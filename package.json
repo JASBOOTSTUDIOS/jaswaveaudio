@@ -1,0 +1,13 @@
+{
+  "name": "jaswave-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "JasWave — AI-First Digital Audio Workstation",
+  "scripts": {
+    "dev": "cd jas-wave && npm run dev",
+    "build": "cd jas-wave && npm run build",
+    "lint": "cd jas-wave && npm run lint",
+    "test": "cd shared && npm test",
+    "typecheck": "cd shared && npm run typecheck"
+  }
+}
