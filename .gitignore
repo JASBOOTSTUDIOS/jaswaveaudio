@@ -1,0 +1,50 @@
+# Root
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+dist-*/
+**/dist-*/
+release/
+out/
+*.tsbuildinfo
+coverage/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Archives / local clutter
+*.zip
+*.tgz
+*.tar.gz
+.agents/locks/
+.agents/status.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# Electron build
+jas-wave/release/
+jas-wave/out/
+
+# Vite / v0 leftovers
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+.snowflake/
+.v0-trash/
+.vercel/
+
+jas-wave/build/
+**/build/electron/
