@@ -3,6 +3,7 @@
 > **Propósito:** archivo de trabajo para alinear implementación y docs, y desbloquear los bugs actuales (VST mudo, UI freeze, Soft Pad vs host).
 > **Fecha:** 2026-08-22 · Actualizar este archivo cuando cambie la arquitectura de audio/plugins.
 > **Auditoría FASE 1:** hecha. Decisión UI+audio + handoff: [ADR-0013](./decisiones/ADR-0013-fx-runtime-pipeline.md) **A+B en producción**. Modelo Reaper (clip → cadena serial de pista): placement R1 + stems/FX inserts R2 + master/bypass R3 **desbloqueados** en código; sends/sidechain siguen fuera.
+> **Robustez 2026-08-22:** stems JWST por AudioWorklet; resample por stem; PDC en `renderMix`; playhead = `AudioContext`; meters peak; Record arma → clip de audio. Clips nativos / bounce / sends = después.
 > **Audiencia:** humanos + agentes de código (`AGENTS.md`).
 
 ---
@@ -196,6 +197,7 @@ Siguiente trabajo grande: sends / sidechain / compensación de latencia / clips 
 5. [x] Device seleccionable (WASAPI / ASIO / …).
 6. [x] FX insert DSP serial por pista + master (modelo Reaper R2/R3). Sends/sidechain pendientes.
 7. [x] native/audio-engine: `isAvailable()===false` hasta `JASWAVE_NATIVE_AUDIO=1`.
+8. [x] Stems por AudioWorklet + PDC relativo + playhead AudioContext + Record→clip. Bounce/clips nativos pendientes.
 
 ---
 

@@ -5,6 +5,7 @@
 
 import { ConsultaDAW } from '../../../shared/src/state/consulta'
 import type { DAWState } from '../../../shared/src'
+import { getSelectedTrackId } from './selection-helpers'
 
 export function buildReadOnlyProjectContext(state: DAWState): string {
   const q = new ConsultaDAW(state)
@@ -13,13 +14,26 @@ export function buildReadOnlyProjectContext(state: DAWState): string {
   const transporte = state.transport
   const grabando = transporte?.grabacion === 'grabando'
   const armado = transporte?.grabacion === 'armada' || grabando
+  const selectedId = getSelectedTrackId(state)
+  const selected = selectedId ? pistas.find((t) => t.id === selectedId) : undefined
 
   const lineasPistas = pistas
     .slice(0, 24)
     .map((t) => {
       const clips = Array.isArray(t.clips) ? t.clips.length : 0
-      return `- ${t.nombre} [${t.tipo}] mute=${t.silenciada ? 'sí' : 'no'} solo=${t.soloActiva ? 'sí' : 'no'} armada=${t.armada ? 'sí' : 'no'} clips=${clips}`
+      const mark = t.id === selectedId ? ' ← SELECCIONADA' : ''
+      return `- ${t.nombre} [${t.tipo}] id=${t.id} mute=${t.silenciada ? 'sí' : 'no'} solo=${t.soloActiva ? 'sí' : 'no'} armada=${t.armada ? 'sí' : 'no'} clips=${clips}${mark}`
     })
+    .join('\n')
+
+  const clipLines = pistas
+    .flatMap((t) =>
+      (t.clips ?? []).slice(0, 8).map((c) => {
+        const name = (c as { nombre?: string }).nombre || 'Clip'
+        return `  - «${name}» id=${c.id} pista=«${t.nombre}» tipo=${(c as { tipo?: string }).tipo ?? '?'}`
+      }),
+    )
+    .slice(0, 30)
     .join('\n')
 
   return [
@@ -41,10 +55,15 @@ export function buildReadOnlyProjectContext(state: DAWState): string {
     '## Pistas',
     lineasPistas || '(sin pistas)',
     '',
+    '## Clips (menciona con @nombre)',
+    clipLines || '(sin clips)',
+    '',
+    selected
+      ? `Pista seleccionada: «${selected.nombre}» [${selected.tipo}] id=${selected.id}`
+      : 'Ninguna pista seleccionada.',
+    '',
     'Responde en español, de forma concisa. Eres el Asistente Jas de JasWave.',
-    'En este modo MVP solo puedes INFORMAR sobre el proyecto (lectura).',
-    'No digas que vas a cambiar el proyecto; sugiere comandos/atajos si el usuario quiere mutar.',
-    'No inventes pistas, clips ni valores que no aparezcan arriba.',
+    'Usa los ids reales de arriba. No inventes pistas ni clips que no existan.',
   ].join('\n')
 }
 

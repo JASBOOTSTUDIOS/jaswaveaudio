@@ -33,6 +33,7 @@ struct StemRing {
   float buf[kCap * 2]{};
   std::atomic<uint32_t> w{0};
   std::atomic<uint32_t> r{0};
+  double phase{0.0};
 };
 
 StemRing gStems[JASWAVE_MIX_MAX_TRACKS]{};
@@ -41,7 +42,6 @@ std::atomic<bool> gRun{false};
 std::atomic<uint32_t> gInRate{48000};
 std::atomic<uint32_t> gOutRate{48000};
 std::atomic<bool> gWantReset{false};
-double gPhase = 0.0;
 
 #ifdef _WIN32
 HANDLE gPipe{INVALID_HANDLE_VALUE};
@@ -77,10 +77,11 @@ void consumeResetIfNeeded() {
   for (int i = 0; i < JASWAVE_MIX_MAX_TRACKS; ++i) {
     const uint32_t w = gStems[i].w.load(std::memory_order_acquire);
     gStems[i].r.store(w, std::memory_order_release);
+    gStems[i].phase = 0.0;
   }
   const uint32_t dw = gDaw.w.load(std::memory_order_acquire);
   gDaw.r.store(dw, std::memory_order_release);
-  gPhase = 0.0;
+  gDaw.phase = 0.0;
   gWantReset.store(false, std::memory_order_release);
 }
 
@@ -123,7 +124,7 @@ void pullFrom(StemRing& s, float* interleaved, uint32_t frames, bool add) {
   }
 
   const double step = static_cast<double>(inRate) / static_cast<double>(outRate);
-  double phase = gPhase;
+  double phase = s.phase;
   for (uint32_t i = 0; i < frames; ++i) {
     float l = 0.f, rr = 0.f;
     if (avail > 0) {
@@ -153,7 +154,7 @@ void pullFrom(StemRing& s, float* interleaved, uint32_t frames, bool add) {
       interleaved[i * 2 + 1] = rr;
     }
   }
-  gPhase = phase;
+  s.phase = phase;
   s.r.store(r, std::memory_order_release);
 }
 
@@ -255,10 +256,11 @@ bool jaswave_mix_bus_start(std::string& pipeName, std::string& err) {
   for (int i = 0; i < JASWAVE_MIX_MAX_TRACKS; ++i) {
     gStems[i].w.store(0, std::memory_order_relaxed);
     gStems[i].r.store(0, std::memory_order_relaxed);
+    gStems[i].phase = 0.0;
   }
   gDaw.w.store(0, std::memory_order_relaxed);
   gDaw.r.store(0, std::memory_order_relaxed);
-  gPhase = 0.0;
+  gDaw.phase = 0.0;
   gWantReset.store(false, std::memory_order_relaxed);
   gRun.store(true, std::memory_order_release);
   gReader = std::thread(readerLoop);

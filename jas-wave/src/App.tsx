@@ -180,22 +180,22 @@ function AppShell() {
             <ResizablePanelGroup direction="horizontal" autoSaveId="jaswave-ide-h" className="min-h-0 flex-1">
               {leftVisible && (
                 <>
-                  <ResizablePanel defaultSize={22} minSize={12} maxSize={40} className="min-w-0 border-r border-border">
+                  <ResizablePanel id="jas-left" order={1} defaultSize={22} minSize={12} maxSize={40} className="min-w-0 border-r border-border">
                     <DockZonePanel zone="left" />
                   </ResizablePanel>
                   <ResizableHandle withHandle />
                 </>
               )}
 
-              <ResizablePanel defaultSize={leftVisible && rightVisible ? 56 : 78} minSize={30} className="min-w-0">
+              <ResizablePanel id="jas-center" order={2} defaultSize={leftVisible && rightVisible ? 56 : 78} minSize={30} className="min-w-0">
                 <ResizablePanelGroup direction="vertical" autoSaveId="jaswave-ide-v" className="h-full">
-                  <ResizablePanel defaultSize={bottomVisible ? 62 : 100} minSize={20}>
+                  <ResizablePanel id="jas-arrange" order={1} defaultSize={bottomVisible ? 62 : 100} minSize={20}>
                     <DockZonePanel zone="center" />
                   </ResizablePanel>
                   {bottomVisible && (
                     <>
                       <ResizableHandle withHandle />
-                      <ResizablePanel defaultSize={38} minSize={12} maxSize={70} className="border-t border-border">
+                      <ResizablePanel id="jas-bottom" order={2} defaultSize={38} minSize={12} maxSize={70} className="border-t border-border">
                         <DockZonePanel zone="bottom" />
                       </ResizablePanel>
                     </>
@@ -206,7 +206,7 @@ function AppShell() {
               {rightVisible && (
                 <>
                   <ResizableHandle withHandle />
-                  <ResizablePanel defaultSize={22} minSize={12} maxSize={40} className="min-w-0 border-l border-border">
+                  <ResizablePanel id="jas-right" order={3} defaultSize={22} minSize={12} maxSize={40} className="min-w-0 border-l border-border">
                     <DockZonePanel zone="right" />
                   </ResizablePanel>
                 </>

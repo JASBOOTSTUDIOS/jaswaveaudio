@@ -4,6 +4,7 @@ import { useDAW } from '@/src/context/daw-context'
 import { audioEngine } from '@/lib/audio-engine'
 import type { GeneratedNote } from '@/src/lib/midi-song-generator'
 import { beatsASegundos } from '@/lib/audio-conversions'
+import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 
 export type MidiPreviewData = {
   kind: 'midiPreview'
@@ -15,6 +16,8 @@ export type MidiPreviewData = {
   structureLabel: string
   mood?: string
   style?: string
+  pistaId?: string
+  applied?: boolean
 }
 
 type Props = {
@@ -28,7 +31,9 @@ export function MidiGenerationPreview({ preview, status = 'pending', onStatusCha
   const tienda = useDAW()
   const [playing, setPlaying] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [localStatus, setLocalStatus] = useState(status)
+  const [localStatus, setLocalStatus] = useState<'pending' | 'applied' | 'discarded'>(
+    preview.applied ? 'applied' : status,
+  )
   const stopTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const mins = useMemo(
@@ -81,17 +86,23 @@ export function MidiGenerationPreview({ preview, status = 'pending', onStatusCha
     setBusy(true)
     try {
       stopPreview()
-      const create = await tienda.executor.execute('track.create', {
-        nombre: preview.nombre,
-        tipo: 'midi',
-      })
-      let pistaId = ''
-      if (create.success) {
-        const tracks = tienda.obtenerEstado().project.tracks
-        pistaId = tracks[tracks.length - 1]?.id ?? ''
-      } else {
-        const midi = tienda.obtenerEstado().project.tracks.find((t) => t.tipo === 'midi')
-        pistaId = midi?.id ?? ''
+      const state = tienda.obtenerEstado()
+      const selectedId = getSelectedTrackId(state)
+      const midiTracks = state.project.tracks.filter((t) => t.tipo === 'midi' || t.tipo === 'instrumento')
+      const preferred =
+        (preview.pistaId && midiTracks.find((t) => t.id === preview.pistaId)) ||
+        (selectedId && midiTracks.find((t) => t.id === selectedId)) ||
+        midiTracks[0]
+      let pistaId = preferred?.id ?? ''
+      if (!pistaId) {
+        const create = await tienda.executor.execute('track.create', {
+          nombre: preview.nombre,
+          tipo: 'midi',
+        })
+        if (create.success) {
+          const tracks = tienda.obtenerEstado().project.tracks
+          pistaId = tracks[tracks.length - 1]?.id ?? ''
+        }
       }
       if (!pistaId) {
         setBusy(false)

@@ -249,6 +249,7 @@ struct RtTrackChain {
   float gain{1.f};
   float pan{0.f};
   bool muted{false};
+  uint16_t delaySamples{0};
   uint8_t slotCount{0};
   RtChainSlot slots[kMaxChainSlots]{};
 };
@@ -260,6 +261,15 @@ static uint8_t gRtMasterCount[2]{0, 0};
 static std::atomic<int> gRtBuf{0};
 static std::atomic<bool> gGraphActive{false};
 static std::mutex gGraphMutex;  // solo control thread / publish
+static uint16_t gRtMaxDelay[2]{0, 0};
+
+static constexpr int kMaxPdc = 16384;
+static float gPdcL[kMaxGraphTracks][kMaxPdc]{};
+static float gPdcR[kMaxGraphTracks][kMaxPdc]{};
+static uint32_t gPdcW[kMaxGraphTracks]{};
+static float gPdcDawL[kMaxPdc]{};
+static float gPdcDawR[kMaxPdc]{};
+static uint32_t gPdcDawW{0};
 
 struct TrackChainSlot {
   std::string slotId;
@@ -303,6 +313,25 @@ static void publishGraphUnlocked(const std::vector<TrackChain>& tracks,
     }
     ++tn;
   }
+  int maxLat = 0;
+  int lats[kMaxGraphTracks]{};
+  for (uint8_t t = 0; t < tn; ++t) {
+    int lat = 0;
+    RtTrackChain& out = gRtTracks[write][t];
+    for (uint8_t s = 0; s < out.slotCount; ++s) {
+      const RtChainSlot& cs = out.slots[s];
+      if (cs.bypass || !cs.slot) continue;
+      lat += std::max(0, cs.slot->latencySamples());
+    }
+    lats[t] = lat;
+    if (lat > maxLat) maxLat = lat;
+  }
+  if (maxLat > kMaxPdc - 1) maxLat = kMaxPdc - 1;
+  for (uint8_t t = 0; t < tn; ++t) {
+    const int lat = std::min(lats[t], maxLat);
+    gRtTracks[write][t].delaySamples = static_cast<uint16_t>(maxLat - lat);
+  }
+  gRtMaxDelay[write] = static_cast<uint16_t>(maxLat);
   gRtTrackCount[write] = tn;
 
   uint8_t mn = 0;
@@ -346,12 +375,33 @@ static void applyTrackGainPan(float* l, float* r, int frames, float gain, float 
   }
   const float g = std::max(0.f, std::min(2.f, gain));
   const float p = std::max(-1.f, std::min(1.f, pan));
-  const float gL = g * (p <= 0.f ? 1.f : 1.f - p);
-  const float gR = g * (p >= 0.f ? 1.f : 1.f + p);
+  const float theta = (p + 1.f) * 0.7853981633974483f;  // (pan+1) * π/4
+  const float gL = g * std::cos(theta);
+  const float gR = g * std::sin(theta);
   for (int i = 0; i < frames; ++i) {
     l[i] *= gL;
     r[i] *= gR;
   }
+}
+
+static void applyPdc(float* l, float* r, int frames, float* dL, float* dR, uint32_t& w, int delay) {
+  if (!l || !r || !dL || !dR || frames <= 0) return;
+  if (delay <= 0) return;
+  const int cap = kMaxPdc;
+  delay = std::min(delay, cap - 1);
+  const uint32_t capU = static_cast<uint32_t>(cap);
+  uint32_t pos = w;
+  for (int i = 0; i < frames; ++i) {
+    const uint32_t ri = (pos + static_cast<uint32_t>(cap - delay)) % capU;
+    const float ol = dL[ri];
+    const float orr = dR[ri];
+    dL[pos] = l[i];
+    dR[pos] = r[i];
+    l[i] = ol;
+    r[i] = orr;
+    pos = (pos + 1u) % capU;
+  }
+  w = pos;
 }
 
 static void renderMix(float* interleaved, uint32_t frameCount) {
@@ -365,7 +415,7 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
 
   if (useGraph) {
     const uint8_t trackN = gRtTrackCount[idx];
-    for (uint8_t t = 0; t < trackN; ++t) {
+    for (uint8_t t = 0; t < trackN && t < kMaxGraphTracks; ++t) {
       const RtTrackChain& tr = gRtTracks[idx][t];
       jaswave_mix_bus_pull_stem(tr.stemIndex, gStemInterleaved, static_cast<uint32_t>(frames));
       for (int i = 0; i < frames; ++i) {
@@ -390,6 +440,8 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
         }
       }
       applyTrackGainPan(gChainL, gChainR, frames, tr.gain, tr.pan, tr.muted);
+      applyPdc(gChainL, gChainR, frames, gPdcL[t], gPdcR[t], gPdcW[t],
+               static_cast<int>(tr.delaySamples));
       for (int i = 0; i < frames; ++i) {
         gMixL[i] += gChainL[i];
         gMixR[i] += gChainR[i];
@@ -433,10 +485,17 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
     interleaved[i * 2 + 0] = gMixL[i] * masterG;
     interleaved[i * 2 + 1] = gMixR[i] * masterG;
   }
-  jaswave_mix_bus_add(interleaved, static_cast<uint32_t>(frames));
+  std::memset(gStemInterleaved, 0, static_cast<size_t>(frames) * 2 * sizeof(float));
+  jaswave_mix_bus_add(gStemInterleaved, static_cast<uint32_t>(frames));
   for (int i = 0; i < frames; ++i) {
-    interleaved[i * 2 + 0] = std::max(-1.f, std::min(1.f, interleaved[i * 2 + 0]));
-    interleaved[i * 2 + 1] = std::max(-1.f, std::min(1.f, interleaved[i * 2 + 1]));
+    gTmpL[i] = gStemInterleaved[i * 2];
+    gTmpR[i] = gStemInterleaved[i * 2 + 1];
+  }
+  const int dawDelay = useGraph ? static_cast<int>(gRtMaxDelay[idx]) : 0;
+  applyPdc(gTmpL, gTmpR, frames, gPdcDawL, gPdcDawR, gPdcDawW, dawDelay);
+  for (int i = 0; i < frames; ++i) {
+    interleaved[i * 2 + 0] = std::max(-1.f, std::min(1.f, interleaved[i * 2 + 0] + gTmpL[i]));
+    interleaved[i * 2 + 1] = std::max(-1.f, std::min(1.f, interleaved[i * 2 + 1] + gTmpR[i]));
   }
 }
 
@@ -696,8 +755,14 @@ static void executeUiJob(UiJob& job) {
       return;
     }
     job.ok = true;
+    int lat = 0;
+    {
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      if (auto* s = findSlotUnlocked(slotId)) lat = s->latencySamples();
+    }
     job.extraJson = "\"slotId\":\"" + jsonEscape(slotId) +
-                    "\",\"latencySamples\":0,\"audioReady\":true,\"audio\":" + audioStatusJsonObject();
+                    "\",\"latencySamples\":" + std::to_string(lat) +
+                    ",\"audioReady\":true,\"audio\":" + audioStatusJsonObject();
     return;
   }
 
@@ -1047,7 +1112,14 @@ static void handleLine(const std::string& line) {
     return;
   }
   if (type == "prepare") {
-    replyOk("\"latencySamples\":0");
+    std::string slotId = getStringField(line, "slotId");
+    if (slotId.empty()) slotId = gActiveSlot;
+    int lat = 0;
+    {
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      if (auto* s = findSlotUnlocked(slotId)) lat = s->latencySamples();
+    }
+    replyOk("\"latencySamples\":" + std::to_string(lat));
     return;
   }
   if (type == "unload") {
@@ -1144,7 +1216,20 @@ static void handleLine(const std::string& line) {
     handleUiRpc(UiJob::Kind::AsioPanel, line);
     return;
   }
-  if (type == "focusEditor" || type == "getLatency" || type == "crashReport") {
+  if (type == "getLatency") {
+    std::string slotId = getStringField(line, "slotId");
+    if (slotId.empty()) slotId = gActiveSlot;
+    int lat = 0;
+    {
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      if (auto* s = findSlotUnlocked(slotId)) lat = s->latencySamples();
+    }
+    replyOk("\"latencySamples\":" + std::to_string(lat) +
+            ",\"graphDelaySamples\":" +
+            std::to_string(gRtMaxDelay[gRtBuf.load(std::memory_order_acquire)]));
+    return;
+  }
+  if (type == "focusEditor" || type == "crashReport") {
     replyOk();
     return;
   }

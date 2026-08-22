@@ -1,6 +1,7 @@
 /**
- * Generador MIDI creativo para el agente JasWave.
- * Cada petición produce una pieza distinta (seed + mood + estilo).
+ * Compositor MIDI del agente JasWave.
+ * Las notas se derivan del brief del usuario (tonalidad, progresión, articulación,
+ * duración, velocidades). No hay bancos de plantillas ni tonalidad por defecto en C menor.
  */
 
 export type MidiSongSection = 'intro' | 'verse' | 'chorus' | 'bridge' | 'outro' | 'breakdown' | 'build'
@@ -15,7 +16,9 @@ export type MusicMood =
   | 'energetic'
   | 'neutral'
 
-export type MusicStyle = 'ballad' | 'arp' | 'sparse' | 'pulse' | 'waltz' | 'cinematic'
+export type MusicStyle = 'ballad' | 'arp' | 'sparse' | 'pulse' | 'waltz' | 'cinematic' | 'strum'
+
+export type Articulation = 'strum' | 'arp' | 'pad' | 'melody' | 'block' | 'drums' | 'bass'
 
 export type GenerateMidiSongOptions = {
   keyRoot?: number
@@ -24,11 +27,15 @@ export type GenerateMidiSongOptions = {
   minutes?: number
   velocitySoft?: number
   sections?: MidiSongSection[]
-  /** Semilla: mismo texto → misma pieza; distinto texto → distinta. */
   seed?: number | string
   mood?: MusicMood
   style?: MusicStyle
   nombre?: string
+  /** Texto original del usuario — manda sobre mood/plantilla. */
+  prompt?: string
+  /** Grados Nashville 1–7, p.ej. [6, 4, 1, 3]. */
+  progression?: number[]
+  articulacion?: Articulation
 }
 
 export type GeneratedNote = {
@@ -38,10 +45,25 @@ export type GeneratedNote = {
   velocidad: number
 }
 
+export type MidiBrief = {
+  keyRoot: number
+  scale: 'major' | 'minor'
+  keyLabel: string
+  keyExplicit: boolean
+  degrees: number[]
+  minutes: number
+  bpm?: number
+  articulation: Articulation
+  velocityBase: number
+  velocityAccent: number
+  clipName: string
+  mood: MusicMood
+  instrumentHint?: string
+}
+
 const MAJOR_INTERVALS = [0, 2, 4, 5, 7, 9, 11]
 const MINOR_INTERVALS = [0, 2, 3, 5, 7, 8, 10]
 
-/** PRNG determinista (mulberry32). */
 function createRng(seed: number) {
   let s = seed >>> 0 || 1
   return () => {
@@ -62,65 +84,16 @@ export function hashSeed(input: string): number {
   return h >>> 0
 }
 
-function pick<T>(rng: () => number, arr: T[]): T {
-  return arr[Math.floor(rng() * arr.length) % arr.length]!
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n))
 }
 
 function degreeToPitch(root: number, degree: number, scale: 'major' | 'minor', octaveOffset = 0): number {
   const intervals = scale === 'major' ? MAJOR_INTERVALS : MINOR_INTERVALS
   const oct = Math.floor(degree / 7) + octaveOffset
   const d = ((degree % 7) + 7) % 7
-  return Math.max(21, Math.min(108, root + intervals[d]! + oct * 12))
+  return clamp(root + intervals[d]! + oct * 12, 21, 108)
 }
-
-/** Progresiones alternativas por mood (grados diatónicos). */
-const PROGRESSION_BANK: Record<MusicMood, number[][][]> = {
-  sad: [
-    [[0, 2, 4], [5, 0, 2], [3, 5, 0], [4, 6, 1]],
-    [[0, 2, 4], [3, 5, 0], [5, 0, 2], [4, 6, 1]],
-    [[5, 0, 2], [3, 5, 0], [0, 2, 4], [4, 0, 2]],
-  ],
-  happy: [
-    [[0, 2, 4], [4, 6, 1], [5, 0, 2], [3, 5, 0]],
-    [[0, 2, 4], [3, 5, 0], [4, 6, 1], [0, 2, 4]],
-  ],
-  epic: [
-    [[0, 2, 4], [5, 0, 2], [3, 5, 0], [4, 6, 1]],
-    [[0, 4, 6], [5, 0, 2], [3, 5, 0], [4, 0, 2]],
-  ],
-  ambient: [
-    [[0, 2, 4], [0, 2, 4], [5, 0, 2], [5, 0, 2]],
-    [[0, 4], [3, 5], [0, 4], [5, 0]],
-  ],
-  dark: [
-    [[0, 2, 4], [1, 3, 5], [5, 0, 2], [4, 6, 1]],
-    [[0, 3, 5], [5, 0, 2], [3, 5, 0], [4, 0, 2]],
-  ],
-  romantic: [
-    [[0, 2, 4], [5, 0, 2], [3, 5, 0], [4, 6, 1]],
-    [[0, 2, 4], [3, 5, 0], [1, 3, 5], [4, 6, 1]],
-  ],
-  energetic: [
-    [[0, 2, 4], [4, 6, 1], [5, 0, 2], [0, 2, 4]],
-    [[0, 4], [5, 0], [3, 5], [4, 6]],
-  ],
-  neutral: [
-    [[0, 2, 4], [3, 5, 0], [0, 2, 4], [4, 6, 1]],
-    [[0, 2, 4], [5, 0, 2], [3, 5, 0], [4, 6, 1]],
-  ],
-}
-
-const STRUCTURE_BANK: MidiSongSection[][] = [
-  ['intro', 'verse', 'chorus', 'verse', 'chorus', 'outro'],
-  ['intro', 'verse', 'chorus', 'bridge', 'chorus', 'outro'],
-  ['verse', 'chorus', 'verse', 'chorus', 'outro'],
-  ['intro', 'verse', 'bridge', 'chorus', 'outro'],
-  ['intro', 'verse', 'chorus', 'breakdown', 'chorus', 'outro'],
-  ['intro', 'build', 'chorus', 'verse', 'chorus', 'outro'],
-  ['intro', 'verse', 'chorus', 'verse', 'bridge', 'build', 'chorus', 'outro'],
-  ['verse', 'bridge', 'verse', 'outro'],
-  ['intro', 'verse', 'outro'],
-]
 
 function moodFromText(text: string): MusicMood {
   const t = text.toLowerCase()
@@ -134,39 +107,349 @@ function moodFromText(text: string): MusicMood {
   return 'neutral'
 }
 
-function styleFromMood(mood: MusicMood, rng: () => number): MusicStyle {
-  const map: Record<MusicMood, MusicStyle[]> = {
-    sad: ['ballad', 'sparse', 'arp'],
-    happy: ['pulse', 'arp', 'ballad'],
-    epic: ['cinematic', 'pulse', 'arp'],
-    ambient: ['sparse', 'ballad', 'arp'],
-    dark: ['sparse', 'cinematic', 'arp'],
-    romantic: ['ballad', 'waltz', 'arp'],
-    energetic: ['pulse', 'arp', 'waltz'],
-    neutral: ['ballad', 'arp', 'pulse', 'sparse'],
-  }
-  return pick(rng, map[mood])
-}
-
-function sectionBars(section: MidiSongSection, rng: () => number): number {
-  const base: Record<MidiSongSection, number[]> = {
-    intro: [4, 8],
-    verse: [8, 12, 16],
-    chorus: [8, 16],
-    bridge: [4, 8],
-    outro: [4, 8],
-    breakdown: [4, 8],
-    build: [4, 8],
-  }
-  return pick(rng, base[section] ?? [8])
-}
-
 export function inferMoodFromText(text: string): MusicMood {
   return moodFromText(text)
 }
 
+const KEY_TABLE: Array<{ re: RegExp; root: number; scale: 'major' | 'minor'; label: string }> = [
+  { re: /\bf\s*#\s*(?:menor|minor)\b|\bf\s*#m\b|fa\s*#\s*menor|f♯\s*(?:menor|m)\b/i, root: 54, scale: 'minor', label: 'F# menor' },
+  { re: /\bf\s*#\s*(?:mayor|major)\b|fa\s*#\s*mayor|f♯\s*mayor/i, root: 54, scale: 'major', label: 'F# mayor' },
+  { re: /\b(?:en\s+)?f\s*#|\bfa\s*(?:sostenid[oa]|#|♯)|\bf♯/i, root: 54, scale: 'major', label: 'F# mayor' },
+  { re: /\bgb\s*(?:menor|minor)|sol\s*b\s*menor/i, root: 54, scale: 'minor', label: 'Gb menor' },
+  { re: /\bgb\b|sol\s*bemol/i, root: 54, scale: 'major', label: 'Gb mayor' },
+  { re: /\bc\s*#\s*(?:menor|minor)|do\s*#\s*menor/i, root: 49, scale: 'minor', label: 'C# menor' },
+  { re: /\bc\s*#|do\s*(?:sostenid|#)/i, root: 49, scale: 'major', label: 'C# mayor' },
+  { re: /\bb\s*b\s*(?:menor|minor)|si\s*b\s*menor/i, root: 46, scale: 'minor', label: 'Bb menor' },
+  { re: /\bb\s*b\b|si\s*bemol/i, root: 46, scale: 'major', label: 'Bb mayor' },
+  { re: /\be\s*b\s*(?:menor|minor)|mi\s*b\s*menor/i, root: 51, scale: 'minor', label: 'Eb menor' },
+  { re: /\be\s*b\b|mi\s*bemol/i, root: 51, scale: 'major', label: 'Eb mayor' },
+  { re: /\ba\s*b\s*(?:menor|minor)|la\s*b\s*menor/i, root: 44, scale: 'minor', label: 'Ab menor' },
+  { re: /\ba\s*b\b|la\s*bemol/i, root: 44, scale: 'major', label: 'Ab mayor' },
+  { re: /\bc\s*menor|c\s*minor|do\s*menor\b/i, root: 48, scale: 'minor', label: 'C menor' },
+  { re: /\bc\s*mayor|c\s*major|do\s*mayor\b/i, root: 48, scale: 'major', label: 'C mayor' },
+  { re: /\ba\s*menor|a\s*minor|la\s*menor\b/i, root: 45, scale: 'minor', label: 'A menor' },
+  { re: /\ba\s*mayor|la\s*mayor\b/i, root: 57, scale: 'major', label: 'A mayor' },
+  { re: /\bg\s*menor|sol\s*menor\b/i, root: 43, scale: 'minor', label: 'G menor' },
+  { re: /\bg\s*mayor|sol\s*mayor\b/i, root: 43, scale: 'major', label: 'G mayor' },
+  { re: /\bf\s*menor|fa\s*menor\b/i, root: 41, scale: 'minor', label: 'F menor' },
+  { re: /\bf\s*mayor|fa\s*mayor\b/i, root: 41, scale: 'major', label: 'F mayor' },
+  { re: /\bd\s*menor|d\s*minor|re\s*menor\b/i, root: 50, scale: 'minor', label: 'D menor' },
+  { re: /\bd\s*mayor|re\s*mayor\b/i, root: 50, scale: 'major', label: 'D mayor' },
+  { re: /\be\s*menor|mi\s*menor\b/i, root: 52, scale: 'minor', label: 'E menor' },
+  { re: /\be\s*mayor|mi\s*mayor\b/i, root: 52, scale: 'major', label: 'E mayor' },
+  { re: /\bb\s*menor|si\s*menor\b/i, root: 47, scale: 'minor', label: 'B menor' },
+  { re: /\bb\s*mayor|si\s*mayor\b/i, root: 59, scale: 'major', label: 'B mayor' },
+]
+
+export function inferKeyFromText(text: string): {
+  root: number
+  scale: 'major' | 'minor'
+  label: string
+  explicit: boolean
+} {
+  const lower = text.toLowerCase()
+  for (const m of KEY_TABLE) {
+    if (m.re.test(lower)) {
+      return { root: m.root, scale: m.scale, label: m.label, explicit: true }
+    }
+  }
+  return { root: 60, scale: 'major', label: 'C mayor', explicit: false }
+}
+
+const ROMAN_TOKEN = /^(vii|vi|iv|iii|ii|i|v)[°o]?$/i
+
+function romanToDegree(tok: string): number | null {
+  const t = tok.toLowerCase().replace(/[°o]/g, '')
+  const map: Record<string, number> = { i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7 }
+  return map[t] ?? null
+}
+
+/** Nashville 1–7 o romanos vi-IV-I-iii. */
+export function inferProgressionFromText(text: string): number[] | null {
+  const roman = text.match(
+    /\b((?:vii|vi|iv|iii|ii|i|v)[°o]?(?:\s*[-–—\/]\s*(?:vii|vi|iv|iii|ii|i|v)[°o]?){1,7})\b/i,
+  )
+  if (roman) {
+    const parts = roman[1]!.split(/\s*[-–—\/]\s*/)
+    const degs = parts.map(romanToDegree).filter((n): n is number => n != null)
+    if (degs.length >= 2 && parts.every((p) => ROMAN_TOKEN.test(p.trim()))) return degs
+  }
+
+  const nums = text.match(/\b([1-7](?:\s*[-–—,\/]\s*[1-7]){1,7})\b/)
+  if (nums) {
+    const seq = nums[1]!.split(/\s*[-–—,\/]\s*/).map((n) => Number(n))
+    if (seq.length >= 2 && seq.every((n) => n >= 1 && n <= 7)) return seq
+  }
+  return null
+}
+
+export function inferArticulationFromText(text: string): Articulation {
+  const t = text.toLowerCase()
+  if (/bater|drum|kit|percusi/.test(t)) return 'drums'
+  if (/rasgueo|downstroke|strum|p\u00faa|pua|guitarra/.test(t)) return 'strum'
+  if (/bajo|bass line|bassline/.test(t)) return 'bass'
+  if (/arpeg/.test(t)) return 'arp'
+  if (/\bpad\b|sostenid|block|acordes?\s+larg/.test(t)) return 'pad'
+  if (/melod[ií]a|lead|canto/.test(t)) return 'melody'
+  if (/bajo|bass/.test(t)) return 'bass'
+  return 'arp'
+}
+
+export function inferInstrumentHint(text: string): string | undefined {
+  const t = text.toLowerCase()
+  if (/guitar|rasgueo/.test(t)) return 'guitar'
+  if (/piano|keys|teclado/.test(t)) return 'piano'
+  if (/bajo|bass/.test(t)) return 'bass'
+  if (/cuerda|string|viol/.test(t)) return 'strings'
+  if (/pad|synth|sintet/.test(t)) return 'pad'
+  if (/bater|drum/.test(t)) return 'drums'
+  return undefined
+}
+
+export function inferMinutesFromText(text: string, fallback = 3): number {
+  const m =
+    text.match(/(\d+(?:[.,]\d+)?)\s*min/) ||
+    text.match(/dure\s+(\d+(?:[.,]\d+)?)/i) ||
+    text.match(/duraci[oó]n\s+(?:de\s+)?(\d+(?:[.,]\d+)?)/i)
+  if (m) return Math.max(0.25, parseFloat(m[1]!.replace(',', '.')))
+  if (/al\s+menos\s+3|3\s*minutos|tres\s+minutos/i.test(text)) return 3
+  if (/4\s*minutos|cuatro\s+minutos/i.test(text)) return 4
+  return fallback
+}
+
+export function wantsDawCreation(text: string): boolean {
+  const t = text.toLowerCase()
+  const verb = /genera|crea|haz(lo|me)?|arm[aá]|escribe|pon(me)?|inserta|modifica|reescribe/
+  const noun = /midi|clip|piano|pista|song|canci[oó]n|estrofa|coro|acorde|arpeg|melod|rasgueo|proyecto|vst|bater|drum/
+  return verb.test(t) && noun.test(t)
+}
+
+export function inferClipNameFromText(text: string, keyLabel: string): string {
+  const t = text.trim()
+  const quoted = t.match(/[«"']([^«"']{2,40})[»"']/)
+  if (quoted) return quoted[1]!.trim()
+  const hint = inferInstrumentHint(t)
+  if (hint === 'guitar') return `Guitarra · ${keyLabel}`
+  if (hint === 'piano') return `Piano · ${keyLabel}`
+  if (/triste/i.test(t)) return `Melodía triste · ${keyLabel}`
+  if (/alegre|feliz/i.test(t)) return `Melodía alegre · ${keyLabel}`
+  if (/[eé]pic/i.test(t)) return `Tema épico · ${keyLabel}`
+  if (/ambient/i.test(t)) return `Ambient · ${keyLabel}`
+  if (/melod/i.test(t)) return `Melodía · ${keyLabel}`
+  return `MIDI · ${keyLabel}`
+}
+
+function defaultProgression(scale: 'major' | 'minor', mood: MusicMood): number[] {
+  if (scale === 'minor') {
+    if (mood === 'dark') return [1, 6, 3, 7]
+    if (mood === 'sad' || mood === 'romantic') return [1, 6, 3, 7]
+    return [1, 4, 6, 5]
+  }
+  if (mood === 'energetic' || mood === 'happy') return [1, 5, 6, 4]
+  return [6, 4, 1, 5]
+}
+
+export function parseMidiBriefFromText(text: string, bpmFallback = 120): MidiBrief {
+  const key = inferKeyFromText(text)
+  const mood = moodFromText(text)
+  let scale = key.scale
+  const degrees = inferProgressionFromText(text)
+  if (!key.explicit && degrees && degrees[0] === 6) {
+    scale = 'major'
+  }
+  const articulation = inferArticulationFromText(text)
+  const minutes = inferMinutesFromText(text, 2)
+  const soft =
+    /suave|soft|delicado/.test(text.toLowerCase()) ||
+    mood === 'sad' ||
+    mood === 'ambient' ||
+    mood === 'romantic'
+  const velocityBase = soft ? 54 : mood === 'energetic' ? 82 : 68
+  const keyLabel = key.label
+
+  return {
+    keyRoot: key.root,
+    scale,
+    keyLabel,
+    keyExplicit: key.explicit,
+    degrees: degrees ?? defaultProgression(scale, mood),
+    minutes,
+    bpm: bpmFallback,
+    articulation,
+    velocityBase,
+    velocityAccent: velocityBase + (soft ? 10 : 16),
+    clipName: inferClipNameFromText(text, keyLabel),
+    mood,
+    instrumentHint: inferInstrumentHint(text),
+  }
+}
+
+function chordTones(root: number, degree1: number, scale: 'major' | 'minor', spread = 4): number[] {
+  const d = degree1 - 1
+  const tones = [
+    degreeToPitch(root, d, scale, -1),
+    degreeToPitch(root, d, scale, 0),
+    degreeToPitch(root, d + 2, scale, 0),
+    degreeToPitch(root, d + 4, scale, 0),
+  ]
+  if (spread > 4) tones.push(degreeToPitch(root, d, scale, 1))
+  return tones
+}
+
+function styleFromArticulation(a: Articulation): MusicStyle {
+  if (a === 'strum') return 'strum'
+  if (a === 'arp') return 'arp'
+  if (a === 'drums' || a === 'bass') return 'pulse'
+  if (a === 'pad' || a === 'block') return 'ballad'
+  return 'ballad'
+}
+
+export function composeMidiFromBrief(
+  brief: MidiBrief,
+  opts?: { seed?: number; bpm?: number },
+): {
+  notes: GeneratedNote[]
+  durationBeats: number
+  structureLabel: string
+  mood: MusicMood
+  style: MusicStyle
+  seed: number
+} {
+  const bpm = Math.max(20, Math.min(400, opts?.bpm ?? brief.bpm ?? 120))
+  const seedNum = opts?.seed ?? hashSeed(`${brief.keyLabel}|${brief.degrees.join('-')}|${brief.articulation}|${brief.minutes}`)
+  const rng = createRng(seedNum)
+  const notes: GeneratedNote[] = []
+  const targetBeats = Math.max(4, brief.minutes * bpm)
+  const barLen = 4
+  const degrees = brief.degrees.length ? brief.degrees : [1, 4, 5, 1]
+  let beat = 0
+  let bar = 0
+
+  const push = (pitch: number, inicio: number, duracion: number, velocidad: number) => {
+    notes.push({
+      pitch: clamp(Math.round(pitch), 0, 127),
+      inicio,
+      duracion: Math.max(0.05, duracion),
+      velocidad: clamp(Math.round(velocidad), 1, 127),
+    })
+  }
+
+  const emitBar = (deg: number, start: number) => {
+    const tones = chordTones(brief.keyRoot, deg, brief.scale, brief.articulation === 'strum' ? 5 : 4)
+    const accentBar = bar % 4 === 0
+    const base = brief.velocityBase + (accentBar ? 4 : 0)
+
+    if (brief.articulation === 'drums') {
+      const kick = 36
+      const snare = 38
+      const chh = 42
+      const ohh = 46
+      const crash = 49
+      const ride = 51
+      if (bar === 0) push(crash, start, 1.5, base + 12)
+      push(kick, start, 0.35, base + 18)
+      push(kick, start + 2.5, 0.3, base + 8)
+      push(snare, start + 1, 0.3, base + 14)
+      push(snare, start + 3, 0.3, base + 12)
+      for (let s = 0; s < 8; s++) {
+        const hat = s % 2 === 1 && bar % 4 === 3 ? ohh : chh
+        push(hat, start + s * 0.5, 0.2, base - 10 + (s === 0 ? 8 : 0) + Math.floor((rng() - 0.5) * 10))
+      }
+      if (bar % 8 === 7) push(ride, start + 3.5, 0.4, base)
+      return
+    }
+
+    if (brief.articulation === 'bass') {
+      const root = chordTones(brief.keyRoot, deg, brief.scale, 4)[0]!
+      push(root, start, 1.6, base + 6)
+      push(root, start + 2, 1.4, base)
+      if (rng() > 0.45) push(root + 7, start + 3, 0.7, base - 8)
+      return
+    }
+
+    if (brief.articulation === 'strum') {
+      // Rasgueo hacia abajo: cuerdas graves → agudas, 8 corcheas, velocidades independientes.
+      for (let s = 0; s < 8; s++) {
+        const down = s % 2 === 0
+        if (!down && /suave/.test(brief.clipName.toLowerCase())) {
+          /* still play, quieter */
+        }
+        const beatVel =
+          base +
+          (s === 0 ? brief.velocityAccent - brief.velocityBase : 0) +
+          (s === 4 ? 6 : 0) +
+          Math.floor((rng() - 0.5) * 10)
+        const strum = down ? tones : [...tones].reverse()
+        for (let i = 0; i < strum.length; i++) {
+          const delay = i * 0.018
+          push(
+            strum[i]!,
+            start + s * 0.5 + delay,
+            0.42,
+            beatVel - i * 3 + Math.floor((rng() - 0.5) * 6),
+          )
+        }
+      }
+      return
+    }
+
+    if (brief.articulation === 'arp') {
+      const pattern = [0, 1, 2, 3, 2, 1, 0, 2]
+      for (let s = 0; s < 8; s++) {
+        const idx = pattern[s % pattern.length]! % tones.length
+        const vel = base - 8 + (s % 4 === 0 ? 8 : 0) + Math.floor((rng() - 0.5) * 8)
+        push(tones[idx]!, start + s * 0.5, 0.46, vel)
+      }
+      return
+    }
+
+    if (brief.articulation === 'pad' || brief.articulation === 'block') {
+      for (let i = 0; i < tones.length; i++) {
+        push(tones[i]!, start + i * 0.03, 3.7, base - i * 4)
+      }
+      return
+    }
+
+    // melody: motif over the chord
+    const motif = [0, 2, 1, 3, 2]
+    for (let m = 0; m < motif.length; m++) {
+      const idx = motif[m]! % tones.length
+      push(tones[idx]!, start + m * 0.75 + rng() * 0.04, 0.65, base - 6 + Math.floor(rng() * 10))
+    }
+  }
+
+  while (beat < targetBeats && bar < 512) {
+    const deg = degrees[bar % degrees.length]!
+    emitBar(deg, beat)
+    beat += barLen
+    bar++
+  }
+
+  const lastDeg = degrees[0]!
+  if (brief.articulation !== 'drums') {
+    const end = chordTones(brief.keyRoot, lastDeg, brief.scale, 4)
+    for (let i = 0; i < end.length; i++) {
+      push(end[i]!, beat + i * 0.04, 3.2, brief.velocityBase - 8 - i * 3)
+    }
+  } else {
+    push(49, beat, 2, brief.velocityBase + 10)
+    push(36, beat, 2, brief.velocityBase + 8)
+  }
+  beat += 4
+
+  const style = styleFromArticulation(brief.articulation)
+  return {
+    notes,
+    durationBeats: beat,
+    structureLabel: `${brief.keyLabel} · ${degrees.join('–')} · ${brief.articulation}`,
+    mood: brief.mood,
+    style,
+    seed: seedNum,
+  }
+}
+
 /**
- * Genera una pieza distinta según seed/mood/estilo.
+ * Compat: genera desde opciones + prompt. Si hay prompt/progresión, manda el brief.
  */
 export function generateSoftPianoSong(opts: GenerateMidiSongOptions = {}): {
   notes: GeneratedNote[]
@@ -176,283 +459,29 @@ export function generateSoftPianoSong(opts: GenerateMidiSongOptions = {}): {
   style: MusicStyle
   seed: number
 } {
+  const prompt = String(opts.prompt ?? opts.nombre ?? '')
+  const brief = parseMidiBriefFromText(prompt || `${opts.mood ?? ''} ${opts.style ?? ''}`, opts.bpm ?? 120)
+
+  if (opts.keyRoot != null) brief.keyRoot = opts.keyRoot
+  if (opts.scale) brief.scale = opts.scale
+  if (opts.minutes != null) brief.minutes = Math.max(0.25, opts.minutes)
+  if (opts.mood) brief.mood = opts.mood
+  if (opts.progression && opts.progression.length >= 2) {
+    brief.degrees = opts.progression.map((n) => clamp(Math.round(n), 1, 7))
+  }
+  if (opts.articulacion) brief.articulation = opts.articulacion
+  else if (opts.style === 'strum') brief.articulation = 'strum'
+  else if (opts.style === 'arp') brief.articulation = 'arp'
+  if (opts.velocitySoft != null) {
+    brief.velocityBase = opts.velocitySoft
+    brief.velocityAccent = opts.velocitySoft + 12
+  }
+  if (opts.nombre) brief.clipName = opts.nombre
+
   const seedNum =
     typeof opts.seed === 'number'
       ? opts.seed
-      : hashSeed(
-          String(opts.seed ?? '') +
-            '|' +
-            (opts.nombre ?? '') +
-            '|' +
-            (opts.keyRoot ?? '') +
-            '|' +
-            (opts.scale ?? '') +
-            '|' +
-            (opts.minutes ?? '') +
-            '|' +
-            (opts.mood ?? '') +
-            '|' +
-            Date.now().toString(36).slice(-4),
-        )
+      : hashSeed(String((opts.seed ?? prompt) || brief.clipName))
 
-  const rng = createRng(seedNum)
-  const root = opts.keyRoot ?? 48
-  const scale = opts.scale ?? 'minor'
-  const mood = opts.mood ?? 'neutral'
-  const style = opts.style ?? styleFromMood(mood, rng)
-
-  // BPM sugerido por mood si no viene fijado
-  let bpm = opts.bpm ?? 120
-  if (opts.bpm == null) {
-    if (mood === 'sad' || mood === 'romantic' || mood === 'ambient') bpm = 72 + Math.floor(rng() * 28)
-    else if (mood === 'energetic') bpm = 118 + Math.floor(rng() * 30)
-    else if (mood === 'epic') bpm = 96 + Math.floor(rng() * 28)
-    else if (mood === 'dark') bpm = 80 + Math.floor(rng() * 25)
-    else bpm = 100 + Math.floor(rng() * 30)
-  }
-
-  const minutes = Math.max(1.2, opts.minutes ?? 3)
-  const softBase =
-    opts.velocitySoft ??
-    (mood === 'sad' || mood === 'ambient' ? 52 : mood === 'energetic' ? 78 : 64)
-
-  const sections =
-    opts.sections ??
-    (() => {
-      let s = [...pick(rng, STRUCTURE_BANK)]
-      if (mood === 'ambient') s = ['intro', 'verse', 'bridge', 'verse', 'outro']
-      if (mood === 'sad' && rng() > 0.5) s = ['intro', 'verse', 'chorus', 'bridge', 'verse', 'outro']
-      if (mood === 'energetic') s = ['intro', 'verse', 'chorus', 'verse', 'chorus', 'bridge', 'chorus', 'outro']
-      return s
-    })()
-
-  const progressions = PROGRESSION_BANK[mood]
-  const progression = pick(rng, progressions)
-  const targetBeats = minutes * bpm
-  const notes: GeneratedNote[] = []
-  let beat = 0
-  const labels: string[] = []
-
-  const densify = style === 'pulse' || style === 'arp'
-  const sparse = style === 'sparse' || mood === 'ambient'
-
-  const emitBar = (section: MidiSongSection, chordDegs: number[], barStart: number) => {
-    const bassOct = mood === 'epic' || mood === 'dark' ? -1 : 0
-    const chordOct = 1
-    const melOct = style === 'arp' ? 2 : mood === 'sad' ? 1 : 2
-
-    // Bajo
-    const bassDur = style === 'waltz' ? 2.8 : sparse ? 3.8 : densify ? 1.9 : 3.4
-    notes.push({
-      pitch: degreeToPitch(root, chordDegs[0]!, scale, bassOct),
-      inicio: barStart,
-      duracion: bassDur,
-      velocidad: Math.max(36, softBase - 14),
-    })
-    if (style === 'pulse' || mood === 'energetic') {
-      notes.push({
-        pitch: degreeToPitch(root, chordDegs[0]!, scale, bassOct),
-        inicio: barStart + 2,
-        duracion: 1.7,
-        velocidad: Math.max(32, softBase - 18),
-      })
-    }
-
-    // Acorde
-    const chordSpread = style === 'cinematic' ? 0.08 : 0.04
-    for (let i = 0; i < chordDegs.length; i++) {
-      notes.push({
-        pitch: degreeToPitch(root, chordDegs[i]!, scale, chordOct),
-        inicio: barStart + chordSpread * i,
-        duracion: sparse ? 3.9 : style === 'waltz' ? 2.6 : 3.5,
-        velocidad: Math.max(30, softBase - 4 - i * 4),
-      })
-    }
-
-    // Melodía / arpegio — patrones distintos
-    if (section === 'intro' && sparse) return
-    if (section === 'outro' && rng() > 0.4) return
-
-    if (style === 'waltz') {
-      const waltzPattern = [0, 1, 2, 1, 0, 2]
-      for (let s = 0; s < 6; s++) {
-        const deg = chordDegs[waltzPattern[s]! % chordDegs.length]!
-        notes.push({
-          pitch: degreeToPitch(root, deg, scale, melOct),
-          inicio: barStart + s * (2 / 3),
-          duracion: 0.55,
-          velocidad: Math.max(26, softBase - 16 + Math.floor(rng() * 8)),
-        })
-      }
-    } else if (style === 'arp' || (densify && section !== 'breakdown')) {
-      const patterns = [
-        [0, 1, 2, 1, 0, 2, 1, 0],
-        [0, 2, 1, 2, 0, 1, 2, 1],
-        [2, 1, 0, 1, 2, 0, 1, 2],
-        [0, 1, 0, 2, 1, 0, 1, 2],
-      ]
-      const arp = pick(rng, patterns)
-      for (let s = 0; s < 8; s++) {
-        if (sparse && s % 2 === 1) continue
-        const deg = chordDegs[arp[s % arp.length]! % chordDegs.length]!
-        notes.push({
-          pitch: degreeToPitch(root, deg, scale, melOct),
-          inicio: barStart + s * 0.5,
-          duracion: 0.42,
-          velocidad: Math.max(26, softBase - 16 + Math.floor(rng() * 8)),
-        })
-      }
-    } else if (style === 'ballad' || style === 'cinematic') {
-      // Motivo melódico 2–4 notas por compás
-      const motifLen = 2 + Math.floor(rng() * 3)
-      for (let m = 0; m < motifLen; m++) {
-        const deg = chordDegs[Math.floor(rng() * chordDegs.length)]! + (rng() > 0.7 ? 2 : 0)
-        notes.push({
-          pitch: degreeToPitch(root, deg, scale, melOct),
-          inicio: barStart + m * (4 / motifLen) + rng() * 0.08,
-          duracion: 0.7 + rng() * 1.2,
-          velocidad: Math.max(28, softBase - 10 + Math.floor(rng() * 12)),
-        })
-      }
-    } else if (style === 'sparse') {
-      if (rng() > 0.45) {
-        notes.push({
-          pitch: degreeToPitch(root, chordDegs[2] ?? chordDegs[0]!, scale, melOct),
-          inicio: barStart + 1 + rng(),
-          duracion: 2 + rng() * 1.5,
-          velocidad: Math.max(24, softBase - 20),
-        })
-      }
-    } else {
-      // pulse default
-      for (let s = 0; s < 4; s++) {
-        notes.push({
-          pitch: degreeToPitch(root, chordDegs[s % chordDegs.length]!, scale, melOct),
-          inicio: barStart + s,
-          duracion: 0.85,
-          velocidad: Math.max(30, softBase - 12),
-        })
-      }
-    }
-  }
-
-  const emitSection = (section: MidiSongSection) => {
-    const bars = sectionBars(section, rng)
-    labels.push(`${section}(${bars}c)`)
-    for (let bar = 0; bar < bars; bar++) {
-      const chordDegs = progression[bar % progression.length]!
-      emitBar(section, chordDegs, beat)
-      beat += style === 'waltz' ? 3 : 4
-    }
-  }
-
-  let guard = 0
-  while (beat < targetBeats && guard < 48) {
-    for (const section of sections) {
-      emitSection(section)
-      if (beat >= targetBeats) break
-    }
-    guard++
-  }
-
-  // Cadencia final (varía)
-  const finalSpread = rng() > 0.5
-  notes.push({
-    pitch: degreeToPitch(root, 0, scale, 0),
-    inicio: beat,
-    duracion: finalSpread ? 5 : 3.5,
-    velocidad: softBase - 6,
-  })
-  notes.push({
-    pitch: degreeToPitch(root, pick(rng, [2, 4]), scale, 1),
-    inicio: beat + (finalSpread ? 0.1 : 0),
-    duracion: 4,
-    velocidad: softBase - 10,
-  })
-  if (rng() > 0.4) {
-    notes.push({
-      pitch: degreeToPitch(root, 4, scale, 1),
-      inicio: beat + 0.15,
-      duracion: 3.8,
-      velocidad: softBase - 14,
-    })
-  }
-  beat += 4
-
-  return {
-    notes,
-    durationBeats: beat,
-    structureLabel: `${mood}/${style} · ${labels.join(' → ')}`,
-    mood,
-    style,
-    seed: seedNum,
-  }
-}
-
-export function inferKeyFromText(text: string): { root: number; scale: 'major' | 'minor'; label: string } {
-  const lower = text.toLowerCase()
-  const map: Array<{ re: RegExp; root: number; scale: 'major' | 'minor'; label: string }> = [
-    { re: /\bc\s*menor|c\s*minor|do\s*menor\b/, root: 48, scale: 'minor', label: 'C menor' },
-    { re: /\bc\s*mayor|c\s*major|do\s*mayor\b/, root: 48, scale: 'major', label: 'C mayor' },
-    { re: /\ba\s*menor|a\s*minor|la\s*menor\b/, root: 45, scale: 'minor', label: 'A menor' },
-    { re: /\bg\s*mayor|sol\s*mayor\b/, root: 43, scale: 'major', label: 'G mayor' },
-    { re: /\bf\s*mayor|fa\s*mayor\b/, root: 41, scale: 'major', label: 'F mayor' },
-    { re: /\bd\s*menor|d\s*minor|re\s*menor|en\s+d\s+menor\b/, root: 50, scale: 'minor', label: 'D menor' },
-    { re: /\bd\s*mayor|re\s*mayor\b/, root: 50, scale: 'major', label: 'D mayor' },
-    { re: /\be\s*menor|mi\s*menor\b/, root: 52, scale: 'minor', label: 'E menor' },
-    { re: /\bb\s*menor|si\s*menor\b/, root: 47, scale: 'minor', label: 'B menor' },
-    { re: /\bf#\s*menor|fa\s*#\s*menor\b/, root: 42, scale: 'minor', label: 'F# menor' },
-  ]
-  for (const m of map) {
-    if (m.re.test(lower)) return { root: m.root, scale: m.scale, label: m.label }
-  }
-  // Mood implica modo si no hay tonalidad explícita
-  const mood = moodFromText(lower)
-  if (mood === 'sad' || mood === 'dark' || mood === 'romantic') {
-    return pick(createRng(hashSeed(lower)), [
-      { root: 50, scale: 'minor' as const, label: 'D menor' },
-      { root: 45, scale: 'minor' as const, label: 'A menor' },
-      { root: 48, scale: 'minor' as const, label: 'C menor' },
-      { root: 52, scale: 'minor' as const, label: 'E menor' },
-    ])
-  }
-  if (mood === 'happy' || mood === 'energetic') {
-    return pick(createRng(hashSeed(lower)), [
-      { root: 48, scale: 'major' as const, label: 'C mayor' },
-      { root: 43, scale: 'major' as const, label: 'G mayor' },
-      { root: 41, scale: 'major' as const, label: 'F mayor' },
-    ])
-  }
-  return { root: 48, scale: 'minor', label: 'C menor' }
-}
-
-export function inferMinutesFromText(text: string, fallback = 3): number {
-  const m =
-    text.match(/(\d+(?:[.,]\d+)?)\s*min/) ||
-    text.match(/dure\s+(\d+(?:[.,]\d+)?)/i) ||
-    text.match(/duraci[oó]n\s+(?:de\s+)?(\d+(?:[.,]\d+)?)/i)
-  if (m) return Math.max(1, parseFloat(m[1]!.replace(',', '.')))
-  if (/al\s+menos\s+3|3\s*minutos|tres\s+minutos/i.test(text)) return 3
-  if (/4\s*minutos|cuatro\s+minutos/i.test(text)) return 4
-  return fallback
-}
-
-export function wantsDawCreation(text: string): boolean {
-  return /genera|crea|haz(lo|me)?|arm[aá]|escribe|pon(me)?|midi|piano|pista|song|canci[oó]n|estrofa|coro|puente|melod/i.test(
-    text,
-  )
-}
-
-/** Nombre de clip a partir del pedido del usuario. */
-export function inferClipNameFromText(text: string, keyLabel: string): string {
-  const t = text.trim()
-  const quoted = t.match(/[«"']([^«"']{2,40})[»"']/)
-  if (quoted) return quoted[1]!.trim()
-  if (/triste/i.test(t)) return `Melodía triste · ${keyLabel}`
-  if (/alegre|feliz/i.test(t)) return `Melodía alegre · ${keyLabel}`
-  if (/[eé]pic/i.test(t)) return `Tema épico · ${keyLabel}`
-  if (/ambient/i.test(t)) return `Ambient · ${keyLabel}`
-  if (/piano/i.test(t)) return `Piano · ${keyLabel}`
-  if (/melod/i.test(t)) return `Melodía · ${keyLabel}`
-  return `MIDI · ${keyLabel}`
+  return composeMidiFromBrief(brief, { seed: seedNum, bpm: opts.bpm ?? brief.bpm })
 }
