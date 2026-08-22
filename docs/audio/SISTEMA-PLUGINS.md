@@ -1,5 +1,7 @@
 # Sistema de Plugins
 
+> **Estado 2026-08-22:** el tipo `FXChain` de §7 **no existe** en código. SSOT = `track.plugins` / `project.master.plugins` (`PluginInfo`). Comandos = `plugin.*` / `fxChain.*` (ADR-0012). Runtime nativo **no** ejecuta la cadena en serie. Ver [ADR-0013](../decisiones/ADR-0013-fx-runtime-pipeline.md).
+
 ## 1. Propósito
 
 El Sistema de Plugins permite descubrir, cargar, ejecutar y controlar plugins de audio (efectos e instrumentos virtuales). La IA debe poder consultar dinámicamente los plugins disponibles, sus parámetros y capacidades.

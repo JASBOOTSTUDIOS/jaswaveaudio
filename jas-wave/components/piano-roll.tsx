@@ -13,6 +13,8 @@ import { PianoRollToolbar, type PianoRollTool } from '@/components/piano-roll-to
 import { PianoRollTransport, PianoRollTimelineRuler } from '@/components/piano-roll-transport'
 import type { MidiClipExpression } from '../../shared/src/types/clips'
 import { GROOVE_LIBRARY } from '../../shared/src/midi/groove'
+import { getUndockUrlFocus } from '@/lib/undock-window'
+import { listMidiClips, resolvePianoRollClip } from '@/src/lib/selection-helpers'
 
 type PianoRollProps = {
   trackId: string
@@ -434,9 +436,10 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
 
   if (!clip || clip.tipo !== 'midi') {
     return (
-      <div className="flex h-full items-center justify-center bg-panel text-[12px] text-muted-foreground">
-        Clip MIDI no encontrado
-      </div>
+      <PianoRollEmptyShell
+        title="Piano roll"
+        message="Sincronizando el clip MIDI de la ventana principal…"
+      />
     )
   }
 
@@ -916,62 +919,108 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   )
 }
 
+function PianoRollEmptyShell({
+  title,
+  message,
+  clips,
+  onPick,
+}: {
+  title: string
+  message: string
+  clips?: Array<{ trackId: string; clipId: string; label: string }>
+  onPick?: (trackId: string, clipId: string) => void
+}) {
+  return (
+    <div className="flex h-full flex-col bg-panel">
+      <PianoRollToolbar
+        herramienta="seleccionar"
+        onHerramienta={() => {}}
+        snapOn
+        onSnapToggle={() => {}}
+        snapDiv={0.25}
+        onSnapDiv={() => {}}
+        onZoomIn={() => {}}
+        onZoomOut={() => {}}
+        onZoomVertical={() => {}}
+        showVelocity
+        onToggleVelocity={() => {}}
+        showExpression
+        onToggleExpression={() => {}}
+        onQuantize={() => {}}
+        onDuplicate={() => {}}
+        onDelete={() => {}}
+        onTranspose={() => {}}
+        onNudge={() => {}}
+        showShortcuts={false}
+        onToggleShortcuts={() => {}}
+        grooves={GROOVE_LIBRARY.map((g) => ({ id: g.id, nombre: g.nombre }))}
+        onGroove={() => {}}
+        notasCount={0}
+        seleccionCount={0}
+        dirty={false}
+        nombreClip={title}
+      />
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 text-center">
+        <Piano className="size-8 text-muted-foreground/40" />
+        <p className="max-w-[280px] text-[11px] text-muted-foreground">{message}</p>
+        {clips && clips.length > 0 && onPick && (
+          <select
+            className="max-w-[280px] rounded-md border border-border bg-panel-raised px-2 py-1.5 text-[11px] text-foreground"
+            defaultValue=""
+            onChange={(e) => {
+              const [trackId, clipId] = e.target.value.split('\t')
+              if (trackId && clipId) onPick(trackId, clipId)
+            }}
+          >
+            <option value="" disabled>
+              Elegir clip MIDI…
+            </option>
+            {clips.map((c) => (
+              <option key={`${c.trackId}:${c.clipId}`} value={`${c.trackId}\t${c.clipId}`}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function PianoRollToolPanel() {
-  const trackId = useDAWState((s: DAWState) => {
-    const tracks = s.project?.tracks ?? []
-    const sel = s.selection
-    const clipId = sel?.idsClips?.[0]
-    if (clipId) {
-      for (const t of tracks) {
-        const c = (t.clips ?? []).find((x) => x.id === clipId)
-        if (c && (c as { tipo?: string }).tipo === 'midi') return t.id
-      }
-    }
-    const preferredTrack = sel?.idPrincipal ?? sel?.idsPistas?.[0]
-    if (preferredTrack) {
-      const t = tracks.find((x) => x.id === preferredTrack)
-      const midiClip = (t?.clips ?? []).find((c) => (c as { tipo?: string }).tipo === 'midi')
-      if (t && midiClip) return t.id
-    }
-    for (const t of tracks) {
-      const midiClip = (t.clips ?? []).find((c) => (c as { tipo?: string }).tipo === 'midi')
-      if (midiClip) return t.id
-    }
-    return null
+  const urlFocus = getUndockUrlFocus()
+  const [override, setOverride] = useState<{ trackId: string; clipId: string } | null>(null)
+  const hintTrack = override?.trackId || urlFocus.trackId
+  const hintClip = override?.clipId || urlFocus.clipId
+
+  // Primitivos estables — no devolver objetos/arrays nuevos desde el selector.
+  const resolvedKey = useDAWState((s: DAWState) => {
+    const hit = resolvePianoRollClip(s, { trackId: hintTrack, clipId: hintClip })
+    return hit ? `${hit.trackId}\t${hit.clipId}` : ''
+  })
+  const midiClipOptions = useDAWState((s: DAWState) => {
+    const list = listMidiClips(s)
+    return list.map((c) => `${c.trackId}\t${c.clipId}\t${c.label}`).join('\n')
   })
 
-  const clipId = useDAWState((s: DAWState) => {
-    const tracks = s.project?.tracks ?? []
-    const sel = s.selection
-    const selectedClip = sel?.idsClips?.[0]
-    if (selectedClip) {
-      for (const t of tracks) {
-        const c = (t.clips ?? []).find((x) => x.id === selectedClip)
-        if (c && (c as { tipo?: string }).tipo === 'midi') return c.id
-      }
-    }
-    const preferredTrack = sel?.idPrincipal ?? sel?.idsPistas?.[0]
-    if (preferredTrack) {
-      const t = tracks.find((x) => x.id === preferredTrack)
-      const midiClip = (t?.clips ?? []).find((c) => (c as { tipo?: string }).tipo === 'midi')
-      if (midiClip) return midiClip.id
-    }
-    for (const t of tracks) {
-      const midiClip = (t.clips ?? []).find((c) => (c as { tipo?: string }).tipo === 'midi')
-      if (midiClip) return midiClip.id
-    }
-    return null
-  })
+  const trackId = override?.trackId || (resolvedKey ? resolvedKey.split('\t')[0] : null) || urlFocus.trackId
+  const clipId = override?.clipId || (resolvedKey ? resolvedKey.split('\t')[1] : null) || urlFocus.clipId
+  const midiClips = useMemo(() => {
+    if (!midiClipOptions) return []
+    return midiClipOptions.split('\n').map((line) => {
+      const [t, c, ...rest] = line.split('\t')
+      return { trackId: t, clipId: c, label: rest.join('\t') || c }
+    })
+  }, [midiClipOptions])
 
   if (!trackId || !clipId) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 bg-panel px-4 text-center">
-        <Piano className="size-8 text-muted-foreground/40" />
-        <p className="text-[12px] font-semibold text-foreground">Piano roll</p>
-        <p className="max-w-[260px] text-[11px] text-muted-foreground">
-          Selecciona o crea un clip MIDI (doble clic en el arrange) para editar las notas aqui. Usa la barra de herramientas y pulsa ? para ver los atajos.
-        </p>
-      </div>
+      <PianoRollEmptyShell
+        title="Piano roll"
+        message="Selecciona o crea un clip MIDI (doble clic en el arrange) para editar las notas aquí."
+        clips={midiClips}
+        onPick={(t, c) => setOverride({ trackId: t, clipId: c })}
+      />
     )
   }
 

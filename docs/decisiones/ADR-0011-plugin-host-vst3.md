@@ -2,11 +2,11 @@
 
 ## Estado
 
-**Aprobado** (aislamiento) · host process estable (Node default + nativo opcional).
+**Aprobado** (aislamiento híbrido C). Host nativo **sí carga y procesa** VST3; el **handoff al motor del DAW no existe**. UI nativa = proceso `jaswave-vst3-editor` (**otra instancia**). Ver [ADR-0013](./ADR-0013-fx-runtime-pipeline.md) **[REQUIERE APROBACIÓN]** antes de unificar UI+audio o FX DSP.
 
 Complementa `PluginInfo` en dominio y [036-sistema-plugins-completo](../hoja-ruta/036-sistema-plugins-completo.md).
 
-Scaffold TS: `jas-wave/src/lib/plugin/`. Stub nativo OOP: `native/plugin-host/`.
+Scaffold TS: `jas-wave/src/lib/plugin/`. Host nativo: `native/plugin-host/` (`jaswave-plugin-host.exe`).
 
 ## Contexto
 
@@ -85,8 +85,8 @@ UI / AI → Tool Registry → Validator → Command System → PluginManager
 | B | Contratos + Descriptor + InstanceRef | Scaffold |
 | C | Format adapter + isolation routing + host process | **Scaffold completo (discover)** |
 | D–E | Discovery + Scanner + Registry | Discovery FS ✅; scan SDK pendiente |
-| F–H | Host + audio handoff | Builtin ✅; VST3 load audio = HostNotReady |
-| I–N | Params, state, presets, **UI nativa** | **UI nativa ✅** (`jaswave-vst3-editor`); params/state pendientes |
+| F–H | Host + audio handoff | Builtin (Soft Pad) ✅. VST3 **load+process+WASAPI en plugin-host** ✅. Handoff al audio engine del DAW ❌. No fingir que eso es el mixer de JasWave. |
+| I–N | Params, state, presets, **UI nativa** | UI flotante ✅ (`jaswave-vst3-editor`, instancia distinta). `createView` en el host de audio = freeze. Params/state/presets nativos pendientes. |
 | O | Proceso hijo nativo + crash recovery | Parcial (editor spawn + kill) |
 | P–T | Browser, commands, AI tools, tests | Parcial |
 
@@ -98,6 +98,6 @@ UI / AI → Tool Registry → Validator → Command System → PluginManager
 
 ## Consecuencias
 
-- Soft Pad / Fake Gain cargan in-process hoy.
-- VST3 comercial exige `native/plugin-host` + bridge; hasta entonces `HostNotReady`.
-- Camino de producción: SDK Steinberg + proceso aislado para terceros.
+- Soft Pad / Fake Gain cargan in-process hoy (Web Audio). Fake Gain **no** tiene DSP.
+- VST3 comercial usa `native/plugin-host` + bridge. El binario nativo **ya no** es `HostNotReady` para load; sigue `HostNotReady` el **handoff** al motor del DAW (ADR-0005/0009).
+- Camino de producción: SDK Steinberg + proceso aislado. Unificar instancia UI+audio o handoff PCM = [ADR-0013](./ADR-0013-fx-runtime-pipeline.md), no improvisar.

@@ -78,10 +78,13 @@ declare global {
         thirdPartyOutOfProcess: boolean
         vst3HostProcessAvailable: boolean
         backend?: string
+        mixPipeConnected?: boolean
         note: string
       }>
       pluginHostEnsure: () => Promise<{ ok: boolean } & Record<string, unknown>>
       pluginHostSend: (cmd: unknown) => Promise<unknown>
+      pluginHostMidi: (cmd: unknown) => Promise<unknown>
+      pluginHostPushPcm: (samples: Float32Array | ArrayBuffer | Uint8Array) => void
       pluginHostStop: () => Promise<{ ok: boolean }>
     }
   }

@@ -13,6 +13,7 @@ import { OutOfProcessRuntime, type PluginHostProcessBridge } from './out-of-proc
 import { PluginManager } from './plugin-manager'
 import { pluginRegistry } from './registry'
 import { PluginHostError } from './types'
+import { descriptorToPluginInfo } from './plugin-info-adapter'
 
 describe('isolation policy', () => {
   it('builtin → in-process', () => {
@@ -20,6 +21,38 @@ describe('isolation policy', () => {
   })
   it('vst3 → out-of-process', () => {
     assert.equal(isolationForFormat('vst3'), 'out-of-process')
+  })
+})
+
+describe('descriptorToPluginInfo (no-engaño)', () => {
+  it('no marca VST3 como cargado al insertar', () => {
+    const info = descriptorToPluginInfo({
+      pluginId: 'vendor.piano',
+      format: 'vst3',
+      vendor: 'Vendor',
+      name: 'Piano',
+      version: '1',
+      path: 'C:/VST3/Piano.vst3',
+      category: 'instrumento',
+      isInstrument: true,
+      isEffect: false,
+      supportsMidiInput: true,
+      supportsMidiOutput: false,
+      supportsAudioInput: false,
+      supportsAudioOutput: true,
+      supportsSidechain: false,
+      supportsEditor: true,
+      parameterCount: 0,
+      scanStatus: 'ok',
+      hostReady: true,
+      isolation: 'out-of-process',
+    })
+    assert.equal(info.estado, 'pendiente')
+  })
+
+  it('builtin listo sí es cargado', () => {
+    const info = descriptorToPluginInfo(createSoftPadDescriptor())
+    assert.equal(info.estado, 'cargado')
   })
 })
 

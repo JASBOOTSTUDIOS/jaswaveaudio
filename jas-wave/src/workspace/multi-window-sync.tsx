@@ -6,9 +6,29 @@ const CHANNEL = 'jaswave-daw-sync-v1'
 
 /**
  * Sync DAW entre primary y satélites (undock).
- * NO publica en cada cambio de estado (congelaba la UI con JSON del proyecto entero).
- * Solo responde a request-state / force.
+ * Publica un recorte sin waveforms (el JSON del proyecto entero congelaba la UI).
+ * Tras el primer request del satélite, reenvía con debounce mientras haya ping.
  */
+function slimDawState(state: DAWState): DAWState {
+  return {
+    ...state,
+    project: {
+      ...state.project,
+      tracks: (state.project?.tracks ?? []).map((t) => ({
+        ...t,
+        clips: (t.clips ?? []).map((c) => {
+          if (c && typeof c === 'object' && 'waveform' in c) {
+            const next = { ...c } as { waveform?: number[] }
+            delete next.waveform
+            return next
+          }
+          return c
+        }),
+      })),
+    },
+  } as DAWState
+}
+
 export function MultiWindowSync({ role }: { role: 'primary' | 'satellite' }) {
   const tienda = useDAW()
 
@@ -16,45 +36,59 @@ export function MultiWindowSync({ role }: { role: 'primary' | 'satellite' }) {
     const ch = new BroadcastChannel(CHANNEL)
 
     if (role === 'primary') {
+      let lastPing = 0
       const publish = () => {
         try {
-          const raw = JSON.parse(JSON.stringify(tienda.obtenerEstado())) as DAWState
-          ch.postMessage({ type: 'state', state: raw })
+          ch.postMessage({ type: 'state', state: slimDawState(tienda.obtenerEstado()) })
         } catch {
           /* ignore */
         }
       }
 
-      const onForce = () => publish()
+      let debounce: ReturnType<typeof setTimeout> | null = null
+      const unsub = tienda.suscribir(() => {
+        if (Date.now() - lastPing > 45_000) return
+        if (debounce) clearTimeout(debounce)
+        debounce = setTimeout(() => {
+          debounce = null
+          publish()
+        }, 180)
+      })
+
+      const onForce = () => {
+        lastPing = Date.now()
+        publish()
+      }
       window.addEventListener('jaswave-force-daw-sync', onForce)
       ch.onmessage = (ev) => {
         const data = ev.data as { type: string; command?: string; payload?: unknown }
-        if (data.type === 'request-state') publish()
+        if (data.type === 'request-state' || data.type === 'ping') {
+          lastPing = Date.now()
+          if (data.type === 'request-state') publish()
+        }
         if (data.type === 'command' && data.command) {
           void tienda.executor.execute(data.command, data.payload ?? {})
         }
       }
       return () => {
         window.removeEventListener('jaswave-force-daw-sync', onForce)
+        if (debounce) clearTimeout(debounce)
+        unsub()
         ch.close()
       }
     }
 
     let gotState = false
-    const ask = () => {
-      if (!gotState) ch.postMessage({ type: 'request-state' })
-    }
-    ask()
-    const retry = window.setInterval(ask, 400)
-    const stopRetry = window.setTimeout(() => clearInterval(retry), 15_000)
+    const retry = window.setInterval(() => {
+      ch.postMessage({ type: gotState ? 'ping' : 'request-state' })
+    }, 400)
+    ch.postMessage({ type: 'request-state' })
 
     ch.onmessage = (ev) => {
       const data = ev.data as { type: string; state?: DAWState }
       if (data.type === 'state' && data.state) {
         gotState = true
         tienda.reemplazarEstado(data.state)
-        clearInterval(retry)
-        clearTimeout(stopRetry)
       }
     }
 
@@ -70,7 +104,6 @@ export function MultiWindowSync({ role }: { role: 'primary' | 'satellite' }) {
 
     return () => {
       clearInterval(retry)
-      clearTimeout(stopRetry)
       tienda.executor.execute = original
       ch.close()
     }

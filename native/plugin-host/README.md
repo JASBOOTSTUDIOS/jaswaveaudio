@@ -8,7 +8,8 @@ Proceso **separado** del main de Electron para plugins de terceros (VST3).
 |-----------|--------|
 | Discover `.vst3` | ✅ |
 | Load + prepare + MIDI + audio (miniaudio) | ✅ |
-| Editor HWND **embebido** en el tab Electron | ✅ |
+| Editor HWND **misma instancia** que process | ✅ (STA + GetMessage; no editorhost) |
+| Device WASAPI / Exclusive / DSound / WinMM / ASIO / JACK | ✅ seleccionable |
 | Soft Pad | in-process (Web Audio) |
 
 ## Build

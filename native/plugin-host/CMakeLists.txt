@@ -26,6 +26,9 @@ if(HAS_VST3_SDK)
   add_executable(jaswave-plugin-host
     src/main.cpp
     src/vst3_slot.cpp
+    src/audio_output.cpp
+    src/asio_output.cpp
+    src/mix_bus.cpp
     "${VST3_SDK_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp"
     "${VST3_SDK_DIR}/public.sdk/source/vst/hosting/module_win32.cpp"
   )

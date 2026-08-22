@@ -29,14 +29,26 @@ import { hydratePluginCatalog } from '@/src/lib/plugin/catalog-store'
 import { pluginManager } from '@/src/lib/plugin-host'
 import {
   descriptorToPluginInfo,
+  extractVst3Path,
+  isBuiltinPlugin,
+  pluginRuntimeCaption,
   softPadPluginInfo,
 } from '@/src/lib/plugin/plugin-info-adapter'
 import type { PluginDescriptor } from '@/src/lib/plugin/types'
 import { audioEngine } from '@/lib/audio-engine'
+import {
+  getVstRuntimeGeneration,
+  isPluginAudioReady,
+  subscribeVstRuntime,
+} from '@/src/lib/plugin/track-vst-runtime'
 import { MASTER_FX_TRACK_ID, getFxChainClipboard } from '../../shared/src/commands/plugin-commands'
 
 function useFxFocus() {
   return useSyncExternalStore(subscribeFxChainFocus, getFxChainFocus, () => null)
+}
+
+function useVstRuntimeTick() {
+  return useSyncExternalStore(subscribeVstRuntime, getVstRuntimeGeneration, () => 0)
 }
 
 function isInstrument(p: PluginInfo): boolean {
@@ -44,11 +56,15 @@ function isInstrument(p: PluginInfo): boolean {
 }
 
 function isMissing(p: PluginInfo): boolean {
-  return p.estado === 'pendiente' || p.estado === 'error' || /missing|faltante/i.test(p.nombre)
+  if (isBuiltinPlugin(p)) return false
+  if (/missing|faltante/i.test(p.nombre)) return true
+  if (p.estado === 'error') return true
+  return !extractVst3Path(p.descripcion ?? '')
 }
 
 export function FxChainPanel() {
   const focus = useFxFocus()
+  useVstRuntimeTick()
   const tienda = useDAW()
   const track = useDAWState((s: DAWState) => {
     if (!focus) return null
@@ -62,14 +78,21 @@ export function FxChainPanel() {
     return s.project?.tracks?.find((t) => t.id === focus.trackId) ?? null
   })
   const [catalog, setCatalog] = useState<PluginDescriptor[]>([])
-  const [pickId, setPickId] = useState('jaswave.softpad')
+  const [pickId, setPickId] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
 
   useEffect(() => {
     hydratePluginCatalog()
     pluginManager.ensureBuiltins()
-    setCatalog(pluginManager.listAvailable())
+    const list = pluginManager.listAvailable()
+    setCatalog(list)
+    setPickId((prev) => {
+      if (prev && list.some((x) => x.pluginId === prev)) return prev
+      const vst = list.find((x) => x.format === 'vst3')
+      const other = list.find((x) => x.pluginId !== 'jaswave.softpad')
+      return vst?.pluginId ?? other?.pluginId ?? list[0]?.pluginId ?? ''
+    })
   }, [focus?.trackId])
 
   if (!focus || !track) {
@@ -99,7 +122,12 @@ export function FxChainPanel() {
   const insertSelected = async () => {
     const d = catalog.find((x) => x.pluginId === pickId)
     const info =
-      pickId === 'jaswave.softpad' || !d ? softPadPluginInfo() : descriptorToPluginInfo(d)
+      pickId === 'jaswave.softpad'
+        ? softPadPluginInfo()
+        : d
+          ? descriptorToPluginInfo(d)
+          : null
+    if (!info) return
     setBusy(true)
     try {
       await tienda.executor.execute('plugin.insert', {
@@ -121,7 +149,12 @@ export function FxChainPanel() {
   const replaceSelected = async (pluginInstanceId: string) => {
     const d = catalog.find((x) => x.pluginId === pickId)
     const info =
-      pickId === 'jaswave.softpad' || !d ? softPadPluginInfo() : descriptorToPluginInfo(d)
+      pickId === 'jaswave.softpad'
+        ? softPadPluginInfo()
+        : d
+          ? descriptorToPluginInfo(d)
+          : null
+    if (!info) return
     await run('plugin.replace', { trackId, pluginInstanceId, plugin: info })
   }
 
@@ -240,9 +273,12 @@ export function FxChainPanel() {
                     </span>
                   </div>
                   <div className="text-[9px] text-muted-foreground">
-                    {isInstrument(p) ? 'Instrument' : 'Audio FX'} · {p.fabricante} · {p.estado}
+                    {isInstrument(p) ? 'Instrument' : 'Audio FX'} · {p.fabricante}
+                    {' · '}
+                    {pluginRuntimeCaption(p, {
+                      audioReady: isPluginAudioReady(trackId, p.id),
+                    })}
                     {p.latencia ? ` · ${p.latencia} smp` : ''}
-                    {p.wet != null && p.wet < 1 ? ` · wet ${Math.round(p.wet * 100)}%` : ''}
                   </div>
                 </button>
                 <div className="flex flex-col gap-0.5">
@@ -322,6 +358,10 @@ export function FxChainPanel() {
 
       <div className="border-t border-border p-2">
         {msg ? <p className="mb-1 text-[10px] text-muted-foreground">{msg}</p> : null}
+        <p className="mb-1 text-[10px] leading-relaxed text-muted-foreground">
+          Soft Pad no es el instrumento por defecto: insértalo desde el catálogo si lo quieres.
+          Un VST en la pista envía MIDI al plugin-host cuando el load confirma.
+        </p>
         <div className="mb-1 flex items-center justify-between">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             + Add FX

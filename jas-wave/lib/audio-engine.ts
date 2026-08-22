@@ -7,8 +7,13 @@
  * paneo y medición en tiempo real para el mixer.
  */
 
-import { routeMidiToActiveVst } from '@/src/lib/plugin/vst-voice-router'
+import { preferredTrackPlaysSoftPad, routeMidiToActiveVst, getPreferredPreviewTrackId, trackChannelIsAudible } from '@/src/lib/plugin/vst-voice-router'
 import { allNotesOffAllTracks, sendVstNote } from '@/src/lib/plugin/track-vst-runtime'
+import pcmTapProcessorUrl from './pcm-tap-processor.js?url'
+import {
+  encodeStemPacket,
+  JASWAVE_MIX_DAW_BUS,
+} from '@/src/lib/plugin/track-graph-encoding'
 
 export interface TrackAudioConfig {
   id: string
@@ -18,7 +23,7 @@ export interface TrackAudioConfig {
   soloActiva: boolean
   /** Slot del Plugin Host para el instrumento VST3 de esta pista. */
   vstInstrumentSlotId?: string
-  /** Soft Pad / synth local aunque haya VST (VST puede ir mudo sin samples). */
+  /** true = Soft Pad insertado en esta pista (no es fallback genérico). */
   softPadFallback?: boolean
 }
 
@@ -54,6 +59,15 @@ export class WebAudioEngine {
   private masterMeterData: Uint8Array<ArrayBuffer> | null = null
   private masterVolume = 1.0
   private masterMuted = false
+  private preferredSampleRate = 48000
+  private nativeOutput = false
+  private pcmTap: ScriptProcessorNode | null = null
+  private pcmWorklet: AudioWorkletNode | null = null
+  private workletModuleReady = false
+  private silentGain: GainNode | null = null
+  private masterLimiter: DynamicsCompressorNode | null = null
+  private tapScratch: Float32Array | null = null
+  private tapInstalling: Promise<void> | null = null
   private trackNodes = new Map<
     string,
     {
@@ -61,8 +75,16 @@ export class WebAudioEngine {
       panner: StereoPannerNode
       analyser: AnalyserNode
       dataArray: Uint8Array<ArrayBuffer>
+      stemTap?: ScriptProcessorNode
+      stemSilent?: GainNode
+      stemIndex?: number
     }
   >()
+  private trackStemIndex = new Map<string, number>()
+  private stemMode = false
+  private dawBusTap: ScriptProcessorNode | null = null
+  private dawBusSilent: GainNode | null = null
+  private stemScratch = new Map<string, Float32Array>()
   private audioBuffers = new Map<string, AudioBuffer>()
   private activeSources = new Map<string, AudioBufferSourceNode>()
   /** Voces programadas de reproducción MIDI (timeline). */
@@ -86,11 +108,304 @@ export class WebAudioEngine {
   private startTime = 0
   private playheadStartSec = 0
 
+  public setPreferredSampleRate(sr: number): void {
+    if (sr >= 8000 && sr <= 192000) this.preferredSampleRate = sr
+  }
+
+  public usesNativeOutput(): boolean {
+    return this.nativeOutput
+  }
+
+  private canPushNativePcm(): boolean {
+    return typeof window !== 'undefined' && typeof window.electron?.pluginHostPushPcm === 'function'
+  }
+
+  private createLiveContext(sampleRate: number): AudioContext {
+    const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext
+    // Sin sinkId 'none': hace falta que el grafo procese para empujar stems al host.
+    const attempts: unknown[] = [
+      { latencyHint: 'playback', sampleRate },
+      { latencyHint: 'playback' },
+    ]
+    for (const opts of attempts) {
+      try {
+        return new AudioCtxClass(opts as AudioContextOptions)
+      } catch {
+        /* siguiente */
+      }
+    }
+    return new AudioCtxClass()
+  }
+
+  /** Mantiene el grafo Web Audio vivo aunque la salida vaya a gain 0 (stems → pipe). */
+  private mixKeepAlive: { osc: OscillatorNode; gain: GainNode } | null = null
+  private ensureMixGraphKeepAlive(): void {
+    const ctx = this.audioCtx
+    if (!ctx || this.mixKeepAlive) return
+    try {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      gain.gain.value = 0
+      osc.frequency.value = 20
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start()
+      this.mixKeepAlive = { osc, gain }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private onPcmTap(e: AudioProcessingEvent): void {
+    const input = e.inputBuffer
+    const n = input.length
+    const l = input.getChannelData(0)
+    const r = input.numberOfChannels > 1 ? input.getChannelData(1) : l
+    if (!this.tapScratch || this.tapScratch.length !== n * 2) {
+      this.tapScratch = new Float32Array(n * 2)
+    }
+    const interleaved = this.tapScratch
+    for (let i = 0; i < n; i++) {
+      interleaved[i * 2] = l[i]
+      interleaved[i * 2 + 1] = r[i]
+    }
+    window.electron?.pluginHostPushPcm?.(interleaved)
+    e.outputBuffer.getChannelData(0).fill(0)
+    if (e.outputBuffer.numberOfChannels > 1) e.outputBuffer.getChannelData(1).fill(0)
+  }
+
+  private disconnectTapGraph() {
+    this.masterAnalyser?.disconnect()
+    this.pcmTap?.disconnect()
+    this.pcmWorklet?.disconnect()
+    this.silentGain?.disconnect()
+  }
+
+  private attachTapGraph() {
+    if (!this.audioCtx || !this.masterAnalyser) return
+    const tap = this.pcmWorklet ?? this.pcmTap
+    const silent = this.silentGain
+    if (!tap || !silent) {
+      this.masterAnalyser.connect(this.audioCtx.destination)
+      return
+    }
+    this.masterAnalyser.connect(tap)
+    tap.connect(silent)
+    silent.connect(this.audioCtx.destination)
+  }
+
+  private async installPcmTap(): Promise<void> {
+    const ctx = this.audioCtx
+    if (!ctx) return
+    if (this.pcmWorklet || this.pcmTap) return
+    if (!this.silentGain) {
+      this.silentGain = ctx.createGain()
+      this.silentGain.gain.value = 0
+    }
+    try {
+      if (!this.workletModuleReady) {
+        await ctx.audioWorklet.addModule(pcmTapProcessorUrl)
+        this.workletModuleReady = true
+      }
+      const node = new AudioWorkletNode(ctx, 'jaswave-pcm-tap', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+        channelCount: 2,
+        channelCountMode: 'explicit',
+      })
+      node.port.onmessage = (ev: MessageEvent) => {
+        const data = ev.data
+        if (data instanceof Float32Array) window.electron?.pluginHostPushPcm?.(data)
+      }
+      node.onprocessorerror = () => {
+        /* el fallback ScriptProcessor se instala en el próximo arm si hace falta */
+      }
+      this.pcmWorklet = node
+    } catch {
+      this.pcmTap = ctx.createScriptProcessor(512, 2, 2)
+      this.pcmTap.onaudioprocess = (ev) => this.onPcmTap(ev)
+    }
+  }
+
+  /** Silencia Chromium y envía el mix DAW al plugin-host (un solo device). */
+  public setNativeOutput(on: boolean, force = false): void {
+    if (!this.audioCtx || !this.masterAnalyser) return
+    const hasTap = !!(this.pcmWorklet || this.pcmTap || this.dawBusTap || this.stemMode)
+    const enable = on && this.canPushNativePcm() && (hasTap || this.stemMode)
+    if (!force && enable === this.nativeOutput) return
+    this.nativeOutput = enable
+    this.disconnectTapGraph()
+    try {
+      this.dawBusTap?.disconnect()
+      this.dawBusSilent?.disconnect()
+    } catch {
+      /* ignore */
+    }
+    if (enable) {
+      if (this.stemMode) this.rewireTrackGraphForStemMode()
+      else this.attachTapGraph()
+    } else {
+      this.masterAnalyser.connect(this.audioCtx.destination)
+      for (const [, node] of this.trackNodes) {
+        try {
+          node.analyser.disconnect()
+        } catch {
+          /* ignore */
+        }
+        if (node.stemTap) {
+          try {
+            node.stemTap.disconnect()
+            node.stemSilent?.disconnect()
+          } catch {
+            /* ignore */
+          }
+          node.stemTap = undefined
+          node.stemSilent = undefined
+        }
+        if (this.masterGain) node.analyser.connect(this.masterGain)
+      }
+      this.stemMode = false
+    }
+  }
+
+  private disposeLiveContext() {
+    this.stopAllSources()
+    this.stopMetronome()
+    this.disconnectTapGraph()
+    this.nativeOutput = false
+    if (this.mixKeepAlive) {
+      try {
+        this.mixKeepAlive.osc.stop()
+        this.mixKeepAlive.osc.disconnect()
+        this.mixKeepAlive.gain.disconnect()
+      } catch {
+        /* ignore */
+      }
+      this.mixKeepAlive = null
+    }
+    try {
+      this.pcmWorklet?.port.close()
+    } catch {
+      /* ignore */
+    }
+    this.pcmWorklet = null
+    this.pcmTap = null
+    this.silentGain = null
+    this.workletModuleReady = false
+    this.tapInstalling = null
+    this.trackNodes.clear()
+    this.synthMaster = null
+    this.synthVoices.clear()
+    const ctx = this.audioCtx
+    this.audioCtx = null
+    this.masterGain = null
+    this.masterPanner = null
+    this.masterLimiter = null
+    this.masterAnalyser = null
+    this.masterMeterData = null
+    if (ctx) {
+      try {
+        void ctx.close()
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /** Tras cambio de driver / sample rate: nuevo AudioContext + tap PCM. */
+  public async rearmAfterDeviceChange(sampleRate?: number): Promise<boolean> {
+    if (sampleRate && sampleRate >= 8000 && sampleRate <= 192000) {
+      this.preferredSampleRate = sampleRate
+    }
+    // Siempre recrear el grafo: el tap puede quedar muerto tras stop/start del device.
+    this.disposeLiveContext()
+    return this.armNativeMixOutput()
+  }
+
+  private notifyMixInputRate() {
+    const sr = this.audioCtx?.sampleRate
+    if (!sr || !window.electron?.pluginHostSend) return
+    void window.electron.pluginHostSend({ type: 'setMixInputRate', sampleRate: Math.round(sr) })
+  }
+
+  /**
+   * Arranca el device nativo y redirige el mix Web Audio (clips / Soft Pad / metrónomo)
+   * al named pipe. Si falla, deja los altavoces de Chromium.
+   */
+  public async armNativeMixOutput(): Promise<boolean> {
+    const api = typeof window !== 'undefined' ? window.electron : undefined
+    if (typeof window !== 'undefined') {
+      try {
+        const q = new URLSearchParams(window.location.search)
+        if (q.get('undock') || window.location.hash.replace(/^#/, '').startsWith('undock/')) {
+          this.setNativeOutput(false)
+          return false
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!api?.pluginHostEnsure || !api.pluginHostSend || !api.pluginHostPushPcm) {
+      this.setNativeOutput(false)
+      return false
+    }
+    try {
+      const ens = await api.pluginHostEnsure()
+      const st = ens as { backend?: string; mixPipeConnected?: boolean } | undefined
+      if (st?.backend && st.backend !== 'native') {
+        this.setNativeOutput(false)
+        return false
+      }
+      if (!st?.mixPipeConnected) {
+        this.setNativeOutput(false)
+        return false
+      }
+      const raw = (await Promise.race([
+        api.pluginHostSend({ type: 'ensureAudio' }),
+        new Promise<null>((r) => setTimeout(() => r(null), 4000)),
+      ])) as { ok?: boolean; audio?: { sampleRate?: number } } | null
+      if (!raw || raw.ok === false) {
+        this.setNativeOutput(false)
+        return false
+      }
+      if (raw.audio?.sampleRate) this.setPreferredSampleRate(raw.audio.sampleRate)
+      this.ensureContext()
+      // No usar sinkId 'none': con WASAPI shared apaga el grafo en algunos Chromium
+      // y los ScriptProcessor/Worklet de stems dejan de emitir PCM → silencio total.
+      // El silentGain=0 ya evita doble salida por altavoces de Chrome.
+      const installing =
+        this.tapInstalling ??
+        (this.tapInstalling = this.installPcmTap().finally(() => {
+          this.tapInstalling = null
+        }))
+      await installing
+      this.setNativeOutput(true, true)
+      if (this.trackStemIndex.size > 0) {
+        const ids = [...this.trackStemIndex.entries()]
+          .sort((a, b) => a[1] - b[1])
+          .map(([id]) => id)
+        this.setTrackStemLayout(ids)
+      }
+      this.ensureMixGraphKeepAlive()
+      this.notifyMixInputRate()
+      if (this.audioCtx?.state === 'suspended') {
+        try {
+          await this.audioCtx.resume()
+        } catch {
+          /* ignore */
+        }
+      }
+      return this.nativeOutput
+    } catch {
+      this.setNativeOutput(false, true)
+      return false
+    }
+  }
+
   public ensureContext(): AudioContext {
     if (!this.audioCtx) {
-      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext
-      // latencyHint playback: buffer mas estable, menos underruns/crackeo
-      this.audioCtx = new AudioCtxClass({ latencyHint: 'playback' })
+      this.audioCtx = this.createLiveContext(this.preferredSampleRate)
 
       this.masterGain = this.audioCtx.createGain()
       this.masterGain.gain.value = this.masterMuted ? 0 : this.masterVolume
@@ -98,21 +413,19 @@ export class WebAudioEngine {
       this.masterPanner = this.audioCtx.createStereoPanner()
       this.masterPanner.pan.value = 0
 
-      // Soft limiter: evita saturacion cuando hay muchas fuentes
       const limiter = this.audioCtx.createDynamicsCompressor()
       limiter.threshold.value = -6
       limiter.knee.value = 12
       limiter.ratio.value = 8
       limiter.attack.value = 0.003
       limiter.release.value = 0.15
-      ;(this as any).masterLimiter = limiter
+      this.masterLimiter = limiter
 
       this.masterAnalyser = this.audioCtx.createAnalyser()
       this.masterAnalyser.fftSize = 256
       this.masterAnalyser.smoothingTimeConstant = 0.8
       this.masterMeterData = new Uint8Array(this.masterAnalyser.frequencyBinCount)
 
-      // Cadena: gain -> panner -> limiter -> analyser -> destination
       this.masterGain.connect(this.masterPanner)
       this.masterPanner.connect(limiter)
       limiter.connect(this.masterAnalyser)
@@ -180,34 +493,209 @@ export class WebAudioEngine {
       analyser.fftSize = 64
       const dataArray = new Uint8Array(analyser.frequencyBinCount)
 
-      // Cadena: gain -> panner -> analyser -> masterGain
       gain.connect(panner)
       panner.connect(analyser)
-      analyser.connect(this.masterGain!)
+      const created = { gain, panner, analyser, dataArray } as {
+        gain: GainNode
+        panner: StereoPannerNode
+        analyser: AnalyserNode
+        dataArray: Uint8Array<ArrayBuffer>
+        stemTap?: ScriptProcessorNode
+        stemSilent?: GainNode
+        stemIndex?: number
+      }
+      if (this.stemMode && this.nativeOutput) {
+        this.attachStemTap(trackId, created)
+      } else {
+        analyser.connect(this.masterGain!)
+      }
 
-      this.trackNodes.set(trackId, { gain, panner, analyser, dataArray })
+      this.trackNodes.set(trackId, created)
     }
-    return this.trackNodes.get(trackId)!
+    const node = this.trackNodes.get(trackId)!
+    if (this.stemMode && this.nativeOutput && !node.stemTap) {
+      try {
+        node.analyser.disconnect(this.masterGain!)
+      } catch {
+        /* ignore */
+      }
+      this.attachStemTap(trackId, node)
+    }
+    return node
+  }
+
+  private attachStemTap(
+    trackId: string,
+    node: {
+      gain: GainNode
+      panner: StereoPannerNode
+      analyser: AnalyserNode
+      dataArray: Uint8Array<ArrayBuffer>
+      stemTap?: ScriptProcessorNode
+      stemSilent?: GainNode
+      stemIndex?: number
+    },
+  ) {
+    const ctx = this.audioCtx
+    if (!ctx) return
+    const idx = this.trackStemIndex.get(trackId)
+    if (idx == null || idx < 0) {
+      node.analyser.connect(this.masterGain!)
+      return
+    }
+    const tap = ctx.createScriptProcessor(512, 2, 2)
+    const silent = ctx.createGain()
+    silent.gain.value = 0
+    tap.onaudioprocess = (ev) => {
+      const input = ev.inputBuffer
+      const n = input.length
+      const l = input.getChannelData(0)
+      const r = input.numberOfChannels > 1 ? input.getChannelData(1) : l
+      let scratch = this.stemScratch.get(trackId)
+      if (!scratch || scratch.length !== n * 2) {
+        scratch = new Float32Array(n * 2)
+        this.stemScratch.set(trackId, scratch)
+      }
+      for (let i = 0; i < n; i++) {
+        scratch[i * 2] = l[i]
+        scratch[i * 2 + 1] = r[i]
+      }
+      const stemIndex = this.trackStemIndex.get(trackId)
+      if (stemIndex != null && this.nativeOutput) {
+        window.electron?.pluginHostPushPcm?.(encodeStemPacket(stemIndex, scratch))
+      }
+      ev.outputBuffer.getChannelData(0).fill(0)
+      if (ev.outputBuffer.numberOfChannels > 1) ev.outputBuffer.getChannelData(1).fill(0)
+    }
+    node.analyser.connect(tap)
+    tap.connect(silent)
+    silent.connect(ctx.destination)
+    node.stemTap = tap
+    node.stemSilent = silent
+    node.stemIndex = idx
+  }
+
+  /** Asigna índices de stem y activa el modo Reaper (dry por pista → host). */
+  public setTrackStemLayout(trackIds: string[]): void {
+    this.trackStemIndex.clear()
+    trackIds.forEach((id, i) => {
+      if (i < 64) this.trackStemIndex.set(id, i)
+    })
+    const wantStem = this.nativeOutput && trackIds.length > 0
+    if (wantStem === this.stemMode) {
+      // Re-wire existing nodes if indices changed
+      if (wantStem) {
+        for (const [id, node] of this.trackNodes) {
+          if (node.stemTap) {
+            try {
+              node.analyser.disconnect(node.stemTap)
+              node.stemTap.disconnect()
+              node.stemSilent?.disconnect()
+            } catch {
+              /* ignore */
+            }
+            node.stemTap = undefined
+            node.stemSilent = undefined
+          }
+          this.attachStemTap(id, node)
+        }
+      }
+      return
+    }
+    this.stemMode = wantStem
+    this.rewireTrackGraphForStemMode()
+  }
+
+  private rewireTrackGraphForStemMode() {
+    if (!this.audioCtx || !this.masterGain) return
+    for (const [id, node] of this.trackNodes) {
+      try {
+        node.analyser.disconnect()
+      } catch {
+        /* ignore */
+      }
+      if (node.stemTap) {
+        try {
+          node.stemTap.disconnect()
+          node.stemSilent?.disconnect()
+        } catch {
+          /* ignore */
+        }
+        node.stemTap = undefined
+        node.stemSilent = undefined
+      }
+      if (this.stemMode && this.nativeOutput) {
+        this.attachStemTap(id, node)
+      } else {
+        node.analyser.connect(this.masterGain)
+      }
+    }
+    this.disconnectTapGraph()
+    if (this.nativeOutput) {
+      if (this.stemMode) this.attachDawBusTap()
+      else this.attachTapGraph()
+    } else if (this.masterAnalyser) {
+      this.masterAnalyser.connect(this.audioCtx.destination)
+    }
+  }
+
+  private attachDawBusTap() {
+    if (!this.audioCtx || !this.masterAnalyser) return
+    if (this.dawBusTap) {
+      this.masterAnalyser.connect(this.dawBusTap)
+      return
+    }
+    const tap = this.audioCtx.createScriptProcessor(512, 2, 2)
+    const silent = this.audioCtx.createGain()
+    silent.gain.value = 0
+    tap.onaudioprocess = (ev) => {
+      const input = ev.inputBuffer
+      const n = input.length
+      const l = input.getChannelData(0)
+      const r = input.numberOfChannels > 1 ? input.getChannelData(1) : l
+      if (!this.tapScratch || this.tapScratch.length !== n * 2) {
+        this.tapScratch = new Float32Array(n * 2)
+      }
+      for (let i = 0; i < n; i++) {
+        this.tapScratch[i * 2] = l[i]
+        this.tapScratch[i * 2 + 1] = r[i]
+      }
+      if (this.nativeOutput) {
+        window.electron?.pluginHostPushPcm?.(encodeStemPacket(JASWAVE_MIX_DAW_BUS, this.tapScratch))
+      }
+      ev.outputBuffer.getChannelData(0).fill(0)
+      if (ev.outputBuffer.numberOfChannels > 1) ev.outputBuffer.getChannelData(1).fill(0)
+    }
+    this.masterAnalyser.connect(tap)
+    tap.connect(silent)
+    silent.connect(this.audioCtx.destination)
+    this.dawBusTap = tap
+    this.dawBusSilent = silent
   }
 
   public updateTrackControls(trackId: string, volumen: number, paneo: number, silenciada: boolean, haySolosActivos: boolean, soloActiva: boolean) {
     const node = this.getTrackNode(trackId)
     const ctx = this.audioCtx
 
+    // En modo stem Reaper el fader/pan viven en el host; aquí solo mute temprano.
     let effectiveGain = Math.max(0, Math.min(1, volumen))
-    // Solo por encima del mute: pista en solo suena aunque esté muteada
+    let effectivePan = Math.max(-1, Math.min(1, paneo))
     if (haySolosActivos) {
       if (!soloActiva) effectiveGain = 0
     } else if (silenciada) {
       effectiveGain = 0
     }
+    if (this.stemMode && this.nativeOutput) {
+      effectiveGain = effectiveGain <= 0 ? 0 : 1
+      effectivePan = 0
+    }
 
     if (ctx) {
       node.gain.gain.setTargetAtTime(effectiveGain, ctx.currentTime, 0.02)
-      node.panner.pan.setTargetAtTime(Math.max(-1, Math.min(1, paneo)), ctx.currentTime, 0.02)
+      node.panner.pan.setTargetAtTime(effectivePan, ctx.currentTime, 0.02)
     } else {
       node.gain.gain.value = effectiveGain
-      node.panner.pan.value = Math.max(-1, Math.min(1, paneo))
+      node.panner.pan.value = effectivePan
     }
   }
 
@@ -311,10 +799,14 @@ export class WebAudioEngine {
     bus.gain.value = Math.max(0, Math.min(1, value))
   }
 
-  /** Preview MIDI: nota encendida (Soft Pad in-process). */
+  /** Preview MIDI: VST de la pista, o Soft Pad solo si está insertado. */
   public noteOn(pitch: number, velocity = 90): void {
     if (routeMidiToActiveVst(true, pitch, velocity)) return
+    if (!preferredTrackPlaysSoftPad()) return
+    const trackId = getPreferredPreviewTrackId()
+    if (trackId && !trackChannelIsAudible(trackId)) return
     const ctx = this.ensureContext()
+    const dest = trackId ? this.getTrackNode(trackId).gain : this.ensureSynthBus()
     const start = () => {
       this.noteOff(pitch, 0.02)
       const freq = 440 * Math.pow(2, (pitch - 69) / 12)
@@ -337,7 +829,7 @@ export class WebAudioEngine {
 
       osc.connect(filter)
       filter.connect(gain)
-      gain.connect(this.ensureSynthBus())
+      gain.connect(dest)
       osc.start(now)
 
       this.synthVoices.set(pitch, { osc, gain, filter })
@@ -377,10 +869,9 @@ export class WebAudioEngine {
    * Sintetizador procedural para generar pistas de demo con sonido real (Drums, Bass, Chords, Lead)
    */
   public generateDemoBuffer(type: 'drums' | 'bass' | 'chords' | 'lead' | 'synth', durationSec = 16): AudioBuffer {
-    const ctx = this.ensureContext()
-    const sampleRate = ctx.sampleRate
+    const sampleRate = this.audioCtx?.sampleRate ?? this.preferredSampleRate
     const length = Math.floor(sampleRate * durationSec)
-    const buffer = ctx.createBuffer(2, length, sampleRate)
+    const buffer = new AudioBuffer({ numberOfChannels: 2, length, sampleRate })
     const left = buffer.getChannelData(0)
     const right = buffer.getChannelData(1)
 
@@ -572,6 +1063,23 @@ export class WebAudioEngine {
     }, 250)
   }
 
+  /** Hot-patch: slot VST confirmado. Soft Pad solo si la pista lo tiene insertado. */
+  public patchTrackVstInstrument(
+    trackId: string,
+    slotId: string | undefined,
+    insertedSoftPad = false,
+  ): void {
+    this.pendingTracksConfig = this.pendingTracksConfig.map((t) =>
+      t.id === trackId
+        ? {
+            ...t,
+            vstInstrumentSlotId: slotId,
+            softPadFallback: !slotId && insertedSoftPad,
+          }
+        : t,
+    )
+  }
+
   private stopMidiScheduler() {
     if (this.midiScheduleTimer) {
       clearInterval(this.midiScheduleTimer)
@@ -644,9 +1152,10 @@ export class WebAudioEngine {
         try {
           if (vstSlot) {
             this.scheduleVstMidiNote(vstSlot, note.pitch, note.velocity, when, dur)
-          }
-          if (!vstSlot || cfg?.softPadFallback) {
+          } else if (cfg?.softPadFallback) {
             this.scheduleMidiVoice(ctx, trackNode.gain, note.pitch, note.velocity, when, dur)
+          } else {
+            continue
           }
           this.midiVoiceKeys.add(key)
           scheduled++
@@ -657,7 +1166,7 @@ export class WebAudioEngine {
     }
   }
 
-  /** Playback MIDI → Plugin Host (timing por setTimeout; MVP audible). */
+  /** Playback MIDI → Plugin Host (slot ya loaded/prepared). */
   private scheduleVstMidiNote(
     slotId: string,
     pitch: number,

@@ -16,6 +16,8 @@ import {
   type ToolId,
   type WorkspaceLayout,
 } from './types'
+import { useDAW } from '@/src/context/daw-context'
+import { resolvePianoRollClip } from '@/src/lib/selection-helpers'
 
 type WorkspaceContextValue = {
   layout: WorkspaceLayout
@@ -51,6 +53,7 @@ function stripTool(layout: WorkspaceLayout, toolId: ToolId): WorkspaceLayout {
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
+  const daw = useDAW()
   const [layout, setLayout] = useState<WorkspaceLayout>(() => loadWorkspace())
 
   useEffect(() => {
@@ -158,7 +161,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       /* ignore */
     }
     const api = window.electron as typeof window.electron & {
-      openToolWindow?: (toolId: string, title: string) => Promise<{ success: boolean }>
+      openToolWindow?: (
+        toolId: string,
+        title: string,
+        extra?: Record<string, string>,
+      ) => Promise<{ success: boolean }>
     }
     let title = TOOL_CATALOG[toolId].title
     if (toolId === 'plugin-editor') {
@@ -170,11 +177,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         /* ignore */
       }
     }
+    const extra: Record<string, string> = {}
+    if (toolId === 'piano-roll') {
+      const hit = resolvePianoRollClip(daw.obtenerEstado())
+      if (hit) {
+        extra.trackId = hit.trackId
+        extra.clipId = hit.clipId
+      }
+    }
     if (!api?.openToolWindow) {
-      const url = `${window.location.origin}${window.location.pathname}?undock=${toolId}`
+      const params = new URLSearchParams({ undock: toolId, ...extra })
+      const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`
       window.open(url, `jaswave-${toolId}`, 'width=900,height=700')
     } else {
-      await api.openToolWindow(toolId, title)
+      await api.openToolWindow(toolId, title, extra)
     }
     setLayout((prev) => {
       const cleaned = stripTool(prev, toolId)
@@ -185,7 +201,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           : [...cleaned.undocked, toolId],
       }
     })
-  }, [])
+  }, [daw])
 
   const dockTool = useCallback((toolId: ToolId, zone?: DockZone) => {
     const target = zone ?? TOOL_CATALOG[toolId].defaultZone

@@ -6,6 +6,7 @@ import {
   useEffect,
   useCallback,
   useMemo,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react'
 import { TransportClock } from '@/lib/transport-clock'
@@ -17,9 +18,17 @@ import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { useImportProgress } from '@/src/context/import-progress-context'
 import { extractStereoPeaks, packStereoPeaks } from '@/lib/stereo-peaks'
 import { nativeAudioBridge } from '@/src/lib/native-audio-bridge'
-import { ensureProjectVstInstruments, isBuiltinInstrument } from '@/src/lib/plugin/track-vst-runtime'
+import {
+  ensureProjectVstInstruments,
+  findTrackPlaybackInstrument,
+  getLoadedInstrumentForTrack,
+  getVstRuntimeGeneration,
+  subscribeVstRuntime,
+} from '@/src/lib/plugin/track-vst-runtime'
 import { setPreferredVstPreviewTrack } from '@/src/lib/plugin/vst-voice-router'
+import { syncNativeChannelMix } from '@/src/lib/plugin/track-channel-mix'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
+import { isUndockWindow } from '@/lib/undock-window'
 
 const MIN_TOTAL_BARS = 160
 const PPQ = 480
@@ -94,6 +103,7 @@ function secondsToBeats(seconds: number, bpm: number): number {
 }
 
 export function PlaybackProvider({ children }: { children: ReactNode }) {
+  const satellite = isUndockWindow()
   const tienda = useDAW()
   const importProgress = useImportProgress()
   const transportStatePlaying = useDAWState((s) => Boolean(s.transport?.reproduciendo))
@@ -103,10 +113,27 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   const transportPosSegundos = useDAWState((s) => s.transport?.posicion?.segundos ?? 0)
   const sharedTracks = useDAWState((s) => s.project?.tracks || [])
   const selectedTrackId = useDAWState((s) => getSelectedTrackId(s))
+  const vstRuntimeGen = useSyncExternalStore(subscribeVstRuntime, getVstRuntimeGeneration, () => 0)
 
   useEffect(() => {
-    setPreferredVstPreviewTrack(selectedTrackId)
-  }, [selectedTrackId])
+    const track = sharedTracks.find((t) => t.id === selectedTrackId)
+    setPreferredVstPreviewTrack(selectedTrackId, track?.plugins)
+  }, [selectedTrackId, sharedTracks])
+
+  useEffect(() => {
+    if (satellite) return
+    return subscribeVstRuntime(() => {
+      for (const t of sharedTracks) {
+        const hit = findTrackPlaybackInstrument(t.plugins)
+        const loaded = hit?.kind === 'vst' ? getLoadedInstrumentForTrack(t.id) : null
+        audioEngine.patchTrackVstInstrument(
+          t.id,
+          loaded?.slotId,
+          hit?.kind === 'builtin',
+        )
+      }
+    })
+  }, [sharedTracks])
   const projectBpm = useDAWState((s) => s.project?.bpm?.valor ?? 120)
   const masterState = useDAWState((s) => s.project?.master)
   const timeSignatureNum = useDAWState((s) => s.project?.timeSignature?.numerador ?? 4)
@@ -138,11 +165,11 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   // Sync master volume/pan/mute from shared state to audio engine
   useEffect(() => {
-    if (!masterState) return
+    if (satellite || !masterState) return
     audioEngine.setMasterVolume(typeof masterState.volumen === 'number' ? masterState.volumen : 1.0)
     audioEngine.setMasterPan(typeof masterState.paneo === 'number' ? masterState.paneo : 0)
     audioEngine.setMasterMuted(Boolean(masterState.muted))
-  }, [masterState?.volumen, masterState?.paneo, masterState?.muted])
+  }, [satellite, masterState?.volumen, masterState?.paneo, masterState?.muted])
 
   const [positionMs, setPositionMs] = useState(0)
 
@@ -235,28 +262,46 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     return list
   }, [sharedTracks, BPM])
 
-  // Mute / solo / volumen / paneo en caliente durante play (sin re-trigger)
+  // Mute / solo / volumen / paneo / cadena FX en caliente durante play
   const trackMixSig = useMemo(
     () =>
       sharedTracks
-        .map(
-          (t) =>
-            `${t.id}:${Boolean(t.silenciada)}:${Boolean(t.soloActiva)}:${typeof t.volumen === 'number' ? t.volumen : 0.8}:${typeof t.paneo === 'number' ? t.paneo : 0}`,
-        )
+        .map((t) => {
+          const plugs = (t.plugins ?? [])
+            .map((p) => `${p.id}:${p.bypass ? 1 : 0}`)
+            .join(',')
+          return `${t.id}:${Boolean(t.silenciada)}:${Boolean(t.soloActiva)}:${typeof t.volumen === 'number' ? t.volumen : 0.8}:${typeof t.paneo === 'number' ? t.paneo : 0}:${plugs}`
+        })
         .join('|'),
     [sharedTracks],
   )
 
+  const masterMixSig = useMemo(() => {
+    if (!masterState) return ''
+    const plugs = (masterState.plugins ?? [])
+      .map((p) => `${p.id}:${p.bypass ? 1 : 0}`)
+      .join(',')
+    return `${masterState.volumen ?? 1}:${masterState.muted ? 1 : 0}:${plugs}`
+  }, [masterState])
+
   useEffect(() => {
-    const tracksConfig: TrackAudioConfig[] = sharedTracks.map((t) => ({
-      id: t.id,
-      volumen: typeof t.volumen === 'number' ? t.volumen : 0.8,
-      paneo: typeof t.paneo === 'number' ? t.paneo : 0,
-      silenciada: Boolean(t.silenciada),
-      soloActiva: Boolean(t.soloActiva),
-    }))
+    if (satellite) return
+    const tracksConfig: TrackAudioConfig[] = sharedTracks.map((t) => {
+      const hit = findTrackPlaybackInstrument(t.plugins)
+      const loaded = hit?.kind === 'vst' ? getLoadedInstrumentForTrack(t.id) : null
+      return {
+        id: t.id,
+        volumen: typeof t.volumen === 'number' ? t.volumen : 0.8,
+        paneo: typeof t.paneo === 'number' ? t.paneo : 0,
+        silenciada: Boolean(t.silenciada),
+        soloActiva: Boolean(t.soloActiva),
+        vstInstrumentSlotId: loaded?.slotId,
+        softPadFallback: hit?.kind === 'builtin',
+      }
+    })
     audioEngine.applyTracksConfig(tracksConfig)
-  }, [trackMixSig, sharedTracks])
+    syncNativeChannelMix(sharedTracks, masterState)
+  }, [satellite, trackMixSig, masterMixSig, sharedTracks, vstRuntimeGen, masterState])
 
   const clockRef = useRef<TransportClock | null>(null)
 
@@ -290,6 +335,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   // Inicializar buffers sintéticos de demostración en audioEngine
   useEffect(() => {
+    if (satellite) return
     try {
       const drumsBuf = audioEngine.generateDemoBuffer('drums', (256 * 60) / BPM)
       audioEngine.setAudioBuffer('demo-drums', drumsBuf)
@@ -329,8 +375,6 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   }, [clock, tienda])
 
   const triggerAudioPlayback = useCallback((startMs: number, currentClips: LoadedClip[]) => {
-    audioEngine.ensureContext()
-
     const playbackClips: AudioClipPlaybackInfo[] = currentClips
       .filter((c) => (c.kind ?? 'audio') !== 'midi')
       .map((c) => ({
@@ -364,27 +408,23 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       })
     }
 
-    const tracksConfig: TrackAudioConfig[] = sharedTracks.map((t) => ({
-      id: t.id,
-      volumen: typeof t.volumen === 'number' ? t.volumen : 0.8,
-      paneo: typeof t.paneo === 'number' ? t.paneo : 0,
-      silenciada: Boolean(t.silenciada),
-      soloActiva: Boolean(t.soloActiva),
-      softPadFallback: (t.plugins ?? []).some((p) => !p.bypass && isBuiltinInstrument(p)),
-    }))
+    const trackAudioConfig = (): TrackAudioConfig[] =>
+      sharedTracks.map((t) => {
+        const hit = findTrackPlaybackInstrument(t.plugins)
+        const loaded = hit?.kind === 'vst' ? getLoadedInstrumentForTrack(t.id) : null
+        return {
+          id: t.id,
+          volumen: typeof t.volumen === 'number' ? t.volumen : 0.8,
+          paneo: typeof t.paneo === 'number' ? t.paneo : 0,
+          silenciada: Boolean(t.silenciada),
+          soloActiva: Boolean(t.soloActiva),
+          vstInstrumentSlotId: loaded?.slotId,
+          softPadFallback: hit?.kind === 'builtin',
+        }
+      })
 
     void (async () => {
-      // Cargar instrumentos VST3 de cada pista antes de programar MIDI.
-      const vstSlots = await ensureProjectVstInstruments(
-        sharedTracks.map((t) => ({ id: t.id, plugins: t.plugins })),
-      )
-      for (const cfg of tracksConfig) {
-        const slot = vstSlots.get(cfg.id)
-        if (slot) cfg.vstInstrumentSlotId = slot
-      }
-
-      // Motor nativo C++ aún es stub (avanza playhead, sin salida HW).
-      // Clips de audio + Soft Pad van por Web Audio hasta fase 2 de audio-engine.
+      await audioEngine.armNativeMixOutput()
       const ctx = audioEngine.ensureContext()
       if (ctx.state === 'suspended') {
         try {
@@ -393,15 +433,23 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           /* ignore */
         }
       }
-      audioEngine.playClips(startMs / 1000, playbackClips, tracksConfig, midiClips)
+      const loadP = ensureProjectVstInstruments(
+        sharedTracks.map((t) => ({ id: t.id, plugins: t.plugins })),
+        masterState?.plugins,
+      )
+      await Promise.race([loadP, new Promise<void>((r) => setTimeout(r, 2000))])
+      audioEngine.playClips(startMs / 1000, playbackClips, trackAudioConfig(), midiClips)
+      void loadP.then(() => {
+        syncNativeChannelMix(sharedTracks, masterState)
+      })
     })()
-  }, [sharedTracks, BPM])
-
+  }, [sharedTracks, BPM, masterState])
 
   // Sync clock & audio: Space = pause/resume en el playhead; Stop = cero
   positionMsRef.current = positionMs
 
   useEffect(() => {
+    if (satellite) return
     if (playing) {
       const ms = positionMsRef.current
       const seconds = ms / 1000
@@ -441,12 +489,22 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     void nativeAudioBridge.pause()
   }, [playing]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Cambios de clips durante play: no reiniciar (stopAllSources corta el audio).
-  // Seek / toggle play ya reprograman fuentes.
+  // Reaper: el clip vive en la pista — al cambiar trackId, reprogramar con la cadena de destino.
+  const clipPlacementSig = useMemo(
+    () => clips.map((c) => `${c.id}>${c.trackId}`).sort().join('|'),
+    [clips],
+  )
 
+  useEffect(() => {
+    if (satellite || !playing) return
+    triggerAudioPlayback(positionMsRef.current, clips)
+    // Solo reaccionar a placement (clip→pista), no a cada mutación de notas/waveform
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clipPlacementSig])
 
   // Sync metronome with playback, BPM, compás y seek
   useEffect(() => {
+    if (satellite) return
     if (playing && metronomeOn) {
       const currentBeat = (positionMs / 1000) / (60 / BPM)
       audioEngine.updateMetronomeGrid(BPM, BEATS_PER_BAR, currentBeat)

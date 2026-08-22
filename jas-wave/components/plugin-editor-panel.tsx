@@ -1,6 +1,6 @@
 /**
  * Panel IU de plugin (workspace tab `plugin-editor`).
- * Soft Pad: UI React. VST3: HWND embebido en el tab + audio out-of-process.
+ * Soft Pad: UI React + Web Audio. VST3: misma instancia (createView + process) en plugin-host.
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -22,7 +22,6 @@ import {
   ensureTrackVstInstrument,
   extractVst3Path,
   slotIdForTrackPlugin,
-  sendVstNote,
 } from '@/src/lib/plugin/track-vst-runtime'
 import { requestOpenTool } from '@/src/workspace/types'
 
@@ -121,23 +120,20 @@ function VstNativeEditor({
   async function openEditor() {
     if (!pluginPath) {
       setStatus('error')
-      setMessage('Este plugin no tiene ruta .vst3 en el proyecto.')
+      setMessage('Este plugin no tiene ruta .vst3 en el proyecto (MISSING).')
       return
     }
     setStatus('opening')
-    setMessage('Cargando audio VST3…')
+    setMessage('Cargando audio en el Plugin Host…')
     setForceBuiltinPreview(false)
     const loaded = await ensureTrackVstInstrument(trackId, plugin)
     if (!loaded) {
       setStatus('error')
-      setMessage(
-        `No se pudo cargar el VST en el Plugin Host.\nRuta: ${pluginPath}`,
-      )
+      setMessage(`No se pudo cargar el VST en el host de audio.\n${pluginPath}`)
       return
     }
-    setMessage('Abriendo UI (proceso aparte; no bloquea el DAW)…')
+    setMessage('Abriendo UI nativa de esta instancia (mismo VST que suena)…')
     const bridge = createElectronPluginHostBridge()
-    await window.electron?.pluginHostEnsure?.()
     const reply = await bridge.send({
       type: 'openEditor',
       path: pluginPath,
@@ -147,13 +143,11 @@ function VstNativeEditor({
     if (reply.ok) {
       setStatus('open')
       setMessage(
-        'UI en ventana aparte. El audio de playback usa la instancia del Plugin Host (carga preset también ahí si puedes).',
+        'UI y audio son la misma instancia. El teclado del plugin debe sonar por el driver seleccionado en Configuración → Audio.',
       )
-      setActiveVstVoiceTarget(null)
     } else {
       setStatus('error')
       setMessage(reply.message || 'No se pudo abrir el editor VST')
-      setActiveVstVoiceTarget(null)
     }
   }
 
@@ -180,12 +174,17 @@ function VstNativeEditor({
   }
 
   useEffect(() => {
-    // Solo preparar audio al montar — NO openEditor automático (cuelga DecentSampler / multi-VST).
     void (async () => {
       if (!pluginPath) return
       setStatus('idle')
-      setMessage('Clic en Reabrir para la UI del plugin (ventana aparte). Audio se carga al reproducir.')
-      await ensureTrackVstInstrument(trackId, plugin)
+      setForceBuiltinPreview(false)
+      setMessage('Cargando audio VST en el Plugin Host…')
+      const ok = await ensureTrackVstInstrument(trackId, plugin)
+      setMessage(
+        ok
+          ? 'Host listo. Reabrir abre la UI de ESTA instancia (preset = sonido). Teclas del panel → MIDI al VST.'
+          : 'Host no cargó este VST. La pista quedará muda hasta que el load confirme (Soft Pad no se usa de fallback).',
+      )
     })()
     return () => {
       setActiveVstVoiceTarget(null)
@@ -206,7 +205,7 @@ function VstNativeEditor({
           <div className="truncate text-[12px] font-semibold text-foreground">{plugin.nombre}</div>
           <div className="truncate text-[9px] text-muted-foreground">
             {status === 'open'
-              ? 'VST3 embebido · toca el teclado o el piano roll'
+              ? 'UI nativa · misma instancia que el audio'
               : status === 'opening'
                 ? 'Abriendo…'
                 : status === 'error'
@@ -238,10 +237,15 @@ function VstNativeEditor({
             key={pitch}
             type="button"
             onPointerDown={() => {
-              sendVstNote(slotId, true, pitch, 100)
+              void audioEngine.ensureContext().resume()
+              audioEngine.noteOn(pitch, 100)
             }}
-            onPointerUp={() => sendVstNote(slotId, false, pitch)}
-            onPointerLeave={() => sendVstNote(slotId, false, pitch)}
+            onPointerUp={() => {
+              audioEngine.noteOff(pitch)
+            }}
+            onPointerLeave={() => {
+              audioEngine.noteOff(pitch)
+            }}
             className="rounded bg-background px-2 py-1 font-mono text-[10px] text-foreground ring-1 ring-border hover:ring-accent-amber"
           >
             {pitch}
@@ -257,7 +261,7 @@ function VstNativeEditor({
       >
         {status !== 'open' ? (
           <div className="flex h-full items-center justify-center px-4 text-center text-[11px] text-muted-foreground">
-            {message || 'Esperando UI nativa…'}
+            {message || 'Cargando host de audio…'}
           </div>
         ) : null}
       </div>
@@ -312,6 +316,7 @@ export function PluginEditorPanel() {
           <div className="truncate text-[12px] font-semibold text-foreground">{plugin.nombre}</div>
           <div className="truncate text-[9px] text-muted-foreground">
             {trackName ? `Pista · ${trackName}` : 'Editor de plugin'}
+            {isSoftPad ? ' · audible' : ' · UI+audio misma instancia'}
           </div>
         </div>
         <button

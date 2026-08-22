@@ -92,12 +92,19 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
   const [tab, setTab] = useState<InspectorTab>('general')
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [catalog, setCatalog] = useState<PluginDescriptor[]>([])
-  const [pickId, setPickId] = useState('jaswave.softpad')
+  const [pickId, setPickId] = useState('')
 
   useEffect(() => {
     hydratePluginCatalog()
     pluginManager.ensureBuiltins()
-    setCatalog(pluginManager.listAvailable())
+    const list = pluginManager.listAvailable()
+    setCatalog(list)
+    setPickId((prev) => {
+      if (prev && list.some((x) => x.pluginId === prev)) return prev
+      const vst = list.find((x) => x.format === 'vst3')
+      const other = list.find((x) => x.pluginId !== 'jaswave.softpad')
+      return vst?.pluginId ?? other?.pluginId ?? list[0]?.pluginId ?? ''
+    })
   }, [tab])
 
   if (!trackId || !track) {
@@ -140,7 +147,7 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
 
   const tabs: { id: InspectorTab; label: string; show?: boolean }[] = [
     { id: 'general', label: 'General' },
-    { id: 'audio', label: 'Audio' },
+    { id: 'audio', label: isMidi ? 'Canal' : 'Audio' },
     { id: 'apariencia', label: 'Apariencia' },
     { id: 'plugins', label: 'Plugins' },
     { id: 'clip', label: 'Clip', show: Boolean(selectedClip) },
@@ -455,7 +462,8 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 </button>
               </div>
               <p className="text-[9px] text-muted-foreground">
-                Los VST3 aparecen tras escanear carpetas. Audio real pendiente del SDK; Soft Pad sí suena.
+                Soft Pad no se asigna solo: insértalo desde el catálogo. VST: MIDI al Plugin Host
+                cuando el load confirma.
               </p>
             </div>
 
@@ -594,6 +602,48 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 </>
               )}
             </div>
+            {selectedClip.tipo === 'midi' && (
+              <div className="flex flex-wrap gap-6 rounded-md border border-border px-3 py-3">
+                <p className="w-full text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Canal de la pista
+                </p>
+                <div className="flex flex-col items-center gap-2">
+                  <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Volumen
+                  </span>
+                  <FaderControl db={db} color={track.color} onChange={handleVolumeChange} />
+                </div>
+                <div className="flex flex-col items-center gap-2">
+                  <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Paneo
+                  </span>
+                  <KnobControl
+                    value={pan}
+                    label="L/R"
+                    color={track.color}
+                    onChange={handlePanChange}
+                    min={-100}
+                    max={100}
+                  />
+                </div>
+                <div className="flex flex-wrap gap-1.5 self-end">
+                  <ToggleChip
+                    active={track.silenciada}
+                    label="Mute"
+                    icon={track.silenciada ? VolumeX : Volume2}
+                    onClick={() => void tienda.executor.execute('track.toggleMute', { trackId: track.id })}
+                    activeClass="bg-accent-amber/20 text-accent-amber"
+                  />
+                  <ToggleChip
+                    active={track.soloActiva}
+                    label="Solo"
+                    icon={Headphones}
+                    onClick={() => void tienda.executor.execute('track.toggleSolo', { trackId: track.id })}
+                    activeClass="bg-track-vocals/20 text-track-vocals"
+                  />
+                </div>
+              </div>
+            )}
             {selectedClip.tipo === 'midi' && (
               <button
                 type="button"

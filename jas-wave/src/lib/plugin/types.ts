@@ -137,6 +137,22 @@ export type PluginHostProcessCommand =
   | { type: 'noteOn'; slotId: string; pitch: number; velocity: number }
   | { type: 'noteOff'; slotId: string; pitch: number }
   | { type: 'allNotesOff'; slotId: string }
+  | { type: 'listAudioDevices' }
+  | {
+      type: 'setAudioDevice'
+      backend: string
+      deviceId?: string
+      sampleRate?: number
+      bufferSize?: number
+      exclusive?: boolean
+    }
+  | { type: 'getAudioDevice' }
+  | { type: 'testTone' }
+  | { type: 'ensureAudio' }
+  | { type: 'setMixInputRate'; sampleRate: number }
+  | { type: 'setSlotMix'; slotId: string; gain: number; pan: number; muted: boolean }
+  | { type: 'setMasterMix'; gain: number; muted: boolean }
+  | { type: 'asioControlPanel'; deviceId?: string }
 
 export type PluginHostDiscoveredPlugin = {
   path: string
@@ -156,5 +172,26 @@ export type PluginHostProcessReply =
       plugins?: PluginHostDiscoveredPlugin[]
       count?: number
       editorReady?: boolean
+      editorOpening?: boolean
+      audioReady?: boolean
+      backends?: Array<{ id: string; name: string; available: boolean; hint?: string }>
+      devices?: Array<{
+        id: string
+        backend: string
+        name: string
+        isDefault?: boolean
+        available?: boolean
+      }>
+      audio?: {
+        backend: string
+        deviceId: string
+        deviceName: string
+        sampleRate: number
+        bufferSize: number
+        exclusive: boolean
+        running: boolean
+        lastError?: string
+      }
+      mixPipe?: string
     }
   | { ok: false; code: PluginHostErrorCode; message: string }

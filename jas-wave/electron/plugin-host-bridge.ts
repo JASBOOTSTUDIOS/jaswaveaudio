@@ -1,15 +1,24 @@
 /**
  * Electron main: Plugin Host Process (ADR-0011 C).
  *
- * Discovery: Node host por defecto (FS fiable).
- * UI nativa VST3: spawnea jaswave-vst3-editor (Steinberg editorhost) en openEditor.
- * Nativo IPC solo si JASWAVE_PLUGIN_HOST=native y el binario responde ping.
+ * VST3: misma instancia para process() y createView (UI nativa).
+ * Device de audio: WASAPI / Exclusive / DirectSound / WinMM / ASIO (seleccionable).
  */
 
-import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import * as fs from 'fs'
+import * as net from 'net'
+import type { Socket } from 'net'
 import * as path from 'path'
 import { app } from 'electron'
+
+export type AudioDevicePrefs = {
+  backend: string
+  deviceId: string
+  sampleRate: number
+  bufferSize: number
+  exclusive?: boolean
+}
 
 export type PluginHostRpcResult =
   | {
@@ -26,11 +35,29 @@ export type PluginHostRpcResult =
       }>
       count?: number
       editorReady?: boolean
+      editorOpening?: boolean
+      audioReady?: boolean
+      backends?: Array<{ id: string; name: string; available: boolean; hint?: string }>
+      devices?: Array<{
+        id: string
+        backend: string
+        name: string
+        isDefault?: boolean
+        available?: boolean
+      }>
+      audio?: {
+        backend: string
+        deviceId: string
+        deviceName: string
+        sampleRate: number
+        bufferSize: number
+        exclusive: boolean
+        running: boolean
+        lastError?: string
+      }
+      mixPipe?: string
     }
   | { ok: false; code: string; message: string }
-
-/** Editors nativos vivos (HWND fuera de Electron). */
-const editors = new Map<string, ChildProcess>()
 
 type Pending = {
   resolve: (v: PluginHostRpcResult) => void
@@ -51,6 +78,152 @@ let started = false
 let backend: 'native' | 'node' | 'none' = 'none'
 let startPromise: Promise<boolean> | null = null
 let lastError: string | undefined
+let mixSock: Socket | null = null
+let mixBackpressure = false
+let mixPipePath = ''
+let mixPending: Buffer | null = null
+let mixReconnectTimer: ReturnType<typeof setTimeout> | null = null
+let mixReconnectAttempts = 0
+let mixSuppressReconnect = false
+
+function sleepMs(ms: number) {
+  return new Promise<void>((r) => setTimeout(r, ms))
+}
+
+function cancelMixReconnect() {
+  mixSuppressReconnect = true
+  if (mixReconnectTimer) {
+    clearTimeout(mixReconnectTimer)
+    mixReconnectTimer = null
+  }
+  mixReconnectAttempts = 0
+}
+
+function closeMixPipe() {
+  mixBackpressure = false
+  mixPending = null
+  if (!mixSock) return
+  const s = mixSock
+  mixSock = null
+  try {
+    s.removeAllListeners()
+    s.destroy()
+  } catch {
+    /* ignore */
+  }
+}
+
+function flushMixPending() {
+  if (!mixSock || mixSock.destroyed || !mixSock.writable || !mixPending) return
+  const p = mixPending
+  mixPending = null
+  const ok = mixSock.write(p)
+  if (!ok) mixBackpressure = true
+}
+
+function scheduleMixReconnect() {
+  if (mixSuppressReconnect || backend !== 'native' || !started) return
+  if (mixReconnectTimer || mixSock) return
+  if (mixReconnectAttempts >= 16) return
+  mixReconnectAttempts += 1
+  const delay = Math.min(1500, 50 * mixReconnectAttempts)
+  mixReconnectTimer = setTimeout(() => {
+    mixReconnectTimer = null
+    if (mixSuppressReconnect || mixSock || !started) return
+    void connectMixPipe(mixPipePath, child?.pid).then((ok) => {
+      if (ok) mixReconnectAttempts = 0
+      else scheduleMixReconnect()
+    })
+  }, delay)
+}
+
+function connectMixPipeOnce(name: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = net.connect({ path: name })
+    let settled = false
+    const done = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (!ok) {
+        try {
+          sock.removeAllListeners()
+          sock.destroy()
+        } catch {
+          /* ignore */
+        }
+        if (mixSock === sock) mixSock = null
+      }
+      resolve(ok)
+    }
+    const timer = setTimeout(() => done(false), 1500)
+    sock.on('connect', () => {
+      mixSock = sock
+      mixBackpressure = false
+      mixPending = null
+      done(true)
+    })
+    sock.on('error', () => done(false))
+    sock.on('close', () => {
+      if (mixSock === sock) {
+        mixSock = null
+        mixBackpressure = false
+        if (!settled) {
+          done(false)
+          return
+        }
+        if (!mixSuppressReconnect) scheduleMixReconnect()
+      }
+    })
+    sock.on('drain', () => {
+      mixBackpressure = false
+      flushMixPending()
+    })
+  })
+}
+
+async function connectMixPipe(pipeName: string, pid?: number): Promise<boolean> {
+  closeMixPipe()
+  if (process.platform !== 'win32') return false
+  const name =
+    pipeName || (typeof pid === 'number' && pid > 0 ? `\\\\.\\pipe\\jaswave-mix-${pid}` : '')
+  if (!name) return false
+  mixPipePath = name
+  mixSuppressReconnect = false
+  for (let i = 0; i < 8; i++) {
+    if (mixSuppressReconnect) return false
+    const ok = await connectMixPipeOnce(name)
+    if (ok) {
+      mixReconnectAttempts = 0
+      return true
+    }
+    await sleepMs(40 + i * 20)
+  }
+  return false
+}
+
+export function isMixPipeConnected(): boolean {
+  return !!mixSock && !mixSock.destroyed && mixSock.writable
+}
+
+/** PCM interleaved f32le → named pipe del host. Latest-wins si hay backpressure. */
+export function pushPluginHostPcm(data: Buffer | ArrayBuffer | Float32Array | ArrayBufferView): void {
+  if (!mixSock || mixSock.destroyed || !mixSock.writable) return
+  let buf: Buffer
+  if (Buffer.isBuffer(data)) buf = data
+  else if (ArrayBuffer.isView(data)) {
+    buf = Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+  } else {
+    buf = Buffer.from(data)
+  }
+  if (buf.byteLength === 0) return
+  if (mixBackpressure) {
+    mixPending = buf
+    return
+  }
+  const ok = mixSock.write(buf)
+  if (!ok) mixBackpressure = true
+}
 
 function findUp(startDir: string, relative: string, maxLevels = 10): string | null {
   let dir = startDir
@@ -119,126 +292,44 @@ function resolveNodeHost(): string | null {
   return null
 }
 
-/** Steinberg editorhost renombrado / copiado como jaswave-vst3-editor. */
-function resolveVst3EditorBinary(): string | null {
-  const names =
-    process.platform === 'win32'
-      ? ['jaswave-vst3-editor.exe', 'editorhost.exe', 'jaswave-vst3-editor', 'editorhost']
-      : ['jaswave-vst3-editor', 'editorhost']
-
-  const relativeDirs = [
-    path.join('native', 'plugin-host', 'build-vst3', 'Release'),
-    path.join('native', 'plugin-host', 'build-vst3', 'Debug'),
-    path.join('native', 'plugin-host', 'build-vst3', 'bin', 'Release'),
-    path.join('native', 'plugin-host', 'build-vst3', 'bin', 'Debug'),
-    path.join('native', 'plugin-host', 'build', 'vst3sdk', 'bin', 'Release'),
-    path.join('native', 'plugin-host', 'build', 'vst3sdk', 'bin', 'Debug'),
-    path.join('native', 'plugin-host', 'build', 'Release'),
-    path.join('native', 'plugin-host', 'build', 'Debug'),
-    path.join('native', 'plugin-host', 'build'),
-    path.join(
-      'native',
-      'plugin-host',
-      'build',
-      'vst3sdk',
-      'public.sdk',
-      'samples',
-      'vst-hosting',
-      'editorhost',
-      'Release',
-    ),
-    path.join(
-      'native',
-      'plugin-host',
-      'build',
-      'vst3sdk',
-      'public.sdk',
-      'samples',
-      'vst-hosting',
-      'editorhost',
-      'Debug',
-    ),
-  ]
-
-  for (const rel of relativeDirs) {
-    for (const name of names) {
-      const found = findUp(__dirname, path.join(rel, name))
-      if (found) return found
-    }
-  }
-
-  if (process.resourcesPath) {
-    for (const name of names) {
-      const p = path.join(process.resourcesPath, 'plugin-host', name)
-      if (fs.existsSync(p)) return p
-    }
-  }
-  return null
+function audioPrefsPath(): string {
+  return path.join(app.getPath('userData'), 'audio-device.json')
 }
 
-function editorReadyOnDisk(): boolean {
-  return !!resolveVst3EditorBinary()
-}
-
-function killEditor(slotId: string) {
-  const proc = editors.get(slotId)
-  if (!proc) return
-  editors.delete(slotId)
+export function readAudioDevicePrefs(): AudioDevicePrefs | null {
   try {
-    if (!proc.killed) proc.kill()
+    const raw = fs.readFileSync(audioPrefsPath(), 'utf8')
+    const p = JSON.parse(raw) as AudioDevicePrefs
+    if (!p || typeof p !== 'object') return null
+    return {
+      backend: String(p.backend || 'auto'),
+      deviceId: String(p.deviceId || ''),
+      sampleRate: Number(p.sampleRate) || 48000,
+      bufferSize: Number(p.bufferSize) || 512,
+      exclusive: !!p.exclusive,
+    }
   } catch {
-    /* ignore */
+    return null
   }
 }
 
-function openNativeVst3Editor(args: {
-  path: string
-  slotId: string
-}): PluginHostRpcResult {
-  const bin = resolveVst3EditorBinary()
-  if (!bin) {
-    return {
-      ok: false,
-      code: 'PluginEditorFailed',
-      message:
-        'No se encontró jaswave-vst3-editor (Steinberg editorhost). Compila native/plugin-host con VST3 SDK.',
-    }
-  }
-  const pluginPath = args.path
-  if (!pluginPath || !fs.existsSync(pluginPath)) {
-    return {
-      ok: false,
-      code: 'PluginNotFound',
-      message: `Ruta VST3 inválida: ${pluginPath || '(vacía)'}`,
-    }
-  }
-
-  killEditor(args.slotId)
-
+export function writeAudioDevicePrefs(prefs: AudioDevicePrefs): void {
   try {
-    // SUBSYSTEM:windows — sin consola; la UI del plugin es una ventana HWND nativa.
-    const proc = spawn(bin, [pluginPath], {
-      windowsHide: false,
-      detached: false,
-      stdio: 'ignore',
-    })
-    editors.set(args.slotId, proc)
-    proc.on('exit', () => {
-      if (editors.get(args.slotId) === proc) editors.delete(args.slotId)
-    })
-    return {
-      ok: true,
-      processId: `vst3-editor-${proc.pid ?? 'unknown'}`,
-      slotId: args.slotId,
-      editorReady: true,
-    }
+    fs.mkdirSync(path.dirname(audioPrefsPath()), { recursive: true })
+    fs.writeFileSync(audioPrefsPath(), JSON.stringify(prefs, null, 2), 'utf8')
   } catch (e) {
-    return {
-      ok: false,
-      code: 'PluginEditorFailed',
-      message: e instanceof Error ? e.message : 'No se pudo abrir editor VST3',
-    }
+    console.error('[plugin-host] no se pudo guardar audio-device.json', e)
   }
+}
+
+export function isEditorHostCommand(type: string): boolean {
+  return (
+    type === 'openEditor' ||
+    type === 'openEditorFloating' ||
+    type === 'focusEditor' ||
+    type === 'closeEditor' ||
+    type === 'setEditorBounds'
+  )
 }
 
 function settlePending(result: PluginHostRpcResult) {
@@ -339,16 +430,27 @@ function pumpQueue() {
   }
 
   const job = queue.shift()!
+  const type = typeof job.cmd.type === 'string' ? job.cmd.type : ''
   const timer = setTimeout(() => {
-    if (pending?.resolve === job.resolve) {
-      pending = null
-      job.resolve({
-        ok: false,
-        code: 'PluginLoadFailed',
-        message: 'Timeout esperando respuesta del Plugin Host Process.',
-      })
-      pumpQueue()
+    if (pending?.resolve !== job.resolve) return
+    const soft =
+      type === 'openEditor' ||
+      type === 'openEditorFloating' ||
+      type === 'listAudioDevices' ||
+      type === 'setAudioDevice' ||
+      type === 'getAudioDevice' ||
+      type === 'testTone' ||
+      type === 'ensureAudio' ||
+      type === 'asioControlPanel'
+    lastError = soft
+      ? `Timeout Plugin Host (${type}). El host sigue vivo.`
+      : 'Timeout Plugin Host (posible freeze). Proceso de audio detenido; el siguiente ping puede reiniciar.'
+    if (soft) {
+      settlePending({ ok: false, code: 'HostNotReady', message: lastError })
+      return
     }
+    failAllRpc(lastError)
+    killAudioChild()
   }, job.timeoutMs)
 
   pending = { resolve: job.resolve, timer }
@@ -366,8 +468,109 @@ function pumpQueue() {
   }
 }
 
+/** MIDI sin esperar reply (el host no responde noteOn/noteOff/allNotesOff). */
+export function sendPluginHostMidi(cmd: Record<string, unknown>): void {
+  if (!child || child.killed || !child.stdin.writable) return
+  const type = typeof cmd.type === 'string' ? cmd.type : ''
+  if (type !== 'noteOn' && type !== 'noteOff' && type !== 'allNotesOff') return
+  try {
+    child.stdin.write(JSON.stringify(cmd) + '\n')
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Mata huérfanos de arranques previos (dos hosts = silencio ASIO). */
+function killOrphanPluginHosts() {
+  if (process.platform !== 'win32') return
+  try {
+    const { execFileSync } = require('child_process') as typeof import('child_process')
+    execFileSync(
+      'taskkill',
+      ['/F', '/IM', 'jaswave-plugin-host.exe', '/T'],
+      { stdio: 'ignore', windowsHide: true },
+    )
+  } catch {
+    /* no había proceso, o acceso denegado */
+  }
+}
+
+export async function setPluginHostAudioDevice(
+  prefs: AudioDevicePrefs,
+): Promise<PluginHostRpcResult> {
+  const ok = await ensurePluginHostStarted()
+  if (!ok) {
+    return {
+      ok: false,
+      code: 'HostNotReady',
+      message: lastError || 'Plugin Host Process no está en ejecución.',
+    }
+  }
+  return applyAudioDeviceOrFallback(prefs)
+}
+
+async function applyAudioDeviceOrFallback(
+  prefs: AudioDevicePrefs,
+): Promise<PluginHostRpcResult> {
+  const applied = await sendPluginHostCommand(
+    {
+      type: 'setAudioDevice',
+      backend: prefs.backend,
+      deviceId: prefs.deviceId,
+      sampleRate: prefs.sampleRate,
+      bufferSize: prefs.bufferSize,
+      exclusive: !!prefs.exclusive,
+    },
+    20_000,
+  )
+  if (applied.ok) {
+    writeAudioDevicePrefs(prefs)
+    return applied
+  }
+  console.error('[plugin-host] setAudioDevice falló:', applied.message)
+
+  const crashed = /salió \(code=/.test(String(applied.message || ''))
+  const fallback: AudioDevicePrefs = {
+    backend: 'wasapi',
+    deviceId: '',
+    sampleRate: prefs.sampleRate || 48000,
+    bufferSize: prefs.bufferSize || 512,
+    exclusive: false,
+  }
+
+  // Host muerto: persistir WASAPI para el próximo arranque (sin reentrar en ensure*).
+  if (crashed) {
+    writeAudioDevicePrefs(fallback)
+    return { ...applied, ok: false, code: 'HostNotReady' }
+  }
+
+  // ASIO / exclusive vivos pero fallaron al abrir: intentar WASAPI en el mismo proceso.
+  if (prefs.backend !== 'wasapi' || prefs.exclusive) {
+    const second = await sendPluginHostCommand(
+      { type: 'setAudioDevice', ...fallback },
+      20_000,
+    )
+    if (second.ok) {
+      writeAudioDevicePrefs(fallback)
+      console.error(
+        '[plugin-host] Fallback WASAPI tras fallo de',
+        prefs.backend,
+        ':',
+        applied.message,
+      )
+      return {
+        ...second,
+        ok: true,
+        message: `Fallback WASAPI (${applied.message || 'driver anterior no abrió'})`,
+      } as PluginHostRpcResult
+    }
+  }
+  return applied
+}
+
 async function tryStart(kind: 'native' | 'node'): Promise<boolean> {
   stopPluginHost()
+  if (kind === 'native') killOrphanPluginHosts()
 
   if (kind === 'native') {
     const bin = resolveNativeBinary()
@@ -393,6 +596,61 @@ async function tryStart(kind: 'native' | 'node'): Promise<boolean> {
     lastError = ping.message
     stopPluginHost()
     return false
+  }
+  if (kind === 'native') {
+    const mixPipe = ping.mixPipe || ''
+    await connectMixPipe(mixPipe, child?.pid)
+    const defaultWasapi: AudioDevicePrefs = {
+      backend: 'wasapi',
+      deviceId: '',
+      sampleRate: 48000,
+      bufferSize: 512,
+      exclusive: false,
+    }
+    let prefs = readAudioDevicePrefs() ?? defaultWasapi
+    // ASIO CoCreate falla a menudo (E_NOINTERFACE); preferir WASAPI al arrancar.
+    // El usuario puede volver a ASIO desde Configuración → Audio.
+    if (prefs.backend === 'asio' || prefs.backend === 'wasapi_exclusive') {
+      console.error(
+        '[plugin-host] prefs',
+        prefs.backend,
+        '→ WASAPI al arrancar (más estable; ASIO sigue en Configuración)',
+      )
+      prefs = { ...defaultWasapi, sampleRate: prefs.sampleRate || 48000, bufferSize: prefs.bufferSize || 512 }
+      writeAudioDevicePrefs(prefs)
+    }
+    let applied = await applyAudioDeviceOrFallback(prefs)
+    // Crash (p.ej. heap 0xC0000374): prefs ya son WASAPI; respawnear una vez.
+    if (!applied.ok && /salió \(code=/.test(String(applied.message || ''))) {
+      console.error('[plugin-host] respawn tras crash de setAudioDevice → WASAPI')
+      const bin = resolveNativeBinary()
+      if (!bin) return false
+      killAudioChild()
+      child = spawnNative(bin)
+      backend = 'native'
+      wireChild(child)
+      started = true
+      lastError = undefined
+      const ping2 = await sendPluginHostCommand({ type: 'ping' }, 4000)
+      if (!ping2.ok) {
+        lastError = ping2.message
+        stopPluginHost()
+        return false
+      }
+      await connectMixPipe(ping2.mixPipe || '', child?.pid)
+      prefs = readAudioDevicePrefs() ?? defaultWasapi
+      applied = await applyAudioDeviceOrFallback(prefs)
+    }
+    // Reconectar pipe al host vivo tras setAudioDevice (evita pipe de un spawn anterior).
+    if (applied.ok && child?.pid) {
+      const ping3 = await sendPluginHostCommand({ type: 'ping' }, 4000)
+      if (ping3.ok) {
+        await connectMixPipe(String(ping3.mixPipe || ''), child.pid)
+      }
+    }
+    if (!applied.ok) {
+      console.error('[plugin-host] audio al arrancar no disponible:', applied.message)
+    }
   }
   return true
 }
@@ -424,56 +682,40 @@ async function doStart(): Promise<boolean> {
 }
 
 export function getPluginHostStatus() {
-  const editorBin = resolveVst3EditorBinary()
   return {
     isolationPolicy: 'hybrid' as const,
     builtinInProcess: true,
     thirdPartyOutOfProcess: true,
     vst3HostProcessAvailable: started && !!child && !child.killed,
-    vst3EditorAvailable: backend === 'native' || !!editorBin,
+    vst3EditorAvailable: backend === 'native',
     vst3AudioAvailable: backend === 'native',
-    editorBinary: editorBin ?? undefined,
-    openEditors: editors.size,
+    mixPipeConnected: isMixPipeConnected(),
+    openEditors: 0,
     backend,
     lastError,
     note:
       backend === 'native'
-        ? 'Plugin Host nativo: audio VST3 + editor HWND embebido en el tab.'
-        : editorBin
-          ? 'Discovery Node; UI flotante (editorhost) disponible. Preferí build-vst3 nativo para audio+embed.'
-          : backend === 'node'
-            ? 'Plugin Host Node (solo discovery). Compila build-vst3 para audio/UI embebida.'
-            : lastError
-              ? `Plugin Host no iniciado: ${lastError}`
-              : 'Plugin Host Process no iniciado.',
+        ? 'Plugin Host nativo: misma instancia UI+audio. Mixer DAW (clips/Soft Pad) + VST en el device elegido.'
+        : backend === 'node'
+          ? 'Plugin Host Node (solo discovery). Compila build-vst3 para audio/UI nativa.'
+          : lastError
+            ? `Plugin Host no iniciado: ${lastError}`
+            : 'Plugin Host Process no iniciado.',
   }
 }
 
 export function ensurePluginHostStarted(): Promise<boolean> {
   if (child && !child.killed && started) return Promise.resolve(true)
-  if (!startPromise) {
-    startPromise = doStart().finally(() => {
-      startPromise = null
-    })
-  }
+  if (startPromise) return startPromise
+  startPromise = doStart().finally(() => {
+    startPromise = null
+  })
   return startPromise
 }
 
-export function stopPluginHost() {
-  if (pending) {
-    clearTimeout(pending.timer)
-    pending.resolve({
-      ok: false,
-      code: 'HostNotReady',
-      message: 'Plugin Host Process detenido.',
-    })
-    pending = null
-  }
-  while (queue.length) {
-    const job = queue.shift()!
-    job.resolve({ ok: false, code: 'HostNotReady', message: 'Plugin Host Process detenido.' })
-  }
-  for (const slotId of [...editors.keys()]) killEditor(slotId)
+function killAudioChild() {
+  cancelMixReconnect()
+  closeMixPipe()
   if (child && !child.killed) {
     try {
       child.stdin.end()
@@ -488,54 +730,82 @@ export function stopPluginHost() {
   buffer = ''
 }
 
+function failAllRpc(reason: string) {
+  if (pending) {
+    clearTimeout(pending.timer)
+    pending.resolve({
+      ok: false,
+      code: 'HostNotReady',
+      message: reason,
+    })
+    pending = null
+  }
+  while (queue.length) {
+    const job = queue.shift()!
+    job.resolve({ ok: false, code: 'HostNotReady', message: reason })
+  }
+}
+
+export function stopPluginHost() {
+  const reason = lastError || 'Plugin Host Process detenido.'
+  failAllRpc(reason)
+  killAudioChild()
+}
+
 export function sendPluginHostCommand(
   cmd: Record<string, unknown>,
   timeoutMs = 30_000,
 ): Promise<PluginHostRpcResult> {
   const type = typeof cmd.type === 'string' ? cmd.type : ''
 
-  // UI: solo editorhost flotante (nunca createView en el host de audio → no cuelga).
-  if (type === 'openEditor' || type === 'openEditorFloating') {
-    const pluginPath = String(cmd.path ?? '')
-    const slotId = String(cmd.slotId ?? cmd.pluginId ?? pluginPath)
-    return Promise.resolve(openNativeVst3Editor({ path: pluginPath, slotId }))
-  }
-  if (type === 'closeEditor') {
-    const slotId = String(cmd.slotId ?? cmd.pluginId ?? '')
-    killEditor(slotId)
-    return Promise.resolve({
-      ok: true,
-      processId: 'jaswave-plugin-host',
-      slotId,
-      editorReady: false,
-    })
-  }
-  if (type === 'focusEditor') {
-    const pluginPath = String(cmd.path ?? '')
-    const slotId = String(cmd.slotId ?? cmd.pluginId ?? pluginPath)
-    if (pluginPath) {
-      return Promise.resolve(openNativeVst3Editor({ path: pluginPath, slotId }))
-    }
-    return Promise.resolve({
-      ok: false,
-      code: 'PluginEditorFailed',
-      message: 'No hay editor abierto para ese slot.',
-    })
-  }
-  if (type === 'setEditorBounds') {
-    return Promise.resolve({
-      ok: true,
-      processId: 'jaswave-plugin-host',
-      slotId: String(cmd.slotId ?? ''),
-      editorReady: true,
-    })
-  }
+  // Prefs solo se escriben tras ok (ver send + applyAudioDeviceOrFallback).
 
   const long =
-    type === 'load' || type === 'prepare' ? Math.max(timeoutMs, 90_000) : timeoutMs
+    type === 'load' ||
+    type === 'prepare' ||
+    type === 'setAudioDevice' ||
+    type === 'listAudioDevices' ||
+    type === 'ensureAudio'
+      ? Math.max(timeoutMs, 90_000)
+      : timeoutMs
+
+  // MIDI: host no responde — no usar la cola RPC (bloquearía load/ping).
+  if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'setMixInputRate' || type === 'setSlotMix' || type === 'setMasterMix' || type === 'setTrackGraph') {
+    if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff') {
+      sendPluginHostMidi(cmd)
+      return Promise.resolve({
+        ok: true,
+        processId: 'jaswave-plugin-host',
+        slotId: String(cmd.slotId ?? ''),
+      })
+    }
+    if (child && !child.killed && child.stdin.writable) {
+      try {
+        child.stdin.write(JSON.stringify(cmd) + '\n')
+      } catch {
+        /* ignore */
+      }
+    }
+    return Promise.resolve({ ok: true, processId: 'jaswave-plugin-host' })
+  }
 
   return new Promise((resolve) => {
-    queue.push({ cmd, timeoutMs: long, resolve })
+    const wrap =
+      type === 'setAudioDevice'
+        ? (result: PluginHostRpcResult) => {
+            if (result.ok && cmd.backend) {
+              writeAudioDevicePrefs({
+                backend: String(cmd.backend),
+                deviceId: String(cmd.deviceId ?? ''),
+                sampleRate: Number(cmd.sampleRate) || 48000,
+                bufferSize: Number(cmd.bufferSize) || 512,
+                exclusive: !!cmd.exclusive || String(cmd.backend) === 'wasapi_exclusive',
+              })
+            }
+            resolve(result)
+          }
+        : resolve
+    queue.push({ cmd, timeoutMs: long, resolve: wrap })
     pumpQueue()
   })
 }
