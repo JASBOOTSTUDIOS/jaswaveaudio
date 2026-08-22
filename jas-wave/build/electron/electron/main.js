@@ -142,6 +142,14 @@ app.on('window-all-closed', () => {
         app.quit();
     }
 });
+app.on('before-quit', () => {
+    try {
+        require('./plugin-host-bridge').stopPluginHost();
+    }
+    catch (_a) {
+        /* ignore */
+    }
+});
 app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
@@ -212,6 +220,15 @@ ipcMain.handle('dialog-open', () => __awaiter(void 0, void 0, void 0, function* 
     const result = yield dialog.showOpenDialog(mainWindow, {
         filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }],
         properties: ['openFile'],
+    });
+    return result;
+}));
+ipcMain.handle('dialog-open-directory', () => __awaiter(void 0, void 0, void 0, function* () {
+    if (!mainWindow)
+        return { canceled: true, filePaths: [] };
+    const result = yield dialog.showOpenDialog(mainWindow, {
+        title: 'Carpeta de plugins VST3',
+        properties: ['openDirectory'],
     });
     return result;
 }));
@@ -327,13 +344,22 @@ ipcMain.handle('tool-window-open', (_event, toolId, title) => __awaiter(void 0, 
         return { success: true, focused: true };
     }
     const icon = resolveAppIconPath();
-    const win = new BrowserWindow(Object.assign(Object.assign({ width: 960, height: 640, minWidth: 480, minHeight: 320, title: `JasWave — ${title}`, backgroundColor: '#0b0d10' }, (icon ? { icon } : {})), { webPreferences: {
+    const win = new BrowserWindow(Object.assign(Object.assign({ width: 960, height: 640, minWidth: 480, minHeight: 320, title: `JasWave — ${title}`, backgroundColor: '#0b0d10', show: false }, (icon ? { icon } : {})), { webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: false,
         } }));
     toolWindows.set(toolId, win);
+    win.once('ready-to-show', () => {
+        if (!win.isDestroyed())
+            win.show();
+    });
+    // Fallback: no quedar oculto si ready-to-show tarda
+    setTimeout(() => {
+        if (!win.isDestroyed() && !win.isVisible())
+            win.show();
+    }, 400);
     win.on('closed', () => {
         toolWindows.delete(toolId);
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -357,3 +383,81 @@ ipcMain.handle('tool-window-close', (_event, toolId) => __awaiter(void 0, void 0
         win.close();
     toolWindows.delete(toolId);
 }));
+// ── Native C++ audio bridge (ADR-0009) ──────────────────────────────────────
+const { getNativeAudio, nativeAudioAvailable } = require('./native-audio');
+ipcMain.handle('native-audio-available', () => nativeAudioAvailable());
+ipcMain.handle('native-audio-initialize', (_e, config) => {
+    var _a;
+    (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.initialize(config);
+});
+ipcMain.handle('native-audio-shutdown', () => {
+    var _a;
+    (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.shutdown();
+});
+ipcMain.handle('native-audio-load-buffer', (_e, id, samples, sampleRate, channels) => {
+    var _a;
+    (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.loadBuffer(id, samples, sampleRate, channels);
+});
+ipcMain.handle('native-audio-unload-buffer', (_e, id) => {
+    var _a;
+    (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.unloadBuffer(id);
+});
+ipcMain.handle('native-audio-set-graph', (_e, graph) => {
+    var _a;
+    (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.setGraph(graph);
+});
+ipcMain.handle('native-audio-play', () => {
+    var _a;
+    (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.transportPlay();
+});
+ipcMain.handle('native-audio-pause', () => {
+    var _a;
+    (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.transportPause();
+});
+ipcMain.handle('native-audio-stop', () => {
+    var _a;
+    (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.transportStop();
+});
+ipcMain.handle('native-audio-seek', (_e, seconds) => {
+    var _a;
+    (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.transportSeek(seconds);
+});
+ipcMain.handle('native-audio-playhead', () => { var _a, _b; return (_b = (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.getPlayheadSeconds()) !== null && _b !== void 0 ? _b : 0; });
+ipcMain.handle('native-audio-is-playing', () => { var _a, _b; return (_b = (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.isPlaying()) !== null && _b !== void 0 ? _b : false; });
+ipcMain.handle('native-audio-meter', () => { var _a, _b; return (_b = (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.getMeterPeak()) !== null && _b !== void 0 ? _b : 0; });
+// Plugin host híbrido (ADR-0011 C)
+const { ensurePluginHostStarted, getPluginHostStatus, sendPluginHostCommand, stopPluginHost, } = require('./plugin-host-bridge');
+ipcMain.handle('plugin-host-status', () => __awaiter(void 0, void 0, void 0, function* () {
+    yield ensurePluginHostStarted();
+    return getPluginHostStatus();
+}));
+ipcMain.handle('plugin-host-ensure', () => __awaiter(void 0, void 0, void 0, function* () {
+    const ok = yield ensurePluginHostStarted();
+    return Object.assign({ ok }, getPluginHostStatus());
+}));
+ipcMain.handle('plugin-host-send', (e, cmd) => __awaiter(void 0, void 0, void 0, function* () {
+    const record = (cmd && typeof cmd === 'object' ? cmd : {});
+    const type = typeof record.type === 'string' ? record.type : '';
+    yield ensurePluginHostStarted();
+    if (type === 'openEditor' || type === 'setEditorBounds') {
+        const win = BrowserWindow.fromWebContents(e.sender);
+        if (win && !win.isDestroyed()) {
+            try {
+                const buf = win.getNativeWindowHandle();
+                const hwnd = buf.length >= 8 ? buf.readBigUInt64LE(0).toString() : String(buf.readUInt32LE(0));
+                if (!record.parentHwnd)
+                    record.parentHwnd = hwnd;
+                // x/y vienen de getBoundingClientRect (client del webContents).
+                // El host nativo hace ClientToScreen(owner) — no sumar frame aquí.
+            }
+            catch (_a) {
+                /* ignore */
+            }
+        }
+    }
+    return sendPluginHostCommand(record);
+}));
+ipcMain.handle('plugin-host-stop', () => {
+    stopPluginHost();
+    return { ok: true };
+});

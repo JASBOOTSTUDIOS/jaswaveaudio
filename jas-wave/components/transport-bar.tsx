@@ -2,7 +2,7 @@ import { useMemo, useState, useRef, useEffect } from 'react'
 import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Metronome } from 'lucide-react'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { DAWState } from '../../shared/src'
-import { usePlayback, formatTimecode, msToBarBeat } from './playback-provider'
+import { TransportPositionReadout } from './transport-position-readout'
 
 function EditableStat({
   value,
@@ -229,10 +229,6 @@ export function TransportBar() {
   const transport = useDAWState((s: DAWState) => s.transport)
   const project = useDAWState((s: DAWState) => s.project)
 
-  const { positionMs: livePositionMs } = usePlayback()
-
-  const positionMs = livePositionMs
-
   const isPlaying = Boolean(transport.reproduciendo)
   const isRecording = transport.grabacion === 'grabando'
   const isLooping = Boolean(transport.loop?.activo)
@@ -267,8 +263,6 @@ export function TransportBar() {
   const setBpm = async (bpm: number) => {
     await tienda.executor.execute('project.setBpm', { bpm })
   }
-
-  const { bar, beat } = msToBarBeat(positionMs, bpm, numerador)
 
   return (
     <header className="flex h-14 items-center gap-4 border-b border-border bg-panel px-4">
@@ -332,26 +326,9 @@ export function TransportBar() {
         </button>
       </div>
 
-      <div className="flex items-center gap-2 rounded-lg bg-background px-3 py-1.5 ring-1 ring-border">
-        <span className="font-mono text-[22px] font-semibold tabular-nums tracking-tight text-foreground">
-          {formatTimecode(positionMs)}
-        </span>
-        <div className="flex flex-col gap-0.5 text-[9px] uppercase leading-none text-muted-foreground">
-          <span className="rounded bg-panel-raised px-1 py-0.5 text-foreground">min:sec</span>
-          <span className="px-1 py-0.5">
-            {bar} | {beat}
-          </span>
-        </div>
-      </div>
+      <TransportPositionReadout bpm={bpm} beatsPerBar={numerador} />
 
-      <div className="flex items-center gap-1 font-mono text-[13px] text-muted-foreground">
-        {Array.from({ length: numerador }, (_, i) => i + 1).map((n) => (
-          <span key={n} className={beat === n ? 'text-accent-amber' : ''}>
-            {n}
-          </span>
-        ))}
-        <Triangle className="ml-1 size-4 rotate-90 text-muted-foreground" />
-      </div>
+      <Triangle className="ml-1 size-4 rotate-90 text-muted-foreground" />
 
       <div className="ml-auto flex items-center gap-5">
         <EditableStat value={bpm} label="BPM" onCommit={setBpm} min={20} max={300} />

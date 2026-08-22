@@ -6,8 +6,11 @@ import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import type { DAWState } from '../../../shared/src/types/state'
 import {
   generateSoftPianoSong,
+  hashSeed,
+  inferClipNameFromText,
   inferKeyFromText,
   inferMinutesFromText,
+  inferMoodFromText,
   wantsDawCreation,
   type GeneratedNote,
 } from './midi-song-generator'
@@ -64,7 +67,7 @@ export function buildAgentSystemPrompt(state: DAWState): string {
     '- track.toggleMute|track.toggleSolo|track.toggleArm { trackId }',
     '- transport.toggle | transport.stop | transport.toggleLoop | transport.toggleMetronome | transport.toggleRecord',
     '- transport.seek { segundos }',
-    '- daw.generateMidiSong { nombre?, minutos?, tonalidad? }  ← canciones piano/MIDI',
+    '- daw.generateMidiSong { nombre?, minutos?, tonalidad?, mood?, estilo? }  ← canción MIDI creativa (vista previa)',
     '- midi.clip.create { pistaId?, nombre?, inicio?, duracion?, notas:[{pitch,inicio,duracion,velocidad}] }',
     '- midi.notes.set { pistaId, clipId, notas:[...] }',
     '- midi.transpose { pistaId, clipId, semitonos, noteIds? }',
@@ -80,8 +83,18 @@ export function buildAgentSystemPrompt(state: DAWState): string {
     '- clip.delete { pistaId, clipId }',
     '- clip.move { pistaId, clipId, inicio, pistaDestinoId? }',
     '- master.update { datos: { volumen?, paneo?, muted? } }',
+    '- track.getFxChain { trackId }  ← consulta (también type track.getFxChain)',
+    '- plugin.insert { trackId, plugin: { nombre, tipo, ... } }',
+    '- plugin.remove { trackId, pluginInstanceId }',
+    '- plugin.move { trackId, pluginInstanceId, toIndex }',
+    '- plugin.bypass { trackId, pluginInstanceId, bypass }',
+    '- plugin.duplicate { trackId, pluginInstanceId }',
+    '- plugin.replace { trackId, pluginInstanceId, plugin: {...} }',
+    '- plugin.setParameter { trackId, pluginInstanceId, parameterId, normalizedValue }',
+    '- fxChain.copy | fxChain.paste { trackId, plugins? }',
+    '- fxChain.loadPreset { trackId, presetId, nombre, plugins:[...] }',
     '',
-    'Para pedir canción/pista MIDI usa daw.generateMidiSong (no inventes miles de notas a mano).',
+    'Para canción MIDI usa daw.generateMidiSong (genera VISTA PREVIA en el chat; el usuario aplica al proyecto). No inventes miles de notas a mano.',
   ].join('\n')
 }
 
@@ -92,6 +105,8 @@ export function stripActionsBlock(text: string): string {
     .replace(/<<<ACTIONS[\s\S]*$/gi, '')
     .replace(/##\s*Cambios en el proyecto[\s\S]*$/gi, '')
     .replace(/^\s*\[?\s*\{\s*"type"\s*:[\s\S]*$/gm, '')
+    .replace(/\bdaw\.generateMidiSong\s*\([^)]*\)\s*;?/gi, '')
+    .replace(/\b(?:track|midi|plugin|transport|ui|project)\.\w+\s*\([^)]*\)\s*;?/gi, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
@@ -145,9 +160,8 @@ export function fallbackActionsFromUserIntent(userText: string): DawAction[] {
   if (wantsDawCreation(userText)) {
     const key = inferKeyFromText(userText)
     const minutes = inferMinutesFromText(userText, 3)
-    const nombre = /piano/i.test(userText)
-      ? `Piano ${key.label}`
-      : `MIDI ${key.label}`
+    const mood = inferMoodFromText(userText)
+    const nombre = inferClipNameFromText(userText, key.label)
     actions.push({
       type: 'daw.generateMidiSong',
       payload: {
@@ -156,6 +170,8 @@ export function fallbackActionsFromUserIntent(userText: string): DawAction[] {
         tonalidad: key.label,
         keyRoot: key.root,
         scale: key.scale,
+        mood,
+        seed: hashSeed(userText + '|' + Date.now()),
       },
     })
   }
@@ -379,44 +395,65 @@ export async function executeDawActions(
         }
         case 'daw.generateMidiSong': {
           const state = tienda.obtenerEstado()
-          const bpm = state.project.bpm?.valor ?? state.transport?.bpm ?? 120
+          const projectBpm = state.project.bpm?.valor ?? state.transport?.bpm ?? 120
           const tonalidad = String(p.tonalidad ?? '')
+          const moodHint = String(p.mood ?? p.nombre ?? tonalidad ?? '')
           const key = tonalidad
-            ? inferKeyFromText(tonalidad)
-            : {
-                root: Number(p.keyRoot ?? 48),
-                scale: (p.scale as 'major' | 'minor') ?? 'major',
-                label: 'C mayor',
-              }
+            ? inferKeyFromText(`${tonalidad} ${moodHint}`)
+            : p.keyRoot != null
+              ? {
+                  root: Number(p.keyRoot),
+                  scale: (p.scale as 'major' | 'minor') ?? 'minor',
+                  label: String(p.tonalidad ?? 'C menor'),
+                }
+              : inferKeyFromText(moodHint || 'triste')
           const minutes = Number(p.minutos ?? 3)
+          const mood =
+            (p.mood as import('./midi-song-generator').MusicMood | undefined) ??
+            inferMoodFromText(moodHint)
+          const seed =
+            p.seed != null
+              ? typeof p.seed === 'number'
+                ? p.seed
+                : hashSeed(String(p.seed))
+              : hashSeed(`${p.nombre}|${key.label}|${minutes}|${Date.now()}`)
+
+          let bpm = p.bpm != null ? Number(p.bpm) : projectBpm
+          if (p.bpm == null) {
+            if (mood === 'sad' || mood === 'romantic' || mood === 'ambient') bpm = 72 + (seed % 28)
+            else if (mood === 'energetic') bpm = 118 + (seed % 30)
+            else if (mood === 'epic') bpm = 96 + (seed % 28)
+            else if (mood === 'dark') bpm = 80 + (seed % 25)
+          }
+
           const song = generateSoftPianoSong({
             keyRoot: Number(p.keyRoot ?? key.root),
             scale: (p.scale as 'major' | 'minor') ?? key.scale,
             bpm,
             minutes,
+            mood,
+            style: p.estilo as import('./midi-song-generator').MusicStyle | undefined,
+            seed,
+            nombre: String(p.nombre ?? ''),
           })
           const nombre = String(p.nombre ?? `Piano ${key.label}`)
-          const track = await findOrCreateMidiTrack(tienda, nombre)
-          if (!track.trackId) {
-            results.push({ type: action.type, success: false, message: track.error ?? 'Sin pista MIDI' })
-            break
-          }
-          const clipRes = await tienda.executor.execute('midi.clip.create', {
-            pistaId: track.trackId,
-            nombre,
-            inicio: 0,
-            duracion: song.durationBeats,
-            color: '#a78bfa',
-            notas: song.notes,
-          })
           const mins = (song.durationBeats / bpm).toFixed(1)
           results.push({
             type: action.type,
-            success: clipRes.success,
-            message: clipRes.success
-              ? `Clip MIDI «${nombre}» en ${key.label}: ${song.notes.length} notas · ${mins} min · ${song.structureLabel}${track.created ? ' · pista creada' : ''}`
-              : clipRes.error?.message ?? 'Error clip MIDI',
-            data: { trackId: track.trackId, notes: song.notes.length, durationBeats: song.durationBeats },
+            success: true,
+            message: `Vista previa «${nombre}» · ${key.label} · ${song.mood}/${song.style} · ${song.notes.length} notas · ${mins} min`,
+            data: {
+              kind: 'midiPreview',
+              nombre,
+              keyLabel: key.label,
+              bpm,
+              durationBeats: song.durationBeats,
+              notes: song.notes,
+              structureLabel: song.structureLabel,
+              mood: song.mood,
+              style: song.style,
+              seed: song.seed,
+            },
           })
           break
         }
@@ -444,6 +481,57 @@ export async function executeDawActions(
             message: r.success
               ? `Clip MIDI con ${notas.length} notas`
               : r.error?.message ?? 'Error clip MIDI',
+          })
+          break
+        }
+        case 'track.getFxChain': {
+          const trackId = String(p.trackId ?? '')
+          const st = tienda.obtenerEstado()
+          const plugins =
+            trackId === 'master' || trackId === '__master__'
+              ? st.project.master.plugins ?? []
+              : st.project.tracks.find((t) => t.id === trackId)?.plugins ?? []
+          const trackName =
+            trackId === 'master'
+              ? 'Master'
+              : st.project.tracks.find((t) => t.id === trackId)?.nombre ?? trackId
+          results.push({
+            type: action.type,
+            success: true,
+            message: `${trackName}: ${plugins.length} plugins`,
+            data: {
+              trackId,
+              trackName,
+              plugins: plugins.map((pl, position) => ({
+                instanceId: pl.id,
+                name: pl.nombre,
+                type: pl.tipo,
+                position,
+                bypass: pl.bypass,
+                latency: pl.latencia,
+                estado: pl.estado,
+              })),
+            },
+          })
+          break
+        }
+        case 'plugin.insert':
+        case 'plugin.remove':
+        case 'plugin.move':
+        case 'plugin.bypass':
+        case 'plugin.duplicate':
+        case 'plugin.replace':
+        case 'plugin.setParameter':
+        case 'fxChain.copy':
+        case 'fxChain.paste':
+        case 'fxChain.loadPreset':
+        case 'fxChain.savePreset': {
+          const r = await tienda.executor.execute(action.type, p)
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success ? `OK ${action.type}` : r.error?.message ?? `Error ${action.type}`,
+            data: r.result,
           })
           break
         }

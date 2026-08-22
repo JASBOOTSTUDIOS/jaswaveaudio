@@ -9,7 +9,10 @@ export type ToolId =
   | 'meters'
   | 'routing'
   | 'instruments'
+  | 'fx-chain'
+  | 'plugin-editor'
   | 'piano-roll'
+  | 'settings'
 
 export interface ToolDefinitionUI {
   id: ToolId
@@ -73,8 +76,22 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
   instruments: {
     id: 'instruments',
     title: 'Instrumentos',
-    description: 'Plugins e instrumentos',
+    description: 'Catálogo de plugins · acoplable / otra pantalla',
     defaultZone: 'left',
+    singleton: true,
+  },
+  'fx-chain': {
+    id: 'fx-chain',
+    title: 'FX Chain',
+    description: 'Cadena de plugins de la pista activa',
+    defaultZone: 'right',
+    singleton: true,
+  },
+  'plugin-editor': {
+    id: 'plugin-editor',
+    title: 'Editor de plugin',
+    description: 'IU del instrumento / efecto activo',
+    defaultZone: 'right',
     singleton: true,
   },
   'piano-roll': {
@@ -82,6 +99,13 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     title: 'Piano roll',
     description: 'Editor MIDI de notas',
     defaultZone: 'bottom',
+    singleton: true,
+  },
+  settings: {
+    id: 'settings',
+    title: 'Configuración',
+    description: 'Proyecto, audio, IA, rutas y permisos',
+    defaultZone: 'right',
     singleton: true,
   },
 }
@@ -97,7 +121,7 @@ export const DEFAULT_WORKSPACE: WorkspaceLayout = {
   zones: {
     left: ['coproducer', 'library', 'instruments'],
     center: ['arrange'],
-    right: ['track-detail', 'meters', 'routing'],
+    right: ['track-detail', 'fx-chain', 'plugin-editor', 'meters', 'routing', 'settings'],
     bottom: ['mixer', 'piano-roll'],
   },
   activeTab: {

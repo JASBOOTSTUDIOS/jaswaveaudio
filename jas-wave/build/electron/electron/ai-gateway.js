@@ -64,8 +64,34 @@ function healthFail(error, errorCode, kind, status = 'disconnected') {
 function normalizeBase(url) {
     return String(url || '').trim().replace(/\/$/, '');
 }
-function needsKey(kind) {
+function needsKey(kind, custom) {
+    if ((custom === null || custom === void 0 ? void 0 : custom.needsApiKey) != null)
+        return custom.needsApiKey;
     return kind !== 'ollama' && kind !== 'openai-compatible';
+}
+function joinUrl(base, path) {
+    const b = normalizeBase(base);
+    const p = path.startsWith('/') ? path : `/${path}`;
+    return `${b}${p}`;
+}
+function applyAuthHeaders(headers, apiKey, kind, custom) {
+    var _a;
+    const style = (_a = custom === null || custom === void 0 ? void 0 : custom.authStyle) !== null && _a !== void 0 ? _a : ((apiKey === null || apiKey === void 0 ? void 0 : apiKey.trim()) ? 'bearer' : 'none');
+    const key = apiKey === null || apiKey === void 0 ? void 0 : apiKey.trim();
+    if (style === 'bearer' && key)
+        headers.Authorization = `Bearer ${key}`;
+    if (style === 'x-api-key' && key)
+        headers['x-api-key'] = key;
+    if (custom === null || custom === void 0 ? void 0 : custom.extraHeaders) {
+        for (const [k, v] of Object.entries(custom.extraHeaders)) {
+            if (k && typeof v === 'string')
+                headers[k] = v;
+        }
+    }
+    if (kind === 'openrouter') {
+        headers['HTTP-Referer'] = headers['HTTP-Referer'] || 'https://jaswave.app';
+        headers['X-Title'] = headers['X-Title'] || 'JasWave';
+    }
 }
 function mapHttpStatus(status, body, kind) {
     const snippet = body.replace(/\s+/g, ' ').slice(0, 280);
@@ -110,7 +136,7 @@ function validateRequest(req) {
         return fail('Falta la URL base del proveedor.', 'missing_base_url', req.kind);
     if (!String(req.model || '').trim())
         return fail('Falta el modelo.', 'missing_model', req.kind);
-    if (needsKey(req.kind) && !String(req.apiKey || '').trim()) {
+    if (needsKey(req.kind, req.custom) && !String(req.apiKey || '').trim()) {
         return fail(`El proveedor ${req.kind} requiere API key.`, 'missing_api_key', req.kind);
     }
     if (!Array.isArray(req.messages) || req.messages.length === 0) {
@@ -121,31 +147,40 @@ function validateRequest(req) {
 function isOpenAiCompatible(kind) {
     return kind === 'openai' || kind === 'openrouter' || kind === 'kilocode' || kind === 'openai-compatible';
 }
-function openAiBase(url) {
+/**
+ * Base URL para clientes OpenAI-compatible.
+ * Kilo usa `…/api/gateway` (sin /v1). OpenAI/OpenRouter suelen necesitar /v1.
+ * `custom.appendV1` tiene prioridad.
+ */
+function openAiBase(url, kind, custom) {
     const base = normalizeBase(url);
-    return base.endsWith('/v1') ? base : `${base}/v1`;
+    if ((custom === null || custom === void 0 ? void 0 : custom.appendV1) === true)
+        return /\/v1$/i.test(base) ? base : `${base}/v1`;
+    if ((custom === null || custom === void 0 ? void 0 : custom.appendV1) === false)
+        return base;
+    if (kind === 'kilocode')
+        return base;
+    if (/\/v1$/i.test(base) || /\/gateway$/i.test(base))
+        return base;
+    return `${base}/v1`;
 }
 function chatOpenAiCompatible(req) {
     return __awaiter(this, void 0, void 0, function* () {
-        var _a, _b, _c, _d, _e, _f, _g;
-        const base = openAiBase(req.baseUrl);
+        var _a, _b, _c, _d, _e, _f, _g, _h;
+        const base = openAiBase(req.baseUrl, req.kind, req.custom);
         const headers = { 'Content-Type': 'application/json' };
-        if ((_a = req.apiKey) === null || _a === void 0 ? void 0 : _a.trim())
-            headers.Authorization = `Bearer ${req.apiKey.trim()}`;
-        if (req.kind === 'openrouter') {
-            headers['HTTP-Referer'] = 'https://jaswave.app';
-            headers['X-Title'] = 'JasWave';
-        }
+        applyAuthHeaders(headers, req.apiKey, req.kind, req.custom);
+        const chatPath = ((_b = (_a = req.custom) === null || _a === void 0 ? void 0 : _a.chatPath) === null || _b === void 0 ? void 0 : _b.trim()) || '/chat/completions';
         let res;
         try {
-            res = yield fetchWithTimeout(`${base}/chat/completions`, {
+            res = yield fetchWithTimeout(joinUrl(base, chatPath), {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({
                     model: req.model,
                     messages: req.messages,
-                    temperature: (_b = req.temperature) !== null && _b !== void 0 ? _b : 0.4,
-                    max_tokens: (_c = req.maxTokens) !== null && _c !== void 0 ? _c : 2048,
+                    temperature: (_c = req.temperature) !== null && _c !== void 0 ? _c : 0.4,
+                    max_tokens: (_d = req.maxTokens) !== null && _d !== void 0 ? _d : 2048,
                     stream: false,
                 }),
             });
@@ -160,13 +195,13 @@ function chatOpenAiCompatible(req) {
         try {
             data = JSON.parse(text);
         }
-        catch (_h) {
+        catch (_j) {
             return fail('Respuesta no JSON del proveedor.', 'provider_error', req.kind);
         }
-        if ((_d = data.error) === null || _d === void 0 ? void 0 : _d.message) {
+        if ((_e = data.error) === null || _e === void 0 ? void 0 : _e.message) {
             return fail(data.error.message, 'provider_error', req.kind);
         }
-        const raw = (_g = (_f = (_e = data.choices) === null || _e === void 0 ? void 0 : _e[0]) === null || _f === void 0 ? void 0 : _f.message) === null || _g === void 0 ? void 0 : _g.content;
+        const raw = (_h = (_g = (_f = data.choices) === null || _f === void 0 ? void 0 : _f[0]) === null || _g === void 0 ? void 0 : _g.message) === null || _h === void 0 ? void 0 : _h.content;
         let content = '';
         if (typeof raw === 'string')
             content = raw;
@@ -322,10 +357,20 @@ function chatOllama(req) {
 }
 function aiChat(req) {
     return __awaiter(this, void 0, void 0, function* () {
+        var _a;
         const invalid = validateRequest(req);
         if (invalid)
             return invalid;
+        const style = (_a = req.custom) === null || _a === void 0 ? void 0 : _a.apiStyle;
         try {
+            if (style === 'ollama' || (!style && req.kind === 'ollama'))
+                return yield chatOllama(req);
+            if (style === 'anthropic' || (!style && req.kind === 'anthropic'))
+                return yield chatAnthropic(req);
+            if (style === 'gemini' || (!style && req.kind === 'gemini'))
+                return yield chatGemini(req);
+            if (style === 'openai' || (!style && isOpenAiCompatible(req.kind)))
+                return yield chatOpenAiCompatible(req);
             if (req.kind === 'ollama')
                 return yield chatOllama(req);
             if (req.kind === 'anthropic')
@@ -343,23 +388,23 @@ function aiChat(req) {
 }
 function healthOpenAi(req) {
     return __awaiter(this, void 0, void 0, function* () {
-        var _a, _b, _c;
-        if (needsKey(req.kind) && !((_a = req.apiKey) === null || _a === void 0 ? void 0 : _a.trim())) {
+        var _a, _b, _c, _d;
+        if (needsKey(req.kind, req.custom) && !((_a = req.apiKey) === null || _a === void 0 ? void 0 : _a.trim())) {
             return healthFail(`El proveedor ${req.kind} requiere API key.`, 'missing_api_key', req.kind, 'misconfigured');
         }
-        const base = openAiBase(req.baseUrl);
+        const base = openAiBase(req.baseUrl, req.kind, req.custom);
         const headers = {};
-        if ((_b = req.apiKey) === null || _b === void 0 ? void 0 : _b.trim())
-            headers.Authorization = `Bearer ${req.apiKey.trim()}`;
+        applyAuthHeaders(headers, req.apiKey, req.kind, req.custom);
+        const modelsPath = ((_c = (_b = req.custom) === null || _b === void 0 ? void 0 : _b.modelsPath) === null || _c === void 0 ? void 0 : _c.trim()) || '/models';
         try {
-            const res = yield fetchWithTimeout(`${base}/models`, { method: 'GET', headers }, 20000);
+            const res = yield fetchWithTimeout(joinUrl(base, modelsPath), { method: 'GET', headers }, 20000);
             const text = yield res.text();
             if (!res.ok) {
                 const mapped = mapHttpStatus(res.status, text, req.kind);
                 return healthFail(mapped.error, mapped.errorCode, req.kind);
             }
             const data = JSON.parse(text);
-            const models = ((_c = data.data) !== null && _c !== void 0 ? _c : []).map((m) => m.id).filter(Boolean);
+            const models = ((_d = data.data) !== null && _d !== void 0 ? _d : []).map((m) => m.id).filter(Boolean);
             return { status: 'healthy', models, baseUrl: base, provider: req.kind };
         }
         catch (err) {
@@ -469,12 +514,22 @@ function healthOllama(req) {
 }
 function aiHealth(req) {
     return __awaiter(this, void 0, void 0, function* () {
+        var _a;
         if (!req.kind)
             return healthFail('Falta el tipo de proveedor.', 'bad_request', 'openai-compatible', 'misconfigured');
         if (!normalizeBase(req.baseUrl)) {
             return healthFail('Falta la URL base.', 'missing_base_url', req.kind, 'misconfigured');
         }
+        const style = (_a = req.custom) === null || _a === void 0 ? void 0 : _a.apiStyle;
         try {
+            if (style === 'ollama' || (!style && req.kind === 'ollama'))
+                return yield healthOllama(req);
+            if (style === 'anthropic' || (!style && req.kind === 'anthropic'))
+                return yield healthAnthropic(req);
+            if (style === 'gemini' || (!style && req.kind === 'gemini'))
+                return yield healthGemini(req);
+            if (style === 'openai' || (!style && isOpenAiCompatible(req.kind)))
+                return yield healthOpenAi(req);
             if (req.kind === 'ollama')
                 return yield healthOllama(req);
             if (req.kind === 'anthropic')

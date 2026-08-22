@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { X, FolderOpen, Save, Music2, AudioLines, Settings2, Keyboard, ListOrdered, Shield, Bot } from 'lucide-react'
+import { FolderOpen, Save, Music2, AudioLines, Settings2, Keyboard, ListOrdered, Shield, Bot } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import type { DAWState } from '../../shared/src/types/state'
 import { ACCIONES_ATAJO, ATAJOS_POR_DEFECTO } from '../../shared/src'
@@ -11,10 +11,16 @@ import {
   upsertProviderModel,
   createProviderProfile,
   getActiveProvider,
+  providerNeedsApiKey,
+  toAiHealthPayload,
+  DEFAULT_CUSTOM_OPENAI,
   PROVIDER_PRESETS,
   type AiSettings,
   type AiProviderKind,
   type AiProviderProfile,
+  type AiProviderCustom,
+  type AiApiStyle,
+  type AiAuthStyle,
 } from '@/src/lib/ai-settings'
 import { JasWaveLogo } from '@/components/brand'
 
@@ -51,6 +57,116 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
         {label}
       </label>
       {children}
+    </div>
+  )
+}
+
+const INPUT =
+  'rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber'
+const MONO = `${INPUT} font-mono`
+
+/** Campos avanzados para un proveedor personalizado / no listado. */
+function CustomProviderFields({
+  value,
+  onChange,
+}: {
+  value: AiProviderCustom
+  onChange: (next: AiProviderCustom) => void
+}) {
+  const headersText = useMemo(
+    () => JSON.stringify(value.extraHeaders ?? {}, null, 0),
+    [value.extraHeaders],
+  )
+  const [headersDraft, setHeadersDraft] = useState(headersText)
+  useEffect(() => {
+    setHeadersDraft(headersText)
+  }, [headersText])
+
+  const patch = (partial: Partial<AiProviderCustom>) => onChange({ ...value, ...partial })
+
+  return (
+    <div className="flex flex-col gap-3 rounded-md border border-dashed border-border/80 bg-background/30 p-2.5">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Parámetros del endpoint (proveedor personalizado)
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Estilo de API">
+          <select
+            value={value.apiStyle ?? 'openai'}
+            onChange={(e) => patch({ apiStyle: e.target.value as AiApiStyle })}
+            className={INPUT}
+          >
+            <option value="openai">OpenAI-compatible</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="gemini">Gemini</option>
+            <option value="ollama">Ollama</option>
+          </select>
+        </Field>
+        <Field label="Auth">
+          <select
+            value={value.authStyle ?? 'bearer'}
+            onChange={(e) => patch({ authStyle: e.target.value as AiAuthStyle })}
+            className={INPUT}
+          >
+            <option value="bearer">Bearer (Authorization)</option>
+            <option value="x-api-key">x-api-key</option>
+            <option value="none">Sin auth</option>
+          </select>
+        </Field>
+        <Field label="Ruta chat">
+          <input
+            type="text"
+            value={value.chatPath ?? '/chat/completions'}
+            onChange={(e) => patch({ chatPath: e.target.value })}
+            className={MONO}
+            placeholder="/chat/completions"
+          />
+        </Field>
+        <Field label="Ruta modelos">
+          <input
+            type="text"
+            value={value.modelsPath ?? '/models'}
+            onChange={(e) => patch({ modelsPath: e.target.value })}
+            className={MONO}
+            placeholder="/models"
+          />
+        </Field>
+      </div>
+      <label className="flex items-center gap-2 text-[11px] text-foreground">
+        <input
+          type="checkbox"
+          checked={value.appendV1 === true}
+          onChange={(e) => patch({ appendV1: e.target.checked })}
+        />
+        Añadir /v1 a la URL base si falta
+      </label>
+      <label className="flex items-center gap-2 text-[11px] text-foreground">
+        <input
+          type="checkbox"
+          checked={value.needsApiKey !== false}
+          onChange={(e) => patch({ needsApiKey: e.target.checked })}
+        />
+        Requiere API key
+      </label>
+      <Field label="Cabeceras extra (JSON)">
+        <input
+          type="text"
+          value={headersDraft}
+          onChange={(e) => setHeadersDraft(e.target.value)}
+          onBlur={() => {
+            try {
+              const parsed = JSON.parse(headersDraft || '{}') as Record<string, string>
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                patch({ extraHeaders: parsed })
+              }
+            } catch {
+              setHeadersDraft(headersText)
+            }
+          }}
+          className={MONO}
+          placeholder='{"HTTP-Referer":"https://…"}'
+        />
+      </Field>
     </div>
   )
 }
@@ -617,15 +733,24 @@ function PermisosTab() {
 function AiTab() {
   const [settings, setSettings] = useState<AiSettings>(() => loadAiSettings())
   const [newModel, setNewModel] = useState('')
-  const [addKind, setAddKind] = useState<AiProviderKind>('openai')
   const [remoteModels, setRemoteModels] = useState<string[]>([])
   const [status, setStatus] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle')
   const [statusMsg, setStatusMsg] = useState('')
   const [statusHint, setStatusHint] = useState('')
   const [showKey, setShowKey] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [draftKind, setDraftKind] = useState<AiProviderKind>('openai-compatible')
+  const [draftName, setDraftName] = useState('Mi proveedor')
+  const [draftBaseUrl, setDraftBaseUrl] = useState(PROVIDER_PRESETS['openai-compatible'].defaultBaseUrl)
+  const [draftApiKey, setDraftApiKey] = useState('')
+  const [draftModel, setDraftModel] = useState('')
+  const [draftShowKey, setDraftShowKey] = useState(false)
+  const [draftCustom, setDraftCustom] = useState<AiProviderCustom>({ ...DEFAULT_CUSTOM_OPENAI })
 
   const active = useMemo(() => getActiveProvider(settings), [settings])
   const preset = PROVIDER_PRESETS[active.kind]
+  const draftPreset = PROVIDER_PRESETS[draftKind]
 
   const persist = (next: AiSettings) => {
     setSettings(next)
@@ -633,9 +758,36 @@ function AiTab() {
     window.dispatchEvent(new CustomEvent('jaswave-ai-settings-changed'))
   }
 
-  const updateActive = (patch: Partial<AiProviderProfile>) => {
-    const providers = settings.providers.map((p) => (p.id === active.id ? { ...p, ...patch } : p))
+  const updateProvider = (id: string, patch: Partial<AiProviderProfile>) => {
+    const providers = settings.providers.map((p) => (p.id === id ? { ...p, ...patch } : p))
     persist({ ...settings, providers })
+  }
+
+  const allModelsFor = (provider: AiProviderProfile) => {
+    const set = new Set<string>([
+      ...(provider.id === active.id ? remoteModels : []),
+      ...provider.models,
+      ...PROVIDER_PRESETS[provider.kind].suggestedModels,
+      provider.selectedModel,
+    ])
+    return Array.from(set).filter(Boolean).sort((a, b) => a.localeCompare(b))
+  }
+
+  const resetDraft = (kind: AiProviderKind = 'openai-compatible') => {
+    const p = PROVIDER_PRESETS[kind]
+    setDraftKind(kind)
+    setDraftName(kind === 'openai-compatible' ? 'Mi proveedor' : p.label)
+    setDraftBaseUrl(p.defaultBaseUrl)
+    setDraftApiKey('')
+    setDraftModel(p.defaultModel)
+    setDraftShowKey(false)
+    setDraftCustom(
+      kind === 'openai-compatible'
+        ? { ...DEFAULT_CUSTOM_OPENAI }
+        : kind === 'kilocode'
+          ? { apiStyle: 'openai', appendV1: false, authStyle: 'bearer', needsApiKey: true }
+          : {},
+    )
   }
 
   const refreshHealth = async (provider: AiProviderProfile = active) => {
@@ -649,11 +801,7 @@ function AiTab() {
       return
     }
     try {
-      const result = await window.electron.aiHealth({
-        kind: provider.kind,
-        baseUrl: provider.baseUrl,
-        apiKey: provider.apiKey,
-      })
+      const result = await window.electron.aiHealth(toAiHealthPayload(provider))
       const models = Array.isArray(result.models)
         ? result.models
             .map((m) => (typeof m === 'string' ? m : String((m as { name?: string })?.name ?? m)))
@@ -680,7 +828,7 @@ function AiTab() {
       } else {
         setStatus('error')
         setStatusMsg(result.error || `No se pudo conectar con ${PROVIDER_PRESETS[provider.kind].label}.`)
-        setStatusHint(result.hint || 'Revisa URL, API key y modelo en esta pestaña.')
+        setStatusHint(result.hint || 'Revisa URL, API key y modelo en el catálogo.')
       }
     } catch (err) {
       setStatus('error')
@@ -695,375 +843,547 @@ function AiTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.activeProviderId])
 
-  const allModels = useMemo(() => {
-    const set = new Set<string>([
-      ...remoteModels,
-      ...active.models,
-      ...preset.suggestedModels,
-      active.selectedModel,
-    ])
-    return Array.from(set).filter(Boolean).sort((a, b) => a.localeCompare(b))
-  }, [remoteModels, active.models, active.selectedModel, preset.suggestedModels])
-
-  const addModel = () => {
+  const addModelToProvider = (providerId: string) => {
     const name = newModel.trim()
     if (!name) {
       setStatus('error')
       setStatusMsg('Escribe un nombre de modelo antes de añadir.')
-      setStatusHint('Ejemplos: gpt-4o-mini, claude-sonnet-4-20250514, gemini-2.0-flash')
+      setStatusHint('Ejemplos: anthropic/claude-sonnet-4.5, gpt-4o-mini, llama3.2')
       return
     }
-    const updated = upsertProviderModel(active, name)
-    const providers = settings.providers.map((p) => (p.id === active.id ? updated : p))
-    persist({ ...settings, providers })
+    const target = settings.providers.find((p) => p.id === providerId)
+    if (!target) return
+    const updated = upsertProviderModel(target, name)
+    updateProvider(providerId, updated)
     setNewModel('')
     setStatus('ok')
-    setStatusMsg(`Modelo «${name}» añadido y seleccionado.`)
+    setStatusMsg(`Modelo «${name}» añadido a «${target.name}».`)
     setStatusHint('')
   }
 
-  const removeModel = (name: string) => {
-    const models = active.models.filter((m) => m !== name)
+  const removeModelFrom = (providerId: string, name: string) => {
+    const target = settings.providers.find((p) => p.id === providerId)
+    if (!target) return
+    const models = target.models.filter((m) => m !== name)
     const selectedModel =
-      active.selectedModel === name ? models[0] ?? preset.defaultModel : active.selectedModel
-    updateActive({ models, selectedModel })
+      target.selectedModel === name
+        ? models[0] ?? PROVIDER_PRESETS[target.kind].defaultModel
+        : target.selectedModel
+    updateProvider(providerId, { models, selectedModel })
   }
 
-  const addProvider = () => {
-    const profile = createProviderProfile(addKind)
-    persist({
-      ...settings,
-      providers: [...settings.providers, profile],
-      activeProviderId: profile.id,
-    })
-    setStatus('idle')
-    setStatusMsg(`Proveedor «${profile.name}» añadido. Configura la API key y prueba la conexión.`)
-    setStatusHint(PROVIDER_PRESETS[addKind].hint)
-  }
-
-  const removeActiveProvider = () => {
+  const removeProvider = (id: string) => {
     if (settings.providers.length <= 1) {
       setStatus('error')
       setStatusMsg('Debes conservar al menos un proveedor.')
       setStatusHint('Añade otro proveedor antes de eliminar este.')
       return
     }
-    const providers = settings.providers.filter((p) => p.id !== active.id)
-    persist({ ...settings, providers, activeProviderId: providers[0].id })
+    const providers = settings.providers.filter((p) => p.id !== id)
+    const nextActive =
+      settings.activeProviderId === id ? providers[0]!.id : settings.activeProviderId
+    if (editingId === id) setEditingId(null)
+    persist({ ...settings, providers, activeProviderId: nextActive })
   }
+
+  const submitNewProvider = () => {
+    const name = draftName.trim() || draftPreset.label
+    const baseUrl = draftBaseUrl.trim() || draftPreset.defaultBaseUrl
+    const model = draftModel.trim() || draftPreset.defaultModel
+    const needsKey =
+      draftKind === 'openai-compatible'
+        ? draftCustom.needsApiKey !== false
+        : draftPreset.needsApiKey
+    if (needsKey && !draftApiKey.trim()) {
+      setStatus('error')
+      setStatusMsg(`«${name}» requiere API key para guardarse.`)
+      setStatusHint(draftPreset.hint)
+      return
+    }
+    if (!baseUrl) {
+      setStatus('error')
+      setStatusMsg('Indica la URL base del proveedor.')
+      setStatusHint('Ejemplo: https://api.ejemplo.com/v1')
+      return
+    }
+    if (!model) {
+      setStatus('error')
+      setStatusMsg('Indica al menos un modelo inicial.')
+      setStatusHint('El id exacto que espera el proveedor (ej. anthropic/claude-sonnet-4.5).')
+      return
+    }
+    const profile = createProviderProfile(draftKind, {
+      name,
+      baseUrl,
+      apiKey: draftApiKey.trim(),
+      models: Array.from(new Set([model, ...draftPreset.suggestedModels])),
+      selectedModel: model,
+      custom:
+        draftKind === 'openai-compatible' || Object.keys(draftCustom).length > 0
+          ? draftCustom
+          : undefined,
+    })
+    persist({
+      ...settings,
+      providers: [...settings.providers, profile],
+      activeProviderId: profile.id,
+    })
+    setShowAddForm(false)
+    setEditingId(profile.id)
+    resetDraft('openai-compatible')
+    setStatus('ok')
+    setStatusMsg(`Proveedor «${profile.name}» añadido al catálogo.`)
+    setStatusHint('Pulsa «Probar» para validar la conexión.')
+  }
+
+  const inputClass = INPUT
+  const monoClass = MONO
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-3 rounded-md border border-border bg-panel-raised/40 px-3 py-2.5">
-        <JasWaveLogo className="h-14 w-auto max-w-[160px] shrink-0" alt="JasWave IA" />
+      <div className="flex items-center gap-3 rounded-md border border-border bg-panel-raised/40 px-3 py-2">
+        <JasWaveLogo className="h-12 w-auto max-w-[140px] shrink-0" alt="JasWave IA" />
         <div className="min-w-0">
           <div className="text-[13px] font-semibold text-foreground">Asistente Jas</div>
           <p className="text-[11px] text-muted-foreground">
-            OpenAI, Anthropic, Gemini, Ollama, OpenRouter, Kilo Code u otro endpoint compatible.
+            Catálogo compacto · edita solo al expandir · cambia modelo desde el chat
           </p>
         </div>
       </div>
 
-      <Field label="Proveedor activo">
-        <div className="flex flex-wrap gap-2">
-          <select
-            value={settings.activeProviderId}
-            onChange={(e) => persist({ ...settings, activeProviderId: e.target.value })}
-            className="min-w-0 flex-1 rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
-          >
-            {settings.providers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({PROVIDER_PRESETS[p.kind].label})
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={removeActiveProvider}
-            className="rounded-md border border-border px-2.5 py-1.5 text-[11px] text-muted-foreground hover:text-destructive"
-          >
-            Quitar
-          </button>
+      <section className="flex flex-col gap-2 rounded-lg border border-border bg-panel-raised/20 p-2.5">
+        <div className="flex items-center justify-between gap-2 px-0.5">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-accent-amber">
+            Catálogo ({settings.providers.length})
+          </div>
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span>Temp</span>
+            <input
+              type="number"
+              min={0}
+              max={2}
+              step={0.1}
+              value={settings.temperature}
+              onChange={(e) => persist({ ...settings, temperature: Number(e.target.value) })}
+              className={`w-14 ${monoClass} py-1`}
+            />
+            <span>Tokens</span>
+            <input
+              type="number"
+              min={256}
+              max={128000}
+              step={256}
+              value={settings.maxTokens}
+              onChange={(e) => persist({ ...settings, maxTokens: Number(e.target.value) })}
+              className={`w-20 ${monoClass} py-1`}
+            />
+          </div>
         </div>
-      </Field>
 
-      <div className="flex flex-wrap items-end gap-2">
-        <Field label="Añadir proveedor">
-          <select
-            value={addKind}
-            onChange={(e) => setAddKind(e.target.value as AiProviderKind)}
-            className="rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
-          >
-            {(Object.keys(PROVIDER_PRESETS) as AiProviderKind[]).map((k) => (
-              <option key={k} value={k}>
-                {PROVIDER_PRESETS[k].label}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <button
-          type="button"
-          onClick={addProvider}
-          className="rounded-md bg-accent-amber/20 px-2.5 py-1.5 text-[11px] font-semibold text-accent-amber hover:bg-accent-amber/30"
-        >
-          Añadir
-        </button>
-      </div>
+        <div className="overflow-hidden rounded-md border border-border">
+          {settings.providers.map((p) => {
+            const isActive = p.id === settings.activeProviderId
+            const isOpen = editingId === p.id
+            const kindLabel = PROVIDER_PRESETS[p.kind].label
+            return (
+              <div key={p.id} className="border-b border-border/60 last:border-b-0">
+                <div
+                  className={`flex items-center gap-1.5 px-2 py-1.5 ${
+                    isActive ? 'bg-accent-amber/10' : 'bg-background/40'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    title="Usar en el chat"
+                    onClick={() => persist({ ...settings, activeProviderId: p.id })}
+                    className={`size-2.5 shrink-0 rounded-full ${
+                      isActive ? 'bg-accent-amber' : 'bg-border hover:bg-muted-foreground'
+                    }`}
+                    aria-label={isActive ? 'Proveedor activo' : 'Activar proveedor'}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(isOpen ? null : p.id)}
+                    className="min-w-0 flex-1 truncate text-left"
+                  >
+                    <span className="block truncate text-[12px] font-medium text-foreground">
+                      {p.name}
+                      {isActive ? (
+                        <span className="ml-1.5 text-[9px] font-semibold uppercase tracking-wide text-accent-amber">
+                          activo
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="block truncate text-[10px] text-muted-foreground">
+                      {kindLabel} · {p.models.length} modelo{p.models.length === 1 ? '' : 's'} ·{' '}
+                      {p.selectedModel || 'sin modelo'}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(isOpen ? null : p.id)}
+                    className="shrink-0 rounded px-2 py-1 text-[10px] font-medium text-muted-foreground hover:bg-panel-raised hover:text-foreground"
+                  >
+                    {isOpen ? 'Cerrar' : 'Editar'}
+                  </button>
+                </div>
 
-      <Field label="Nombre en la app">
-        <input
-          type="text"
-          value={active.name}
-          onChange={(e) => updateActive({ name: e.target.value })}
-          onBlur={() => persist(settings)}
-          className="rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
-        />
-      </Field>
+                {isOpen ? (
+                  <div className="space-y-3 border-t border-border/50 bg-panel-raised/30 p-3">
+                    <Field label="Nombre">
+                      <input
+                        type="text"
+                        value={p.name}
+                        onChange={(e) => updateProvider(p.id, { name: e.target.value })}
+                        className={inputClass}
+                      />
+                    </Field>
+                    <Field label="URL base">
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={p.baseUrl}
+                          onChange={(e) => updateProvider(p.id, { baseUrl: e.target.value })}
+                          placeholder={PROVIDER_PRESETS[p.kind].defaultBaseUrl}
+                          className={`min-w-0 flex-1 ${monoClass}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            persist({ ...settings, activeProviderId: p.id })
+                            void refreshHealth(p)
+                          }}
+                          className="shrink-0 rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:bg-background"
+                        >
+                          Probar
+                        </button>
+                      </div>
+                      <p className="mt-1 text-[10px] text-muted-foreground">
+                        {PROVIDER_PRESETS[p.kind].hint}
+                      </p>
+                    </Field>
 
-      <Field label="URL base">
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={active.baseUrl}
-            onChange={(e) => {
-              const baseUrl = e.target.value
-              setSettings((s) => ({
-                ...s,
-                providers: s.providers.map((p) => (p.id === active.id ? { ...p, baseUrl } : p)),
-              }))
-            }}
-            onBlur={() => persist(settings)}
-            placeholder={preset.defaultBaseUrl}
-            className="min-w-0 flex-1 rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] font-mono text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
-          />
+                    {providerNeedsApiKey(p) || p.kind === 'openai-compatible' ? (
+                      <Field label={providerNeedsApiKey(p) ? 'API key' : 'API key (opcional)'}>
+                        <div className="flex gap-2">
+                          <input
+                            type={showKey ? 'text' : 'password'}
+                            value={p.apiKey}
+                            onChange={(e) => updateProvider(p.id, { apiKey: e.target.value })}
+                            className={`min-w-0 flex-1 ${MONO}`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowKey((v) => !v)}
+                            className="shrink-0 rounded-md border border-border px-2.5 py-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+                          >
+                            {showKey ? 'Ocultar' : 'Ver'}
+                          </button>
+                        </div>
+                      </Field>
+                    ) : null}
+
+                    {(p.kind === 'openai-compatible' || p.custom) && (
+                      <CustomProviderFields
+                        value={p.custom ?? { ...DEFAULT_CUSTOM_OPENAI }}
+                        onChange={(custom) => updateProvider(p.id, { custom })}
+                      />
+                    )}
+
+                    {p.id === active.id && (status !== 'idle' || statusMsg) ? (
+                      <div
+                        className={`rounded-md border px-3 py-2 text-[11px] ${
+                          status === 'ok'
+                            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                            : status === 'error'
+                              ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                              : 'border-border bg-panel-raised/40 text-muted-foreground'
+                        }`}
+                        role="status"
+                      >
+                        <div className="font-medium">
+                          {status === 'checking' ? 'Comprobando…' : statusMsg || '—'}
+                        </div>
+                        {statusHint ? <div className="mt-1 opacity-90">{statusHint}</div> : null}
+                      </div>
+                    ) : null}
+
+                    <Field label="Modelo por defecto">
+                      <select
+                        value={p.selectedModel}
+                        onChange={(e) => updateProvider(p.id, { selectedModel: e.target.value })}
+                        className={`w-full ${inputClass}`}
+                      >
+                        {allModelsFor(p).map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+
+                    <Field label="Modelos guardados">
+                      <div className="mb-2 max-h-[12vh] overflow-y-auto rounded-md border border-border">
+                        {p.models.length === 0 ? (
+                          <div className="px-3 py-2 text-[11px] text-muted-foreground">Sin modelos</div>
+                        ) : (
+                          p.models.map((m) => (
+                            <div
+                              key={m}
+                              className="flex items-center gap-2 border-b border-border/50 px-3 py-1.5 text-[12px] last:border-b-0"
+                            >
+                              <button
+                                type="button"
+                                title="Usar este modelo"
+                                onClick={() => {
+                                  const providers = settings.providers.map((x) =>
+                                    x.id === p.id ? { ...x, selectedModel: m } : x,
+                                  )
+                                  persist({ ...settings, providers, activeProviderId: p.id })
+                                }}
+                                className={`min-w-0 flex-1 truncate text-left ${
+                                  p.selectedModel === m ? 'font-medium text-accent-amber' : 'text-foreground'
+                                }`}
+                              >
+                                {m}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeModelFrom(p.id, m)}
+                                className="text-[10px] text-muted-foreground hover:text-destructive"
+                              >
+                                Quitar
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={newModel}
+                          onChange={(e) => setNewModel(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') addModelToProvider(p.id)
+                          }}
+                          placeholder="Añadir id de modelo…"
+                          className={`min-w-0 flex-1 ${inputClass}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => addModelToProvider(p.id)}
+                          className="shrink-0 rounded-md bg-accent-amber/20 px-2.5 py-1.5 text-[11px] font-semibold text-accent-amber hover:bg-accent-amber/30"
+                        >
+                          Añadir
+                        </button>
+                      </div>
+                    </Field>
+
+                    <div className="flex justify-between gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => persist({ ...settings, activeProviderId: p.id })}
+                        className="rounded-md border border-border px-2.5 py-1.5 text-[11px] text-foreground hover:bg-panel-raised"
+                      >
+                        Usar en el chat
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeProvider(p.id)}
+                        className="rounded-md border border-border px-2.5 py-1.5 text-[11px] text-muted-foreground hover:border-destructive/40 hover:text-destructive"
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )
+          })}
+        </div>
+      </section>
+
+      {/* ——— FORMULARIO DE ALTA ——— */}
+      <section className="flex flex-col gap-3 rounded-lg border border-accent-amber/30 bg-accent-amber/5 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-accent-amber">
+              Añadir proveedor
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Solo se abre al crear uno nuevo; no mezcla con el catálogo.
+            </p>
+          </div>
           <button
             type="button"
             onClick={() => {
-              persist(settings)
-              void refreshHealth(getActiveProvider(settings))
+              if (!showAddForm) resetDraft(draftKind)
+              setShowAddForm((v) => !v)
             }}
-            className="shrink-0 rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:bg-background"
-          >
-            Probar
-          </button>
-        </div>
-        <p className="mt-1 text-[10px] text-muted-foreground">{preset.hint}</p>
-      </Field>
-
-      {preset.needsApiKey || active.kind === 'openai-compatible' ? (
-        <Field label={preset.needsApiKey ? 'API key (obligatoria)' : 'API key (opcional)'}>
-          <div className="flex gap-2">
-            <input
-              type={showKey ? 'text' : 'password'}
-              value={active.apiKey}
-              onChange={(e) => {
-                const apiKey = e.target.value
-                setSettings((s) => ({
-                  ...s,
-                  providers: s.providers.map((p) => (p.id === active.id ? { ...p, apiKey } : p)),
-                }))
-              }}
-              onBlur={() => persist(settings)}
-              placeholder={preset.needsApiKey ? 'sk-… / clave del proveedor' : 'si el endpoint la pide'}
-              className="min-w-0 flex-1 rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] font-mono text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
-            />
-            <button
-              type="button"
-              onClick={() => setShowKey((v) => !v)}
-              className="shrink-0 rounded-md border border-border px-2.5 py-1.5 text-[11px] text-muted-foreground hover:text-foreground"
-            >
-              {showKey ? 'Ocultar' : 'Ver'}
-            </button>
-          </div>
-          <p className="mt-1 text-[10px] text-muted-foreground">
-            Se guarda solo en este equipo (localStorage). No se sube a ningún servidor de JasWave.
-          </p>
-        </Field>
-      ) : null}
-
-      <div
-        className={`rounded-md border px-3 py-2 text-[11px] ${
-          status === 'ok'
-            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-            : status === 'error'
-              ? 'border-destructive/40 bg-destructive/10 text-destructive'
-              : 'border-border bg-panel-raised/40 text-muted-foreground'
-        }`}
-        role="status"
-        aria-live="polite"
-      >
-        <div className="font-medium">
-          {status === 'checking' ? 'Comprobando proveedor…' : statusMsg || 'Pulsa «Probar» para validar la conexión.'}
-        </div>
-        {statusHint ? <div className="mt-1 opacity-90">{statusHint}</div> : null}
-      </div>
-
-      <Field label="Modelo activo">
-        <select
-          value={active.selectedModel}
-          onChange={(e) => updateActive({ selectedModel: e.target.value })}
-          className="w-full rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
-        >
-          {allModels.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
-      </Field>
-
-      <div className="flex gap-4">
-        <Field label="Temperatura">
-          <input
-            type="number"
-            min={0}
-            max={2}
-            step={0.1}
-            value={settings.temperature}
-            onChange={(e) => setSettings((s) => ({ ...s, temperature: Number(e.target.value) }))}
-            onBlur={() => persist(settings)}
-            className="w-24 rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] font-mono text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
-          />
-        </Field>
-        <Field label="Max tokens">
-          <input
-            type="number"
-            min={256}
-            max={128000}
-            step={256}
-            value={settings.maxTokens}
-            onChange={(e) => setSettings((s) => ({ ...s, maxTokens: Number(e.target.value) }))}
-            onBlur={() => persist(settings)}
-            className="w-28 rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] font-mono text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
-          />
-        </Field>
-      </div>
-
-      <Field label="Añadir modelo">
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={newModel}
-            onChange={(e) => setNewModel(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') addModel()
-            }}
-            placeholder="id exacto del modelo del proveedor"
-            className="min-w-0 flex-1 rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
-          />
-          <button
-            type="button"
-            onClick={addModel}
             className="shrink-0 rounded-md bg-accent-amber/20 px-2.5 py-1.5 text-[11px] font-semibold text-accent-amber hover:bg-accent-amber/30"
           >
-            Añadir
+            {showAddForm ? 'Cerrar' : 'Nuevo'}
           </button>
         </div>
-      </Field>
 
-      {active.models.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Modelos del proveedor
-          </div>
-          <div className="max-h-[18vh] overflow-y-auto rounded-md border border-border">
-            {active.models.map((m) => (
-              <div
-                key={m}
-                className="flex items-center gap-2 border-b border-border/50 px-3 py-1.5 text-[12px] last:border-b-0"
+        {showAddForm ? (
+          <div className="flex flex-col gap-3 rounded-md border border-border bg-background/50 p-3">
+            <Field label="Tipo de proveedor">
+              <select
+                value={draftKind}
+                onChange={(e) => resetDraft(e.target.value as AiProviderKind)}
+                className={`w-full ${inputClass}`}
               >
-                <span className="min-w-0 flex-1 truncate text-foreground">{m}</span>
-                <button
-                  type="button"
-                  onClick={() => removeModel(m)}
-                  className="text-[10px] text-muted-foreground hover:text-destructive"
-                >
-                  Quitar
-                </button>
-              </div>
-            ))}
+                {(Object.keys(PROVIDER_PRESETS) as AiProviderKind[]).map((k) => (
+                  <option key={k} value={k}>
+                    {PROVIDER_PRESETS[k].label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="Nombre en la app">
+              <input
+                type="text"
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                placeholder={draftPreset.label}
+                className={inputClass}
+              />
+            </Field>
+
+            <Field label="URL base">
+              <input
+                type="text"
+                value={draftBaseUrl}
+                onChange={(e) => setDraftBaseUrl(e.target.value)}
+                placeholder={draftPreset.defaultBaseUrl}
+                className={monoClass}
+              />
+              <p className="mt-1 text-[10px] text-muted-foreground">{draftPreset.hint}</p>
+            </Field>
+
+            {draftPreset.needsApiKey ||
+            draftKind === 'openai-compatible' ||
+            draftCustom.needsApiKey !== false ? (
+              <Field label="API key">
+                <div className="flex gap-2">
+                  <input
+                    type={draftShowKey ? 'text' : 'password'}
+                    value={draftApiKey}
+                    onChange={(e) => setDraftApiKey(e.target.value)}
+                    className={`min-w-0 flex-1 ${monoClass}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setDraftShowKey((v) => !v)}
+                    className="shrink-0 rounded-md border border-border px-2.5 py-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+                  >
+                    {draftShowKey ? 'Ocultar' : 'Ver'}
+                  </button>
+                </div>
+              </Field>
+            ) : null}
+
+            {(draftKind === 'openai-compatible' || draftKind === 'kilocode') && (
+              <CustomProviderFields value={draftCustom} onChange={setDraftCustom} />
+            )}
+
+            <Field label="Modelo inicial">
+              <input
+                type="text"
+                value={draftModel}
+                onChange={(e) => setDraftModel(e.target.value)}
+                list="jaswave-draft-models"
+                placeholder={draftPreset.defaultModel}
+                className={monoClass}
+              />
+              <datalist id="jaswave-draft-models">
+                {draftPreset.suggestedModels.map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+            </Field>
+
+            <div className="flex flex-wrap justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddForm(false)
+                  resetDraft('openai-compatible')
+                }}
+                className="rounded-md border border-border px-2.5 py-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={submitNewProvider}
+                className="rounded-md bg-accent-amber px-3 py-1.5 text-[11px] font-semibold text-background hover:opacity-90"
+              >
+                Guardar en catálogo
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        ) : null}
+      </section>
     </div>
   )
 }
 
-export function ProjectSettingsDialog({ open, onClose }: ProjectSettingsDialogProps) {
-  const [tab, setTab] = useState<SettingsTab>('general')
-
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [open, onClose])
-
-  useEffect(() => {
-    if (open) setTab('general')
-  }, [open])
-
-  if (!open) return null
+export function SettingsPanel() {
+  const [tab, setTab] = useState<SettingsTab>('ia')
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div
-        className="flex w-full max-w-2xl flex-col rounded-lg border border-border bg-panel shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-border px-5 py-3">
-          <div className="flex items-center gap-2">
-            <Settings2 className="size-4 text-accent-amber" />
-            <span className="text-[14px] font-semibold text-foreground">Configuración</span>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-panel-raised hover:text-foreground"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
+    <div className="flex h-full min-h-0 flex-col bg-panel">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        <Settings2 className="size-4 text-accent-amber" />
+        <span className="text-[13px] font-semibold text-foreground">Configuración</span>
+        <span className="text-[10px] text-muted-foreground">Panel · arrastra pestaña / desacopla a otro monitor</span>
+      </div>
 
-        {/* Tabs */}
-        <div className="flex gap-1 border-b border-border px-5 pt-2">
-          {TABS.map((t) => {
-            const Icon = t.icon
-            return (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                className={`flex items-center gap-1.5 rounded-t-md px-3 py-2 text-[12px] font-medium transition-colors ${
-                  tab === t.id
-                    ? 'bg-panel-raised text-foreground border-b-2 border-accent-amber'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-panel-raised/50'
-                }`}
-              >
-                {t.id === 'ia' ? (
-                  <JasWaveLogo className="size-4" alt="" />
-                ) : (
-                  <Icon className="size-3.5" />
-                )}
-                {t.label}
-              </button>
-            )
-          })}
-        </div>
+      <div className="flex shrink-0 gap-0.5 overflow-x-auto border-b border-border px-2 pt-1">
+        {TABS.map((t) => {
+          const Icon = t.icon
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              className={`flex shrink-0 items-center gap-1.5 rounded-t-md px-2.5 py-1.5 text-[11px] font-medium transition-colors ${
+                tab === t.id
+                  ? 'bg-panel-raised text-foreground border-b-2 border-accent-amber'
+                  : 'text-muted-foreground hover:bg-panel-raised/50 hover:text-foreground'
+              }`}
+            >
+              {t.id === 'ia' ? <JasWaveLogo className="size-3.5" alt="" /> : <Icon className="size-3.5" />}
+              {t.label}
+            </button>
+          )
+        })}
+      </div>
 
-        {/* Tab content */}
-        <div className="overflow-y-auto px-5 py-4" style={{ maxHeight: '60vh' }}>
-          {tab === 'general' && <GeneralTab />}
-          {tab === 'audio' && <AudioTab />}
-          {tab === 'ia' && <AiTab />}
-          {tab === 'rutas' && <RutasTab />}
-          {tab === 'atajos' && <AtajosTab />}
-          {tab === 'comandos' && <ComandosTab />}
-          {tab === 'permisos' && <PermisosTab />}
-        </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+        {tab === 'general' && <GeneralTab />}
+        {tab === 'audio' && <AudioTab />}
+        {tab === 'ia' && <AiTab />}
+        {tab === 'rutas' && <RutasTab />}
+        {tab === 'atajos' && <AtajosTab />}
+        {tab === 'comandos' && <ComandosTab />}
+        {tab === 'permisos' && <PermisosTab />}
       </div>
     </div>
   )
+}
+
+/** @deprecated Preferir el panel dockeable `settings`. Redirige al workspace. */
+export function ProjectSettingsDialog({ open, onClose }: ProjectSettingsDialogProps) {
+  useEffect(() => {
+    if (!open) return
+    window.dispatchEvent(
+      new CustomEvent('jaswave-open-tool', { detail: { toolId: 'settings' as const } }),
+    )
+    onClose()
+  }, [open, onClose])
+  return null
 }

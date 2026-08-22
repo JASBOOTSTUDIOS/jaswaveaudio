@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import type { AudioTrack } from '../../shared/src/types/tracks'
 import type { Clip } from '../../shared/src/types/clips'
@@ -28,6 +28,15 @@ import { FaderControl, KnobControl } from './ui/controls'
 import { ConfirmDialog } from './ui/confirm-dialog'
 import { requestOpenTool } from '@/src/workspace/types'
 import { audioEngine } from '@/lib/audio-engine'
+import { hydratePluginCatalog } from '@/src/lib/plugin/catalog-store'
+import { pluginManager } from '@/src/lib/plugin-host'
+import {
+  descriptorToPluginInfo,
+  softPadPluginInfo,
+} from '@/src/lib/plugin/plugin-info-adapter'
+import { openPluginEditor } from '@/src/lib/plugin/plugin-editor-store'
+import { openFxChain } from '@/src/lib/plugin/fx-chain-store'
+import type { PluginDescriptor } from '@/src/lib/plugin/types'
 
 const TRACK_COLORS = [
   '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899',
@@ -39,23 +48,7 @@ const TRACK_COLORS = [
 type InspectorTab = 'general' | 'audio' | 'apariencia' | 'plugins' | 'clip'
 
 function makeSoftPadPlugin(): PluginInfo {
-  return {
-    id: `plugin-softpad-${Date.now().toString(36)}`,
-    nombre: 'JasWave Soft Pad',
-    fabricante: 'JasWave',
-    tipo: 'instrumento',
-    bypass: false,
-    parametros: [],
-    estado: 'cargado',
-    version: '1.0.0',
-    wet: 1,
-    latencia: 0,
-    categoria: 'synth',
-    autor: 'JasWave',
-    licencia: 'interno',
-    descripcion: 'Sintetizador suave de prueba para previsualizar MIDI (triangle + lowpass).',
-    ui: { ancho: 320, alto: 180, personalizable: false },
-  }
+  return softPadPluginInfo()
 }
 
 function TabButton({
@@ -98,6 +91,14 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
 
   const [tab, setTab] = useState<InspectorTab>('general')
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [catalog, setCatalog] = useState<PluginDescriptor[]>([])
+  const [pickId, setPickId] = useState('jaswave.softpad')
+
+  useEffect(() => {
+    hydratePluginCatalog()
+    pluginManager.ensureBuiltins()
+    setCatalog(pluginManager.listAvailable())
+  }, [tab])
 
   if (!trackId || !track) {
     return (
@@ -394,26 +395,75 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
 
         {activeTab === 'plugins' && (
           <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-foreground">Cadena de efectos / instrumento</span>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-foreground">Cadena de plugins</span>
               <button
                 type="button"
-                onClick={() => {
-                  const next = [...plugins, makeSoftPadPlugin()]
-                  updateTrack({ plugins: next })
-                  audioEngine.ensureContext()
-                }}
-                className="inline-flex items-center gap-1 rounded-md bg-accent-amber/15 px-2 py-1 text-[10px] font-semibold text-accent-amber hover:bg-accent-amber/25"
+                onClick={() => openFxChain(track.id, 'right')}
+                className="text-[10px] text-accent-amber hover:underline"
               >
-                <Plus className="size-3" />
-                Soft Pad
+                Abrir FX Chain
               </button>
             </div>
+
+            <div className="flex flex-col gap-1.5 rounded-md border border-border bg-panel-raised/40 p-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Añadir del catálogo
+              </span>
+              <div className="flex gap-1">
+                <select
+                  value={pickId}
+                  onChange={(e) => setPickId(e.target.value)}
+                  className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1.5 text-[11px] text-foreground"
+                >
+                  {catalog.map((d) => (
+                    <option key={d.pluginId} value={d.pluginId}>
+                      {d.name}
+                      {d.format === 'vst3' ? ' (VST3)' : ''}
+                      {!d.hostReady && d.format !== 'builtin' ? ' · pendiente' : ''}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void (async () => {
+                      const d = catalog.find((x) => x.pluginId === pickId)
+                      const info = d
+                        ? descriptorToPluginInfo(d)
+                        : pickId === 'jaswave.softpad'
+                          ? makeSoftPadPlugin()
+                          : null
+                      if (!info) return
+                      await tienda.executor.execute('plugin.insert', {
+                        trackId: track.id,
+                        plugin: info,
+                      })
+                      if (info.nombre.includes('Soft Pad')) audioEngine.ensureContext()
+                      openPluginEditor({
+                        trackId: track.id,
+                        pluginId: info.id,
+                        pluginName: info.nombre,
+                        zone: 'right',
+                      })
+                    })()
+                  }}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-amber/15 px-2 py-1 text-[10px] font-semibold text-accent-amber hover:bg-accent-amber/25"
+                >
+                  <Plus className="size-3" />
+                  Añadir
+                </button>
+              </div>
+              <p className="text-[9px] text-muted-foreground">
+                Los VST3 aparecen tras escanear carpetas. Audio real pendiente del SDK; Soft Pad sí suena.
+              </p>
+            </div>
+
             {plugins.length === 0 ? (
               <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border px-4 py-8 text-center">
                 <Waves className="size-7 text-muted-foreground/40" />
                 <p className="text-[11px] text-muted-foreground">
-                  Sin plugins. Añade <strong>JasWave Soft Pad</strong> para previsualizar MIDI.
+                  Sin plugins en esta pista. Elige uno del catálogo arriba.
                 </p>
               </div>
             ) : (
@@ -424,33 +474,43 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                     className="flex items-start gap-2 rounded-md border border-border bg-panel-raised/60 px-2.5 py-2"
                   >
                     <Sparkles className="mt-0.5 size-3.5 shrink-0 text-accent-amber" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[12px] font-semibold text-foreground">{p.nombre}</div>
-                      <div className="text-[10px] text-muted-foreground">
-                        {p.fabricante} · {p.tipo} · {p.bypass ? 'bypass' : 'activo'}
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() =>
+                        openPluginEditor({
+                          trackId: track.id,
+                          pluginId: p.id,
+                          pluginName: p.nombre,
+                          zone: 'right',
+                        })
+                      }
+                      title="Abrir UI del plugin"
+                    >
+                      <div className="truncate text-[12px] font-semibold text-foreground hover:text-accent-amber">
+                        {p.nombre}
                       </div>
-                      {p.nombre.includes('Soft Pad') && (
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          {[60, 64, 67, 72].map((pitch) => (
-                            <button
-                              key={pitch}
-                              type="button"
-                              onPointerDown={() => audioEngine.noteOn(pitch, 95)}
-                              onPointerUp={() => audioEngine.noteOff(pitch)}
-                              onPointerLeave={() => audioEngine.noteOff(pitch)}
-                              className="rounded bg-background px-2 py-1 font-mono text-[10px] text-foreground ring-1 ring-border hover:ring-accent-amber"
-                            >
-                              {pitch}
-                            </button>
-                          ))}
+                      <div className="text-[10px] text-muted-foreground">
+                        {p.fabricante} · {p.tipo} · {p.estado}
+                        {p.bypass ? ' · bypass' : ''}
+                      </div>
+                      {p.descripcion ? (
+                        <div
+                          className="mt-0.5 truncate text-[9px] text-muted-foreground/80"
+                          title={p.descripcion}
+                        >
+                          {p.descripcion}
                         </div>
-                      )}
-                    </div>
+                      ) : null}
+                    </button>
                     <button
                       type="button"
                       title="Quitar"
                       onClick={() => {
-                        updateTrack({ plugins: plugins.filter((_, i) => i !== index) })
+                        void tienda.executor.execute('plugin.remove', {
+                          trackId: track.id,
+                          pluginInstanceId: p.id,
+                        })
                         audioEngine.allNotesOff()
                       }}
                       className="rounded p-1 text-muted-foreground hover:text-destructive"
@@ -461,13 +521,6 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 ))}
               </ul>
             )}
-            <button
-              type="button"
-              onClick={() => requestOpenTool('instruments')}
-              className="text-left text-[11px] text-accent-amber hover:underline"
-            >
-              Abrir panel Instrumentos →
-            </button>
           </div>
         )}
 

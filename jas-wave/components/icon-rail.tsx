@@ -14,17 +14,19 @@ import {
 import type { DockZone, ToolId } from '@/src/workspace/types'
 import { JasWaveAppIcon, JasWaveLogo } from '@/components/brand'
 
-const ITEMS: { id: ToolId | 'settings'; icon?: LucideIcon; label: string; brand?: 'logo' }[] = [
+const ITEMS: { id: ToolId; icon?: LucideIcon; label: string; brand?: 'logo' }[] = [
   { id: 'coproducer', brand: 'logo', label: 'Asistente Jas' },
   { id: 'library', icon: Library, label: 'Biblioteca' },
   { id: 'instruments', icon: Piano, label: 'Instrumentos' },
+  { id: 'fx-chain', icon: SlidersHorizontal, label: 'FX Chain' },
+  { id: 'plugin-editor', icon: SlidersHorizontal, label: 'Editor de plugin' },
   { id: 'arrange', icon: LayoutTemplate, label: 'Arrange' },
   { id: 'mixer', icon: SlidersHorizontal, label: 'Mixer' },
   { id: 'piano-roll', icon: Piano, label: 'Piano roll' },
   { id: 'meters', icon: Gauge, label: 'Medidores' },
   { id: 'routing', icon: GitBranch, label: 'Enrutamiento' },
   { id: 'track-detail', icon: SlidersHorizontal, label: 'Inspector' },
-  { id: 'settings', icon: Settings, label: 'Ajustes' },
+  { id: 'settings', icon: Settings, label: 'Configuración' },
 ]
 
 export function IconRail({
@@ -36,7 +38,7 @@ export function IconRail({
 }: {
   activeTool: ToolId | null
   undockedTools?: ToolId[]
-  onToolSelect: (id: ToolId | 'settings') => void
+  onToolSelect: (id: ToolId) => void
   onToggleZone: (zone: DockZone) => void
   zoneVisible: Record<DockZone, boolean>
 }) {
@@ -51,7 +53,7 @@ export function IconRail({
 
       {ITEMS.map(({ id, icon: Icon, label, brand }) => {
         const isActive = activeTool === id
-        const floating = id !== 'settings' && undockedTools.includes(id)
+        const floating = undockedTools.includes(id)
         return (
           <button
             key={id}

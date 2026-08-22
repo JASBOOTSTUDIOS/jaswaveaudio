@@ -1,6 +1,9 @@
 /**
  * Configuración multi-proveedor de IA (OpenAI, Anthropic, Gemini, Ollama, KiloCode, etc.).
  * Persistida en localStorage. Las claves API viven solo en el escritorio local.
+ *
+ * Los presets son plantillas. Cualquier proveedor no listado se integra como
+ * `openai-compatible` + `custom` (URL, paths, auth, headers, modelos propios).
  */
 
 export type AiProviderKind =
@@ -12,6 +15,27 @@ export type AiProviderKind =
   | 'kilocode'
   | 'openai-compatible'
 
+/** Cómo hablar con el endpoint (para proveedores no registrados). */
+export type AiApiStyle = 'openai' | 'anthropic' | 'gemini' | 'ollama'
+
+export type AiAuthStyle = 'bearer' | 'x-api-key' | 'none'
+
+/** Overrides por proveedor personalizado (no hardcodeados en el catálogo). */
+export type AiProviderCustom = { 
+  apiStyle?: AiApiStyle
+  /** Ruta relativa a la base, p.ej. `/chat/completions` */
+  chatPath?: string
+  /** Ruta para listar modelos, p.ej. `/models` */
+  modelsPath?: string
+  /** Si true fuerza `/v1`; si false no lo añade (p.ej. Kilo gateway). */
+  appendV1?: boolean
+  authStyle?: AiAuthStyle
+  /** Cabeceras extra (Organization, Referer, etc.) */
+  extraHeaders?: Record<string, string>
+  /** Si el endpoint exige API key aunque el kind base no lo haga. */
+  needsApiKey?: boolean
+}
+
 export type AiProviderProfile = {
   id: string
   kind: AiProviderKind
@@ -20,6 +44,8 @@ export type AiProviderProfile = {
   apiKey: string
   models: string[]
   selectedModel: string
+  /** Config libre para proveedores fuera del catálogo preset. */
+  custom?: AiProviderCustom
 }
 
 export type AiSettings = {
@@ -39,12 +65,14 @@ export type AiChatRequest = {
   apiKey?: string
   temperature?: number
   maxTokens?: number
+  custom?: AiProviderCustom
 }
 
 export type AiHealthRequest = {
   kind: AiProviderKind
   baseUrl: string
   apiKey?: string
+  custom?: AiProviderCustom
 }
 
 export type AiErrorCode =
@@ -139,20 +167,34 @@ export const PROVIDER_PRESETS: Record<
   },
   kilocode: {
     label: 'Kilo Code',
-    defaultBaseUrl: 'https://api.kilo.ai/v1',
-    defaultModel: 'kilocode/default',
+    defaultBaseUrl: 'https://api.kilo.ai/api/gateway',
+    defaultModel: 'anthropic/claude-sonnet-4.5',
     needsApiKey: true,
-    hint: 'API compatible con OpenAI. Ajusta la URL si tu despliegue es distinto.',
-    suggestedModels: ['kilocode/default'],
+    hint: 'Gateway OpenAI-compatible: https://api.kilo.ai/api/gateway (requiere API key de kilo.ai).',
+    suggestedModels: [
+      'anthropic/claude-sonnet-4.5',
+      'openai/gpt-4o-mini',
+      'google/gemini-2.0-flash',
+    ],
   },
   'openai-compatible': {
-    label: 'Compatible OpenAI (cualquier proveedor)',
+    label: 'Personalizado (cualquier API)',
     defaultBaseUrl: 'http://127.0.0.1:1234/v1',
     defaultModel: 'local-model',
     needsApiKey: false,
-    hint: 'LM Studio, vLLM, Together, Fireworks, Azure OpenAI, etc. Endpoint /v1/chat/completions.',
+    hint: 'Proveedor no listado: LM Studio, vLLM, Together, Azure, gateway propio… Define URL, modelo, key y paths.',
     suggestedModels: ['local-model'],
   },
+}
+
+export const DEFAULT_CUSTOM_OPENAI: AiProviderCustom = {
+  apiStyle: 'openai',
+  chatPath: '/chat/completions',
+  modelsPath: '/models',
+  appendV1: false,
+  authStyle: 'bearer',
+  needsApiKey: true,
+  extraHeaders: {},
 }
 
 function newId(): string {
@@ -161,11 +203,36 @@ function newId(): string {
     : `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function normalizeCustom(raw?: AiProviderCustom | null): AiProviderCustom | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const extraHeaders =
+    raw.extraHeaders && typeof raw.extraHeaders === 'object'
+      ? Object.fromEntries(
+          Object.entries(raw.extraHeaders)
+            .filter(([k, v]) => typeof k === 'string' && typeof v === 'string')
+            .map(([k, v]) => [k, String(v)]),
+        )
+      : undefined
+  return {
+    apiStyle: raw.apiStyle,
+    chatPath: raw.chatPath?.trim() || undefined,
+    modelsPath: raw.modelsPath?.trim() || undefined,
+    appendV1: typeof raw.appendV1 === 'boolean' ? raw.appendV1 : undefined,
+    authStyle: raw.authStyle,
+    needsApiKey: typeof raw.needsApiKey === 'boolean' ? raw.needsApiKey : undefined,
+    extraHeaders: extraHeaders && Object.keys(extraHeaders).length ? extraHeaders : undefined,
+  }
+}
+
 export function createProviderProfile(
   kind: AiProviderKind,
   overrides?: Partial<AiProviderProfile>,
 ): AiProviderProfile {
   const preset = PROVIDER_PRESETS[kind]
+  const custom =
+    kind === 'openai-compatible'
+      ? normalizeCustom({ ...DEFAULT_CUSTOM_OPENAI, ...overrides?.custom })
+      : normalizeCustom(overrides?.custom)
   return {
     id: overrides?.id ?? newId(),
     kind,
@@ -174,6 +241,46 @@ export function createProviderProfile(
     apiKey: overrides?.apiKey ?? '',
     models: overrides?.models ?? [...preset.suggestedModels],
     selectedModel: overrides?.selectedModel ?? preset.defaultModel,
+    custom,
+  }
+}
+
+export function providerNeedsApiKey(provider: AiProviderProfile): boolean {
+  if (provider.custom?.needsApiKey != null) return provider.custom.needsApiKey
+  return PROVIDER_PRESETS[provider.kind].needsApiKey
+}
+
+export function providerLabel(provider: AiProviderProfile): string {
+  if (provider.kind === 'openai-compatible') {
+    return provider.name?.trim() || PROVIDER_PRESETS['openai-compatible'].label
+  }
+  return PROVIDER_PRESETS[provider.kind].label
+}
+
+/** Arma el request de chat desde el perfil activo. */
+export function toAiChatPayload(
+  provider: AiProviderProfile,
+  messages: AiChatRequest['messages'],
+  opts: { temperature: number; maxTokens: number },
+): AiChatRequest {
+  return {
+    messages,
+    kind: provider.kind,
+    model: provider.selectedModel,
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    temperature: opts.temperature,
+    maxTokens: opts.maxTokens,
+    custom: provider.custom,
+  }
+}
+
+export function toAiHealthPayload(provider: AiProviderProfile): AiHealthRequest {
+  return {
+    kind: provider.kind,
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    custom: provider.custom,
   }
 }
 
@@ -200,7 +307,11 @@ function migrateFromV1(raw: string): AiSettings | null {
       baseUrl: parsed.baseUrl,
       selectedModel: parsed.selectedModel,
       models: Array.isArray(parsed.customModels)
-        ? [...new Set([...(parsed.customModels ?? []), parsed.selectedModel ?? 'llama3.2'].filter(Boolean) as string[])]
+        ? [
+            ...new Set(
+              [...(parsed.customModels ?? []), parsed.selectedModel ?? 'llama3.2'].filter(Boolean) as string[],
+            ),
+          ]
         : undefined,
     })
     return {
@@ -222,13 +333,15 @@ export function loadAiSettings(): AiSettings {
       const parsed = JSON.parse(raw) as Partial<AiSettings>
       if (parsed.version === 2 && Array.isArray(parsed.providers) && parsed.providers.length > 0) {
         const providers = parsed.providers.map((p) => ({
-          ...createProviderProfile((p.kind as AiProviderKind) || 'ollama', p),
+          ...createProviderProfile((p.kind as AiProviderKind) || 'ollama', {
+            ...p,
+            custom: p.custom,
+          }),
           id: p.id || newId(),
         }))
-        const activeProviderId =
-          providers.some((p) => p.id === parsed.activeProviderId)
-            ? (parsed.activeProviderId as string)
-            : providers[0].id
+        const activeProviderId = providers.some((p) => p.id === parsed.activeProviderId)
+          ? (parsed.activeProviderId as string)
+          : providers[0]!.id
         return {
           version: 2,
           activeProviderId,
@@ -263,7 +376,7 @@ export function saveAiSettings(settings: AiSettings): void {
 }
 
 export function getActiveProvider(settings: AiSettings = loadAiSettings()): AiProviderProfile {
-  return settings.providers.find((p) => p.id === settings.activeProviderId) ?? settings.providers[0]
+  return settings.providers.find((p) => p.id === settings.activeProviderId) ?? settings.providers[0]!
 }
 
 export function upsertProviderModel(provider: AiProviderProfile, model: string): AiProviderProfile {

@@ -1,5 +1,9 @@
 # ADR-0005: Interfaz del Motor de Audio
 
+## Estado
+
+Aceptado. Implementación del bridge N-API + C++: ver [ADR-0009](./ADR-0009-native-audio-bridge-napi.md).
+
 ## Contexto
 
 Electron no debe encargarse del procesamiento de audio en tiempo real. Necesitamos un motor nativo separado que:
@@ -15,28 +19,19 @@ Diseñar una **interfaz clara entre Electron y el motor nativo** mediante un Nat
 ```
 Electron Application
         ↓
-Native Audio Bridge
+Native Audio Bridge (N-API / IPC tipado)
         ↓
-Native Audio Engine (C++ futuro)
+Native Audio Engine (C++)
 ```
 
 Reglas:
-1. El motor de audio se implementará en C++ por rendimiento y control y rendimiento.
-2. La comunicación se hace mediante FFI (Foreign Function Interface) o IPC local.
+1. El motor de audio se implementará en **C++** por rendimiento y control.
+2. La comunicación se hace mediante FFI (N-API) o IPC local tipado.
 3. El hilo de audio es completamente independiente de los hilos de UI e IA.
 4. Todas las órdenes al motor son asíncronas y no bloqueantes.
-5. El estado del motor se comunica mediante eventos, no polling.
+5. El estado del motor se comunica mediante eventos / lecturas ligeras, no polling agresivo del renderer.
 
-```typescript
-interface NativeBridgeAPI {
-  initialize(config: AudioEngineConfig): Promise<void>;
-  startPlayback(): Promise<void>;
-  stopPlayback(): Promise<void>;
-  seek(position: TimePosition): Promise<void>;
-  getAnalysis(trackId: string): Promise<AudioAnalysis>;
-  // ... más operaciones
-}
-```
+Contrato detallado, build y fallback Web Audio: **ADR-0009**.
 
 ## Consecuencias
 
@@ -47,12 +42,12 @@ interface NativeBridgeAPI {
 - Facilita portabilidad futura
 
 ### Negativas
-- Complejidad de comunicación entre procesos
+- Complejidad de comunicación entre procesos / addon
 - Overhead de serialización en la interfaz
 - Curva de aprendizaje en C++ para el motor
 
 ### Riesgos
-- Latencia en la comunicación entre procesos
-- Mitigación: diseño de interfaz de baja overhead, buffers compartidos cuando sea posible
-- Errores en el motor crash todo el DAW
-- Mitigación: watchdog, restart graceful del motor, sandboxing
+- Latencia en la comunicación
+- Mitigación: interfaz de baja overhead, buffers compartidos cuando sea posible
+- Errores en el motor pueden tumbar el proceso
+- Mitigación: fallback Web Audio, build opcional, watchdog futuro

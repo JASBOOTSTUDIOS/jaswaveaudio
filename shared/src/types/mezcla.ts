@@ -16,6 +16,8 @@
  *   ChannelStrip y sus niveles asociados.
  */
 
+import type { PluginInfo } from './entidades'
+
 export interface EQParametros {
   graves: number;
   medios: number;
@@ -73,6 +75,8 @@ export interface MasterChannel {
   nivelRMS: number;
   reduccionGain: number;
   corrupcion: boolean;
+  /** FX Chain del master (misma abstracción que track.plugins — ADR-0012). */
+  plugins?: PluginInfo[];
 }
 
 export interface MixerChannel {

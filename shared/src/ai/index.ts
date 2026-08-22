@@ -29,4 +29,5 @@ export type {
   ToolResult,
   ToolRegistry,
 } from './tool-registry';
+export { registrarPluginTools } from './plugin-tools';
 

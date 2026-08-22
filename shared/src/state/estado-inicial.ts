@@ -287,7 +287,8 @@ function crearMasterInicial(): MasterChannel {
     nivelRMS: 0,
     reduccionGain: 0,
     corrupcion: false,
-  };
+    plugins: [],
+  }
 }
 
 function crearAnalisisInicial(): ProjectAnalysis {

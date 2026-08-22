@@ -5,8 +5,12 @@ import { CoProducerPanel } from '@/components/coproducer-panel'
 import { TrackDetailPanel } from '@/components/track-detail-panel'
 import { PianoRollToolPanel } from '@/components/piano-roll'
 import { InstrumentsPanel } from '@/components/instruments-panel'
+import { PluginEditorPanel } from '@/components/plugin-editor-panel'
+import { FxChainPanel } from '@/components/fx-chain-panel'
+import { SettingsPanel } from '@/components/project-settings-dialog'
 import { useDAWState } from '@/src/context/daw-context'
 import type { ToolId } from '@/src/workspace/types'
+import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 
 function PlaceholderTool({ title }: { title: string }) {
   return (
@@ -21,16 +25,7 @@ function PlaceholderTool({ title }: { title: string }) {
 }
 
 export function ToolHost({ toolId }: { toolId: ToolId }) {
-  const selectedTrackId = useDAWState((s) => {
-    const fromSel = s.selection?.idPrincipal ?? s.selection?.idsPistas?.[0] ?? null
-    if (fromSel) return fromSel
-    const clipId = s.selection?.idsClips?.[0]
-    if (!clipId) return null
-    for (const t of s.project?.tracks ?? []) {
-      if ((t.clips ?? []).some((c) => c.id === clipId)) return t.id
-    }
-    return null
-  })
+  const selectedTrackId = useDAWState((s) => getSelectedTrackId(s))
 
   switch (toolId) {
     case 'coproducer':
@@ -45,6 +40,12 @@ export function ToolHost({ toolId }: { toolId: ToolId }) {
       return <PianoRollToolPanel />
     case 'instruments':
       return <InstrumentsPanel />
+    case 'fx-chain':
+      return <FxChainPanel />
+    case 'plugin-editor':
+      return <PluginEditorPanel />
+    case 'settings':
+      return <SettingsPanel />
     case 'library':
       return <PlaceholderTool title="Biblioteca de Audio" />
     case 'meters':

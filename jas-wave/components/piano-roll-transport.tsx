@@ -6,7 +6,7 @@
 import { useEffect, useRef } from 'react'
 import { Play, Pause, Square, Repeat, Link2, Unlink } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
-import { usePlayback } from '@/components/playback-provider'
+import { usePlaybackActions } from '@/components/playback-provider'
 import type { DAWState } from '../../shared/src/types/state'
 
 function formatBarsBeats(beatsAbs: number, beatsPerBar: number): string {
@@ -41,34 +41,65 @@ export function PianoRollTransport({
   const transport = useDAWState((s: DAWState) => s.transport)
   const bpm = useDAWState((s: DAWState) => s.project?.bpm?.valor ?? 120)
   const beatsPerBar = useDAWState((s: DAWState) => s.project?.timeSignature?.numerador ?? 4)
-  const { positionMs } = usePlayback()
+  const { getPositionMs } = usePlaybackActions()
 
   const isPlaying = Boolean(transport?.reproduciendo)
   const msPerBeat = 60_000 / Math.max(1, bpm)
-  const absBeats = positionMs / msPerBeat
-  const relativeBeats = absBeats - clipInicioBeats
 
   const clipStartMs = clipInicioBeats * msPerBeat
   const clipEndMs = (clipInicioBeats + clipDuracionBeats) * msPerBeat
 
-  // Loop local: un solo check por cruce de fin (no en cada frame)
+  const clockRef = useRef<HTMLSpanElement>(null)
+  const barsRef = useRef<HTMLSpanElement>(null)
+  const clipPosRef = useRef<HTMLSpanElement>(null)
+
+  // Loop local + displays fluidos vía RAF (sin setState de posición)
   const loopingRef = useRef(false)
-  const lastPosRef = useRef(positionMs)
+  const lastPosRef = useRef(0)
   useEffect(() => {
-    if (!soloClip || !isPlaying) {
-      loopingRef.current = false
-      lastPosRef.current = positionMs
-      return
+    let raf = 0
+    const tick = () => {
+      const positionMs = getPositionMs()
+      const absBeats = positionMs / msPerBeat
+      const relativeBeats = absBeats - clipInicioBeats
+      if (clockRef.current) clockRef.current.textContent = formatClock(positionMs)
+      if (barsRef.current) {
+        barsRef.current.textContent = formatBarsBeats(Math.max(0, absBeats), beatsPerBar)
+      }
+      if (clipPosRef.current) {
+        clipPosRef.current.textContent =
+          relativeBeats >= 0 ? formatBarsBeats(relativeBeats, beatsPerBar) : '—'
+      }
+
+      if (soloClip && isPlaying) {
+        const prev = lastPosRef.current
+        lastPosRef.current = positionMs
+        const crossed = prev < clipEndMs - 8 && positionMs >= clipEndMs - 8
+        if (crossed && !loopingRef.current) {
+          loopingRef.current = true
+          void tienda.executor.execute('transport.seek', { segundos: clipStartMs / 1000 }).finally(() => {
+            loopingRef.current = false
+          })
+        }
+      } else {
+        lastPosRef.current = positionMs
+        loopingRef.current = false
+      }
+      raf = requestAnimationFrame(tick)
     }
-    const prev = lastPosRef.current
-    lastPosRef.current = positionMs
-    const crossed = prev < clipEndMs - 8 && positionMs >= clipEndMs - 8
-    if (!crossed || loopingRef.current) return
-    loopingRef.current = true
-    void tienda.executor.execute('transport.seek', { segundos: clipStartMs / 1000 }).finally(() => {
-      loopingRef.current = false
-    })
-  }, [soloClip, isPlaying, positionMs, clipEndMs, clipStartMs, tienda])
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [
+    getPositionMs,
+    msPerBeat,
+    clipInicioBeats,
+    beatsPerBar,
+    soloClip,
+    isPlaying,
+    clipEndMs,
+    clipStartMs,
+    tienda,
+  ])
 
   const play = async () => {
     if (soloClip) {
@@ -114,11 +145,16 @@ export function PianoRollTransport({
       </div>
 
       <div className="flex items-center gap-2 rounded bg-background px-2 py-0.5 font-mono text-[11px] tabular-nums ring-1 ring-border">
-        <span className="text-foreground">{formatClock(positionMs)}</span>
+        <span ref={clockRef} className="text-foreground">
+          {formatClock(getPositionMs())}
+        </span>
         <span className="text-muted-foreground">|</span>
-        <span className="text-foreground">{formatBarsBeats(Math.max(0, absBeats), beatsPerBar)}</span>
+        <span ref={barsRef} className="text-foreground">
+          {formatBarsBeats(Math.max(0, getPositionMs() / msPerBeat), beatsPerBar)}
+        </span>
         <span className="text-[9px] text-muted-foreground">
-          clip {relativeBeats >= 0 ? formatBarsBeats(relativeBeats, beatsPerBar) : '—'}
+          clip{' '}
+          <span ref={clipPosRef}>—</span>
         </span>
       </div>
 

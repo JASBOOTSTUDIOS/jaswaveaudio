@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Piano } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
-import { usePlayback } from '@/components/playback-provider'
+import { usePlaybackClock } from '@/components/playback-provider'
 import type { DAWState } from '../../shared/src/types/state'
 import type { MidiNote } from '../../shared/src/types/clips'
 import { adaptiveGridForZoom } from '../../shared/src/midi/grid'
@@ -62,7 +62,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   const bpm = useDAWState((s: DAWState) => s.project?.bpm?.valor ?? 120)
   const beatsPerBar = useDAWState((s: DAWState) => s.project?.timeSignature?.numerador ?? 4)
   const isPlaying = useDAWState((s: DAWState) => s.transport?.reproduciendo === true)
-  const { positionMs: livePositionMs } = usePlayback()
+  const { positionMs: livePositionMs } = usePlaybackClock()
   const transportSec = livePositionMs / 1000
 
   const [notes, setNotes] = useState<LocalNote[]>([])

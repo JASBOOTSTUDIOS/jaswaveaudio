@@ -8,6 +8,7 @@
     "build": "cd jas-wave && npm run build",
     "lint": "cd jas-wave && npm run lint",
     "test": "cd shared && npm test",
-    "typecheck": "cd shared && npm run typecheck"
+    "typecheck": "cd shared && npm run typecheck",
+    "native:build": "cd native/audio-engine && npm install && npm run build"
   }
 }

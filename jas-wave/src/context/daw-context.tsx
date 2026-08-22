@@ -15,6 +15,7 @@ import {
   type DAWState,
   toolRegistry,
   registrarMidiAiTools,
+  registrarPluginTools,
 } from '../../../shared/src'
 import { configurarFileService } from '../../../shared/src/commands/project-commands'
 import { FileServiceElectron } from '@/src/lib/file-service'
@@ -52,6 +53,7 @@ function getSharedStore() {
 
     try {
       registrarMidiAiTools(toolRegistry, () => sharedStore!.obtenerEstado())
+      registrarPluginTools(toolRegistry, () => sharedStore!.obtenerEstado())
     } catch {
       /* HMR */
     }
@@ -108,9 +110,22 @@ export function DAWProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     let detachAutosave: (() => void) | undefined
 
+    // Si IndexedDB se atasca, no dejar la splash para siempre
+    const failsafe = window.setTimeout(() => {
+      if (cancelled) return
+      console.warn('[DAWProvider] timeout de hidratación — entrando a la UI')
+      setProgress({
+        phase: 'done',
+        label: 'Arranque forzado',
+        progress: 1,
+        detail: 'La sesión tardó demasiado; se omite la restauración',
+      })
+      setReady(true)
+    }, 8_000)
+
     void (async () => {
-      // Ventana flotante: no hidratar IndexedDB (lento); MultiWindowSync trae el estado.
       if (undock) {
+        window.clearTimeout(failsafe)
         setReady(true)
         return
       }
@@ -126,12 +141,14 @@ export function DAWProvider({ children }: { children: ReactNode }) {
         console.warn('[DAWProvider] session hydrate failed', err)
       }
       if (cancelled) return
+      window.clearTimeout(failsafe)
       detachAutosave = attachSessionAutosave(store)
       setReady(true)
     })()
 
     return () => {
       cancelled = true
+      window.clearTimeout(failsafe)
       detachAutosave?.()
     }
   }, [store, undock])
