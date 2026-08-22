@@ -22,10 +22,29 @@ import {
   buildAgentSystemPrompt,
   stripActionsBlock,
   parseActionsFromText,
+  parsePlanFromText,
   fallbackActionsFromUserIntent,
   executeDawActions,
   formatActionResultsForUser,
 } from '@/src/lib/ai-daw-agent'
+import { MidiGenerationPreview, type MidiPreviewData } from '@/components/midi-generation-preview'
+import { ProjectPlanPreview } from '@/components/project-plan-preview'
+import { AiModelPicker } from '@/components/ai-model-picker'
+import {
+  filterMentionables,
+  groupMentionables,
+  listMentionables,
+  mentionDraftAtCaret,
+  type Mentionable,
+} from '@/src/lib/ai-mentions'
+import type { ProjectPlanData } from '@/src/lib/project-plan'
+import {
+  AGENT_MODE_META,
+  detectAgentMode,
+  loadAgentMode,
+  saveAgentMode,
+  type AgentMode,
+} from '@/src/lib/ai-modes'
 import {
   ensureActiveConversation,
   listConversations,
@@ -40,8 +59,6 @@ import {
 } from '@/src/lib/ai-chat-store'
 import { JasWaveLogo } from '@/components/brand'
 import { ChatMarkdown } from '@/components/chat-markdown'
-import { MidiGenerationPreview, type MidiPreviewData } from '@/components/midi-generation-preview'
-import { AiModelPicker } from '@/components/ai-model-picker'
 
 function newMsgId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
@@ -55,13 +72,59 @@ export function CoProducerPanel() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [aiStatus, setAiStatus] = useState<'unknown' | 'online' | 'offline' | 'misconfigured'>('unknown')
   const [statusDetail, setStatusDetail] = useState('')
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const [mentionStart, setMentionStart] = useState(0)
+  const [mentionIndex, setMentionIndex] = useState(0)
+  const [agentMode, setAgentMode] = useState<AgentMode>(() => loadAgentMode())
+  const inputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const dawStore = useDAW()
   const projectName = useDAWState((state) => state.project?.nombre || 'Nuevo Proyecto')
   const trackCount = useDAWState((state) => state.project?.tracks?.length ?? 0)
+  const mentionHits =
+    mentionQuery != null
+      ? filterMentionables(listMentionables(dawStore.obtenerEstado()), mentionQuery)
+      : []
+  const mentionGroups = groupMentionables(mentionHits)
 
   const messages = conversation.messages.filter((m) => m.role === 'user' || m.role === 'assistant')
+
+  const insertMention = (item: Mentionable) => {
+    if (item.kind === 'mode' && item.mode) {
+      setAgentMode(item.mode)
+      saveAgentMode(item.mode)
+    }
+    const el = inputRef.current
+    const caret = el?.selectionStart ?? inputMessage.length
+    const draft = mentionDraftAtCaret(inputMessage, caret)
+    const start = draft?.start ?? mentionStart
+    const before = inputMessage.slice(0, start)
+    const after = inputMessage.slice(caret)
+    const token =
+      item.insertText ??
+      (item.label.includes(' ') ? `@"${item.label}"` : `@${item.label}`)
+    const next = `${before}${token} ${after}`
+    setInputMessage(next)
+    setMentionQuery(null)
+    requestAnimationFrame(() => {
+      const pos = (before + token + ' ').length
+      el?.focus()
+      el?.setSelectionRange(pos, pos)
+    })
+  }
+
+  const onInputChange = (value: string, caret: number) => {
+    setInputMessage(value)
+    const draft = mentionDraftAtCaret(value, caret)
+    if (draft) {
+      setMentionQuery(draft.query)
+      setMentionStart(draft.start)
+      setMentionIndex(0)
+    } else {
+      setMentionQuery(null)
+    }
+  }
 
   const refreshHistoryList = useCallback(() => {
     setConversations(listConversations())
@@ -165,7 +228,7 @@ export function CoProducerPanel() {
       if (!local) {
         if (!window.electron?.aiChat) {
           // Sin Electron: si pide crear, ejecutamos igual en el DAW local
-          const forced = fallbackActionsFromUserIntent(userText)
+          const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
           if (forced.length) {
             const results = await executeDawActions(dawStore, forced)
             lastResults = results
@@ -187,7 +250,9 @@ export function CoProducerPanel() {
         } else {
           const cfg = loadAiSettings()
           const provider = getActiveProvider(cfg)
-          const systemContext = buildAgentSystemPrompt(state)
+          const systemContext = buildAgentSystemPrompt(state, userText, agentMode)
+          const resolvedMode = detectAgentMode(userText, agentMode)
+          const think = resolvedMode === 'think'
           const prior = (refreshed?.messages ?? messages)
             .filter((m) => m.content.trim().length > 0 && m.id !== assistantMsgId)
             .slice(-12)
@@ -205,15 +270,33 @@ export function CoProducerPanel() {
                   ...prior,
                   { role: 'user', content: userText },
                 ],
-                { temperature: cfg.temperature, maxTokens: cfg.maxTokens },
+                { temperature: think ? Math.max(cfg.temperature, 0.55) : cfg.temperature, maxTokens: Math.max(cfg.maxTokens, think ? 16384 : 8192) },
               ),
             )
 
             if (result.success && result.content?.trim()) {
               const raw = result.content
               let actions = parseActionsFromText(raw)
+              const parsedPlan = parsePlanFromText(raw)
+              if (parsedPlan && !actions.some((a) => a.type === 'daw.composeProject')) {
+                actions = [
+                  {
+                    type: 'daw.composeProject',
+                    payload: {
+                      aplicar: resolvedMode === 'create',
+                      nombre: parsedPlan.nombre,
+                      bpm: parsedPlan.bpm,
+                      tonalidad: parsedPlan.keyLabel,
+                      minutos: parsedPlan.minutes,
+                      pensamiento: parsedPlan.pensamiento,
+                      pistas: parsedPlan.tracks,
+                    },
+                  },
+                  ...actions,
+                ]
+              }
               if (actions.length === 0) {
-                actions = fallbackActionsFromUserIntent(userText)
+                actions = fallbackActionsFromUserIntent(userText, state, agentMode)
               }
 
               let text = stripActionsBlock(raw)
@@ -232,14 +315,13 @@ export function CoProducerPanel() {
               setAiStatus('online')
               setStatusDetail('')
             } else {
-              // Si el modelo falla pero el usuario pidió crear, igual generamos
-              const forced = fallbackActionsFromUserIntent(userText)
+              // Si el modelo falla pero el usuario pidió crear, igual generamos desde el brief
+              const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
               if (forced.length) {
                 const results = await executeDawActions(dawStore, forced)
                 lastResults = results
                 actionsSummary = formatActionResultsForUser(results)
-                accumulated =
-                  'El modelo no respondió bien; apliqué la generación directamente en el DAW.'
+                accumulated = `El modelo no devolvió texto usable; apliqué tu brief en el DAW.\n\n${actionsSummary}`
               } else {
                 accumulated = formatAiUserError({
                   error: result.error || 'No se pudo obtener respuesta del modelo.',
@@ -253,7 +335,7 @@ export function CoProducerPanel() {
             }
           } catch (err) {
             const message = err instanceof Error ? err.message : 'Error de comunicación con el motor de IA'
-            const forced = fallbackActionsFromUserIntent(userText)
+            const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
             if (forced.length) {
               const results = await executeDawActions(dawStore, forced)
               lastResults = results
@@ -281,7 +363,18 @@ export function CoProducerPanel() {
             (r.data as { kind?: string } | undefined)?.kind === 'midiPreview',
         )
         const data = hit?.data as MidiPreviewData | undefined
-        return data ? { ...data, status: 'pending' as const } : undefined
+        return data
+          ? { ...data, status: (data.applied ? 'applied' : 'pending') as 'applied' | 'pending' }
+          : undefined
+      })()
+      const projectPlan = (() => {
+        const hit = lastResults.find(
+          (r) => r.type === 'daw.composeProject' && (r.data as { kind?: string } | undefined)?.kind === 'projectPlan',
+        )
+        const data = hit?.data as ProjectPlanData | undefined
+        return data
+          ? { ...data, status: (data.applied ? 'applied' : 'pending') as 'applied' | 'pending' }
+          : undefined
       })()
       updateMessageContent(
         conversation.id,
@@ -289,6 +382,7 @@ export function CoProducerPanel() {
         accumulated || '⚠️ Sin respuesta.',
         actionsSummary || undefined,
         midiPreview,
+        projectPlan,
       )
       const after = getConversation(conversation.id)
       if (after) setConversation(after)
@@ -333,8 +427,8 @@ export function CoProducerPanel() {
         setIsGenerating(true)
         try {
           const state = dawStore.obtenerEstado()
-          if (/crea|midi|piano/i.test(userText)) {
-            const forced = fallbackActionsFromUserIntent(userText)
+          if (/crea|midi|piano|proyecto|plan/i.test(userText)) {
+            const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
             const results = await executeDawActions(dawStore, forced)
             const summary = formatActionResultsForUser(results)
             const midiPreview = (() => {
@@ -345,16 +439,31 @@ export function CoProducerPanel() {
                   (r.data as { kind?: string } | undefined)?.kind === 'midiPreview',
               )
               const data = hit?.data as MidiPreviewData | undefined
-              return data ? { ...data, status: 'pending' as const } : undefined
+              return data
+                ? { ...data, status: (data.applied ? 'applied' : 'pending') as 'applied' | 'pending' }
+                : undefined
+            })()
+            const projectPlan = (() => {
+              const hit = results.find(
+                (r) => r.type === 'daw.composeProject' && (r.data as { kind?: string } | undefined)?.kind === 'projectPlan',
+              )
+              return hit?.data as ProjectPlanData | undefined
             })()
             updateMessageContent(
               conversation.id,
               assistantMsgId,
-              midiPreview
-                ? 'Vista previa lista en el chat. Escucha y aplica cuando quieras.'
-                : ['He creado el material en el arrange de JasWave.', summary].join('\n\n'),
+              projectPlan
+                ? projectPlan.applied
+                  ? `Proyecto aplicado: ${projectPlan.nombre}.`
+                  : `Plan listo: ${projectPlan.tracks.length} pistas. Revisa y aplica cuando quieras.`
+                : midiPreview
+                  ? midiPreview.status === 'applied'
+                    ? `Clip aplicado: ${midiPreview.keyLabel}.`
+                    : 'Vista previa lista en el chat. Escucha y aplica cuando quieras.'
+                  : ['He creado el material en el arrange de JasWave.', summary].join('\n\n'),
               summary,
               midiPreview,
+              projectPlan,
             )
           } else {
             const reply =
@@ -428,6 +537,30 @@ export function CoProducerPanel() {
           </div>
         </div>
         <AiModelPicker compact />
+        <div className="flex flex-wrap gap-1">
+          {(['auto', 'plan', 'create', 'think'] as AgentMode[]).map((m) => {
+            const label = m === 'auto' ? 'Auto' : AGENT_MODE_META[m].label
+            const title = m === 'auto' ? 'Elige plan, crear o pensar según el mensaje' : AGENT_MODE_META[m].hint
+            return (
+              <button
+                key={m}
+                type="button"
+                title={title}
+                onClick={() => {
+                  setAgentMode(m)
+                  saveAgentMode(m)
+                }}
+                className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                  agentMode === m
+                    ? 'bg-accent-amber/20 text-accent-amber'
+                    : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+                }`}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
       </header>
 
       {historyOpen && (
@@ -484,12 +617,13 @@ export function CoProducerPanel() {
             <JasWaveLogo className="mb-3 h-28 w-auto max-w-[220px]" alt="JasWave" />
             <h3 className="mb-1 text-[14px] font-semibold text-foreground">Asistente Jas</h3>
             <p className="max-w-[280px] text-[12px]">
-              Puedo crear pistas y clips MIDI en el proyecto. El historial se guarda entre sesiones.
+              Puedo planear o crear el proyecto: pistas, VSTs y MIDI. Escribe @ para ver pistas, clips, plugins y acciones.
             </p>
             <div className="mt-4 flex flex-wrap justify-center gap-1.5">
               {[
                 'Resumen del proyecto',
-                'Crea una pista MIDI de piano suave en C mayor de 3 minutos',
+                'Haz un plan de un tema pop desde cero',
+                'Crea un clip MIDI en la pista seleccionada',
               ].map((s) => (
                 <button
                   key={s}
@@ -538,6 +672,12 @@ export function CoProducerPanel() {
                     status={msg.midiPreview.status ?? 'pending'}
                   />
                 ) : null}
+                {msg.projectPlan ? (
+                  <ProjectPlanPreview
+                    plan={msg.projectPlan}
+                    status={msg.projectPlan.status ?? 'pending'}
+                  />
+                ) : null}
               </div>
               {msg.role === 'user' && (
                 <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
@@ -550,19 +690,79 @@ export function CoProducerPanel() {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="border-t border-border p-3">
+      <div className="relative border-t border-border p-3">
+        {mentionQuery != null ? (
+          <div className="absolute inset-x-3 bottom-full z-20 mb-1 max-h-64 overflow-y-auto rounded-md border border-border bg-panel-raised shadow-lg">
+            {mentionHits.length === 0 ? (
+              <div className="px-3 py-2 text-[11px] text-muted-foreground">Sin coincidencias</div>
+            ) : (
+              mentionGroups.map((g) => (
+                <div key={g.kind}>
+                  <div className="sticky top-0 bg-panel-raised px-3 py-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {g.label}
+                  </div>
+                  {g.items.map((item) => {
+                    const flatIndex = mentionHits.indexOf(item)
+                    const active = flatIndex === mentionIndex
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          insertMention(item)
+                        }}
+                        className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] ${
+                          active ? 'bg-accent-amber/20' : 'hover:bg-accent-amber/15'
+                        }`}
+                      >
+                        <span className="truncate text-foreground">
+                          {item.kind === 'action' || item.kind === 'mode' ? item.label : `@${item.label}`}
+                        </span>
+                        <span className="max-w-[45%] shrink-0 truncate text-[10px] text-muted-foreground">
+                          {item.hint}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
         <form
           onSubmit={(e) => {
             e.preventDefault()
+            setMentionQuery(null)
             void handleSendMessage()
           }}
           className="flex items-center gap-2 rounded-lg bg-panel-raised px-3 py-2 ring-1 ring-border focus-within:ring-2 focus-within:ring-ring"
         >
           <input
+            ref={inputRef}
             value={inputMessage}
-            onChange={(e) => setInputMessage(e.target.value)}
+            onChange={(e) => onInputChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+            onKeyUp={(e) => onInputChange(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setMentionQuery(null)
+              if (mentionQuery != null && mentionHits.length > 0) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setMentionIndex((i) => Math.min(mentionHits.length - 1, i + 1))
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setMentionIndex((i) => Math.max(0, i - 1))
+                } else if (e.key === 'Enter') {
+                  e.preventDefault()
+                  insertMention(mentionHits[mentionIndex] ?? mentionHits[0]!)
+                } else if (e.key === 'Tab') {
+                  e.preventDefault()
+                  insertMention(mentionHits[mentionIndex] ?? mentionHits[0]!)
+                }
+              }
+            }}
             disabled={isGenerating}
-            placeholder="Pide crear MIDI, pistas, o pregunta por el proyecto…"
+            placeholder="Pide un clip, o escribe @ para pista / clip / plugin…"
             className="flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
           />
           <button

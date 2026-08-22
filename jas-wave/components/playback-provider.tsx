@@ -63,6 +63,13 @@ export interface LoadedClip {
   waveform?: number[]
   kind?: 'audio' | 'midi'
   noteCount?: number
+  notes?: Array<{
+    pitch: number
+    inicio: number
+    duracion: number
+    velocidad?: number
+    mute?: boolean
+  }>
 }
 
 type PlaybackState = {
@@ -210,6 +217,15 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
               sourceId: '',
               kind: 'midi',
               noteCount: Array.isArray(clip.notas) ? clip.notas.length : 0,
+              notes: Array.isArray(clip.notas)
+                ? clip.notas.map((n) => ({
+                    pitch: n.pitch,
+                    inicio: n.inicio,
+                    duracion: n.duracion,
+                    velocidad: n.velocidad,
+                    mute: n.mute,
+                  }))
+                : [],
             })
             continue
           }
@@ -328,7 +344,9 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     clock.setBpm(BPM)
     clock.setTimeSignature(BEATS_PER_BAR)
-  }, [BPM, BEATS_PER_BAR, clock])
+    clock.setSampleRate(audioEngine.getSampleRate())
+    if (!satellite) clock.setTimelineSource(() => audioEngine.getTimelineSeconds())
+  }, [BPM, BEATS_PER_BAR, clock, satellite])
 
   const lastStoreSyncRef = useRef(0)
   const positionMsRef = useRef(0)
@@ -437,9 +455,14 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         sharedTracks.map((t) => ({ id: t.id, plugins: t.plugins })),
         masterState?.plugins,
       )
-      await Promise.race([loadP, new Promise<void>((r) => setTimeout(r, 2000))])
+      await Promise.race([loadP, new Promise<void>((r) => setTimeout(r, 8000))])
       audioEngine.playClips(startMs / 1000, playbackClips, trackAudioConfig(), midiClips)
       void loadP.then(() => {
+        const cfg = trackAudioConfig()
+        audioEngine.applyTracksConfig(cfg)
+        for (const t of cfg) {
+          audioEngine.patchTrackVstInstrument(t.id, t.vstInstrumentSlotId, t.softPadFallback)
+        }
         syncNativeChannelMix(sharedTracks, masterState)
       })
     })()
@@ -457,7 +480,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       clock.seek({
         beats,
         segundos: seconds,
-        samples: Math.round(seconds * 44100),
+        samples: Math.round(seconds * audioEngine.getSampleRate()),
         ticks: beats * PPQ,
         compases: 0,
         frames: 0,
@@ -559,6 +582,56 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     void tienda.executor.execute('transport.toggleRecord', {})
   }, [tienda])
 
+  const recStartBeatsRef = useRef(0)
+  const wasRecordingRef = useRef(false)
+
+  useEffect(() => {
+    if (satellite) return
+    const recOn = recording
+    if (recOn && !wasRecordingRef.current) {
+      const armed = sharedTracks.filter((t) => t.armada)
+      if (armed.length === 0) {
+        void tienda.executor.execute('transport.toggleRecord', {})
+        return
+      }
+      wasRecordingRef.current = true
+      recStartBeatsRef.current = Math.max(0, positionMsRef.current / msPerBeatRef.current)
+      const monitor =
+        armed.find((t) => Boolean((t as { configuracion?: { monitorizarEntrada?: boolean } }).configuracion?.monitorizarEntrada))
+          ?.id ?? null
+      void audioEngine.startInputCapture(monitor).then((ok) => {
+        if (!ok) {
+          wasRecordingRef.current = false
+          void tienda.executor.execute('transport.toggleRecord', {})
+        }
+      })
+      return
+    }
+    if (!recOn && wasRecordingRef.current) {
+      wasRecordingRef.current = false
+      const startBeats = recStartBeatsRef.current
+      const armed = sharedTracks.filter((t) => t.armada && t.tipo !== 'midi')
+      void (async () => {
+        const key = `rec-${Date.now()}`
+        const result = await audioEngine.stopInputCapture(key)
+        if (!result || armed.length === 0) return
+        const durationBeats = segundosABeats(result.duration, BPM)
+        const buckets = Math.min(4096, Math.max(256, Math.floor(result.duration * 80)))
+        const waveform = packStereoPeaks(extractStereoPeaks(result.buffer, buckets))
+        for (const t of armed) {
+          await tienda.executor.execute('clip.create', {
+            pistaId: t.id,
+            nombre: 'Grabación',
+            inicio: startBeats,
+            duracion: durationBeats,
+            sourceId: key,
+            waveform,
+          })
+        }
+      })()
+    }
+  }, [recording, satellite, sharedTracks, tienda, BPM])
+
   const toggleLooping = useCallback(() => {
     void tienda.executor.execute('transport.toggleLoop', {})
   }, [tienda])
@@ -574,7 +647,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       clock.seek({
         beats: targetBeats,
         segundos: targetSeconds,
-        samples: Math.round(targetSeconds * 44100),
+        samples: Math.round(targetSeconds * audioEngine.getSampleRate()),
         ticks: targetTicks,
         compases: targetBeats / BEATS_PER_BAR,
         frames: Math.round(targetSeconds * 30),
@@ -605,7 +678,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       clock.seek({
         beats: targetBeats,
         segundos: targetSeconds,
-        samples: Math.round(targetSeconds * 44100),
+        samples: Math.round(targetSeconds * audioEngine.getSampleRate()),
         ticks: targetTicks,
         compases: targetBeats / BEATS_PER_BAR,
         frames: Math.round(targetSeconds * 30),

@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect, useRef } from 'react'
+import { useMemo, useCallback, useEffect, useRef, useState } from 'react'
 import { Minus, SlidersHorizontal, Wand2, Shuffle } from 'lucide-react'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { Track as SharedTrack, AudioTrack } from '../../shared/src/types/tracks'
@@ -14,6 +14,7 @@ import {
 import { FaderControl, KnobControl } from './ui/controls'
 import { TrackFxButton } from '@/components/fx-chain-panel'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
+import { audioEngine } from '@/lib/audio-engine'
 
 type MixerRow = {
   id: string
@@ -84,6 +85,25 @@ export function Mixer() {
   const collapsed = useDAWState((s: DAWState) => s.ui?.estadoMezcladorUI?.colapsado ?? false)
   const selectedTrackId = useDAWState((s: DAWState) => getSelectedTrackId(s))
   const stripRefs = useRef(new Map<string, HTMLDivElement | null>())
+  const [meters, setMeters] = useState<Record<string, number>>({})
+  const trackIdsKey = tracks.map((t) => t.id).join('|')
+
+  useEffect(() => {
+    let raf = 0
+    let last = 0
+    const ids = trackIdsKey.split('|').filter(Boolean)
+    const tick = (now: number) => {
+      if (now - last >= 50) {
+        last = now
+        const next: Record<string, number> = { master: audioEngine.getMasterMeterLevel() }
+        for (const id of ids) next[id] = audioEngine.getMeterLevel(id)
+        setMeters(next)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [trackIdsKey])
 
   useEffect(() => {
     if (!selectedTrackId) return
@@ -265,7 +285,7 @@ export function Mixer() {
 
             {/* Fader */}
             <div className="mt-2 flex-1">
-              <FaderControl db={track.db} color={track.color} onChange={(db) => handleChangeDb(track.id, db)} showScale />
+              <FaderControl db={track.db} color={track.color} meter={meters[track.id] ?? 0} onChange={(db) => handleChangeDb(track.id, db)} showScale />
             </div>
 
             {/* Valor en dB */}
@@ -313,7 +333,7 @@ export function Mixer() {
           }} />
 
           <div className="mt-2 flex-1">
-            <FaderControl db={masterTrack.db} color={masterTrack.color} onChange={(db) => {
+            <FaderControl db={masterTrack.db} color={masterTrack.color} meter={meters.master ?? 0} onChange={(db) => {
               const volumen = db > DB_INFERIOR ? dbALineal(db) : 0
               void tienda.executor.execute('master.update', { datos: { volumen } })
             }} />

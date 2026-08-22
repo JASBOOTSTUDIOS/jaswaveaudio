@@ -14,6 +14,8 @@ interface FaderProps {
   showScale?: boolean
   height?: string
   handleSize?: string
+  /** Pico lineal 0..1 para el VU junto al fader. */
+  meter?: number
 }
 
 export function FaderControl({
@@ -23,6 +25,7 @@ export function FaderControl({
   showScale = false,
   height = 'h-full',
   handleSize = 'size-4',
+  meter,
 }: FaderProps) {
   const top = dbAPorcentaje(db)
   const drag = useDragValue({
@@ -65,6 +68,12 @@ export function FaderControl({
         className="relative w-4 cursor-ns-resize touch-none focus:outline-none"
       >
         <div className="absolute left-1/2 top-0 h-full w-0.5 -translate-x-1/2 rounded-full bg-panel-raised" />
+        {typeof meter === 'number' && meter > 0.01 && (
+          <div
+            className="pointer-events-none absolute bottom-0 left-1/2 w-1.5 -translate-x-1/2 rounded-sm bg-accent-amber/80"
+            style={{ height: `${Math.min(100, Math.max(0, meter * 100))}%` }}
+          />
+        )}
         <div
           className="absolute left-1/2 w-0.5 -translate-x-1/2 rounded-full"
           style={{ top: `calc(${top}% - 8px)`, bottom: 0, backgroundColor: color, opacity: 0.6 }}

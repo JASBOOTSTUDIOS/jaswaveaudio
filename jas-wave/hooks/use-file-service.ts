@@ -52,6 +52,7 @@ declare global {
         provider?: string
         baseUrl?: string
       }>
+      pluginLookup: (pluginName: string) => Promise<Array<{ title: string; snippet: string; url: string }>>
       dialogMessage: (type: string, title: string, message: string) => Promise<number>
       shellOpenExternal: (url: string) => Promise<void>
       nativeAudioAvailable: () => Promise<boolean>

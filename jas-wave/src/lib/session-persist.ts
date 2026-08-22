@@ -191,11 +191,15 @@ export async function saveSessionNow(tienda: TiendaDAW): Promise<void> {
     const meta = toMeta(snap)
     // Meta primero (arranque rápido); audio después
     await idbPutKey(KEY_META, meta)
-    await idbPutKey(KEY_AUDIO, {
-      version: VERSION,
-      savedAt: snap.savedAt,
-      audio: snap.audio,
-    } satisfies SessionAudioBlob)
+    try {
+      await idbPutKey(KEY_AUDIO, {
+        version: VERSION,
+        savedAt: snap.savedAt,
+        audio: snap.audio,
+      } satisfies SessionAudioBlob)
+    } catch (audioErr) {
+      console.warn('[session-persist] audio snapshot skipped', audioErr)
+    }
     // Limpiar blob monolítico legacy si existía
     await idbDeleteKeys([KEY_LEGACY])
   } catch (err) {

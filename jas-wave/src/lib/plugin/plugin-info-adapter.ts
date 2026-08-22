@@ -7,7 +7,14 @@ import type { PluginInfo } from '../../../../shared/src/types/entidades'
 import type { PluginDescriptor } from './types'
 
 const INSTRUMENT_RE =
-  /sampler|synth|piano|keys|organ|drum|bass|guitar|violin|pad|lead|kontakt|sforzando|decent|instrument|vsti/i
+  /sampler|synth|piano|keys|organ|drum|bass|guitar|violin|pad|lead|kontakt|sforzando|decent|instrument|vsti|analog|arturia|lab\s*v|omnisphere|serum|vital|keyscape|play\b|workstation|engine/i
+
+const FX_RE =
+  /reverb|delay|compress|eq\b|equaliz|limiter|saturat|gate\b|chorus|flanger|phaser|utility|maximizer|imager|exciter|de-?ess|transient|clipper/i
+
+export function isLikelyAudioFx(name: string, path?: string): boolean {
+  return FX_RE.test(name) || (!!path && FX_RE.test(path))
+}
 
 export function guessIsInstrument(name: string, path?: string): boolean {
   return INSTRUMENT_RE.test(name) || (!!path && INSTRUMENT_RE.test(path))

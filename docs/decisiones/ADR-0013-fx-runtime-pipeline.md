@@ -116,10 +116,10 @@ Mantener aislamiento: no `createView` en el renderer. El editor se adjunta al **
 
 ### Límites honestos
 
-- Clips / Soft Pad **se generan** en Web Audio; solo el **device** y el **FX graph** son nativos. Resample fino pendiente.
+- Clips / Soft Pad **se generan** en Web Audio; solo el **device** y el **FX graph** son nativos. Resample lineal **por stem** si Web Audio y el device no coinciden.
 - DecentSampler puede quedar mudo hasta cargar un preset **en esa misma** ventana de editor.
-- ASIO exclusive puede pelear con el WASAPI silencioso de Chrome (el ScriptProcessor debe seguir conectado a `destination` para dispararse).
-- Compensación de latencia por plugin: reportable vía `getLatency`; compensación automática de timeline = después.
+- ASIO exclusive puede pelear con el WASAPI silencioso de Chrome (el tap Worklet debe seguir conectado a `destination` para dispararse).
+- Compensación de latencia por plugin: reportable vía `getLatency`; **PDC relativo por pista en `renderMix`** (tope 16384 samples). Master no se retrasa extra (latencia común de salida).
 - Sends / pre-FX / post-fader / item FX take: no.
 
 ### No hacer (sigue bloqueado)
@@ -139,5 +139,5 @@ Mantener aislamiento: no `createView` en el renderer. El editor se adjunta al **
 | 3 | Docs vs código | A+B + Reaper graph documentados aquí + CONTEXTO |
 | 4 | Lifecycle | **Definido** (contrato TS existente + mapeo) |
 | 5–7 | Runtime FX serial por pista, stems, load efectos | **Hecho** (modelo Reaper R2; sin sends) |
-| 8–9 | Master chain + bypass real en audio thread | **Hecho** (R3; compensación latencia fina = después) |
+| 8–9 | Master chain + bypass real en audio thread | **Hecho** (R3; PDC relativo por pista) |
 | 10–15 | Mixer nativo de clips, routing/sidechain, automation, AI txn | **Bloqueado** / siguiente |

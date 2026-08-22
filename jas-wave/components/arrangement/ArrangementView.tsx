@@ -16,6 +16,7 @@ import { PlayheadOverlay } from './PlayheadOverlay'
 import { TrackCanvas } from './TrackCanvas'
 import { ArrangeBoard } from './ArrangeBoard'
 import { TrackAddPluginButton } from './TrackAddPluginButton'
+import { MidiClipPreview } from './MidiClipPreview'
 import { TrackFxButton } from '@/components/fx-chain-panel'
 import {
   ROW_H,
@@ -1061,21 +1062,11 @@ export function ArrangementView() {
                             style={{ height: ROW_H - 22 }}
                           >
                             {clip.kind === 'midi' ? (
-                              <div className="flex h-full items-end gap-px px-0.5 opacity-80">
-                                {Array.from({ length: Math.min(48, Math.max(8, Math.floor(clipWidth / 4))) }).map(
-                                  (_, i) => (
-                                    <div
-                                      key={i}
-                                      className="flex-1 rounded-sm"
-                                      style={{
-                                        height: `${20 + ((i * 17) % 60)}%`,
-                                        backgroundColor: track.color,
-                                        opacity: 0.35 + ((i * 13) % 50) / 100,
-                                      }}
-                                    />
-                                  ),
-                                )}
-                              </div>
+                              <MidiClipPreview
+                                notes={clip.notes ?? []}
+                                durationBeats={Math.max(0.25, clip.duracionBeats)}
+                                color={track.color}
+                              />
                             ) : (
                               <StereoWaveform
                                 waveform={clip.waveform}

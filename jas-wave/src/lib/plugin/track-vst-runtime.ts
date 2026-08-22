@@ -4,7 +4,12 @@
  */
 
 import type { PluginInfo } from '../../../../shared/src/types/entidades'
-import { extractVst3Path, guessIsInstrument, isBuiltinPlugin } from './plugin-info-adapter'
+import {
+  extractVst3Path,
+  guessIsInstrument,
+  isBuiltinPlugin,
+  isLikelyAudioFx,
+} from './plugin-info-adapter'
 import { setActiveVstVoiceTarget, getActiveVstVoiceTarget } from './vst-voice-router'
 import { encodeTrackGraph } from './track-graph-encoding'
 import { audioEngine } from '@/lib/audio-engine'
@@ -29,6 +34,7 @@ export function findTrackPlaybackInstrument(
   plugins: PluginInfo[] | undefined,
 ): { kind: 'builtin'; plugin: PluginInfo } | { kind: 'vst'; plugin: PluginInfo; path: string } | null {
   let builtin: PluginInfo | null = null
+  let firstVst: { plugin: PluginInfo; path: string } | null = null
   for (const p of plugins ?? []) {
     if (p.bypass) continue
     if (isBuiltinInstrument(p)) {
@@ -37,7 +43,11 @@ export function findTrackPlaybackInstrument(
     }
     const path = extractVst3Path(p.descripcion)
     if (!path) continue
+    if (!firstVst) firstVst = { plugin: p, path }
     if (isVstInstrumentPlugin(p, path)) return { kind: 'vst', plugin: p, path }
+  }
+  if (firstVst && !isLikelyAudioFx(firstVst.plugin.nombre, firstVst.path)) {
+    return { kind: 'vst', plugin: firstVst.plugin, path: firstVst.path }
   }
   return builtin ? { kind: 'builtin', plugin: builtin } : null
 }

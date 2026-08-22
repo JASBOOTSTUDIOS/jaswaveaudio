@@ -14,6 +14,7 @@ import {
   encodeStemPacket,
   JASWAVE_MIX_DAW_BUS,
 } from '@/src/lib/plugin/track-graph-encoding'
+import { peakFromByteTimeDomain } from './audio-dsp'
 
 export interface TrackAudioConfig {
   id: string
@@ -51,6 +52,16 @@ export interface MidiClipPlaybackInfo {
   notes: MidiNotePlaybackInfo[]
 }
 
+type TrackAudioNode = {
+  gain: GainNode
+  panner: StereoPannerNode
+  analyser: AnalyserNode
+  dataArray: Uint8Array<ArrayBuffer>
+  stemTap?: AudioWorkletNode | ScriptProcessorNode
+  stemSilent?: GainNode
+  stemIndex?: number
+}
+
 export class WebAudioEngine {
   private audioCtx: AudioContext | null = null
   private masterGain: GainNode | null = null
@@ -68,21 +79,10 @@ export class WebAudioEngine {
   private masterLimiter: DynamicsCompressorNode | null = null
   private tapScratch: Float32Array | null = null
   private tapInstalling: Promise<void> | null = null
-  private trackNodes = new Map<
-    string,
-    {
-      gain: GainNode
-      panner: StereoPannerNode
-      analyser: AnalyserNode
-      dataArray: Uint8Array<ArrayBuffer>
-      stemTap?: ScriptProcessorNode
-      stemSilent?: GainNode
-      stemIndex?: number
-    }
-  >()
+  private trackNodes = new Map<string, TrackAudioNode>()
   private trackStemIndex = new Map<string, number>()
   private stemMode = false
-  private dawBusTap: ScriptProcessorNode | null = null
+  private dawBusTap: AudioWorkletNode | ScriptProcessorNode | null = null
   private dawBusSilent: GainNode | null = null
   private stemScratch = new Map<string, Float32Array>()
   private audioBuffers = new Map<string, AudioBuffer>()
@@ -90,6 +90,15 @@ export class WebAudioEngine {
   /** Voces programadas de reproducción MIDI (timeline). */
   private activeMidiNodes: Array<{ osc: OscillatorNode; gain: GainNode }> = []
   private midiScheduleTimer: ReturnType<typeof setInterval> | null = null
+  private recStream: MediaStream | null = null
+  private recSource: MediaStreamAudioSourceNode | null = null
+  private recTap: AudioWorkletNode | ScriptProcessorNode | null = null
+  private recSilent: GainNode | null = null
+  private recChunksL: Float32Array[] = []
+  private recChunksR: Float32Array[] = []
+  private recFrames = 0
+  private recPeak = 0
+  private recMonitorTrackId: string | null = null
   private pendingMidiClips: MidiClipPlaybackInfo[] = []
   private pendingTracksConfig: TrackAudioConfig[] = []
   private midiScheduledUntilSec = 0
@@ -174,6 +183,36 @@ export class WebAudioEngine {
     if (e.outputBuffer.numberOfChannels > 1) e.outputBuffer.getChannelData(1).fill(0)
   }
 
+  private onWorkletPcm(data: unknown): void {
+    let pcm: Float32Array | null = null
+    let stem = -1
+    if (data instanceof Float32Array) {
+      pcm = data
+    } else if (data && typeof data === 'object' && 'pcm' in data) {
+      const d = data as { pcm?: unknown; stemIndex?: number }
+      if (d.pcm instanceof Float32Array) pcm = d.pcm
+      if (typeof d.stemIndex === 'number') stem = d.stemIndex
+    }
+    if (!pcm || pcm.length === 0) return
+    const copy = new Float32Array(pcm.length)
+    copy.set(pcm)
+    if (stem >= 0) {
+      window.electron?.pluginHostPushPcm?.(encodeStemPacket(stem, copy))
+      return
+    }
+    window.electron?.pluginHostPushPcm?.(copy)
+  }
+
+  public getSampleRate(): number {
+    return this.audioCtx?.sampleRate ?? this.preferredSampleRate
+  }
+
+  /** Playhead de timeline alineado a AudioContext (no performance.now). */
+  public getTimelineSeconds(): number {
+    if (!this.audioCtx || !this.isPlaying) return this.playheadStartSec
+    return this.playheadStartSec + Math.max(0, this.audioCtx.currentTime - this.startTime)
+  }
+
   private disconnectTapGraph() {
     this.masterAnalyser?.disconnect()
     this.pcmTap?.disconnect()
@@ -214,12 +253,12 @@ export class WebAudioEngine {
         channelCount: 2,
         channelCountMode: 'explicit',
       })
-      node.port.onmessage = (ev: MessageEvent) => {
-        const data = ev.data
-        if (data instanceof Float32Array) window.electron?.pluginHostPushPcm?.(data)
-      }
+      node.port.onmessage = (ev: MessageEvent) => this.onWorkletPcm(ev.data)
       node.onprocessorerror = () => {
-        /* el fallback ScriptProcessor se instala en el próximo arm si hace falta */
+        if (this.pcmTap) return
+        this.pcmTap = ctx.createScriptProcessor(512, 2, 2)
+        this.pcmTap.onaudioprocess = (ev) => this.onPcmTap(ev)
+        if (this.nativeOutput && !this.stemMode) this.attachTapGraph()
       }
       this.pcmWorklet = node
     } catch {
@@ -242,6 +281,8 @@ export class WebAudioEngine {
     } catch {
       /* ignore */
     }
+    this.dawBusTap = null
+    this.dawBusSilent = null
     if (enable) {
       if (this.stemMode) this.rewireTrackGraphForStemMode()
       else this.attachTapGraph()
@@ -272,6 +313,7 @@ export class WebAudioEngine {
   private disposeLiveContext() {
     this.stopAllSources()
     this.stopMetronome()
+    void this.abortInputCapture()
     this.disconnectTapGraph()
     this.nativeOutput = false
     if (this.mixKeepAlive) {
@@ -292,11 +334,27 @@ export class WebAudioEngine {
     this.pcmWorklet = null
     this.pcmTap = null
     this.silentGain = null
+    try {
+      this.dawBusTap?.disconnect()
+      this.dawBusSilent?.disconnect()
+    } catch {
+      /* ignore */
+    }
+    this.dawBusTap = null
+    this.dawBusSilent = null
     this.workletModuleReady = false
     this.tapInstalling = null
     this.trackNodes.clear()
     this.synthMaster = null
     this.synthVoices.clear()
+    if (this.metronomeGain) {
+      try {
+        this.metronomeGain.disconnect()
+      } catch {
+        /* ignore */
+      }
+      this.metronomeGain = null
+    }
     const ctx = this.audioCtx
     this.audioCtx = null
     this.masterGain = null
@@ -422,9 +480,9 @@ export class WebAudioEngine {
       this.masterLimiter = limiter
 
       this.masterAnalyser = this.audioCtx.createAnalyser()
-      this.masterAnalyser.fftSize = 256
-      this.masterAnalyser.smoothingTimeConstant = 0.8
-      this.masterMeterData = new Uint8Array(this.masterAnalyser.frequencyBinCount)
+      this.masterAnalyser.fftSize = 512
+      this.masterAnalyser.smoothingTimeConstant = 0
+      this.masterMeterData = new Uint8Array(this.masterAnalyser.fftSize)
 
       this.masterGain.connect(this.masterPanner)
       this.masterPanner.connect(limiter)
@@ -475,13 +533,8 @@ export class WebAudioEngine {
 
   public getMasterMeterLevel(): number {
     if (!this.masterAnalyser || !this.masterMeterData) return 0
-    this.masterAnalyser.getByteFrequencyData(this.masterMeterData)
-    let sum = 0
-    for (let i = 0; i < this.masterMeterData.length; i++) {
-      sum += this.masterMeterData[i]
-    }
-    const avg = sum / this.masterMeterData.length
-    return Math.min(1, avg / 128)
+    this.masterAnalyser.getByteTimeDomainData(this.masterMeterData)
+    return peakFromByteTimeDomain(this.masterMeterData)
   }
 
   public getTrackNode(trackId: string) {
@@ -490,20 +543,13 @@ export class WebAudioEngine {
       const gain = ctx.createGain()
       const panner = ctx.createStereoPanner()
       const analyser = ctx.createAnalyser()
-      analyser.fftSize = 64
-      const dataArray = new Uint8Array(analyser.frequencyBinCount)
+      analyser.fftSize = 256
+      analyser.smoothingTimeConstant = 0
+      const dataArray = new Uint8Array(analyser.fftSize)
 
       gain.connect(panner)
       panner.connect(analyser)
-      const created = { gain, panner, analyser, dataArray } as {
-        gain: GainNode
-        panner: StereoPannerNode
-        analyser: AnalyserNode
-        dataArray: Uint8Array<ArrayBuffer>
-        stemTap?: ScriptProcessorNode
-        stemSilent?: GainNode
-        stemIndex?: number
-      }
+      const created: TrackAudioNode = { gain, panner, analyser, dataArray }
       if (this.stemMode && this.nativeOutput) {
         this.attachStemTap(trackId, created)
       } else {
@@ -524,18 +570,7 @@ export class WebAudioEngine {
     return node
   }
 
-  private attachStemTap(
-    trackId: string,
-    node: {
-      gain: GainNode
-      panner: StereoPannerNode
-      analyser: AnalyserNode
-      dataArray: Uint8Array<ArrayBuffer>
-      stemTap?: ScriptProcessorNode
-      stemSilent?: GainNode
-      stemIndex?: number
-    },
-  ) {
+  private attachStemTap(trackId: string, node: TrackAudioNode) {
     const ctx = this.audioCtx
     if (!ctx) return
     const idx = this.trackStemIndex.get(trackId)
@@ -543,36 +578,41 @@ export class WebAudioEngine {
       node.analyser.connect(this.masterGain!)
       return
     }
-    const tap = ctx.createScriptProcessor(512, 2, 2)
     const silent = ctx.createGain()
     silent.gain.value = 0
-    tap.onaudioprocess = (ev) => {
-      const input = ev.inputBuffer
-      const n = input.length
-      const l = input.getChannelData(0)
-      const r = input.numberOfChannels > 1 ? input.getChannelData(1) : l
-      let scratch = this.stemScratch.get(trackId)
-      if (!scratch || scratch.length !== n * 2) {
-        scratch = new Float32Array(n * 2)
-        this.stemScratch.set(trackId, scratch)
-      }
-      for (let i = 0; i < n; i++) {
-        scratch[i * 2] = l[i]
-        scratch[i * 2 + 1] = r[i]
-      }
-      const stemIndex = this.trackStemIndex.get(trackId)
-      if (stemIndex != null && this.nativeOutput) {
-        window.electron?.pluginHostPushPcm?.(encodeStemPacket(stemIndex, scratch))
-      }
-      ev.outputBuffer.getChannelData(0).fill(0)
-      if (ev.outputBuffer.numberOfChannels > 1) ev.outputBuffer.getChannelData(1).fill(0)
-    }
+    const tap = this.makePcmTap(ctx, idx)
     node.analyser.connect(tap)
     tap.connect(silent)
     silent.connect(ctx.destination)
     node.stemTap = tap
     node.stemSilent = silent
     node.stemIndex = idx
+  }
+
+  private makePcmTap(ctx: AudioContext, stemIndex: number): AudioWorkletNode | ScriptProcessorNode {
+    // ScriptProcessor: el Worklet + postMessage transferable llegaba detached en Electron
+    // (host en silencio). El Worklet sigue usándose en installPcmTap sin transfer.
+    const tap = ctx.createScriptProcessor(512, 2, 2)
+    tap.onaudioprocess = (ev) => {
+      const input = ev.inputBuffer
+      const n = input.length
+      const l = input.getChannelData(0)
+      const r = input.numberOfChannels > 1 ? input.getChannelData(1) : l
+      const key = `stem-${stemIndex}`
+      let scratch = this.stemScratch.get(key)
+      if (!scratch || scratch.length !== n * 2) {
+        scratch = new Float32Array(n * 2)
+        this.stemScratch.set(key, scratch)
+      }
+      for (let i = 0; i < n; i++) {
+        scratch[i * 2] = l[i]
+        scratch[i * 2 + 1] = r[i]
+      }
+      window.electron?.pluginHostPushPcm?.(encodeStemPacket(stemIndex, scratch))
+      ev.outputBuffer.getChannelData(0).fill(0)
+      if (ev.outputBuffer.numberOfChannels > 1) ev.outputBuffer.getChannelData(1).fill(0)
+    }
+    return tap
   }
 
   /** Asigna índices de stem y activa el modo Reaper (dry por pista → host). */
@@ -645,27 +685,9 @@ export class WebAudioEngine {
       this.masterAnalyser.connect(this.dawBusTap)
       return
     }
-    const tap = this.audioCtx.createScriptProcessor(512, 2, 2)
     const silent = this.audioCtx.createGain()
     silent.gain.value = 0
-    tap.onaudioprocess = (ev) => {
-      const input = ev.inputBuffer
-      const n = input.length
-      const l = input.getChannelData(0)
-      const r = input.numberOfChannels > 1 ? input.getChannelData(1) : l
-      if (!this.tapScratch || this.tapScratch.length !== n * 2) {
-        this.tapScratch = new Float32Array(n * 2)
-      }
-      for (let i = 0; i < n; i++) {
-        this.tapScratch[i * 2] = l[i]
-        this.tapScratch[i * 2 + 1] = r[i]
-      }
-      if (this.nativeOutput) {
-        window.electron?.pluginHostPushPcm?.(encodeStemPacket(JASWAVE_MIX_DAW_BUS, this.tapScratch))
-      }
-      ev.outputBuffer.getChannelData(0).fill(0)
-      if (ev.outputBuffer.numberOfChannels > 1) ev.outputBuffer.getChannelData(1).fill(0)
-    }
+    const tap = this.makePcmTap(this.audioCtx, JASWAVE_MIX_DAW_BUS)
     this.masterAnalyser.connect(tap)
     tap.connect(silent)
     silent.connect(this.audioCtx.destination)
@@ -748,8 +770,13 @@ export class WebAudioEngine {
       string,
       { sampleRate: number; length: number; numberOfChannels: number; channels: ArrayBuffer[] }
     > = {}
+    const maxTotal = 12 * 1024 * 1024
+    const maxOne = 8 * 1024 * 1024
+    let total = 0
     for (const [key, buf] of this.audioBuffers) {
       if (key.startsWith('demo-')) continue
+      const bytes = buf.length * Math.max(1, buf.numberOfChannels) * 4
+      if (bytes > maxOne || total + bytes > maxTotal) continue
       const channels: ArrayBuffer[] = []
       for (let c = 0; c < buf.numberOfChannels; c++) {
         const copy = new Float32Array(buf.length)
@@ -762,6 +789,7 @@ export class WebAudioEngine {
         numberOfChannels: buf.numberOfChannels,
         channels,
       }
+      total += bytes
     }
     return out
   }
@@ -1069,6 +1097,8 @@ export class WebAudioEngine {
     slotId: string | undefined,
     insertedSoftPad = false,
   ): void {
+    const prev = this.pendingTracksConfig.find((t) => t.id === trackId)
+    const slotChanged = Boolean(slotId) && slotId !== prev?.vstInstrumentSlotId
     this.pendingTracksConfig = this.pendingTracksConfig.map((t) =>
       t.id === trackId
         ? {
@@ -1078,6 +1108,13 @@ export class WebAudioEngine {
           }
         : t,
     )
+    // Notas saltadas mientras el slot no existía: reabrir la ventana actual.
+    if (slotChanged && this.isPlaying && this.audioCtx) {
+      const wallElapsed = this.audioCtx.currentTime - this.startTime
+      const nowTimeline = this.playheadStartSec + Math.max(0, wallElapsed)
+      this.midiScheduledUntilSec = Math.min(this.midiScheduledUntilSec, nowTimeline)
+      this.scheduleMidiLookahead()
+    }
   }
 
   private stopMidiScheduler() {
@@ -1111,8 +1148,6 @@ export class WebAudioEngine {
     if (!ctx) return
 
     const cfgById = new Map(this.pendingTracksConfig.map((t) => [t.id, t]))
-    const maxNotes = 48
-    let scheduled = 0
 
     for (const clip of this.pendingMidiClips) {
       const cfg = cfgById.get(clip.trackId)
@@ -1127,7 +1162,6 @@ export class WebAudioEngine {
       const vstSlot = cfg?.vstInstrumentSlotId
 
       for (let ni = 0; ni < clip.notes.length; ni++) {
-        if (scheduled >= maxNotes) return
         const note = clip.notes[ni]!
         const noteStart = note.startSec
         const durRaw = Math.max(0.03, note.durationSec)
@@ -1158,7 +1192,6 @@ export class WebAudioEngine {
             continue
           }
           this.midiVoiceKeys.add(key)
-          scheduled++
         } catch (err) {
           console.warn('[audio-engine] midi voice failed', err)
         }
@@ -1248,20 +1281,180 @@ export class WebAudioEngine {
     } catch {
       /* ignore */
     }
+    if (this.isPlaying && this.audioCtx) {
+      this.playheadStartSec = this.getTimelineSeconds()
+    }
     this.isPlaying = false
   }
 
   public getMeterLevel(trackId: string): number {
     const node = this.trackNodes.get(trackId)
     if (!node) return 0
+    node.analyser.getByteTimeDomainData(node.dataArray)
+    return peakFromByteTimeDomain(node.dataArray)
+  }
 
-    node.analyser.getByteFrequencyData(node.dataArray)
-    let sum = 0
-    for (let i = 0; i < node.dataArray.length; i++) {
-      sum += node.dataArray[i]
+  public getInputMeterLevel(): number {
+    return this.recPeak
+  }
+
+  public isCapturingInput(): boolean {
+    return this.recStream != null
+  }
+
+  /**
+   * Captura el dispositivo de entrada por defecto. Monitor opcional a una pista armada.
+   * Tope ~5 min para no llenar memoria.
+   */
+  public async startInputCapture(monitorTrackId?: string | null): Promise<boolean> {
+    await this.abortInputCapture()
+    const ctx = this.ensureContext()
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume()
+      } catch {
+        return false
+      }
     }
-    const avg = sum / node.dataArray.length
-    return Math.min(1, avg / 128)
+    if (!navigator.mediaDevices?.getUserMedia) return false
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      })
+      this.recStream = stream
+      this.recChunksL = []
+      this.recChunksR = []
+      this.recFrames = 0
+      this.recPeak = 0
+      this.recMonitorTrackId = monitorTrackId ?? null
+      const source = ctx.createMediaStreamSource(stream)
+      this.recSource = source
+      const tap = ctx.createScriptProcessor(1024, 2, 2)
+      tap.onaudioprocess = (ev) => this.onRecProcess(ev)
+      this.recTap = tap
+      const silent = ctx.createGain()
+      silent.gain.value = 0
+      this.recSilent = silent
+      source.connect(tap)
+      tap.connect(silent)
+      silent.connect(ctx.destination)
+      if (monitorTrackId) {
+        try {
+          source.connect(this.getTrackNode(monitorTrackId).gain)
+        } catch {
+          /* ignore */
+        }
+      }
+      return true
+    } catch {
+      await this.abortInputCapture()
+      return false
+    }
+  }
+
+  private onRecProcess(ev: AudioProcessingEvent): void {
+    const input = ev.inputBuffer
+    const n = input.length
+    const l = input.getChannelData(0)
+    const r = input.numberOfChannels > 1 ? input.getChannelData(1) : l
+    const maxFrames = Math.floor(this.getSampleRate() * 300)
+    if (this.recFrames + n > maxFrames) {
+      ev.outputBuffer.getChannelData(0).fill(0)
+      if (ev.outputBuffer.numberOfChannels > 1) ev.outputBuffer.getChannelData(1).fill(0)
+      return
+    }
+    const cl = new Float32Array(n)
+    const cr = new Float32Array(n)
+    cl.set(l)
+    cr.set(r)
+    this.recChunksL.push(cl)
+    this.recChunksR.push(cr)
+    this.recFrames += n
+    let peak = this.recPeak * 0.98
+    for (let i = 0; i < n; i++) {
+      const a = Math.abs(l[i])
+      const b = Math.abs(r[i])
+      if (a > peak) peak = a
+      if (b > peak) peak = b
+    }
+    this.recPeak = peak > 1 ? 1 : peak
+    ev.outputBuffer.getChannelData(0).fill(0)
+    if (ev.outputBuffer.numberOfChannels > 1) ev.outputBuffer.getChannelData(1).fill(0)
+  }
+
+  public async abortInputCapture(): Promise<void> {
+    this.teardownInputCapture()
+    this.recChunksL = []
+    this.recChunksR = []
+    this.recFrames = 0
+    this.recPeak = 0
+  }
+
+  /** Detiene captura y devuelve un AudioBuffer estéreo, o null si no hay audio. */
+  public async stopInputCapture(bufferKey: string): Promise<{ buffer: AudioBuffer; duration: number } | null> {
+    const frames = this.recFrames
+    const chunksL = this.recChunksL
+    const chunksR = this.recChunksR
+    this.teardownInputCapture()
+    this.recChunksL = []
+    this.recChunksR = []
+    this.recFrames = 0
+    this.recPeak = 0
+    if (frames < 64) return null
+    const ctx = this.ensureContext()
+    const buffer = ctx.createBuffer(2, frames, ctx.sampleRate)
+    const outL = buffer.getChannelData(0)
+    const outR = buffer.getChannelData(1)
+    let o = 0
+    for (let i = 0; i < chunksL.length; i++) {
+      const a = chunksL[i]
+      const b = chunksR[i] ?? a
+      outL.set(a, o)
+      outR.set(b, o)
+      o += a.length
+    }
+    this.audioBuffers.set(bufferKey, buffer)
+    return { buffer, duration: buffer.duration }
+  }
+
+  private teardownInputCapture(): void {
+    const monitorId = this.recMonitorTrackId
+    this.recMonitorTrackId = null
+    try {
+      this.recTap?.disconnect()
+    } catch {
+      /* ignore */
+    }
+    try {
+      this.recSilent?.disconnect()
+    } catch {
+      /* ignore */
+    }
+    try {
+      this.recSource?.disconnect()
+    } catch {
+      /* ignore */
+    }
+    if (monitorId && this.recSource) {
+      try {
+        this.recSource.disconnect(this.getTrackNode(monitorId).gain)
+      } catch {
+        /* ignore */
+      }
+    }
+    this.recTap = null
+    this.recSilent = null
+    this.recSource = null
+    if (this.recStream) {
+      for (const t of this.recStream.getTracks()) {
+        try {
+          t.stop()
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    this.recStream = null
   }
 
   // ── Metrónomo ────────────────────────────────────────────────
@@ -1280,7 +1473,8 @@ export class WebAudioEngine {
    * `accent` = true para el primer beat del compás (más agudo y fuerte).
    */
   private playClick(ctx: AudioContext, time: number, accent: boolean) {
-    if (!this.metronomeGain) return
+    const dest = this.metronomeGain
+    if (!dest || dest.context !== ctx) return
 
     const osc = ctx.createOscillator()
     const env = ctx.createGain()
@@ -1292,7 +1486,7 @@ export class WebAudioEngine {
     env.gain.exponentialRampToValueAtTime(0.001, time + 0.05)
 
     osc.connect(env)
-    env.connect(this.metronomeGain)
+    env.connect(dest)
 
     osc.start(time)
     osc.stop(time + 0.06)
@@ -1332,12 +1526,7 @@ export class WebAudioEngine {
   public startMetronome(bpm: number, beatsPerBar: number, currentBeat: number) {
     this.stopMetronome()
     const ctx = this.ensureContext()
-
-    if (!this.metronomeGain) {
-      this.metronomeGain = ctx.createGain()
-      this.metronomeGain.gain.value = this.metronomeVolumen
-      this.metronomeGain.connect(this.masterGain!)
-    }
+    this.ensureMetronomeGain(ctx)
 
     this.metronomeBpm = Math.max(20, Math.min(400, bpm))
     this.metronomeBeatsPerBar = Math.max(1, Math.min(32, Math.floor(beatsPerBar)))
@@ -1384,6 +1573,32 @@ export class WebAudioEngine {
     if (this.metronomeGain) {
       this.metronomeGain.gain.value = this.metronomeVolumen
     }
+  }
+
+  /** Recrea el gain del metrónomo si el AudioContext se regeneró (device / native mix). */
+  private ensureMetronomeGain(ctx: AudioContext) {
+    const master = this.masterGain
+    if (!master || master.context !== ctx) return
+    if (this.metronomeGain && this.metronomeGain.context === ctx) {
+      try {
+        this.metronomeGain.connect(master)
+      } catch {
+        /* already connected */
+      }
+      this.metronomeGain.gain.value = this.metronomeVolumen
+      return
+    }
+    if (this.metronomeGain) {
+      try {
+        this.metronomeGain.disconnect()
+      } catch {
+        /* ignore */
+      }
+      this.metronomeGain = null
+    }
+    this.metronomeGain = ctx.createGain()
+    this.metronomeGain.gain.value = this.metronomeVolumen
+    this.metronomeGain.connect(master)
   }
 }
 

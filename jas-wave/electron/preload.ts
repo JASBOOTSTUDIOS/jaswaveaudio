@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('electron', {
   aiChat: (payload: unknown, model?: string, baseUrl?: string, temperature?: number) =>
     ipcRenderer.invoke('ai-chat', payload, model, baseUrl, temperature),
   aiHealth: (payload?: unknown) => ipcRenderer.invoke('ai-health', payload),
+  pluginLookup: (pluginName: string) => ipcRenderer.invoke('plugin-lookup', pluginName),
   dialogMessage: (type: string, title: string, message: string) => ipcRenderer.invoke('dialog-message', type, title, message),
   shellOpenExternal: (url: string) => ipcRenderer.invoke('shell-open-external', url),
   openToolWindow: (toolId: string, title: string, extra?: Record<string, string>) =>

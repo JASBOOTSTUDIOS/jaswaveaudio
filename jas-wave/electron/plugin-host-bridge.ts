@@ -210,9 +210,10 @@ export function isMixPipeConnected(): boolean {
 export function pushPluginHostPcm(data: Buffer | ArrayBuffer | Float32Array | ArrayBufferView): void {
   if (!mixSock || mixSock.destroyed || !mixSock.writable) return
   let buf: Buffer
-  if (Buffer.isBuffer(data)) buf = data
+  if (Buffer.isBuffer(data)) buf = Buffer.from(data)
   else if (ArrayBuffer.isView(data)) {
-    buf = Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+    if (data.byteLength === 0) return
+    buf = Buffer.from(new Uint8Array(data.buffer, data.byteOffset, data.byteLength))
   } else {
     buf = Buffer.from(data)
   }

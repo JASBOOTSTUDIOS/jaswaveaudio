@@ -4,6 +4,7 @@ const fs = require('fs/promises')
 const fsSync = require('fs')
 import type { IpcMainInvokeEvent } from 'electron'
 import { aiChat, aiHealth, legacyChatArgsToRequest, type AiChatRequest, type AiHealthRequest } from './ai-gateway'
+import { lookupPluginOnWeb } from './plugin-lookup'
 
 let mainWindow: typeof BrowserWindow | null = null
 
@@ -335,6 +336,12 @@ ipcMain.handle('ai-health', async (_event: IpcMainInvokeEvent, payload?: unknown
     kind: 'ollama',
     baseUrl: baseUrl || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434',
   })
+})
+
+ipcMain.handle('plugin-lookup', async (_event: IpcMainInvokeEvent, pluginName: unknown) => {
+  const name = String(pluginName ?? '').trim().slice(0, 120)
+  if (name.length < 2) return []
+  return lookupPluginOnWeb(name)
 })
 
 ipcMain.handle('dialog-message', async (_event: IpcMainInvokeEvent, type: string, title: string, message: string) => {

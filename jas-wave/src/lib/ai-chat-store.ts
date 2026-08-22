@@ -18,10 +18,15 @@ export type StoredChatMessage = {
     keyLabel: string
     bpm: number
     durationBeats: number
-    notes: Array<{ pitch: number; inicio: number; duracion: number; velocidad: number }> 
+    notes: Array<{ pitch: number; inicio: number; duracion: number; velocidad: number }>
     structureLabel: string
     status?: 'pending' | 'applied' | 'discarded'
+    mood?: string
+    style?: string
+    pistaId?: string
+    applied?: boolean
   }
+  projectPlan?: import('./project-plan').ProjectPlanData
 }
 
 export type ChatConversation = {
@@ -143,6 +148,7 @@ export function updateMessageContent(
   content: string,
   actionsSummary?: string,
   midiPreview?: StoredChatMessage['midiPreview'],
+  projectPlan?: StoredChatMessage['projectPlan'],
 ): ChatConversation | null {
   const all = loadAll()
   const idx = all.findIndex((c) => c.id === conversationId)
@@ -157,6 +163,7 @@ export function updateMessageContent(
             content,
             ...(actionsSummary !== undefined ? { actionsSummary } : {}),
             ...(midiPreview !== undefined ? { midiPreview } : {}),
+            ...(projectPlan !== undefined ? { projectPlan } : {}),
           }
         : m,
     ),
