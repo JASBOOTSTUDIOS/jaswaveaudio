@@ -5,8 +5,11 @@
 #include "vst3_slot.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
+#include <thread>
+#include <vector>
 
 #include "public.sdk/source/vst/hosting/eventlist.h"
 #include "public.sdk/source/vst/hosting/hostclasses.h"
@@ -20,6 +23,7 @@
 #include "pluginterfaces/vst/ivsteditcontroller.h"
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivstprocesscontext.h"
+#include "pluginterfaces/vst/vstspeaker.h"
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -122,6 +126,29 @@ struct Vst3Slot::Impl {
   int32_t blockSize{512};
   std::mutex midiMutex;
   std::vector<Vst3MidiEvent> midiQueue;
+  std::mutex paramMutex;
+  std::vector<std::pair<ParamID, ParamValue>> paramQueue;
+
+  struct Handler : public IComponentHandler {
+    Impl* owner{nullptr};
+    tresult PLUGIN_API beginEdit(ParamID) override { return kResultOk; }
+    tresult PLUGIN_API performEdit(ParamID id, ParamValue valueNormalized) override {
+      if (!owner) return kResultFalse;
+      std::lock_guard<std::mutex> lock(owner->paramMutex);
+      owner->paramQueue.push_back({id, valueNormalized});
+      return kResultOk;
+    }
+    tresult PLUGIN_API endEdit(ParamID) override { return kResultOk; }
+    tresult PLUGIN_API restartComponent(int32) override { return kResultOk; }
+    tresult PLUGIN_API queryInterface(const TUID _iid, void** obj) override {
+      QUERY_INTERFACE(_iid, obj, FUnknown::iid, IComponentHandler)
+      QUERY_INTERFACE(_iid, obj, IComponentHandler::iid, IComponentHandler)
+      *obj = nullptr;
+      return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return 1000; }
+    uint32 PLUGIN_API release() override { return 1000; }
+  } handler;
 
   std::vector<float> silentInL;
   std::vector<float> silentInR;
@@ -139,6 +166,7 @@ Vst3Slot::Vst3Slot() : impl_(std::make_unique<Impl>()) {
   impl_->embed.frame = &impl_->plugFrame;
   impl_->plugFrame.st = &impl_->embed;
 #endif
+  impl_->handler.owner = impl_.get();
 }
 
 Vst3Slot::~Vst3Slot() { unload(); }
@@ -184,21 +212,9 @@ bool Vst3Slot::load(const std::string& path, std::string& err) {
     return false;
   }
   impl_->processor = proc;
-
-  // Activar buses de evento (MIDI) y audio salida
-  const int32 eventIns = impl_->component->getBusCount(kEvent, kInput);
-  for (int32 i = 0; i < eventIns; ++i) {
-    impl_->component->activateBus(kEvent, kInput, i, true);
+  if (impl_->controller) {
+    impl_->controller->setComponentHandler(&impl_->handler);
   }
-  const int32 audioOuts = impl_->component->getBusCount(kAudio, kOutput);
-  for (int32 i = 0; i < audioOuts; ++i) {
-    impl_->component->activateBus(kAudio, kOutput, i, true);
-  }
-  const int32 audioIns = impl_->component->getBusCount(kAudio, kInput);
-  for (int32 i = 0; i < audioIns; ++i) {
-    impl_->component->activateBus(kAudio, kInput, i, true);
-  }
-
   return true;
 }
 
@@ -220,6 +236,40 @@ bool Vst3Slot::prepare(double sampleRate, int32_t blockSize, std::string& err) {
     err = "setupProcessing falló";
     return false;
   }
+
+  // Stereo I/O — sin esto muchos VST3 dejan numOutputs=0 y no suenan.
+  const int32 numInBuses = impl_->component->getBusCount(kAudio, kInput);
+  const int32 numOutBuses = impl_->component->getBusCount(kAudio, kOutput);
+  std::vector<SpeakerArrangement> inArr(static_cast<size_t>(std::max(0, numInBuses)),
+                                        SpeakerArr::kStereo);
+  std::vector<SpeakerArrangement> outArr(static_cast<size_t>(std::max(0, numOutBuses)),
+                                         SpeakerArr::kStereo);
+  const tresult busRes = impl_->processor->setBusArrangements(
+      numInBuses > 0 ? inArr.data() : nullptr, numInBuses,
+      numOutBuses > 0 ? outArr.data() : nullptr, numOutBuses);
+  (void)busRes; // kResultFalse = layout negociado; seguimos con activateBus.
+
+  const int32 eventIns = impl_->component->getBusCount(kEvent, kInput);
+  for (int32 i = 0; i < eventIns; ++i) {
+    impl_->component->activateBus(kEvent, kInput, i, true);
+  }
+  for (int32 i = 0; i < numOutBuses; ++i) {
+    impl_->component->activateBus(kAudio, kOutput, i, true);
+  }
+  for (int32 i = 0; i < numInBuses; ++i) {
+    // Instrumentos: entradas de audio en silencio; activar para HostProcessData.
+    impl_->component->activateBus(kAudio, kInput, i, true);
+  }
+
+  if (!impl_->processData.prepare(*impl_->component, blockSize, kSample32)) {
+    err = "HostProcessData::prepare falló";
+    return false;
+  }
+  if (impl_->processData.numOutputs <= 0) {
+    err = "Plugin sin buses de audio de salida activos";
+    return false;
+  }
+
   if (impl_->component->setActive(true) != kResultOk) {
     err = "setActive(true) falló";
     return false;
@@ -229,28 +279,49 @@ bool Vst3Slot::prepare(double sampleRate, int32_t blockSize, std::string& err) {
     return false;
   }
 
-  if (!impl_->processData.prepare(*impl_->component, blockSize, kSample32)) {
-    err = "HostProcessData::prepare falló";
-    return false;
-  }
-
   impl_->silentInL.assign(static_cast<size_t>(blockSize), 0.f);
   impl_->silentInR.assign(static_cast<size_t>(blockSize), 0.f);
   impl_->outBusL.assign(static_cast<size_t>(blockSize), 0.f);
   impl_->outBusR.assign(static_cast<size_t>(blockSize), 0.f);
 
+  impl_->processContext = {};
   impl_->processContext.sampleRate = sampleRate;
-  impl_->processContext.state = ProcessContext::kPlaying | ProcessContext::kTempoValid;
   impl_->processContext.tempo = 120.0;
+  impl_->processContext.state = ProcessContext::kPlaying | ProcessContext::kTempoValid |
+                               ProcessContext::kProjectTimeMusicValid |
+                               ProcessContext::kContTimeValid;
+  impl_->processContext.projectTimeMusic = 0;
+  impl_->processContext.continousTimeSamples = 0;
 
   latencySamples_ = static_cast<int>(impl_->processor->getLatencySamples());
-  prepared_ = true;
+  prepared_.store(true);
   return true;
+}
+
+bool Vst3Slot::reprepare(double sampleRate, int32_t blockSize, std::string& err) {
+  waitNotProcessing();
+  prepared_.store(false);
+  if (impl_->processor) impl_->processor->setProcessing(false);
+  if (impl_->component) impl_->component->setActive(false);
+  impl_->processData.unprepare();
+  return prepare(sampleRate, blockSize, err);
+}
+
+void Vst3Slot::waitNotProcessing() {
+  prepared_.store(false);
+  for (int i = 0; i < 200 && inProcess_.load(); ++i) {
+#ifdef _WIN32
+    Sleep(1);
+#else
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+#endif
+  }
 }
 
 void Vst3Slot::unload() {
   closeEditor();
-  prepared_ = false;
+  waitNotProcessing();
+  if (impl_->controller) impl_->controller->setComponentHandler(nullptr);
   if (impl_->processor) {
     impl_->processor->setProcessing(false);
   }
@@ -284,21 +355,55 @@ void Vst3Slot::allNotesOff() {
   }
 }
 
-void Vst3Slot::process(float* outL, float* outR, int frames) {
-  if (!prepared_ || !impl_->processor || frames <= 0) {
-    if (outL && frames > 0) std::fill(outL, outL + frames, 0.f);
-    if (outR && frames > 0) std::fill(outR, outR + frames, 0.f);
+void Vst3Slot::setMix(float gain, float pan, bool muted) {
+  mixGain_.store(std::max(0.f, std::min(2.f, gain)), std::memory_order_relaxed);
+  mixPan_.store(std::max(-1.f, std::min(1.f, pan)), std::memory_order_relaxed);
+  mixMuted_.store(muted, std::memory_order_relaxed);
+}
+
+void Vst3Slot::applyMix(float* outL, float* outR, int frames) const {
+  if (!outL || !outR || frames <= 0) return;
+  const float g = mixMuted_.load(std::memory_order_relaxed)
+                      ? 0.f
+                      : mixGain_.load(std::memory_order_relaxed);
+  const float pan = mixPan_.load(std::memory_order_relaxed);
+  float gL = g;
+  float gR = g;
+  if (pan < 0.f) gR *= 1.f + pan;
+  else if (pan > 0.f) gL *= 1.f - pan;
+  if (gL == 1.f && gR == 1.f) return;
+  for (int i = 0; i < frames; ++i) {
+    outL[i] *= gL;
+    outR[i] *= gR;
+  }
+}
+
+void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* outR, int frames) {
+  if (!outL || !outR || frames <= 0) return;
+  if (bypass_.load(std::memory_order_relaxed) || !prepared_.load() || !impl_->processor) {
+    if (inL && inR) {
+      std::memcpy(outL, inL, static_cast<size_t>(frames) * sizeof(float));
+      std::memcpy(outR, inR, static_cast<size_t>(frames) * sizeof(float));
+    } else {
+      std::fill(outL, outL + frames, 0.f);
+      std::fill(outR, outR + frames, 0.f);
+    }
     return;
   }
+  inProcess_.store(true);
 
-  if (outL) std::fill(outL, outL + frames, 0.f);
-  if (outR) std::fill(outR, outR + frames, 0.f);
+  std::fill(outL, outL + frames, 0.f);
+  std::fill(outR, outR + frames, 0.f);
 
-  // Drain MIDI once at block start (offset 0 of first sub-buffer).
   std::vector<Vst3MidiEvent> pendingMidi;
   {
     std::lock_guard<std::mutex> lock(impl_->midiMutex);
     pendingMidi.swap(impl_->midiQueue);
+  }
+  std::vector<std::pair<ParamID, ParamValue>> pendingParams;
+  {
+    std::lock_guard<std::mutex> lock(impl_->paramMutex);
+    pendingParams.swap(impl_->paramQueue);
   }
 
   int offset = 0;
@@ -313,6 +418,13 @@ void Vst3Slot::process(float* outL, float* outR, int frames) {
     }
     std::fill(impl_->outBusL.begin(), impl_->outBusL.begin() + n, 0.f);
     std::fill(impl_->outBusR.begin(), impl_->outBusR.begin() + n, 0.f);
+    if (inL && inR) {
+      std::memcpy(impl_->silentInL.data(), inL + offset, static_cast<size_t>(n) * sizeof(float));
+      std::memcpy(impl_->silentInR.data(), inR + offset, static_cast<size_t>(n) * sizeof(float));
+    } else {
+      std::fill(impl_->silentInL.begin(), impl_->silentInL.begin() + n, 0.f);
+      std::fill(impl_->silentInR.begin(), impl_->silentInR.begin() + n, 0.f);
+    }
 
     impl_->eventList.clear();
     if (!midiSent) {
@@ -341,6 +453,18 @@ void Vst3Slot::process(float* outL, float* outR, int frames) {
       midiSent = true;
     }
 
+    impl_->inputParameterChanges.clearQueue();
+    if (!pendingParams.empty()) {
+      for (const auto& p : pendingParams) {
+        int32 qIndex = 0;
+        if (auto* q = impl_->inputParameterChanges.addParameterData(p.first, qIndex)) {
+          int32 pt = 0;
+          q->addPoint(0, p.second, pt);
+        }
+      }
+      pendingParams.clear();
+    }
+
     if (impl_->processData.numInputs > 0 && impl_->processData.inputs) {
       auto& in = impl_->processData.inputs[0];
       if (in.numChannels >= 1) impl_->processData.setChannelBuffer(kInput, 0, 0, impl_->silentInL.data());
@@ -358,10 +482,12 @@ void Vst3Slot::process(float* outL, float* outR, int frames) {
     impl_->processData.outputEvents = nullptr;
     impl_->processData.inputParameterChanges = &impl_->inputParameterChanges;
     impl_->processData.outputParameterChanges = &impl_->outputParameterChanges;
-    impl_->inputParameterChanges.clearQueue();
     impl_->outputParameterChanges.clearQueue();
 
     impl_->processContext.continousTimeSamples += n;
+    impl_->processContext.projectTimeMusic +=
+        (static_cast<double>(n) / impl_->sampleRate) * (impl_->processContext.tempo / 60.0);
+
     impl_->processor->process(impl_->processData);
 
     const bool stereo = impl_->processData.numOutputs > 0 &&
@@ -374,6 +500,7 @@ void Vst3Slot::process(float* outL, float* outR, int frames) {
     }
     offset += n;
   }
+  inProcess_.store(false);
 }
 
 bool Vst3Slot::openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h, std::string& err) {
@@ -384,27 +511,12 @@ bool Vst3Slot::openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h,
     return false;
   }
 
-  // Suspender process mientras se crea la UI (plugins como DecentSampler crashean si no).
-  const bool wasPrepared = prepared_;
-  if (impl_->processor && wasPrepared) {
-    impl_->processor->setProcessing(false);
-    prepared_ = false;
-  }
-
   IPtr<IPlugView> view = owned(impl_->controller->createView(ViewType::kEditor));
   if (!view) {
-    if (impl_->processor && wasPrepared) {
-      impl_->processor->setProcessing(true);
-      prepared_ = true;
-    }
     err = "createView(kEditor) falló";
     return false;
   }
   if (view->isPlatformTypeSupported(kPlatformTypeHWND) != kResultTrue) {
-    if (impl_->processor && wasPrepared) {
-      impl_->processor->setProcessing(true);
-      prepared_ = true;
-    }
     err = "El plugin no soporta HWND";
     return false;
   }
@@ -459,10 +571,6 @@ bool Vst3Slot::openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h,
       nullptr,
       nullptr, inst, nullptr);
   if (!hwnd) {
-    if (impl_->processor && wasPrepared) {
-      impl_->processor->setProcessing(true);
-      prepared_ = true;
-    }
     err = "CreateWindowEx falló (GetLastError=" + std::to_string(GetLastError()) + ")";
     return false;
   }
@@ -479,10 +587,6 @@ bool Vst3Slot::openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h,
     DestroyWindow(hwnd);
     impl_->embed.hwnd = nullptr;
     impl_->embed.view = nullptr;
-    if (impl_->processor && wasPrepared) {
-      impl_->processor->setProcessing(true);
-      prepared_ = true;
-    }
     return false;
   }
 
@@ -490,11 +594,6 @@ bool Vst3Slot::openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h,
   vr.right = vw;
   vr.bottom = vh;
   view->onSize(&vr);
-
-  if (impl_->processor && wasPrepared) {
-    impl_->processor->setProcessing(true);
-    prepared_ = true;
-  }
 
   SetWindowPos(hwnd, HWND_TOP, sx, sy, vw + 16, vh + 40, SWP_SHOWWINDOW);
   ShowWindow(hwnd, SW_SHOW);

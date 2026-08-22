@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useEffect, useRef } from 'react'
 import { Minus, SlidersHorizontal, Wand2, Shuffle } from 'lucide-react'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { Track as SharedTrack, AudioTrack } from '../../shared/src/types/tracks'
@@ -13,6 +13,7 @@ import {
 } from '@/lib/audio-conversions'
 import { FaderControl, KnobControl } from './ui/controls'
 import { TrackFxButton } from '@/components/fx-chain-panel'
+import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 
 type MixerRow = {
   id: string
@@ -25,6 +26,7 @@ type MixerRow = {
   db: number
   pan: number
   fxCount: number
+  tipo: string
 }
 
 function toMixerRow(track: SharedTrack): MixerRow {
@@ -40,6 +42,7 @@ function toMixerRow(track: SharedTrack): MixerRow {
     db: linealADb(linearVol),
     pan: panADisplay(track.paneo),
     fxCount: track.plugins?.length ?? 0,
+    tipo: track.tipo,
   }
 }
 
@@ -79,6 +82,13 @@ export function Mixer() {
   const tracks = useDAWState((s: DAWState) => s.project?.tracks ?? [])
   const master = useDAWState((s: DAWState) => s.project?.master)
   const collapsed = useDAWState((s: DAWState) => s.ui?.estadoMezcladorUI?.colapsado ?? false)
+  const selectedTrackId = useDAWState((s: DAWState) => getSelectedTrackId(s))
+  const stripRefs = useRef(new Map<string, HTMLDivElement | null>())
+
+  useEffect(() => {
+    if (!selectedTrackId) return
+    stripRefs.current.get(selectedTrackId)?.scrollIntoView({ inline: 'nearest', block: 'nearest' })
+  }, [selectedTrackId])
 
   const handleToggleMute = (id: string) => {
     void tienda.executor.execute('track.toggleMute', { trackId: id })
@@ -188,7 +198,15 @@ export function Mixer() {
       {/* Tiras de canal */}
       <div className="flex min-h-0 flex-1 overflow-auto">
         {trackList.map((track) => (
-          <div key={track.id} className={`flex shrink-0 flex-col border-r border-border px-2 py-2 ${collapsed ? 'w-[52px]' : 'w-[92px]'}`}>
+          <div
+            key={track.id}
+            ref={(el) => {
+              stripRefs.current.set(track.id, el)
+            }}
+            className={`flex shrink-0 flex-col border-r border-border px-2 py-2 ${collapsed ? 'w-[52px]' : 'w-[92px]'} ${
+              selectedTrackId === track.id ? 'bg-accent-amber/10' : ''
+            }`}
+          >
             {/* Nombre */}
             <p
               className="mb-1.5 truncate text-center text-[11px] font-medium text-foreground"
@@ -196,6 +214,11 @@ export function Mixer() {
             >
               {track.name}
             </p>
+            {(track.tipo === 'midi' || track.tipo === 'instrumento') && (
+              <p className="mb-1 text-center text-[8px] font-semibold uppercase tracking-wider text-accent-amber">
+                MIDI
+              </p>
+            )}
 
             {/* M / S */}
             <div className="mb-1 flex items-center justify-center gap-1">

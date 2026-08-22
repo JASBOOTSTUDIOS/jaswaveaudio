@@ -18,6 +18,13 @@ function mapReply(raw: unknown): PluginHostProcessReply {
         : undefined,
       count: typeof r.count === 'number' ? r.count : undefined,
       editorReady: typeof r.editorReady === 'boolean' ? r.editorReady : undefined,
+      editorOpening: typeof r.editorOpening === 'boolean' ? r.editorOpening : undefined,
+      audioReady: typeof r.audioReady === 'boolean' ? r.audioReady : undefined,
+      backends: Array.isArray(r.backends)
+        ? (r.backends as PluginHostProcessReply extends { ok: true; backends?: infer B } ? B : never)
+        : undefined,
+      devices: Array.isArray(r.devices) ? (r.devices as never) : undefined,
+      audio: r.audio && typeof r.audio === 'object' ? (r.audio as never) : undefined,
     }
   }
   return {
@@ -46,14 +53,13 @@ export function createElectronPluginHostBridge(): PluginHostProcessBridge {
       }
       try {
         const isEditorCmd =
-          cmd.type === 'openEditor' || cmd.type === 'closeEditor' || cmd.type === 'focusEditor'
+          cmd.type === 'openEditor' ||
+          cmd.type === 'closeEditor' ||
+          cmd.type === 'focusEditor' ||
+          cmd.type === 'setEditorBounds'
         if (!isEditorCmd && !availableCache && window.electron.pluginHostEnsure) {
           const ensured = await window.electron.pluginHostEnsure()
           availableCache = !!(ensured as { ok?: boolean }).ok
-        }
-        if (isEditorCmd && window.electron.pluginHostEnsure) {
-          const ensured = await window.electron.pluginHostEnsure()
-          availableCache = !!(ensured as { ok?: boolean }).ok || availableCache
         }
         const raw = await window.electron.pluginHostSend(cmd)
         const reply = mapReply(raw)

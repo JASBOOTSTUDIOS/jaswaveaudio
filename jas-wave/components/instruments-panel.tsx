@@ -160,7 +160,11 @@ export function InstrumentsPanel() {
       const { ensureTrackVstInstrument } = await import('@/src/lib/plugin/track-vst-runtime')
       void ensureTrackVstInstrument(track.id, info)
     }
-    setScanMsg(`«${info.nombre}» añadido · abre “Reabrir” para la UI (no se abre sola)`)
+    setScanMsg(
+      info.nombre.includes('Soft Pad')
+        ? `«${info.nombre}» añadido · audible en Play / piano roll`
+        : `«${info.nombre}» añadido · cargando audio en el Plugin Host…`,
+    )
     openPluginEditor({
       trackId: track.id,
       pluginId: info.id,
@@ -190,7 +194,7 @@ export function InstrumentsPanel() {
               className="inline-flex items-center justify-center gap-1 rounded-md bg-accent-amber/20 py-1.5 text-[11px] font-semibold text-accent-amber hover:bg-accent-amber/30"
             >
               <Plus className="size-3" />
-              Soft Pad en esta pista
+              Insertar Soft Pad
             </button>
           </div>
         ) : (
@@ -417,8 +421,9 @@ export function InstrumentsPanel() {
         </div>
 
         <p className="mt-4 text-[10px] leading-relaxed text-muted-foreground">
-          Panel acoplable: en la barra de pestañas usa el icono de desacoplar para otra
-          ventana/monitor. Soft Pad suena ya; VST3 quedan pendientes del SDK.
+          Soft Pad es un instrumento interno: hay que insertarlo en la pista. No suena por
+          defecto. Un VST insertado se carga en el Plugin Host; Play y el piano-roll le envían
+          MIDI. La UI flotante es otra instancia (presets del editor no pasan al audio).
         </p>
       </div>
     </div>

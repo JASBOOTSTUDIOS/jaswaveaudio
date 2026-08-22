@@ -5,8 +5,11 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -29,8 +32,8 @@
 
 #if defined(JASWAVE_HAS_VST3_SDK)
 #include "vst3_slot.h"
-#define MINIAUDIO_IMPLEMENTATION
-#include "miniaudio.h"
+#include "audio_output.h"
+#include "mix_bus.h"
 #endif
 
 static std::string jsonEscape(const std::string& s) {
@@ -97,6 +100,19 @@ static double getNumberField(const std::string& json, const char* key, double fa
   } catch (...) {
     return fallback;
   }
+}
+
+static bool getBoolField(const std::string& json, const char* key, bool fallback = false) {
+  const std::string needle = std::string("\"") + key + "\"";
+  auto pos = json.find(needle);
+  if (pos == std::string::npos) return fallback;
+  pos = json.find(':', pos);
+  if (pos == std::string::npos) return fallback;
+  pos = json.find_first_not_of(" \t", pos + 1);
+  if (pos == std::string::npos) return fallback;
+  if (json.compare(pos, 4, "true") == 0) return true;
+  if (json.compare(pos, 5, "false") == 0) return false;
+  return fallback;
 }
 
 #ifdef _WIN32
@@ -202,20 +218,245 @@ static void handleDiscover(const std::string& json) {
 static std::mutex gSlotsMutex;
 static std::unordered_map<std::string, std::unique_ptr<Vst3Slot>> gSlots;
 static std::string gActiveSlot;
+static std::string gMixPipeName;
+static std::atomic<float> gMasterGain{1.f};
+static std::atomic<bool> gMasterMuted{false};
+static float gMixL[8192];
+static float gMixR[8192];
+static float gTmpL[8192];
+static float gTmpR[8192];
+static float gChainL[8192];
+static float gChainR[8192];
+static float gFxL[8192];
+static float gFxR[8192];
+static float gStemInterleaved[8192 * 2];
 
-static ma_device gAudioDevice;
-static std::atomic<bool> gAudioRunning{false};
-static std::vector<float> gMixL;
-static std::vector<float> gMixR;
+static Vst3Slot* findSlotUnlocked(const std::string& slotId);
+
+/** Graph Reaper en buffers POD (doble) — sin alloc en el audio thread. */
+static constexpr int kMaxGraphTracks = 64;
+static constexpr int kMaxChainSlots = 24;
+static constexpr int kSlotIdLen = 96;
+
+struct RtChainSlot {
+  Vst3Slot* slot{nullptr};
+  char slotId[kSlotIdLen]{};
+  bool instrument{false};
+  bool bypass{false};
+};
+struct RtTrackChain {
+  uint16_t stemIndex{0};
+  float gain{1.f};
+  float pan{0.f};
+  bool muted{false};
+  uint8_t slotCount{0};
+  RtChainSlot slots[kMaxChainSlots]{};
+};
+
+static RtTrackChain gRtTracks[2][kMaxGraphTracks]{};
+static uint8_t gRtTrackCount[2]{0, 0};
+static RtChainSlot gRtMaster[2][kMaxChainSlots]{};
+static uint8_t gRtMasterCount[2]{0, 0};
+static std::atomic<int> gRtBuf{0};
+static std::atomic<bool> gGraphActive{false};
+static std::mutex gGraphMutex;  // solo control thread / publish
+
+struct TrackChainSlot {
+  std::string slotId;
+  bool instrument{false};
+  bool bypass{false};
+};
+struct TrackChain {
+  uint16_t stemIndex{0};
+  float gain{1.f};
+  float pan{0.f};
+  bool muted{false};
+  std::vector<TrackChainSlot> slots;
+};
+
+static void copySlotId(char* dst, const std::string& src) {
+  if (!dst) return;
+  const size_t n = std::min(src.size(), static_cast<size_t>(kSlotIdLen - 1));
+  if (n) std::memcpy(dst, src.data(), n);
+  dst[n] = '\0';
+}
+
+static void publishGraphUnlocked(const std::vector<TrackChain>& tracks,
+                                 const std::vector<TrackChainSlot>& master) {
+  const int write = 1 - gRtBuf.load(std::memory_order_relaxed);
+  uint8_t tn = 0;
+  for (const auto& tr : tracks) {
+    if (tn >= kMaxGraphTracks) break;
+    RtTrackChain& out = gRtTracks[write][tn];
+    out.stemIndex = tr.stemIndex;
+    out.gain = tr.gain;
+    out.pan = tr.pan;
+    out.muted = tr.muted;
+    out.slotCount = 0;
+    for (const auto& cs : tr.slots) {
+      if (out.slotCount >= kMaxChainSlots) break;
+      RtChainSlot& rs = out.slots[out.slotCount++];
+      copySlotId(rs.slotId, cs.slotId);
+      rs.instrument = cs.instrument;
+      rs.bypass = cs.bypass;
+      rs.slot = findSlotUnlocked(cs.slotId);
+    }
+    ++tn;
+  }
+  gRtTrackCount[write] = tn;
+
+  uint8_t mn = 0;
+  for (const auto& cs : master) {
+    if (mn >= kMaxChainSlots) break;
+    RtChainSlot& rs = gRtMaster[write][mn++];
+    copySlotId(rs.slotId, cs.slotId);
+    rs.instrument = cs.instrument;
+    rs.bypass = cs.bypass;
+    rs.slot = findSlotUnlocked(cs.slotId);
+  }
+  gRtMasterCount[write] = mn;
+  gRtBuf.store(write, std::memory_order_release);
+  gGraphActive.store(true, std::memory_order_release);
+}
+
+static void clearSlotPointersInGraph(Vst3Slot* doomed) {
+  if (!doomed) return;
+  for (int b = 0; b < 2; ++b) {
+    for (uint8_t t = 0; t < gRtTrackCount[b]; ++t) {
+      for (uint8_t s = 0; s < gRtTracks[b][t].slotCount; ++s) {
+        if (gRtTracks[b][t].slots[s].slot == doomed) gRtTracks[b][t].slots[s].slot = nullptr;
+      }
+    }
+    for (uint8_t s = 0; s < gRtMasterCount[b]; ++s) {
+      if (gRtMaster[b][s].slot == doomed) gRtMaster[b][s].slot = nullptr;
+    }
+  }
+}
 
 #ifdef _WIN32
 static DWORD gMainThreadId = 0;
+static constexpr UINT WM_JASWAVE_JOB = WM_APP + 7;
 #endif
 
+static void applyTrackGainPan(float* l, float* r, int frames, float gain, float pan, bool muted) {
+  if (muted || gain <= 0.f) {
+    std::fill(l, l + frames, 0.f);
+    std::fill(r, r + frames, 0.f);
+    return;
+  }
+  const float g = std::max(0.f, std::min(2.f, gain));
+  const float p = std::max(-1.f, std::min(1.f, pan));
+  const float gL = g * (p <= 0.f ? 1.f : 1.f - p);
+  const float gR = g * (p >= 0.f ? 1.f : 1.f + p);
+  for (int i = 0; i < frames; ++i) {
+    l[i] *= gL;
+    r[i] *= gR;
+  }
+}
+
+static void renderMix(float* interleaved, uint32_t frameCount) {
+  const int frames = static_cast<int>(std::min<uint32_t>(frameCount, 8192));
+  if (frames <= 0) return;
+  std::fill(gMixL, gMixL + frames, 0.f);
+  std::fill(gMixR, gMixR + frames, 0.f);
+
+  const bool useGraph = gGraphActive.load(std::memory_order_acquire);
+  const int idx = gRtBuf.load(std::memory_order_acquire);
+
+  if (useGraph) {
+    const uint8_t trackN = gRtTrackCount[idx];
+    for (uint8_t t = 0; t < trackN; ++t) {
+      const RtTrackChain& tr = gRtTracks[idx][t];
+      jaswave_mix_bus_pull_stem(tr.stemIndex, gStemInterleaved, static_cast<uint32_t>(frames));
+      for (int i = 0; i < frames; ++i) {
+        gChainL[i] = gStemInterleaved[i * 2];
+        gChainR[i] = gStemInterleaved[i * 2 + 1];
+      }
+      for (uint8_t s = 0; s < tr.slotCount; ++s) {
+        const RtChainSlot& cs = tr.slots[s];
+        Vst3Slot* slot = cs.slot;
+        if (!slot || !slot->isPrepared()) continue;
+        if (cs.bypass) continue;
+        if (cs.instrument) {
+          slot->process(nullptr, nullptr, gFxL, gFxR, frames);
+          for (int i = 0; i < frames; ++i) {
+            gChainL[i] += gFxL[i];
+            gChainR[i] += gFxR[i];
+          }
+        } else {
+          slot->process(gChainL, gChainR, gFxL, gFxR, frames);
+          std::memcpy(gChainL, gFxL, static_cast<size_t>(frames) * sizeof(float));
+          std::memcpy(gChainR, gFxR, static_cast<size_t>(frames) * sizeof(float));
+        }
+      }
+      applyTrackGainPan(gChainL, gChainR, frames, tr.gain, tr.pan, tr.muted);
+      for (int i = 0; i < frames; ++i) {
+        gMixL[i] += gChainL[i];
+        gMixR[i] += gChainR[i];
+      }
+    }
+    const uint8_t masterN = gRtMasterCount[idx];
+    for (uint8_t s = 0; s < masterN; ++s) {
+      const RtChainSlot& cs = gRtMaster[idx][s];
+      Vst3Slot* slot = cs.slot;
+      if (!slot || !slot->isPrepared() || cs.bypass) continue;
+      slot->process(gMixL, gMixR, gFxL, gFxR, frames);
+      std::memcpy(gMixL, gFxL, static_cast<size_t>(frames) * sizeof(float));
+      std::memcpy(gMixR, gFxR, static_cast<size_t>(frames) * sizeof(float));
+    }
+  } else {
+    // Legacy: suma paralela de todos los slots
+    Vst3Slot* snapshot[48]{};
+    int n = 0;
+    {
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      for (auto& [id, slot] : gSlots) {
+        (void)id;
+        if (!slot || !slot->isPrepared() || n >= 48) continue;
+        snapshot[n++] = slot.get();
+      }
+    }
+    for (int s = 0; s < n; ++s) {
+      snapshot[s]->process(nullptr, nullptr, gTmpL, gTmpR, frames);
+      snapshot[s]->applyMix(gTmpL, gTmpR, frames);
+      for (int i = 0; i < frames; ++i) {
+        gMixL[i] += gTmpL[i];
+        gMixR[i] += gTmpR[i];
+      }
+    }
+  }
+
+  const float masterG = gMasterMuted.load(std::memory_order_relaxed)
+                            ? 0.f
+                            : gMasterGain.load(std::memory_order_relaxed);
+  for (int i = 0; i < frames; ++i) {
+    interleaved[i * 2 + 0] = gMixL[i] * masterG;
+    interleaved[i * 2 + 1] = gMixR[i] * masterG;
+  }
+  jaswave_mix_bus_add(interleaved, static_cast<uint32_t>(frames));
+  for (int i = 0; i < frames; ++i) {
+    interleaved[i * 2 + 0] = std::max(-1.f, std::min(1.f, interleaved[i * 2 + 0]));
+    interleaved[i * 2 + 1] = std::max(-1.f, std::min(1.f, interleaved[i * 2 + 1]));
+  }
+}
+
 struct UiJob {
-  enum class Kind { OpenEditor, SetBounds, CloseEditor } kind{};
+  enum class Kind {
+    OpenEditor,
+    SetBounds,
+    CloseEditor,
+    Load,
+    Unload,
+    ListDevices,
+    SetDevice,
+    GetDevice,
+    TestTone,
+    AsioPanel,
+    EnsureAudio
+  } kind{};
   std::string json;
   std::string err;
+  std::string extraJson;
   bool ok{false};
   bool replyWhenDone{true};
   std::mutex mu;
@@ -231,72 +472,110 @@ static Vst3Slot* findSlotUnlocked(const std::string& slotId) {
   return it == gSlots.end() ? nullptr : it->second.get();
 }
 
-static void audioCallback(ma_device* /*device*/, void* output, const void* /*input*/,
-                          ma_uint32 frameCount) {
-  auto* out = static_cast<float*>(output);
-  const int frames = static_cast<int>(frameCount);
-  if (static_cast<int>(gMixL.size()) < frames) {
-    gMixL.resize(static_cast<size_t>(frames));
-    gMixR.resize(static_cast<size_t>(frames));
+static bool ensureAudioDevice(std::string& err) {
+  const auto st = jaswave_audio_status();
+  if (st.running) {
+    const uint32_t sr = st.actualSampleRate ? st.actualSampleRate : st.cfg.sampleRate;
+    if (sr) jaswave_mix_bus_set_output_rate(sr);
+    return true;
   }
-  std::fill(gMixL.begin(), gMixL.begin() + frames, 0.f);
-  std::fill(gMixR.begin(), gMixR.begin() + frames, 0.f);
+  JaswaveAudioConfig cfg = st.cfg;
+  if (cfg.backend.empty()) cfg.backend = "auto";
+  if (!cfg.sampleRate) cfg.sampleRate = 48000;
+  if (!cfg.bufferSize) cfg.bufferSize = 512;
+  jaswave_audio_set_renderer(renderMix);
+  if (!jaswave_audio_start(cfg, err)) return false;
+  const auto st2 = jaswave_audio_status();
+  const uint32_t sr = st2.actualSampleRate ? st2.actualSampleRate : cfg.sampleRate;
+  if (sr) jaswave_mix_bus_set_output_rate(sr);
+  return true;
+}
 
-  std::vector<float> tmpL(static_cast<size_t>(frames));
-  std::vector<float> tmpR(static_cast<size_t>(frames));
+static void stopAudioDevice() { jaswave_audio_stop(); }
 
+static uint32_t currentBlockSize() {
+  const auto st = jaswave_audio_status();
+  const uint32_t b = st.actualBufferSize ? st.actualBufferSize : st.cfg.bufferSize;
+  return std::max(512u, std::min(b * 4u, 4096u));
+}
+
+static double currentSampleRate() {
+  const auto st = jaswave_audio_status();
+  if (st.actualSampleRate) return static_cast<double>(st.actualSampleRate);
+  return st.cfg.sampleRate ? static_cast<double>(st.cfg.sampleRate) : 48000.0;
+}
+
+static bool ensureSlotLoaded(const std::string& slotId, const std::string& path, std::string& err);
+
+static std::string audioStatusJsonObject() {
+  const auto st = jaswave_audio_status();
+  std::ostringstream o;
+  o << "{\"backend\":\"" << jsonEscape(st.cfg.backend) << "\""
+    << ",\"deviceId\":\"" << jsonEscape(st.cfg.deviceId) << "\""
+    << ",\"deviceName\":\"" << jsonEscape(st.deviceName) << "\""
+    << ",\"sampleRate\":" << (st.actualSampleRate ? st.actualSampleRate : st.cfg.sampleRate)
+    << ",\"bufferSize\":" << (st.actualBufferSize ? st.actualBufferSize : st.cfg.bufferSize)
+    << ",\"exclusive\":" << (st.cfg.exclusive ? "true" : "false")
+    << ",\"running\":" << (st.running ? "true" : "false")
+    << ",\"lastError\":\"" << jsonEscape(st.lastError) << "\"}";
+  return o.str();
+}
+
+static std::string listDevicesExtraJson() {
+  std::vector<JaswaveAudioBackendInfo> backends;
+  std::vector<JaswaveAudioDevice> devices;
+  std::string err;
+  jaswave_audio_list(backends, devices, err);
+  std::ostringstream o;
+  o << "\"backends\":[";
+  for (size_t i = 0; i < backends.size(); ++i) {
+    if (i) o << ",";
+    o << "{\"id\":\"" << jsonEscape(backends[i].id) << "\",\"name\":\"" << jsonEscape(backends[i].name)
+      << "\",\"available\":" << (backends[i].available ? "true" : "false") << ",\"hint\":\""
+      << jsonEscape(backends[i].hint) << "\"}";
+  }
+  o << "],\"devices\":[";
+  for (size_t i = 0; i < devices.size(); ++i) {
+    if (i) o << ",";
+    o << "{\"id\":\"" << jsonEscape(devices[i].id) << "\",\"backend\":\"" << jsonEscape(devices[i].backend)
+      << "\",\"name\":\"" << jsonEscape(devices[i].name)
+      << "\",\"isDefault\":" << (devices[i].isDefault ? "true" : "false")
+      << ",\"available\":" << (devices[i].available ? "true" : "false") << "}";
+  }
+  o << "],\"audio\":" << audioStatusJsonObject();
+  return o.str();
+}
+
+static bool applyAudioConfigFromJson(const std::string& json, std::string& err) {
+  JaswaveAudioConfig cfg;
+  cfg.backend = getStringField(json, "backend");
+  if (cfg.backend.empty()) cfg.backend = getStringField(json, "api");
+  cfg.deviceId = getStringField(json, "deviceId");
+  if (cfg.deviceId.empty()) cfg.deviceId = getStringField(json, "device");
+  cfg.sampleRate = static_cast<uint32_t>(getNumberField(json, "sampleRate", 48000));
+  cfg.bufferSize = static_cast<uint32_t>(getNumberField(json, "bufferSize", 512));
+  cfg.exclusive = getBoolField(json, "exclusive", cfg.backend == "wasapi_exclusive");
+  jaswave_audio_set_renderer(renderMix);
+  if (!jaswave_audio_start(cfg, err)) return false;
+  // El device ya corre: un fallo de reprepare no debe dejar la app muda ni
+  // reportar "setAudioDevice falló" cuando el audio sí abrió.
+  std::vector<Vst3Slot*> slots;
   {
     std::lock_guard<std::mutex> lock(gSlotsMutex);
     for (auto& [id, slot] : gSlots) {
       (void)id;
-      if (!slot || !slot->isPrepared()) continue;
-      slot->process(tmpL.data(), tmpR.data(), frames);
-      for (int i = 0; i < frames; ++i) {
-        gMixL[static_cast<size_t>(i)] += tmpL[static_cast<size_t>(i)];
-        gMixR[static_cast<size_t>(i)] += tmpR[static_cast<size_t>(i)];
-      }
+      if (slot) slots.push_back(slot.get());
     }
   }
-
-  for (int i = 0; i < frames; ++i) {
-    out[i * 2 + 0] = std::max(-1.f, std::min(1.f, gMixL[static_cast<size_t>(i)]));
-    out[i * 2 + 1] = std::max(-1.f, std::min(1.f, gMixR[static_cast<size_t>(i)]));
-  }
-}
-
-static bool ensureAudioDevice(std::string& err) {
-  if (gAudioRunning) return true;
-  ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
-  cfg.playback.format = ma_format_f32;
-  cfg.playback.channels = 2;
-  cfg.playback.shareMode = ma_share_mode_shared; // crítico: no robar el device a Electron/Web Audio
-  cfg.sampleRate = 0; // rate nativo del device (evita exclusive / SRC agresivo)
-  cfg.periodSizeInFrames = 512;
-  cfg.dataCallback = audioCallback;
-  cfg.wasapi.noAutoConvertSRC = MA_FALSE;
-  cfg.wasapi.usage = ma_wasapi_usage_default;
-  if (ma_device_init(nullptr, &cfg, &gAudioDevice) != MA_SUCCESS) {
-    // Retry fijo 48k shared
-    cfg.sampleRate = 48000;
-    if (ma_device_init(nullptr, &cfg, &gAudioDevice) != MA_SUCCESS) {
-      err = "ma_device_init falló";
-      return false;
+  for (auto* slot : slots) {
+    std::string perr;
+    if (!slot->reprepare(currentSampleRate(), static_cast<int32_t>(currentBlockSize()), perr)) {
+      std::cerr << "[jaswave-plugin-host] reprepare tras setAudioDevice: " << perr << "\n";
     }
   }
-  if (ma_device_start(&gAudioDevice) != MA_SUCCESS) {
-    ma_device_uninit(&gAudioDevice);
-    err = "ma_device_start falló";
-    return false;
-  }
-  gAudioRunning = true;
+  jaswave_mix_bus_set_output_rate(static_cast<uint32_t>(currentSampleRate()));
+  jaswave_mix_bus_reset();
   return true;
-}
-
-static void stopAudioDevice() {
-  if (!gAudioRunning) return;
-  ma_device_stop(&gAudioDevice);
-  ma_device_uninit(&gAudioDevice);
-  gAudioRunning = false;
 }
 
 static bool ensureSlotLoaded(const std::string& slotId, const std::string& path, std::string& err) {
@@ -312,12 +591,25 @@ static bool ensureSlotLoaded(const std::string& slotId, const std::string& path,
   slot->setSlotId(slotId);
   if (!slot->load(expandEnvPath(path), err)) return false;
   if (!ensureAudioDevice(err)) return false;
-  const double rate =
-      gAudioDevice.sampleRate > 0 ? static_cast<double>(gAudioDevice.sampleRate) : 48000.0;
-  if (!slot->prepare(rate, 512, err)) return false;
+  if (!slot->prepare(currentSampleRate(), static_cast<int32_t>(currentBlockSize()), err)) return false;
   std::lock_guard<std::mutex> lock(gSlotsMutex);
   gSlots[slotId] = std::move(slot);
   gActiveSlot = slotId;
+  // Re-enlazar punteros del graph activo (si ya había setTrackGraph).
+  {
+    std::lock_guard<std::mutex> graphLock(gGraphMutex);
+    const int idx = gRtBuf.load(std::memory_order_relaxed);
+    for (uint8_t t = 0; t < gRtTrackCount[idx]; ++t) {
+      for (uint8_t s = 0; s < gRtTracks[idx][t].slotCount; ++s) {
+        auto& rs = gRtTracks[idx][t].slots[s];
+        if (rs.slotId[0]) rs.slot = findSlotUnlocked(rs.slotId);
+      }
+    }
+    for (uint8_t s = 0; s < gRtMasterCount[idx]; ++s) {
+      auto& rs = gRtMaster[idx][s];
+      if (rs.slotId[0]) rs.slot = findSlotUnlocked(rs.slotId);
+    }
+  }
   return true;
 }
 
@@ -386,10 +678,107 @@ static void executeUiJob(UiJob& job) {
   }
 
   if (job.kind == UiJob::Kind::CloseEditor) {
-    std::lock_guard<std::mutex> lock(gSlotsMutex);
-    auto* slot = findSlotUnlocked(slotId);
+    Vst3Slot* slot = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      slot = findSlotUnlocked(slotId);
+    }
     if (slot) slot->closeEditor();
     job.ok = true;
+    return;
+  }
+
+  if (job.kind == UiJob::Kind::Load) {
+    std::string err;
+    if (!ensureSlotLoaded(slotId, path, err)) {
+      job.ok = false;
+      job.err = err;
+      return;
+    }
+    job.ok = true;
+    job.extraJson = "\"slotId\":\"" + jsonEscape(slotId) +
+                    "\",\"latencySamples\":0,\"audioReady\":true,\"audio\":" + audioStatusJsonObject();
+    return;
+  }
+
+  if (job.kind == UiJob::Kind::Unload) {
+    std::unique_ptr<Vst3Slot> doomed;
+    {
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      auto it = gSlots.find(slotId);
+      if (it != gSlots.end()) {
+        doomed = std::move(it->second);
+        gSlots.erase(it);
+      }
+      if (gActiveSlot == slotId) gActiveSlot.clear();
+      if (doomed) clearSlotPointersInGraph(doomed.get());
+    }
+    if (doomed) doomed->unload();
+    job.ok = true;
+    job.extraJson = "\"slotId\":\"" + jsonEscape(slotId) + "\"";
+    return;
+  }
+
+  if (job.kind == UiJob::Kind::ListDevices) {
+    job.ok = true;
+    job.extraJson = listDevicesExtraJson();
+    return;
+  }
+
+  if (job.kind == UiJob::Kind::SetDevice) {
+    std::string err;
+    if (!applyAudioConfigFromJson(json, err)) {
+      job.ok = false;
+      job.err = err;
+      return;
+    }
+    job.ok = true;
+    job.extraJson = "\"audio\":" + audioStatusJsonObject();
+    return;
+  }
+
+  if (job.kind == UiJob::Kind::GetDevice) {
+    job.ok = true;
+    job.extraJson = "\"audio\":" + audioStatusJsonObject();
+    return;
+  }
+
+  if (job.kind == UiJob::Kind::TestTone) {
+    std::string err;
+    if (!ensureAudioDevice(err)) {
+      job.ok = false;
+      job.err = err;
+      return;
+    }
+    const auto st = jaswave_audio_status();
+    const uint32_t sr = st.actualSampleRate ? st.actualSampleRate : 48000;
+    jaswave_audio_test_tone(sr / 2);  // ~0.5 s
+    job.ok = true;
+    job.extraJson = "\"audio\":" + audioStatusJsonObject();
+    return;
+  }
+
+  if (job.kind == UiJob::Kind::AsioPanel) {
+    std::string err;
+    std::string id = getStringField(json, "deviceId");
+    if (id.empty()) id = getStringField(json, "backend");
+    if (!jaswave_audio_asio_control_panel(id, err)) {
+      job.ok = false;
+      job.err = err;
+      return;
+    }
+    job.ok = true;
+  }
+
+  if (job.kind == UiJob::Kind::EnsureAudio) {
+    std::string err;
+    if (!ensureAudioDevice(err)) {
+      job.ok = false;
+      job.err = err;
+      return;
+    }
+    job.ok = true;
+    job.extraJson = "\"audio\":" + audioStatusJsonObject();
   }
 }
 
@@ -402,19 +791,40 @@ static void enqueueUiAsync(UiJob::Kind kind, const std::string& json) {
     gUiQueue.push_back(job);
   }
 #ifdef _WIN32
-  PostThreadMessageW(gMainThreadId, WM_NULL, 0, 0);
+  PostThreadMessageW(gMainThreadId, WM_JASWAVE_JOB, 0, 0);
 #endif
   // NO bloquear stdin: noteOn/load deben seguir. Respuesta al terminar el job en UI.
+}
+
+static void enqueueUiAndWait(const std::shared_ptr<UiJob>& job) {
+  {
+    std::lock_guard<std::mutex> lock(gUiQueueMu);
+    gUiQueue.push_back(job);
+  }
+#ifdef _WIN32
+  PostThreadMessageW(gMainThreadId, WM_JASWAVE_JOB, 0, 0);
+#endif
+  std::unique_lock<std::mutex> lk(job->mu);
+  job->cv.wait(lk, [&] { return job->done; });
 }
 
 static void finishUiJob(const std::shared_ptr<UiJob>& job) {
   if (!job->replyWhenDone) return;
   std::string slotId = getStringField(job->json, "slotId");
   if (slotId.empty()) slotId = getStringField(job->json, "pluginId");
-  if (job->ok)
-    replyOk("\"slotId\":\"" + jsonEscape(slotId) + "\",\"editorReady\":true,\"audioReady\":true");
-  else
-    replyFail("PluginEditorFailed", job->err.empty() ? "UI job failed" : job->err);
+  if (job->ok) {
+    std::string extra = job->extraJson;
+    if (extra.empty()) {
+      extra = "\"slotId\":\"" + jsonEscape(slotId) + "\",\"editorReady\":true,\"audioReady\":true";
+    }
+    replyOk(extra);
+  } else {
+    const char* code =
+        (job->kind == UiJob::Kind::Load) ? "PluginLoadFailed" : "PluginEditorFailed";
+    if (job->kind == UiJob::Kind::SetDevice || job->kind == UiJob::Kind::ListDevices)
+      code = "HostNotReady";
+    replyFail(code, job->err.empty() ? "UI job failed" : job->err);
+  }
 }
 
 static void drainUiQueue() {
@@ -435,34 +845,27 @@ static void drainUiQueue() {
 }
 
 static void handleLoad(const std::string& json) {
-  std::string path = getStringField(json, "path");
-  std::string slotId = getStringField(json, "slotId");
-  if (slotId.empty()) slotId = getStringField(json, "pluginId");
-  if (slotId.empty()) slotId = path;
-  std::string err;
-  if (!ensureSlotLoaded(slotId, path, err)) {
-    replyFail("PluginLoadFailed", err);
-    return;
-  }
-  replyOk("\"slotId\":\"" + jsonEscape(slotId) + "\",\"latencySamples\":0,\"audioReady\":true");
+  auto job = std::make_shared<UiJob>();
+  job->kind = UiJob::Kind::Load;
+  job->json = json;
+  job->replyWhenDone = true;
+  enqueueUiAndWait(job);
 }
 
 static void handleUnload(const std::string& json) {
-  std::string slotId = getStringField(json, "slotId");
-  std::unique_ptr<Vst3Slot> doomed;
-  {
-    std::lock_guard<std::mutex> lock(gSlotsMutex);
-    auto it = gSlots.find(slotId);
-    if (it != gSlots.end()) {
-      doomed = std::move(it->second);
-      gSlots.erase(it);
-    }
-    if (gActiveSlot == slotId) gActiveSlot.clear();
-    if (gSlots.empty()) stopAudioDevice();
-  }
-  // closeEditor/unload fuera del mutex de audio
-  if (doomed) doomed->unload();
-  replyOk("\"slotId\":\"" + jsonEscape(slotId) + "\"");
+  auto job = std::make_shared<UiJob>();
+  job->kind = UiJob::Kind::Unload;
+  job->json = json;
+  job->replyWhenDone = true;
+  enqueueUiAndWait(job);
+}
+
+static void handleUiRpc(UiJob::Kind kind, const std::string& json) {
+  auto job = std::make_shared<UiJob>();
+  job->kind = kind;
+  job->json = json;
+  job->replyWhenDone = true;
+  enqueueUiAndWait(job);
 }
 
 static void handleNote(const std::string& json, bool on) {
@@ -473,14 +876,18 @@ static void handleNote(const std::string& json, bool on) {
   std::lock_guard<std::mutex> lock(gSlotsMutex);
   auto* slot = findSlotUnlocked(slotId);
   if (!slot) {
-    replyFail("PluginNotFound", "slot no cargado: " + slotId);
+    static std::atomic<uint32_t> missingLogs{0};
+    const uint32_t n = missingLogs.fetch_add(1, std::memory_order_relaxed);
+    if (n < 6 || (n % 250) == 0) {
+      std::cerr << "[jaswave-plugin-host] note: slot no cargado: " << slotId << "\n";
+    }
     return;
   }
-  if (on)
+  if (on) {
     slot->noteOn(pitch, vel > 1.f ? vel / 127.f : vel);
-  else
+  } else {
     slot->noteOff(pitch);
-  replyOk("\"slotId\":\"" + jsonEscape(slotId) + "\"");
+  }
 }
 
 #endif // JASWAVE_HAS_VST3_SDK
@@ -489,10 +896,145 @@ static void handleLine(const std::string& line) {
   if (line.empty()) return;
   const std::string type = getStringField(line, "type");
   if (type == "ping") {
-    replyOk(std::string("\"latencySamples\":0,\"editorReady\":") +
-            (kAudioReady ? "true" : "false") + ",\"audioReady\":" +
-            (kAudioReady ? "true" : "false"));
+    std::string extra = std::string("\"latencySamples\":0,\"editorReady\":") +
+                        (kAudioReady ? "true" : "false") + ",\"audioReady\":" +
+                        (kAudioReady ? "true" : "false");
+#if defined(JASWAVE_HAS_VST3_SDK)
+    if (!gMixPipeName.empty()) extra += ",\"mixPipe\":\"" + jsonEscape(gMixPipeName) + "\"";
+#endif
+    replyOk(extra);
     return;
+  }
+  if (type == "setMixInputRate") {
+#if defined(JASWAVE_HAS_VST3_SDK)
+    const uint32_t sr = static_cast<uint32_t>(getNumberField(line, "sampleRate", 48000));
+    jaswave_mix_bus_set_input_rate(sr);
+#endif
+    return;  // fire-and-forget: no reply (no mezclar con la cola RPC)
+  }
+  if (type == "setSlotMix" || type == "setMasterMix") {
+#if defined(JASWAVE_HAS_VST3_SDK)
+    if (type == "setMasterMix") {
+      const float g = static_cast<float>(getNumberField(line, "gain", 1));
+      gMasterGain.store(std::max(0.f, std::min(2.f, g)), std::memory_order_relaxed);
+      gMasterMuted.store(getBoolField(line, "muted", false), std::memory_order_relaxed);
+    } else {
+      std::string slotId = getStringField(line, "slotId");
+      if (slotId.empty()) slotId = gActiveSlot;
+      const float g = static_cast<float>(getNumberField(line, "gain", 1));
+      const float pan = static_cast<float>(getNumberField(line, "pan", 0));
+      const bool muted = getBoolField(line, "muted", false);
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      auto* slot = findSlotUnlocked(slotId);
+      if (slot) slot->setMix(g, pan, muted);
+    }
+#endif
+    return;
+  }
+  if (type == "setTrackGraph") {
+#if defined(JASWAVE_HAS_VST3_SDK)
+    // encoding: "idx|slotId:i|e:0|1,...;idx|...||masterSlot:e:0,..."
+    const std::string enc = getStringField(line, "encoding");
+    std::vector<TrackChain> tracks;
+    std::vector<TrackChainSlot> master;
+    auto parseSlotList = [](const std::string& part, std::vector<TrackChainSlot>& out) {
+      size_t p = 0;
+      while (p < part.size()) {
+        size_t comma = part.find(',', p);
+        std::string tok = part.substr(p, comma == std::string::npos ? std::string::npos : comma - p);
+        // slotId:role:bypass
+        size_t c1 = tok.rfind(':');
+        size_t c0 = c1 == std::string::npos ? std::string::npos : tok.rfind(':', c1 - 1);
+        if (c0 != std::string::npos && c1 != std::string::npos && c1 > c0) {
+          TrackChainSlot cs;
+          cs.slotId = tok.substr(0, c0);
+          cs.instrument = tok.substr(c0 + 1, c1 - c0 - 1) == "i";
+          cs.bypass = tok.substr(c1 + 1) == "1";
+          if (!cs.slotId.empty()) out.push_back(std::move(cs));
+        }
+        if (comma == std::string::npos) break;
+        p = comma + 1;
+      }
+    };
+    size_t masterSep = enc.find("||");
+    std::string tracksPart = masterSep == std::string::npos ? enc : enc.substr(0, masterSep);
+    std::string masterPart = masterSep == std::string::npos ? "" : enc.substr(masterSep + 2);
+    size_t p = 0;
+    while (p < tracksPart.size()) {
+      size_t semi = tracksPart.find(';', p);
+      std::string seg = tracksPart.substr(p, semi == std::string::npos ? std::string::npos : semi - p);
+      size_t bar = seg.find('|');
+      if (bar != std::string::npos) {
+        TrackChain tc;
+        try {
+          tc.stemIndex = static_cast<uint16_t>(std::stoi(seg.substr(0, bar)));
+        } catch (...) {
+          tc.stemIndex = 0;
+        }
+        // optional :gain:pan:muted after index — "0:0.8:0:0|slots"
+        size_t colon = seg.find(':');
+        size_t firstBar = bar;
+        if (colon != std::string::npos && colon < firstBar) {
+          // idx only before |
+        }
+        // Extended: idx~gain~pan~muted|slots
+        size_t tilde = seg.find('~');
+        if (tilde != std::string::npos && tilde < firstBar) {
+          try {
+            tc.stemIndex = static_cast<uint16_t>(std::stoi(seg.substr(0, tilde)));
+          } catch (...) {
+          }
+          size_t t2 = seg.find('~', tilde + 1);
+          size_t t3 = t2 == std::string::npos ? std::string::npos : seg.find('~', t2 + 1);
+          try {
+            if (t2 != std::string::npos) tc.gain = std::stof(seg.substr(tilde + 1, t2 - tilde - 1));
+            if (t2 != std::string::npos && t3 != std::string::npos)
+              tc.pan = std::stof(seg.substr(t2 + 1, t3 - t2 - 1));
+            if (t3 != std::string::npos && t3 < firstBar)
+              tc.muted = seg.substr(t3 + 1, firstBar - t3 - 1) == "1";
+          } catch (...) {
+          }
+        }
+        parseSlotList(seg.substr(firstBar + 1), tc.slots);
+        if (tc.stemIndex < JASWAVE_MIX_MAX_TRACKS) tracks.push_back(std::move(tc));
+      }
+      if (semi == std::string::npos) break;
+      p = semi + 1;
+    }
+    parseSlotList(masterPart, master);
+    {
+      std::lock_guard<std::mutex> slotsLock(gSlotsMutex);
+      std::lock_guard<std::mutex> graphLock(gGraphMutex);
+      publishGraphUnlocked(tracks, master);
+    }
+#endif
+    return;  // fire-and-forget
+  }
+  if (type == "setBypass") {
+#if defined(JASWAVE_HAS_VST3_SDK)
+    std::string slotId = getStringField(line, "slotId");
+    const bool bypass = getBoolField(line, "bypass", false);
+    {
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      auto* slot = findSlotUnlocked(slotId);
+      if (slot) slot->setBypass(bypass);
+    }
+    {
+      std::lock_guard<std::mutex> glock(gGraphMutex);
+      for (int b = 0; b < 2; ++b) {
+        for (uint8_t t = 0; t < gRtTrackCount[b]; ++t) {
+          for (uint8_t s = 0; s < gRtTracks[b][t].slotCount; ++s) {
+            if (slotId == gRtTracks[b][t].slots[s].slotId) gRtTracks[b][t].slots[s].bypass = bypass;
+          }
+        }
+        for (uint8_t s = 0; s < gRtMasterCount[b]; ++s) {
+          if (slotId == gRtMaster[b][s].slotId) gRtMaster[b][s].bypass = bypass;
+        }
+      }
+    }
+    replyOk();
+    return;
+#endif
   }
   if (type == "discover") {
     handleDiscover(line);
@@ -514,7 +1056,7 @@ static void handleLine(const std::string& line) {
   }
   if (type == "noteOn") {
     handleNote(line, true);
-    return;
+    return; // sin reply — MIDI fire-and-forget
   }
   if (type == "noteOff") {
     handleNote(line, false);
@@ -526,7 +1068,6 @@ static void handleLine(const std::string& line) {
     std::lock_guard<std::mutex> lock(gSlotsMutex);
     auto* slot = findSlotUnlocked(slotId);
     if (slot) slot->allNotesOff();
-    replyOk("\"slotId\":\"" + jsonEscape(slotId) + "\"");
     return;
   }
   if (type == "openEditor") {
@@ -541,7 +1082,7 @@ static void handleLine(const std::string& line) {
       gUiQueue.push_back(job);
     }
 #ifdef _WIN32
-    PostThreadMessageW(gMainThreadId, WM_NULL, 0, 0);
+    PostThreadMessageW(gMainThreadId, WM_JASWAVE_JOB, 0, 0);
 #endif
     std::string slotId = getStringField(line, "slotId");
     if (slotId.empty()) slotId = getStringField(line, "pluginId");
@@ -559,7 +1100,7 @@ static void handleLine(const std::string& line) {
       gUiQueue.push_back(job);
     }
 #ifdef _WIN32
-    PostThreadMessageW(gMainThreadId, WM_NULL, 0, 0);
+    PostThreadMessageW(gMainThreadId, WM_JASWAVE_JOB, 0, 0);
 #endif
     replyOk();
     return;
@@ -574,12 +1115,36 @@ static void handleLine(const std::string& line) {
       gUiQueue.push_back(job);
     }
 #ifdef _WIN32
-    PostThreadMessageW(gMainThreadId, WM_NULL, 0, 0);
+    PostThreadMessageW(gMainThreadId, WM_JASWAVE_JOB, 0, 0);
 #endif
     replyOk();
     return;
   }
-  if (type == "focusEditor" || type == "setBypass" || type == "getLatency" || type == "crashReport") {
+  if (type == "listAudioDevices") {
+    handleUiRpc(UiJob::Kind::ListDevices, line);
+    return;
+  }
+  if (type == "setAudioDevice") {
+    handleUiRpc(UiJob::Kind::SetDevice, line);
+    return;
+  }
+  if (type == "getAudioDevice") {
+    handleUiRpc(UiJob::Kind::GetDevice, line);
+    return;
+  }
+  if (type == "testTone") {
+    handleUiRpc(UiJob::Kind::TestTone, line);
+    return;
+  }
+  if (type == "ensureAudio") {
+    handleUiRpc(UiJob::Kind::EnsureAudio, line);
+    return;
+  }
+  if (type == "asioControlPanel") {
+    handleUiRpc(UiJob::Kind::AsioPanel, line);
+    return;
+  }
+  if (type == "focusEditor" || type == "getLatency" || type == "crashReport") {
     replyOk();
     return;
   }
@@ -606,7 +1171,7 @@ int main(int argc, char** argv) {
 #endif
   std::cerr << "[jaswave-plugin-host] ready"
 #if defined(JASWAVE_HAS_VST3_SDK)
-               " (VST3 audio+editor)"
+               " (VST3 audio+editor, same instance, selectable device)"
 #else
                " (discover-only)"
 #endif
@@ -615,6 +1180,17 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
 #if defined(JASWAVE_HAS_VST3_SDK)
   gMainThreadId = GetCurrentThreadId();
+  jaswave_audio_set_renderer(renderMix);
+  {
+    std::string mixErr;
+    if (!jaswave_mix_bus_start(gMixPipeName, mixErr)) {
+      std::cerr << "[jaswave-plugin-host] mix bus: " << mixErr << "\n";
+    } else {
+      std::cerr << "[jaswave-plugin-host] mix pipe " << gMixPipeName << "\n";
+    }
+  }
+  MSG pumpInit{};
+  PeekMessageW(&pumpInit, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
 #endif
 #endif
 
@@ -644,15 +1220,18 @@ int main(int argc, char** argv) {
 #if defined(JASWAVE_HAS_VST3_SDK)
     drainUiQueue();
 #endif
-    while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-      if (msg.message == WM_QUIT) {
-        running = false;
-        break;
-      }
+    const BOOL gm = GetMessageW(&msg, nullptr, 0, 0);
+    if (gm <= 0) {
+      running = false;
+      break;
+    }
+    if (msg.message != WM_JASWAVE_JOB) {
       TranslateMessage(&msg);
       DispatchMessageW(&msg);
     }
-    Sleep(5);
+#if defined(JASWAVE_HAS_VST3_SDK)
+    drainUiQueue();
+#endif
   }
 #else
   while (running) {
@@ -667,6 +1246,7 @@ int main(int argc, char** argv) {
     gSlots.clear();
   }
   stopAudioDevice();
+  jaswave_mix_bus_stop();
 #endif
   return 0;
 }

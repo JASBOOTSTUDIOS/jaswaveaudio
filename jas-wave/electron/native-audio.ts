@@ -62,5 +62,8 @@ export function getNativeAudio(): NativeBinding | null {
 }
 
 export function nativeAudioAvailable(): boolean {
+  // Addon stub (playhead, sin salida HW). No reportar available: el DAW usa Web Audio.
+  // Opt-in: JASWAVE_NATIVE_AUDIO=1 cuando el device miniaudio sea real (ADR-0009 fase 2).
+  if (process.env.JASWAVE_NATIVE_AUDIO !== '1') return false
   return getNativeAudio() != null
 }

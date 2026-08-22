@@ -29,7 +29,8 @@ contextBridge.exposeInMainWorld('electron', {
   aiHealth: (payload?: unknown) => ipcRenderer.invoke('ai-health', payload),
   dialogMessage: (type: string, title: string, message: string) => ipcRenderer.invoke('dialog-message', type, title, message),
   shellOpenExternal: (url: string) => ipcRenderer.invoke('shell-open-external', url),
-  openToolWindow: (toolId: string, title: string) => ipcRenderer.invoke('tool-window-open', toolId, title),
+  openToolWindow: (toolId: string, title: string, extra?: Record<string, string>) =>
+    ipcRenderer.invoke('tool-window-open', toolId, title, extra),
   closeToolWindow: (toolId: string) => ipcRenderer.invoke('tool-window-close', toolId),
   onToolWindowClosed: (callback: (toolId: string) => void) => {
     const handler = (_event: unknown, toolId: string) => callback(toolId)
@@ -59,5 +60,20 @@ contextBridge.exposeInMainWorld('electron', {
   pluginHostStatus: () => ipcRenderer.invoke('plugin-host-status'),
   pluginHostEnsure: () => ipcRenderer.invoke('plugin-host-ensure'),
   pluginHostSend: (cmd: unknown) => ipcRenderer.invoke('plugin-host-send', cmd),
+  pluginHostMidi: (cmd: unknown) => ipcRenderer.invoke('plugin-host-midi', cmd),
+  pluginHostPushPcm: (samples: Float32Array | ArrayBuffer | Uint8Array) => {
+    // Siempre Uint8Array: ArrayBuffer puro a veces no sobrevive el clone IPC de Electron.
+    let u8: Uint8Array
+    if (samples instanceof Uint8Array && samples.byteOffset === 0 && samples.byteLength === samples.buffer.byteLength) {
+      u8 = samples
+    } else if (samples instanceof ArrayBuffer) {
+      u8 = new Uint8Array(samples.slice(0))
+    } else if (ArrayBuffer.isView(samples)) {
+      u8 = new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength).slice()
+    } else {
+      return
+    }
+    ipcRenderer.send('plugin-host-pcm', u8)
+  },
   pluginHostStop: () => ipcRenderer.invoke('plugin-host-stop'),
 })

@@ -34,14 +34,17 @@ public:
 
   bool load(const std::string& path, std::string& err);
   bool prepare(double sampleRate, int32_t blockSize, std::string& err);
+  bool reprepare(double sampleRate, int32_t blockSize, std::string& err);
   void unload();
 
   void noteOn(int pitch, float velocity);
   void noteOff(int pitch);
   void allNotesOff();
 
-  /** Procesa un bloque stereo interleaved → outL/outR (frames muestras). */
-  void process(float* outL, float* outR, int frames);
+  /** Procesa un bloque. Si inL/inR son null, entrada silenciosa (instrumento). */
+  void process(const float* inL, const float* inR, float* outL, float* outR, int frames);
+  /** Compat: entrada silenciosa. */
+  void process(float* outL, float* outR, int frames) { process(nullptr, nullptr, outL, outR, frames); }
 
   bool openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h, std::string& err);
   void setEditorBounds(int x, int y, int w, int h);
@@ -51,14 +54,24 @@ public:
   const std::string& path() const { return path_; }
   const std::string& slotId() const { return slotId_; }
   void setSlotId(std::string id) { slotId_ = std::move(id); }
-  bool isPrepared() const { return prepared_; }
+  bool isPrepared() const { return prepared_.load(); }
   int latencySamples() const { return latencySamples_; }
+  void waitNotProcessing();
+  void setMix(float gain, float pan, bool muted);
+  void applyMix(float* outL, float* outR, int frames) const;
+  void setBypass(bool bypass) { bypass_.store(bypass, std::memory_order_relaxed); }
+  bool isBypassed() const { return bypass_.load(std::memory_order_relaxed); }
 
 private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
   std::string path_;
   std::string slotId_;
-  bool prepared_{false};
+  std::atomic<bool> prepared_{false};
+  std::atomic<bool> inProcess_{false};
+  std::atomic<float> mixGain_{1.f};
+  std::atomic<float> mixPan_{0.f};
+  std::atomic<bool> mixMuted_{false};
+  std::atomic<bool> bypass_{false};
   int latencySamples_{0};
 };

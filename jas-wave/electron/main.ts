@@ -34,6 +34,15 @@ function sendMenuAction(id: string) {
   }
 }
 
+function senderIsSatellite(sender: { getURL?: () => string } | null | undefined): boolean {
+  try {
+    const url = sender?.getURL?.() ?? ''
+    return /(?:\?|&)undock=/.test(url) || url.includes('#undock/')
+  } catch {
+    return false
+  }
+}
+
 function buildAppMenu() {
   const template = [
     {
@@ -347,7 +356,7 @@ ipcMain.handle('shell-open-external', async (_event: IpcMainInvokeEvent, url: st
 /** Ventanas flotantes de herramientas (multi-monitor) */
 const toolWindows = new Map<string, typeof BrowserWindow>()
 
-ipcMain.handle('tool-window-open', async (_event: IpcMainInvokeEvent, toolId: string, title: string) => {
+ipcMain.handle('tool-window-open', async (_event: IpcMainInvokeEvent, toolId: string, title: string, extra?: Record<string, string>) => {
   const existing = toolWindows.get(toolId)
   if (existing && !existing.isDestroyed()) {
     existing.focus()
@@ -387,12 +396,24 @@ ipcMain.handle('tool-window-open', async (_event: IpcMainInvokeEvent, toolId: st
     }
   })
 
-  const query = `?undock=${encodeURIComponent(toolId)}`
+  const params = new URLSearchParams({ undock: String(toolId || '') })
+  if (extra && typeof extra === 'object') {
+    for (const [k, v] of Object.entries(extra)) {
+      if (v) params.set(k, String(v))
+    }
+  }
+  const query = `?${params.toString()}`
+  const queryObj: Record<string, string> = { undock: String(toolId || '') }
+  if (extra && typeof extra === 'object') {
+    for (const [k, v] of Object.entries(extra)) {
+      if (v) queryObj[k] = String(v)
+    }
+  }
   if (process.env.VITE_DEV_SERVER_URL) {
     await win.loadURL(`${process.env.VITE_DEV_SERVER_URL}${query}`)
   } else {
     await win.loadFile(path.join(__dirname, '../dist/index.html'), {
-      query: { undock: toolId },
+      query: queryObj,
     })
   }
   return { success: true }
@@ -447,40 +468,92 @@ const {
   ensurePluginHostStarted,
   getPluginHostStatus,
   sendPluginHostCommand,
+  sendPluginHostMidi,
+  pushPluginHostPcm,
   stopPluginHost,
+  isEditorHostCommand,
+  setPluginHostAudioDevice,
 } = require('./plugin-host-bridge')
 
-ipcMain.handle('plugin-host-status', async () => {
-  await ensurePluginHostStarted()
+ipcMain.handle('plugin-host-status', async (e: IpcMainInvokeEvent) => {
+  if (!senderIsSatellite(e.sender)) await ensurePluginHostStarted()
   return getPluginHostStatus()
 })
-ipcMain.handle('plugin-host-ensure', async () => {
+ipcMain.handle('plugin-host-ensure', async (e: IpcMainInvokeEvent) => {
+  if (senderIsSatellite(e.sender)) {
+    return { ok: !!getPluginHostStatus().vst3HostProcessAvailable, ...getPluginHostStatus() }
+  }
   const ok = await ensurePluginHostStarted()
   return { ok, ...getPluginHostStatus() }
+})
+ipcMain.handle('plugin-host-midi', async (_e: IpcMainInvokeEvent, cmd: unknown) => {
+  // Fire-and-forget: el host ya debe estar en marcha tras load. No bloquear Play.
+  const record = (cmd && typeof cmd === 'object' ? cmd : {}) as Record<string, unknown>
+  sendPluginHostMidi(record)
+  return { ok: true }
 })
 ipcMain.handle('plugin-host-send', async (e: IpcMainInvokeEvent, cmd: unknown) => {
   const record = (cmd && typeof cmd === 'object' ? cmd : {}) as Record<string, unknown>
   const type = typeof record.type === 'string' ? record.type : ''
 
-  await ensurePluginHostStarted()
+  if (!isEditorHostCommand(type)) {
+    await ensurePluginHostStarted()
+  }
 
   if (type === 'openEditor' || type === 'setEditorBounds') {
-    const win = BrowserWindow.fromWebContents(e.sender)
-    if (win && !win.isDestroyed()) {
-      try {
-        const buf = win.getNativeWindowHandle()
-        const hwnd =
-          buf.length >= 8 ? buf.readBigUInt64LE(0).toString() : String(buf.readUInt32LE(0))
-        if (!record.parentHwnd) record.parentHwnd = hwnd
-        // x/y vienen de getBoundingClientRect (client del webContents).
-        // El host nativo hace ClientToScreen(owner) — no sumar frame aquí.
-      } catch {
-        /* ignore */
+    // openEditor: ventana top-level centrada (sin parent Electron → sin deadlock).
+    if (type === 'openEditor') {
+      delete record.parentHwnd
+      if (record.x == null) record.x = 0
+      if (record.y == null) record.y = 0
+    } else {
+      const win = BrowserWindow.fromWebContents(e.sender)
+      if (win && !win.isDestroyed()) {
+        try {
+          const buf = win.getNativeWindowHandle()
+          const hwnd =
+            buf.length >= 8 ? buf.readBigUInt64LE(0).toString() : String(buf.readUInt32LE(0))
+          if (!record.parentHwnd) record.parentHwnd = hwnd
+        } catch {
+          /* ignore */
+        }
       }
     }
   }
 
+  if (type === 'setAudioDevice') {
+    return setPluginHostAudioDevice({
+      backend: String(record.backend || record.api || 'auto'),
+      deviceId: String(record.deviceId || record.device || ''),
+      sampleRate: Number(record.sampleRate) || 48000,
+      bufferSize: Number(record.bufferSize) || 512,
+      exclusive: !!record.exclusive || String(record.backend) === 'wasapi_exclusive',
+    })
+  }
+
   return sendPluginHostCommand(record)
+})
+ipcMain.on('plugin-host-pcm', (e: IpcMainInvokeEvent, data: unknown) => {
+  if (senderIsSatellite(e.sender)) return
+  if (!data) return
+  if (Buffer.isBuffer(data)) {
+    pushPluginHostPcm(data)
+    return
+  }
+  if (data instanceof Uint8Array || ArrayBuffer.isView(data)) {
+    const view = data as ArrayBufferView
+    pushPluginHostPcm(Buffer.from(view.buffer, view.byteOffset, view.byteLength))
+    return
+  }
+  if (data instanceof ArrayBuffer) {
+    pushPluginHostPcm(Buffer.from(data))
+    return
+  }
+  // Clone IPC a veces entrega { type:'Buffer', data:number[] }
+  const rec = data as { type?: string; data?: number[] }
+  if (rec?.type === 'Buffer' && Array.isArray(rec.data)) {
+    pushPluginHostPcm(Buffer.from(rec.data))
+  }
 })
 ipcMain.handle('plugin-host-stop', () => {
   stopPluginHost()

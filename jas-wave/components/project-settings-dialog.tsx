@@ -23,6 +23,7 @@ import {
   type AiAuthStyle,
 } from '@/src/lib/ai-settings'
 import { JasWaveLogo } from '@/components/brand'
+import { audioEngine } from '@/lib/audio-engine'
 
 interface ProjectSettingsDialogProps {
   open: boolean
@@ -327,12 +328,32 @@ function GeneralTab() {
   )
 }
 
+type AudioBackendInfo = { id: string; name: string; available: boolean; hint?: string }
+type AudioDeviceInfo = { id: string; backend: string; name: string; isDefault?: boolean; available?: boolean }
+type AudioRuntime = {
+  backend: string
+  deviceId: string
+  deviceName: string
+  sampleRate: number
+  bufferSize: number
+  exclusive: boolean
+  running: boolean
+  lastError?: string
+}
+
 function AudioTab() {
   const tienda = useDAW()
   const project = useDAWState((s: DAWState) => s.project)
   const [sampleRate, setSampleRate] = useState(48000)
   const [bitDepth, setBitDepth] = useState(24)
   const [bufferSize, setBufferSize] = useState(512)
+  const [backends, setBackends] = useState<AudioBackendInfo[]>([])
+  const [devices, setDevices] = useState<AudioDeviceInfo[]>([])
+  const [backend, setBackend] = useState('auto')
+  const [deviceId, setDeviceId] = useState('')
+  const [runtime, setRuntime] = useState<AudioRuntime | null>(null)
+  const [status, setStatus] = useState('')
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     if (project) {
@@ -342,25 +363,275 @@ function AudioTab() {
     }
   }, [project])
 
-  const guardar = () => {
+  const refreshDevices = async () => {
+    if (!window.electron?.pluginHostEnsure || !window.electron.pluginHostSend) {
+      setStatus('El host de audio nativo solo está en la app Electron.')
+      return
+    }
+    setBusy(true)
+    try {
+      await window.electron.pluginHostEnsure()
+      const raw = (await window.electron.pluginHostSend({ type: 'listAudioDevices' })) as {
+        ok?: boolean
+        message?: string
+        backends?: AudioBackendInfo[]
+        devices?: AudioDeviceInfo[]
+        audio?: AudioRuntime
+      }
+      if (!raw?.ok) {
+        setStatus(raw?.message || 'No se pudieron listar los dispositivos.')
+        return
+      }
+      setBackends(raw.backends ?? [])
+      setDevices(raw.devices ?? [])
+      if (raw.audio) {
+        setRuntime(raw.audio)
+        if (raw.audio.backend) setBackend(raw.audio.backend)
+        if (raw.audio.deviceId) setDeviceId(raw.audio.deviceId)
+        if (raw.audio.sampleRate) setSampleRate(raw.audio.sampleRate)
+        if (raw.audio.bufferSize) setBufferSize(raw.audio.bufferSize)
+      }
+      setStatus(
+        raw.audio?.running
+          ? `En uso: ${raw.audio.backend} · ${raw.audio.deviceName || 'default'} · ${raw.audio.sampleRate} Hz / ${raw.audio.bufferSize}`
+          : 'Host listo. Elige API y dispositivo y pulsa Aplicar.',
+      )
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : 'Error al enumerar audio')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    void refreshDevices()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const guardarProyecto = (next?: { sampleRate?: number; bufferSize?: number; dispositivoSalida?: string }) => {
+    const sr = next?.sampleRate ?? sampleRate
+    const buf = next?.bufferSize ?? bufferSize
     void tienda.executor.execute('project.update', {
-      datos: { sampleRate, bitDepth, configuracion: { ...project?.configuracion, bufferSize } },
+      datos: {
+        sampleRate: sr,
+        bitDepth,
+        configuracion: {
+          ...project?.configuracion,
+          bufferSize: buf,
+          dispositivoSalida: next?.dispositivoSalida ?? project?.configuracion?.dispositivoSalida ?? '',
+        },
+      },
     })
   }
 
+  const applyDevice = async () => {
+    if (!window.electron?.pluginHostSend) return
+    setBusy(true)
+    setStatus('Aplicando dispositivo…')
+    try {
+      await window.electron.pluginHostEnsure?.()
+      const raw = (await window.electron.pluginHostSend({
+        type: 'setAudioDevice',
+        backend,
+        deviceId,
+        sampleRate,
+        bufferSize,
+        exclusive: backend === 'wasapi_exclusive',
+      })) as {
+        ok?: boolean
+        message?: string
+        audio?: AudioRuntime
+      }
+      if (!raw?.ok) {
+        setStatus(raw?.message || 'No se pudo abrir el dispositivo.')
+        // Reenganchar al device que siga vivo (si hay)
+        void audioEngine.rearmAfterDeviceChange()
+        return
+      }
+      setRuntime(raw.audio ?? null)
+      if (raw.audio?.backend) setBackend(raw.audio.backend)
+      if (raw.audio?.deviceId != null) setDeviceId(raw.audio.deviceId)
+      if (raw.audio?.sampleRate) setSampleRate(raw.audio.sampleRate)
+      if (raw.audio?.bufferSize) setBufferSize(raw.audio.bufferSize)
+      const label = raw.audio
+        ? `${raw.audio.backend} · ${raw.audio.deviceName || deviceId || 'default'}`
+        : backend
+      guardarProyecto({
+        sampleRate: raw.audio?.sampleRate ?? sampleRate,
+        bufferSize: raw.audio?.bufferSize ?? bufferSize,
+        dispositivoSalida: label,
+      })
+      const armed = await audioEngine.rearmAfterDeviceChange(raw.audio?.sampleRate)
+      const running = raw.audio?.running !== false
+      if (!running) {
+        setStatus(`Driver respondió pero no está running: ${label}`)
+        return
+      }
+      if (!armed) {
+        setStatus(
+          `Driver activo (${label}) pero el tap PCM no se rearmó. Pulsa Play o Test tone.`,
+        )
+        return
+      }
+      const fallbackNote =
+        raw.message && /fallback/i.test(raw.message) ? ` · ${raw.message}` : ''
+      setStatus(
+        `Driver activo: ${label} · ${raw.audio?.sampleRate ?? sampleRate} Hz${fallbackNote}`,
+      )
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : 'Error al aplicar el dispositivo')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const testTone = async () => {
+    if (!window.electron?.pluginHostSend) return
+    setBusy(true)
+    try {
+      await window.electron.pluginHostEnsure?.()
+      const raw = (await window.electron.pluginHostSend({ type: 'testTone' })) as {
+        ok?: boolean
+        message?: string
+      }
+      setStatus(raw?.ok ? 'Tono de prueba (440 Hz, 0,5 s) enviado al device actual.' : raw?.message || 'Falló el tono')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openAsioPanel = async () => {
+    if (!window.electron?.pluginHostSend) return
+    await window.electron.pluginHostEnsure?.()
+    const raw = (await window.electron.pluginHostSend({
+      type: 'asioControlPanel',
+      deviceId,
+    })) as { ok?: boolean; message?: string }
+    if (!raw?.ok) setStatus(raw?.message || 'No se pudo abrir el panel ASIO')
+  }
+
+  const devicesForBackend = devices.filter((d) => {
+    if (backend === 'auto') return true
+    if (backend === 'wasapi_exclusive') return d.backend === 'wasapi_exclusive' || d.backend === 'wasapi'
+    return d.backend === backend
+  })
+  const selectedBackend = backends.find((b) => b.id === backend)
+
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex gap-4">
+      <p className="text-[11px] text-muted-foreground">
+        El DAW usa el Plugin Host nativo como dueño del device: WASAPI, DirectSound, WinMM, JACK y ASIO
+        si hay driver instalado. Clips, Soft Pad, metrónomo y VST salen por ese mismo dispositivo.
+        Solo un proceso puede abrir ASIO; las ventanas flotantes no vuelven a abrir el driver.
+      </p>
+      {backend === 'asio' && /fl studio|asio4all|generic low latency/i.test(runtime?.deviceName || deviceId) ? (
+        <p className="text-[10px] text-accent-amber">
+          FL Studio ASIO y ASIO4ALL envuelven WASAPI. Si no hay sonido, usa el ASIO del interfaz de
+          audio o cambia a WASAPI.
+        </p>
+      ) : null}
+
+      <Field label="API / driver">
+        <select
+          value={backend}
+          onChange={(e) => {
+            setBackend(e.target.value)
+            setDeviceId('')
+          }}
+          className="rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
+        >
+          {backends.length === 0 ? <option value="auto">Automático</option> : null}
+          {backends.map((b) => (
+            <option key={b.id} value={b.id} disabled={!b.available && b.id !== 'auto'}>
+              {b.name}
+              {b.available ? '' : ' (no disponible)'}
+            </option>
+          ))}
+        </select>
+        {selectedBackend?.hint ? (
+          <p className="mt-1 text-[10px] text-muted-foreground">{selectedBackend.hint}</p>
+        ) : null}
+      </Field>
+
+      <Field label="Dispositivo de salida">
+        <select
+          value={deviceId}
+          onChange={(e) => setDeviceId(e.target.value)}
+          className="rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
+        >
+          <option value="">Predeterminado del sistema / API</option>
+          {devicesForBackend.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+              {d.isDefault ? ' (default)' : ''}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <div className="flex flex-wrap gap-4">
         <Field label="Sample Rate">
-          <Select value={sampleRate} onChange={(v) => { setSampleRate(v); setTimeout(guardar, 0) }} options={SAMPLE_RATES} render={(v) => `${v} Hz`} />
+          <Select
+            value={sampleRate}
+            onChange={(v) => setSampleRate(v)}
+            options={SAMPLE_RATES}
+            render={(v) => `${v} Hz`}
+          />
         </Field>
         <Field label="Bit Depth">
-          <Select value={bitDepth} onChange={(v) => { setBitDepth(v); setTimeout(guardar, 0) }} options={BIT_DEPTHS} render={(v) => `${v}-bit`} />
+          <Select
+            value={bitDepth}
+            onChange={(v) => {
+              setBitDepth(v)
+              setTimeout(() => guardarProyecto(), 0)
+            }}
+            options={BIT_DEPTHS}
+            render={(v) => `${v}-bit`}
+          />
         </Field>
         <Field label="Buffer Size">
-          <Select value={bufferSize} onChange={(v) => { setBufferSize(v); setTimeout(guardar, 0) }} options={BUFFER_SIZES} render={(v) => `${v} samples`} />
+          <Select value={bufferSize} onChange={(v) => setBufferSize(v)} options={BUFFER_SIZES} render={(v) => `${v} samples`} />
         </Field>
       </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void applyDevice()}
+          className="rounded-md bg-accent-amber px-3 py-1.5 text-[11px] font-semibold text-background hover:opacity-90 disabled:opacity-50"
+        >
+          Aplicar driver
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void testTone()}
+          className="rounded-md border border-border px-3 py-1.5 text-[11px] text-foreground hover:bg-panel-raised disabled:opacity-50"
+        >
+          Probar tono
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void refreshDevices()}
+          className="rounded-md border border-border px-3 py-1.5 text-[11px] text-foreground hover:bg-panel-raised disabled:opacity-50"
+        >
+          Detectar de nuevo
+        </button>
+        {backend === 'asio' ? (
+          <button
+            type="button"
+            onClick={() => void openAsioPanel()}
+            className="rounded-md border border-border px-3 py-1.5 text-[11px] text-foreground hover:bg-panel-raised"
+          >
+            Panel ASIO
+          </button>
+        ) : null}
+      </div>
+
+      {status ? <p className="text-[11px] text-muted-foreground">{status}</p> : null}
+      {runtime?.lastError ? <p className="text-[11px] text-destructive">{runtime.lastError}</p> : null}
     </div>
   )
 }

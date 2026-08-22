@@ -5,12 +5,14 @@ Implementar cadenas de efectos por track/insert/send. Los plugins de efecto proc
 
 ## Criterios de Aceptación
 - [x] Cadena de efectos por track (`track.plugins` + comandos `plugin.*`, ADR-0012)
-- [ ] Los plugins de efecto procesan el audio (host VST3 / audio engine)
-- [x] Bypass por plugin (`plugin.bypass`)
-- [x] Orden de plugins configurable (`plugin.move`)
-- [x] Master FX (`project.master.plugins`, trackId `master`)
+- [x] Los plugins de efecto procesan el audio (cadena serial Reaper en `jaswave-plugin-host`; stems JWST) — sin sends aún ([ADR-0013](../decisiones/ADR-0013-fx-runtime-pipeline.md))
+- [x] Bypass por plugin (`plugin.bypass`) — dominio/UI + salto de slot en audio thread
+- [x] Orden de plugins configurable (`plugin.move`) — dominio/UI + `setTrackGraph` serial
+- [x] Master FX (`project.master.plugins`, trackId `master`) — serial en el mismo graph
 - [x] replace / copy-paste / presets de cadena
 - [x] setParameter + clave automatización `plugin:instance:param`
+
+> Comandos reales: `plugin.insert` / `plugin.remove` (no existen `plugin.load` / `plugin.unload`). Eventos reales: `plugin.cargado`, `plugin.descargado`, `plugin.movido`, `plugin.bypass.cambiado` (no `plugin.loaded` en inglés).
 
 ## Requerimientos Detallados
 

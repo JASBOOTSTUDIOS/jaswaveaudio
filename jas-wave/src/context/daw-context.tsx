@@ -25,22 +25,13 @@ import {
   type HydrateProgress,
 } from '@/src/lib/session-persist'
 import { JasWaveLogo } from '@/components/brand'
+import { isUndockWindow } from '@/lib/undock-window'
 
 const DAWContext = createContext<TiendaDAW | null>(null)
 
 let sharedStore: TiendaDAW | null = null
 
-function isUndockWindow(): boolean {
-  if (typeof window === 'undefined') return false
-  try {
-    const params = new URLSearchParams(window.location.search)
-    if (params.get('undock')) return true
-    const hash = window.location.hash.replace(/^#/, '')
-    return hash.startsWith('undock/')
-  } catch {
-    return false
-  }
-}
+export { isUndockWindow }
 
 function getSharedStore() {
   if (!sharedStore) {
@@ -179,12 +170,41 @@ export function useDAWState<T>(selector: (state: DAWState) => T): T {
     () => {
       const next = selectorRef.current(store.obtenerEstado())
       const prev = cachedRef.current
-      if (prev && Object.is(prev.snapshot, next)) return prev.snapshot
+      if (prev && snapshotsEqual(prev.snapshot, next)) return prev.snapshot
       cachedRef.current = { snapshot: next }
       return next
     },
     () => selectorRef.current(store.obtenerEstado()),
   )
+}
+
+/** Evita bucles en useSyncExternalStore cuando el selector crea objetos/arrays nuevos. */
+function snapshotsEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true
+  if (typeof a !== typeof b) return false
+  if (a == null || b == null) return a === b
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) {
+      if (!Object.is(a[i], b[i]) && !shallowPlainEqual(a[i], b[i])) return false
+    }
+    return true
+  }
+  return shallowPlainEqual(a, b)
+}
+
+function shallowPlainEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || !a || !b) return false
+  if (Array.isArray(a) || Array.isArray(b)) return false
+  const ao = a as Record<string, unknown>
+  const bo = b as Record<string, unknown>
+  const keys = Object.keys(ao)
+  if (keys.length !== Object.keys(bo).length) return false
+  for (const k of keys) {
+    if (!Object.is(ao[k], bo[k])) return false
+  }
+  return true
 }
 
 type EventBinding = {

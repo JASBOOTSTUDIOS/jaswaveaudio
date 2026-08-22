@@ -254,7 +254,6 @@ export default function App() {
             <WorkspaceProvider>
               <MultiWindowSync role="satellite" />
               <PluginHostBootstrap />
-              <PluginHostLifecycle />
               <UndockedToolApp toolId={undockId} />
             </WorkspaceProvider>
           ) : (
