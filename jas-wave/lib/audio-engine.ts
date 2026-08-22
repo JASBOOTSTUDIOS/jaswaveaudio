@@ -7,12 +7,19 @@
  * paneo y medición en tiempo real para el mixer.
  */
 
+import { routeMidiToActiveVst } from '@/src/lib/plugin/vst-voice-router'
+import { allNotesOffAllTracks, sendVstNote } from '@/src/lib/plugin/track-vst-runtime'
+
 export interface TrackAudioConfig {
   id: string
   volumen: number // 0.0 a 1.0 (o dB convertido)
   paneo: number // -1.0 (izquierda) a 1.0 (derecha)
   silenciada: boolean
   soloActiva: boolean
+  /** Slot del Plugin Host para el instrumento VST3 de esta pista. */
+  vstInstrumentSlotId?: string
+  /** Soft Pad / synth local aunque haya VST (VST puede ir mudo sin samples). */
+  softPadFallback?: boolean
 }
 
 export interface AudioClipPlaybackInfo {
@@ -60,6 +67,14 @@ export class WebAudioEngine {
   private activeSources = new Map<string, AudioBufferSourceNode>()
   /** Voces programadas de reproducción MIDI (timeline). */
   private activeMidiNodes: Array<{ osc: OscillatorNode; gain: GainNode }> = []
+  private midiScheduleTimer: ReturnType<typeof setInterval> | null = null
+  private pendingMidiClips: MidiClipPlaybackInfo[] = []
+  private pendingTracksConfig: TrackAudioConfig[] = []
+  private midiScheduledUntilSec = 0
+  private midiHaySolos = false
+  private midiVoiceKeys = new Set<string>()
+  /** Timers de noteOn/noteOff hacia el Plugin Host (playback VST). */
+  private vstMidiTimers: ReturnType<typeof setTimeout>[] = []
   /** Voces del sintetizador de prueba (MIDI preview). */
   private synthVoices = new Map<
     number,
@@ -180,9 +195,10 @@ export class WebAudioEngine {
     const ctx = this.audioCtx
 
     let effectiveGain = Math.max(0, Math.min(1, volumen))
-    if (silenciada) {
-      effectiveGain = 0
-    } else if (haySolosActivos && !soloActiva) {
+    // Solo por encima del mute: pista en solo suena aunque esté muteada
+    if (haySolosActivos) {
+      if (!soloActiva) effectiveGain = 0
+    } else if (silenciada) {
       effectiveGain = 0
     }
 
@@ -192,6 +208,19 @@ export class WebAudioEngine {
     } else {
       node.gain.gain.value = effectiveGain
       node.panner.pan.value = Math.max(-1, Math.min(1, paneo))
+    }
+  }
+
+  /**
+   * Aplica mute/solo/volumen/paneo en caliente sin reiniciar fuentes.
+   * Actualiza también el scheduler MIDI pendiente.
+   */
+  public applyTracksConfig(tracksConfig: TrackAudioConfig[]) {
+    const haySolos = tracksConfig.some((t) => t.soloActiva)
+    this.pendingTracksConfig = tracksConfig
+    this.midiHaySolos = haySolos
+    for (const trk of tracksConfig) {
+      this.updateTrackControls(trk.id, trk.volumen, trk.paneo, trk.silenciada, haySolos, trk.soloActiva)
     }
   }
 
@@ -282,38 +311,47 @@ export class WebAudioEngine {
     bus.gain.value = Math.max(0, Math.min(1, value))
   }
 
-  /** Preview MIDI: nota encendida (sintetizador suave tipo pad). */
+  /** Preview MIDI: nota encendida (Soft Pad in-process). */
   public noteOn(pitch: number, velocity = 90): void {
+    if (routeMidiToActiveVst(true, pitch, velocity)) return
     const ctx = this.ensureContext()
-    this.noteOff(pitch, 0.02)
-    const freq = 440 * Math.pow(2, (pitch - 69) / 12)
-    const vel = Math.max(0.05, Math.min(1, velocity / 127))
+    const start = () => {
+      this.noteOff(pitch, 0.02)
+      const freq = 440 * Math.pow(2, (pitch - 69) / 12)
+      const vel = Math.max(0.05, Math.min(1, velocity / 127))
 
-    const osc = ctx.createOscillator()
-    osc.type = 'triangle'
-    osc.frequency.value = freq
+      const osc = ctx.createOscillator()
+      osc.type = 'triangle'
+      osc.frequency.value = freq
 
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'lowpass'
-    filter.frequency.value = 900 + vel * 2400
-    filter.Q.value = 0.7
+      const filter = ctx.createBiquadFilter()
+      filter.type = 'lowpass'
+      filter.frequency.value = 900 + vel * 2400
+      filter.Q.value = 0.7
 
-    const gain = ctx.createGain()
-    const now = ctx.currentTime
-    gain.gain.setValueAtTime(0.0001, now)
-    gain.gain.exponentialRampToValueAtTime(0.22 * vel, now + 0.02)
-    gain.gain.exponentialRampToValueAtTime(0.14 * vel, now + 0.18)
+      const gain = ctx.createGain()
+      const now = ctx.currentTime
+      gain.gain.setValueAtTime(0.0001, now)
+      gain.gain.exponentialRampToValueAtTime(0.22 * vel, now + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.14 * vel, now + 0.18)
 
-    osc.connect(filter)
-    filter.connect(gain)
-    gain.connect(this.ensureSynthBus())
-    osc.start(now)
+      osc.connect(filter)
+      filter.connect(gain)
+      gain.connect(this.ensureSynthBus())
+      osc.start(now)
 
-    this.synthVoices.set(pitch, { osc, gain, filter })
+      this.synthVoices.set(pitch, { osc, gain, filter })
+    }
+    if (ctx.state === 'suspended') {
+      void ctx.resume().then(start)
+      return
+    }
+    start()
   }
 
   /** Preview MIDI: nota apagada. */
   public noteOff(pitch: number, releaseSec = 0.25): void {
+    if (routeMidiToActiveVst(false, pitch, 0)) return
     const voice = this.synthVoices.get(pitch)
     if (!voice) return
     const ctx = this.ensureContext()
@@ -489,7 +527,17 @@ export class WebAudioEngine {
         const sourceNode = ctx.createBufferSource()
         sourceNode.buffer = buffer
         sourceNode.connect(trackNode.gain)
-        sourceNode.start(this.startTime + delay, offset, remainingDuration)
+
+        const clipRemain = Math.max(0, clipDuration - consumed)
+        // Si el clip de timeline es mas largo que el buffer, loopear hasta cubrir
+        if (clipRemain > buffer.duration - offset + 0.01) {
+          sourceNode.loop = true
+          sourceNode.loopStart = clip.clipInicio || 0
+          sourceNode.loopEnd = buffer.duration
+          sourceNode.start(this.startTime + delay, offset, clipRemain)
+        } else {
+          sourceNode.start(this.startTime + delay, offset, remainingDuration)
+        }
         this.activeSources.set(clip.id, sourceNode)
       } catch (err) {
         console.warn('[audio-engine] clip start failed', clip.id, err)
@@ -497,40 +545,89 @@ export class WebAudioEngine {
     }
 
     try {
-      this.scheduleMidiClips(midiClips, tracksConfig, haySolos)
+      this.beginMidiScheduler(midiClips, tracksConfig, haySolos)
     } catch (err) {
       console.warn('[audio-engine] midi schedule failed', err)
     }
   }
 
-  /** Programa notas MIDI (ventana corta) sin tumbar el audio. */
-  private scheduleMidiClips(
+  private beginMidiScheduler(
     midiClips: MidiClipPlaybackInfo[],
     tracksConfig: TrackAudioConfig[],
     haySolos: boolean,
   ) {
+    this.stopMidiScheduler()
+    this.midiVoiceKeys.clear()
+    this.pendingMidiClips = midiClips
+    this.pendingTracksConfig = tracksConfig
+    this.midiHaySolos = haySolos
+    this.midiScheduledUntilSec = this.playheadStartSec
+    this.scheduleMidiLookahead()
+    this.midiScheduleTimer = setInterval(() => {
+      if (!this.isPlaying) {
+        this.stopMidiScheduler()
+        return
+      }
+      this.scheduleMidiLookahead()
+    }, 250)
+  }
+
+  private stopMidiScheduler() {
+    if (this.midiScheduleTimer) {
+      clearInterval(this.midiScheduleTimer)
+      this.midiScheduleTimer = null
+    }
+    for (const t of this.vstMidiTimers) clearTimeout(t)
+    this.vstMidiTimers = []
+    allNotesOffAllTracks()
+  }
+
+  /** Programa MIDI por ventanas sin tocar las fuentes de audio. */
+  private scheduleMidiLookahead() {
+    const ctx = this.audioCtx
+    if (!ctx || !this.isPlaying) return
+    const horizon = 2.5
+    const from = this.midiScheduledUntilSec
+    const wallElapsed = ctx.currentTime - this.startTime
+    const nowTimeline = this.playheadStartSec + Math.max(0, wallElapsed)
+    const windowStart = Math.max(from, nowTimeline - 0.05)
+    const windowEnd = nowTimeline + horizon
+    if (windowEnd <= windowStart) return
+
+    this.scheduleMidiClipsInWindow(windowStart, windowEnd)
+    this.midiScheduledUntilSec = windowEnd
+  }
+
+  private scheduleMidiClipsInWindow(windowStart: number, windowEnd: number) {
     const ctx = this.audioCtx
     if (!ctx) return
 
-    const cfgById = new Map(tracksConfig.map((t) => [t.id, t]))
-    const maxNotes = 32
-    const windowEnd = this.playheadStartSec + 8
+    const cfgById = new Map(this.pendingTracksConfig.map((t) => [t.id, t]))
+    const maxNotes = 48
     let scheduled = 0
 
-    for (const clip of midiClips) {
+    for (const clip of this.pendingMidiClips) {
       const cfg = cfgById.get(clip.trackId)
-      if (cfg?.silenciada) continue
-      if (haySolos && !cfg?.soloActiva) continue
+      // Solo > mute (igual que audio)
+      if (this.midiHaySolos) {
+        if (!cfg?.soloActiva) continue
+      } else if (cfg?.silenciada) {
+        continue
+      }
 
       const trackNode = this.getTrackNode(clip.trackId)
+      const vstSlot = cfg?.vstInstrumentSlotId
 
-      for (const note of clip.notes) {
+      for (let ni = 0; ni < clip.notes.length; ni++) {
         if (scheduled >= maxNotes) return
+        const note = clip.notes[ni]!
         const noteStart = note.startSec
         const durRaw = Math.max(0.03, note.durationSec)
         const noteEnd = noteStart + durRaw
-        if (noteEnd <= this.playheadStartSec) continue
+        if (noteEnd <= windowStart) continue
         if (noteStart > windowEnd) continue
+        const key = clip.id + ':' + ni + ':' + note.pitch + ':' + noteStart.toFixed(4)
+        if (this.midiVoiceKeys.has(key)) continue
 
         let when = this.startTime + (noteStart - this.playheadStartSec)
         let dur = durRaw
@@ -538,16 +635,43 @@ export class WebAudioEngine {
           dur = noteEnd - this.playheadStartSec
           when = this.startTime
         }
+        if (when < ctx.currentTime - 0.02) {
+          dur -= ctx.currentTime - when
+          when = ctx.currentTime
+        }
         if (dur <= 0.02) continue
 
         try {
-          this.scheduleMidiVoice(ctx, trackNode.gain, note.pitch, note.velocity, when, dur)
+          if (vstSlot) {
+            this.scheduleVstMidiNote(vstSlot, note.pitch, note.velocity, when, dur)
+          }
+          if (!vstSlot || cfg?.softPadFallback) {
+            this.scheduleMidiVoice(ctx, trackNode.gain, note.pitch, note.velocity, when, dur)
+          }
+          this.midiVoiceKeys.add(key)
           scheduled++
         } catch (err) {
           console.warn('[audio-engine] midi voice failed', err)
         }
       }
     }
+  }
+
+  /** Playback MIDI → Plugin Host (timing por setTimeout; MVP audible). */
+  private scheduleVstMidiNote(
+    slotId: string,
+    pitch: number,
+    velocity: number,
+    when: number,
+    durationSec: number,
+  ) {
+    const ctx = this.audioCtx
+    if (!ctx) return
+    const delayOn = Math.max(0, (when - ctx.currentTime) * 1000)
+    const delayOff = delayOn + Math.max(30, durationSec * 1000)
+    const tOn = setTimeout(() => sendVstNote(slotId, true, pitch, velocity), delayOn)
+    const tOff = setTimeout(() => sendVstNote(slotId, false, pitch, 0), delayOff)
+    this.vstMidiTimers.push(tOn, tOff)
   }
 
   private scheduleMidiVoice(
@@ -587,6 +711,9 @@ export class WebAudioEngine {
    * Detiene todos los nodos de fuente activos
    */
   public stopAllSources() {
+    this.stopMidiScheduler()
+    this.pendingMidiClips = []
+    this.midiVoiceKeys.clear()
     for (const source of this.activeSources.values()) {
       try {
         source.stop()

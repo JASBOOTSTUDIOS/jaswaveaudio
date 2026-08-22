@@ -71,6 +71,20 @@ import {
   crearComandoSelectionClear,
   crearComandoUiSetPalette,
 } from '../commands/selection-commands';
+import {
+  crearComandoPluginInsert,
+  crearComandoPluginRemove,
+  crearComandoPluginMove,
+  crearComandoPluginBypass,
+  crearComandoPluginDuplicate,
+  crearComandoPluginReplace,
+  crearComandoPluginSetParameter,
+  crearComandoFxChainCopy,
+  crearComandoFxChainPaste,
+  crearComandoFxChainPasteUndo,
+  crearComandoFxChainLoadPreset,
+  crearComandoFxChainSavePreset,
+} from '../commands/plugin-commands';
 
 /**
  * Crea un evento de dominio estandarizado para el bus.
@@ -168,6 +182,18 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoSelectionSet(), registry);
   registrar(crearComandoSelectionClear(), registry);
   registrar(crearComandoUiSetPalette(), registry);
+  registrar(crearComandoPluginInsert(), registry);
+  registrar(crearComandoPluginRemove(), registry);
+  registrar(crearComandoPluginMove(), registry);
+  registrar(crearComandoPluginBypass(), registry);
+  registrar(crearComandoPluginDuplicate(), registry);
+  registrar(crearComandoPluginReplace(), registry);
+  registrar(crearComandoPluginSetParameter(), registry);
+  registrar(crearComandoFxChainCopy(), registry);
+  registrar(crearComandoFxChainPaste(), registry);
+  registrar(crearComandoFxChainPasteUndo(), registry);
+  registrar(crearComandoFxChainLoadPreset(), registry);
+  registrar(crearComandoFxChainSavePreset(), registry);
 }
 /**
  * Alias de `registrarComandosBuiltin` para registrar comandos de proyecto.

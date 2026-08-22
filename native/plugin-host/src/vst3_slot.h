@@ -1,0 +1,64 @@
+#pragma once
+/**
+ * Slot VST3 out-of-process (ADR-0011): load + MIDI + process + editor HWND hijo.
+ */
+
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+struct Vst3MidiEvent {
+  enum class Kind { NoteOn, NoteOff };
+  Kind kind{};
+  int16_t pitch{0};
+  float velocity{0};
+};
+
+class Vst3Slot {
+public:
+  Vst3Slot();
+  ~Vst3Slot();
+
+  Vst3Slot(const Vst3Slot&) = delete;
+  Vst3Slot& operator=(const Vst3Slot&) = delete;
+
+  bool load(const std::string& path, std::string& err);
+  bool prepare(double sampleRate, int32_t blockSize, std::string& err);
+  void unload();
+
+  void noteOn(int pitch, float velocity);
+  void noteOff(int pitch);
+  void allNotesOff();
+
+  /** Procesa un bloque stereo interleaved → outL/outR (frames muestras). */
+  void process(float* outL, float* outR, int frames);
+
+  bool openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h, std::string& err);
+  void setEditorBounds(int x, int y, int w, int h);
+  void closeEditor();
+  bool hasEditor() const;
+
+  const std::string& path() const { return path_; }
+  const std::string& slotId() const { return slotId_; }
+  void setSlotId(std::string id) { slotId_ = std::move(id); }
+  bool isPrepared() const { return prepared_; }
+  int latencySamples() const { return latencySamples_; }
+
+private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+  std::string path_;
+  std::string slotId_;
+  bool prepared_{false};
+  int latencySamples_{0};
+};

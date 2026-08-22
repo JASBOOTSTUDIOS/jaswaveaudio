@@ -1,5 +1,6 @@
 /**
- * Autosave de sesión contra reload: proyecto + UI + buffers de audio en IndexedDB.
+ * Autosave de sesión: meta (proyecto/UI) y audio en claves IndexedDB separadas
+ * para que el arranque no se congele leyendo buffers grandes.
  */
 
 import type { DAWState } from '../../../shared/src/types/state'
@@ -8,8 +9,14 @@ import { audioEngine } from '@/lib/audio-engine'
 
 const DB_NAME = 'jaswave-session-v1'
 const STORE = 'snapshots'
-const KEY = 'current'
+const KEY_LEGACY = 'current'
+const KEY_META = 'current-meta'
+const KEY_AUDIO = 'current-audio'
 const VERSION = 1
+
+/** Tiempo máx. para leer meta / legacy antes de abandonar y arrancar vacío. */
+const LOAD_META_TIMEOUT_MS = 6_000
+const LOAD_AUDIO_TIMEOUT_MS = 45_000
 
 export type PersistedAudioBuffer = {
   sampleRate: number
@@ -31,6 +38,14 @@ export type SessionSnapshot = {
   audio: Record<string, PersistedAudioBuffer>
 }
 
+type SessionMeta = Omit<SessionSnapshot, 'audio'>
+
+type SessionAudioBlob = {
+  version: typeof VERSION
+  savedAt: number
+  audio: Record<string, PersistedAudioBuffer>
+}
+
 export type HydrateProgress = {
   phase: 'idle' | 'db' | 'snapshot' | 'project' | 'audio' | 'done' | 'empty'
   label: string
@@ -41,9 +56,7 @@ export type HydrateProgress = {
 
 export type HydrateOptions = {
   onProgress?: (p: HydrateProgress) => void
-  /** Si true, no restaura buffers de audio (ventanas flotantes / arranque rápido). */
   skipAudio?: boolean
-  /** Restaura audio en segundo plano tras aplicar el proyecto. */
   audioBackground?: boolean
 }
 
@@ -63,6 +76,21 @@ function yieldUi(): Promise<void> {
   })
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve('timeout'), ms)
+    promise
+      .then((v) => {
+        clearTimeout(t)
+        resolve(v)
+      })
+      .catch(() => {
+        clearTimeout(t)
+        resolve('timeout')
+      })
+  })
+}
+
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1)
@@ -75,12 +103,12 @@ function openDb(): Promise<IDBDatabase> {
   })
 }
 
-async function idbPut(value: SessionSnapshot): Promise<void> {
+async function idbPutKey(key: string, value: unknown): Promise<void> {
   const db = await openDb()
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite')
-      tx.objectStore(STORE).put(value, KEY)
+      tx.objectStore(STORE).put(value, key)
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error ?? new Error('IndexedDB put failed'))
     })
@@ -89,13 +117,13 @@ async function idbPut(value: SessionSnapshot): Promise<void> {
   }
 }
 
-async function idbGet(): Promise<SessionSnapshot | null> {
+async function idbGetKey<T>(key: string): Promise<T | null> {
   const db = await openDb()
   try {
     return await new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readonly')
-      const req = tx.objectStore(STORE).get(KEY)
-      req.onsuccess = () => resolve((req.result as SessionSnapshot | undefined) ?? null)
+      const req = tx.objectStore(STORE).get(key)
+      req.onsuccess = () => resolve((req.result as T | undefined) ?? null)
       req.onerror = () => reject(req.error ?? new Error('IndexedDB get failed'))
     })
   } finally {
@@ -103,17 +131,29 @@ async function idbGet(): Promise<SessionSnapshot | null> {
   }
 }
 
-async function idbClear(): Promise<void> {
+async function idbDeleteKeys(keys: string[]): Promise<void> {
   const db = await openDb()
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite')
-      tx.objectStore(STORE).delete(KEY)
+      const store = tx.objectStore(STORE)
+      for (const k of keys) store.delete(k)
       tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error ?? new Error('IndexedDB clear failed'))
+      tx.onerror = () => reject(tx.error ?? new Error('IndexedDB delete failed'))
     })
   } finally {
     db.close()
+  }
+}
+
+function toMeta(snap: SessionSnapshot | SessionMeta): SessionMeta {
+  return {
+    version: VERSION,
+    savedAt: snap.savedAt,
+    project: snap.project,
+    transport: snap.transport,
+    ui: snap.ui,
+    selection: snap.selection,
   }
 }
 
@@ -148,7 +188,16 @@ export async function saveSessionNow(tienda: TiendaDAW): Promise<void> {
   saving = true
   try {
     const snap = buildSnapshot(tienda.obtenerEstado())
-    await idbPut(snap)
+    const meta = toMeta(snap)
+    // Meta primero (arranque rápido); audio después
+    await idbPutKey(KEY_META, meta)
+    await idbPutKey(KEY_AUDIO, {
+      version: VERSION,
+      savedAt: snap.savedAt,
+      audio: snap.audio,
+    } satisfies SessionAudioBlob)
+    // Limpiar blob monolítico legacy si existía
+    await idbDeleteKeys([KEY_LEGACY])
   } catch (err) {
     console.warn('[session-persist] save failed', err)
   } finally {
@@ -168,12 +217,71 @@ export function scheduleSessionSave(tienda: TiendaDAW, delayMs = 800): void {
   }, delayMs)
 }
 
-export async function loadSessionSnapshot(): Promise<SessionSnapshot | null> {
-  if (typeof indexedDB === 'undefined') return null
+async function idbHasKey(key: string): Promise<boolean> {
+  const db = await openDb()
   try {
-    const snap = await idbGet()
-    if (!snap || snap.version !== VERSION || !snap.project) return null
-    return snap
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readonly')
+      const store = tx.objectStore(STORE)
+      // getKey evita deserializar el valor (crítico con blobs de audio enormes)
+      if (typeof store.getKey === 'function') {
+        const req = store.getKey(key)
+        req.onsuccess = () => resolve(req.result !== undefined)
+        req.onerror = () => reject(req.error ?? new Error('IndexedDB getKey failed'))
+      } else {
+        const req = store.openKeyCursor(IDBKeyRange.only(key))
+        req.onsuccess = () => resolve(!!req.result)
+        req.onerror = () => reject(req.error ?? new Error('IndexedDB cursor failed'))
+      }
+    })
+  } finally {
+    db.close()
+  }
+}
+
+async function loadSessionMeta(): Promise<SessionMeta | null> {
+  if (typeof indexedDB === 'undefined') return null
+
+  const metaResult = await withTimeout(idbGetKey<SessionMeta>(KEY_META), LOAD_META_TIMEOUT_MS)
+  if (metaResult !== 'timeout' && metaResult && metaResult.version === VERSION && metaResult.project) {
+    return metaResult
+  }
+
+  // Nunca leer KEY_LEGACY en el arranque: el blob monolítico (proyecto+audio)
+  // bloquea el hilo principal al deserializar y la UI se queda en 15%.
+  try {
+    if (await idbHasKey(KEY_LEGACY)) {
+      console.warn(
+        '[session-persist] Sesión legacy monolítica detectada; se elimina sin leerla para no congelar el arranque. El próximo guardado usará meta/audio separados.',
+      )
+      await idbDeleteKeys([KEY_LEGACY])
+    }
+  } catch (err) {
+    console.warn('[session-persist] no se pudo limpiar legacy', err)
+  }
+  return null
+}
+
+async function loadSessionAudio(): Promise<Record<string, PersistedAudioBuffer>> {
+  const audioResult = await withTimeout(
+    idbGetKey<SessionAudioBlob>(KEY_AUDIO),
+    LOAD_AUDIO_TIMEOUT_MS,
+  )
+  if (audioResult === 'timeout') {
+    console.warn('[session-persist] audio timeout; UI sigue sin buffers')
+    return {}
+  }
+  if (audioResult?.version === VERSION && audioResult.audio) return audioResult.audio
+  return {}
+}
+
+/** Carga meta+audio (compat). Preferir hydrateSession para arranque. */
+export async function loadSessionSnapshot(): Promise<SessionSnapshot | null> {
+  try {
+    const meta = await loadSessionMeta()
+    if (!meta) return null
+    const audio = await loadSessionAudio()
+    return { ...meta, audio }
   } catch (err) {
     console.warn('[session-persist] load failed', err)
     return null
@@ -183,14 +291,13 @@ export async function loadSessionSnapshot(): Promise<SessionSnapshot | null> {
 export async function clearSessionSnapshot(): Promise<void> {
   if (typeof indexedDB === 'undefined') return
   try {
-    await idbClear()
+    await idbDeleteKeys([KEY_LEGACY, KEY_META, KEY_AUDIO])
   } catch (err) {
     console.warn('[session-persist] clear failed', err)
   }
 }
 
-/** Aplica proyecto/UI/transporte sin audio. */
-export function applySessionProject(tienda: TiendaDAW, snap: SessionSnapshot): void {
+export function applySessionProject(tienda: TiendaDAW, snap: SessionMeta | SessionSnapshot): void {
   tienda.establecerEstado((s) => ({
     ...s,
     project: snap.project,
@@ -224,8 +331,7 @@ async function restoreAudioChunked(
   const entries = Object.entries(audio)
   if (entries.length === 0) return
   const total = entries.length
-  // Restaurar de a lotes para no congelar el hilo principal
-  const batch = 2
+  const batch = 1
   for (let i = 0; i < entries.length; i += batch) {
     const slice = entries.slice(i, i + batch)
     const partial: Record<string, PersistedAudioBuffer> = {}
@@ -244,6 +350,8 @@ async function restoreAudioChunked(
       `${done} / ${total} buffers`,
     )
     await yieldUi()
+    // Ceder al event loop entre buffers grandes
+    await new Promise((r) => setTimeout(r, 0))
   }
 }
 
@@ -260,7 +368,6 @@ export function applySessionSnapshot(tienda: TiendaDAW, snap: SessionSnapshot): 
 
 export function attachSessionAutosave(tienda: TiendaDAW): () => void {
   const unsub = tienda.suscribir(() => {
-    // No serializar IndexedDB mientras suena (freeze por buffers grandes)
     if (tienda.obtenerEstado().transport?.reproduciendo) return
     scheduleSessionSave(tienda)
   })
@@ -289,8 +396,8 @@ export function attachSessionAutosave(tienda: TiendaDAW): () => void {
 }
 
 /**
- * Hidrata sesión con progreso. Por defecto aplica proyecto ya y audio en background
- * para que la UI arranque rápido.
+ * Hidrata sesión: meta primero (UI lista), audio en background.
+ * Si la sesión legacy es enorme, timeout → arranque vacío (no se queda en 15%).
  */
 export async function hydrateSession(
   tienda: TiendaDAW,
@@ -301,38 +408,60 @@ export async function hydrateSession(
   await yieldUi()
 
   report(onProgress, 'snapshot', 'Leyendo sesión guardada…', 0.15)
-  const snap = await loadSessionSnapshot()
-  if (!snap) {
+  await yieldUi()
+
+  let meta: SessionMeta | null = null
+  try {
+    meta = await loadSessionMeta()
+  } catch (err) {
+    console.warn('[session-persist] meta load failed', err)
+  }
+
+  if (!meta) {
     report(onProgress, 'empty', 'Sin sesión previa', 1)
     return false
   }
 
-  const audioCount = snap.audio ? Object.keys(snap.audio).length : 0
   report(
     onProgress,
     'project',
     'Restaurando proyecto…',
-    0.4,
-    `${snap.project?.tracks?.length ?? 0} pistas`,
+    0.45,
+    `${meta.project?.tracks?.length ?? 0} pistas`,
   )
   await yieldUi()
-  applySessionProject(tienda, snap)
+  applySessionProject(tienda, meta)
 
-  if (skipAudio || audioCount === 0) {
+  if (skipAudio) {
     report(onProgress, 'done', 'Listo', 1)
     return true
   }
 
+  // UI puede mostrarse ya; audio no bloquea ready
   if (audioBackground) {
-    report(onProgress, 'done', 'Interfaz lista · audio en segundo plano…', 0.92, `${audioCount} buffers`)
-    void restoreAudioChunked(snap.audio, onProgress).then(() => {
-      report(onProgress, 'done', 'Sesión completa', 1)
-    })
+    report(onProgress, 'done', 'Interfaz lista · audio en segundo plano…', 0.85)
+    void (async () => {
+      try {
+        report(onProgress, 'audio', 'Cargando audio guardado…', 0.55)
+        const audio = await loadSessionAudio()
+        const n = Object.keys(audio).length
+        if (n === 0) {
+          report(onProgress, 'done', 'Sesión lista', 1)
+          return
+        }
+        await restoreAudioChunked(audio, onProgress)
+        report(onProgress, 'done', 'Sesión completa', 1)
+      } catch (err) {
+        console.warn('[session-persist] background audio failed', err)
+        report(onProgress, 'done', 'Interfaz lista (audio incompleto)', 1)
+      }
+    })()
     return true
   }
 
-  report(onProgress, 'audio', 'Restaurando audio…', 0.55, `0 / ${audioCount}`)
-  await restoreAudioChunked(snap.audio, onProgress)
+  report(onProgress, 'audio', 'Cargando audio guardado…', 0.55)
+  const audio = await loadSessionAudio()
+  await restoreAudioChunked(audio, onProgress)
   report(onProgress, 'done', 'Sesión restaurada', 1)
   return true
 }

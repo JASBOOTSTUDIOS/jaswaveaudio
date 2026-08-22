@@ -148,6 +148,14 @@ app.on('window-all-closed', () => {
   }
 })
 
+app.on('before-quit', () => {
+  try {
+    require('./plugin-host-bridge').stopPluginHost()
+  } catch {
+    /* ignore */
+  }
+})
+
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow()
@@ -221,6 +229,15 @@ ipcMain.handle('dialog-open', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }],
     properties: ['openFile'],
+  })
+  return result
+})
+
+ipcMain.handle('dialog-open-directory', async () => {
+  if (!mainWindow) return { canceled: true, filePaths: [] as string[] }
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Carpeta de plugins VST3',
+    properties: ['openDirectory'],
   })
   return result
 })
@@ -385,4 +402,87 @@ ipcMain.handle('tool-window-close', async (_event: IpcMainInvokeEvent, toolId: s
   const win = toolWindows.get(toolId)
   if (win && !win.isDestroyed()) win.close()
   toolWindows.delete(toolId)
+})
+
+// ── Native C++ audio bridge (ADR-0009) ──────────────────────────────────────
+const { getNativeAudio, nativeAudioAvailable } = require('./native-audio')
+
+ipcMain.handle('native-audio-available', () => nativeAudioAvailable())
+ipcMain.handle('native-audio-initialize', (_e: IpcMainInvokeEvent, config: unknown) => {
+  getNativeAudio()?.initialize(config)
+})
+ipcMain.handle('native-audio-shutdown', () => {
+  getNativeAudio()?.shutdown()
+})
+ipcMain.handle(
+  'native-audio-load-buffer',
+  (_e: IpcMainInvokeEvent, id: string, samples: Float32Array, sampleRate: number, channels: number) => {
+    getNativeAudio()?.loadBuffer(id, samples, sampleRate, channels)
+  },
+)
+ipcMain.handle('native-audio-unload-buffer', (_e: IpcMainInvokeEvent, id: string) => {
+  getNativeAudio()?.unloadBuffer(id)
+})
+ipcMain.handle('native-audio-set-graph', (_e: IpcMainInvokeEvent, graph: unknown) => {
+  getNativeAudio()?.setGraph(graph)
+})
+ipcMain.handle('native-audio-play', () => {
+  getNativeAudio()?.transportPlay()
+})
+ipcMain.handle('native-audio-pause', () => {
+  getNativeAudio()?.transportPause()
+})
+ipcMain.handle('native-audio-stop', () => {
+  getNativeAudio()?.transportStop()
+})
+ipcMain.handle('native-audio-seek', (_e: IpcMainInvokeEvent, seconds: number) => {
+  getNativeAudio()?.transportSeek(seconds)
+})
+ipcMain.handle('native-audio-playhead', () => getNativeAudio()?.getPlayheadSeconds() ?? 0)
+ipcMain.handle('native-audio-is-playing', () => getNativeAudio()?.isPlaying() ?? false)
+ipcMain.handle('native-audio-meter', () => getNativeAudio()?.getMeterPeak() ?? 0)
+
+// Plugin host híbrido (ADR-0011 C)
+const {
+  ensurePluginHostStarted,
+  getPluginHostStatus,
+  sendPluginHostCommand,
+  stopPluginHost,
+} = require('./plugin-host-bridge')
+
+ipcMain.handle('plugin-host-status', async () => {
+  await ensurePluginHostStarted()
+  return getPluginHostStatus()
+})
+ipcMain.handle('plugin-host-ensure', async () => {
+  const ok = await ensurePluginHostStarted()
+  return { ok, ...getPluginHostStatus() }
+})
+ipcMain.handle('plugin-host-send', async (e: IpcMainInvokeEvent, cmd: unknown) => {
+  const record = (cmd && typeof cmd === 'object' ? cmd : {}) as Record<string, unknown>
+  const type = typeof record.type === 'string' ? record.type : ''
+
+  await ensurePluginHostStarted()
+
+  if (type === 'openEditor' || type === 'setEditorBounds') {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (win && !win.isDestroyed()) {
+      try {
+        const buf = win.getNativeWindowHandle()
+        const hwnd =
+          buf.length >= 8 ? buf.readBigUInt64LE(0).toString() : String(buf.readUInt32LE(0))
+        if (!record.parentHwnd) record.parentHwnd = hwnd
+        // x/y vienen de getBoundingClientRect (client del webContents).
+        // El host nativo hace ClientToScreen(owner) — no sumar frame aquí.
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  return sendPluginHostCommand(record)
+})
+ipcMain.handle('plugin-host-stop', () => {
+  stopPluginHost()
+  return { ok: true }
 })

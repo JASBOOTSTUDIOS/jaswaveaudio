@@ -23,6 +23,7 @@ declare global {
       fileSize: (ruta: string) => Promise<number>
       dialogSave: () => Promise<{ canceled: boolean; filePath?: string }>
       dialogOpen: () => Promise<{ canceled: boolean; filePaths?: string[] }>
+      dialogOpenDirectory: () => Promise<{ canceled: boolean; filePaths?: string[] }>
       projectSave: (projectId: string, data: unknown) => Promise<{ success: boolean; path?: string; size?: number; error?: string }>
       projectLoad: (projectId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>
       projectOpenDialog: () => Promise<{ success: boolean; data?: unknown; path?: string; canceled?: boolean; error?: string }>
@@ -53,6 +54,35 @@ declare global {
       }>
       dialogMessage: (type: string, title: string, message: string) => Promise<number>
       shellOpenExternal: (url: string) => Promise<void>
+      nativeAudioAvailable: () => Promise<boolean>
+      nativeAudioInitialize: (config: unknown) => Promise<void>
+      nativeAudioShutdown: () => Promise<void>
+      nativeAudioLoadBuffer: (
+        id: string,
+        samples: Float32Array,
+        sampleRate: number,
+        channels: number,
+      ) => Promise<void>
+      nativeAudioUnloadBuffer: (id: string) => Promise<void>
+      nativeAudioSetGraph: (graph: unknown) => Promise<void>
+      nativeAudioPlay: () => Promise<void>
+      nativeAudioPause: () => Promise<void>
+      nativeAudioStop: () => Promise<void>
+      nativeAudioSeek: (seconds: number) => Promise<void>
+      nativeAudioGetPlayhead: () => Promise<number>
+      nativeAudioIsPlaying: () => Promise<boolean>
+      nativeAudioGetMeterPeak: () => Promise<number>
+      pluginHostStatus: () => Promise<{
+        isolationPolicy: string
+        builtinInProcess: boolean
+        thirdPartyOutOfProcess: boolean
+        vst3HostProcessAvailable: boolean
+        backend?: string
+        note: string
+      }>
+      pluginHostEnsure: () => Promise<{ ok: boolean } & Record<string, unknown>>
+      pluginHostSend: (cmd: unknown) => Promise<unknown>
+      pluginHostStop: () => Promise<{ ok: boolean }>
     }
   }
 }

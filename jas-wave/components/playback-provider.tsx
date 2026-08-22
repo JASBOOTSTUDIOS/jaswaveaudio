@@ -16,6 +16,10 @@ import { msATiempoFormateado, msACompasBeat, beatsASegundos, segundosABeats } fr
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { useImportProgress } from '@/src/context/import-progress-context'
 import { extractStereoPeaks, packStereoPeaks } from '@/lib/stereo-peaks'
+import { nativeAudioBridge } from '@/src/lib/native-audio-bridge'
+import { ensureProjectVstInstruments, isBuiltinInstrument } from '@/src/lib/plugin/track-vst-runtime'
+import { setPreferredVstPreviewTrack } from '@/src/lib/plugin/vst-voice-router'
+import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 
 const MIN_TOTAL_BARS = 160
 const PPQ = 480
@@ -68,9 +72,14 @@ type PlaybackState = {
   seekToProgress: (p: number) => void
   seekToBeats: (beats: number) => void
   addClipFromFile: (trackId: string, file: File, startBeats?: number) => Promise<void>
+  /** Lectura sin re-render (playhead HF). */
+  getPositionMs: () => number
 }
 
-const PlaybackContext = createContext<PlaybackState | null>(null)
+/** Acciones + clips (cambia poco). */
+const PlaybackActionsContext = createContext<Omit<PlaybackState, 'positionMs' | 'progress'> | null>(null)
+/** Reloj UI (~20fps). */
+const PlaybackClockContext = createContext<{ positionMs: number; progress: number } | null>(null)
 
 function msToProgress(ms: number, loopMs: number): number {
   return Math.max(0, Math.min(1, ms / loopMs))
@@ -87,8 +96,17 @@ function secondsToBeats(seconds: number, bpm: number): number {
 export function PlaybackProvider({ children }: { children: ReactNode }) {
   const tienda = useDAW()
   const importProgress = useImportProgress()
-  const transportState = useDAWState((s) => s.transport)
+  const transportStatePlaying = useDAWState((s) => Boolean(s.transport?.reproduciendo))
+  const transportGrabacion = useDAWState((s) => s.transport?.grabacion)
+  const transportLoopActivo = useDAWState((s) => Boolean(s.transport?.loop?.activo))
+  const transportMetronomo = useDAWState((s) => Boolean(s.transport?.metronomo?.activo))
+  const transportPosSegundos = useDAWState((s) => s.transport?.posicion?.segundos ?? 0)
   const sharedTracks = useDAWState((s) => s.project?.tracks || [])
+  const selectedTrackId = useDAWState((s) => getSelectedTrackId(s))
+
+  useEffect(() => {
+    setPreferredVstPreviewTrack(selectedTrackId)
+  }, [selectedTrackId])
   const projectBpm = useDAWState((s) => s.project?.bpm?.valor ?? 120)
   const masterState = useDAWState((s) => s.project?.master)
   const timeSignatureNum = useDAWState((s) => s.project?.timeSignature?.numerador ?? 4)
@@ -128,22 +146,21 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   const [positionMs, setPositionMs] = useState(0)
 
-  const playing = Boolean(transportState?.reproduciendo)
-  const recording = transportState?.grabacion === 'grabando'
-  const looping = Boolean(transportState?.loop?.activo)
-  const metronomeOn = Boolean(transportState?.metronomo?.activo)
+  const playing = transportStatePlaying
+  const recording = transportGrabacion === 'grabando'
+  const looping = transportLoopActivo
+  const metronomeOn = transportMetronomo
 
   // Sync positionMs from shared state when transport position changes externally (e.g. Home key, seek command)
   useEffect(() => {
     if (!playing) {
-      const sharedSeconds = transportState?.posicion?.segundos ?? 0
-      const sharedMs = sharedSeconds * 1000
+      const sharedMs = transportPosSegundos * 1000
       setPositionMs((prev) => {
         if (Math.abs(prev - sharedMs) > 1) return sharedMs
         return prev
       })
     }
-  }, [transportState?.posicion?.segundos, playing])
+  }, [transportPosSegundos, playing])
 
   // Map clips from shared store tracks (+ backfill peaks desde buffer en memoria)
   const peaksCacheRef = useRef<Map<string, number[]>>(new Map())
@@ -218,6 +235,29 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     return list
   }, [sharedTracks, BPM])
 
+  // Mute / solo / volumen / paneo en caliente durante play (sin re-trigger)
+  const trackMixSig = useMemo(
+    () =>
+      sharedTracks
+        .map(
+          (t) =>
+            `${t.id}:${Boolean(t.silenciada)}:${Boolean(t.soloActiva)}:${typeof t.volumen === 'number' ? t.volumen : 0.8}:${typeof t.paneo === 'number' ? t.paneo : 0}`,
+        )
+        .join('|'),
+    [sharedTracks],
+  )
+
+  useEffect(() => {
+    const tracksConfig: TrackAudioConfig[] = sharedTracks.map((t) => ({
+      id: t.id,
+      volumen: typeof t.volumen === 'number' ? t.volumen : 0.8,
+      paneo: typeof t.paneo === 'number' ? t.paneo : 0,
+      silenciada: Boolean(t.silenciada),
+      soloActiva: Boolean(t.soloActiva),
+    }))
+    audioEngine.applyTracksConfig(tracksConfig)
+  }, [trackMixSig, sharedTracks])
+
   const clockRef = useRef<TransportClock | null>(null)
 
   if (!clockRef.current) {
@@ -246,20 +286,21 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   }, [BPM, BEATS_PER_BAR, clock])
 
   const lastStoreSyncRef = useRef(0)
+  const positionMsRef = useRef(0)
 
   // Inicializar buffers sintéticos de demostración en audioEngine
   useEffect(() => {
     try {
-      const drumsBuf = audioEngine.generateDemoBuffer('drums', (64 * 60) / BPM)
+      const drumsBuf = audioEngine.generateDemoBuffer('drums', (256 * 60) / BPM)
       audioEngine.setAudioBuffer('demo-drums', drumsBuf)
 
-      const bassBuf = audioEngine.generateDemoBuffer('bass', (64 * 60) / BPM)
+      const bassBuf = audioEngine.generateDemoBuffer('bass', (256 * 60) / BPM)
       audioEngine.setAudioBuffer('demo-bass', bassBuf)
 
-      const chordsBuf = audioEngine.generateDemoBuffer('chords', (64 * 60) / BPM)
+      const chordsBuf = audioEngine.generateDemoBuffer('chords', (256 * 60) / BPM)
       audioEngine.setAudioBuffer('demo-chords', chordsBuf)
 
-      const leadBuf = audioEngine.generateDemoBuffer('lead', (56 * 60) / BPM)
+      const leadBuf = audioEngine.generateDemoBuffer('lead', (256 * 60) / BPM)
       audioEngine.setAudioBuffer('demo-lead', leadBuf)
     } catch (e) {
       console.warn('AudioEngine synth initialization deferred until user interaction', e)
@@ -267,24 +308,19 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
+    let lastUiMs = 0
     const unsubscribe = clock.subscribe((position) => {
       const ms = position.segundos * 1000
       const loopMs = loopMsRef.current
-      const progress = msToProgress(ms, loopMs)
-      setPositionMs(progressToMs(progress, loopMs))
-
-      // Throttle sync a DAWState (sin undo) para que atajos/IA vean posición real
+      const clamped = progressToMs(msToProgress(ms, loopMs), loopMs)
       const ahora = performance.now()
-      if (ahora - lastStoreSyncRef.current > 200) {
-        lastStoreSyncRef.current = ahora
-        tienda.establecerEstado((s) => ({
-          ...s,
-          transport: {
-            ...s.transport,
-            posicion: position,
-          },
-        }))
+      positionMsRef.current = clamped
+      // React clock context poco frecuente (progress bars); displays usan getPositionMs+RAF
+      if (ahora - lastUiMs >= 250) {
+        lastUiMs = ahora
+        setPositionMs(clamped)
       }
+      // No escribir posición al store durante play (re-render global + BroadcastChannel = tirones)
     })
 
     return () => {
@@ -334,26 +370,35 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       paneo: typeof t.paneo === 'number' ? t.paneo : 0,
       silenciada: Boolean(t.silenciada),
       soloActiva: Boolean(t.soloActiva),
+      softPadFallback: (t.plugins ?? []).some((p) => !p.bypass && isBuiltinInstrument(p)),
     }))
 
-    audioEngine.playClips(startMs / 1000, playbackClips, tracksConfig, midiClips)
+    void (async () => {
+      // Cargar instrumentos VST3 de cada pista antes de programar MIDI.
+      const vstSlots = await ensureProjectVstInstruments(
+        sharedTracks.map((t) => ({ id: t.id, plugins: t.plugins })),
+      )
+      for (const cfg of tracksConfig) {
+        const slot = vstSlots.get(cfg.id)
+        if (slot) cfg.vstInstrumentSlotId = slot
+      }
+
+      // Motor nativo C++ aún es stub (avanza playhead, sin salida HW).
+      // Clips de audio + Soft Pad van por Web Audio hasta fase 2 de audio-engine.
+      const ctx = audioEngine.ensureContext()
+      if (ctx.state === 'suspended') {
+        try {
+          await ctx.resume()
+        } catch {
+          /* ignore */
+        }
+      }
+      audioEngine.playClips(startMs / 1000, playbackClips, tracksConfig, midiClips)
+    })()
   }, [sharedTracks, BPM])
 
-  // Firma estable: no re-disparar audio por recalculos de waveform/referencias
-  const playbackSignature = useMemo(
-    () =>
-      clips
-        .map((c) =>
-          c.kind === 'midi'
-            ? `m:${c.id}:${c.trackId}:${c.noteCount ?? 0}:${c.inicioBeats}:${c.duracionBeats}`
-            : `a:${c.id}:${c.trackId}:${c.sourceId}:${c.inicioBeats}:${c.duracionBeats}`,
-        )
-        .join('|'),
-    [clips],
-  )
 
   // Sync clock & audio: Space = pause/resume en el playhead; Stop = cero
-  const positionMsRef = useRef(0)
   positionMsRef.current = positionMs
 
   useEffect(() => {
@@ -393,17 +438,12 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     }))
     audioEngine.stopAllSources()
     audioEngine.stopMetronome()
+    void nativeAudioBridge.pause()
   }, [playing]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-disparar solo si YA estaba sonando y cambio el contenido (evitar doble start al play)
-  const wasPlayingRef = useRef(false)
-  useEffect(() => {
-    const was = wasPlayingRef.current
-    wasPlayingRef.current = playing
-    // Solo reprogramar si ya estaba en play y cambio el contenido (no al primer play)
-    if (!playing || !was) return
-    triggerAudioPlayback(positionMsRef.current, clips)
-  }, [playbackSignature, playing]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Cambios de clips durante play: no reiniciar (stopAllSources corta el audio).
+  // Seek / toggle play ya reprograman fuentes.
+
 
   // Sync metronome with playback, BPM, compás y seek
   useEffect(() => {
@@ -449,6 +489,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     setPositionMs(0)
     audioEngine.stopAllSources()
     audioEngine.stopMetronome()
+    void nativeAudioBridge.pause()
     void tienda.executor.execute('transport.stop', {}).then((r) => {
       if (!r.success) {
         tienda.busEventos.emit('comando.fallido', { type: 'transport.stop', error: r.error?.message })
@@ -581,31 +622,74 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     [tienda, playing, positionMs, BPM, importProgress],
   )
 
-  const value: PlaybackState = {
-    playing,
-    recording,
-    looping,
-    positionMs,
-    progress: msToProgress(positionMs, loopMsRef.current),
-    clips,
-    play,
-    pause,
-    togglePlay,
-    stop,
-    toggleRecording,
-    toggleLooping,
-    seekToProgress,
-    seekToBeats,
-    addClipFromFile,
-  }
+  const getPositionMs = useCallback(() => positionMsRef.current, [])
 
-  return <PlaybackContext.Provider value={value}>{children}</PlaybackContext.Provider>
+  const actionsValue = useMemo(
+    () => ({
+      playing,
+      recording,
+      looping,
+      clips,
+      play,
+      pause,
+      togglePlay,
+      stop,
+      toggleRecording,
+      toggleLooping,
+      seekToProgress,
+      seekToBeats,
+      addClipFromFile,
+      getPositionMs,
+    }),
+    [
+      playing,
+      recording,
+      looping,
+      clips,
+      play,
+      pause,
+      togglePlay,
+      stop,
+      toggleRecording,
+      toggleLooping,
+      seekToProgress,
+      seekToBeats,
+      addClipFromFile,
+      getPositionMs,
+    ],
+  )
+
+  const clockValue = useMemo(
+    () => ({
+      positionMs,
+      progress: msToProgress(positionMs, loopMsRef.current),
+    }),
+    [positionMs],
+  )
+
+  return (
+    <PlaybackActionsContext.Provider value={actionsValue}>
+      <PlaybackClockContext.Provider value={clockValue}>{children}</PlaybackClockContext.Provider>
+    </PlaybackActionsContext.Provider>
+  )
 }
 
-export function usePlayback() {
-  const ctx = useContext(PlaybackContext)
-  if (!ctx) throw new Error('usePlayback debe usarse dentro de PlaybackProvider')
+export function usePlaybackActions() {
+  const ctx = useContext(PlaybackActionsContext)
+  if (!ctx) throw new Error('usePlaybackActions debe usarse dentro de PlaybackProvider')
   return ctx
+}
+
+export function usePlaybackClock() {
+  const ctx = useContext(PlaybackClockContext)
+  if (!ctx) throw new Error('usePlaybackClock debe usarse dentro de PlaybackProvider')
+  return ctx
+}
+
+export function usePlayback(): PlaybackState {
+  const actions = usePlaybackActions()
+  const clock = usePlaybackClock()
+  return { ...actions, ...clock }
 }
 
 export { msATiempoFormateado as formatTimecode } from '@/lib/audio-conversions'

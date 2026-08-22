@@ -61,3 +61,19 @@ export interface SnapConfig {
   divisionBeats: number;
   strength: number;
 }
+
+/** Redondea un beat a la división musical (0 = off). */
+export function snapBeatToDivision(beat: number, divisionBeats: number, enabled = true): number {
+  if (!enabled || !(divisionBeats > 0) || !Number.isFinite(beat)) return beat;
+  return Math.round(beat / divisionBeats) * divisionBeats;
+}
+
+/** Duración mínima al menos una división. */
+export function snapDurationToDivision(
+  durationBeats: number,
+  divisionBeats: number,
+  enabled = true,
+): number {
+  if (!enabled || !(divisionBeats > 0)) return Math.max(0, durationBeats);
+  return Math.max(divisionBeats, Math.round(durationBeats / divisionBeats) * divisionBeats);
+}

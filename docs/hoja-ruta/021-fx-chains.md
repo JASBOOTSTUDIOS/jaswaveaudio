@@ -4,10 +4,13 @@
 Implementar cadenas de efectos por track/insert/send. Los plugins de efecto procesan el audio en tiempo real dentro del DSP graph.
 
 ## Criterios de Aceptación
-- [ ] Cadena de efectos por track/insert/send
-- [ ] Los plugins de efecto procesan el audio
-- [ ] Bypass por plugin
-- [ ] Orden de plugins configurable
+- [x] Cadena de efectos por track (`track.plugins` + comandos `plugin.*`, ADR-0012)
+- [ ] Los plugins de efecto procesan el audio (host VST3 / audio engine)
+- [x] Bypass por plugin (`plugin.bypass`)
+- [x] Orden de plugins configurable (`plugin.move`)
+- [x] Master FX (`project.master.plugins`, trackId `master`)
+- [x] replace / copy-paste / presets de cadena
+- [x] setParameter + clave automatización `plugin:instance:param`
 
 ## Requerimientos Detallados
 

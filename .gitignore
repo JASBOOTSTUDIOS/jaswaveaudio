@@ -48,3 +48,6 @@ __v0_jsx-dev-runtime.ts
 
 jas-wave/build/
 **/build/electron/
+native/plugin-host/build/
+native/plugin-host/build-vst3/
+native/plugin-host/third_party/

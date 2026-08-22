@@ -1,12 +1,13 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { useDAW } from '@/src/context/daw-context'
 import type { DAWState } from '../../../shared/src'
 
 const CHANNEL = 'jaswave-daw-sync-v1'
 
 /**
- * Sincroniza estado DAW entre ventana principal y ventanas flotantes.
- * Throttle fuerte: durante play no spamea el estado completo cada tick.
+ * Sync DAW entre primary y satélites (undock).
+ * NO publica en cada cambio de estado (congelaba la UI con JSON del proyecto entero).
+ * Solo responde a request-state / force.
  */
 export function MultiWindowSync({ role }: { role: 'primary' | 'satellite' }) {
   const tienda = useDAW()
@@ -15,54 +16,42 @@ export function MultiWindowSync({ role }: { role: 'primary' | 'satellite' }) {
     const ch = new BroadcastChannel(CHANNEL)
 
     if (role === 'primary') {
-      let timer: ReturnType<typeof setTimeout> | null = null
-      let pending = false
-
       const publish = () => {
-        pending = false
-        timer = null
         try {
-          ch.postMessage({ type: 'state', state: tienda.obtenerEstado() })
+          const raw = JSON.parse(JSON.stringify(tienda.obtenerEstado())) as DAWState
+          ch.postMessage({ type: 'state', state: raw })
         } catch {
           /* ignore */
         }
       }
 
-      const schedule = () => {
-        pending = true
-        if (timer) return
-        timer = setTimeout(publish, 120)
-      }
-
-      const unsub = tienda.suscribir(schedule)
+      const onForce = () => publish()
+      window.addEventListener('jaswave-force-daw-sync', onForce)
       ch.onmessage = (ev) => {
         const data = ev.data as { type: string; command?: string; payload?: unknown }
-        if (data.type === 'request-state') {
-          publish()
-        }
+        if (data.type === 'request-state') publish()
         if (data.type === 'command' && data.command) {
           void tienda.executor.execute(data.command, data.payload ?? {})
         }
       }
-      publish()
       return () => {
-        unsub()
-        if (timer) clearTimeout(timer)
-        if (pending) publish()
+        window.removeEventListener('jaswave-force-daw-sync', onForce)
         ch.close()
       }
     }
 
-    // satellite
-    ch.postMessage({ type: 'request-state' })
-    const retry = window.setInterval(() => {
-      ch.postMessage({ type: 'request-state' })
-    }, 250)
-    const stopRetry = window.setTimeout(() => clearInterval(retry), 2000)
+    let gotState = false
+    const ask = () => {
+      if (!gotState) ch.postMessage({ type: 'request-state' })
+    }
+    ask()
+    const retry = window.setInterval(ask, 400)
+    const stopRetry = window.setTimeout(() => clearInterval(retry), 15_000)
 
     ch.onmessage = (ev) => {
       const data = ev.data as { type: string; state?: DAWState }
       if (data.type === 'state' && data.state) {
+        gotState = true
         tienda.reemplazarEstado(data.state)
         clearInterval(retry)
         clearTimeout(stopRetry)
@@ -71,7 +60,11 @@ export function MultiWindowSync({ role }: { role: 'primary' | 'satellite' }) {
 
     const original = tienda.executor.execute.bind(tienda.executor)
     tienda.executor.execute = async (type: string, payload: unknown, source?: any, userId?: string) => {
-      ch.postMessage({ type: 'command', command: type, payload })
+      try {
+        ch.postMessage({ type: 'command', command: type, payload })
+      } catch {
+        /* ignore */
+      }
       return original(type, payload, source, userId)
     }
 

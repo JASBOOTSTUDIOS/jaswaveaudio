@@ -15,7 +15,8 @@ import {
   loadAiSettings,
   getActiveProvider,
   formatAiUserError,
-  PROVIDER_PRESETS,
+  toAiChatPayload,
+  toAiHealthPayload,
 } from '@/src/lib/ai-settings'
 import {
   buildAgentSystemPrompt,
@@ -38,6 +39,9 @@ import {
   type StoredChatMessage,
 } from '@/src/lib/ai-chat-store'
 import { JasWaveLogo } from '@/components/brand'
+import { ChatMarkdown } from '@/components/chat-markdown'
+import { MidiGenerationPreview, type MidiPreviewData } from '@/components/midi-generation-preview'
+import { AiModelPicker } from '@/components/ai-model-picker'
 
 function newMsgId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
@@ -51,11 +55,6 @@ export function CoProducerPanel() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [aiStatus, setAiStatus] = useState<'unknown' | 'online' | 'offline' | 'misconfigured'>('unknown')
   const [statusDetail, setStatusDetail] = useState('')
-  const [modelLabel, setModelLabel] = useState(() => {
-    const s = loadAiSettings()
-    const p = getActiveProvider(s)
-    return `${PROVIDER_PRESETS[p.kind].label} · ${p.selectedModel}`
-  })
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const dawStore = useDAW()
@@ -76,7 +75,6 @@ export function CoProducerPanel() {
     const refresh = () => {
       const cfg = loadAiSettings()
       const provider = getActiveProvider(cfg)
-      setModelLabel(`${PROVIDER_PRESETS[provider.kind].label} · ${provider.selectedModel}`)
 
       if (!window.electron?.aiHealth) {
         setAiStatus('misconfigured')
@@ -85,11 +83,7 @@ export function CoProducerPanel() {
       }
 
       void window.electron
-        .aiHealth({
-          kind: provider.kind,
-          baseUrl: provider.baseUrl,
-          apiKey: provider.apiKey,
-        })
+        .aiHealth(toAiHealthPayload(provider))
         .then((result) => {
           if (result.status === 'healthy') {
             setAiStatus('online')
@@ -166,6 +160,7 @@ export function CoProducerPanel() {
       const local = preferLocal ? answerLocalReadQuery(state, userText) : null
       let accumulated = local ?? ''
       let actionsSummary = ''
+    let lastResults: import('@/src/lib/ai-daw-agent').ActionResult[] = []
 
       if (!local) {
         if (!window.electron?.aiChat) {
@@ -173,6 +168,7 @@ export function CoProducerPanel() {
           const forced = fallbackActionsFromUserIntent(userText)
           if (forced.length) {
             const results = await executeDawActions(dawStore, forced)
+            lastResults = results
             actionsSummary = formatActionResultsForUser(results)
             accumulated = [
               'He aplicado los cambios directamente en JasWave (sin modelo remoto).',
@@ -201,19 +197,17 @@ export function CoProducerPanel() {
             }))
 
           try {
-            const result = await window.electron.aiChat({
-              messages: [
-                { role: 'system', content: systemContext },
-                ...prior,
-                { role: 'user', content: userText },
-              ],
-              kind: provider.kind,
-              model: provider.selectedModel,
-              baseUrl: provider.baseUrl,
-              apiKey: provider.apiKey,
-              temperature: cfg.temperature,
-              maxTokens: cfg.maxTokens,
-            })
+            const result = await window.electron.aiChat(
+              toAiChatPayload(
+                provider,
+                [
+                  { role: 'system', content: systemContext },
+                  ...prior,
+                  { role: 'user', content: userText },
+                ],
+                { temperature: cfg.temperature, maxTokens: cfg.maxTokens },
+              ),
+            )
 
             if (result.success && result.content?.trim()) {
               const raw = result.content
@@ -225,6 +219,7 @@ export function CoProducerPanel() {
               let text = stripActionsBlock(raw)
               if (actions.length > 0) {
                 const results = await executeDawActions(dawStore, actions)
+                lastResults = results
                 actionsSummary = formatActionResultsForUser(results)
                 if (!text.trim() || /ableton|logic pro|no puedo generar|<<<ACTIONS/i.test(text)) {
                   text = 'Listo — cambios aplicados en JasWave.'
@@ -241,6 +236,7 @@ export function CoProducerPanel() {
               const forced = fallbackActionsFromUserIntent(userText)
               if (forced.length) {
                 const results = await executeDawActions(dawStore, forced)
+                lastResults = results
                 actionsSummary = formatActionResultsForUser(results)
                 accumulated =
                   'El modelo no respondió bien; apliqué la generación directamente en el DAW.'
@@ -260,6 +256,7 @@ export function CoProducerPanel() {
             const forced = fallbackActionsFromUserIntent(userText)
             if (forced.length) {
               const results = await executeDawActions(dawStore, forced)
+              lastResults = results
               actionsSummary = formatActionResultsForUser(results)
               accumulated = 'Hubo un error de red con el modelo; apliqué la generación en el DAW.'
             } else {
@@ -276,11 +273,22 @@ export function CoProducerPanel() {
         }
       }
 
+      const midiPreview = (() => {
+        const hit = lastResults.find(
+          (r) =>
+            r.success &&
+            r.type === 'daw.generateMidiSong' &&
+            (r.data as { kind?: string } | undefined)?.kind === 'midiPreview',
+        )
+        const data = hit?.data as MidiPreviewData | undefined
+        return data ? { ...data, status: 'pending' as const } : undefined
+      })()
       updateMessageContent(
         conversation.id,
         assistantMsgId,
         accumulated || '⚠️ Sin respuesta.',
         actionsSummary || undefined,
+        midiPreview,
       )
       const after = getConversation(conversation.id)
       if (after) setConversation(after)
@@ -329,11 +337,24 @@ export function CoProducerPanel() {
             const forced = fallbackActionsFromUserIntent(userText)
             const results = await executeDawActions(dawStore, forced)
             const summary = formatActionResultsForUser(results)
+            const midiPreview = (() => {
+              const hit = results.find(
+                (r) =>
+                  r.success &&
+                  r.type === 'daw.generateMidiSong' &&
+                  (r.data as { kind?: string } | undefined)?.kind === 'midiPreview',
+              )
+              const data = hit?.data as MidiPreviewData | undefined
+              return data ? { ...data, status: 'pending' as const } : undefined
+            })()
             updateMessageContent(
               conversation.id,
               assistantMsgId,
-              ['He creado el material en el arrange de JasWave.', summary].join('\n\n'),
+              midiPreview
+                ? 'Vista previa lista en el chat. Escucha y aplica cuando quieras.'
+                : ['He creado el material en el arrange de JasWave.', summary].join('\n\n'),
               summary,
+              midiPreview,
             )
           } else {
             const reply =
@@ -374,36 +395,39 @@ export function CoProducerPanel() {
 
   return (
     <aside className="relative flex h-full w-full min-w-0 flex-col bg-panel">
-      <header className="flex items-center gap-2.5 border-b border-border px-3 py-2.5">
-        <JasWaveLogo className="h-10 w-auto max-w-[120px] shrink-0" alt="Asistente Jas" />
-        <div className="min-w-0 flex-1 truncate">
-          <h2 className="truncate text-[13px] font-semibold text-foreground">Asistente Jas</h2>
-          <p className="truncate text-[11px] text-muted-foreground" title={`${conversation.title} · ${modelLabel}`}>
-            {projectName} • {trackCount} pistas · {modelLabel}
-          </p>
+      <header className="flex flex-col gap-1.5 border-b border-border px-3 py-2">
+        <div className="flex items-center gap-2.5">
+          <JasWaveLogo className="h-10 w-auto max-w-[120px] shrink-0" alt="Asistente Jas" />
+          <div className="min-w-0 flex-1 truncate">
+            <h2 className="truncate text-[13px] font-semibold text-foreground">Asistente Jas</h2>
+            <p className="truncate text-[11px] text-muted-foreground">
+              {projectName} • {trackCount} pistas
+            </p>
+          </div>
+          <div className="flex items-center gap-1">
+            {statusBadge}
+            <button
+              type="button"
+              title="Historial de chats"
+              onClick={() => {
+                refreshHistoryList()
+                setHistoryOpen((v) => !v)
+              }}
+              className={`rounded p-1.5 ${historyOpen ? 'bg-panel-raised text-foreground' : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'}`}
+            >
+              <History className="size-4" />
+            </button>
+            <button
+              type="button"
+              title="Nueva conversación"
+              onClick={startNewChat}
+              className="rounded p-1.5 text-muted-foreground hover:bg-panel-raised hover:text-foreground"
+            >
+              <MessageSquarePlus className="size-4" />
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-1">
-          {statusBadge}
-          <button
-            type="button"
-            title="Historial de chats"
-            onClick={() => {
-              refreshHistoryList()
-              setHistoryOpen((v) => !v)
-            }}
-            className={`rounded p-1.5 ${historyOpen ? 'bg-panel-raised text-foreground' : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'}`}
-          >
-            <History className="size-4" />
-          </button>
-          <button
-            type="button"
-            title="Nueva conversación"
-            onClick={startNewChat}
-            className="rounded p-1.5 text-muted-foreground hover:bg-panel-raised hover:text-foreground"
-          >
-            <MessageSquarePlus className="size-4" />
-          </button>
-        </div>
+        <AiModelPicker compact />
       </header>
 
       {historyOpen && (
@@ -490,22 +514,29 @@ export function CoProducerPanel() {
                 </div>
               )}
               <div
-                className={`max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 leading-relaxed ${
+                className={`max-w-[85%] rounded-lg px-3 py-2 leading-relaxed ${
                   msg.role === 'user'
                     ? 'rounded-br-none bg-accent text-accent-foreground'
                     : 'rounded-bl-none border border-border bg-panel-raised text-foreground'
                 }`}
               >
-                {msg.content ||
-                  (isGenerating && msg.role === 'assistant' ? (
-                    <span className="flex items-center gap-1.5 text-muted-foreground">
-                      <Loader2 className="size-3.5 animate-spin" /> Trabajando en el DAW…
-                    </span>
-                  ) : null)}
+                {msg.content ? (
+                  <ChatMarkdown text={msg.content} />
+                ) : isGenerating && msg.role === 'assistant' ? (
+                  <span className="flex items-center gap-1.5 text-muted-foreground">
+                    <Loader2 className="size-3.5 animate-spin" /> Trabajando en el DAW…
+                  </span>
+                ) : null}
                 {msg.actionsSummary ? (
-                  <div className="mt-2 border-t border-border/60 pt-2 text-[11px] whitespace-pre-wrap text-emerald-400/90">
-                    {msg.actionsSummary}
+                  <div className="mt-2 border-t border-border/60 pt-2 text-[11px] text-emerald-400/90">
+                    <ChatMarkdown text={msg.actionsSummary} />
                   </div>
+                ) : null}
+                {msg.midiPreview ? (
+                  <MidiGenerationPreview
+                    preview={msg.midiPreview}
+                    status={msg.midiPreview.status ?? 'pending'}
+                  />
                 ) : null}
               </div>
               {msg.role === 'user' && (

@@ -151,15 +151,30 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const undockTool = useCallback(async (toolId: ToolId) => {
+    // Publicar estado YA (antes de abrir satélite) para que el panel flotante no arranque vacío.
+    try {
+      window.dispatchEvent(new CustomEvent('jaswave-force-daw-sync'))
+    } catch {
+      /* ignore */
+    }
     const api = window.electron as typeof window.electron & {
       openToolWindow?: (toolId: string, title: string) => Promise<{ success: boolean }>
     }
+    let title = TOOL_CATALOG[toolId].title
+    if (toolId === 'plugin-editor') {
+      try {
+        const { getPluginEditorFocus } = await import('@/src/lib/plugin/plugin-editor-store')
+        const focus = getPluginEditorFocus()
+        if (focus?.pluginName) title = focus.pluginName
+      } catch {
+        /* ignore */
+      }
+    }
     if (!api?.openToolWindow) {
-      // Fallback web: marca undocked y abre popup
       const url = `${window.location.origin}${window.location.pathname}?undock=${toolId}`
       window.open(url, `jaswave-${toolId}`, 'width=900,height=700')
     } else {
-      await api.openToolWindow(toolId, TOOL_CATALOG[toolId].title)
+      await api.openToolWindow(toolId, title)
     }
     setLayout((prev) => {
       const cleaned = stripTool(prev, toolId)

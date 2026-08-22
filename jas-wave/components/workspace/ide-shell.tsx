@@ -4,8 +4,17 @@ import { useWorkspace } from '@/src/workspace/workspace-context'
 import { TOOL_CATALOG, type DockZone, type ToolId } from '@/src/workspace/types'
 import { ToolHost } from './tool-host'
 import { JasWaveLogo } from '@/components/brand'
+import { usePluginEditorTabTitle } from '@/components/plugin-editor-panel'
 
 const ZONE_DROP = 'application/x-jaswave-tool'
+
+function ToolTabLabel({ toolId }: { toolId: ToolId }) {
+  const pluginTitle = usePluginEditorTabTitle()
+  if (toolId === 'plugin-editor' && pluginTitle) {
+    return <span className="max-w-[9rem] truncate">{pluginTitle}</span>
+  }
+  return <>{TOOL_CATALOG[toolId].title}</>
+}
 
 function AddToolButton({ zone }: { zone: DockZone }) {
   const [open, setOpen] = useState(false)
@@ -163,7 +172,7 @@ export function DockZonePanel({
                 title={`Arrastra para mover · ${meta.description}`}
               >
                 {toolId === 'coproducer' && <JasWaveLogo className="size-4 shrink-0" alt="" />}
-                {meta.title}
+                <ToolTabLabel toolId={toolId} />
               </button>
             )
           })}

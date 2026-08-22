@@ -11,6 +11,17 @@ export type StoredChatMessage = {
   createdAt: number
   /** Acciones DAW ejecutadas en este turno (si aplica). */
   actionsSummary?: string
+  /** Vista previa MIDI pendiente de aplicar al proyecto. */
+  midiPreview?: {
+    kind: 'midiPreview'
+    nombre: string
+    keyLabel: string
+    bpm: number
+    durationBeats: number
+    notes: Array<{ pitch: number; inicio: number; duracion: number; velocidad: number }> 
+    structureLabel: string
+    status?: 'pending' | 'applied' | 'discarded'
+  }
 }
 
 export type ChatConversation = {
@@ -103,6 +114,7 @@ export function appendMessage(
     content: message.content,
     createdAt: message.createdAt ?? Date.now(),
     actionsSummary: message.actionsSummary,
+    midiPreview: message.midiPreview,
   }
 
   const messages = [...all[idx].messages, msg].slice(-MAX_MESSAGES)
@@ -130,6 +142,7 @@ export function updateMessageContent(
   messageId: string,
   content: string,
   actionsSummary?: string,
+  midiPreview?: StoredChatMessage['midiPreview'],
 ): ChatConversation | null {
   const all = loadAll()
   const idx = all.findIndex((c) => c.id === conversationId)
@@ -139,7 +152,12 @@ export function updateMessageContent(
     updatedAt: Date.now(),
     messages: all[idx].messages.map((m) =>
       m.id === messageId
-        ? { ...m, content, ...(actionsSummary !== undefined ? { actionsSummary } : {}) }
+        ? {
+            ...m,
+            content,
+            ...(actionsSummary !== undefined ? { actionsSummary } : {}),
+            ...(midiPreview !== undefined ? { midiPreview } : {}),
+          }
         : m,
     ),
   }

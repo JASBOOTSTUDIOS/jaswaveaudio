@@ -12,6 +12,7 @@ import {
   panADisplay,
 } from '@/lib/audio-conversions'
 import { FaderControl, KnobControl } from './ui/controls'
+import { TrackFxButton } from '@/components/fx-chain-panel'
 
 type MixerRow = {
   id: string
@@ -23,6 +24,7 @@ type MixerRow = {
   armed: boolean
   db: number
   pan: number
+  fxCount: number
 }
 
 function toMixerRow(track: SharedTrack): MixerRow {
@@ -37,6 +39,7 @@ function toMixerRow(track: SharedTrack): MixerRow {
     armed: track.armada,
     db: linealADb(linearVol),
     pan: panADisplay(track.paneo),
+    fxCount: track.plugins?.length ?? 0,
   }
 }
 
@@ -213,7 +216,7 @@ export function Mixer() {
               </TrackButton>
             </div>
 
-            {/* i / rec */}
+            {/* i / rec / FX */}
             <div className="mb-2 flex items-center justify-center gap-1">
               <TrackButton
                 label={`Monitor de entrada ${track.name}`}
@@ -231,6 +234,7 @@ export function Mixer() {
                   className={`size-1.5 rounded-full ${track.armed ? 'bg-background' : 'bg-muted-foreground'}`}
                 />
               </TrackButton>
+              <TrackFxButton trackId={track.id} trackName={track.name} count={track.fxCount} />
             </div>
 
             {/* Knob de balance */}
@@ -260,6 +264,13 @@ export function Mixer() {
           <p className="mb-1.5 truncate text-center text-[11px] font-medium text-foreground" title={masterTrack.name}>
             {masterTrack.name}
           </p>
+          <div className="mb-1 flex justify-center">
+            <TrackFxButton
+              trackId="master"
+              trackName="Master"
+              count={(master?.plugins ?? []).length}
+            />
+          </div>
 
           <div className="mb-1 flex items-center justify-center gap-1">
             <TrackButton label={`Silenciar Master`} active={master.muted} onClick={() => {
