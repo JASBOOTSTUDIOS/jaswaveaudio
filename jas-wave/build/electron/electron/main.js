@@ -14,6 +14,7 @@ const path = require('path');
 const fs = require('fs/promises');
 const fsSync = require('fs');
 const ai_gateway_1 = require("./ai-gateway");
+const plugin_lookup_1 = require("./plugin-lookup");
 let mainWindow = null;
 /** Icono de app (ventana / taskbar). */
 function resolveAppIconPath() {
@@ -40,6 +41,16 @@ function resolveAppIconPath() {
 function sendMenuAction(id) {
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('menu-action', id);
+    }
+}
+function senderIsSatellite(sender) {
+    var _a, _b;
+    try {
+        const url = (_b = (_a = sender === null || sender === void 0 ? void 0 : sender.getURL) === null || _a === void 0 ? void 0 : _a.call(sender)) !== null && _b !== void 0 ? _b : '';
+        return /(?:\?|&)undock=/.test(url) || url.includes('#undock/');
+    }
+    catch (_c) {
+        return false;
     }
 }
 function buildAppMenu() {
@@ -181,6 +192,7 @@ ipcMain.handle('window-is-maximized', () => {
 });
 ipcMain.handle('file-save', (_event, ruta, contenido) => __awaiter(void 0, void 0, void 0, function* () {
     try {
+        yield fs.mkdir(path.dirname(ruta), { recursive: true });
         yield fs.writeFile(ruta, contenido, 'utf-8');
         return { success: true };
     }
@@ -320,6 +332,12 @@ ipcMain.handle('ai-health', (_event, payload) => __awaiter(void 0, void 0, void 
         baseUrl: baseUrl || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434',
     });
 }));
+ipcMain.handle('plugin-lookup', (_event, pluginName) => __awaiter(void 0, void 0, void 0, function* () {
+    const name = String(pluginName !== null && pluginName !== void 0 ? pluginName : '').trim().slice(0, 120);
+    if (name.length < 2)
+        return [];
+    return (0, plugin_lookup_1.lookupPluginOnWeb)(name);
+}));
 ipcMain.handle('dialog-message', (_event, type, title, message) => __awaiter(void 0, void 0, void 0, function* () {
     if (!mainWindow)
         return 0;
@@ -337,7 +355,7 @@ ipcMain.handle('shell-open-external', (_event, url) => __awaiter(void 0, void 0,
 }));
 /** Ventanas flotantes de herramientas (multi-monitor) */
 const toolWindows = new Map();
-ipcMain.handle('tool-window-open', (_event, toolId, title) => __awaiter(void 0, void 0, void 0, function* () {
+ipcMain.handle('tool-window-open', (_event, toolId, title, extra) => __awaiter(void 0, void 0, void 0, function* () {
     const existing = toolWindows.get(toolId);
     if (existing && !existing.isDestroyed()) {
         existing.focus();
@@ -366,13 +384,27 @@ ipcMain.handle('tool-window-open', (_event, toolId, title) => __awaiter(void 0, 
             mainWindow.webContents.send('tool-window-closed', toolId);
         }
     });
-    const query = `?undock=${encodeURIComponent(toolId)}`;
+    const params = new URLSearchParams({ undock: String(toolId || '') });
+    if (extra && typeof extra === 'object') {
+        for (const [k, v] of Object.entries(extra)) {
+            if (v)
+                params.set(k, String(v));
+        }
+    }
+    const query = `?${params.toString()}`;
+    const queryObj = { undock: String(toolId || '') };
+    if (extra && typeof extra === 'object') {
+        for (const [k, v] of Object.entries(extra)) {
+            if (v)
+                queryObj[k] = String(v);
+        }
+    }
     if (process.env.VITE_DEV_SERVER_URL) {
         yield win.loadURL(`${process.env.VITE_DEV_SERVER_URL}${query}`);
     }
     else {
         yield win.loadFile(path.join(__dirname, '../dist/index.html'), {
-            query: { undock: toolId },
+            query: queryObj,
         });
     }
     return { success: true };
@@ -426,37 +458,90 @@ ipcMain.handle('native-audio-playhead', () => { var _a, _b; return (_b = (_a = g
 ipcMain.handle('native-audio-is-playing', () => { var _a, _b; return (_b = (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.isPlaying()) !== null && _b !== void 0 ? _b : false; });
 ipcMain.handle('native-audio-meter', () => { var _a, _b; return (_b = (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.getMeterPeak()) !== null && _b !== void 0 ? _b : 0; });
 // Plugin host híbrido (ADR-0011 C)
-const { ensurePluginHostStarted, getPluginHostStatus, sendPluginHostCommand, stopPluginHost, } = require('./plugin-host-bridge');
-ipcMain.handle('plugin-host-status', () => __awaiter(void 0, void 0, void 0, function* () {
-    yield ensurePluginHostStarted();
+const { ensurePluginHostStarted, getPluginHostStatus, sendPluginHostCommand, sendPluginHostMidi, pushPluginHostPcm, stopPluginHost, isEditorHostCommand, setPluginHostAudioDevice, } = require('./plugin-host-bridge');
+ipcMain.handle('plugin-host-status', (e) => __awaiter(void 0, void 0, void 0, function* () {
+    if (!senderIsSatellite(e.sender))
+        yield ensurePluginHostStarted();
     return getPluginHostStatus();
 }));
-ipcMain.handle('plugin-host-ensure', () => __awaiter(void 0, void 0, void 0, function* () {
+ipcMain.handle('plugin-host-ensure', (e) => __awaiter(void 0, void 0, void 0, function* () {
+    if (senderIsSatellite(e.sender)) {
+        return Object.assign({ ok: !!getPluginHostStatus().vst3HostProcessAvailable }, getPluginHostStatus());
+    }
     const ok = yield ensurePluginHostStarted();
     return Object.assign({ ok }, getPluginHostStatus());
+}));
+ipcMain.handle('plugin-host-midi', (_e, cmd) => __awaiter(void 0, void 0, void 0, function* () {
+    // Fire-and-forget: el host ya debe estar en marcha tras load. No bloquear Play.
+    const record = (cmd && typeof cmd === 'object' ? cmd : {});
+    sendPluginHostMidi(record);
+    return { ok: true };
 }));
 ipcMain.handle('plugin-host-send', (e, cmd) => __awaiter(void 0, void 0, void 0, function* () {
     const record = (cmd && typeof cmd === 'object' ? cmd : {});
     const type = typeof record.type === 'string' ? record.type : '';
-    yield ensurePluginHostStarted();
+    if (!isEditorHostCommand(type)) {
+        yield ensurePluginHostStarted();
+    }
     if (type === 'openEditor' || type === 'setEditorBounds') {
-        const win = BrowserWindow.fromWebContents(e.sender);
-        if (win && !win.isDestroyed()) {
-            try {
-                const buf = win.getNativeWindowHandle();
-                const hwnd = buf.length >= 8 ? buf.readBigUInt64LE(0).toString() : String(buf.readUInt32LE(0));
-                if (!record.parentHwnd)
-                    record.parentHwnd = hwnd;
-                // x/y vienen de getBoundingClientRect (client del webContents).
-                // El host nativo hace ClientToScreen(owner) — no sumar frame aquí.
-            }
-            catch (_a) {
-                /* ignore */
+        // openEditor: ventana top-level centrada (sin parent Electron → sin deadlock).
+        if (type === 'openEditor') {
+            delete record.parentHwnd;
+            if (record.x == null)
+                record.x = 0;
+            if (record.y == null)
+                record.y = 0;
+        }
+        else {
+            const win = BrowserWindow.fromWebContents(e.sender);
+            if (win && !win.isDestroyed()) {
+                try {
+                    const buf = win.getNativeWindowHandle();
+                    const hwnd = buf.length >= 8 ? buf.readBigUInt64LE(0).toString() : String(buf.readUInt32LE(0));
+                    if (!record.parentHwnd)
+                        record.parentHwnd = hwnd;
+                }
+                catch (_a) {
+                    /* ignore */
+                }
             }
         }
     }
+    if (type === 'setAudioDevice') {
+        return setPluginHostAudioDevice({
+            backend: String(record.backend || record.api || 'auto'),
+            deviceId: String(record.deviceId || record.device || ''),
+            sampleRate: Number(record.sampleRate) || 48000,
+            bufferSize: Number(record.bufferSize) || 512,
+            exclusive: !!record.exclusive || String(record.backend) === 'wasapi_exclusive',
+        });
+    }
     return sendPluginHostCommand(record);
 }));
+ipcMain.on('plugin-host-pcm', (e, data) => {
+    if (senderIsSatellite(e.sender))
+        return;
+    if (!data)
+        return;
+    if (Buffer.isBuffer(data)) {
+        pushPluginHostPcm(data);
+        return;
+    }
+    if (data instanceof Uint8Array || ArrayBuffer.isView(data)) {
+        const view = data;
+        pushPluginHostPcm(Buffer.from(view.buffer, view.byteOffset, view.byteLength));
+        return;
+    }
+    if (data instanceof ArrayBuffer) {
+        pushPluginHostPcm(Buffer.from(data));
+        return;
+    }
+    // Clone IPC a veces entrega { type:'Buffer', data:number[] }
+    const rec = data;
+    if ((rec === null || rec === void 0 ? void 0 : rec.type) === 'Buffer' && Array.isArray(rec.data)) {
+        pushPluginHostPcm(Buffer.from(rec.data));
+    }
+});
 ipcMain.handle('plugin-host-stop', () => {
     stopPluginHost();
     return { ok: true };

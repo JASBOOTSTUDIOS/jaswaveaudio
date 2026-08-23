@@ -26,9 +26,10 @@ contextBridge.exposeInMainWorld('electron', {
     projectList: () => ipcRenderer.invoke('project-list'),
     aiChat: (payload, model, baseUrl, temperature) => ipcRenderer.invoke('ai-chat', payload, model, baseUrl, temperature),
     aiHealth: (payload) => ipcRenderer.invoke('ai-health', payload),
+    pluginLookup: (pluginName) => ipcRenderer.invoke('plugin-lookup', pluginName),
     dialogMessage: (type, title, message) => ipcRenderer.invoke('dialog-message', type, title, message),
     shellOpenExternal: (url) => ipcRenderer.invoke('shell-open-external', url),
-    openToolWindow: (toolId, title) => ipcRenderer.invoke('tool-window-open', toolId, title),
+    openToolWindow: (toolId, title, extra) => ipcRenderer.invoke('tool-window-open', toolId, title, extra),
     closeToolWindow: (toolId) => ipcRenderer.invoke('tool-window-close', toolId),
     onToolWindowClosed: (callback) => {
         const handler = (_event, toolId) => callback(toolId);
@@ -57,5 +58,23 @@ contextBridge.exposeInMainWorld('electron', {
     pluginHostStatus: () => ipcRenderer.invoke('plugin-host-status'),
     pluginHostEnsure: () => ipcRenderer.invoke('plugin-host-ensure'),
     pluginHostSend: (cmd) => ipcRenderer.invoke('plugin-host-send', cmd),
+    pluginHostMidi: (cmd) => ipcRenderer.invoke('plugin-host-midi', cmd),
+    pluginHostPushPcm: (samples) => {
+        // Siempre Uint8Array: ArrayBuffer puro a veces no sobrevive el clone IPC de Electron.
+        let u8;
+        if (samples instanceof Uint8Array && samples.byteOffset === 0 && samples.byteLength === samples.buffer.byteLength) {
+            u8 = samples;
+        }
+        else if (samples instanceof ArrayBuffer) {
+            u8 = new Uint8Array(samples.slice(0));
+        }
+        else if (ArrayBuffer.isView(samples)) {
+            u8 = new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength).slice();
+        }
+        else {
+            return;
+        }
+        ipcRenderer.send('plugin-host-pcm', u8);
+    },
     pluginHostStop: () => ipcRenderer.invoke('plugin-host-stop'),
 });

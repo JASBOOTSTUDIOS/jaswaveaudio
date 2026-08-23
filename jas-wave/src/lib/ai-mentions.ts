@@ -5,6 +5,7 @@
 import type { DAWState } from '../../../shared/src/types/state'
 import { AGENT_MODE_META, type AgentMode } from './ai-modes'
 import { listAgentDocs } from './agent-docs'
+import { pluginRegistry } from './plugin/registry'
 
 export type MentionKind = 'mode' | 'action' | 'track' | 'clip' | 'plugin' | 'vst' | 'doc'
 
