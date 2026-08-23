@@ -24,6 +24,7 @@ struct Vst3MidiEvent {
   float velocity{0};
   int16_t cc{0};
   int16_t ccValue{0};
+  int32_t delaySamples{0};
 };
 
 struct Vst3ParamDesc {
@@ -57,9 +58,9 @@ public:
   void suspendForAudioRestart();
   void unload();
 
-  void noteOn(int pitch, float velocity);
-  void noteOff(int pitch);
-  void midiCc(int cc, int value);
+  void noteOn(int pitch, float velocity, int delaySamples = 0);
+  void noteOff(int pitch, int delaySamples = 0);
+  void midiCc(int cc, int value, int delaySamples = 0);
   /** Sustain off + all notes/sound off + noteOff 0-127. */
   void allNotesOff();
   void setParameterNormalized(uint32_t paramId, double normalized);

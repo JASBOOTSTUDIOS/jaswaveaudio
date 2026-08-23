@@ -1,8 +1,9 @@
 import { useMemo, useState, useRef, useEffect } from 'react'
-import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Metronome } from 'lucide-react'
+import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Piano } from 'lucide-react'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { DAWState } from '../../shared/src'
 import { TransportPositionReadout } from './transport-position-readout'
+import { midiController } from '@/src/lib/midi-controller'
 
 function EditableStat({
   value,
@@ -224,6 +225,36 @@ function TimeSigEditor({
   )
 }
 
+function MidiActivityBadge() {
+  const [name, setName] = useState(() => midiController.getStatus().inputName)
+  const [hot, setHot] = useState(false)
+
+  useEffect(() => {
+    const sync = () => setName(midiController.getStatus().inputName)
+    const unsubDev = midiController.subscribeDevices(sync)
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const unsubAct = midiController.subscribeActivity(() => {
+      setHot(true)
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => setHot(false), 120)
+    })
+    void midiController.start().then(sync)
+    return () => {
+      unsubDev()
+      unsubAct()
+      if (timer) clearTimeout(timer)
+    }
+  }, [])
+
+  return (
+    <div className="flex max-w-[160px] items-center gap-1.5 text-muted-foreground" title={name}>
+      <span className={`size-1.5 shrink-0 rounded-full ${hot ? 'bg-accent-amber' : 'bg-border'}`} aria-hidden />
+      <Piano className="size-3.5 shrink-0" />
+      <span className="truncate text-[10px]">{name}</span>
+    </div>
+  )
+}
+
 export function TransportBar() {
   const tienda = useDAW()
   const transport = useDAWState((s: DAWState) => s.transport)
@@ -331,6 +362,7 @@ export function TransportBar() {
       <Triangle className="ml-1 size-4 rotate-90 text-muted-foreground" />
 
       <div className="ml-auto flex items-center gap-5">
+        <MidiActivityBadge />
         <EditableStat value={bpm} label="BPM" onCommit={setBpm} min={20} max={300} />
         <TimeSigEditor numerador={numerador} denominador={denominador} onCommit={(n, d) => {
           void tienda.executor.execute('project.setTimeSignature', { numerador: n, denominador: d })

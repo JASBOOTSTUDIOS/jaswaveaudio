@@ -342,15 +342,17 @@ export function sendVstNote(
   on: boolean,
   pitch: number,
   velocity = 100,
+  delaySamples = 0,
 ): void {
   try {
     const api = window.electron
     if (!api) return
+    const delay = Math.max(0, Math.round(delaySamples))
     const cmd = on
-      ? { type: 'noteOn' as const, slotId, pitch, velocity }
-      : { type: 'noteOff' as const, slotId, pitch }
+      ? { type: 'noteOn' as const, slotId, pitch, velocity, delaySamples: delay }
+      : { type: 'noteOff' as const, slotId, pitch, delaySamples: delay }
     if (typeof api.pluginHostMidi === 'function') {
-      void api.pluginHostMidi(cmd)
+      api.pluginHostMidi(cmd)
       return
     }
     void api.pluginHostSend?.(cmd)
@@ -359,12 +361,18 @@ export function sendVstNote(
   }
 }
 
-export function sendVstCc(slotId: string, cc: number, value: number): void {
+export function sendVstCc(slotId: string, cc: number, value: number, delaySamples = 0): void {
   try {
     const api = window.electron
-    const cmd = { type: 'midiCc' as const, slotId, cc, value }
+    const cmd = {
+      type: 'midiCc' as const,
+      slotId,
+      cc,
+      value,
+      delaySamples: Math.max(0, Math.round(delaySamples)),
+    }
     if (typeof api?.pluginHostMidi === 'function') {
-      void api.pluginHostMidi(cmd)
+      api.pluginHostMidi(cmd)
       return
     }
     void api?.pluginHostSend?.(cmd)

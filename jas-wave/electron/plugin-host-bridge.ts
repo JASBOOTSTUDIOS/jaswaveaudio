@@ -113,7 +113,7 @@ let lastError: string | undefined
 let mixSock: Socket | null = null
 let mixBackpressure = false
 let mixPipePath = ''
-let mixPending: Buffer | null = null
+let mixQueue: Buffer[] = []
 let mixReconnectTimer: ReturnType<typeof setTimeout> | null = null
 let mixReconnectAttempts = 0
 let mixSuppressReconnect = false
@@ -133,7 +133,7 @@ function cancelMixReconnect() {
 
 function closeMixPipe() {
   mixBackpressure = false
-  mixPending = null
+  mixQueue = []
   if (!mixSock) return
   const s = mixSock
   mixSock = null
@@ -146,11 +146,16 @@ function closeMixPipe() {
 }
 
 function flushMixPending() {
-  if (!mixSock || mixSock.destroyed || !mixSock.writable || !mixPending) return
-  const p = mixPending
-  mixPending = null
-  const ok = mixSock.write(p)
-  if (!ok) mixBackpressure = true
+  if (!mixSock || mixSock.destroyed || !mixSock.writable) return
+  while (mixQueue.length) {
+    const p = mixQueue[0]!
+    const ok = mixSock.write(p)
+    mixQueue.shift()
+    if (!ok) {
+      mixBackpressure = true
+      return
+    }
+  }
 }
 
 function scheduleMixReconnect() {
@@ -192,7 +197,7 @@ function connectMixPipeOnce(name: string): Promise<boolean> {
     sock.on('connect', () => {
       mixSock = sock
       mixBackpressure = false
-      mixPending = null
+      mixQueue = []
       done(true)
     })
     sock.on('error', () => done(false))
@@ -238,7 +243,7 @@ export function isMixPipeConnected(): boolean {
   return !!mixSock && !mixSock.destroyed && mixSock.writable
 }
 
-/** PCM interleaved f32le → named pipe del host. Latest-wins si hay backpressure. */
+/** PCM interleaved f32le → named pipe del host. Cola FIFO (nunca latest-wins: eso desincroniza pistas). */
 export function pushPluginHostPcm(data: Buffer | ArrayBuffer | Float32Array | ArrayBufferView): void {
   if (!mixSock || mixSock.destroyed || !mixSock.writable) return
   let buf: Buffer
@@ -250,8 +255,9 @@ export function pushPluginHostPcm(data: Buffer | ArrayBuffer | Float32Array | Ar
     buf = Buffer.from(data)
   }
   if (buf.byteLength === 0) return
-  if (mixBackpressure) {
-    mixPending = buf
+  if (mixBackpressure || mixQueue.length) {
+    mixQueue.push(buf)
+    if (mixQueue.length > 256) mixQueue.pop()
     return
   }
   const ok = mixSock.write(buf)

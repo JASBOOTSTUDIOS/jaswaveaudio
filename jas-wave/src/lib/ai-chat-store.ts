@@ -28,6 +28,7 @@ export type StoredChatMessage = {
   }
   projectPlan?: import('./project-plan').ProjectPlanData
   musicBuild?: import('./music-build/types').MusicBuildResult
+  citedMessageIds?: string[]
 }
 
 export type ChatConversation = {
@@ -121,6 +122,7 @@ export function appendMessage(
     createdAt: message.createdAt ?? Date.now(),
     actionsSummary: message.actionsSummary,
     midiPreview: message.midiPreview,
+    citedMessageIds: message.citedMessageIds,
   }
 
   const messages = [...all[idx].messages, msg].slice(-MAX_MESSAGES)

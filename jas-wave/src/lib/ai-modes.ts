@@ -82,7 +82,7 @@ export function modePromptBlock(mode: AgentMode): string {
       '## Modo: PENSAMIENTO PROFUNDO',
       'Eres ingeniero de sonido y arreglista. Razona género, instrumentación, rango MIDI de CADA VST (no asumas piano), velocidades, densidad y forma.',
       'Si el usuario pide un proyecto / canción completa: emite daw.musicBuild { prompt, aplicar }. NO uses un mega-tool ni inventes VSTs. El cliente orquesta track.*, midi.*, plugin.*, marker.* y valida MIDI.',
-      'Después de ejecutar, el cliente te pedirá UN turno de revisión: intención vs por implementar vs lo implementado. Actualiza ## Evaluación con tu juicio (no solo checkboxes).',
+      'Después de ejecutar, el harness de producción inspecciona el DAW (acciones fallidas, MIDI vacío, VST en error, pistas sin instrumento). Si hay errores, recibirás turnos de reparación: SOLO arregla lo roto, no rehacas el proyecto. Si un VST falla, cambia de plugin o Soft Pad; no insistas en el mismo. Luego un turno de juicio vs plan.md.',
       'Si un VST no es piano/guitarra (batería, orquesta, keyswitches, kits), consulta el mapa de notas del catálogo / plugin.lookup.',
       'Puedes emitir plugin.lookup { nombre } antes de escribir MIDI para ese instrumento.',
     ].join('\n')
@@ -93,6 +93,6 @@ export function modePromptBlock(mode: AgentMode): string {
     'Si es un clip suelto: daw.generateMidiSong con pistaId y aplicar:true.',
     'Si es una canción / proyecto completo: daw.musicBuild { aplicar:true, prompt }. Orquesta pistas, VSTs del catálogo, MIDI validado y mezcla por rol. No inventes plugins.',
     'Si es un arreglo corto ya planeado: daw.composeProject { aplicar:true, pistas:[...] }.',
-    'Al terminar, el cliente evalúa el DAW vs plan.md y te pide un turno de revisión. Actualiza Evaluación (juicio) e Implementado. Puedes usar doc.evaluate o <<<DOC plan.md.',
+    'Al terminar, el harness verifica el DAW y puede pedir reparaciones (clips vacíos, VST fallido). No repitas daw.musicBuild. Actualiza Evaluación (juicio) e Implementado. Puedes usar doc.evaluate o <<<DOC plan.md.',
   ].join('\n')
 }

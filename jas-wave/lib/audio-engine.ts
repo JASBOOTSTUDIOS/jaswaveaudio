@@ -73,6 +73,7 @@ export class WebAudioEngine {
   private masterMuted = false
   private preferredSampleRate = 48000
   private nativeOutput = false
+  private nativeBufferSize = 512
   private pcmTap: ScriptProcessorNode | null = null
   private pcmWorklet: AudioWorkletNode | null = null
   private workletModuleReady = false
@@ -138,14 +139,14 @@ export class WebAudioEngine {
     const sink = this.pendingChromiumSink
     const attempts: unknown[] = sink
       ? [
-          { latencyHint: 'playback', sampleRate, sinkId: sink },
-          { latencyHint: 'playback', sinkId: sink },
-          { latencyHint: 'playback', sampleRate },
-          { latencyHint: 'playback' },
+          { latencyHint: 'interactive', sampleRate, sinkId: sink },
+          { latencyHint: 'interactive', sinkId: sink },
+          { latencyHint: 'interactive', sampleRate },
+          { latencyHint: 'interactive' },
         ]
       : [
-          { latencyHint: 'playback', sampleRate },
-          { latencyHint: 'playback' },
+          { latencyHint: 'interactive', sampleRate },
+          { latencyHint: 'interactive' },
         ]
     for (const opts of attempts) {
       try {
@@ -205,23 +206,39 @@ export class WebAudioEngine {
       if (typeof d.stemIndex === 'number') stem = d.stemIndex
     }
     if (!pcm || pcm.length === 0) return
-    const copy = new Float32Array(pcm.length)
-    copy.set(pcm)
     if (stem >= 0) {
-      window.electron?.pluginHostPushPcm?.(encodeStemPacket(stem, copy))
+      window.electron?.pluginHostPushPcm?.(encodeStemPacket(stem, pcm))
       return
     }
-    window.electron?.pluginHostPushPcm?.(copy)
+    window.electron?.pluginHostPushPcm?.(pcm)
   }
 
   public getSampleRate(): number {
     return this.audioCtx?.sampleRate ?? this.preferredSampleRate
   }
 
-  /** Playhead de timeline alineado a AudioContext (no performance.now). */
+  /** Playhead de generación (AudioContext). No restar latencia: el MIDI/clips se programan aquí. */
   public getTimelineSeconds(): number {
     if (!this.audioCtx || !this.isPlaying) return this.playheadStartSec
     return this.playheadStartSec + Math.max(0, this.audioCtx.currentTime - this.startTime)
+  }
+
+  /** Retraso estimado Web Audio tap → pipe → ASIO (doble buffer). */
+  public nativePathAheadSec(): number {
+    const sr = this.audioCtx?.sampleRate ?? this.preferredSampleRate
+    const tap = 256
+    const buf = this.nativeBufferSize > 0 ? this.nativeBufferSize : 512
+    return (tap + buf * 2) / sr + 0.008
+  }
+
+  /** Playhead audible (UI): coincide con lo que sale del device, no con Chromium. */
+  public getAudibleTimelineSeconds(): number {
+    const raw = this.getTimelineSeconds()
+    if (!this.isPlaying) return raw
+    const ctx = this.audioCtx
+    const chromeLat = ctx ? (ctx.baseLatency || 0) + ((ctx as AudioContext & { outputLatency?: number }).outputLatency || 0) : 0
+    const lat = this.nativeOutput ? this.nativePathAheadSec() : chromeLat
+    return Math.max(this.playheadStartSec, raw - lat)
   }
 
   private disconnectTapGraph() {
@@ -439,6 +456,8 @@ export class WebAudioEngine {
         return false
       }
       if (raw.audio?.sampleRate) this.setPreferredSampleRate(raw.audio.sampleRate)
+      const bufSz = (raw.audio as { bufferSize?: number } | undefined)?.bufferSize
+      if (bufSz && bufSz >= 16 && bufSz <= 8192) this.nativeBufferSize = bufSz
       this.pendingChromiumSink = await this.preferredChromiumSink(raw.audio?.backend)
       if (this.audioCtx && raw.audio?.backend === 'asio') this.disposeLiveContext()
       this.ensureContext()
@@ -475,51 +494,21 @@ export class WebAudioEngine {
   private async preferredChromiumSink(
     backend?: string,
   ): Promise<string | { type: string } | undefined> {
-    if (backend !== 'asio') return undefined
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices()
-      const other = devices.find(
-        (d) =>
-          d.kind === 'audiooutput' &&
-          d.deviceId &&
-          d.deviceId !== 'default' &&
-          d.deviceId !== 'communications' &&
-          !/umc|behringer/i.test(d.label || ''),
-      )
-      if (other) return other.deviceId
-    } catch {
-      /* ignore */
-    }
+    if (!backend) return undefined
+    // Un solo reloj: Chromium no debe abrir otro device (ni la UMC). El grafo sigue vivo con sink none.
     return { type: 'none' }
   }
 
   private async releaseInterfaceFromChromium(backend?: string): Promise<void> {
-    if (backend !== 'asio') return
+    if (!backend) return
     const ctx = this.audioCtx as
       | (AudioContext & { setSinkId?: (id: string | { type: string }) => Promise<void> })
       | null
     if (!ctx?.setSinkId) return
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices()
-      const other = devices.find(
-        (d) =>
-          d.kind === 'audiooutput' &&
-          d.deviceId &&
-          d.deviceId !== 'default' &&
-          d.deviceId !== 'communications' &&
-          !/umc|behringer/i.test(d.label || ''),
-      )
-      if (other) {
-        await ctx.setSinkId(other.deviceId)
-        return
-      }
-    } catch {
-      /* sin permiso de labels */
-    }
-    try {
       await ctx.setSinkId({ type: 'none' })
     } catch {
-      /* Chromium sin sink none: el grafo sigue; el host ASIO es el dueño de la UMC */
+      /* Chromium sin sink none */
     }
   }
 
@@ -533,22 +522,13 @@ export class WebAudioEngine {
       this.masterPanner = this.audioCtx.createStereoPanner()
       this.masterPanner.pan.value = 0
 
-      const limiter = this.audioCtx.createDynamicsCompressor()
-      limiter.threshold.value = -6
-      limiter.knee.value = 12
-      limiter.ratio.value = 8
-      limiter.attack.value = 0.003
-      limiter.release.value = 0.15
-      this.masterLimiter = limiter
-
       this.masterAnalyser = this.audioCtx.createAnalyser()
-      this.masterAnalyser.fftSize = 512
+      this.masterAnalyser.fftSize = 256
       this.masterAnalyser.smoothingTimeConstant = 0
       this.masterMeterData = new Uint8Array(this.masterAnalyser.fftSize)
 
       this.masterGain.connect(this.masterPanner)
-      this.masterPanner.connect(limiter)
-      limiter.connect(this.masterAnalyser)
+      this.masterPanner.connect(this.masterAnalyser)
       this.masterAnalyser.connect(this.audioCtx.destination)
     }
 
@@ -652,8 +632,18 @@ export class WebAudioEngine {
   }
 
   private makePcmTap(ctx: AudioContext, stemIndex: number): AudioWorkletNode | ScriptProcessorNode {
-    // ScriptProcessor: el Worklet + postMessage transferable llegaba detached en Electron
-    // (host en silencio). El Worklet sigue usándose en installPcmTap sin transfer.
+    if (this.workletModuleReady) {
+      const node = new AudioWorkletNode(ctx, 'jaswave-pcm-tap', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+        channelCount: 2,
+        channelCountMode: 'explicit',
+        processorOptions: { stemIndex },
+      })
+      node.port.onmessage = (ev: MessageEvent) => this.onWorkletPcm(ev.data)
+      return node
+    }
     const tap = ctx.createScriptProcessor(512, 2, 2)
     tap.onaudioprocess = (ev) => {
       const input = ev.inputBuffer
@@ -1152,7 +1142,7 @@ export class WebAudioEngine {
         return
       }
       this.scheduleMidiLookahead()
-    }, 250)
+    }, 40)
   }
 
   /** Hot-patch: slot VST confirmado. Soft Pad solo si la pista lo tiene insertado. */
@@ -1195,7 +1185,7 @@ export class WebAudioEngine {
   private scheduleMidiLookahead() {
     const ctx = this.audioCtx
     if (!ctx || !this.isPlaying) return
-    const horizon = 2.5
+    const horizon = 0.85
     const from = this.midiScheduledUntilSec
     const wallElapsed = ctx.currentTime - this.startTime
     const nowTimeline = this.playheadStartSec + Math.max(0, wallElapsed)
@@ -1270,9 +1260,14 @@ export class WebAudioEngine {
         let when = this.startTime + (ev.timeSec - this.playheadStartSec)
         if (when < ctx.currentTime - 0.02) when = ctx.currentTime
         if (!vstSlot) continue
-        const delay = Math.max(0, (when - ctx.currentTime) * 1000)
-        const t = setTimeout(() => sendVstCc(vstSlot, ev.cc, ev.value), delay)
-        this.vstMidiTimers.push(t)
+        const delay = Math.max(
+          0,
+          Math.round(
+            (when - ctx.currentTime + (this.nativeOutput ? this.nativePathAheadSec() : 0)) *
+              ctx.sampleRate,
+          ),
+        )
+        sendVstCc(vstSlot, ev.cc, ev.value, delay)
         this.midiCcKeys.add(key)
       }
     }
@@ -1288,11 +1283,15 @@ export class WebAudioEngine {
   ) {
     const ctx = this.audioCtx
     if (!ctx) return
-    const delayOn = Math.max(0, (when - ctx.currentTime) * 1000)
-    const delayOff = delayOn + Math.max(30, durationSec * 1000)
-    const tOn = setTimeout(() => sendVstNote(slotId, true, pitch, velocity), delayOn)
-    const tOff = setTimeout(() => sendVstNote(slotId, false, pitch, 0), delayOff)
-    this.vstMidiTimers.push(tOn, tOff)
+    const delayOn = Math.max(
+      0,
+      Math.round(
+        (when - ctx.currentTime + (this.nativeOutput ? this.nativePathAheadSec() : 0)) * ctx.sampleRate,
+      ),
+    )
+    const delayOff = delayOn + Math.max(32, Math.round(durationSec * ctx.sampleRate))
+    sendVstNote(slotId, true, pitch, velocity, delayOn)
+    sendVstNote(slotId, false, pitch, 0, delayOff)
   }
 
   private scheduleMidiVoice(

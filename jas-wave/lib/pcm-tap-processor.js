@@ -7,8 +7,8 @@ const WorkletBase = typeof AudioWorkletProcessor === 'function' ? AudioWorkletPr
 class JaswavePcmTapProcessor extends WorkletBase {
   constructor(options) {
     super()
-    this._l = new Float32Array(512)
-    this._r = new Float32Array(512)
+    this._l = new Float32Array(256)
+    this._r = new Float32Array(256)
     this._n = 0
     this._stem = -1
     const opts = options && options.processorOptions
@@ -31,15 +31,15 @@ class JaswavePcmTapProcessor extends WorkletBase {
     let i = 0
     const q = l.length
     while (i < q) {
-      const room = 512 - this._n
+      const room = 256 - this._n
       const take = q - i < room ? q - i : room
       this._l.set(l.subarray(i, i + take), this._n)
       this._r.set(r.subarray(i, i + take), this._n)
       this._n += take
       i += take
-      if (this._n >= 512) {
-        const interleaved = new Float32Array(1024)
-        for (let f = 0; f < 512; f++) {
+      if (this._n >= 256) {
+        const interleaved = new Float32Array(512)
+        for (let f = 0; f < 256; f++) {
           interleaved[f * 2] = this._l[f]
           interleaved[f * 2 + 1] = this._r[f]
         }

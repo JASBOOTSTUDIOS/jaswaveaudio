@@ -415,6 +415,7 @@ static void applyPdc(float* l, float* r, int frames, float* dL, float* dR, uint3
 static void renderMix(float* interleaved, uint32_t frameCount) {
   const int frames = static_cast<int>(std::min<uint32_t>(frameCount, 8192));
   if (frames <= 0) return;
+  jaswave_mix_bus_begin_block(static_cast<uint32_t>(frames));
   std::fill(gMixL, gMixL + frames, 0.f);
   std::fill(gMixR, gMixR + frames, 0.f);
 
@@ -988,6 +989,7 @@ static void handleNote(const std::string& json, bool on) {
   if (slotId.empty()) slotId = gActiveSlot;
   const int pitch = static_cast<int>(getNumberField(json, "pitch", 60));
   float vel = static_cast<float>(getNumberField(json, "velocity", 0.8));
+  const int delay = std::max(0, static_cast<int>(getNumberField(json, "delaySamples", 0)));
   std::lock_guard<std::mutex> lock(gSlotsMutex);
   auto* slot = findSlotUnlocked(slotId);
   if (!slot) {
@@ -999,9 +1001,9 @@ static void handleNote(const std::string& json, bool on) {
     return;
   }
   if (on) {
-    slot->noteOn(pitch, vel > 1.f ? vel / 127.f : vel);
+    slot->noteOn(pitch, vel > 1.f ? vel / 127.f : vel, delay);
   } else {
-    slot->noteOff(pitch);
+    slot->noteOff(pitch, delay);
   }
 }
 
@@ -1213,7 +1215,7 @@ static void handleLine(const std::string& line) {
     const int value = static_cast<int>(getNumberField(line, "value", 0));
     std::lock_guard<std::mutex> lock(gSlotsMutex);
     auto* slot = findSlotUnlocked(slotId.empty() ? gActiveSlot : slotId);
-    if (slot) slot->midiCc(cc, value);
+    if (slot) slot->midiCc(cc, value, std::max(0, static_cast<int>(getNumberField(line, "delaySamples", 0))));
     return;
   }
   if (type == "setTransport") {

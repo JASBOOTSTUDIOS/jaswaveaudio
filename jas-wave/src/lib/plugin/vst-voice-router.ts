@@ -94,3 +94,18 @@ export function routeMidiToActiveVst(on: boolean, pitch: number, velocity = 90):
   sendMidi(slotId, on, pitch, velocity)
   return true
 }
+
+/** MIDI en vivo hacia el VST de una pista concreta (controlador / armado). */
+export function routeMidiToTrack(
+  trackId: string,
+  on: boolean,
+  pitch: number,
+  velocity = 90,
+): boolean {
+  if (forceBuiltin) return false
+  const slotId = getLoadedInstrumentForTrack(trackId)?.slotId
+  if (!slotId) return false
+  if (on && !trackChannelIsAudible(trackId)) return false
+  sendMidi(slotId, on, pitch, velocity)
+  return true
+}

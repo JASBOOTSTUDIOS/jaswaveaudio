@@ -4,6 +4,8 @@
 
 Construir un DAW AI-First donde la inteligencia artificial no sea un complemento, sino una capa integral que comprende, analiza y colabora en el proceso de producción musical.
 
+Checklist de huecos para producción real: [`docs/CHECKLIST-PRODUCTO.md`](CHECKLIST-PRODUCTO.md).
+
 ## Fases del Proyecto
 
 ### Fase 0: Cimientos (Semana 1-3)

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { FolderOpen, Save, Music2, AudioLines, Settings2, Keyboard, ListOrdered, Shield, Bot } from 'lucide-react'
+import { FolderOpen, Save, Music2, AudioLines, Settings2, Keyboard, ListOrdered, Shield, Bot, Piano } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import type { DAWState } from '../../shared/src/types/state'
 import { ACCIONES_ATAJO, ATAJOS_POR_DEFECTO } from '../../shared/src'
@@ -24,6 +24,7 @@ import {
 } from '@/src/lib/ai-settings'
 import { JasWaveLogo } from '@/components/brand'
 import { audioEngine } from '@/lib/audio-engine'
+import { midiController } from '@/src/lib/midi-controller'
 
 interface ProjectSettingsDialogProps {
   open: boolean
@@ -39,11 +40,12 @@ const COMPASES_COMUNES = [
   [6, 8], [3, 8], [5, 8], [7, 8], [9, 8], [12, 8],
 ] as const
 
-type SettingsTab = 'general' | 'audio' | 'rutas' | 'atajos' | 'comandos' | 'permisos' | 'ia'
+type SettingsTab = 'general' | 'audio' | 'midi' | 'rutas' | 'atajos' | 'comandos' | 'permisos' | 'ia'
 
 const TABS: { id: SettingsTab; label: string; icon: typeof Music2 }[] = [
   { id: 'general', label: 'General', icon: Music2 },
   { id: 'audio', label: 'Audio', icon: AudioLines },
+  { id: 'midi', label: 'MIDI', icon: Piano },
   { id: 'ia', label: 'IA', icon: Bot },
   { id: 'rutas', label: 'Rutas', icon: FolderOpen },
   { id: 'atajos', label: 'Atajos', icon: Keyboard },
@@ -655,6 +657,131 @@ function AudioTab() {
 
       {status ? <p className="text-[11px] text-muted-foreground">{status}</p> : null}
       {runtime?.lastError ? <p className="text-[11px] text-destructive">{runtime.lastError}</p> : null}
+    </div>
+  )
+}
+
+const MIDI_GRID: { value: number; label: string }[] = [
+  { value: 0, label: 'Sin cuantizar' },
+  { value: 1, label: '1/4' },
+  { value: 0.5, label: '1/8' },
+  { value: 0.25, label: '1/16' },
+  { value: 0.125, label: '1/32' },
+  { value: 0.0625, label: '1/64' },
+]
+
+function MidiTab() {
+  const tienda = useDAW()
+  const project = useDAWState((s: DAWState) => s.project)
+  const [status, setStatus] = useState(() => midiController.getStatus())
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => midiController.subscribeDevices(() => setStatus(midiController.getStatus())), [])
+
+  const refresh = async () => {
+    setBusy(true)
+    try {
+      await midiController.start()
+      setStatus(midiController.getStatus())
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    void refresh()
+  }, [])
+
+  const persistInput = (id: string) => {
+    midiController.setSelectedId(id)
+    setStatus(midiController.getStatus())
+    void tienda.executor.execute('project.update', {
+      datos: {
+        configuracion: {
+          ...project?.configuracion,
+          dispositivoMidiEntrada: id,
+        },
+      },
+    })
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-[12px] text-muted-foreground">
+        El teclado o pad entra a la pista MIDI seleccionada (o a las armadas). Arma la pista, pulsa
+        Grabar y toca: se crea un clip. Sustain (CC64) y otros CC van al VST de esa pista.
+      </p>
+
+      <Field label="Controlador de entrada">
+        <select
+          value={status.inputId}
+          onChange={(e) => persistInput(e.target.value)}
+          className="rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
+        >
+          <option value="all">Todos los conectados</option>
+          {status.devices.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+              {d.manufacturer ? ` · ${d.manufacturer}` : ''}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <div className="flex flex-wrap gap-4">
+        <Field label="Canal">
+          <select
+            value={status.channel === 'omni' ? 'omni' : String(status.channel)}
+            onChange={(e) => {
+              const v = e.target.value
+              midiController.setChannel(v === 'omni' ? 'omni' : Number(v))
+              setStatus(midiController.getStatus())
+            }}
+            className="rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
+          >
+            <option value="omni">Omni (todos)</option>
+            {Array.from({ length: 16 }, (_, i) => (
+              <option key={i} value={String(i)}>
+                Canal {i + 1}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Cuantizar grabación">
+          <select
+            value={String(status.quantizeGrid)}
+            onChange={(e) => {
+              midiController.setQuantizeGridBeats(Number(e.target.value))
+              setStatus(midiController.getStatus())
+            }}
+            className="rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
+          >
+            {MIDI_GRID.map((g) => (
+              <option key={g.label} value={String(g.value)}>
+                {g.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void refresh()}
+          className="rounded-md border border-border px-3 py-1.5 text-[11px] text-foreground hover:bg-panel-raised disabled:opacity-50"
+        >
+          Detectar de nuevo
+        </button>
+        <span className="text-[11px] text-muted-foreground">
+          {status.error
+            ? status.error
+            : status.ready
+              ? `${status.devices.length} dispositivo(s) · ${status.inputName}`
+              : 'Esperando permiso MIDI…'}
+        </span>
+      </div>
     </div>
   )
 }
@@ -1660,6 +1787,7 @@ export function SettingsPanel() {
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {tab === 'general' && <GeneralTab />}
         {tab === 'audio' && <AudioTab />}
+        {tab === 'midi' && <MidiTab />}
         {tab === 'ia' && <AiTab />}
         {tab === 'rutas' && <RutasTab />}
         {tab === 'atajos' && <AtajosTab />}

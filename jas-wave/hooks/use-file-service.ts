@@ -85,7 +85,7 @@ declare global {
       }>
       pluginHostEnsure: () => Promise<{ ok: boolean } & Record<string, unknown>>
       pluginHostSend: (cmd: unknown) => Promise<unknown>
-      pluginHostMidi: (cmd: unknown) => Promise<unknown>
+      pluginHostMidi: (cmd: unknown) => void
       onPluginHostRestarted?: (callback: () => void) => () => void
       pluginHostPushPcm: (samples: Float32Array | ArrayBuffer | Uint8Array) => void
       pluginHostStop: () => Promise<{ ok: boolean }>
