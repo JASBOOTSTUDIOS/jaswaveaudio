@@ -267,7 +267,7 @@ bool jaswave_audio_list(std::vector<JaswaveAudioBackendInfo>& backends,
   jaswave_asio_list_drivers(asio);
   addBackend("asio", !asio.empty(),
              asio.empty() ? "No hay drivers ASIO en el registro (ASIO4ALL, interfaz, etc.)"
-                          : "Baja latencia · usa el panel del fabricante si hace falta");
+                          : "Baja latencia. Elige el ASIO x64 de tu interfaz, no «Predeterminado».");
   for (auto& d : asio) devices.push_back(d);
 
   std::vector<JaswaveAudioDevice> jack;
@@ -333,15 +333,11 @@ bool jaswave_audio_start(const JaswaveAudioConfig& want, std::string& err) {
     std::string name = cfg.deviceId;
     const auto colon = name.find(':');
     if (colon != std::string::npos) name = name.substr(colon + 1);
-    if (name.empty()) {
-      std::vector<JaswaveAudioDevice> asio;
-      jaswave_asio_list_drivers(asio);
-      if (asio.empty()) {
-        err = "No hay drivers ASIO instalados";
-        gStatus.lastError = err;
-        return false;
-      }
-      name = asio.front().name;
+    if (name.empty() || name == "default") {
+      err =
+          "Elige un driver ASIO de la lista (Yamaha, UMC, M-WAVE…). «Predeterminado» no abre ASIO.";
+      gStatus.lastError = err;
+      return false;
     }
     if (!jaswave_asio_start(name, cfg.sampleRate, cfg.bufferSize, err)) {
       gStatus.lastError = err;
@@ -436,6 +432,14 @@ JaswaveAudioStatus jaswave_audio_status() {
   }
 #endif
   return gStatus;
+}
+
+void jaswave_audio_set_sys_handle(void* hwnd) {
+#ifdef _WIN32
+  jaswave_asio_set_sys_handle(hwnd);
+#else
+  (void)hwnd;
+#endif
 }
 
 bool jaswave_audio_asio_control_panel(const std::string& deviceId, std::string& err) {

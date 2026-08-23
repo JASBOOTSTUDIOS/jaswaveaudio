@@ -51,6 +51,7 @@ bool jaswave_audio_list(std::vector<JaswaveAudioBackendInfo>& backends,
 bool jaswave_audio_start(const JaswaveAudioConfig& want, std::string& err);
 void jaswave_audio_stop();
 JaswaveAudioStatus jaswave_audio_status();
+void jaswave_audio_set_sys_handle(void* hwnd);
 bool jaswave_audio_asio_control_panel(const std::string& deviceId, std::string& err);
 void jaswave_audio_test_tone(uint32_t frames);
 bool jaswave_audio_test_tone_active();

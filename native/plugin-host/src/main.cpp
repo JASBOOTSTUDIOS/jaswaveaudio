@@ -833,6 +833,7 @@ static void executeUiJob(UiJob& job) {
       return;
     }
     job.ok = true;
+    return;
   }
 
   if (job.kind == UiJob::Kind::EnsureAudio) {
@@ -844,6 +845,7 @@ static void executeUiJob(UiJob& job) {
     }
     job.ok = true;
     job.extraJson = "\"audio\":" + audioStatusJsonObject();
+    return;
   }
 }
 

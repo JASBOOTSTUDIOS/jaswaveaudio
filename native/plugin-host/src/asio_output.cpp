@@ -15,8 +15,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <iostream>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -133,31 +136,48 @@ struct IASIO : public IUnknown {
 namespace {
 
 std::mutex gAsioMu;
+std::atomic<uintptr_t> gSysHwnd{0};
 IASIO* gDriver{nullptr};
 std::atomic<bool> gRunning{false};
 std::atomic<int> gInCallback{0};
 uint32_t gSr{48000};
 uint32_t gBuf{512};
 long gSampleType{ASIOSTFloat32LSB};
+long gOutChannels{0};
 bool gNeedOutputReady{false};
-ASIOBufferInfo gBufInfo[2]{};
+bool gBuffersCreated{false};
+ASIOBufferInfo gBufInfo[32]{};
 ASIOCallbacks gCb{};
 std::string gDriverName;
 float gScratch[8192 * 2]{};
 float gAsioL[8192];
 float gAsioR[8192];
-HWND gHostWnd{nullptr};
 
-HWND asioHostWindow() {
-  if (gHostWnd && IsWindow(gHostWnd)) return gHostWnd;
-  WNDCLASSW wc{};
-  wc.lpfnWndProc = DefWindowProcW;
-  wc.hInstance = GetModuleHandleW(nullptr);
-  wc.lpszClassName = L"JasWaveAsioHost";
-  RegisterClassW(&wc);
-  gHostWnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"JasWaveAsioHost", L"JasWave ASIO",
-                             WS_OVERLAPPED, 0, 0, 16, 16, nullptr, nullptr, wc.hInstance, nullptr);
-  return gHostWnd ? gHostWnd : GetDesktopWindow();
+bool isAsioWrapperName(const std::string& name) {
+  std::string n = name;
+  for (char& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return n.find("fl studio") != std::string::npos || n.find("generic low latency") != std::string::npos;
+}
+
+size_t asioSampleBytes(long type) {
+  switch (type) {
+    case ASIOSTInt16LSB:
+    case ASIOSTInt16MSB:
+      return 2;
+    case ASIOSTInt24LSB:
+    case ASIOSTInt24MSB:
+      return 3;
+    case ASIOSTFloat64LSB:
+    case ASIOSTFloat64MSB:
+      return 8;
+    default:
+      return 4;
+  }
+}
+
+void silenceAsioChannel(void* dest, int frames, long type) {
+  if (!dest || frames <= 0) return;
+  std::memset(dest, 0, static_cast<size_t>(frames) * asioSampleBytes(type));
 }
 
 long snapAsioBuffer(long want, long minB, long maxB, long pref, long gran) {
@@ -303,54 +323,104 @@ void CALLBACK_bufferSwitch(long index, ASIOBool /*directProcess*/) {
     gAsioR[i] = gScratch[i * 2 + 1];
   }
   writeAsioChannel(gBufInfo[0].buffers[index], gAsioL, frames, gSampleType, false);
-  if (gBufInfo[1].buffers[index] && gBufInfo[1].buffers[index] != gBufInfo[0].buffers[index]) {
+  if (gOutChannels > 1 && gBufInfo[1].buffers[index] &&
+      gBufInfo[1].buffers[index] != gBufInfo[0].buffers[index]) {
     writeAsioChannel(gBufInfo[1].buffers[index], gAsioR, frames, gSampleType, false);
+  }
+  for (long c = 2; c < gOutChannels && c < 32; ++c) {
+    silenceAsioChannel(gBufInfo[c].buffers[index], frames, gSampleType);
   }
   if (gNeedOutputReady && gDriver) gDriver->outputReady();
   gInCallback.fetch_sub(1, std::memory_order_acq_rel);
 }
 
-bool clsidFromRegistry(const std::wstring& keyPath, CLSID& clsid) {
+std::string wideToUtf8(const wchar_t* w) {
+  if (!w || !w[0]) return {};
+  char buf[512]{};
+  WideCharToMultiByte(CP_UTF8, 0, w, -1, buf, sizeof(buf), nullptr, nullptr);
+  return buf;
+}
+
+std::string hresultHex(HRESULT hr) {
+  char b[20]{};
+  std::snprintf(b, sizeof(b), "0x%08X", static_cast<unsigned>(hr));
+  return b;
+}
+
+bool iequalsUtf8(const std::string& a, const std::string& b) {
+  if (a.size() != b.size()) return false;
+  for (size_t i = 0; i < a.size(); ++i) {
+    const unsigned char ca = static_cast<unsigned char>(a[i]);
+    const unsigned char cb = static_cast<unsigned char>(b[i]);
+    if (std::tolower(ca) != std::tolower(cb)) return false;
+  }
+  return true;
+}
+
+bool clsidHasInproc(const CLSID& clsid, REGSAM wow) {
+  wchar_t guid[64]{};
+  if (StringFromGUID2(clsid, guid, 64) <= 0) return false;
+  const std::wstring path = std::wstring(L"SOFTWARE\\Classes\\CLSID\\") + guid + L"\\InprocServer32";
   HKEY h = nullptr;
-  if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, keyPath.c_str(), 0, KEY_READ | KEY_WOW64_64KEY, &h) !=
-      ERROR_SUCCESS) {
+  if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, path.c_str(), 0, KEY_READ | wow, &h) != ERROR_SUCCESS) {
     return false;
   }
+  wchar_t dll[MAX_PATH]{};
+  DWORD sz = sizeof(dll);
+  const LONG st = RegGetValueW(h, nullptr, nullptr, RRF_RT_REG_SZ, nullptr, dll, &sz);
+  RegCloseKey(h);
+  return st == ERROR_SUCCESS && dll[0] != 0;
+}
+
+bool readAsioClsid(HKEY sub, CLSID& clsid) {
   wchar_t buf[128]{};
   DWORD sz = sizeof(buf);
-  const LONG st = RegGetValueW(h, nullptr, L"CLSID", RRF_RT_REG_SZ, nullptr, buf, &sz);
-  RegCloseKey(h);
-  if (st != ERROR_SUCCESS) return false;
+  if (RegGetValueW(sub, nullptr, L"CLSID", RRF_RT_REG_SZ, nullptr, buf, &sz) != ERROR_SUCCESS) {
+    return false;
+  }
   return SUCCEEDED(CLSIDFromString(buf, &clsid));
 }
 
-void enumAsioKey(HKEY root, const wchar_t* path, std::vector<JaswaveAudioDevice>& out) {
+void enumAsioView(REGSAM wow, std::vector<JaswaveAudioDevice>& out) {
   HKEY h = nullptr;
-  if (RegOpenKeyExW(root, path, 0, KEY_READ | KEY_WOW64_64KEY, &h) != ERROR_SUCCESS) return;
+  if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\ASIO", 0, KEY_READ | wow, &h) != ERROR_SUCCESS) {
+    return;
+  }
   for (DWORD i = 0; i < 128; ++i) {
     wchar_t name[256]{};
     DWORD nlen = 256;
     if (RegEnumKeyExW(h, i, name, &nlen, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) break;
+    HKEY sub = nullptr;
+    if (RegOpenKeyExW(h, name, 0, KEY_READ | wow, &sub) != ERROR_SUCCESS) continue;
     wchar_t desc[256]{};
     DWORD dsz = sizeof(desc);
-    HKEY sub = nullptr;
-    if (RegOpenKeyExW(h, name, 0, KEY_READ | KEY_WOW64_64KEY, &sub) != ERROR_SUCCESS) continue;
     if (RegGetValueW(sub, nullptr, L"Description", RRF_RT_REG_SZ, nullptr, desc, &dsz) != ERROR_SUCCESS) {
       wcsncpy_s(desc, name, _TRUNCATE);
     }
+    CLSID clsid{};
+    const bool hasClsid = readAsioClsid(sub, clsid);
     RegCloseKey(sub);
-    char utf8[512]{};
-    WideCharToMultiByte(CP_UTF8, 0, desc[0] ? desc : name, -1, utf8, sizeof(utf8), nullptr, nullptr);
+
+    const std::string label = wideToUtf8(desc[0] ? desc : name);
+    if (label.empty()) continue;
     JaswaveAudioDevice d;
     d.backend = "asio";
-    d.name = utf8;
-    d.id = std::string("asio:") + utf8;
-    d.available = true;
-    d.isDefault = out.empty();
+    d.name = label;
+    d.id = std::string("asio:") + label;
+    const bool x64 = hasClsid && clsidHasInproc(clsid, KEY_WOW64_64KEY);
+    const bool x86 = hasClsid && clsidHasInproc(clsid, KEY_WOW64_32KEY);
+#if defined(_WIN64)
+    d.available = x64;
+    if (!d.available) d.name += x86 ? " (32-bit, no usable en JasWave x64)" : " (sin servidor COM)";
+#else
+    d.available = x86 || x64;
+#endif
+    d.isDefault = false;
     bool dup = false;
-    for (const auto& e : out) {
+    for (auto& e : out) {
       if (e.id == d.id) {
         dup = true;
+        if (d.available) e.available = true;
         break;
       }
     }
@@ -359,56 +429,91 @@ void enumAsioKey(HKEY root, const wchar_t* path, std::vector<JaswaveAudioDevice>
   RegCloseKey(h);
 }
 
-IASIO* createDriver(const std::string& driverName, std::string& err) {
-  const std::wstring wname(driverName.begin(), driverName.end());
-  CLSID clsid{};
-  bool found = clsidFromRegistry(L"SOFTWARE\\ASIO\\" + wname, clsid);
-  if (!found) {
-    // Recorre subclaves por Description == driverName
+bool findClsidForDriver(const std::string& driverName, CLSID& clsid, bool& only32, std::string& err) {
+  only32 = false;
+  const REGSAM views[] = {KEY_WOW64_64KEY, KEY_WOW64_32KEY};
+  CLSID found32{};
+  bool have32 = false;
+  for (REGSAM wow : views) {
     HKEY h = nullptr;
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\ASIO", 0, KEY_READ | KEY_WOW64_64KEY, &h) ==
-        ERROR_SUCCESS) {
-      for (DWORD i = 0; i < 128 && !found; ++i) {
-        wchar_t name[256]{};
-        DWORD nlen = 256;
-        if (RegEnumKeyExW(h, i, name, &nlen, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
-          break;
-        wchar_t desc[256]{};
-        DWORD dsz = sizeof(desc);
-        HKEY sub = nullptr;
-        if (RegOpenKeyExW(h, name, 0, KEY_READ | KEY_WOW64_64KEY, &sub) != ERROR_SUCCESS) continue;
-        RegGetValueW(sub, nullptr, L"Description", RRF_RT_REG_SZ, nullptr, desc, &dsz);
-        wchar_t clsidStr[128]{};
-        DWORD csz = sizeof(clsidStr);
-        const LONG ok = RegGetValueW(sub, nullptr, L"CLSID", RRF_RT_REG_SZ, nullptr, clsidStr, &csz);
-        RegCloseKey(sub);
-        char utf8[512]{};
-        WideCharToMultiByte(CP_UTF8, 0, desc[0] ? desc : name, -1, utf8, sizeof(utf8), nullptr, nullptr);
-        if (ok == ERROR_SUCCESS && driverName == utf8) {
-          found = SUCCEEDED(CLSIDFromString(clsidStr, &clsid));
-        }
-      }
-      RegCloseKey(h);
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\ASIO", 0, KEY_READ | wow, &h) != ERROR_SUCCESS) {
+      continue;
     }
+    for (DWORD i = 0; i < 128; ++i) {
+      wchar_t name[256]{};
+      DWORD nlen = 256;
+      if (RegEnumKeyExW(h, i, name, &nlen, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) break;
+      HKEY sub = nullptr;
+      if (RegOpenKeyExW(h, name, 0, KEY_READ | wow, &sub) != ERROR_SUCCESS) continue;
+      wchar_t desc[256]{};
+      DWORD dsz = sizeof(desc);
+      RegGetValueW(sub, nullptr, L"Description", RRF_RT_REG_SZ, nullptr, desc, &dsz);
+      CLSID id{};
+      const bool ok = readAsioClsid(sub, id);
+      RegCloseKey(sub);
+      if (!ok) continue;
+      const std::string keyUtf = wideToUtf8(name);
+      const std::string descUtf = wideToUtf8(desc[0] ? desc : name);
+      if (!iequalsUtf8(driverName, descUtf) && !iequalsUtf8(driverName, keyUtf)) continue;
+      const bool x64 = clsidHasInproc(id, KEY_WOW64_64KEY);
+      if (x64) {
+        clsid = id;
+        RegCloseKey(h);
+        return true;
+      }
+      found32 = id;
+      have32 = true;
+    }
+    RegCloseKey(h);
   }
-  if (!found) {
-    err = "Driver ASIO no encontrado en el registro: " + driverName;
-    return nullptr;
+  if (have32) {
+    only32 = true;
+    clsid = found32;
+    err = "El driver ASIO «" + driverName +
+          "» es 32-bit. JasWave es 64-bit: instala el ASIO x64 del fabricante.";
+    return false;
   }
+  err = "Driver ASIO no encontrado en el registro: " + driverName;
+  return false;
+}
+
+IASIO* instantiateAsio(const CLSID& clsid, std::string& err) {
+  // Steinberg: el IID del driver es el mismo GUID que el CLSID. Castear IUnknown→IASIO
+  // cuando CoCreateInstance(clsid) falla (E_NOINTERFACE) llama métodos en el vtable
+  // equivocado y termina en heap 0xC0000374.
   IASIO* drv = nullptr;
-  const HRESULT hr =
-      CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, clsid, reinterpret_cast<void**>(&drv));
+  HRESULT hr = CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, clsid,
+                                reinterpret_cast<void**>(&drv));
   if (FAILED(hr) || !drv) {
-    err = "CoCreateInstance ASIO falló (HRESULT=" + std::to_string(static_cast<long>(hr)) + ")";
+    err = "CoCreateInstance ASIO falló (" + hresultHex(hr) +
+          "). Usa el ASIO x64 de tu interfaz o WASAPI; no wrappers (FL Studio ASIO).";
     return nullptr;
   }
   return drv;
 }
 
+IASIO* createDriver(const std::string& driverName, std::string& err) {
+  CLSID clsid{};
+  bool only32 = false;
+  if (!findClsidForDriver(driverName, clsid, only32, err)) return nullptr;
+  return instantiateAsio(clsid, err);
+}
+
+HWND asioSysHandle() {
+  const auto p = reinterpret_cast<HWND>(gSysHwnd.load(std::memory_order_acquire));
+  if (p && IsWindow(p)) return p;
+  return GetDesktopWindow();
+}
+
 }  // namespace
 
+void jaswave_asio_set_sys_handle(void* hwnd) {
+  gSysHwnd.store(reinterpret_cast<uintptr_t>(hwnd), std::memory_order_release);
+}
+
 bool jaswave_asio_list_drivers(std::vector<JaswaveAudioDevice>& out) {
-  enumAsioKey(HKEY_LOCAL_MACHINE, L"SOFTWARE\\ASIO", out);
+  enumAsioView(KEY_WOW64_64KEY, out);
+  enumAsioView(KEY_WOW64_32KEY, out);
   return true;
 }
 
@@ -420,10 +525,12 @@ void jaswave_asio_stop() {
   }
   if (gDriver) {
     gDriver->stop();
-    gDriver->disposeBuffers();
+    if (gBuffersCreated) gDriver->disposeBuffers();
     gDriver->Release();
     gDriver = nullptr;
   }
+  gBuffersCreated = false;
+  gOutChannels = 0;
   gNeedOutputReady = false;
   gDriverName.clear();
 }
@@ -432,19 +539,23 @@ bool jaswave_asio_start(const std::string& driverName, uint32_t sampleRate, uint
                         std::string& err) {
   jaswave_asio_stop();
   std::lock_guard<std::mutex> lock(gAsioMu);
-  IASIO* drv = createDriver(driverName, err);
-  if (!drv) return false;
-  HWND sys = asioHostWindow();
-  if (!drv->init(sys)) {
-    char msg[256]{};
-    drv->getErrorMessage(msg);
-    err = std::string("ASIO init: ") + (msg[0] ? msg : "falló");
-    drv->Release();
+  if (isAsioWrapperName(driverName)) {
+    err = "«" + driverName +
+          "» es un wrapper (FL Studio / Generic Low Latency) y suele corromper el host. "
+          "Usa WASAPI o el ASIO x64 de tu interfaz.";
     return false;
   }
+  IASIO* drv = createDriver(driverName, err);
+  if (!drv) return false;
+  // Un solo init. Varios drivers devuelven 0 (= ASE_OK) en éxito; re-llamar init()
+  // (hwnd / desktop / nullptr) es lo que provocaba el heap 0xC0000374.
+  drv->init(GetDesktopWindow());
   long inCh = 0, outCh = 0;
   if (drv->getChannels(&inCh, &outCh) != ASE_OK || outCh < 1) {
-    err = "El driver ASIO no tiene canales de salida";
+    char msg[256]{};
+    drv->getErrorMessage(msg);
+    err = std::string("ASIO init/getChannels: ") +
+          (msg[0] ? msg : "el driver rechazó el host (¿ASIO ya abierto en otra DAW?)");
     drv->Release();
     return false;
   }
@@ -464,19 +575,18 @@ bool jaswave_asio_start(const std::string& driverName, uint32_t sampleRate, uint
   drv->getChannelInfo(&ci);
   gSampleType = ci.type;
 
-  gBufInfo[0] = {};
-  gBufInfo[0].isInput = ASIOFalse;
-  gBufInfo[0].channelNum = 0;
-  gBufInfo[1] = {};
-  gBufInfo[1].isInput = ASIOFalse;
-  gBufInfo[1].channelNum = outCh > 1 ? 1 : 0;
+  const long nCh = std::min(outCh, 32L);
+  std::memset(gBufInfo, 0, sizeof(gBufInfo));
+  for (long c = 0; c < nCh; ++c) {
+    gBufInfo[c].isInput = ASIOFalse;
+    gBufInfo[c].channelNum = c;
+  }
 
   gCb.bufferSwitch = CALLBACK_bufferSwitch;
   gCb.sampleRateDidChange = CALLBACK_sampleRateDidChange;
   gCb.asioMessage = CALLBACK_asioMessage;
   gCb.bufferSwitchTimeInfo = CALLBACK_bufferSwitchTimeInfo;
 
-  const long nCh = outCh > 1 ? 2 : 1;
   if (drv->createBuffers(gBufInfo, nCh, buf, &gCb) != ASE_OK) {
     char msg[256]{};
     drv->getErrorMessage(msg);
@@ -484,6 +594,8 @@ bool jaswave_asio_start(const std::string& driverName, uint32_t sampleRate, uint
     drv->Release();
     return false;
   }
+  gBuffersCreated = true;
+  gOutChannels = nCh;
   gNeedOutputReady = (drv->outputReady() == ASE_OK);
   gSr = static_cast<uint32_t>(sr > 0 ? sr : 48000);
   gBuf = static_cast<uint32_t>(std::min(buf, 8192L));
@@ -496,8 +608,10 @@ bool jaswave_asio_start(const std::string& driverName, uint32_t sampleRate, uint
     err = std::string("ASIO start: ") + (msg[0] ? msg : "falló");
     gRunning.store(false, std::memory_order_release);
     drv->disposeBuffers();
+    gBuffersCreated = false;
     drv->Release();
     gDriver = nullptr;
+    gOutChannels = 0;
     gNeedOutputReady = false;
     return false;
   }
@@ -516,12 +630,7 @@ bool jaswave_asio_control_panel(const std::string& driverName, std::string& err)
   }
   IASIO* drv = createDriver(driverName, err);
   if (!drv) return false;
-  HWND sys = asioHostWindow();
-  if (!drv->init(sys)) {
-    err = "ASIO init para panel de control falló";
-    drv->Release();
-    return false;
-  }
+  drv->init(GetDesktopWindow());
   drv->controlPanel();
   drv->Release();
   return true;

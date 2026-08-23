@@ -24,6 +24,7 @@ export type PluginHostRpcResult =
   | {
       ok: true
       processId: string
+      message?: string
       slotId?: string
       latencySamples?: number
       plugins?: Array<{
@@ -74,7 +75,21 @@ export type PluginHostRpcResult =
         programChange?: boolean
       }>
     }
-  | { ok: false; code: string; message: string }
+  | {
+      ok: false
+      code: string
+      message: string
+      audio?: {
+        backend: string
+        deviceId: string
+        deviceName: string
+        sampleRate: number
+        bufferSize: number
+        exclusive: boolean
+        running: boolean
+        lastError?: string
+      }
+    }
 
 type Pending = {
   resolve: (v: PluginHostRpcResult) => void
@@ -513,6 +528,44 @@ function killOrphanPluginHosts() {
   }
 }
 
+const ASIO_WRAPPER_RE = /fl studio|generic low latency/i
+
+function wasapiPrefs(from?: AudioDevicePrefs): AudioDevicePrefs {
+  return {
+    backend: 'wasapi',
+    deviceId: '',
+    sampleRate: from?.sampleRate || 48000,
+    bufferSize: from?.bufferSize || 512,
+    exclusive: false,
+  }
+}
+
+function isRiskyAsioPrefs(prefs: AudioDevicePrefs): boolean {
+  if (prefs.backend !== 'asio') return false
+  const raw = prefs.deviceId || ''
+  const name = raw.includes(':') ? raw.slice(raw.indexOf(':') + 1) : raw
+  return !name.trim() || name === 'default' || ASIO_WRAPPER_RE.test(name)
+}
+
+async function respawnNativeHost(): Promise<boolean> {
+  const bin = resolveNativeBinary()
+  if (!bin) return false
+  killAudioChild()
+  child = spawnNative(bin)
+  backend = 'native'
+  wireChild(child)
+  started = true
+  lastError = undefined
+  const ping = await sendPluginHostCommand({ type: 'ping' }, 4000)
+  if (!ping.ok) {
+    lastError = ping.message
+    stopPluginHost()
+    return false
+  }
+  await connectMixPipe(String(ping.mixPipe || ''), child?.pid)
+  return true
+}
+
 export async function setPluginHostAudioDevice(
   prefs: AudioDevicePrefs,
 ): Promise<PluginHostRpcResult> {
@@ -524,12 +577,24 @@ export async function setPluginHostAudioDevice(
       message: lastError || 'Plugin Host Process no está en ejecución.',
     }
   }
+  if (isRiskyAsioPrefs(prefs)) {
+    const fallback = await applyAudioDeviceOrFallback(wasapiPrefs(prefs), { persist: false })
+    const why = !prefs.deviceId || prefs.deviceId === 'default'
+      ? 'Elige un driver ASIO x64 de tu interfaz; «Predeterminado» no abre ASIO.'
+      : `«${prefs.deviceId}» es un wrapper y no se aplica (suele tumbar el host). Audio en WASAPI.`
+    if (fallback.ok) {
+      return { ok: false, code: 'AudioDeviceFailed', message: why, audio: fallback.audio }
+    }
+    return { ok: false, code: 'AudioDeviceFailed', message: why }
+  }
   return applyAudioDeviceOrFallback(prefs)
 }
 
 async function applyAudioDeviceOrFallback(
   prefs: AudioDevicePrefs,
+  opts?: { sessionFallbackOk?: boolean; persist?: boolean },
 ): Promise<PluginHostRpcResult> {
+  const persist = opts?.persist !== false
   const applied = await sendPluginHostCommand(
     {
       type: 'setAudioDevice',
@@ -542,46 +607,45 @@ async function applyAudioDeviceOrFallback(
     20_000,
   )
   if (applied.ok) {
-    writeAudioDevicePrefs(prefs)
+    if (persist) writeAudioDevicePrefs(prefs)
     return applied
   }
   console.error('[plugin-host] setAudioDevice falló:', applied.message)
 
   const crashed = /salió \(code=/.test(String(applied.message || ''))
-  const fallback: AudioDevicePrefs = {
-    backend: 'wasapi',
-    deviceId: '',
-    sampleRate: prefs.sampleRate || 48000,
-    bufferSize: prefs.bufferSize || 512,
-    exclusive: false,
-  }
+  const fallback = wasapiPrefs(prefs)
 
-  // Host muerto: persistir WASAPI para el próximo arranque (sin reentrar en ensure*).
-  if (crashed) {
-    writeAudioDevicePrefs(fallback)
-    return { ...applied, ok: false, code: 'HostNotReady' }
-  }
-
-  // ASIO / exclusive vivos pero fallaron al abrir: intentar WASAPI en el mismo proceso.
-  if (prefs.backend !== 'wasapi' || prefs.exclusive) {
-    const second = await sendPluginHostCommand(
-      { type: 'setAudioDevice', ...fallback },
-      20_000,
+  const openWasapi = async (): Promise<PluginHostRpcResult> => {
+    const second = await sendPluginHostCommand({ type: 'setAudioDevice', ...fallback }, 20_000)
+    if (!second.ok) return second
+    console.error(
+      '[plugin-host] Audio temporal en WASAPI tras fallo de',
+      prefs.backend,
+      ':',
+      applied.message,
     )
-    if (second.ok) {
-      writeAudioDevicePrefs(fallback)
-      console.error(
-        '[plugin-host] Fallback WASAPI tras fallo de',
-        prefs.backend,
-        ':',
-        applied.message,
-      )
-      return {
-        ...second,
-        ok: true,
-        message: `Fallback WASAPI (${applied.message || 'driver anterior no abrió'})`,
-      } as PluginHostRpcResult
+    const msg = `${applied.message || 'No se pudo abrir el driver.'} Audio en WASAPI.`
+    if (opts?.sessionFallbackOk) {
+      return { ...second, ok: true, message: msg }
     }
+    return {
+      ok: false,
+      code: 'AudioDeviceFailed',
+      message: `${msg} Elige WASAPI o el ASIO x64 de tu interfaz y pulsa Aplicar.`,
+      audio: second.audio,
+    }
+  }
+
+  if (crashed) {
+    console.error('[plugin-host] host muerto al aplicar driver; respawn → WASAPI')
+    if (!(await respawnNativeHost())) {
+      return { ...applied, ok: false, code: 'HostNotReady' }
+    }
+    return openWasapi()
+  }
+
+  if (prefs.backend !== 'wasapi' || prefs.exclusive) {
+    return openWasapi()
   }
   return applied
 }
@@ -618,46 +682,22 @@ async function tryStart(kind: 'native' | 'node'): Promise<boolean> {
   if (kind === 'native') {
     const mixPipe = ping.mixPipe || ''
     await connectMixPipe(mixPipe, child?.pid)
-    const defaultWasapi: AudioDevicePrefs = {
-      backend: 'wasapi',
-      deviceId: '',
-      sampleRate: 48000,
-      bufferSize: 512,
-      exclusive: false,
-    }
-    let prefs = readAudioDevicePrefs() ?? defaultWasapi
-    // ASIO CoCreate falla a menudo (E_NOINTERFACE); preferir WASAPI al arrancar.
-    // El usuario puede volver a ASIO desde Configuración → Audio.
-    if (prefs.backend === 'asio' || prefs.backend === 'wasapi_exclusive') {
-      console.error(
-        '[plugin-host] prefs',
-        prefs.backend,
-        '→ WASAPI al arrancar (más estable; ASIO sigue en Configuración)',
-      )
-      prefs = { ...defaultWasapi, sampleRate: prefs.sampleRate || 48000, bufferSize: prefs.bufferSize || 512 }
-      writeAudioDevicePrefs(prefs)
-    }
-    let applied = await applyAudioDeviceOrFallback(prefs)
-    // Crash (p.ej. heap 0xC0000374): prefs ya son WASAPI; respawnear una vez.
-    if (!applied.ok && /salió \(code=/.test(String(applied.message || ''))) {
-      console.error('[plugin-host] respawn tras crash de setAudioDevice → WASAPI')
-      const bin = resolveNativeBinary()
-      if (!bin) return false
-      killAudioChild()
-      child = spawnNative(bin)
-      backend = 'native'
-      wireChild(child)
-      started = true
-      lastError = undefined
-      const ping2 = await sendPluginHostCommand({ type: 'ping' }, 4000)
-      if (!ping2.ok) {
-        lastError = ping2.message
-        stopPluginHost()
-        return false
-      }
-      await connectMixPipe(ping2.mixPipe || '', child?.pid)
-      prefs = readAudioDevicePrefs() ?? defaultWasapi
-      applied = await applyAudioDeviceOrFallback(prefs)
+    const defaultWasapi = wasapiPrefs()
+    const saved = readAudioDevicePrefs()
+    // Siempre abrir WASAPI primero: un ASIO crashy no debe dejar el host muerto al arrancar.
+    let applied = await applyAudioDeviceOrFallback(defaultWasapi, {
+      sessionFallbackOk: true,
+      persist: false,
+    })
+    if (
+      applied.ok &&
+      saved &&
+      saved.backend === 'asio' &&
+      !isRiskyAsioPrefs(saved)
+    ) {
+      applied = await applyAudioDeviceOrFallback(saved, { sessionFallbackOk: true })
+    } else if (saved && saved.backend !== 'asio' && saved.backend !== 'auto') {
+      applied = await applyAudioDeviceOrFallback(saved, { sessionFallbackOk: true })
     }
     // Reconectar pipe al host vivo tras setAudioDevice (evita pipe de un spawn anterior).
     if (applied.ok && child?.pid) {
@@ -809,22 +849,7 @@ export function sendPluginHostCommand(
   }
 
   return new Promise((resolve) => {
-    const wrap =
-      type === 'setAudioDevice'
-        ? (result: PluginHostRpcResult) => {
-            if (result.ok && cmd.backend) {
-              writeAudioDevicePrefs({
-                backend: String(cmd.backend),
-                deviceId: String(cmd.deviceId ?? ''),
-                sampleRate: Number(cmd.sampleRate) || 48000,
-                bufferSize: Number(cmd.bufferSize) || 512,
-                exclusive: !!cmd.exclusive || String(cmd.backend) === 'wasapi_exclusive',
-              })
-            }
-            resolve(result)
-          }
-        : resolve
-    queue.push({ cmd, timeoutMs: long, resolve: wrap })
+    queue.push({ cmd, timeoutMs: long, resolve })
     pumpQueue()
   })
 }
