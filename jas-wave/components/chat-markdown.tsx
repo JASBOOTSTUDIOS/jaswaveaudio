@@ -20,9 +20,9 @@ export function ChatMarkdown({ text }: { text: string }) {
         ) : (
           <div key={i} className="space-y-1.5">
             {block.content.split(/\n{2,}/).map((para, j) => (
-              <p key={j} className="whitespace-pre-wrap break-words">
+              <div key={j} className="whitespace-pre-wrap break-words">
                 {renderInline(para.trim())}
-              </p>
+              </div>
             ))}
           </div>
         ),
@@ -61,30 +61,120 @@ function splitFences(src: string): Block[] {
   return out
 }
 
+function isTableRow(line: string): boolean {
+  const t = line.trim()
+  return t.startsWith('|') && t.includes('|', 1)
+}
+
+function isTableSep(line: string): boolean {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)
+}
+
+function splitTableCells(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((c) => c.trim())
+}
+
 function renderInline(text: string): ReactNode[] {
-  // Listas: líneas que empiezan con - o *
   const lines = text.split('\n')
   const nodes: ReactNode[] = []
-  let listBuf: string[] = []
+  let listBuf: Array<{ text: string; checked?: boolean }> = []
+  let tableBuf: string[] = []
 
   const flushList = (keyBase: number) => {
     if (listBuf.length === 0) return
     nodes.push(
       <ul key={`ul-${keyBase}`} className="my-1 list-disc space-y-0.5 pl-4">
         {listBuf.map((item, i) => (
-          <li key={i}>{inlineMarks(item)}</li>
+          <li key={i} className="flex items-start gap-1.5">
+            {item.checked != null ? (
+              <span className={`mt-0.5 inline-block size-3 shrink-0 rounded-sm border ${item.checked ? 'border-accent-amber bg-accent-amber/80' : 'border-muted-foreground/50'}`} />
+            ) : null}
+            <span>{inlineMarks(item.text)}</span>
+          </li>
         ))}
       </ul>,
     )
     listBuf = []
   }
 
+  const flushTable = (keyBase: number) => {
+    if (tableBuf.length === 0) return
+    const rows = tableBuf.filter((l) => !isTableSep(l)).map(splitTableCells)
+    tableBuf = []
+    if (rows.length === 0) return
+    const head = rows[0]!
+    const body = rows.slice(1)
+    nodes.push(
+      <table key={`tbl-${keyBase}`} className="my-1 w-full border-collapse text-[11px]">
+        <thead>
+          <tr>
+            {head.map((c, i) => (
+              <th key={i} className="border border-border bg-background/60 px-1.5 py-0.5 text-left font-medium">
+                {inlineMarks(c)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        {body.length > 0 ? (
+          <tbody>
+            {body.map((row, ri) => (
+              <tr key={ri}>
+                {row.map((c, ci) => (
+                  <td key={ci} className="border border-border px-1.5 py-0.5">
+                    {inlineMarks(c)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        ) : null}
+      </table>,
+    )
+  }
+
   lines.forEach((line, idx) => {
-    const bullet = line.match(/^\s*[-*]\s+(.+)$/)
-    if (bullet) {
-      listBuf.push(bullet[1]!)
+    if (isTableRow(line)) {
+      flushList(idx)
+      tableBuf.push(line)
       return
     }
+    flushTable(idx)
+
+    const heading = line.match(/^(#{1,3})\s+(.+)$/)
+    if (heading) {
+      flushList(idx)
+      const level = heading[1]!.length
+      const cls =
+        level === 1
+          ? 'text-[13px] font-semibold text-foreground'
+          : level === 2
+            ? 'text-[12px] font-semibold text-accent-amber'
+            : 'text-[11px] font-medium text-muted-foreground'
+      nodes.push(
+        <div key={`h-${idx}`} className={cls}>
+          {inlineMarks(heading[2]!)}
+        </div>,
+      )
+      return
+    }
+
+    const task = line.match(/^\s*[-*]\s+\[( |x|X)\]\s+(.+)$/)
+    if (task) {
+      listBuf.push({ text: task[2]!, checked: task[1] !== ' ' })
+      return
+    }
+
+    const bullet = line.match(/^\s*[-*]\s+(.+)$/)
+    if (bullet) {
+      listBuf.push({ text: bullet[1]! })
+      return
+    }
+
     flushList(idx)
     if (line.trim() === '') {
       nodes.push(<br key={`br-${idx}`} />)
@@ -92,12 +182,12 @@ function renderInline(text: string): ReactNode[] {
     }
     nodes.push(
       <Fragment key={`ln-${idx}`}>
-        {idx > 0 && listBuf.length === 0 ? null : null}
         {inlineMarks(line)}
         {idx < lines.length - 1 ? '\n' : null}
       </Fragment>,
     )
   })
+  flushTable(lines.length)
   flushList(lines.length)
   return nodes
 }

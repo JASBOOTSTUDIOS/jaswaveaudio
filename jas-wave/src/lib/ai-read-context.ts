@@ -22,7 +22,12 @@ export function buildReadOnlyProjectContext(state: DAWState): string {
     .map((t) => {
       const clips = Array.isArray(t.clips) ? t.clips.length : 0
       const mark = t.id === selectedId ? ' ← SELECCIONADA' : ''
-      return `- ${t.nombre} [${t.tipo}] id=${t.id} mute=${t.silenciada ? 'sí' : 'no'} solo=${t.soloActiva ? 'sí' : 'no'} armada=${t.armada ? 'sí' : 'no'} clips=${clips}${mark}`
+      const plugs = (t.plugins ?? [])
+        .slice(0, 6)
+        .map((p) => `${p.nombre}(${p.id})`)
+        .join(', ')
+      const plugTxt = plugs ? ` plugins=[${plugs}]` : ''
+      return `- ${t.nombre} [${t.tipo}] id=${t.id} mute=${t.silenciada ? 'sí' : 'no'} solo=${t.soloActiva ? 'sí' : 'no'} armada=${t.armada ? 'sí' : 'no'} clips=${clips}${plugTxt}${mark}`
     })
     .join('\n')
 

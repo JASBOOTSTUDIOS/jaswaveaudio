@@ -2,6 +2,7 @@ import { Construction, Library, Gauge, GitBranch, Piano, SlidersHorizontal } fro
 import { ArrangeView } from '@/components/arrange-view'
 import { Mixer } from '@/components/mixer'
 import { CoProducerPanel } from '@/components/coproducer-panel'
+import { AgentDocsPanel } from '@/components/agent-docs-panel'
 import { TrackDetailPanel } from '@/components/track-detail-panel'
 import { PianoRollToolPanel } from '@/components/piano-roll'
 import { InstrumentsPanel } from '@/components/instruments-panel'
@@ -30,6 +31,8 @@ export function ToolHost({ toolId }: { toolId: ToolId }) {
   switch (toolId) {
     case 'coproducer':
       return <CoProducerPanel />
+    case 'docs':
+      return <AgentDocsPanel />
     case 'arrange':
       return <ArrangeView />
     case 'mixer':

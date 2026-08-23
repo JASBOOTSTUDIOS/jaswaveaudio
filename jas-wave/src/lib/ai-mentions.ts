@@ -4,9 +4,9 @@
 
 import type { DAWState } from '../../../shared/src/types/state'
 import { AGENT_MODE_META, type AgentMode } from './ai-modes'
-import { pluginRegistry } from './plugin/registry'
+import { listAgentDocs } from './agent-docs'
 
-export type MentionKind = 'mode' | 'action' | 'track' | 'clip' | 'plugin' | 'vst'
+export type MentionKind = 'mode' | 'action' | 'track' | 'clip' | 'plugin' | 'vst' | 'doc'
 
 export type Mentionable = {
   kind: MentionKind
@@ -28,6 +28,7 @@ export const MENTION_KIND_LABEL: Record<MentionKind, string> = {
   clip: 'Clips',
   plugin: 'Plugins en el proyecto',
   vst: 'Catálogo VST',
+  doc: 'Documentos',
 }
 
 function norm(s: string): string {
@@ -55,6 +56,8 @@ function staticMentions(): Mentionable[] {
     { kind: 'action', id: 'action:bpm', label: 'cambiar BPM', hint: 'tempo', insertText: 'pon el BPM a ' },
     { kind: 'action', id: 'action:insert-vst', label: 'insertar VST', hint: 'catálogo en pista', insertText: 'inserta el VST ' },
     { kind: 'action', id: 'action:lookup', label: 'consultar VST', hint: 'mapa MIDI / manual', insertText: 'consulta cómo se usa el VST ' },
+    { kind: 'action', id: 'action:plan-md', label: 'editar plan.md', hint: 'documento de plan', insertText: 'actualiza plan.md con lo que vamos a hacer y evalúa después' },
+    { kind: 'action', id: 'action:eval-plan', label: 'evaluar plan.md', hint: 'planeado vs DAW', insertText: 'evalúa plan.md: intención vs por implementar vs lo que hay en el DAW' },
   ]
   return [...modes, ...actions]
 }
@@ -110,6 +113,15 @@ export function listMentionables(state: DAWState): Mentionable[] {
       label: d.name,
       hint: `${d.format} · ${d.isInstrument ? 'instrumento' : 'efecto'} · ${d.vendor}`,
       insertText: d.name.includes(' ') ? `@"${d.name}"` : `@${d.name}`,
+    })
+  }
+  for (const d of listAgentDocs(state.project?.id || 'default')) {
+    out.push({
+      kind: 'doc',
+      id: `doc:${d.slug}`,
+      label: d.slug,
+      hint: 'markdown del proyecto',
+      insertText: d.slug === 'plan.md' ? 'lee y actualiza @plan.md' : `abre @${d.slug}`,
     })
   }
   return out
@@ -197,7 +209,7 @@ export function filterMentionables(items: Mentionable[], query: string): Mention
 }
 
 export function groupMentionables(items: Mentionable[]): Array<{ kind: MentionKind; label: string; items: Mentionable[] }> {
-  const order: MentionKind[] = ['mode', 'action', 'track', 'clip', 'plugin', 'vst']
+  const order: MentionKind[] = ['mode', 'action', 'doc', 'track', 'clip', 'plugin', 'vst']
   return order
     .map((kind) => ({
       kind,
@@ -216,6 +228,7 @@ export function formatMentionsForPrompt(mentions: Mentionable[]): string {
       if (m.kind === 'plugin') return `- plugin id=${m.pluginInstanceId} pista=${m.trackId} «${m.label}» (${m.hint})`
       if (m.kind === 'vst') return `- VST catálogo id=${m.pluginId} «${m.label}» (${m.hint})`
       if (m.kind === 'mode') return `- modo ${m.label}`
+      if (m.kind === 'doc') return `- documento ${m.label} (markdown editable)`
       return `- acción «${m.label}»`
     })
     .join('\n')

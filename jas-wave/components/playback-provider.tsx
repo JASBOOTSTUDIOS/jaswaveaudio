@@ -408,10 +408,24 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       if (c.kind !== 'midi') continue
       const trk = sharedTracks.find((t) => t.id === c.trackId)
       const raw = trk?.clips?.find((x: { id: string }) => x.id === c.id) as
-        | { notas?: Array<{ pitch: number; velocidad?: number; inicio: number; duracion: number; mute?: boolean }> }
+        | {
+            notas?: Array<{ pitch: number; velocidad?: number; inicio: number; duracion: number; mute?: boolean }>
+            expression?: { cc?: Array<{ cc: number; puntos?: Array<{ tiempo: number; valor: number }> }> }
+          }
         | undefined
       const notas = Array.isArray(raw?.notas) ? raw.notas : []
-      if (notas.length === 0) continue
+      const ccs: Array<{ cc: number; timeSec: number; value: number }> = []
+      for (const lane of raw?.expression?.cc ?? []) {
+        for (const pt of lane.puntos ?? []) {
+          const nrm = pt.valor <= 1 ? pt.valor : pt.valor / 127
+          ccs.push({
+            cc: lane.cc,
+            timeSec: c.inicioSeconds + beatsASegundos(pt.tiempo, BPM),
+            value: Math.max(0, Math.min(127, Math.round(nrm * 127))),
+          })
+        }
+      }
+      if (notas.length === 0 && ccs.length === 0) continue
       midiClips.push({
         id: c.id,
         trackId: c.trackId,
@@ -423,6 +437,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
             startSec: c.inicioSeconds + beatsASegundos(n.inicio, BPM),
             durationSec: Math.max(0.03, beatsASegundos(n.duracion, BPM)),
           })),
+        ccs,
       })
     }
 

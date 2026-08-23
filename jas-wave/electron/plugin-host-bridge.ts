@@ -56,6 +56,23 @@ export type PluginHostRpcResult =
         lastError?: string
       }
       mixPipe?: string
+      parameterCount?: number
+      parameters?: Array<{
+        id: number
+        parameterId: string
+        name: string
+        shortName?: string
+        unit?: string
+        displayValue?: string
+        normalizedValue: number
+        defaultNormalizedValue?: number
+        stepCount?: number
+        automatable?: boolean
+        readOnly?: boolean
+        hidden?: boolean
+        bypass?: boolean
+        programChange?: boolean
+      }>
     }
   | { ok: false; code: string; message: string }
 
@@ -473,7 +490,7 @@ function pumpQueue() {
 export function sendPluginHostMidi(cmd: Record<string, unknown>): void {
   if (!child || child.killed || !child.stdin.writable) return
   const type = typeof cmd.type === 'string' ? cmd.type : ''
-  if (type !== 'noteOn' && type !== 'noteOff' && type !== 'allNotesOff') return
+  if (type !== 'noteOn' && type !== 'noteOff' && type !== 'allNotesOff' && type !== 'midiCc' && type !== 'setTransport') return
   try {
     child.stdin.write(JSON.stringify(cmd) + '\n')
   } catch {
@@ -766,13 +783,14 @@ export function sendPluginHostCommand(
     type === 'prepare' ||
     type === 'setAudioDevice' ||
     type === 'listAudioDevices' ||
-    type === 'ensureAudio'
+    type === 'ensureAudio' ||
+    type === 'listParameters'
       ? Math.max(timeoutMs, 90_000)
       : timeoutMs
 
   // MIDI: host no responde — no usar la cola RPC (bloquearía load/ping).
-  if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'setMixInputRate' || type === 'setSlotMix' || type === 'setMasterMix' || type === 'setTrackGraph') {
-    if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff') {
+  if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setMixInputRate' || type === 'setSlotMix' || type === 'setMasterMix' || type === 'setTrackGraph') {
+    if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport') {
       sendPluginHostMidi(cmd)
       return Promise.resolve({
         ok: true,

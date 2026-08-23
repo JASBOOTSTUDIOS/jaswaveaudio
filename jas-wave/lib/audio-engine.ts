@@ -8,7 +8,7 @@
  */
 
 import { preferredTrackPlaysSoftPad, routeMidiToActiveVst, getPreferredPreviewTrackId, trackChannelIsAudible } from '@/src/lib/plugin/vst-voice-router'
-import { allNotesOffAllTracks, sendVstNote } from '@/src/lib/plugin/track-vst-runtime'
+import { allNotesOffAllTracks, sendVstCc, sendVstNote, setHostTransportPlaying } from '@/src/lib/plugin/track-vst-runtime'
 import pcmTapProcessorUrl from './pcm-tap-processor.js?url'
 import {
   encodeStemPacket,
@@ -50,6 +50,7 @@ export interface MidiClipPlaybackInfo {
   id: string
   trackId: string
   notes: MidiNotePlaybackInfo[]
+  ccs?: Array<{ cc: number; timeSec: number; value: number }>
 }
 
 type TrackAudioNode = {
@@ -104,6 +105,7 @@ export class WebAudioEngine {
   private midiScheduledUntilSec = 0
   private midiHaySolos = false
   private midiVoiceKeys = new Set<string>()
+  private midiCcKeys = new Set<string>()
   /** Timers de noteOn/noteOff hacia el Plugin Host (playback VST). */
   private vstMidiTimers: ReturnType<typeof setTimeout>[] = []
   /** Voces del sintetizador de prueba (MIDI preview). */
@@ -1006,6 +1008,7 @@ export class WebAudioEngine {
     this.isPlaying = true
     this.startTime = ctx.currentTime
     this.playheadStartSec = Math.max(0, startSec)
+    setHostTransportPlaying(true)
 
     const haySolos = tracksConfig.some((t) => t.soloActiva)
     for (const trk of tracksConfig) {
@@ -1077,6 +1080,7 @@ export class WebAudioEngine {
   ) {
     this.stopMidiScheduler()
     this.midiVoiceKeys.clear()
+    this.midiCcKeys.clear()
     this.pendingMidiClips = midiClips
     this.pendingTracksConfig = tracksConfig
     this.midiHaySolos = haySolos
@@ -1196,6 +1200,21 @@ export class WebAudioEngine {
           console.warn('[audio-engine] midi voice failed', err)
         }
       }
+
+      const ccs = clip.ccs ?? []
+      for (let ci = 0; ci < ccs.length; ci++) {
+        const ev = ccs[ci]!
+        if (ev.timeSec < windowStart - 0.02 || ev.timeSec > windowEnd) continue
+        const key = clip.id + ':cc:' + ev.cc + ':' + ev.timeSec.toFixed(4)
+        if (this.midiCcKeys.has(key)) continue
+        let when = this.startTime + (ev.timeSec - this.playheadStartSec)
+        if (when < ctx.currentTime - 0.02) when = ctx.currentTime
+        if (!vstSlot) continue
+        const delay = Math.max(0, (when - ctx.currentTime) * 1000)
+        const t = setTimeout(() => sendVstCc(vstSlot, ev.cc, ev.value), delay)
+        this.vstMidiTimers.push(t)
+        this.midiCcKeys.add(key)
+      }
     }
   }
 
@@ -1254,8 +1273,10 @@ export class WebAudioEngine {
    */
   public stopAllSources() {
     this.stopMidiScheduler()
+    setHostTransportPlaying(false)
     this.pendingMidiClips = []
     this.midiVoiceKeys.clear()
+    this.midiCcKeys.clear()
     for (const source of this.activeSources.values()) {
       try {
         source.stop()

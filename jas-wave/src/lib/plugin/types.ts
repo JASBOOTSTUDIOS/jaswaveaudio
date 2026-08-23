@@ -136,7 +136,11 @@ export type PluginHostProcessCommand =
   | { type: 'setEditorBounds'; slotId: string; x: number; y: number; w: number; h: number }
   | { type: 'noteOn'; slotId: string; pitch: number; velocity: number }
   | { type: 'noteOff'; slotId: string; pitch: number }
-  | { type: 'allNotesOff'; slotId: string }
+  | { type: 'allNotesOff'; slotId?: string }
+  | { type: 'midiCc'; slotId: string; cc: number; value: number }
+  | { type: 'listParameters'; slotId: string; maxCount?: number }
+  | { type: 'setParameter'; slotId: string; paramId: number; normalizedValue: number }
+  | { type: 'setTransport'; playing: boolean; tempo?: number }
   | { type: 'listAudioDevices' }
   | {
       type: 'setAudioDevice'
@@ -193,5 +197,22 @@ export type PluginHostProcessReply =
         lastError?: string
       }
       mixPipe?: string
+      parameterCount?: number
+      parameters?: Array<{
+        id: number
+        parameterId: string
+        name: string
+        shortName?: string
+        unit?: string
+        displayValue?: string
+        normalizedValue: number
+        defaultNormalizedValue?: number
+        stepCount?: number
+        automatable?: boolean
+        readOnly?: boolean
+        hidden?: boolean
+        bypass?: boolean
+        programChange?: boolean
+      }>
     }
   | { ok: false; code: PluginHostErrorCode; message: string }

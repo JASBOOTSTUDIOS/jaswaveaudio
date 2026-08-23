@@ -199,6 +199,7 @@ ipcMain.handle('window-is-maximized', () => {
 
 ipcMain.handle('file-save', async (_event: IpcMainInvokeEvent, ruta: string, contenido: string) => {
   try {
+    await fs.mkdir(path.dirname(ruta), { recursive: true })
     await fs.writeFile(ruta, contenido, 'utf-8')
     return { success: true }
   } catch (err) {
