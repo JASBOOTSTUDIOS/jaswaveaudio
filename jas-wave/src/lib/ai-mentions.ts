@@ -53,7 +53,7 @@ function staticMentions(): Mentionable[] {
   )
   const actions: Mentionable[] = [
     { kind: 'action', id: 'action:clip', label: 'crear clip MIDI', hint: 'clip en pista seleccionada', insertText: 'crea un clip MIDI en la pista seleccionada' },
-    { kind: 'action', id: 'action:project', label: 'proyecto desde cero', hint: 'plan + pistas + VSTs', insertText: 'crea un proyecto completo desde cero con vista previa' },
+    { kind: 'action', id: 'action:project', label: 'proyecto desde cero', hint: 'Music Build: pistas + MIDI + mix', insertText: 'créame una canción completa desde cero' },
     { kind: 'action', id: 'action:bpm', label: 'cambiar BPM', hint: 'tempo', insertText: 'pon el BPM a ' },
     { kind: 'action', id: 'action:insert-vst', label: 'insertar VST', hint: 'catálogo en pista', insertText: 'inserta el VST ' },
     { kind: 'action', id: 'action:lookup', label: 'consultar VST', hint: 'mapa MIDI / manual', insertText: 'consulta cómo se usa el VST ' },

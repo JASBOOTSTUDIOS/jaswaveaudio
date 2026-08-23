@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -25,6 +26,7 @@
 #endif
 #include <windows.h>
 #include <objbase.h>
+#include <ole2.h>
 #else
 #include <dirent.h>
 #include <sys/stat.h>
@@ -60,10 +62,16 @@ static void replyOk(const std::string& extraJson = "") {
   }
 }
 
-static void replyFail(const char* code, const std::string& message) {
-  std::cout << "{\"ok\":false,\"code\":\"" << code << "\",\"message\":\"" << jsonEscape(message)
-            << "\"}\n"
-            << std::flush;
+static void replyFail(const char* code, const std::string& message, const std::string& extraJson = "") {
+  if (extraJson.empty()) {
+    std::cout << "{\"ok\":false,\"code\":\"" << code << "\",\"message\":\"" << jsonEscape(message)
+              << "\"}\n"
+              << std::flush;
+  } else {
+    std::cout << "{\"ok\":false,\"code\":\"" << code << "\",\"message\":\"" << jsonEscape(message)
+              << "\"," << extraJson << "}\n"
+              << std::flush;
+  }
 }
 
 static std::string getStringField(const std::string& json, const char* key) {
@@ -614,10 +622,39 @@ static bool applyAudioConfigFromJson(const std::string& json, std::string& err) 
   cfg.sampleRate = static_cast<uint32_t>(getNumberField(json, "sampleRate", 48000));
   cfg.bufferSize = static_cast<uint32_t>(getNumberField(json, "bufferSize", 512));
   cfg.exclusive = getBoolField(json, "exclusive", cfg.backend == "wasapi_exclusive");
-  jaswave_audio_set_renderer(renderMix);
-  if (!jaswave_audio_start(cfg, err)) return false;
-  // El device ya corre: un fallo de reprepare no debe dejar la app muda ni
-  // reportar "setAudioDevice falló" cuando el audio sí abrió.
+  const auto st = jaswave_audio_status();
+  const bool wantSharedWasapi =
+      !cfg.exclusive && cfg.backend != "asio" && cfg.backend != "wasapi_exclusive" &&
+      (cfg.backend.empty() || cfg.backend == "wasapi" || cfg.backend == "auto");
+  const bool haveSharedWasapi = st.running && !st.cfg.exclusive && st.cfg.backend != "asio" &&
+                                (st.cfg.backend.empty() || st.cfg.backend == "wasapi" ||
+                                 st.cfg.backend == "auto");
+  if (haveSharedWasapi && wantSharedWasapi) {
+    /* Un segundo ma_device_init en la UMC (y suspend/reprepare de BFD) corrompe el heap. */
+    jaswave_audio_set_renderer(renderMix);
+    const uint32_t sr = st.actualSampleRate ? st.actualSampleRate : st.cfg.sampleRate;
+    if (sr) jaswave_mix_bus_set_output_rate(sr);
+    err.clear();
+    return true;
+  }
+  // No procesar VST mientras el driver arranca (BFD en el callback ASIO = heap 0xC0000374).
+  jaswave_audio_set_renderer(nullptr);
+  std::vector<Vst3Slot*> toSuspend;
+  {
+    std::lock_guard<std::mutex> lock(gSlotsMutex);
+    for (auto& [id, slot] : gSlots) {
+      (void)id;
+      if (slot) toSuspend.push_back(slot.get());
+    }
+  }
+  for (auto* slot : toSuspend) slot->suspendForAudioRestart();
+  if (!jaswave_audio_start(cfg, err)) {
+    jaswave_audio_set_renderer(renderMix);
+    return false;
+  }
+#ifdef _WIN32
+  if (cfg.backend == "asio") Sleep(80);
+#endif
   std::vector<Vst3Slot*> slots;
   {
     std::lock_guard<std::mutex> lock(gSlotsMutex);
@@ -634,6 +671,7 @@ static bool applyAudioConfigFromJson(const std::string& json, std::string& err) 
   }
   jaswave_mix_bus_set_output_rate(static_cast<uint32_t>(currentSampleRate()));
   jaswave_mix_bus_reset();
+  jaswave_audio_set_renderer(renderMix);
   return true;
 }
 
@@ -648,8 +686,8 @@ static bool ensureSlotLoaded(const std::string& slotId, const std::string& path,
   }
   auto slot = std::make_unique<Vst3Slot>();
   slot->setSlotId(slotId);
-  if (!slot->load(expandEnvPath(path), err)) return false;
   if (!ensureAudioDevice(err)) return false;
+  if (!slot->load(expandEnvPath(path), err)) return false;
   if (!slot->prepare(currentSampleRate(), static_cast<int32_t>(currentBlockSize()), err)) return false;
   std::lock_guard<std::mutex> lock(gSlotsMutex);
   gSlots[slotId] = std::move(slot);
@@ -795,6 +833,7 @@ static void executeUiJob(UiJob& job) {
     if (!applyAudioConfigFromJson(json, err)) {
       job.ok = false;
       job.err = err;
+      job.extraJson = "\"audio\":" + audioStatusJsonObject();
       return;
     }
     job.ok = true;
@@ -888,10 +927,16 @@ static void finishUiJob(const std::shared_ptr<UiJob>& job) {
   } else {
     const char* code =
         (job->kind == UiJob::Kind::Load) ? "PluginLoadFailed" : "PluginEditorFailed";
-    if (job->kind == UiJob::Kind::SetDevice || job->kind == UiJob::Kind::ListDevices)
-      code = "HostNotReady";
-    replyFail(code, job->err.empty() ? "UI job failed" : job->err);
+    if (job->kind == UiJob::Kind::SetDevice) code = "AudioDeviceFailed";
+    else if (job->kind == UiJob::Kind::ListDevices) code = "HostNotReady";
+    replyFail(code, job->err.empty() ? "UI job failed" : job->err, job->extraJson);
   }
+}
+
+static bool isAudioDeviceJob(UiJob::Kind k) {
+  using K = UiJob::Kind;
+  return k == K::ListDevices || k == K::SetDevice || k == K::GetDevice || k == K::TestTone ||
+         k == K::AsioPanel || k == K::EnsureAudio;
 }
 
 static void drainUiQueue() {
@@ -900,6 +945,9 @@ static void drainUiQueue() {
     std::lock_guard<std::mutex> lock(gUiQueueMu);
     batch.swap(gUiQueue);
   }
+  std::stable_partition(batch.begin(), batch.end(), [](const std::shared_ptr<UiJob>& j) {
+    return j && isAudioDeviceJob(j->kind);
+  });
   for (auto& job : batch) {
     executeUiJob(*job);
     {
@@ -970,6 +1018,16 @@ static void handleLine(const std::string& line) {
     if (!gMixPipeName.empty()) extra += ",\"mixPipe\":\"" + jsonEscape(gMixPipeName) + "\"";
 #endif
     replyOk(extra);
+    return;
+  }
+  if (type == "setHostWindow") {
+#ifdef _WIN32
+    const std::string s = getStringField(line, "hwnd");
+    uintptr_t v = 0;
+    if (!s.empty()) v = static_cast<uintptr_t>(std::strtoull(s.c_str(), nullptr, 10));
+    jaswave_audio_set_sys_handle(reinterpret_cast<void*>(v));
+#endif
+    replyOk();
     return;
   }
   if (type == "setMixInputRate") {
@@ -1317,13 +1375,30 @@ static void handleLine(const std::string& line) {
   replyFail("PluginLoadFailed", "Comando desconocido: " + type);
 }
 
+#ifdef _WIN32
+static LONG WINAPI jaswaveCrashFilter(EXCEPTION_POINTERS* info) {
+  if (!info || !info->ExceptionRecord) return EXCEPTION_CONTINUE_SEARCH;
+  HMODULE mod = nullptr;
+  GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                     reinterpret_cast<LPCSTR>(info->ExceptionRecord->ExceptionAddress), &mod);
+  char name[MAX_PATH]{};
+  if (mod) GetModuleFileNameA(mod, name, MAX_PATH);
+  std::fprintf(stderr, "[jaswave-plugin-host] CRASH code=0x%08lX addr=%p module=%s\n",
+               static_cast<unsigned long>(info->ExceptionRecord->ExceptionCode),
+               info->ExceptionRecord->ExceptionAddress, name[0] ? name : "?");
+  std::fflush(stderr);
+  return EXCEPTION_CONTINUE_SEARCH;
+}
+#endif
+
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
 #ifdef _WIN32
   setvbuf(stdout, nullptr, _IONBF, 0);
-  HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-  (void)hr;
+  setvbuf(stderr, nullptr, _IONBF, 0);
+  SetUnhandledExceptionFilter(jaswaveCrashFilter);
+  OleInitialize(nullptr);
 #else
   setvbuf(stdout, nullptr, _IOLBF, 0);
 #endif
@@ -1354,9 +1429,6 @@ int main(int argc, char** argv) {
 
   std::atomic<bool> running{true};
   std::thread stdinThread([&] {
-#ifdef _WIN32
-    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-#endif
     std::string line;
     while (std::getline(std::cin, line)) {
       if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -1368,7 +1440,6 @@ int main(int argc, char** argv) {
 #endif
 #ifdef _WIN32
     PostQuitMessage(0);
-    CoUninitialize();
 #endif
   });
 
@@ -1405,6 +1476,9 @@ int main(int argc, char** argv) {
   }
   stopAudioDevice();
   jaswave_mix_bus_stop();
+#endif
+#ifdef _WIN32
+  OleUninitialize();
 #endif
   return 0;
 }

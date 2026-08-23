@@ -46,7 +46,7 @@ export function saveAgentMode(mode: AgentMode): void {
 }
 
 export function wantsFullProject(text: string): boolean {
-  return /proyecto completo|desde cero|todas las pistas|producci[oó]n completa|arreglo completo|canci[oó]n completa|full (song|mix|project)|armame (el |un )?tema|banda completa/i.test(
+  return /proyecto completo|desde cero|todas las pistas|producci[oó]n completa|arreglo completo|canci[oó]n completa|full (song|mix|project)|armame (el |un )?tema|banda completa|hazme (una |un )?(canci[oó]n|tema)|cr[eé]ame (una |un )?(canci[oó]n|tema)|crea(me)? (una |un )?(canci[oó]n|tema)|produce(me)? (una |un )?(canci[oó]n|tema)|music build/i.test(
     text,
   )
 }
@@ -54,11 +54,13 @@ export function wantsFullProject(text: string): boolean {
 export function detectAgentMode(text: string, forced: AgentMode = 'auto'): AgentMode {
   if (forced !== 'auto') return forced
   const t = text.toLowerCase()
-  if (/\bplan\b|estructura|c[oó]mo lo har|antes de crear|propuesta|vista previa/.test(t) && !/aplica|hazlo ya/.test(t) && !/crea(r|me)? (el |un )?(proyecto|clip|pista)/.test(t)) {
+  if (/\bplan\b|estructura|c[oó]mo lo har|antes de crear|propuesta|vista previa/.test(t) && !/aplica|hazlo ya/.test(t) && !/crea(r|me)? (el |un )?(proyecto|clip|pista|canci)/.test(t)) {
     return 'plan'
   }
-  if (wantsFullProject(t) || /piensa|criterio|ingeniero|arreglo|orquest/i.test(t)) return 'think'
-  if (/crea|genera|aplica|hazme|inserta|arm[aá]|pon(me)?/.test(t)) return 'create'
+  const creating = /crea|genera|aplica|hazme|cr[eé]ame|inserta|arm[aá]|pon(me)?|produce/.test(t)
+  if (wantsFullProject(t)) return creating ? 'create' : 'think'
+  if (/piensa|criterio|ingeniero|arreglo|orquest/i.test(t) && !creating) return 'think'
+  if (creating) return 'create'
   return 'plan'
 }
 
@@ -79,7 +81,7 @@ export function modePromptBlock(mode: AgentMode): string {
     return [
       '## Modo: PENSAMIENTO PROFUNDO',
       'Eres ingeniero de sonido y arreglista. Razona género, instrumentación, rango MIDI de CADA VST (no asumas piano), velocidades, densidad y forma.',
-      'Si el usuario pide un proyecto completo: primero PLAN en plan.md (<<<DOC plan.md o <<<PLAN), luego si debes ejecutar usa daw.composeProject { aplicar:true, ... }.',
+      'Si el usuario pide un proyecto / canción completa: emite daw.musicBuild { prompt, aplicar }. NO uses un mega-tool ni inventes VSTs. El cliente orquesta track.*, midi.*, plugin.*, marker.* y valida MIDI.',
       'Después de ejecutar, el cliente te pedirá UN turno de revisión: intención vs por implementar vs lo implementado. Actualiza ## Evaluación con tu juicio (no solo checkboxes).',
       'Si un VST no es piano/guitarra (batería, orquesta, keyswitches, kits), consulta el mapa de notas del catálogo / plugin.lookup.',
       'Puedes emitir plugin.lookup { nombre } antes de escribir MIDI para ese instrumento.',
@@ -89,7 +91,8 @@ export function modePromptBlock(mode: AgentMode): string {
     '## Modo: CREACIÓN',
     'Ejecuta en el DAW. Si el plan.md existe, síguelo (el usuario puede haberlo editado).',
     'Si es un clip suelto: daw.generateMidiSong con pistaId y aplicar:true.',
-    'Si es un proyecto / varias pistas: daw.composeProject { aplicar:true, pistas:[...] } y carga el VST del catálogo por pista.',
+    'Si es una canción / proyecto completo: daw.musicBuild { aplicar:true, prompt }. Orquesta pistas, VSTs del catálogo, MIDI validado y mezcla por rol. No inventes plugins.',
+    'Si es un arreglo corto ya planeado: daw.composeProject { aplicar:true, pistas:[...] }.',
     'Al terminar, el cliente evalúa el DAW vs plan.md y te pide un turno de revisión. Actualiza Evaluación (juicio) e Implementado. Puedes usar doc.evaluate o <<<DOC plan.md.',
   ].join('\n')
 }

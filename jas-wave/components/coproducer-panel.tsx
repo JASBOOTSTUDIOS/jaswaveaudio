@@ -30,6 +30,7 @@ import {
 } from '@/src/lib/ai-daw-agent'
 import { MidiGenerationPreview, type MidiPreviewData } from '@/components/midi-generation-preview'
 import { ProjectPlanPreview } from '@/components/project-plan-preview'
+import { MusicBuildPreview } from '@/components/music-build-preview'
 import { AiModelPicker } from '@/components/ai-model-picker'
 import {
   filterMentionables,
@@ -44,8 +45,11 @@ import {
   detectAgentMode,
   loadAgentMode,
   saveAgentMode,
+  wantsFullProject,
   type AgentMode,
 } from '@/src/lib/ai-modes'
+import { specToProjectPlan } from '@/src/lib/music-build'
+import type { MusicBuildResult } from '@/src/lib/music-build/types'
 import {
   ensureActiveConversation,
   listConversations,
@@ -79,10 +83,18 @@ function finishAgentTurn(
 ): { extra: string; evaluation: PlanEvaluation | null; mutated: boolean } {
   bindAgentDocsDisk(projectId, state.project?.ruta)
   const planHit = results.find(
-    (r) => r.type === 'daw.composeProject' && (r.data as { kind?: string } | undefined)?.kind === 'projectPlan',
+    (r) =>
+      (r.type === 'daw.composeProject' && (r.data as { kind?: string } | undefined)?.kind === 'projectPlan') ||
+      (r.type === 'daw.musicBuild' && (r.data as { kind?: string } | undefined)?.kind === 'musicBuild'),
   )
   if (planHit?.data) {
-    ensurePlanFromCompose(projectId, planHit.data as import('@/src/lib/project-plan').ProjectPlanData)
+    const data = planHit.data as { kind?: string }
+    if (data.kind === 'musicBuild') {
+      const build = data as MusicBuildResult
+      ensurePlanFromCompose(projectId, specToProjectPlan(build.spec, build.applied))
+    } else {
+      ensurePlanFromCompose(projectId, planHit.data as import('@/src/lib/project-plan').ProjectPlanData)
+    }
   }
   const skipSync = new Set(['doc.list', 'doc.read', 'doc.evaluate'])
   const mutated = results.some((r) => r.success && !skipSync.has(r.type))
@@ -108,6 +120,13 @@ function finishAgentTurn(
   }
   if (extra || planHit || evaluation) requestOpenTool('docs', { zone: 'left' })
   return { extra, evaluation, mutated }
+}
+
+function pickMusicBuild(results: ActionResult[]): MusicBuildResult | undefined {
+  const hit = results.find(
+    (r) => r.type === 'daw.musicBuild' && (r.data as { kind?: string } | undefined)?.kind === 'musicBuild',
+  )
+  return hit?.data as MusicBuildResult | undefined
 }
 
 export function CoProducerPanel() {
@@ -326,22 +345,38 @@ export function CoProducerPanel() {
               modelRaw = raw
               let actions = parseActionsFromText(raw)
               const parsedPlan = parsePlanFromText(raw)
-              if (parsedPlan && !actions.some((a) => a.type === 'daw.composeProject')) {
-                actions = [
-                  {
-                    type: 'daw.composeProject',
-                    payload: {
-                      aplicar: resolvedMode === 'create',
-                      nombre: parsedPlan.nombre,
-                      bpm: parsedPlan.bpm,
-                      tonalidad: parsedPlan.keyLabel,
-                      minutos: parsedPlan.minutes,
-                      pensamiento: parsedPlan.pensamiento,
-                      pistas: parsedPlan.tracks,
+              if (parsedPlan && !actions.some((a) => a.type === 'daw.composeProject' || a.type === 'daw.musicBuild')) {
+                if (wantsFullProject(userText)) {
+                  actions = [
+                    {
+                      type: 'daw.musicBuild',
+                      payload: {
+                        aplicar: resolvedMode === 'create',
+                        prompt: userText,
+                        nombre: parsedPlan.nombre,
+                        bpm: parsedPlan.bpm,
+                        minutos: parsedPlan.minutes,
+                      },
                     },
-                  },
-                  ...actions,
-                ]
+                    ...actions,
+                  ]
+                } else {
+                  actions = [
+                    {
+                      type: 'daw.composeProject',
+                      payload: {
+                        aplicar: resolvedMode === 'create',
+                        nombre: parsedPlan.nombre,
+                        bpm: parsedPlan.bpm,
+                        tonalidad: parsedPlan.keyLabel,
+                        minutos: parsedPlan.minutes,
+                        pensamiento: parsedPlan.pensamiento,
+                        pistas: parsedPlan.tracks,
+                      },
+                    },
+                    ...actions,
+                  ]
+                }
               }
               if (actions.length === 0) {
                 actions = fallbackActionsFromUserIntent(userText, state, agentMode)
@@ -493,6 +528,7 @@ export function CoProducerPanel() {
           ? { ...data, status: (data.applied ? 'applied' : 'pending') as 'applied' | 'pending' }
           : undefined
       })()
+      const musicBuild = pickMusicBuild(lastResults)
       updateMessageContent(
         conversation.id,
         assistantMsgId,
@@ -500,6 +536,7 @@ export function CoProducerPanel() {
         actionsSummary || undefined,
         midiPreview,
         projectPlan,
+        musicBuild,
       )
       const after = getConversation(conversation.id)
       if (after) setConversation(after)
@@ -571,10 +608,15 @@ export function CoProducerPanel() {
               )
               return hit?.data as ProjectPlanData | undefined
             })()
+            const musicBuild = pickMusicBuild(results)
             updateMessageContent(
               conversation.id,
               assistantMsgId,
-              projectPlan
+              musicBuild
+                ? musicBuild.applied
+                  ? `Music Build completado: ${musicBuild.spec.nombre}.`
+                  : `Music Build listo: ${musicBuild.spec.tracks.length} pistas. Revisa las fases y ejecuta cuando quieras.`
+                : projectPlan
                 ? projectPlan.applied
                   ? `Proyecto aplicado: ${projectPlan.nombre}.`
                   : `Plan listo: ${projectPlan.tracks.length} pistas. Revisa y aplica cuando quieras.`
@@ -586,6 +628,7 @@ export function CoProducerPanel() {
               summary,
               midiPreview,
               projectPlan,
+              musicBuild,
             )
           } else {
             const reply =
@@ -798,6 +841,12 @@ export function CoProducerPanel() {
                   <ProjectPlanPreview
                     plan={msg.projectPlan}
                     status={msg.projectPlan.status ?? 'pending'}
+                  />
+                ) : null}
+                {msg.musicBuild ? (
+                  <MusicBuildPreview
+                    build={msg.musicBuild}
+                    status={msg.musicBuild.applied ? 'applied' : 'pending'}
                   />
                 ) : null}
               </div>

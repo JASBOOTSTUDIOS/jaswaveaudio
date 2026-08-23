@@ -7,7 +7,7 @@ import type { GeneratedNote } from '../midi-song-generator'
 describe('music-build spec', () => {
   it('parsea BPM, tonalidad, duración y forma de un brief de canción', () => {
     const spec = specFromPrompt(
-      'Créame una canción de reggaetón moderna, 95 BPM, 3 minutos, con intro, verso, pre-coro, coro, segundo verso, coro y outro.',
+      'Créame una canción de reggaetón moderna, 95 BPM, A menor, 3 minutos, con intro, verso, pre-coro, coro, segundo verso, coro y outro.',
     )
     assert.equal(spec.bpm, 95)
     assert.equal(spec.scale, 'minor')

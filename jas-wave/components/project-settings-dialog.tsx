@@ -427,7 +427,7 @@ function AudioTab() {
   const applyDevice = async () => {
     if (!window.electron?.pluginHostSend) return
     if (backend === 'asio' && (!deviceId || deviceId === 'default')) {
-      setStatus('Elige un driver ASIO x64 de la lista (Yamaha, UMC, M-WAVE…). «Predeterminado» no abre ASIO.')
+      setStatus('Elige un driver ASIO x64 de la lista (UMC, Yamaha, M-WAVE…). «Predeterminado» no abre ASIO.')
       return
     }
     setBusy(true)
@@ -525,10 +525,17 @@ function AudioTab() {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-[11px] text-muted-foreground">
-        El DAW usa el Plugin Host nativo como dueño del device: WASAPI, DirectSound, WinMM, JACK y ASIO
-        si hay driver instalado. Clips, Soft Pad, metrónomo y VST salen por ese mismo dispositivo.
-        Solo un proceso puede abrir ASIO; las ventanas flotantes no vuelven a abrir el driver.
+        El DAW usa el Plugin Host nativo como dueño del device (como REAPER): WASAPI, DirectSound, WinMM,
+        JACK y ASIO. El ASIO de Behringer UMC se abre en un proceso limpio, con todos los canales y el
+        buffer del panel ASIO; Chromium no debe usar esa tarjeta a la vez. Cierra REAPER/Cubase/FL si
+        ya tienen el driver abierto.
       </p>
+      {backend === 'asio' && /umc|behringer/i.test(deviceId) ? (
+        <p className="text-[10px] text-accent-amber">
+          UMC ASIO: igual que en REAPER. Al aplicar se reinicia el Plugin Host (sin WASAPI previo) y se
+          abre el driver x64. Si falla, se restaura WASAPI compartido.
+        </p>
+      ) : null}
       {backend === 'asio' && /fl studio|asio4all|generic low latency/i.test(deviceId) ? (
         <p className="text-[10px] text-accent-amber">
           FL Studio ASIO, ASIO4ALL y Generic Low Latency envuelven WASAPI y pueden tumbar el host.

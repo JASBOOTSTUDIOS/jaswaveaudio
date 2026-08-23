@@ -133,7 +133,8 @@ describe('modos y @', () => {
     assert.equal(detectAgentMode('haz un plan del arreglo'), 'plan')
     assert.equal(detectAgentMode('crea un clip midi'), 'create')
     assert.equal(wantsFullProject('crea un proyecto completo desde cero'), true)
-    assert.equal(detectAgentMode('crea un proyecto completo desde cero'), 'think')
+    assert.equal(detectAgentMode('crea un proyecto completo desde cero'), 'create')
+    assert.equal(wantsFullProject('créame una canción de reggaetón, 95 BPM'), true)
   })
   it('al escribir @ lista modos, acciones y pistas', () => {
     const st = miniState('t-midi')

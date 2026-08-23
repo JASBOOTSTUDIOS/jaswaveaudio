@@ -327,6 +327,13 @@ bool Vst3Slot::reprepare(double sampleRate, int32_t blockSize, std::string& err)
   return prepare(sampleRate, blockSize, err);
 }
 
+void Vst3Slot::suspendForAudioRestart() {
+  waitNotProcessing();
+  prepared_.store(false);
+  if (impl_->processor) impl_->processor->setProcessing(false);
+  if (impl_->component) impl_->component->setActive(false);
+}
+
 void Vst3Slot::waitNotProcessing() {
   prepared_.store(false);
   for (int i = 0; i < 200 && inProcess_.load(); ++i) {

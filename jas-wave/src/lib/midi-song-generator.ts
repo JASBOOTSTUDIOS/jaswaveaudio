@@ -212,6 +212,8 @@ export function inferMinutesFromText(text: string, fallback = 3): number {
     text.match(/dure\s+(\d+(?:[.,]\d+)?)/i) ||
     text.match(/duraci[oó]n\s+(?:de\s+)?(\d+(?:[.,]\d+)?)/i)
   if (m) return Math.max(0.25, parseFloat(m[1]!.replace(',', '.')))
+  const clock = text.match(/\b(\d{1,2}):([0-5]\d)\b/)
+  if (clock) return Math.max(0.25, Number(clock[1]) + Number(clock[2]) / 60)
   if (/al\s+menos\s+3|3\s*minutos|tres\s+minutos/i.test(text)) return 3
   if (/4\s*minutos|cuatro\s+minutos/i.test(text)) return 4
   return fallback
