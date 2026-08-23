@@ -13,6 +13,7 @@ import {
 import { setActiveVstVoiceTarget, getActiveVstVoiceTarget } from './vst-voice-router'
 import { encodeTrackGraph } from './track-graph-encoding'
 import { audioEngine } from '@/lib/audio-engine'
+import type { HostParameterRaw } from './plugin-parameter-intel'
 
 export { extractVst3Path }
 
@@ -329,6 +330,20 @@ export function sendVstNote(
   }
 }
 
+export function sendVstCc(slotId: string, cc: number, value: number): void {
+  try {
+    const api = window.electron
+    const cmd = { type: 'midiCc' as const, slotId, cc, value }
+    if (typeof api?.pluginHostMidi === 'function') {
+      void api.pluginHostMidi(cmd)
+      return
+    }
+    void api?.pluginHostSend?.(cmd)
+  } catch {
+    /* ignore */
+  }
+}
+
 export function allNotesOffSlot(slotId: string): void {
   try {
     const api = window.electron
@@ -342,8 +357,76 @@ export function allNotesOffSlot(slotId: string): void {
   }
 }
 
+/** Panic MIDI en todos los slots (instrumento + FX): sustain off + all notes off. */
 export function allNotesOffAllTracks(): void {
-  for (const inst of byTrack.values()) {
+  try {
+    const api = window.electron
+    if (typeof api?.pluginHostMidi === 'function') {
+      void api.pluginHostMidi({ type: 'allNotesOff' })
+    } else {
+      void api?.pluginHostSend?.({ type: 'allNotesOff' })
+    }
+  } catch {
+    /* ignore */
+  }
+  for (const inst of bySlot.values()) {
     allNotesOffSlot(inst.slotId)
+  }
+}
+
+export function setHostTransportPlaying(playing: boolean, tempo?: number): void {
+  try {
+    const cmd = { type: 'setTransport' as const, playing, tempo }
+    const api = window.electron
+    if (typeof api?.pluginHostMidi === 'function') {
+      void api.pluginHostMidi(cmd)
+      return
+    }
+    void api?.pluginHostSend?.(cmd)
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function listSlotParameters(slotId: string): Promise<HostParameterRaw[]> {
+  try {
+    const api = window.electron
+    if (!api?.pluginHostSend) return []
+    const raw = (await api.pluginHostSend({
+      type: 'listParameters',
+      slotId,
+      maxCount: 400,
+    })) as { ok?: boolean; parameters?: HostParameterRaw[] }
+    if (!raw?.ok || !Array.isArray(raw.parameters)) return []
+    return raw.parameters.map((p) => ({
+      ...p,
+      parameterId: String(p.parameterId ?? p.id ?? ''),
+      name: p.name || p.shortName || String(p.parameterId ?? ''),
+      normalizedValue: Number(p.normalizedValue) || 0,
+    }))
+  } catch {
+    return []
+  }
+}
+
+export async function setSlotParameter(
+  slotId: string,
+  parameterId: string | number,
+  normalizedValue: number,
+): Promise<boolean> {
+  try {
+    const api = window.electron
+    if (!api?.pluginHostSend) return false
+    const paramId = Number(parameterId)
+    if (!Number.isFinite(paramId)) return false
+    const raw = (await api.pluginHostSend({
+      type: 'setParameter',
+      slotId,
+      paramId,
+      normalizedValue: Math.max(0, Math.min(1, normalizedValue)),
+    })) as { ok?: boolean }
+    return !!raw?.ok
+  } catch {
+    return false
   }
 }

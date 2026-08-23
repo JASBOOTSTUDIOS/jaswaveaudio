@@ -22,6 +22,18 @@ import { getSelectedTrackId } from './selection-helpers'
 import { formatMentionsForPrompt, resolveAtMentions } from './ai-mentions'
 import { pluginRegistry } from './plugin/registry'
 import { descriptorToPluginInfo } from './plugin/plugin-info-adapter'
+import {
+  ensureTrackVstPlugin,
+  extractVst3Path,
+  listSlotParameters,
+  setSlotParameter,
+  slotIdForTrackPlugin,
+} from './plugin/track-vst-runtime'
+import {
+  enrichParameter,
+  searchParameters,
+  summarizeParametersForAi,
+} from './plugin/plugin-parameter-intel'
 import { detectAgentMode, modePromptBlock, wantsFullProject, type AgentMode } from './ai-modes'
 import {
   draftArrangement,
@@ -32,8 +44,22 @@ import {
   type InstrumentRole,
   type PluginUsageGuide,
 } from './plugin-knowledge'
-import type { ProjectPlanData, ProjectPlanTrack } from './project-plan'
+import type { PluginInfo } from '../../../shared/src/types/entidades'
 import { parsePlanFromText } from './project-plan'
+import type { ProjectPlanData, ProjectPlanTrack } from './project-plan'
+import {
+  bindAgentDocsDisk,
+  createAgentDoc,
+  docsPromptActions,
+  formatDocsForPrompt,
+  getAgentDoc,
+  getMarkdownSection,
+  listAgentDocs,
+  PLAN_SLUG,
+  setMarkdownSection,
+  writeAgentDoc,
+} from './agent-docs'
+import { ensurePlanFromCompose, syncPlanAfterDawChange } from './agent-plan-eval'
 
 const ZOOM_MIN = 0.15
 const ZOOM_MAX = 256
@@ -79,6 +105,8 @@ export function buildAgentSystemPrompt(state: DAWState, userText = '', mode: Age
 
   return [
     context,
+    '',
+    formatDocsForPrompt(state.project?.id || 'default'),
     '',
     '## Pistas (ids para acciones)',
     tracks || '  (ninguna)',
@@ -146,11 +174,21 @@ export function buildAgentSystemPrompt(state: DAWState, userText = '', mode: Age
     '- plugin.bypass { trackId, pluginInstanceId, bypass }',
     '- plugin.duplicate { trackId, pluginInstanceId }',
     '- plugin.replace { trackId, pluginInstanceId, plugin: {...} }',
-    '- plugin.setParameter { trackId, pluginInstanceId, parameterId, normalizedValue }',
+    '- plugin.setParameter { trackId, pluginInstanceId, parameterId, normalizedValue 0..1, delta? }',
+    '- plugin.listParameters { trackId, pluginInstanceId? }  ← descubre knobs REALES del VST (IEditController). Obligatoria antes de tocar un plugin.',
+    '- plugin.searchParameters { trackId, query, pluginInstanceId? }  ← "brightness", "cutoff", "sustain", "attack"…',
+    '- plugin.getParameter { trackId, pluginInstanceId, parameterId }',
+    '- midi.setVelocity { pistaId, clipId, velocity? | relativeFactor?, noteIds? }',
+    '- midi.setCC { pistaId, clipId, cc, puntos:[{tiempo,valor:0..1}] }  ← CC64 = sustain',
+    '- midi.setPitchBend { pistaId, clipId, puntos:[{tiempo,valor:-1..1}] }',
+    '- midi.humanize | midi.transpose | midi.quantize | midi.makeStaccato | midi.makeLegato { pistaId, clipId, ... }',
     '- fxChain.copy | fxChain.paste { trackId, plugins? }',
     '- fxChain.loadPreset { trackId, presetId, nombre, plugins:[...] }',
+    docsPromptActions(),
     '',
-    'MIDI: cada nota necesita velocidad propia. Rasgueo = strum. Batería = articulacion drums (C1 bombo, D1 caja, no escalas). Bajo = articulacion bass. Elige VST del catálogo por rol; si no lo conoces, plugin.lookup.',
+    'MIDI: cada nota necesita velocidad propia (1-127). Sustain de piano/pad = midi.setCC cc:64. Al Stop/Pause el host envía panic (CC64=0 + all notes off).',
+    'VST: NUNCA simules la GUI. Usa plugin.listParameters / searchParameters y setParameter con ParamID del host. Si el nombre es opaco (P47) no inventes que es cutoff.',
+    'Si preguntan qué puede hacer un plugin, lista sus parámetros reales y elige el más cercano a la intención (brillo→cutoff, cola→release/reverb).',
   ].join('\n')
 }
 
@@ -158,6 +196,8 @@ export function buildAgentSystemPrompt(state: DAWState, userText = '', mode: Age
 export function stripActionsBlock(text: string): string {
   return text
     .replace(ACTIONS_RE, '')
+    .replace(/<<<DOC[\s\S]*?DOC>>>/gi, '')
+    .replace(/<<<DOC[\s\S]*$/gi, '')
     .replace(/<<<PLAN[\s\S]*PLAN>>>/gi, '')
     .replace(/<<<ACTIONS[\s\S]*$/gi, '')
     .replace(/<<<PLAN[\s\S]*$/gi, '')
@@ -253,6 +293,10 @@ export function fallbackActionsFromUserIntent(
     if (nombre) {
       actions.push({ type: 'plugin.lookup', payload: { nombre } })
     }
+  }
+
+  if (/evalu[aá](r|cion)?\s*(el )?plan|plan\.md.*(vs|contra|evalu)|compara(r)? (el )?plan/i.test(lower)) {
+    actions.push({ type: 'doc.evaluate', payload: {} })
   }
 
   if (wantsFullProject(userText)) {
@@ -421,11 +465,59 @@ function payloadOf(action: DawAction): Record<string, unknown> {
   return (action.payload ?? {}) as Record<string, unknown>
 }
 
+function pluginsOnTrack(state: DAWState, trackId: string): { trackId: string; plugins: PluginInfo[] } {
+  if (trackId === 'master' || trackId === '__master__') {
+    return { trackId: 'master', plugins: state.project.master.plugins ?? [] }
+  }
+  const t = state.project.tracks.find((x) => x.id === trackId)
+  return { trackId, plugins: t?.plugins ?? [] }
+}
+
+async function collectLiveParameters(
+  trackId: string,
+  pluginInstanceId: string | undefined,
+  state: DAWState,
+) {
+  const { plugins } = pluginsOnTrack(state, trackId)
+  const targets = pluginInstanceId ? plugins.filter((p) => p.id === pluginInstanceId) : plugins
+  const bundles: Array<{
+    pluginInstanceId: string
+    name: string
+    slotId: string
+    parameters: ReturnType<typeof enrichParameter>[]
+    summary: string
+  }> = []
+  for (const pl of targets) {
+    const path = extractVst3Path(pl.descripcion ?? '')
+    const hostId = trackId === 'master' || trackId === '__master__' ? 'master' : trackId
+    const slotId = slotIdForTrackPlugin(hostId, pl.id)
+    if (path) {
+      await ensureTrackVstPlugin(hostId, pl)
+    }
+    const raw = path ? await listSlotParameters(slotId) : []
+    const parameters = raw.length
+      ? raw.map((p) => enrichParameter(p, pl.id, slotId))
+      : []
+    bundles.push({
+      pluginInstanceId: pl.id,
+      name: pl.nombre,
+      slotId,
+      parameters,
+      summary: parameters.length
+        ? summarizeParametersForAi(parameters)
+        : 'Sin catálogo VST3 (plugin no cargado o builtin sin IEditController).',
+    })
+  }
+  return bundles
+}
+
 export async function executeDawActions(
   tienda: TiendaDAW,
   actions: DawAction[],
 ): Promise<ActionResult[]> {
   const results: ActionResult[] = []
+  const st = tienda.obtenerEstado()
+  bindAgentDocsDisk(st.project?.id || 'default', st.project?.ruta)
 
   for (const action of actions) {
     const p = payloadOf(action)
@@ -641,6 +733,7 @@ export async function executeDawActions(
           } else {
             plan = planFromPrompt(promptText, bpm, p.nombre ? String(p.nombre) : undefined)
           }
+          ensurePlanFromCompose(st0.project.id, plan)
           if (p.aplicar !== true) {
             results.push({
               type: action.type,
@@ -923,12 +1016,82 @@ export async function executeDawActions(
           })
           break
         }
+        case 'plugin.listParameters': {
+          const trackId = String(p.trackId ?? p.pistaId ?? '')
+          if (!trackId) {
+            results.push({ type: action.type, success: false, message: 'Falta trackId' })
+            break
+          }
+          const bundles = await collectLiveParameters(
+            trackId,
+            p.pluginInstanceId ? String(p.pluginInstanceId) : undefined,
+            tienda.obtenerEstado(),
+          )
+          results.push({
+            type: action.type,
+            success: true,
+            message: bundles.map((b) => `«${b.name}»: ${b.summary}`).join('\n') || 'Sin plugins en la pista',
+            data: bundles,
+          })
+          break
+        }
+        case 'plugin.searchParameters': {
+          const trackId = String(p.trackId ?? p.pistaId ?? '')
+          const query = String(p.query ?? p.q ?? '')
+          if (!trackId || !query) {
+            results.push({ type: action.type, success: false, message: 'Falta trackId o query' })
+            break
+          }
+          const bundles = await collectLiveParameters(
+            trackId,
+            p.pluginInstanceId ? String(p.pluginInstanceId) : undefined,
+            tienda.obtenerEstado(),
+          )
+          const hits = bundles.flatMap((b) =>
+            searchParameters(b.parameters, query).map((param) => ({
+              ...param,
+              plugin: b.name,
+            })),
+          )
+          results.push({
+            type: action.type,
+            success: true,
+            message: hits.length
+              ? hits
+                  .slice(0, 12)
+                  .map(
+                    (h) =>
+                      `${h.plugin} · ${h.name} id=${h.parameterId} = ${h.displayValue || h.normalizedValue.toFixed(3)}`,
+                  )
+                  .join('\n')
+              : `Ningún parámetro coincide con «${query}». Usa plugin.listParameters; no inventes IDs.`,
+            data: hits,
+          })
+          break
+        }
+        case 'plugin.getParameter': {
+          const trackId = String(p.trackId ?? p.pistaId ?? '')
+          const pluginInstanceId = String(p.pluginInstanceId ?? '')
+          const parameterId = String(p.parameterId ?? p.paramId ?? '')
+          const bundles = await collectLiveParameters(trackId, pluginInstanceId, tienda.obtenerEstado())
+          const hit = bundles
+            .flatMap((b) => b.parameters)
+            .find((x) => x.parameterId === parameterId || x.name === parameterId)
+          results.push({
+            type: action.type,
+            success: !!hit,
+            message: hit
+              ? `${hit.name} = ${hit.displayValue || hit.normalizedValue.toFixed(3)}`
+              : 'Parámetro no encontrado',
+            data: hit,
+          })
+          break
+        }
         case 'plugin.remove':
         case 'plugin.move':
         case 'plugin.bypass':
         case 'plugin.duplicate':
         case 'plugin.replace':
-        case 'plugin.setParameter':
         case 'fxChain.copy':
         case 'fxChain.paste':
         case 'fxChain.loadPreset':
@@ -939,6 +1102,137 @@ export async function executeDawActions(
             success: r.success,
             message: r.success ? `OK ${action.type}` : r.error?.message ?? `Error ${action.type}`,
             data: r.result,
+          })
+          break
+        }
+        case 'plugin.setParameter': {
+          const trackId = String(p.trackId ?? p.pistaId ?? '')
+          const pluginInstanceId = String(p.pluginInstanceId ?? '')
+          let normalized = p.normalizedValue != null ? Number(p.normalizedValue) : NaN
+          if (p.delta != null && Number.isFinite(Number(p.delta))) {
+            const bundles = await collectLiveParameters(trackId, pluginInstanceId, tienda.obtenerEstado())
+            const parameterId = String(p.parameterId ?? '')
+            const cur =
+              bundles
+                .flatMap((b) => b.parameters)
+                .find((x) => x.parameterId === parameterId || x.name === parameterId)?.normalizedValue ?? 0
+            normalized = Math.max(0, Math.min(1, cur + Number(p.delta)))
+          }
+          if (!Number.isFinite(normalized)) {
+            results.push({ type: action.type, success: false, message: 'Falta normalizedValue o delta' })
+            break
+          }
+          const r = await tienda.executor.execute('plugin.setParameter', {
+            trackId,
+            pluginInstanceId,
+            parameterId: String(p.parameterId ?? ''),
+            normalizedValue: normalized,
+            name: typeof p.name === 'string' ? p.name : undefined,
+          })
+          if (r.success) {
+            const slotId = slotIdForTrackPlugin(trackId === 'master' ? 'master' : trackId, pluginInstanceId)
+            void setSlotParameter(slotId, String(p.parameterId ?? ''), normalized)
+          }
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success
+              ? `Parámetro ${String(p.parameterId)} → ${normalized.toFixed(3)}`
+              : r.error?.message ?? 'Error plugin.setParameter',
+            data: r.result,
+          })
+          break
+        }
+        case 'midi.transpose':
+        case 'midi.quantize':
+        case 'midi.humanize':
+        case 'midi.setVelocity':
+        case 'midi.deleteNotes':
+        case 'midi.createNotes':
+        case 'midi.makeStaccato':
+        case 'midi.makeLegato':
+        case 'midi.repeatPattern':
+        case 'midi.reverse':
+        case 'midi.invert':
+        case 'midi.timeStretch':
+        case 'midi.constrainScale':
+        case 'midi.generatePattern':
+        case 'midi.applyGroove':
+        case 'midi.setCC':
+        case 'midi.setPitchBend': {
+          const r = await tienda.executor.execute(action.type, p)
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success ? `OK ${action.type}` : r.error?.message ?? `Error ${action.type}`,
+            data: r.result,
+          })
+          break
+        }
+        case 'doc.list': {
+          const docs = listAgentDocs(tienda.obtenerEstado().project.id)
+          results.push({
+            type: action.type,
+            success: true,
+            message: docs.map((d) => d.slug).join(', ') || 'sin docs',
+            data: docs.map((d) => ({ slug: d.slug, title: d.title, updatedAt: d.updatedAt })),
+          })
+          break
+        }
+        case 'doc.read': {
+          const slug = String(p.slug ?? PLAN_SLUG)
+          const doc = getAgentDoc(tienda.obtenerEstado().project.id, slug)
+          results.push({
+            type: action.type,
+            success: Boolean(doc),
+            message: doc ? doc.content.slice(0, 6000) : `No existe ${slug}`,
+            data: doc,
+          })
+          break
+        }
+        case 'doc.create':
+        case 'doc.write': {
+          const slug = String(p.slug ?? PLAN_SLUG)
+          const content = String(p.content ?? p.markdown ?? '')
+          if (!content.trim()) {
+            results.push({ type: action.type, success: false, message: 'Falta content' })
+            break
+          }
+          const projectId = tienda.obtenerEstado().project.id
+          const doc =
+            action.type === 'doc.create'
+              ? createAgentDoc(projectId, slug, content, 'ai')
+              : writeAgentDoc(projectId, slug, content, { origin: 'ai' })
+          results.push({ type: action.type, success: true, message: `Documento ${doc.slug}`, data: { slug: doc.slug } })
+          break
+        }
+        case 'doc.append': {
+          const projectId = tienda.obtenerEstado().project.id
+          const slug = String(p.slug ?? PLAN_SLUG)
+          const chunk = String(p.markdown ?? p.content ?? '')
+          const section = p.section ? String(p.section) : ''
+          const prev = getAgentDoc(projectId, slug)
+          let next = prev?.content ?? `# ${slug.replace(/\.md$/i, '')}\n`
+          if (section) {
+            const cur = getMarkdownSection(next, section)
+            next = setMarkdownSection(next, section, [cur, chunk].filter(Boolean).join('\n\n'))
+          } else {
+            next = `${next.trimEnd()}\n\n${chunk}\n`
+          }
+          const doc = writeAgentDoc(projectId, slug, next, { origin: 'ai' })
+          results.push({ type: action.type, success: true, message: `Actualizado ${doc.slug}`, data: { slug: doc.slug } })
+          break
+        }
+        case 'doc.evaluate': {
+          const stEval = tienda.obtenerEstado()
+          const ev = syncPlanAfterDawChange(stEval.project.id, stEval)
+          results.push({
+            type: action.type,
+            success: Boolean(ev),
+            message: ev?.summary ?? 'No hay plan.md que evaluar. Añade tareas `- [ ]` en Por implementar.',
+            data: ev
+              ? { planned: ev.planned, done: ev.done, missing: ev.missing, extraTracks: ev.extraTracks }
+              : undefined,
           })
           break
         }

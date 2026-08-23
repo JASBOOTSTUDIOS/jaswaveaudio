@@ -71,21 +71,25 @@ export function modePromptBlock(mode: AgentMode): string {
       '<<<PLAN',
       '{"nombre","bpm","tonalidad","minutos","pensamiento","pistas":[{"nombre","rol","pluginNombre","articulacion","notasUso"}]}',
       'PLAN>>>',
-      'El cliente mostrará una vista previa. El usuario aplicará el plan cuando quiera.',
+      'El cliente mostrará una vista previa y guardará/actualizará plan.md (editable por el usuario).',
+      'También puedes emitir <<<DOC plan.md ... DOC>>>. No pises la sección «Notas del usuario».',
     ].join('\n')
   }
   if (mode === 'think') {
     return [
       '## Modo: PENSAMIENTO PROFUNDO',
       'Eres ingeniero de sonido y arreglista. Razona género, instrumentación, rango MIDI de CADA VST (no asumas piano), velocidades, densidad y forma.',
-      'Si el usuario pide un proyecto completo: primero PLAN (<<<PLAN ... PLAN>>>), luego si debes ejecutar usa daw.composeProject { aplicar:true, ... }.',
+      'Si el usuario pide un proyecto completo: primero PLAN en plan.md (<<<DOC plan.md o <<<PLAN), luego si debes ejecutar usa daw.composeProject { aplicar:true, ... }.',
+      'Después de ejecutar, el cliente te pedirá UN turno de revisión: intención vs por implementar vs lo implementado. Actualiza ## Evaluación con tu juicio (no solo checkboxes).',
       'Si un VST no es piano/guitarra (batería, orquesta, keyswitches, kits), consulta el mapa de notas del catálogo / plugin.lookup.',
       'Puedes emitir plugin.lookup { nombre } antes de escribir MIDI para ese instrumento.',
     ].join('\n')
   }
   return [
     '## Modo: CREACIÓN',
-    'Ejecuta en el DAW. Si es un clip suelto: daw.generateMidiSong con pistaId y aplicar:true.',
+    'Ejecuta en el DAW. Si el plan.md existe, síguelo (el usuario puede haberlo editado).',
+    'Si es un clip suelto: daw.generateMidiSong con pistaId y aplicar:true.',
     'Si es un proyecto / varias pistas: daw.composeProject { aplicar:true, pistas:[...] } y carga el VST del catálogo por pista.',
+    'Al terminar, el cliente evalúa el DAW vs plan.md y te pide un turno de revisión. Actualiza Evaluación (juicio) e Implementado. Puedes usar doc.evaluate o <<<DOC plan.md.',
   ].join('\n')
 }

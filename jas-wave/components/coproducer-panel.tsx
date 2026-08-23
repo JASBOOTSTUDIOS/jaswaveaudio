@@ -26,6 +26,7 @@ import {
   fallbackActionsFromUserIntent,
   executeDawActions,
   formatActionResultsForUser,
+  type ActionResult,
 } from '@/src/lib/ai-daw-agent'
 import { MidiGenerationPreview, type MidiPreviewData } from '@/components/midi-generation-preview'
 import { ProjectPlanPreview } from '@/components/project-plan-preview'
@@ -59,9 +60,54 @@ import {
 } from '@/src/lib/ai-chat-store'
 import { JasWaveLogo } from '@/components/brand'
 import { ChatMarkdown } from '@/components/chat-markdown'
+import type { DAWState } from '../../shared/src/types/state'
+import { applyMarkdownDocsFromModel, bindAgentDocsDisk } from '@/src/lib/agent-docs'
+import { ensurePlanFromCompose, syncPlanAfterDawChange, type PlanEvaluation } from '@/src/lib/agent-plan-eval'
+import { buildHarnessReviewMessage, harnessReviewNeeded } from '@/src/lib/agent-harness'
+import { requestOpenTool } from '@/src/workspace/types'
 
 function newMsgId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+function finishAgentTurn(
+  projectId: string,
+  state: DAWState,
+  results: ActionResult[],
+  modelText?: string,
+  opts?: { preferModelEval?: boolean },
+): { extra: string; evaluation: PlanEvaluation | null; mutated: boolean } {
+  bindAgentDocsDisk(projectId, state.project?.ruta)
+  const planHit = results.find(
+    (r) => r.type === 'daw.composeProject' && (r.data as { kind?: string } | undefined)?.kind === 'projectPlan',
+  )
+  if (planHit?.data) {
+    ensurePlanFromCompose(projectId, planHit.data as import('@/src/lib/project-plan').ProjectPlanData)
+  }
+  const skipSync = new Set(['doc.list', 'doc.read', 'doc.evaluate'])
+  const mutated = results.some((r) => r.success && !skipSync.has(r.type))
+  let extra = ''
+  let evaluation: PlanEvaluation | null = null
+  const applyDocs = () => {
+    const written = modelText ? applyMarkdownDocsFromModel(projectId, modelText) : []
+    if (written.length) extra = [extra, `Docs: ${written.join(', ')}`].filter(Boolean).join('\n')
+    return written
+  }
+  if (opts?.preferModelEval) {
+    if (mutated) {
+      evaluation = syncPlanAfterDawChange(projectId, state)
+      if (evaluation?.summary) extra = [extra, evaluation.summary].filter(Boolean).join('\n')
+    }
+    applyDocs()
+  } else {
+    applyDocs()
+    if (mutated) {
+      evaluation = syncPlanAfterDawChange(projectId, state)
+      if (evaluation?.summary) extra = [extra, evaluation.summary].filter(Boolean).join('\n')
+    }
+  }
+  if (extra || planHit || evaluation) requestOpenTool('docs', { zone: 'left' })
+  return { extra, evaluation, mutated }
 }
 
 export function CoProducerPanel() {
@@ -223,7 +269,8 @@ export function CoProducerPanel() {
       const local = preferLocal ? answerLocalReadQuery(state, userText) : null
       let accumulated = local ?? ''
       let actionsSummary = ''
-    let lastResults: import('@/src/lib/ai-daw-agent').ActionResult[] = []
+      let lastResults: ActionResult[] = []
+      let modelRaw = ''
 
       if (!local) {
         if (!window.electron?.aiChat) {
@@ -276,6 +323,7 @@ export function CoProducerPanel() {
 
             if (result.success && result.content?.trim()) {
               const raw = result.content
+              modelRaw = raw
               let actions = parseActionsFromText(raw)
               const parsedPlan = parsePlanFromText(raw)
               if (parsedPlan && !actions.some((a) => a.type === 'daw.composeProject')) {
@@ -355,6 +403,75 @@ export function CoProducerPanel() {
         }
       }
 
+      const firstReview = finishAgentTurn(
+        dawStore.obtenerEstado().project.id,
+        dawStore.obtenerEstado(),
+        lastResults,
+        modelRaw,
+      )
+      if (firstReview.extra) {
+        actionsSummary = [actionsSummary, firstReview.extra].filter(Boolean).join('\n')
+      }
+
+      const canReview =
+        Boolean(window.electron?.aiChat) &&
+        !local &&
+        harnessReviewNeeded(lastResults) &&
+        (firstReview.mutated || Boolean(firstReview.evaluation))
+      if (canReview) {
+        try {
+          const cfg = loadAiSettings()
+          const provider = getActiveProvider(cfg)
+          const afterState = dawStore.obtenerEstado()
+          const reviewUser = buildHarnessReviewMessage({
+            userText,
+            evalSummary: firstReview.evaluation?.summary || firstReview.extra,
+            actionsSummary,
+            projectId: afterState.project.id,
+            evaluation: firstReview.evaluation,
+          })
+          const reviewResult = await window.electron.aiChat(
+            toAiChatPayload(
+              provider,
+              [
+                { role: 'system', content: buildAgentSystemPrompt(afterState, userText, 'think') },
+                { role: 'user', content: reviewUser },
+              ],
+              { temperature: Math.max(cfg.temperature, 0.4), maxTokens: Math.min(cfg.maxTokens, 8192) },
+            ),
+          )
+          if (reviewResult.success && reviewResult.content?.trim()) {
+            const reviewRaw = reviewResult.content
+            const reviewActions = parseActionsFromText(reviewRaw)
+            let reviewResults: ActionResult[] = []
+            if (reviewActions.length) {
+              reviewResults = await executeDawActions(dawStore, reviewActions)
+              lastResults = [...lastResults, ...reviewResults]
+            }
+            const second = finishAgentTurn(
+              dawStore.obtenerEstado().project.id,
+              dawStore.obtenerEstado(),
+              reviewResults,
+              reviewRaw,
+              { preferModelEval: true },
+            )
+            const reviewText = stripActionsBlock(reviewRaw)
+            if (reviewText.trim()) {
+              accumulated = [accumulated, reviewText].filter(Boolean).join('\n\n')
+            }
+            if (reviewResults.length) {
+              actionsSummary = [actionsSummary, formatActionResultsForUser(reviewResults), second.extra]
+                .filter(Boolean)
+                .join('\n')
+            } else if (second.extra) {
+              actionsSummary = [actionsSummary, second.extra].filter(Boolean).join('\n')
+            }
+          }
+        } catch {
+          /* la revisión es best-effort; el primer turno ya aplicó cambios */
+        }
+      }
+
       const midiPreview = (() => {
         const hit = lastResults.find(
           (r) =>
@@ -430,7 +547,12 @@ export function CoProducerPanel() {
           if (/crea|midi|piano|proyecto|plan/i.test(userText)) {
             const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
             const results = await executeDawActions(dawStore, forced)
-            const summary = formatActionResultsForUser(results)
+            const firstReview = finishAgentTurn(
+              dawStore.obtenerEstado().project.id,
+              dawStore.obtenerEstado(),
+              results,
+            )
+            const summary = [formatActionResultsForUser(results), firstReview.extra].filter(Boolean).join('\n')
             const midiPreview = (() => {
               const hit = results.find(
                 (r) =>

@@ -2,6 +2,7 @@ export type DockZone = 'left' | 'center' | 'right' | 'bottom'
 
 export type ToolId =
   | 'coproducer'
+  | 'docs'
   | 'arrange'
   | 'mixer'
   | 'library'
@@ -28,6 +29,13 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     id: 'coproducer',
     title: 'Asistente Jas',
     description: 'Asistente JasWave',
+    defaultZone: 'left',
+    singleton: true,
+  },
+  docs: {
+    id: 'docs',
+    title: 'Plan / Docs',
+    description: 'plan.md y documentos Markdown editables',
     defaultZone: 'left',
     singleton: true,
   },
@@ -119,7 +127,7 @@ export type WorkspaceLayout = {
 
 export const DEFAULT_WORKSPACE: WorkspaceLayout = {
   zones: {
-    left: ['coproducer', 'library', 'instruments'],
+    left: ['coproducer', 'docs', 'library', 'instruments'],
     center: ['arrange'],
     right: ['track-detail', 'fx-chain', 'plugin-editor', 'meters', 'routing', 'settings'],
     bottom: ['mixer', 'piano-roll'],

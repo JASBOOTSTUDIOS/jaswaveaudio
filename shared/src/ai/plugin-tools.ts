@@ -99,7 +99,7 @@ export function registrarPluginTools(registry: ToolRegistry, getState: GetState)
     ['plugin.bypass', 'Activa/desactiva bypass'],
     ['plugin.duplicate', 'Duplica una instancia'],
     ['plugin.replace', 'Reemplaza un plugin en la misma posición'],
-    ['plugin.setParameter', 'Actualiza un parámetro lógico'],
+    ['plugin.setParameter', 'Cambia un parámetro VST3 (valor normalizado 0..1)'],
   ] as const) {
     try {
       registry.register(pluginWrite(type, description), viaCommand(type))

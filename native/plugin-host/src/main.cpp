@@ -1136,10 +1136,81 @@ static void handleLine(const std::string& line) {
   }
   if (type == "allNotesOff") {
     std::string slotId = getStringField(line, "slotId");
+    std::lock_guard<std::mutex> lock(gSlotsMutex);
+    if (slotId.empty()) {
+      for (auto& [id, slot] : gSlots) {
+        if (slot) slot->allNotesOff();
+      }
+    } else {
+      auto* slot = findSlotUnlocked(slotId);
+      if (slot) slot->allNotesOff();
+    }
+    return;
+  }
+  if (type == "midiCc") {
+    std::string slotId = getStringField(line, "slotId");
+    const int cc = static_cast<int>(getNumberField(line, "cc", 64));
+    const int value = static_cast<int>(getNumberField(line, "value", 0));
+    std::lock_guard<std::mutex> lock(gSlotsMutex);
+    auto* slot = findSlotUnlocked(slotId.empty() ? gActiveSlot : slotId);
+    if (slot) slot->midiCc(cc, value);
+    return;
+  }
+  if (type == "setTransport") {
+    const bool playing = getBoolField(line, "playing", false);
+    std::lock_guard<std::mutex> lock(gSlotsMutex);
+    for (auto& [id, slot] : gSlots) {
+      if (slot) slot->setPlaying(playing);
+    }
+    return;
+  }
+  if (type == "listParameters") {
+    std::string slotId = getStringField(line, "slotId");
     if (slotId.empty()) slotId = gActiveSlot;
+    const int maxCount = static_cast<int>(getNumberField(line, "maxCount", 400));
+    std::vector<Vst3ParamDesc> params;
+    {
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      auto* slot = findSlotUnlocked(slotId);
+      if (!slot) {
+        replyFail("PluginNotFound", "slot no cargado: " + slotId);
+        return;
+      }
+      params = slot->listParameters(maxCount);
+    }
+    std::ostringstream js;
+    js << "\"slotId\":\"" << jsonEscape(slotId) << "\",\"parameterCount\":" << params.size()
+       << ",\"parameters\":[";
+    for (size_t i = 0; i < params.size(); ++i) {
+      const auto& p = params[i];
+      if (i) js << ",";
+      js << "{\"id\":" << p.id << ",\"parameterId\":\"" << p.id << "\",\"name\":\""
+         << jsonEscape(p.name) << "\",\"shortName\":\"" << jsonEscape(p.shortName)
+         << "\",\"unit\":\"" << jsonEscape(p.unit) << "\",\"displayValue\":\""
+         << jsonEscape(p.display) << "\",\"normalizedValue\":" << p.normalized
+         << ",\"defaultNormalizedValue\":" << p.defaultNormalized << ",\"stepCount\":"
+         << p.stepCount << ",\"automatable\":" << (p.automatable ? "true" : "false")
+         << ",\"readOnly\":" << (p.readOnly ? "true" : "false") << ",\"hidden\":"
+         << (p.hidden ? "true" : "false") << ",\"bypass\":" << (p.bypass ? "true" : "false")
+         << ",\"programChange\":" << (p.programChange ? "true" : "false") << "}";
+    }
+    js << "]";
+    replyOk(js.str());
+    return;
+  }
+  if (type == "setParameter") {
+    std::string slotId = getStringField(line, "slotId");
+    if (slotId.empty()) slotId = gActiveSlot;
+    const uint32_t paramId = static_cast<uint32_t>(getNumberField(line, "paramId", 0));
+    const double value = getNumberField(line, "normalizedValue", 0);
     std::lock_guard<std::mutex> lock(gSlotsMutex);
     auto* slot = findSlotUnlocked(slotId);
-    if (slot) slot->allNotesOff();
+    if (!slot) {
+      replyFail("PluginNotFound", "slot no cargado: " + slotId);
+      return;
+    }
+    slot->setParameterNormalized(paramId, value);
+    replyOk("\"slotId\":\"" + jsonEscape(slotId) + "\",\"paramId\":" + std::to_string(paramId));
     return;
   }
   if (type == "openEditor") {

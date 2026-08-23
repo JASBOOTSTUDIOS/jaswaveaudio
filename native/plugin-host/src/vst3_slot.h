@@ -18,10 +18,28 @@
 #endif
 
 struct Vst3MidiEvent {
-  enum class Kind { NoteOn, NoteOff };
+  enum class Kind { NoteOn, NoteOff, ControlChange };
   Kind kind{};
   int16_t pitch{0};
   float velocity{0};
+  int16_t cc{0};
+  int16_t ccValue{0};
+};
+
+struct Vst3ParamDesc {
+  uint32_t id{0};
+  std::string name;
+  std::string shortName;
+  std::string unit;
+  std::string display;
+  double normalized{0};
+  double defaultNormalized{0};
+  int32_t stepCount{0};
+  bool automatable{true};
+  bool readOnly{false};
+  bool hidden{false};
+  bool bypass{false};
+  bool programChange{false};
 };
 
 class Vst3Slot {
@@ -39,7 +57,12 @@ public:
 
   void noteOn(int pitch, float velocity);
   void noteOff(int pitch);
+  void midiCc(int cc, int value);
+  /** Sustain off + all notes/sound off + noteOff 0-127. */
   void allNotesOff();
+  void setParameterNormalized(uint32_t paramId, double normalized);
+  std::vector<Vst3ParamDesc> listParameters(int maxCount = 400);
+  void setPlaying(bool playing);
 
   /** Procesa un bloque. Si inL/inR son null, entrada silenciosa (instrumento). */
   void process(const float* inL, const float* inR, float* outL, float* outR, int frames);

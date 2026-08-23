@@ -22,6 +22,7 @@
 #include "pluginterfaces/vst/ivstcomponent.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
 #include "pluginterfaces/vst/ivstevents.h"
+#include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "pluginterfaces/vst/ivstprocesscontext.h"
 #include "pluginterfaces/vst/vstspeaker.h"
 
@@ -106,6 +107,25 @@ void registerEmbedClass(HINSTANCE inst) {
   RegisterClassExW(&wc);
 }
 #endif
+
+std::string vstStringToUtf8(const String128 s) {
+  std::string out;
+  out.reserve(64);
+  for (int i = 0; i < 128 && s[i]; ++i) {
+    const uint32_t c = static_cast<uint16_t>(s[i]);
+    if (c < 0x80) {
+      out += static_cast<char>(c);
+    } else if (c < 0x800) {
+      out += static_cast<char>(0xC0 | (c >> 6));
+      out += static_cast<char>(0x80 | (c & 0x3F));
+    } else {
+      out += static_cast<char>(0xE0 | (c >> 12));
+      out += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+      out += static_cast<char>(0x80 | (c & 0x3F));
+    }
+  }
+  return out;
+}
 
 } // namespace
 
@@ -348,11 +368,84 @@ void Vst3Slot::noteOff(int pitch) {
   impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(pitch), 0.f});
 }
 
+void Vst3Slot::midiCc(int cc, int value) {
+  const int c = std::clamp(cc, 0, 127);
+  const int v = std::clamp(value, 0, 127);
+  {
+    std::lock_guard<std::mutex> lock(impl_->midiMutex);
+    impl_->midiQueue.push_back(
+        {Vst3MidiEvent::Kind::ControlChange, 0, 0.f, static_cast<int16_t>(c), static_cast<int16_t>(v)});
+  }
+  if (!impl_->controller) return;
+  FUnknownPtr<IMidiMapping> mapping(impl_->controller);
+  if (!mapping) return;
+  ParamID pid = 0;
+  if (mapping->getMidiControllerAssignment(0, 0, static_cast<CtrlNumber>(c), pid) == kResultOk) {
+    const ParamValue nv = v >= 127 ? 1.0 : (v <= 0 ? 0.0 : static_cast<ParamValue>(v) / 127.0);
+    impl_->controller->setParamNormalized(pid, nv);
+    std::lock_guard<std::mutex> lock(impl_->paramMutex);
+    impl_->paramQueue.push_back({pid, nv});
+  }
+}
+
 void Vst3Slot::allNotesOff() {
+  midiCc(64, 0);
+  midiCc(120, 0);
+  midiCc(123, 0);
   std::lock_guard<std::mutex> lock(impl_->midiMutex);
   for (int p = 0; p < 128; ++p) {
     impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(p), 0.f});
   }
+  setPlaying(false);
+}
+
+void Vst3Slot::setParameterNormalized(uint32_t paramId, double normalized) {
+  const ParamValue v = std::clamp(normalized, 0.0, 1.0);
+  const ParamID id = static_cast<ParamID>(paramId);
+  if (impl_->controller) {
+    impl_->controller->setParamNormalized(id, v);
+  }
+  std::lock_guard<std::mutex> lock(impl_->paramMutex);
+  impl_->paramQueue.push_back({id, v});
+}
+
+void Vst3Slot::setPlaying(bool playing) {
+  if (playing) {
+    impl_->processContext.state |= ProcessContext::kPlaying;
+  } else {
+    impl_->processContext.state &= ~static_cast<uint32>(ProcessContext::kPlaying);
+  }
+}
+
+std::vector<Vst3ParamDesc> Vst3Slot::listParameters(int maxCount) {
+  std::vector<Vst3ParamDesc> out;
+  if (!impl_->controller) return out;
+  const int32 n = impl_->controller->getParameterCount();
+  const int32 lim = std::min(n, maxCount > 0 ? static_cast<int32>(maxCount) : n);
+  out.reserve(static_cast<size_t>(std::max(0, lim)));
+  for (int32 i = 0; i < lim; ++i) {
+    ParameterInfo info{};
+    if (impl_->controller->getParameterInfo(i, info) != kResultOk) continue;
+    Vst3ParamDesc d;
+    d.id = static_cast<uint32_t>(info.id);
+    d.name = vstStringToUtf8(info.title);
+    d.shortName = vstStringToUtf8(info.shortTitle);
+    d.unit = vstStringToUtf8(info.units);
+    d.normalized = impl_->controller->getParamNormalized(info.id);
+    d.defaultNormalized = info.defaultNormalizedValue;
+    d.stepCount = info.stepCount;
+    d.automatable = (info.flags & ParameterInfo::kCanAutomate) != 0;
+    d.readOnly = (info.flags & ParameterInfo::kIsReadOnly) != 0;
+    d.hidden = (info.flags & ParameterInfo::kIsHidden) != 0;
+    d.bypass = (info.flags & ParameterInfo::kIsBypass) != 0;
+    d.programChange = (info.flags & ParameterInfo::kIsProgramChange) != 0;
+    String128 disp{};
+    if (impl_->controller->getParamStringByValue(info.id, d.normalized, disp) == kResultOk) {
+      d.display = vstStringToUtf8(disp);
+    }
+    out.push_back(std::move(d));
+  }
+  return out;
 }
 
 void Vst3Slot::setMix(float gain, float pan, bool muted) {
@@ -440,6 +533,12 @@ void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* o
           e.noteOn.length = 0;
           e.noteOn.tuning = 0;
           e.noteOn.noteId = ev.pitch;
+        } else if (ev.kind == Vst3MidiEvent::Kind::ControlChange) {
+          e.type = Event::kLegacyMIDICCOutEvent;
+          e.midiCCOut.channel = 0;
+          e.midiCCOut.controlNumber = static_cast<uint8>(ev.cc);
+          e.midiCCOut.value = static_cast<int8>(ev.ccValue);
+          e.midiCCOut.value2 = 0;
         } else {
           e.type = Event::kNoteOffEvent;
           e.noteOff.channel = 0;
