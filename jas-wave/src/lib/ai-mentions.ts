@@ -7,7 +7,14 @@ import { AGENT_MODE_META, type AgentMode } from './ai-modes'
 import { listAgentDocs } from './agent-docs'
 import { pluginRegistry } from './plugin/registry'
 
-export type MentionKind = 'mode' | 'action' | 'track' | 'clip' | 'plugin' | 'vst' | 'doc'
+export type MentionKind = 'mode' | 'action' | 'track' | 'clip' | 'plugin' | 'vst' | 'doc' | 'message'
+
+export type MentionableMessage = {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  actionsSummary?: string
+}
 
 export type Mentionable = {
   kind: MentionKind
@@ -16,6 +23,8 @@ export type Mentionable = {
   clipId?: string
   pluginInstanceId?: string
   pluginId?: string
+  messageId?: string
+  messageExcerpt?: string
   mode?: Exclude<AgentMode, 'auto'>
   label: string
   hint: string
@@ -23,6 +32,7 @@ export type Mentionable = {
 }
 
 export const MENTION_KIND_LABEL: Record<MentionKind, string> = {
+  message: 'Mensajes',
   mode: 'Modos',
   action: 'Acciones',
   track: 'Pistas',
@@ -30,6 +40,14 @@ export const MENTION_KIND_LABEL: Record<MentionKind, string> = {
   plugin: 'Plugins en el proyecto',
   vst: 'Catálogo VST',
   doc: 'Documentos',
+}
+
+export const MAX_CITED_MESSAGES = 5
+
+export function messagePreview(content: string, max = 42): string {
+  const one = content.replace(/\s+/g, ' ').trim()
+  if (!one) return '(vacío)'
+  return one.length > max ? `${one.slice(0, max - 1)}…` : one
 }
 
 function norm(s: string): string {
@@ -63,8 +81,28 @@ function staticMentions(): Mentionable[] {
   return [...modes, ...actions]
 }
 
-export function listMentionables(state: DAWState): Mentionable[] {
-  const out: Mentionable[] = [...staticMentions()]
+export function listMessageMentionables(messages: MentionableMessage[] = []): Mentionable[] {
+  const out: Mentionable[] = []
+  for (const m of [...messages].reverse()) {
+    const text = [m.content, m.actionsSummary].filter((p) => p?.trim()).join(' ')
+    if (!text.trim() || m.role === 'system') continue
+    const preview = messagePreview(m.content || m.actionsSummary || '')
+    out.push({
+      kind: 'message',
+      id: `msg:${m.id}`,
+      messageId: m.id,
+      messageExcerpt: [m.content.trim(), m.actionsSummary?.trim()].filter(Boolean).join('\n').slice(0, 1200),
+      label: preview,
+      hint: m.role === 'user' ? 'tú' : 'asistente',
+      insertText: `@msg:${m.id}`,
+    })
+    if (out.length >= 30) break
+  }
+  return out
+}
+
+export function listMentionables(state: DAWState, messages: MentionableMessage[] = []): Mentionable[] {
+  const out: Mentionable[] = [...listMessageMentionables(messages), ...staticMentions()]
   for (const t of state.project?.tracks ?? []) {
     out.push({
       kind: 'track',
@@ -133,12 +171,17 @@ function matchItem(query: string, item: Mentionable): boolean {
   if (!q) return true
   const label = norm(item.label)
   const hint = norm(item.hint)
-  return label === q || label.startsWith(q) || label.includes(q) || hint.includes(q)
+  const excerpt = norm(item.messageExcerpt ?? '')
+  return label === q || label.startsWith(q) || label.includes(q) || hint.includes(q) || (excerpt.length > 0 && excerpt.includes(q))
 }
 
 /** Resuelve @Nombre / @"Nombre con espacios" contra el proyecto. */
-export function resolveAtMentions(text: string, state: DAWState): Mentionable[] {
-  const items = listMentionables(state)
+export function resolveAtMentions(
+  text: string,
+  state: DAWState,
+  messages: MentionableMessage[] = [],
+): Mentionable[] {
+  const items = listMentionables(state, messages)
   const sorted = [...items].sort((a, b) => b.label.length - a.label.length)
   const found: Mentionable[] = []
   const seen = new Set<string>()
@@ -151,6 +194,18 @@ export function resolveAtMentions(text: string, state: DAWState): Mentionable[] 
       seen.add(hit.id)
       found.push(hit)
     }
+  }
+
+  const takeMessage = (id: string) => {
+    const hit = items.find((it) => it.kind === 'message' && it.messageId === id)
+    if (hit && !seen.has(hit.id)) {
+      seen.add(hit.id)
+      found.push(hit)
+    }
+  }
+
+  for (const m of text.matchAll(/@msg:([A-Za-z0-9._-]+)/g)) {
+    takeMessage(m[1] ?? '')
   }
 
   const quoted = [...text.matchAll(/@"([^"]+)"|@«([^»]+)»/g)]
@@ -167,7 +222,13 @@ export function resolveAtMentions(text: string, state: DAWState): Mentionable[] 
       continue
     }
     const rest = text.slice(i + 1)
+    if (rest.startsWith('msg:')) {
+      const id = rest.slice(4).match(/^[A-Za-z0-9._-]+/)
+      i += 1 + (id ? 4 + id[0].length : 4)
+      continue
+    }
     const hit = sorted.find((it) => {
+      if (it.kind === 'message') return false
       const lab = it.label
       if (!lab) return false
       const slice = rest.slice(0, lab.length)
@@ -210,7 +271,7 @@ export function filterMentionables(items: Mentionable[], query: string): Mention
 }
 
 export function groupMentionables(items: Mentionable[]): Array<{ kind: MentionKind; label: string; items: Mentionable[] }> {
-  const order: MentionKind[] = ['mode', 'action', 'doc', 'track', 'clip', 'plugin', 'vst']
+  const order: MentionKind[] = ['message', 'mode', 'action', 'doc', 'track', 'clip', 'plugin', 'vst']
   return order
     .map((kind) => ({
       kind,
@@ -230,7 +291,72 @@ export function formatMentionsForPrompt(mentions: Mentionable[]): string {
       if (m.kind === 'vst') return `- VST catálogo id=${m.pluginId} «${m.label}» (${m.hint})`
       if (m.kind === 'mode') return `- modo ${m.label}`
       if (m.kind === 'doc') return `- documento ${m.label} (markdown editable)`
+      if (m.kind === 'message') {
+        const excerpt = (m.messageExcerpt || m.label).replace(/\n/g, ' ').slice(0, 240)
+        return `- mensaje anterior (${m.hint}) «${m.label}»: ${excerpt}`
+      }
       return `- acción «${m.label}»`
     })
     .join('\n')
+}
+
+export function collectCitedMessages(
+  text: string,
+  chipIds: string[],
+  state: DAWState,
+  messages: MentionableMessage[],
+): MentionableMessage[] {
+  const fromAt = resolveAtMentions(text, state, messages)
+    .filter((m) => m.kind === 'message' && m.messageId)
+    .map((m) => m.messageId as string)
+  const ids = [...new Set([...chipIds, ...fromAt])].slice(-MAX_CITED_MESSAGES)
+  const byId = new Map(messages.map((m) => [m.id, m]))
+  return ids.map((id) => byId.get(id)).filter((m): m is MentionableMessage => Boolean(m))
+}
+
+/** Texto que ve el modelo: ancla citada + pedido actual. El hilo reciente se envía aparte. */
+export function formatUserTurnWithCitations(userText: string, cited: MentionableMessage[]): string {
+  if (!cited.length) return userText
+  const block = cited
+    .map((m) => {
+      const who = m.role === 'user' ? 'Tú' : 'Asistente'
+      const body = [m.content.trim(), m.actionsSummary?.trim()].filter(Boolean).join('\n')
+      return `> ${who}: ${body.slice(0, 1200)}`
+    })
+    .join('\n\n')
+  return [
+    'El usuario citó mensajes anteriores como ancla. Usa lo citado como contexto extra; NO descartes el hilo actual ni el pedido de abajo.',
+    '',
+    block,
+    '',
+    '## Pedido actual',
+    userText,
+  ].join('\n')
+}
+
+export function historyWithCitedPins(
+  history: MentionableMessage[],
+  cited: MentionableMessage[],
+  excludeIds: string | string[] = [],
+): Array<{ role: 'user' | 'assistant'; content: string }> {
+  const skip = new Set(Array.isArray(excludeIds) ? excludeIds : [excludeIds])
+  const window = history
+    .filter(
+      (m) =>
+        (m.role === 'user' || m.role === 'assistant') &&
+        m.content.trim() &&
+        !skip.has(m.id),
+    )
+    .slice(-12)
+  const inWindow = new Set(window.map((m) => m.id))
+  const pins = cited
+    .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content.trim() && !inWindow.has(m.id))
+    .map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: `[Mensaje citado]\n${m.content}`,
+    }))
+  return [
+    ...pins,
+    ...window.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+  ]
 }

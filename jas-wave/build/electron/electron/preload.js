@@ -58,7 +58,7 @@ contextBridge.exposeInMainWorld('electron', {
     pluginHostStatus: () => ipcRenderer.invoke('plugin-host-status'),
     pluginHostEnsure: () => ipcRenderer.invoke('plugin-host-ensure'),
     pluginHostSend: (cmd) => ipcRenderer.invoke('plugin-host-send', cmd),
-    pluginHostMidi: (cmd) => ipcRenderer.invoke('plugin-host-midi', cmd),
+    pluginHostMidi: (cmd) => ipcRenderer.send('plugin-host-midi', cmd),
     onPluginHostRestarted: (callback) => {
         const handler = () => callback();
         ipcRenderer.on('plugin-host-restarted', handler);

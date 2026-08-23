@@ -345,7 +345,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     clock.setBpm(BPM)
     clock.setTimeSignature(BEATS_PER_BAR)
     clock.setSampleRate(audioEngine.getSampleRate())
-    if (!satellite) clock.setTimelineSource(() => audioEngine.getTimelineSeconds())
+    if (!satellite) clock.setTimelineSource(() => audioEngine.getAudibleTimelineSeconds())
   }, [BPM, BEATS_PER_BAR, clock, satellite])
 
   const lastStoreSyncRef = useRef(0)
@@ -611,9 +611,12 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       }
       wasRecordingRef.current = true
       recStartBeatsRef.current = Math.max(0, positionMsRef.current / msPerBeatRef.current)
+      const armedAudio = armed.filter((t) => t.tipo !== 'midi' && t.tipo !== 'instrumento')
+      if (armedAudio.length === 0) return
       const monitor =
-        armed.find((t) => Boolean((t as { configuracion?: { monitorizarEntrada?: boolean } }).configuracion?.monitorizarEntrada))
-          ?.id ?? null
+        armedAudio.find((t) =>
+          Boolean((t as { configuracion?: { monitorizarEntrada?: boolean } }).configuracion?.monitorizarEntrada),
+        )?.id ?? null
       void audioEngine.startInputCapture(monitor).then((ok) => {
         if (!ok) {
           wasRecordingRef.current = false

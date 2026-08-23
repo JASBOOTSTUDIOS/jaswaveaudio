@@ -6,7 +6,14 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { fallbackActionsFromUserIntent } from './ai-daw-agent'
-import { filterMentionables, listMentionables, resolveAtMentions } from './ai-mentions'
+import {
+  collectCitedMessages,
+  filterMentionables,
+  formatUserTurnWithCitations,
+  historyWithCitedPins,
+  listMentionables,
+  resolveAtMentions,
+} from './ai-mentions'
 import { detectAgentMode, wantsFullProject } from './ai-modes'
 import {
   composeMidiFromBrief,
@@ -142,5 +149,35 @@ describe('modos y @', () => {
     assert.ok(all.some((m) => m.kind === 'mode' && m.label === 'Plan'))
     assert.ok(all.some((m) => m.kind === 'action'))
     assert.ok(all.some((m) => m.kind === 'track' && m.label === 'Piano Lead'))
+  })
+
+  it('cita un mensaje anterior sin perder el pedido actual', () => {
+    const st = miniState('t-midi')
+    const chat = [
+      { id: 'u1', role: 'user' as const, content: 'crea un bajo funk en F#' },
+      { id: 'a1', role: 'assistant' as const, content: 'Listo, puse el bajo en la pista.' },
+    ]
+    const hits = listMentionables(st, chat)
+    assert.ok(hits.some((m) => m.kind === 'message' && m.messageId === 'u1'))
+    const resolved = resolveAtMentions('cambia el groove @msg:u1', st, chat)
+    assert.ok(resolved.some((m) => m.kind === 'message' && m.messageId === 'u1'))
+    const cited = collectCitedMessages('sigue con eso', ['u1'], st, chat)
+    const packed = formatUserTurnWithCitations('ahora ponle más ghost notes', cited)
+    assert.match(packed, /bajo funk/)
+    assert.match(packed, /ahora ponle más ghost notes/)
+    const hist = historyWithCitedPins(
+      [
+        ...chat,
+        ...Array.from({ length: 20 }, (_, i) => ({
+          id: `x${i}`,
+          role: 'user' as const,
+          content: `turno ${i}`,
+        })),
+      ],
+      cited,
+      [],
+    )
+    assert.ok(hist.some((m) => m.content.includes('Mensaje citado') && m.content.includes('bajo funk')))
+    assert.ok(hist.some((m) => m.content === 'turno 19'))
   })
 })

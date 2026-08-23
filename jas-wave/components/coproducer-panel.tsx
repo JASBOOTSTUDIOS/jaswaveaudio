@@ -1,7 +1,12 @@
 import {
   ArrowUp,
+  Check,
+  Copy,
   Loader2,
+  Quote,
+  Square,
   User,
+  X,
   Zap,
   WifiOff,
   History,
@@ -33,10 +38,15 @@ import { ProjectPlanPreview } from '@/components/project-plan-preview'
 import { MusicBuildPreview } from '@/components/music-build-preview'
 import { AiModelPicker } from '@/components/ai-model-picker'
 import {
+  collectCitedMessages,
   filterMentionables,
+  formatUserTurnWithCitations,
   groupMentionables,
+  historyWithCitedPins,
   listMentionables,
+  MAX_CITED_MESSAGES,
   mentionDraftAtCaret,
+  messagePreview,
   type Mentionable,
 } from '@/src/lib/ai-mentions'
 import type { ProjectPlanData } from '@/src/lib/project-plan'
@@ -67,7 +77,13 @@ import { ChatMarkdown } from '@/components/chat-markdown'
 import type { DAWState } from '../../shared/src/types/state'
 import { applyMarkdownDocsFromModel, bindAgentDocsDisk } from '@/src/lib/agent-docs'
 import { ensurePlanFromCompose, syncPlanAfterDawChange, type PlanEvaluation } from '@/src/lib/agent-plan-eval'
-import { buildHarnessReviewMessage, harnessReviewNeeded } from '@/src/lib/agent-harness'
+import {
+  buildHarnessReviewMessage,
+  formatHarnessProgress,
+  formatHarnessStopLine,
+  harnessReviewNeeded,
+  runHarnessFollowups,
+} from '@/src/lib/agent-harness'
 import { requestOpenTool } from '@/src/workspace/types'
 
 function newMsgId(prefix: string): string {
@@ -141,21 +157,51 @@ export function CoProducerPanel() {
   const [mentionStart, setMentionStart] = useState(0)
   const [mentionIndex, setMentionIndex] = useState(0)
   const [agentMode, setAgentMode] = useState<AgentMode>(() => loadAgentMode())
+  const [harnessPhase, setHarnessPhase] = useState('')
+  const [copiedMsgId, setCopiedMsgId] = useState('')
+  const [citedIds, setCitedIds] = useState<string[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const dawStore = useDAW()
   const projectName = useDAWState((state) => state.project?.nombre || 'Nuevo Proyecto')
   const trackCount = useDAWState((state) => state.project?.tracks?.length ?? 0)
+  const messages = conversation.messages.filter((m) => m.role === 'user' || m.role === 'assistant')
+  const citedMessages = citedIds
+    .map((id) => messages.find((m) => m.id === id))
+    .filter((m): m is StoredChatMessage => Boolean(m))
   const mentionHits =
     mentionQuery != null
-      ? filterMentionables(listMentionables(dawStore.obtenerEstado()), mentionQuery)
+      ? filterMentionables(listMentionables(dawStore.obtenerEstado(), messages), mentionQuery)
       : []
   const mentionGroups = groupMentionables(mentionHits)
 
-  const messages = conversation.messages.filter((m) => m.role === 'user' || m.role === 'assistant')
+  const citeMessage = (msg: StoredChatMessage) => {
+    if (!msg.content?.trim() && !msg.actionsSummary?.trim()) return
+    setCitedIds((ids) => {
+      if (ids.includes(msg.id)) return ids
+      return [...ids, msg.id].slice(-MAX_CITED_MESSAGES)
+    })
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }
 
   const insertMention = (item: Mentionable) => {
+    if (item.kind === 'message' && item.messageId) {
+      const target = messages.find((m) => m.id === item.messageId)
+      if (target) citeMessage(target)
+      const el = inputRef.current
+      const caret = el?.selectionStart ?? inputMessage.length
+      const draft = mentionDraftAtCaret(inputMessage, caret)
+      if (draft) {
+        const next = `${inputMessage.slice(0, draft.start)}${inputMessage.slice(caret)}`
+        setInputMessage(next)
+      }
+      setMentionQuery(null)
+      requestAnimationFrame(() => el?.focus())
+      return
+    }
     if (item.kind === 'mode' && item.mode) {
       setAgentMode(item.mode)
       saveAgentMode(item.mode)
@@ -198,6 +244,12 @@ export function CoProducerPanel() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isGenerating])
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     const refresh = () => {
@@ -265,16 +317,47 @@ export function CoProducerPanel() {
     refreshHistoryList()
   }
 
+  const stopGeneration = () => {
+    abortRef.current?.abort()
+  }
+
+  const copyChatMessage = async (msg: StoredChatMessage) => {
+    const text = [msg.content, msg.actionsSummary].filter((p) => p?.trim()).join('\n\n')
+    if (!text.trim()) return
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      return
+    }
+    setCopiedMsgId(msg.id)
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    copiedTimerRef.current = setTimeout(() => {
+      setCopiedMsgId((id) => (id === msg.id ? '' : id))
+      copiedTimerRef.current = null
+    }, 1600)
+  }
+
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isGenerating) return
 
     const userText = inputMessage.trim()
+    const stateForCite = dawStore.obtenerEstado()
+    const cited = collectCitedMessages(userText, citedIds, stateForCite, messages)
     setInputMessage('')
+    setCitedIds([])
+    const ac = new AbortController()
+    abortRef.current = ac
+    setHarnessPhase('Trabajando en el DAW…')
 
     const userMsgId = newMsgId('user')
     const assistantMsgId = newMsgId('asst')
 
-    appendMessage(conversation.id, { id: userMsgId, role: 'user', content: userText })
+    appendMessage(conversation.id, {
+      id: userMsgId,
+      role: 'user',
+      content: userText,
+      citedMessageIds: cited.map((m) => m.id),
+    })
     appendMessage(conversation.id, { id: assistantMsgId, role: 'assistant', content: '' })
     const refreshed = getConversation(conversation.id)
     if (refreshed) setConversation(refreshed)
@@ -316,16 +399,14 @@ export function CoProducerPanel() {
         } else {
           const cfg = loadAiSettings()
           const provider = getActiveProvider(cfg)
-          const systemContext = buildAgentSystemPrompt(state, userText, agentMode)
+          const systemContext = buildAgentSystemPrompt(state, userText, agentMode, messages)
           const resolvedMode = detectAgentMode(userText, agentMode)
           const think = resolvedMode === 'think'
-          const prior = (refreshed?.messages ?? messages)
-            .filter((m) => m.content.trim().length > 0 && m.id !== assistantMsgId)
-            .slice(-12)
-            .map((m) => ({
-              role: m.role as 'user' | 'assistant',
-              content: m.content,
-            }))
+          const modelUser = formatUserTurnWithCitations(userText, cited)
+          const prior = historyWithCitedPins(refreshed?.messages ?? messages, cited, [
+            assistantMsgId,
+            userMsgId,
+          ])
 
           try {
             const result = await window.electron.aiChat(
@@ -334,7 +415,7 @@ export function CoProducerPanel() {
                 [
                   { role: 'system', content: systemContext },
                   ...prior,
-                  { role: 'user', content: userText },
+                  { role: 'user', content: modelUser },
                 ],
                 { temperature: think ? Math.max(cfg.temperature, 0.55) : cfg.temperature, maxTokens: Math.max(cfg.maxTokens, think ? 16384 : 8192) },
               ),
@@ -451,25 +532,85 @@ export function CoProducerPanel() {
       const canReview =
         Boolean(window.electron?.aiChat) &&
         !local &&
+        !ac.signal.aborted &&
         harnessReviewNeeded(lastResults) &&
         (firstReview.mutated || Boolean(firstReview.evaluation))
       if (canReview) {
         try {
           const cfg = loadAiSettings()
           const provider = getActiveProvider(cfg)
+          const chatOnce = async (userContent: string) => {
+            if (ac.signal.aborted) return { success: false as const, content: '' }
+            const r = await window.electron!.aiChat!(
+              toAiChatPayload(
+                provider,
+                [
+                  { role: 'system', content: buildAgentSystemPrompt(dawStore.obtenerEstado(), userText, 'think', messages) },
+                  { role: 'user', content: userContent },
+                ],
+                { temperature: Math.max(cfg.temperature, 0.35), maxTokens: Math.min(cfg.maxTokens, 8192) },
+              ),
+            )
+            return { success: !!r.success, content: r.content }
+          }
+
+          setHarnessPhase('Inspeccionando el DAW…')
+          const follow = await runHarnessFollowups({
+            userText,
+            initialResults: lastResults,
+            evaluation: firstReview.evaluation,
+            actionsSummary,
+            projectId: dawStore.obtenerEstado().project.id,
+            abort: ac.signal,
+            chat: chatOnce,
+            parseActions: parseActionsFromText,
+            execute: (actions) => executeDawActions(dawStore, actions),
+            getState: () => dawStore.obtenerEstado(),
+            afterTurn: (turnResults, raw) => {
+              const step = finishAgentTurn(
+                dawStore.obtenerEstado().project.id,
+                dawStore.obtenerEstado(),
+                turnResults,
+                raw,
+                { preferModelEval: true },
+              )
+              return step.evaluation ?? firstReview.evaluation
+            },
+            formatResults: formatActionResultsForUser,
+            onProgress: ({ turn, maxTurns, report }) => {
+              setHarnessPhase(formatHarnessProgress(turn, maxTurns, report))
+            },
+          })
+          lastResults = follow.results
+          actionsSummary = follow.actionsSummary
+          if (follow.text.trim()) {
+            accumulated = [accumulated, follow.text].filter(Boolean).join('\n\n')
+          }
+          const leftover = follow.lastReport.errors.map((e) => e.message)
+          if (follow.turns.length > 0 || follow.stoppedReason !== 'healthy') {
+            actionsSummary = [
+              actionsSummary,
+              formatHarnessStopLine(follow.stoppedReason, follow.turns.length, leftover),
+            ]
+              .filter(Boolean)
+              .join('\n')
+          }
+
+          if (!ac.signal.aborted && follow.stoppedReason !== 'aborted') {
           const afterState = dawStore.obtenerEstado()
+          setHarnessPhase('Revisión vs plan.md…')
           const reviewUser = buildHarnessReviewMessage({
             userText,
-            evalSummary: firstReview.evaluation?.summary || firstReview.extra,
+            evalSummary: follow.evaluation?.summary || firstReview.evaluation?.summary || firstReview.extra,
             actionsSummary,
             projectId: afterState.project.id,
-            evaluation: firstReview.evaluation,
+            evaluation: follow.evaluation ?? firstReview.evaluation,
           })
           const reviewResult = await window.electron.aiChat(
             toAiChatPayload(
               provider,
               [
-                { role: 'system', content: buildAgentSystemPrompt(afterState, userText, 'think') },
+                { role: 'system', content: buildAgentSystemPrompt(afterState, userText, 'think', messages) },
                 { role: 'user', content: reviewUser },
               ],
               { temperature: Math.max(cfg.temperature, 0.4), maxTokens: Math.min(cfg.maxTokens, 8192) },
@@ -501,6 +642,7 @@ export function CoProducerPanel() {
             } else if (second.extra) {
               actionsSummary = [actionsSummary, second.extra].filter(Boolean).join('\n')
             }
+          }
           }
         } catch {
           /* la revisión es best-effort; el primer turno ya aplicó cambios */
@@ -556,6 +698,8 @@ export function CoProducerPanel() {
       if (after) setConversation(after)
       setStatusDetail(message)
     } finally {
+      abortRef.current = null
+      setHarnessPhase('')
       setIsGenerating(false)
     }
   }
@@ -775,6 +919,12 @@ export function CoProducerPanel() {
           {statusDetail}
         </div>
       ) : null}
+      {isGenerating && harnessPhase ? (
+        <div className="flex items-center gap-2 border-b border-border bg-accent-amber/10 px-3 py-1.5 text-[11px] text-accent-amber">
+          <Loader2 className="size-3 shrink-0 animate-spin" />
+          <span className="min-w-0 truncate">{harnessPhase}</span>
+        </div>
+      ) : null}
 
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
         {messages.length === 0 ? (
@@ -802,10 +952,15 @@ export function CoProducerPanel() {
             </div>
           </div>
         ) : (
-          messages.map((msg: StoredChatMessage) => (
+          messages.map((msg: StoredChatMessage) => {
+            const canCopy = Boolean(msg.content?.trim() || msg.actionsSummary?.trim())
+            const copied = copiedMsgId === msg.id
+            return (
             <div
               key={msg.id}
-              className={`flex gap-2 text-[13px] ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              className={`group flex gap-2 text-[13px] ${msg.role === 'user' ? 'justify-end' : 'justify-start'} ${
+                citedIds.includes(msg.id) ? 'rounded-md ring-1 ring-accent-amber/60' : ''
+              }`}
             >
               {msg.role === 'assistant' && (
                 <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-panel-raised ring-1 ring-border">
@@ -813,7 +968,12 @@ export function CoProducerPanel() {
                 </div>
               )}
               <div
-                className={`max-w-[85%] rounded-lg px-3 py-2 leading-relaxed ${
+                className={`flex max-w-[85%] min-w-0 flex-col gap-0.5 ${
+                  msg.role === 'user' ? 'items-end' : 'items-start'
+                }`}
+              >
+              <div
+                className={`rounded-lg px-3 py-2 leading-relaxed ${
                   msg.role === 'user'
                     ? 'rounded-br-none bg-accent text-accent-foreground'
                     : 'rounded-bl-none border border-border bg-panel-raised text-foreground'
@@ -823,8 +983,27 @@ export function CoProducerPanel() {
                   <ChatMarkdown text={msg.content} />
                 ) : isGenerating && msg.role === 'assistant' ? (
                   <span className="flex items-center gap-1.5 text-muted-foreground">
-                    <Loader2 className="size-3.5 animate-spin" /> Trabajando en el DAW…
+                    <Loader2 className="size-3.5 animate-spin" /> {harnessPhase || 'Trabajando en el DAW…'}
                   </span>
+                ) : null}
+                {msg.citedMessageIds?.length ? (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {msg.citedMessageIds.map((id) => {
+                      const src = messages.find((m) => m.id === id)
+                      return (
+                        <span
+                          key={id}
+                          className={`rounded px-1.5 py-0.5 text-[10px] ${
+                            msg.role === 'user'
+                              ? 'bg-background/15 text-accent-foreground/80'
+                              : 'bg-muted text-muted-foreground'
+                          }`}
+                        >
+                          {src ? messagePreview(src.content, 28) : 'mensaje citado'}
+                        </span>
+                      )
+                    })}
+                  </div>
                 ) : null}
                 {msg.actionsSummary ? (
                   <div className="mt-2 border-t border-border/60 pt-2 text-[11px] text-emerald-400/90">
@@ -850,18 +1029,70 @@ export function CoProducerPanel() {
                   />
                 ) : null}
               </div>
+              {canCopy ? (
+                <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  title={copied ? 'Copiado' : 'Copiar mensaje'}
+                  aria-label={copied ? 'Mensaje copiado' : 'Copiar mensaje'}
+                  onClick={() => void copyChatMessage(msg)}
+                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-panel-raised hover:text-foreground"
+                >
+                  {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+                  {copied ? 'Copiado' : 'Copiar'}
+                </button>
+                <button
+                  type="button"
+                  title="Citar este mensaje (el hilo actual se conserva)"
+                  aria-label="Citar mensaje"
+                  onClick={() => citeMessage(msg)}
+                  className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] hover:bg-panel-raised hover:text-foreground ${
+                    citedIds.includes(msg.id) ? 'text-accent-amber' : 'text-muted-foreground'
+                  }`}
+                >
+                  <Quote className="size-3" />
+                  Citar
+                </button>
+                </div>
+              ) : null}
+              </div>
               {msg.role === 'user' && (
                 <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
                   <User className="size-3.5" />
                 </div>
               )}
             </div>
-          ))
+            )
+          })
         )}
         <div ref={messagesEndRef} />
       </div>
 
       <div className="relative border-t border-border p-3">
+        {citedMessages.length > 0 ? (
+          <div className="mb-2 flex flex-wrap gap-1">
+            {citedMessages.map((m) => (
+              <span
+                key={m.id}
+                className="flex max-w-full items-center gap-1 rounded-full border border-accent-amber/40 bg-accent-amber/10 px-2 py-0.5 text-[10px] text-accent-amber"
+              >
+                <Quote className="size-2.5 shrink-0" />
+                <span className="truncate">
+                  {m.role === 'user' ? 'Tú' : 'Jas'}: {messagePreview(m.content, 36)}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Quitar cita"
+                  title="Quitar cita"
+                  onClick={() => setCitedIds((ids) => ids.filter((id) => id !== m.id))}
+                  className="rounded-full p-0.5 hover:bg-accent-amber/20"
+                >
+                  <X className="size-2.5" />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         {mentionQuery != null ? (
           <div className="absolute inset-x-3 bottom-full z-20 mb-1 max-h-64 overflow-y-auto rounded-md border border-border bg-panel-raised shadow-lg">
             {mentionHits.length === 0 ? (
@@ -888,7 +1119,9 @@ export function CoProducerPanel() {
                         }`}
                       >
                         <span className="truncate text-foreground">
-                          {item.kind === 'action' || item.kind === 'mode' ? item.label : `@${item.label}`}
+                          {item.kind === 'action' || item.kind === 'mode' || item.kind === 'message'
+                            ? item.label
+                            : `@${item.label}`}
                         </span>
                         <span className="max-w-[45%] shrink-0 truncate text-[10px] text-muted-foreground">
                           {item.hint}
@@ -915,7 +1148,10 @@ export function CoProducerPanel() {
             onChange={(e) => onInputChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
             onKeyUp={(e) => onInputChange(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
             onKeyDown={(e) => {
-              if (e.key === 'Escape') setMentionQuery(null)
+              if (e.key === 'Escape') {
+                setMentionQuery(null)
+                if (isGenerating) stopGeneration()
+              }
               if (mentionQuery != null && mentionHits.length > 0) {
                 if (e.key === 'ArrowDown') {
                   e.preventDefault()
@@ -933,17 +1169,29 @@ export function CoProducerPanel() {
               }
             }}
             disabled={isGenerating}
-            placeholder="Pide un clip, o escribe @ para pista / clip / plugin…"
+            placeholder="Pide un clip, o @ para pista / plugin / mensaje…"
             className="flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
           />
-          <button
-            type="submit"
-            disabled={!inputMessage.trim() || isGenerating}
-            aria-label="Enviar mensaje"
-            className="flex size-7 items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-90 disabled:opacity-40"
-          >
-            {isGenerating ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
-          </button>
+          {isGenerating ? (
+            <button
+              type="button"
+              onClick={stopGeneration}
+              aria-label="Detener agente"
+              title="Detener"
+              className="flex size-7 items-center justify-center rounded-full bg-destructive text-destructive-foreground transition-opacity hover:opacity-90"
+            >
+              <Square className="size-3 fill-current" />
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={!inputMessage.trim()}
+              aria-label="Enviar mensaje"
+              className="flex size-7 items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              <ArrowUp className="size-4" />
+            </button>
+          )}
         </form>
       </div>
     </aside>

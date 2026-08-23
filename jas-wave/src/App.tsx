@@ -29,6 +29,7 @@ import { WorkspaceMenu } from '@/components/workspace/workspace-menu'
 import { ImportProgressProvider } from '@/src/context/import-progress-context'
 import { PluginHostBootstrap } from '@/components/plugin-host-bootstrap'
 import { PluginHostLifecycle } from '@/components/plugin-host-lifecycle'
+import { MidiControllerHost } from '@/components/midi-controller-host'
 import { PanelLeft, PanelRight, PanelBottom } from 'lucide-react'
 import { JasWaveAppIcon, JasWaveLogo } from '@/components/brand'
 
@@ -261,6 +262,7 @@ export default function App() {
               <MultiWindowSync role="primary" />
               <PluginHostBootstrap />
               <PluginHostLifecycle />
+              <MidiControllerHost />
               <AppShell />
             </WorkspaceProvider>
           )}

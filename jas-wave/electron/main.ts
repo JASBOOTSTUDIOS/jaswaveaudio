@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, Menu, session } = require('electron')
 const path = require('path')
 const fs = require('fs/promises')
 const fsSync = require('fs')
@@ -148,6 +148,17 @@ app.whenReady().then(() => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.jaswave.app')
   }
+  session.defaultSession.setPermissionRequestHandler((_wc: unknown, permission: string, callback: (ok: boolean) => void) => {
+    callback(
+      permission === 'midi' ||
+        permission === 'media' ||
+        permission === 'audioCapture' ||
+        permission === 'mediaKeySystem',
+    )
+  })
+  session.defaultSession.setPermissionCheckHandler((_wc: unknown, permission: string) => {
+    return permission === 'midi' || permission === 'media' || permission === 'audioCapture'
+  })
   buildAppMenu()
   createWindow()
 })
@@ -494,8 +505,13 @@ ipcMain.handle('plugin-host-ensure', async (e: IpcMainInvokeEvent) => {
   const ok = await ensurePluginHostStarted()
   return { ok, ...getPluginHostStatus() }
 })
-ipcMain.handle('plugin-host-midi', async (_e: IpcMainInvokeEvent, cmd: unknown) => {
-  // Fire-and-forget: el host ya debe estar en marcha tras load. No bloquear Play.
+ipcMain.on('plugin-host-midi', (e: IpcMainInvokeEvent, cmd: unknown) => {
+  if (senderIsSatellite(e.sender)) return
+  const record = (cmd && typeof cmd === 'object' ? cmd : {}) as Record<string, unknown>
+  sendPluginHostMidi(record)
+})
+ipcMain.handle('plugin-host-midi', async (e: IpcMainInvokeEvent, cmd: unknown) => {
+  if (senderIsSatellite(e.sender)) return { ok: true }
   const record = (cmd && typeof cmd === 'object' ? cmd : {}) as Record<string, unknown>
   sendPluginHostMidi(record)
   return { ok: true }

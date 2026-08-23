@@ -364,24 +364,34 @@ void Vst3Slot::unload() {
   path_.clear();
 }
 
-void Vst3Slot::noteOn(int pitch, float velocity) {
+void Vst3Slot::noteOn(int pitch, float velocity, int delaySamples) {
   std::lock_guard<std::mutex> lock(impl_->midiMutex);
+  if (impl_->midiQueue.size() > 2048) {
+    impl_->midiQueue.erase(impl_->midiQueue.begin(), impl_->midiQueue.begin() + 512);
+  }
+  impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOn, static_cast<int16_t>(pitch),
+                              std::clamp(velocity, 0.f, 1.f), 0, 0, std::max(0, delaySamples)});
+}
+
+void Vst3Slot::noteOff(int pitch, int delaySamples) {
+  std::lock_guard<std::mutex> lock(impl_->midiMutex);
+  if (impl_->midiQueue.size() > 2048) {
+    impl_->midiQueue.erase(impl_->midiQueue.begin(), impl_->midiQueue.begin() + 512);
+  }
   impl_->midiQueue.push_back(
-      {Vst3MidiEvent::Kind::NoteOn, static_cast<int16_t>(pitch), std::clamp(velocity, 0.f, 1.f)});
+      {Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(pitch), 0.f, 0, 0, std::max(0, delaySamples)});
 }
 
-void Vst3Slot::noteOff(int pitch) {
-  std::lock_guard<std::mutex> lock(impl_->midiMutex);
-  impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(pitch), 0.f});
-}
-
-void Vst3Slot::midiCc(int cc, int value) {
+void Vst3Slot::midiCc(int cc, int value, int delaySamples) {
   const int c = std::clamp(cc, 0, 127);
   const int v = std::clamp(value, 0, 127);
   {
     std::lock_guard<std::mutex> lock(impl_->midiMutex);
-    impl_->midiQueue.push_back(
-        {Vst3MidiEvent::Kind::ControlChange, 0, 0.f, static_cast<int16_t>(c), static_cast<int16_t>(v)});
+    if (impl_->midiQueue.size() > 2048) {
+      impl_->midiQueue.erase(impl_->midiQueue.begin(), impl_->midiQueue.begin() + 512);
+    }
+    impl_->midiQueue.push_back({Vst3MidiEvent::Kind::ControlChange, 0, 0.f, static_cast<int16_t>(c),
+                                static_cast<int16_t>(v), std::max(0, delaySamples)});
   }
   if (!impl_->controller) return;
   FUnknownPtr<IMidiMapping> mapping(impl_->controller);
@@ -396,6 +406,10 @@ void Vst3Slot::midiCc(int cc, int value) {
 }
 
 void Vst3Slot::allNotesOff() {
+  {
+    std::lock_guard<std::mutex> lock(impl_->midiMutex);
+    impl_->midiQueue.clear();
+  }
   midiCc(64, 0);
   midiCc(120, 0);
   midiCc(123, 0);
@@ -496,9 +510,19 @@ void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* o
   std::fill(outR, outR + frames, 0.f);
 
   std::vector<Vst3MidiEvent> pendingMidi;
+  std::vector<Vst3MidiEvent> keepMidi;
   {
     std::lock_guard<std::mutex> lock(impl_->midiMutex);
-    pendingMidi.swap(impl_->midiQueue);
+    keepMidi.reserve(impl_->midiQueue.size());
+    for (auto& ev : impl_->midiQueue) {
+      if (ev.delaySamples >= frames) {
+        ev.delaySamples -= frames;
+        keepMidi.push_back(ev);
+      } else {
+        pendingMidi.push_back(ev);
+      }
+    }
+    impl_->midiQueue.swap(keepMidi);
   }
   std::vector<std::pair<ParamID, ParamValue>> pendingParams;
   {
@@ -507,7 +531,6 @@ void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* o
   }
 
   int offset = 0;
-  bool midiSent = false;
   while (offset < frames) {
     const int n = std::min(frames - offset, impl_->blockSize);
     if (static_cast<int>(impl_->outBusL.size()) < n) {
@@ -527,36 +550,35 @@ void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* o
     }
 
     impl_->eventList.clear();
-    if (!midiSent) {
-      for (const auto& ev : pendingMidi) {
-        Event e{};
-        e.busIndex = 0;
-        e.sampleOffset = 0;
-        if (ev.kind == Vst3MidiEvent::Kind::NoteOn) {
-          e.type = Event::kNoteOnEvent;
-          e.noteOn.channel = 0;
-          e.noteOn.pitch = ev.pitch;
-          e.noteOn.velocity = ev.velocity;
-          e.noteOn.length = 0;
-          e.noteOn.tuning = 0;
-          e.noteOn.noteId = ev.pitch;
-        } else if (ev.kind == Vst3MidiEvent::Kind::ControlChange) {
-          e.type = Event::kLegacyMIDICCOutEvent;
-          e.midiCCOut.channel = 0;
-          e.midiCCOut.controlNumber = static_cast<uint8>(ev.cc);
-          e.midiCCOut.value = static_cast<int8>(ev.ccValue);
-          e.midiCCOut.value2 = 0;
-        } else {
-          e.type = Event::kNoteOffEvent;
-          e.noteOff.channel = 0;
-          e.noteOff.pitch = ev.pitch;
-          e.noteOff.velocity = 0;
-          e.noteOff.tuning = 0;
-          e.noteOff.noteId = ev.pitch;
-        }
-        impl_->eventList.addEvent(e);
+    for (const auto& ev : pendingMidi) {
+      const int off = ev.delaySamples;
+      if (off < offset || off >= offset + n) continue;
+      Event e{};
+      e.busIndex = 0;
+      e.sampleOffset = off - offset;
+      if (ev.kind == Vst3MidiEvent::Kind::NoteOn) {
+        e.type = Event::kNoteOnEvent;
+        e.noteOn.channel = 0;
+        e.noteOn.pitch = ev.pitch;
+        e.noteOn.velocity = ev.velocity;
+        e.noteOn.length = 0;
+        e.noteOn.tuning = 0;
+        e.noteOn.noteId = ev.pitch;
+      } else if (ev.kind == Vst3MidiEvent::Kind::ControlChange) {
+        e.type = Event::kLegacyMIDICCOutEvent;
+        e.midiCCOut.channel = 0;
+        e.midiCCOut.controlNumber = static_cast<uint8>(ev.cc);
+        e.midiCCOut.value = static_cast<int8>(ev.ccValue);
+        e.midiCCOut.value2 = 0;
+      } else {
+        e.type = Event::kNoteOffEvent;
+        e.noteOff.channel = 0;
+        e.noteOff.pitch = ev.pitch;
+        e.noteOff.velocity = 0;
+        e.noteOff.tuning = 0;
+        e.noteOff.noteId = ev.pitch;
       }
-      midiSent = true;
+      impl_->eventList.addEvent(e);
     }
 
     impl_->inputParameterChanges.clearQueue();

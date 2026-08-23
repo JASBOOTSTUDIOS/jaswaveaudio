@@ -14,6 +14,9 @@
 bool jaswave_mix_bus_start(std::string& pipeName, std::string& err);
 void jaswave_mix_bus_stop();
 
+/** Antes de pull/add en el callback: lockstep entre stems vivos + PLL de relleno. */
+void jaswave_mix_bus_begin_block(uint32_t frames);
+
 /** Suma el bus DAW (metro / legacy) al buffer ya con cadenas de pista. Audio thread. */
 void jaswave_mix_bus_add(float* interleavedStereo, uint32_t frames);
 

@@ -19,7 +19,7 @@ import {
 } from './midi-song-generator'
 import { buildReadOnlyProjectContext } from './ai-read-context'
 import { getSelectedTrackId } from './selection-helpers'
-import { formatMentionsForPrompt, resolveAtMentions } from './ai-mentions'
+import { formatMentionsForPrompt, resolveAtMentions, type MentionableMessage } from './ai-mentions'
 import { pluginRegistry } from './plugin/registry'
 import { descriptorToPluginInfo } from './plugin/plugin-info-adapter'
 import {
@@ -78,7 +78,12 @@ export type ActionResult = {
 
 const ACTIONS_RE = /<<<ACTIONS\s*([\s\S]*?)\s*ACTIONS>>>/gi
 
-export function buildAgentSystemPrompt(state: DAWState, userText = '', mode: AgentMode = 'auto'): string {
+export function buildAgentSystemPrompt(
+  state: DAWState,
+  userText = '',
+  mode: AgentMode = 'auto',
+  chatMessages: MentionableMessage[] = [],
+): string {
   const context = buildReadOnlyProjectContext(state)
   const tracks = state.project.tracks
     .slice(0, 24)
@@ -86,7 +91,7 @@ export function buildAgentSystemPrompt(state: DAWState, userText = '', mode: Age
     .join('\n')
   const selectedId = getSelectedTrackId(state)
   const selected = selectedId ? state.project.tracks.find((t) => t.id === selectedId) : undefined
-  const mentions = userText ? resolveAtMentions(userText, state) : []
+  const mentions = userText ? resolveAtMentions(userText, state, chatMessages) : []
   const resolvedMode = detectAgentMode(userText, mode)
   const catalog = pluginRegistry.list()
   const instruments = catalog.filter((d) => d.isInstrument).slice(0, 80)
@@ -118,7 +123,7 @@ export function buildAgentSystemPrompt(state: DAWState, userText = '', mode: Age
     '',
     '## Menciones @ del mensaje',
     formatMentionsForPrompt(mentions),
-    'El usuario puede referirse a cualquier pista, clip o plugin con @nombre. Interpreta esas menciones como el objetivo de la acción (modificar, insertar, reemplazar).',
+    'El usuario puede referirse a pistas, clips, plugins o mensajes anteriores con @. Un mensaje citado es ancla extra: no descartes el hilo actual.',
     '',
     '## Catálogo de plugins (consulta esto para elegir instrumento/FX)',
     catalogBlock,
