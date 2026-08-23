@@ -1,8 +1,10 @@
 /**
  * AudioWorklet: interleave stereo y envía bloques al renderer (fuera del hilo de UI).
  * processorOptions.stemIndex: índice JWST (0..63 o 0xFFFF). -1 = mix crudo sin header.
+ * En Node (tests) no hay AudioWorkletProcessor: no registrar el processor.
  */
-class JaswavePcmTapProcessor extends AudioWorkletProcessor {
+const WorkletBase = typeof AudioWorkletProcessor === 'function' ? AudioWorkletProcessor : class {}
+class JaswavePcmTapProcessor extends WorkletBase {
   constructor(options) {
     super()
     this._l = new Float32Array(512)
@@ -50,4 +52,6 @@ class JaswavePcmTapProcessor extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor('jaswave-pcm-tap', JaswavePcmTapProcessor)
+if (typeof registerProcessor === 'function') {
+  registerProcessor('jaswave-pcm-tap', JaswavePcmTapProcessor)
+}

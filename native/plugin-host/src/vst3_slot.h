@@ -53,6 +53,8 @@ public:
   bool load(const std::string& path, std::string& err);
   bool prepare(double sampleRate, int32_t blockSize, std::string& err);
   bool reprepare(double sampleRate, int32_t blockSize, std::string& err);
+  /** setProcessing/setActive off sin descargar (cambio de driver). */
+  void suspendForAudioRestart();
   void unload();
 
   void noteOn(int pitch, float velocity);

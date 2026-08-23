@@ -46,11 +46,11 @@ function sectionsFromText(text: string, minutes: number, bpm: number): MusicSect
 }
 
 export function specFromPrompt(prompt: string, bpmHint?: number): MusicBuildSpec {
-  const brief = parseMidiBriefFromText(prompt, bpmHint ?? 120)
+  const bpmMatch = prompt.match(/\b(\d{2,3})\s*bpm\b/i) || prompt.match(/\bbpm\s*(?:a|de|=|:)?\s*(\d{2,3})/i)
+  const bpm = bpmHint || (bpmMatch ? Number(bpmMatch[1]) : undefined) || 120
+  const brief = parseMidiBriefFromText(prompt, bpm)
   const key = inferKeyFromText(prompt)
   const minutes = inferMinutesFromText(prompt, brief.minutes || 2)
-  const bpmMatch = prompt.match(/\b(\d{2,3})\s*bpm\b/i)
-  const bpm = bpmHint || brief.bpm || (bpmMatch ? Number(bpmMatch[1]) : 120)
   const drafts = draftArrangement(prompt, pluginRegistry.list())
   const degrees = inferProgressionFromText(prompt) ?? brief.degrees
   return {

@@ -62,6 +62,11 @@ contextBridge.exposeInMainWorld('electron', {
   pluginHostEnsure: () => ipcRenderer.invoke('plugin-host-ensure'),
   pluginHostSend: (cmd: unknown) => ipcRenderer.invoke('plugin-host-send', cmd),
   pluginHostMidi: (cmd: unknown) => ipcRenderer.invoke('plugin-host-midi', cmd),
+  onPluginHostRestarted: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('plugin-host-restarted', handler)
+    return () => ipcRenderer.removeListener('plugin-host-restarted', handler)
+  },
   pluginHostPushPcm: (samples: Float32Array | ArrayBuffer | Uint8Array) => {
     // Siempre Uint8Array: ArrayBuffer puro a veces no sobrevive el clone IPC de Electron.
     let u8: Uint8Array

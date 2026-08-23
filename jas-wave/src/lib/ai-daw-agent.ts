@@ -148,8 +148,10 @@ export function buildAgentSystemPrompt(state: DAWState, userText = '', mode: Age
     '- track.toggleMute|track.toggleSolo|track.toggleArm { trackId }',
     '- transport.toggle | transport.stop | transport.toggleLoop | transport.toggleMetronome | transport.toggleRecord',
     '- transport.seek { segundos }',
+    '- daw.musicBuild { aplicar, prompt, nombre?, bpm?, minutos? }',
+    '  ← Canción completa por fases (spec → marcadores → pistas → VST catálogo → MIDI validado → mix). No es createCompleteSong: orquesta track.*/midi.*/plugin.*/marker.*.',
     '- daw.composeProject { aplicar, nombre?, bpm?, tonalidad?, minutos?, pistas:[{ nombre, rol, pluginNombre?, pluginId?, articulacion? }] }',
-    '  ← Proyecto completo: crea pistas, carga VST del catálogo y genera MIDI con el mapa de notas de CADA instrumento (batería ≠ piano).',
+    '  ← Arreglo ya listado: crea pistas, carga VST del catálogo y genera MIDI con el mapa de notas de CADA instrumento (batería ≠ piano).',
     '- plugin.lookup { nombre }  ← manual + mapa MIDI (local y, si hace falta, internet)',
     '  ← El cliente genera CADA nota (pitch, inicio, duración, velocidad) a partir del brief. Tú decides el criterio musical; no dejes progresión/tonalidad vacías si el usuario las dijo.',
     '- midi.clip.create { pistaId, nombre?, inicio?, duracion?, notas:[{pitch,inicio,duracion,velocidad}] }  ← si ya tienes las notas',
@@ -301,7 +303,7 @@ export function fallbackActionsFromUserIntent(
 
   if (wantsFullProject(userText)) {
     actions.push({
-      type: 'daw.composeProject',
+      type: 'daw.musicBuild',
       payload: {
         prompt: userText,
         aplicar: resolved === 'create',
@@ -703,6 +705,32 @@ export async function executeDawActions(
             success: true,
             message: formatGuideForPrompt(guide),
             data: { kind: 'pluginGuide', ...guide },
+          })
+          break
+        }
+        case 'daw.musicBuild': {
+          const { executeMusicBuild, specToProjectPlan } = await import('./music-build')
+          const promptText = String(p.prompt ?? p.nombre ?? '')
+          const aplicar = p.aplicar === true || p.apply === true
+          const build = await executeMusicBuild(tienda, {
+            prompt: promptText,
+            aplicar,
+            bpm: p.bpm != null ? Number(p.bpm) : undefined,
+            nombre: p.nombre ? String(p.nombre) : undefined,
+            minutos: p.minutos != null ? Number(p.minutos) : undefined,
+          })
+          const plan = specToProjectPlan(build.spec, build.applied)
+          ensurePlanFromCompose(tienda.obtenerEstado().project.id, plan)
+          const stageLine = build.stages
+            .map((s) => `${s.status === 'ok' ? '✓' : s.status === 'fail' ? '✗' : s.status === 'running' ? '●' : ' '} ${s.label}`)
+            .join(' · ')
+          results.push({
+            type: action.type,
+            success: build.status !== 'failed',
+            message: aplicar
+              ? `Music Build «${build.spec.nombre}»: ${stageLine}`
+              : `Music Build planificado «${build.spec.nombre}»: ${build.spec.tracks.length} pistas · ${build.spec.sections.map((s) => s.name).join(' → ')}`,
+            data: build,
           })
           break
         }

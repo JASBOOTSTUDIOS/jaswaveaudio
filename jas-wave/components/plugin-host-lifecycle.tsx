@@ -10,6 +10,7 @@ import { isUndockWindow } from '@/lib/undock-window'
 import {
   syncLoadedSlotsWithProject,
   ensureProjectVstInstruments,
+  forgetHostPlugins,
 } from '@/src/lib/plugin/track-vst-runtime'
 
 export function PluginHostLifecycle() {
@@ -48,6 +49,30 @@ export function PluginHostLifecycle() {
     // signature es la SSOT; tracks se lee al disparar el timer
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, satellite])
+
+  const tracksRef = useRef(tracks)
+  const masterRef = useRef(masterPlugins)
+  tracksRef.current = tracks
+  masterRef.current = masterPlugins
+
+  useEffect(() => {
+    if (satellite) return
+    const off = window.electron?.onPluginHostRestarted?.(() => {
+      forgetHostPlugins()
+      const t = tracksRef.current
+      const m = masterRef.current
+      void (async () => {
+        await syncLoadedSlotsWithProject(t, m)
+        await ensureProjectVstInstruments(
+          t.map((tr) => ({ id: tr.id, plugins: tr.plugins })),
+          m,
+        )
+      })()
+    })
+    return () => {
+      off?.()
+    }
+  }, [satellite])
 
   return null
 }

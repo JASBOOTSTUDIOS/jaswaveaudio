@@ -131,13 +131,22 @@ export class WebAudioEngine {
     return typeof window !== 'undefined' && typeof window.electron?.pluginHostPushPcm === 'function'
   }
 
+  private pendingChromiumSink: string | { type: string } | undefined
+
   private createLiveContext(sampleRate: number): AudioContext {
     const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext
-    // Sin sinkId 'none': hace falta que el grafo procese para empujar stems al host.
-    const attempts: unknown[] = [
-      { latencyHint: 'playback', sampleRate },
-      { latencyHint: 'playback' },
-    ]
+    const sink = this.pendingChromiumSink
+    const attempts: unknown[] = sink
+      ? [
+          { latencyHint: 'playback', sampleRate, sinkId: sink },
+          { latencyHint: 'playback', sinkId: sink },
+          { latencyHint: 'playback', sampleRate },
+          { latencyHint: 'playback' },
+        ]
+      : [
+          { latencyHint: 'playback', sampleRate },
+          { latencyHint: 'playback' },
+        ]
     for (const opts of attempts) {
       try {
         return new AudioCtxClass(opts as AudioContextOptions)
@@ -424,16 +433,16 @@ export class WebAudioEngine {
       const raw = (await Promise.race([
         api.pluginHostSend({ type: 'ensureAudio' }),
         new Promise<null>((r) => setTimeout(() => r(null), 4000)),
-      ])) as { ok?: boolean; audio?: { sampleRate?: number } } | null
+      ])) as { ok?: boolean; audio?: { sampleRate?: number; backend?: string } } | null
       if (!raw || raw.ok === false) {
         this.setNativeOutput(false)
         return false
       }
       if (raw.audio?.sampleRate) this.setPreferredSampleRate(raw.audio.sampleRate)
+      this.pendingChromiumSink = await this.preferredChromiumSink(raw.audio?.backend)
+      if (this.audioCtx && raw.audio?.backend === 'asio') this.disposeLiveContext()
       this.ensureContext()
-      // No usar sinkId 'none': con WASAPI shared apaga el grafo en algunos Chromium
-      // y los ScriptProcessor/Worklet de stems dejan de emitir PCM → silencio total.
-      // El silentGain=0 ya evita doble salida por altavoces de Chrome.
+      await this.releaseInterfaceFromChromium(raw.audio?.backend)
       const installing =
         this.tapInstalling ??
         (this.tapInstalling = this.installPcmTap().finally(() => {
@@ -460,6 +469,57 @@ export class WebAudioEngine {
     } catch {
       this.setNativeOutput(false, true)
       return false
+    }
+  }
+
+  private async preferredChromiumSink(
+    backend?: string,
+  ): Promise<string | { type: string } | undefined> {
+    if (backend !== 'asio') return undefined
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const other = devices.find(
+        (d) =>
+          d.kind === 'audiooutput' &&
+          d.deviceId &&
+          d.deviceId !== 'default' &&
+          d.deviceId !== 'communications' &&
+          !/umc|behringer/i.test(d.label || ''),
+      )
+      if (other) return other.deviceId
+    } catch {
+      /* ignore */
+    }
+    return { type: 'none' }
+  }
+
+  private async releaseInterfaceFromChromium(backend?: string): Promise<void> {
+    if (backend !== 'asio') return
+    const ctx = this.audioCtx as
+      | (AudioContext & { setSinkId?: (id: string | { type: string }) => Promise<void> })
+      | null
+    if (!ctx?.setSinkId) return
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const other = devices.find(
+        (d) =>
+          d.kind === 'audiooutput' &&
+          d.deviceId &&
+          d.deviceId !== 'default' &&
+          d.deviceId !== 'communications' &&
+          !/umc|behringer/i.test(d.label || ''),
+      )
+      if (other) {
+        await ctx.setSinkId(other.deviceId)
+        return
+      }
+    } catch {
+      /* sin permiso de labels */
+    }
+    try {
+      await ctx.setSinkId({ type: 'none' })
+    } catch {
+      /* Chromium sin sink none: el grafo sigue; el host ASIO es el dueño de la UMC */
     }
   }
 

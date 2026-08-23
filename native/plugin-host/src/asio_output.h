@@ -7,6 +7,9 @@
 
 #ifdef _WIN32
 
+/** Re-afirma STA en este hilo si miniaudio/WASAPI dejó COM en MTA o sin apartment. */
+void jaswave_com_restore_sta();
+
 void jaswave_asio_set_sys_handle(void* hwnd);
 
 bool jaswave_asio_list_drivers(std::vector<JaswaveAudioDevice>& out);

@@ -21,6 +21,7 @@ import {
 import {
   ensureTrackVstInstrument,
   extractVst3Path,
+  getLastVstLoadError,
   slotIdForTrackPlugin,
 } from '@/src/lib/plugin/track-vst-runtime'
 import { requestOpenTool } from '@/src/workspace/types'
@@ -183,7 +184,8 @@ function VstNativeEditor({
       setMessage(
         ok
           ? 'Host listo. Reabrir abre la UI de ESTA instancia (preset = sonido). Teclas del panel → MIDI al VST.'
-          : 'Host no cargó este VST. La pista quedará muda hasta que el load confirme (Soft Pad no se usa de fallback).',
+          : getLastVstLoadError() ||
+            'Host no cargó este VST. Si tumbó el proceso (p.ej. BFD), queda aislado y el audio sigue en WASAPI.',
       )
     })()
     return () => {

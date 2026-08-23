@@ -82,6 +82,11 @@ const bySlot = new Map<string, LoadedPlugin>()
 const loadPromises = new Map<string, Promise<boolean>>()
 const runtimeListeners = new Set<() => void>()
 let runtimeGeneration = 0
+let lastVstLoadError = ''
+
+export function getLastVstLoadError(): string {
+  return lastVstLoadError
+}
 
 function emitRuntime() {
   runtimeGeneration += 1
@@ -105,6 +110,14 @@ export function isPluginAudioReady(trackId: string, pluginId: string): boolean {
 
 export function getLoadedInstrumentForTrack(trackId: string): LoadedPlugin | null {
   return byTrack.get(trackId) ?? null
+}
+
+export function forgetHostPlugins(): void {
+  bySlot.clear()
+  byTrack.clear()
+  loadPromises.clear()
+  lastVstLoadError = ''
+  emitRuntime()
 }
 
 export async function releaseSlot(slotId: string): Promise<void> {
@@ -149,6 +162,8 @@ export async function syncLoadedSlotsWithProject(
   }
 }
 
+let lastHostPid = 0
+
 export async function ensureTrackVstPlugin(
   trackId: string,
   plugin: PluginInfo,
@@ -157,6 +172,10 @@ export async function ensureTrackVstPlugin(
   if (!path) return false
   const slotId = slotIdForTrackPlugin(trackId, plugin.id)
   const instrument = isVstInstrumentPlugin(plugin, path)
+  const st = typeof window !== 'undefined' ? await window.electron?.pluginHostStatus?.() : undefined
+  const pid = typeof st?.nativePid === 'number' ? st.nativePid : 0
+  if (pid && lastHostPid && pid !== lastHostPid) forgetHostPlugins()
+  if (pid) lastHostPid = pid
   const existing = bySlot.get(slotId)
   if (existing?.path === path) {
     if (instrument) byTrack.set(trackId, existing)
@@ -175,6 +194,16 @@ export async function ensureTrackVstPlugin(
     try {
       if (!window.electron?.pluginHostEnsure || !window.electron.pluginHostSend) return false
       await window.electron.pluginHostEnsure()
+      const st = await window.electron.pluginHostStatus?.()
+      const pid = typeof st?.nativePid === 'number' ? st.nativePid : 0
+      if (pid && lastHostPid && pid !== lastHostPid) forgetHostPlugins()
+      if (pid) lastHostPid = pid
+      const audio = (await window.electron.pluginHostSend({ type: 'getAudioDevice' })) as {
+        audio?: { running?: boolean }
+      }
+      if (!audio?.audio?.running) {
+        await window.electron.pluginHostSend({ type: 'ensureAudio' })
+      }
       const raw = await window.electron.pluginHostSend({
         type: 'load',
         path,
@@ -190,8 +219,10 @@ export async function ensureTrackVstPlugin(
             ? String((raw as { message: unknown }).message)
             : 'load falló'
         console.error('[track-vst] load failed', path, msg)
+        lastVstLoadError = msg
         return false
       }
+      lastVstLoadError = ''
       const loaded: LoadedPlugin = { trackId, pluginId: plugin.id, path, slotId, instrument }
       bySlot.set(slotId, loaded)
       if (instrument) {
@@ -225,25 +256,23 @@ export async function ensureProjectVstInstruments(
   masterPlugins?: PluginInfo[],
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>()
-  await Promise.all([
-    ...tracks.map(async (t) => {
-      for (const p of t.plugins ?? []) {
-        if (p.bypass) continue
-        if (isBuiltinInstrument(p)) continue
-        const path = extractVst3Path(p.descripcion)
-        if (!path) continue
-        const ok = await ensureTrackVstPlugin(t.id, p)
-        if (ok && isVstInstrumentPlugin(p, path)) {
-          map.set(t.id, slotIdForTrackPlugin(t.id, p.id))
-        }
+  for (const t of tracks) {
+    for (const p of t.plugins ?? []) {
+      if (p.bypass) continue
+      if (isBuiltinInstrument(p)) continue
+      const path = extractVst3Path(p.descripcion)
+      if (!path) continue
+      const ok = await ensureTrackVstPlugin(t.id, p)
+      if (ok && isVstInstrumentPlugin(p, path)) {
+        map.set(t.id, slotIdForTrackPlugin(t.id, p.id))
       }
-    }),
-    ...(masterPlugins ?? []).map(async (p) => {
-      if (p.bypass || isBuiltinInstrument(p)) return
-      if (!extractVst3Path(p.descripcion)) return
-      await ensureTrackVstPlugin('master', p)
-    }),
-  ])
+    }
+  }
+  for (const p of masterPlugins ?? []) {
+    if (p.bypass || isBuiltinInstrument(p)) continue
+    if (!extractVst3Path(p.descripcion)) continue
+    await ensureTrackVstPlugin('master', p)
+  }
   return map
 }
 

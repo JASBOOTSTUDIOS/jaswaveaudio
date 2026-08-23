@@ -27,6 +27,7 @@ export type StoredChatMessage = {
     applied?: boolean
   }
   projectPlan?: import('./project-plan').ProjectPlanData
+  musicBuild?: import('./music-build/types').MusicBuildResult
 }
 
 export type ChatConversation = {
@@ -149,6 +150,7 @@ export function updateMessageContent(
   actionsSummary?: string,
   midiPreview?: StoredChatMessage['midiPreview'],
   projectPlan?: StoredChatMessage['projectPlan'],
+  musicBuild?: StoredChatMessage['musicBuild'],
 ): ChatConversation | null {
   const all = loadAll()
   const idx = all.findIndex((c) => c.id === conversationId)
@@ -164,6 +166,7 @@ export function updateMessageContent(
             ...(actionsSummary !== undefined ? { actionsSummary } : {}),
             ...(midiPreview !== undefined ? { midiPreview } : {}),
             ...(projectPlan !== undefined ? { projectPlan } : {}),
+            ...(musicBuild !== undefined ? { musicBuild } : {}),
           }
         : m,
     ),

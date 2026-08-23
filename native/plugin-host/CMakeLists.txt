@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(jaswave_plugin_host LANGUAGES CXX)
+project(jaswave_plugin_host LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,6 +28,7 @@ if(HAS_VST3_SDK)
     src/vst3_slot.cpp
     src/audio_output.cpp
     src/asio_output.cpp
+    src/asio_com.c
     src/mix_bus.cpp
     "${VST3_SDK_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp"
     "${VST3_SDK_DIR}/public.sdk/source/vst/hosting/module_win32.cpp"
@@ -40,7 +41,7 @@ if(HAS_VST3_SDK)
   )
   target_link_libraries(jaswave-plugin-host PRIVATE sdk_hosting)
   if(WIN32)
-    target_link_libraries(jaswave-plugin-host PRIVATE ole32 uuid)
+    target_link_libraries(jaswave-plugin-host PRIVATE ole32 oleaut32 uuid)
   endif()
   message(STATUS "jaswave-plugin-host: VST3 audio+editor (miniaudio)")
 else()

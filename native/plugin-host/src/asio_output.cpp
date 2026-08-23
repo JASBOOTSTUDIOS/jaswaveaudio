@@ -9,14 +9,20 @@
 #endif
 #include <windows.h>
 #include <objbase.h>
+#include <ole2.h>
 
 #include "asio_output.h"
+#include "asio_com.h"
 #include "audio_output.h"
+
+#include <unknwn.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -27,6 +33,9 @@
 typedef long ASIOBool;
 typedef long ASIOError;
 typedef double ASIOSampleRate;
+
+/* Steinberg ASIO 2.3: pack(4). Sin esto, ASIOTime/ASIOClockSource no coinciden en x64. */
+#pragma pack(push, 4)
 
 enum {
   ASIOFalse = 0,
@@ -107,6 +116,11 @@ struct ASIOCallbacks {
   ASIOTime* (*bufferSwitchTimeInfo)(ASIOTime* params, long doubleBufferIndex, ASIOBool directProcess);
 };
 
+#pragma pack(pop)
+
+static_assert(sizeof(ASIOBufferInfo) == 24, "ASIOBufferInfo must be 24 bytes on x64");
+static_assert(offsetof(ASIOBufferInfo, buffers) == 8, "ASIOBufferInfo.buffers offset");
+
 struct IASIO : public IUnknown {
   virtual ASIOBool init(void* sysHandle) = 0;
   virtual void getDriverName(char* name) = 0;
@@ -137,26 +151,57 @@ namespace {
 
 std::mutex gAsioMu;
 std::atomic<uintptr_t> gSysHwnd{0};
+HWND gAsioHwnd{nullptr};
 IASIO* gDriver{nullptr};
 std::atomic<bool> gRunning{false};
 std::atomic<int> gInCallback{0};
 uint32_t gSr{48000};
 uint32_t gBuf{512};
-long gSampleType{ASIOSTFloat32LSB};
+long gSampleType{ASIOSTInt32LSB};
 long gOutChannels{0};
+long gNumBufInfos{0};
 bool gNeedOutputReady{false};
 bool gBuffersCreated{false};
-ASIOBufferInfo gBufInfo[32]{};
+ASIOBufferInfo gBufInfo[64]{};
+long gChanType[64]{};
 ASIOCallbacks gCb{};
 std::string gDriverName;
 float gScratch[8192 * 2]{};
 float gAsioL[8192];
 float gAsioR[8192];
 
+HWND ensureAsioHostWindow() {
+  if (gAsioHwnd && IsWindow(gAsioHwnd)) return gAsioHwnd;
+  WNDCLASSEXW wc{};
+  wc.cbSize = sizeof(wc);
+  wc.lpfnWndProc = DefWindowProcW;
+  wc.hInstance = GetModuleHandleW(nullptr);
+  wc.lpszClassName = L"JasWaveAsioHost";
+  if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+    return nullptr;
+  }
+  gAsioHwnd = CreateWindowExW(WS_EX_NOACTIVATE, L"JasWaveAsioHost", L"JasWave ASIO",
+                              WS_OVERLAPPEDWINDOW, 0, 0, 8, 8, nullptr, nullptr, wc.hInstance,
+                              nullptr);
+  if (gAsioHwnd) ShowWindow(gAsioHwnd, SW_HIDE);
+  return gAsioHwnd;
+}
+
 bool isAsioWrapperName(const std::string& name) {
   std::string n = name;
   for (char& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   return n.find("fl studio") != std::string::npos || n.find("generic low latency") != std::string::npos;
+}
+
+const char* sampleTypeName(long type) {
+  switch (type) {
+    case ASIOSTInt16LSB: return "Int16LSB";
+    case ASIOSTInt24LSB: return "Int24LSB";
+    case ASIOSTInt32LSB: return "Int32LSB";
+    case ASIOSTInt32LSB24: return "Int32LSB24";
+    case ASIOSTFloat32LSB: return "Float32LSB";
+    default: return "other";
+  }
 }
 
 size_t asioSampleBytes(long type) {
@@ -249,11 +294,9 @@ void writeAsioChannel(void* dest, const float* src, int frames, long type, bool 
       }
       break;
     }
-    default: {
-      auto* d = static_cast<float*>(dest);
-      std::memcpy(d, src, static_cast<size_t>(frames) * sizeof(float));
+    default:
+      silenceAsioChannel(dest, frames, type);
       break;
-    }
   }
 }
 
@@ -282,16 +325,22 @@ long CALLBACK_asioMessage(long selector, long value, void* message, double* opt)
         case kAsioResyncRequest:
         case kAsioLatenciesChanged:
         case kAsioSupportsTimeInfo:
+        case kAsioSupportsTimeCode:
           return 1;
         default:
           return 0;
       }
     case kAsioEngineVersion:
       return 2;
+    case kAsioResetRequest:
+    case kAsioBufferSizeChange:
+    case kAsioResyncRequest:
+    case kAsioLatenciesChanged:
+      return 1;
     case kAsioSupportsTimeInfo:
       return 1;
     case kAsioSupportsTimeCode:
-      return 0;
+      return 1;
     default:
       return 0;
   }
@@ -301,36 +350,63 @@ void CALLBACK_sampleRateDidChange(ASIOSampleRate sRate) {
   if (sRate > 0) gSr = static_cast<uint32_t>(sRate);
 }
 
-ASIOTime* CALLBACK_bufferSwitchTimeInfo(ASIOTime* params, long doubleBufferIndex,
+ASIOTime* CALLBACK_bufferSwitchTimeInfo(ASIOTime* /*params*/, long doubleBufferIndex,
                                         ASIOBool directProcess) {
   CALLBACK_bufferSwitch(doubleBufferIndex, directProcess);
-  return params;
+  return nullptr;
+}
+
+void bufferSwitchBody(long index) {
+  const bool running = gRunning.load(std::memory_order_acquire);
+  const int frames = std::min(static_cast<int>(gBuf), 8192);
+  if (index < 0 || index > 1 || frames <= 0) return;
+  long outSeen = 0;
+  for (long i = 0; i < gNumBufInfos && i < 64; ++i) {
+    if (gBufInfo[i].isInput) continue;
+    void* dest = gBufInfo[i].buffers[index];
+    if (!dest) continue;
+    const long type = gChanType[i] ? gChanType[i] : gSampleType;
+    if (!running) {
+      silenceAsioChannel(dest, frames, type);
+      continue;
+    }
+    if (outSeen == 0) {
+      std::fill(gScratch, gScratch + frames * 2, 0.f);
+      if (gRenderProc) gRenderProc(gScratch, static_cast<uint32_t>(frames));
+      jaswave_audio_mix_test_tone(gScratch, static_cast<uint32_t>(frames), gSr ? gSr : 48000);
+      for (int s = 0; s < frames; ++s) {
+        gAsioL[s] = gScratch[s * 2];
+        gAsioR[s] = gScratch[s * 2 + 1];
+      }
+      writeAsioChannel(dest, gAsioL, frames, type, false);
+    } else if (outSeen == 1) {
+      writeAsioChannel(dest, gAsioR, frames, type, false);
+    } else {
+      silenceAsioChannel(dest, frames, type);
+    }
+    ++outSeen;
+  }
 }
 
 void CALLBACK_bufferSwitch(long index, ASIOBool /*directProcess*/) {
-  if (!gRunning.load(std::memory_order_acquire) || index < 0 || index > 1) return;
   gInCallback.fetch_add(1, std::memory_order_acq_rel);
-  const int frames = std::min(static_cast<int>(gBuf), 8192);
-  if (frames <= 0) {
-    gInCallback.fetch_sub(1, std::memory_order_acq_rel);
-    return;
+#if defined(_MSC_VER)
+  __try {
+    bufferSwitchBody(index);
+    if (gNeedOutputReady && gDriver) {
+      const int rc = jaswave_asio_seh_output_ready(gDriver);
+      if (rc != ASE_OK) gNeedOutputReady = false;
+    }
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    gNeedOutputReady = false;
   }
-  std::fill(gScratch, gScratch + frames * 2, 0.f);
-  if (gRenderProc) gRenderProc(gScratch, static_cast<uint32_t>(frames));
-  jaswave_audio_mix_test_tone(gScratch, static_cast<uint32_t>(frames), gSr ? gSr : 48000);
-  for (int i = 0; i < frames; ++i) {
-    gAsioL[i] = gScratch[i * 2];
-    gAsioR[i] = gScratch[i * 2 + 1];
+#else
+  bufferSwitchBody(index);
+  if (gNeedOutputReady && gDriver) {
+    const int rc = jaswave_asio_seh_output_ready(gDriver);
+    if (rc != ASE_OK) gNeedOutputReady = false;
   }
-  writeAsioChannel(gBufInfo[0].buffers[index], gAsioL, frames, gSampleType, false);
-  if (gOutChannels > 1 && gBufInfo[1].buffers[index] &&
-      gBufInfo[1].buffers[index] != gBufInfo[0].buffers[index]) {
-    writeAsioChannel(gBufInfo[1].buffers[index], gAsioR, frames, gSampleType, false);
-  }
-  for (long c = 2; c < gOutChannels && c < 32; ++c) {
-    silenceAsioChannel(gBufInfo[c].buffers[index], frames, gSampleType);
-  }
-  if (gNeedOutputReady && gDriver) gDriver->outputReady();
+#endif
   gInCallback.fetch_sub(1, std::memory_order_acq_rel);
 }
 
@@ -357,7 +433,7 @@ bool iequalsUtf8(const std::string& a, const std::string& b) {
   return true;
 }
 
-bool clsidHasInproc(const CLSID& clsid, REGSAM wow) {
+bool inprocServerPath(const CLSID& clsid, REGSAM wow, std::wstring& dll) {
   wchar_t guid[64]{};
   if (StringFromGUID2(clsid, guid, 64) <= 0) return false;
   const std::wstring path = std::wstring(L"SOFTWARE\\Classes\\CLSID\\") + guid + L"\\InprocServer32";
@@ -365,11 +441,87 @@ bool clsidHasInproc(const CLSID& clsid, REGSAM wow) {
   if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, path.c_str(), 0, KEY_READ | wow, &h) != ERROR_SUCCESS) {
     return false;
   }
-  wchar_t dll[MAX_PATH]{};
-  DWORD sz = sizeof(dll);
-  const LONG st = RegGetValueW(h, nullptr, nullptr, RRF_RT_REG_SZ, nullptr, dll, &sz);
+  wchar_t buf[MAX_PATH]{};
+  DWORD sz = sizeof(buf);
+  const LONG st = RegGetValueW(h, nullptr, nullptr, RRF_RT_REG_SZ, nullptr, buf, &sz);
   RegCloseKey(h);
-  return st == ERROR_SUCCESS && dll[0] != 0;
+  if (st != ERROR_SUCCESS || !buf[0]) return false;
+  dll = buf;
+  return true;
+}
+
+bool clsidHasInproc(const CLSID& clsid, REGSAM wow) {
+  std::wstring dll;
+  return inprocServerPath(clsid, wow, dll);
+}
+
+bool ensureStaApartment(std::string& err) {
+  jaswave_com_restore_sta();
+  APTTYPE apt = APTTYPE_MTA;
+  APTTYPEQUALIFIER qual = APTTYPEQUALIFIER_NONE;
+  const HRESULT aptHr = CoGetApartmentType(&apt, &qual);
+  if (FAILED(aptHr) || apt == APTTYPE_MTA) {
+    err =
+        "ASIO requiere un hilo STA (como REAPER/Cubase). No se pudo recuperar el apartment COM.";
+    return false;
+  }
+  return true;
+}
+
+IASIO* adoptIfAsio(IUnknown* unk, const char* via) {
+  if (!unk) return nullptr;
+  char name[64]{};
+  if (!jaswave_asio_probe_name(unk, name, 64)) {
+    unk->Release();
+    return nullptr;
+  }
+  std::cerr << "[jaswave-plugin-host] ASIO " << via << " «" << name << "»\n";
+  return reinterpret_cast<IASIO*>(unk);
+}
+
+IASIO* instantiateViaClassFactory(const CLSID& clsid, std::string& err) {
+  std::wstring dllPath;
+  if (!inprocServerPath(clsid, KEY_WOW64_64KEY, dllPath)) {
+    err = "El CLSID ASIO no tiene InprocServer32 x64.";
+    return nullptr;
+  }
+  HMODULE mod = LoadLibraryW(dllPath.c_str());
+  if (!mod) {
+    err = "LoadLibrary del driver ASIO falló.";
+    return nullptr;
+  }
+  static std::vector<HMODULE> kept;
+  kept.push_back(mod);
+
+  using DllGetClassObjectFn = HRESULT(STDAPICALLTYPE*)(REFCLSID, REFIID, LPVOID*);
+  auto pfn = reinterpret_cast<DllGetClassObjectFn>(GetProcAddress(mod, "DllGetClassObject"));
+  if (!pfn) {
+    err = "El DLL ASIO no exporta DllGetClassObject.";
+    return nullptr;
+  }
+  IClassFactory* factory = nullptr;
+  const HRESULT gco = pfn(clsid, IID_IClassFactory, reinterpret_cast<void**>(&factory));
+  if (FAILED(gco) || !factory) {
+    err = "DllGetClassObject falló (" + hresultHex(gco) + ").";
+    return nullptr;
+  }
+
+  IASIO* drv = nullptr;
+  int hr = jaswave_com_factory_create(factory, &clsid, reinterpret_cast<void**>(&drv));
+  if (hr == static_cast<int>(S_OK) && drv) {
+    factory->Release();
+    std::cerr << "[jaswave-plugin-host] ASIO class factory CLSID-as-IID ok\n";
+    return drv;
+  }
+
+  IUnknown* unk = nullptr;
+  hr = jaswave_com_factory_create(factory, &IID_IUnknown, reinterpret_cast<void**>(&unk));
+  factory->Release();
+  if (hr == static_cast<int>(S_OK) && unk) {
+    if (auto* asio = adoptIfAsio(unk, "class factory IUnknown")) return asio;
+  }
+  err = "CreateInstance del driver ASIO falló (" + hresultHex(static_cast<HRESULT>(hr)) + ").";
+  return nullptr;
 }
 
 bool readAsioClsid(HKEY sub, CLSID& clsid) {
@@ -478,18 +630,38 @@ bool findClsidForDriver(const std::string& driverName, CLSID& clsid, bool& only3
 }
 
 IASIO* instantiateAsio(const CLSID& clsid, std::string& err) {
-  // Steinberg: el IID del driver es el mismo GUID que el CLSID. Castear IUnknown→IASIO
-  // cuando CoCreateInstance(clsid) falla (E_NOINTERFACE) llama métodos en el vtable
-  // equivocado y termina en heap 0xC0000374.
+  if (!ensureStaApartment(err)) return nullptr;
+
+  APTTYPE apt = APTTYPE_STA;
+  APTTYPEQUALIFIER qual = APTTYPEQUALIFIER_NONE;
+  CoGetApartmentType(&apt, &qual);
+  std::cerr << "[jaswave-plugin-host] ASIO instantiate apt=" << static_cast<int>(apt) << "\n";
+
+  // Steinberg/JUCE: el IID es el CLSID. En STA eso suele bastar.
   IASIO* drv = nullptr;
-  HRESULT hr = CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, clsid,
-                                reinterpret_cast<void**>(&drv));
-  if (FAILED(hr) || !drv) {
-    err = "CoCreateInstance ASIO falló (" + hresultHex(hr) +
-          "). Usa el ASIO x64 de tu interfaz o WASAPI; no wrappers (FL Studio ASIO).";
-    return nullptr;
+  int hr = jaswave_com_create(&clsid, &clsid, reinterpret_cast<void**>(&drv));
+  if (hr == static_cast<int>(S_OK) && drv) {
+    std::cerr << "[jaswave-plugin-host] ASIO CoCreate CLSID-as-IID ok\n";
+    return drv;
   }
-  return drv;
+  std::cerr << "[jaswave-plugin-host] ASIO CoCreate CLSID-as-IID hr=" << hresultHex(static_cast<HRESULT>(hr))
+            << "\n";
+
+  // UMC y otros no implementan QueryInterface(CLSID). En STA, IUnknown + probe de
+  // getDriverName es el camino que usan hosts cuando COM devuelve E_NOINTERFACE.
+  IUnknown* unk = nullptr;
+  hr = jaswave_com_create(&clsid, &IID_IUnknown, reinterpret_cast<void**>(&unk));
+  if (hr == static_cast<int>(S_OK) && unk) {
+    if (auto* asio = adoptIfAsio(unk, "CoCreate IUnknown")) return asio;
+  }
+
+  std::string factoryErr;
+  drv = instantiateViaClassFactory(clsid, factoryErr);
+  if (drv) return drv;
+
+  err = "No se pudo instanciar el driver ASIO (" + hresultHex(static_cast<HRESULT>(hr)) +
+        "). Cierra Cubase/REAPER/FL si tienen el interfaz abierto, o usa WASAPI. " + factoryErr;
+  return nullptr;
 }
 
 IASIO* createDriver(const std::string& driverName, std::string& err) {
@@ -500,12 +672,28 @@ IASIO* createDriver(const std::string& driverName, std::string& err) {
 }
 
 HWND asioSysHandle() {
-  const auto p = reinterpret_cast<HWND>(gSysHwnd.load(std::memory_order_acquire));
-  if (p && IsWindow(p)) return p;
-  return GetDesktopWindow();
+  /* REAPER pasa un HWND del mismo proceso. Nunca el de Electron ni el desktop
+   * (otro PID): UMC ASIO hace subclass/SetWindowLong y corrompe el heap. */
+  HWND owned = ensureAsioHostWindow();
+  if (owned && IsWindow(owned)) return owned;
+  return nullptr;
 }
 
 }  // namespace
+
+void jaswave_com_restore_sta() {
+  APTTYPE apt = APTTYPE_STA;
+  APTTYPEQUALIFIER qual = APTTYPEQUALIFIER_NONE;
+  const HRESULT hr = CoGetApartmentType(&apt, &qual);
+  if (hr == CO_E_NOTINITIALIZED) {
+    OleInitialize(nullptr);
+    return;
+  }
+  if (SUCCEEDED(hr) && apt == APTTYPE_MTA) {
+    CoUninitialize();
+    OleInitialize(nullptr);
+  }
+}
 
 void jaswave_asio_set_sys_handle(void* hwnd) {
   gSysHwnd.store(reinterpret_cast<uintptr_t>(hwnd), std::memory_order_release);
@@ -531,6 +719,7 @@ void jaswave_asio_stop() {
   }
   gBuffersCreated = false;
   gOutChannels = 0;
+  gNumBufInfos = 0;
   gNeedOutputReady = false;
   gDriverName.clear();
 }
@@ -547,9 +736,20 @@ bool jaswave_asio_start(const std::string& driverName, uint32_t sampleRate, uint
   }
   IASIO* drv = createDriver(driverName, err);
   if (!drv) return false;
-  // Un solo init. Varios drivers devuelven 0 (= ASE_OK) en éxito; re-llamar init()
-  // (hwnd / desktop / nullptr) es lo que provocaba el heap 0xC0000374.
-  drv->init(GetDesktopWindow());
+  HWND sys = asioSysHandle();
+  std::cerr << "[jaswave-plugin-host] ASIO init «" << driverName << "» hwnd=" << static_cast<void*>(sys)
+            << "\n";
+  const int initRc = jaswave_asio_seh_init(drv, sys);
+  if (initRc < 0) {
+    err = "El driver ASIO crasheó en init(). Cierra otras DAWs que lo tengan abierto o usa WASAPI.";
+    drv->Release();
+    return false;
+  }
+  {
+    char dn[64]{};
+    drv->getDriverName(dn);  // algunos drivers (UMC) esperan esta llamada tras init
+    (void)drv->getDriverVersion();
+  }
   long inCh = 0, outCh = 0;
   if (drv->getChannels(&inCh, &outCh) != ASE_OK || outCh < 1) {
     char msg[256]{};
@@ -559,6 +759,8 @@ bool jaswave_asio_start(const std::string& driverName, uint32_t sampleRate, uint
     drv->Release();
     return false;
   }
+  std::cerr << "[jaswave-plugin-host] ASIO channels in=" << inCh << " out=" << outCh << "\n";
+
   ASIOSampleRate sr = sampleRate > 0 ? static_cast<ASIOSampleRate>(sampleRate) : 48000;
   if (drv->canSampleRate(sr) != ASE_OK) {
     if (drv->getSampleRate(&sr) != ASE_OK) sr = 48000;
@@ -567,19 +769,49 @@ bool jaswave_asio_start(const std::string& driverName, uint32_t sampleRate, uint
   }
   long minB = 0, maxB = 0, prefB = 0, gran = 0;
   drv->getBufferSize(&minB, &maxB, &prefB, &gran);
-  long buf = snapAsioBuffer(static_cast<long>(bufferSize), minB, maxB, prefB, gran);
+  std::cerr << "[jaswave-plugin-host] ASIO buf min=" << minB << " max=" << maxB << " pref=" << prefB
+            << " gran=" << gran << " want=" << bufferSize << "\n";
+  long want = static_cast<long>(bufferSize);
+  /* REAPER usa el tamaño del panel ASIO (preferred). Forzar otro size en UMC/Behringer tumba el driver. */
+  long buf = prefB > 0 ? prefB : snapAsioBuffer(want, minB, maxB, prefB, gran);
 
-  ASIOChannelInfo ci{};
-  ci.channel = 0;
-  ci.isInput = ASIOFalse;
-  drv->getChannelInfo(&ci);
-  gSampleType = ci.type;
+  auto fillInfos = [&](long nIn, long nOut) -> long {
+    long n = 0;
+    std::memset(gBufInfo, 0, sizeof(gBufInfo));
+    std::memset(gChanType, 0, sizeof(gChanType));
+    for (long c = 0; c < nIn && n < 64; ++c) {
+      gBufInfo[n].isInput = ASIOTrue;
+      gBufInfo[n].channelNum = c;
+      ASIOChannelInfo ci{};
+      ci.channel = c;
+      ci.isInput = ASIOTrue;
+      gChanType[n] = (drv->getChannelInfo(&ci) == ASE_OK) ? ci.type : ASIOSTInt32LSB;
+      ++n;
+    }
+    for (long c = 0; c < nOut && n < 64; ++c) {
+      gBufInfo[n].isInput = ASIOFalse;
+      gBufInfo[n].channelNum = c;
+      ASIOChannelInfo ci{};
+      ci.channel = c;
+      ci.isInput = ASIOFalse;
+      gChanType[n] = (drv->getChannelInfo(&ci) == ASE_OK) ? ci.type : ASIOSTInt32LSB;
+      ++n;
+    }
+    return n;
+  };
 
-  const long nCh = std::min(outCh, 32L);
-  std::memset(gBufInfo, 0, sizeof(gBufInfo));
-  for (long c = 0; c < nCh; ++c) {
-    gBufInfo[c].isInput = ASIOFalse;
-    gBufInfo[c].channelNum = c;
+  /* Como REAPER: createBuffers de TODAS las entradas y salidas que declara el driver. */
+  long nInfos = fillInfos(inCh, outCh);
+  long outInfos = 0;
+  for (long i = 0; i < nInfos; ++i) {
+    if (!gBufInfo[i].isInput) ++outInfos;
+  }
+  gSampleType = ASIOSTInt32LSB;
+  for (long i = 0; i < nInfos; ++i) {
+    if (!gBufInfo[i].isInput) {
+      gSampleType = gChanType[i];
+      break;
+    }
   }
 
   gCb.bufferSwitch = CALLBACK_bufferSwitch;
@@ -587,7 +819,11 @@ bool jaswave_asio_start(const std::string& driverName, uint32_t sampleRate, uint
   gCb.asioMessage = CALLBACK_asioMessage;
   gCb.bufferSwitchTimeInfo = CALLBACK_bufferSwitchTimeInfo;
 
-  if (drv->createBuffers(gBufInfo, nCh, buf, &gCb) != ASE_OK) {
+  std::cerr << "[jaswave-plugin-host] ASIO createBuffers infos=" << nInfos << " out=" << outInfos
+            << " buf=" << buf << " sr=" << sr << " type=" << sampleTypeName(gSampleType) << "("
+            << gSampleType << ")\n";
+  ASIOError created = drv->createBuffers(gBufInfo, nInfos, buf, &gCb);
+  if (created != ASE_OK) {
     char msg[256]{};
     drv->getErrorMessage(msg);
     err = std::string("ASIO createBuffers: ") + (msg[0] ? msg : "falló");
@@ -595,26 +831,42 @@ bool jaswave_asio_start(const std::string& driverName, uint32_t sampleRate, uint
     return false;
   }
   gBuffersCreated = true;
-  gOutChannels = nCh;
-  gNeedOutputReady = (drv->outputReady() == ASE_OK);
+  gOutChannels = outInfos;
+  gNumBufInfos = nInfos;
   gSr = static_cast<uint32_t>(sr > 0 ? sr : 48000);
   gBuf = static_cast<uint32_t>(std::min(buf, 8192L));
   gDriver = drv;
   gDriverName = driverName;
-  gRunning.store(true, std::memory_order_release);
+
+  for (long i = 0; i < nInfos; ++i) {
+    ASIOChannelInfo ci{};
+    ci.channel = gBufInfo[i].channelNum;
+    ci.isInput = gBufInfo[i].isInput;
+    if (drv->getChannelInfo(&ci) == ASE_OK) gChanType[i] = ci.type;
+  }
+
+  long inLat = 0, outLat = 0;
+  drv->getLatencies(&inLat, &outLat);
+  /* No llamar outputReady antes de start(): en UMC eso AV. Se prueba en el primer callback. */
+  gNeedOutputReady = true;
+  std::cerr << "[jaswave-plugin-host] ASIO lat in=" << inLat << " out=" << outLat
+            << " (outputReady en callback, como REAPER)\n";
+
   if (drv->start() != ASE_OK) {
     char msg[256]{};
     drv->getErrorMessage(msg);
     err = std::string("ASIO start: ") + (msg[0] ? msg : "falló");
-    gRunning.store(false, std::memory_order_release);
     drv->disposeBuffers();
     gBuffersCreated = false;
     drv->Release();
     gDriver = nullptr;
     gOutChannels = 0;
+    gNumBufInfos = 0;
     gNeedOutputReady = false;
     return false;
   }
+  gRunning.store(true, std::memory_order_release);
+  std::cerr << "[jaswave-plugin-host] ASIO running «" << driverName << "»\n";
   return true;
 }
 
@@ -630,7 +882,7 @@ bool jaswave_asio_control_panel(const std::string& driverName, std::string& err)
   }
   IASIO* drv = createDriver(driverName, err);
   if (!drv) return false;
-  drv->init(GetDesktopWindow());
+  drv->init(asioSysHandle());
   drv->controlPanel();
   drv->Release();
   return true;

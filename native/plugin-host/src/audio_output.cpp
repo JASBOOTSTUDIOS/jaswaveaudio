@@ -8,16 +8,25 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <windows.h>
 #include "asio_output.h"
 #endif
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <sstream>
+
+#ifdef _WIN32
+#include <objbase.h>
+#ifndef MA_COINIT_VALUE
+#define MA_COINIT_VALUE COINIT_APARTMENTTHREADED
+#endif
+#endif
 
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
@@ -55,6 +64,13 @@ std::string backendName(ma_backend b) {
     default:
       return "unknown";
   }
+}
+
+bool nameLooksLikeUmc(const char* name) {
+  if (!name || !name[0]) return false;
+  std::string n(name);
+  for (char& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return n.find("umc") != std::string::npos || n.find("behringer") != std::string::npos;
 }
 
 std::string backendLabel(const std::string& id) {
@@ -202,6 +218,132 @@ void uninitMaLocked() {
   }
 }
 
+bool openDeviceLocked(JaswaveAudioConfig cfg, std::string& err) {
+  if (cfg.backend.empty() || cfg.backend == "auto") {
+#ifdef _WIN32
+    cfg.backend = "wasapi";
+#elif defined(__APPLE__)
+    cfg.backend = "coreaudio";
+#else
+    cfg.backend = "alsa";
+#endif
+  }
+  if (cfg.sampleRate == 0) cfg.sampleRate = 48000;
+  if (cfg.bufferSize == 0) cfg.bufferSize = 512;
+  cfg.exclusive = cfg.exclusive || cfg.backend == "wasapi_exclusive";
+
+#ifdef _WIN32
+  if (cfg.backend == "asio") {
+    std::string name = cfg.deviceId;
+    const auto colon = name.find(':');
+    if (colon != std::string::npos) name = name.substr(colon + 1);
+    if (name.empty() || name == "default") {
+      err =
+          "Elige un driver ASIO x64 de la lista (UMC, Yamaha, M-WAVE…). «Predeterminado» no abre ASIO.";
+      gStatus.lastError = err;
+      return false;
+    }
+    if (!jaswave_asio_start(name, cfg.sampleRate, cfg.bufferSize, err)) {
+      gStatus.lastError = err;
+      return false;
+    }
+    gUsingAsio = true;
+    gStatus.cfg = cfg;
+    gStatus.deviceName = name;
+    gStatus.running = true;
+    gStatus.lastError.clear();
+    gStatus.actualSampleRate = jaswave_asio_sample_rate();
+    gStatus.actualBufferSize = jaswave_asio_buffer_size();
+    return true;
+  }
+#endif
+
+  ma_backend backend = parseMaBackend(cfg.backend);
+  ma_backend backends[] = {backend};
+  ma_context_config ctxCfg = ma_context_config_init();
+  if (ma_context_init(backends, 1, &ctxCfg, &gCtx) != MA_SUCCESS) {
+    err = "No se pudo inicializar el backend " + backendLabel(cfg.backend);
+    gStatus.lastError = err;
+    return false;
+  }
+  gCtxInit = true;
+
+  ma_device_id decoded{};
+  ma_device_config dcfg = ma_device_config_init(ma_device_type_playback);
+  dcfg.playback.format = ma_format_f32;
+  dcfg.playback.channels = 2;
+  dcfg.playback.shareMode = cfg.exclusive ? ma_share_mode_exclusive : ma_share_mode_shared;
+  dcfg.sampleRate = cfg.sampleRate;
+  dcfg.periodSizeInFrames = cfg.bufferSize;
+  dcfg.dataCallback = dataCallback;
+#if defined(_WIN32)
+  dcfg.wasapi.noAutoConvertSRC = MA_FALSE;
+  dcfg.wasapi.usage = ma_wasapi_usage_pro_audio;
+#endif
+
+  std::string opaque = cfg.deviceId;
+  const auto colon = opaque.find(':');
+  if (colon != std::string::npos) {
+    if (opaque.rfind("wasapi_exclusive:", 0) == 0) opaque = std::string("wasapi:") + opaque.substr(17);
+  }
+  if (!opaque.empty() && opaque != "default" && opaque.find(':') != std::string::npos) {
+    if (decodeDeviceId(opaque, backend, decoded)) {
+      dcfg.playback.pDeviceID = &decoded;
+    }
+  }
+#if defined(_WIN32)
+  /* Primer open WASAPI: si no hay deviceId, preferir Behringer UMC (ASIO de esa tarjeta tumba el host). */
+  if (!dcfg.playback.pDeviceID && backend == ma_backend_wasapi && !cfg.exclusive) {
+    ma_device_info* playback = nullptr;
+    ma_uint32 playbackCount = 0;
+    if (ma_context_get_devices(&gCtx, &playback, &playbackCount, nullptr, nullptr) == MA_SUCCESS) {
+      for (ma_uint32 i = 0; i < playbackCount; ++i) {
+        if (!nameLooksLikeUmc(playback[i].name)) continue;
+        decoded = playback[i].id;
+        dcfg.playback.pDeviceID = &decoded;
+        std::fprintf(stderr, "[jaswave-plugin-host] WASAPI: se abre «%s» (UMC preferida)\n",
+                     playback[i].name);
+        break;
+      }
+    }
+  }
+#endif
+
+  if (ma_device_init(&gCtx, &dcfg, &gDev) != MA_SUCCESS) {
+    dcfg.playback.shareMode = ma_share_mode_shared;
+    dcfg.sampleRate = 0;
+    if (ma_device_init(&gCtx, &dcfg, &gDev) != MA_SUCCESS) {
+      ma_context_uninit(&gCtx);
+      gCtxInit = false;
+      err = "ma_device_init falló para " + backendLabel(cfg.backend);
+      gStatus.lastError = err;
+      return false;
+    }
+  }
+  if (ma_device_start(&gDev) != MA_SUCCESS) {
+    ma_device_uninit(&gDev);
+    ma_context_uninit(&gCtx);
+    gCtxInit = false;
+    err = "ma_device_start falló";
+    gStatus.lastError = err;
+    return false;
+  }
+  gDevInit = true;
+  gUsingAsio = false;
+  if (cfg.deviceId.empty() || cfg.deviceId == "default") {
+    cfg.deviceId = encodeDeviceId(backend, gDev.playback.id);
+  }
+  gStatus.cfg = cfg;
+  gStatus.deviceName = gDev.playback.name[0] ? gDev.playback.name : backendLabel(cfg.backend);
+  gStatus.running = true;
+  gStatus.lastError.clear();
+  gStatus.actualSampleRate = gDev.sampleRate;
+  gStatus.actualBufferSize = gDev.playback.internalPeriodSizeInFrames
+                                 ? gDev.playback.internalPeriodSizeInFrames
+                                 : cfg.bufferSize;
+  return true;
+}
+
 }  // namespace
 
 void jaswave_audio_set_renderer(JaswaveRenderProc proc) { gRenderProc = proc; }
@@ -295,6 +437,9 @@ bool jaswave_audio_list(std::vector<JaswaveAudioBackendInfo>& backends,
 #endif
 
   addBackend("auto", true, "Elige el primer backend disponible (WASAPI / CoreAudio / ALSA)");
+#ifdef _WIN32
+  jaswave_com_restore_sta();
+#endif
   return true;
 }
 
@@ -308,118 +453,58 @@ void jaswave_audio_stop() {
 #endif
   uninitMaLocked();
   gStatus.running = false;
+#ifdef _WIN32
+  jaswave_com_restore_sta();
+#endif
 }
 
 bool jaswave_audio_start(const JaswaveAudioConfig& want, std::string& err) {
+  JaswaveAudioConfig previous{};
+  bool had = false;
+  {
+    std::lock_guard<std::mutex> lock(gMu);
+    had = gStatus.running;
+    previous = gStatus.cfg;
+    if (previous.backend.empty()) previous.backend = "wasapi";
+    const bool keepWasapi =
+        had && !gUsingAsio && gStatus.running && !want.exclusive &&
+        (want.backend == "wasapi" || want.backend == "auto" || want.backend.empty());
+    if (keepWasapi) {
+      gStatus.lastError.clear();
+      err.clear();
+      return true;
+    }
+  }
+
   jaswave_audio_stop();
-  std::lock_guard<std::mutex> lock(gMu);
-
-  JaswaveAudioConfig cfg = want;
-  if (cfg.backend.empty() || cfg.backend == "auto") {
 #ifdef _WIN32
-    cfg.backend = "wasapi";
-#elif defined(__APPLE__)
-    cfg.backend = "coreaudio";
-#else
-    cfg.backend = "alsa";
+  if (want.backend == "asio") Sleep(400);
 #endif
-  }
-  if (cfg.sampleRate == 0) cfg.sampleRate = 48000;
-  if (cfg.bufferSize == 0) cfg.bufferSize = 512;
-  cfg.exclusive = cfg.exclusive || cfg.backend == "wasapi_exclusive";
 
+  {
+    std::lock_guard<std::mutex> lock(gMu);
+    if (openDeviceLocked(want, err)) {
 #ifdef _WIN32
-  if (cfg.backend == "asio") {
-    std::string name = cfg.deviceId;
-    const auto colon = name.find(':');
-    if (colon != std::string::npos) name = name.substr(colon + 1);
-    if (name.empty() || name == "default") {
-      err =
-          "Elige un driver ASIO de la lista (Yamaha, UMC, M-WAVE…). «Predeterminado» no abre ASIO.";
-      gStatus.lastError = err;
-      return false;
-    }
-    if (!jaswave_asio_start(name, cfg.sampleRate, cfg.bufferSize, err)) {
-      gStatus.lastError = err;
-      return false;
-    }
-    gUsingAsio = true;
-    gStatus.cfg = cfg;
-    gStatus.deviceName = name;
-    gStatus.running = true;
-    gStatus.lastError.clear();
-    gStatus.actualSampleRate = jaswave_asio_sample_rate();
-    gStatus.actualBufferSize = jaswave_asio_buffer_size();
-    return true;
-  }
+      jaswave_com_restore_sta();
 #endif
-
-  ma_backend backend = parseMaBackend(cfg.backend);
-  ma_backend backends[] = {backend};
-  ma_context_config ctxCfg = ma_context_config_init();
-  if (ma_context_init(backends, 1, &ctxCfg, &gCtx) != MA_SUCCESS) {
-    err = "No se pudo inicializar el backend " + backendLabel(cfg.backend);
-    gStatus.lastError = err;
-    return false;
+      return true;
+    }
   }
-  gCtxInit = true;
 
-  ma_device_id decoded{};
-  ma_device_config dcfg = ma_device_config_init(ma_device_type_playback);
-  dcfg.playback.format = ma_format_f32;
-  dcfg.playback.channels = 2;
-  dcfg.playback.shareMode = cfg.exclusive ? ma_share_mode_exclusive : ma_share_mode_shared;
-  dcfg.sampleRate = cfg.sampleRate;
-  dcfg.periodSizeInFrames = cfg.bufferSize;
-  dcfg.dataCallback = dataCallback;
-#if defined(_WIN32)
-  dcfg.wasapi.noAutoConvertSRC = MA_FALSE;
-  dcfg.wasapi.usage = ma_wasapi_usage_pro_audio;
+  if (had && (previous.backend != want.backend || previous.deviceId != want.deviceId)) {
+#ifdef _WIN32
+    Sleep(50);
 #endif
-
-  std::string opaque = cfg.deviceId;
-  const auto colon = opaque.find(':');
-  if (colon != std::string::npos) {
-    // wasapi_exclusive:xxx → treat as wasapi:xxx for decode
-    if (opaque.rfind("wasapi_exclusive:", 0) == 0) opaque = std::string("wasapi:") + opaque.substr(17);
-  }
-  if (!opaque.empty() && opaque != "default" && opaque.find(':') != std::string::npos) {
-    if (decodeDeviceId(opaque, backend, decoded)) {
-      dcfg.playback.pDeviceID = &decoded;
-    }
-  }
-
-  if (ma_device_init(&gCtx, &dcfg, &gDev) != MA_SUCCESS) {
-    // Reintentar shared / sampleRate nativo
-    dcfg.playback.shareMode = ma_share_mode_shared;
-    dcfg.sampleRate = 0;
-    if (ma_device_init(&gCtx, &dcfg, &gDev) != MA_SUCCESS) {
-      ma_context_uninit(&gCtx);
-      gCtxInit = false;
-      err = "ma_device_init falló para " + backendLabel(cfg.backend);
+    std::string ignored;
+    std::lock_guard<std::mutex> lock(gMu);
+    if (openDeviceLocked(previous, ignored)) {
       gStatus.lastError = err;
-      return false;
     }
   }
-  if (ma_device_start(&gDev) != MA_SUCCESS) {
-    ma_device_uninit(&gDev);
-    ma_context_uninit(&gCtx);
-    gCtxInit = false;
-    err = "ma_device_start falló";
-    gStatus.lastError = err;
-    return false;
-  }
-  gDevInit = true;
-  gUsingAsio = false;
-  gStatus.cfg = cfg;
-  gStatus.deviceName = gDev.playback.name[0] ? gDev.playback.name : backendLabel(cfg.backend);
-  gStatus.running = true;
-  gStatus.lastError.clear();
-  gStatus.actualSampleRate = gDev.sampleRate;
-  gStatus.actualBufferSize = gDev.playback.internalPeriodSizeInFrames
-                                 ? gDev.playback.internalPeriodSizeInFrames
-                                 : cfg.bufferSize;
-  return true;
+#ifdef _WIN32
+  jaswave_com_restore_sta();
+#endif
+  return false;
 }
 
 JaswaveAudioStatus jaswave_audio_status() {
