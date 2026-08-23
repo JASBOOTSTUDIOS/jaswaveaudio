@@ -426,6 +426,10 @@ function AudioTab() {
 
   const applyDevice = async () => {
     if (!window.electron?.pluginHostSend) return
+    if (backend === 'asio' && (!deviceId || deviceId === 'default')) {
+      setStatus('Elige un driver ASIO x64 de la lista (Yamaha, UMC, M-WAVE…). «Predeterminado» no abre ASIO.')
+      return
+    }
     setBusy(true)
     setStatus('Aplicando dispositivo…')
     try {
@@ -442,17 +446,18 @@ function AudioTab() {
         message?: string
         audio?: AudioRuntime
       }
+      if (raw.audio) {
+        setRuntime(raw.audio)
+        if (raw.audio.backend) setBackend(raw.audio.backend)
+        if (raw.audio.deviceId != null) setDeviceId(raw.audio.deviceId)
+        if (raw.audio.sampleRate) setSampleRate(raw.audio.sampleRate)
+        if (raw.audio.bufferSize) setBufferSize(raw.audio.bufferSize)
+      }
       if (!raw?.ok) {
-        setStatus(raw?.message || 'No se pudo abrir el dispositivo.')
-        // Reenganchar al device que siga vivo (si hay)
-        void audioEngine.rearmAfterDeviceChange()
+        setStatus(raw?.message || 'No se pudo abrir el dispositivo. Se mantiene el driver que sí está running.')
+        void audioEngine.rearmAfterDeviceChange(raw.audio?.sampleRate)
         return
       }
-      setRuntime(raw.audio ?? null)
-      if (raw.audio?.backend) setBackend(raw.audio.backend)
-      if (raw.audio?.deviceId != null) setDeviceId(raw.audio.deviceId)
-      if (raw.audio?.sampleRate) setSampleRate(raw.audio.sampleRate)
-      if (raw.audio?.bufferSize) setBufferSize(raw.audio.bufferSize)
       const label = raw.audio
         ? `${raw.audio.backend} · ${raw.audio.deviceName || deviceId || 'default'}`
         : backend
@@ -474,7 +479,7 @@ function AudioTab() {
         return
       }
       const fallbackNote =
-        raw.message && /fallback/i.test(raw.message) ? ` · ${raw.message}` : ''
+        raw.message && /WASAPI|wrapper|crash/i.test(raw.message) ? ` · ${raw.message}` : ''
       setStatus(
         `Driver activo: ${label} · ${raw.audio?.sampleRate ?? sampleRate} Hz${fallbackNote}`,
       )
@@ -524,10 +529,10 @@ function AudioTab() {
         si hay driver instalado. Clips, Soft Pad, metrónomo y VST salen por ese mismo dispositivo.
         Solo un proceso puede abrir ASIO; las ventanas flotantes no vuelven a abrir el driver.
       </p>
-      {backend === 'asio' && /fl studio|asio4all|generic low latency/i.test(runtime?.deviceName || deviceId) ? (
+      {backend === 'asio' && /fl studio|asio4all|generic low latency/i.test(deviceId) ? (
         <p className="text-[10px] text-accent-amber">
-          FL Studio ASIO y ASIO4ALL envuelven WASAPI. Si no hay sonido, usa el ASIO del interfaz de
-          audio o cambia a WASAPI.
+          FL Studio ASIO, ASIO4ALL y Generic Low Latency envuelven WASAPI y pueden tumbar el host.
+          Elige el ASIO x64 de tu interfaz o cambia a WASAPI y pulsa Aplicar.
         </p>
       ) : null}
 
@@ -535,8 +540,19 @@ function AudioTab() {
         <select
           value={backend}
           onChange={(e) => {
-            setBackend(e.target.value)
-            setDeviceId('')
+            const id = e.target.value
+            setBackend(id)
+            if (id === 'asio') {
+              const preferred = devices.find(
+                (d) =>
+                  d.backend === 'asio' &&
+                  d.available !== false &&
+                  !/fl studio|generic low latency|asio4all/i.test(d.name),
+              )
+              setDeviceId(preferred?.id ?? '')
+            } else {
+              setDeviceId('')
+            }
           }}
           className="rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
         >
@@ -559,9 +575,9 @@ function AudioTab() {
           onChange={(e) => setDeviceId(e.target.value)}
           className="rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
         >
-          <option value="">Predeterminado del sistema / API</option>
+          <option value="">{backend === 'asio' ? '— Elige un driver ASIO —' : 'Predeterminado del sistema / API'}</option>
           {devicesForBackend.map((d) => (
-            <option key={d.id} value={d.id}>
+            <option key={d.id} value={d.id} disabled={d.available === false}>
               {d.name}
               {d.isDefault ? ' (default)' : ''}
             </option>

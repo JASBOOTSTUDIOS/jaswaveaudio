@@ -7,6 +7,8 @@
 
 #ifdef _WIN32
 
+void jaswave_asio_set_sys_handle(void* hwnd);
+
 bool jaswave_asio_list_drivers(std::vector<JaswaveAudioDevice>& out);
 bool jaswave_asio_start(const std::string& driverName, uint32_t sampleRate, uint32_t bufferSize,
                         std::string& err);
