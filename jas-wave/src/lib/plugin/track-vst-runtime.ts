@@ -192,7 +192,15 @@ export async function ensureTrackVstPlugin(
   if (pid) lastHostPid = pid
   const existing = bySlot.get(slotId)
   if (existing?.path === path) {
-    if (instrument) byTrack.set(trackId, existing)
+    if (instrument) {
+      byTrack.set(trackId, existing)
+      setActiveVstVoiceTarget({
+        slotId: existing.slotId,
+        path: existing.path,
+        trackId,
+        pluginId: existing.pluginId,
+      })
+    }
     return true
   }
 

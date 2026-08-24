@@ -103,11 +103,14 @@ export function PianoRollCanvasNotes({
   return (
     <canvas
       ref={canvasRef}
-      className="absolute left-0 top-0 z-10"
+      className="absolute left-0 top-0 z-10 touch-none"
       style={{ width, height }}
       onPointerDown={(e) => {
         if (!onHit) return
         const hit = hitTest(e.clientX, e.clientY, e.currentTarget)
+        if (!hit) return
+        e.stopPropagation()
+        e.preventDefault()
         onHit(hit, e.nativeEvent)
       }}
     />
