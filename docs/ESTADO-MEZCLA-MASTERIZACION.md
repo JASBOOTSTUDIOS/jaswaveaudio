@@ -91,7 +91,7 @@ Además de composición/mix/plugin.*: `render.start` (orquesta bounce nativo), `
 Tipos en dominio; sin DSP/UI/comandos.
 
 ### G4 / G5 / G6
-Automatización, persistencia chunk VST en `.jaswave`, freeze — pendientes (R4/R5 del plan).
+Automatización, freeze — pendientes. **Persistencia estado VST:** params + chunk (`estadoPluginBase64`) al guardar `.jaswave` (VST2 `effGetChunk` / VST3 `IComponent::getState`).
 
 ---
 
@@ -110,7 +110,9 @@ Automatización, persistencia chunk VST en `.jaswave`, freeze — pendientes (R4
 
 **Hecho en este corte:** Fase M (meters), VST2 hosting, R1 bounce WAV **con contenido real** (notas→VST, clips/Soft Pad→stems, PCM24+dither), R2 loudness+tools.
 
-**Pendiente:** R3 FLAC/MP3 + stems por pista, R4 persistencia estado VST, R5 sends/automatización/freeze.
+**Pendiente:** R3 FLAC/MP3 + stems por pista, R5 sends/automatización/freeze.
+
+**Hecho (corte chat/VST):** R4 persistencia estado VST en proyecto; historial IA por `projectId`; VST2 MIDI+editor idle.
 
 ---
 

@@ -140,6 +140,8 @@ export type PluginHostProcessCommand =
   | { type: 'midiCc'; slotId: string; cc: number; value: number }
   | { type: 'listParameters'; slotId: string; maxCount?: number }
   | { type: 'setParameter'; slotId: string; paramId: number; normalizedValue: number }
+  | { type: 'getPluginState'; slotId: string }
+  | { type: 'setPluginState'; slotId: string; stateBase64: string }
   | { type: 'setTransport'; playing: boolean; tempo?: number }
   | { type: 'listAudioDevices' }
   | {

@@ -36,6 +36,16 @@ import {
 } from './plugin/plugin-parameter-intel'
 import { detectAgentMode, modePromptBlock, wantsFullProject, type AgentMode } from './ai-modes'
 import {
+  forcePreviewAplicar,
+  isMutatingAction,
+  modeBlocksMutation,
+  payloadOfAction,
+} from './ai-action-policy'
+import {
+  appendAiDawAudit,
+  type AiDawAuditSource,
+} from './ai-daw-audit-store'
+import {
   draftArrangement,
   formatGuideForPrompt,
   localUsageGuide,
@@ -258,7 +268,10 @@ export function fallbackActionsFromUserIntent(
   const selectedId = state ? getSelectedTrackId(state) : null
   const resolved = detectAgentMode(userText, mode)
 
-  const bpmMatch = lower.match(/bpm\s*(?:a|de|=|:)?\s*(\d{2,3})/) || lower.match(/tempo\s*(?:a|de|=|:)?\s*(\d{2,3})/)
+  const bpmMatch =
+    lower.match(/\b(\d{2,3})\s*bpm\b/) ||
+    lower.match(/\bbpm\s*(?:a|de|=|:)?\s*(\d{2,3})\b/) ||
+    lower.match(/\btempo\s*(?:a|de|=|:)?\s*(\d{2,3})\b/)
   if (bpmMatch) {
     actions.push({ type: 'project.setBpm', payload: { bpm: Number(bpmMatch[1]) } })
   }
@@ -318,7 +331,7 @@ export function fallbackActionsFromUserIntent(
         nombre: inferClipNameFromText(userText, inferKeyFromText(userText).label),
       },
     })
-    return actions
+    return forcePreviewAplicar(actions, resolved)
   }
 
   if (wantsDawCreation(userText) || mentionedClip) {
@@ -333,6 +346,7 @@ export function fallbackActionsFromUserIntent(
       mentionedClip?.trackId ||
       selectedId ||
       undefined
+    const allowApply = resolved === 'create'
 
     if (mentionedClip && /modifica|cambia|reemplaza|reescribe|inserta/i.test(lower)) {
       actions.push({
@@ -348,7 +362,8 @@ export function fallbackActionsFromUserIntent(
           articulacion,
           pistaId,
           clipId: mentionedClip.clipId,
-          aplicar: true,
+          bpm: brief.bpm,
+          aplicar: allowApply,
           reemplazar: true,
           seed: hashSeed(userText),
         },
@@ -366,14 +381,17 @@ export function fallbackActionsFromUserIntent(
           progresion: progression,
           articulacion,
           pistaId,
-          aplicar: clipOnlyIntent(userText) || /crea|pon|aplica|inserta|arm/i.test(lower),
+          bpm: brief.bpm,
+          aplicar:
+            allowApply &&
+            (clipOnlyIntent(userText) || /crea|pon|aplica|inserta|arm/i.test(lower)),
           seed: hashSeed(userText),
         },
       })
     }
   }
 
-  return actions
+  return forcePreviewAplicar(actions, resolved)
 }
 
 function isMidiCapableTrack(tipo: string | undefined): boolean {
@@ -472,7 +490,7 @@ function planFromPrompt(text: string, bpm: number, nombre?: string): ProjectPlan
 }
 
 function payloadOf(action: DawAction): Record<string, unknown> {
-  return (action.payload ?? {}) as Record<string, unknown>
+  return payloadOfAction(action)
 }
 
 function pluginsOnTrack(state: DAWState, trackId: string): { trackId: string; plugins: PluginInfo[] } {
@@ -506,7 +524,7 @@ async function collectLiveParameters(
     }
     const raw = path ? await listSlotParameters(slotId) : []
     const parameters = raw.length
-      ? raw.map((p) => enrichParameter(p, pl.id, slotId))
+      ? raw.map((param) => enrichParameter(param, pl.id, slotId))
       : []
     bundles.push({
       pluginInstanceId: pl.id,
@@ -521,16 +539,61 @@ async function collectLiveParameters(
   return bundles
 }
 
+export type ExecuteDawOptions = {
+  agentMode?: AgentMode
+  /** Permite mutaciones aunque el modo sea plan/think (botón Construir). */
+  forceApply?: boolean
+  source?: AiDawAuditSource
+  conversationId?: string
+  messageId?: string
+  /** Si true, no ejecuta mutaciones en plan/think (defensa en profundidad). */
+  respectModeGate?: boolean
+}
+
 export async function executeDawActions(
   tienda: TiendaDAW,
   actions: DawAction[],
+  opts: ExecuteDawOptions = {},
 ): Promise<ActionResult[]> {
   const results: ActionResult[] = []
   const st = tienda.obtenerEstado()
   bindAgentDocsDisk(st.project?.id || 'default', st.project?.ruta)
 
+  const mode = opts.agentMode ?? 'create'
+  const source = opts.source ?? 'model_actions'
+  const conversationId = opts.conversationId ?? ''
+  const messageId = opts.messageId ?? ''
+  const blockMutations =
+    opts.respectModeGate !== false && modeBlocksMutation(mode) && !opts.forceApply
+
   for (const action of actions) {
     const p = payloadOf(action)
+    const auditBase = {
+      conversationId,
+      messageId,
+      agentMode: mode,
+      source,
+      tool: action.type,
+      params: { ...p },
+    }
+
+    if (blockMutations && isMutatingAction(action)) {
+      appendAiDawAudit({
+        ...auditBase,
+        status: 'skipped_by_mode',
+        result: {
+          success: false,
+          message: `Omitido: modo ${mode} no muta el DAW (usa Construir)`,
+        },
+      })
+      results.push({
+        type: action.type,
+        success: false,
+        message: `Omitido (modo ${mode}): ${action.type} — pulsa Construir para aplicar`,
+      })
+      continue
+    }
+
     try {
       switch (action.type) {
         case 'project.setBpm': {
@@ -861,7 +924,7 @@ export async function executeDawActions(
           if (vel?.accent != null) brief.velocityAccent = Number(vel.accent)
           if (p.nombre) brief.clipName = String(p.nombre)
 
-          const bpm = p.bpm != null ? Number(p.bpm) : projectBpm
+          const bpm = p.bpm != null ? Number(p.bpm) : brief.bpm ?? projectBpm
           const seed =
             p.seed != null
               ? typeof p.seed === 'number'
@@ -889,6 +952,9 @@ export async function executeDawActions(
           }
 
           if (apply) {
+            if (bpm !== projectBpm) {
+              await tienda.executor.execute('project.setBpm', { bpm })
+            }
             const clipId = p.clipId ? String(p.clipId) : ''
             const replace = p.reemplazar === true || p.replace === true
             if (replace && clipId && p.pistaId) {
@@ -1325,10 +1391,26 @@ export async function executeDawActions(
           })
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
       results.push({
         type: action.type,
         success: false,
-        message: err instanceof Error ? err.message : String(err),
+        message,
+      })
+      appendAiDawAudit({
+        ...auditBase,
+        status: 'failed',
+        result: { success: false, message, error: message },
+      })
+      continue
+    }
+
+    const last = results[results.length - 1]
+    if (last && last.type === action.type) {
+      appendAiDawAudit({
+        ...auditBase,
+        status: last.success ? 'executed' : 'failed',
+        result: { success: last.success, message: last.message },
       })
     }
   }

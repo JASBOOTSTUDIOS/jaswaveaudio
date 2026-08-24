@@ -220,6 +220,8 @@ export interface PluginInfo {
   descripcion: string;
   sitioWeb?: string;
   manualUrl?: string;
+  /** Snapshot binario del estado del plugin (VST chunk / VST3 state), base64. */
+  estadoPluginBase64?: string;
   ui: {
     ancho: number;
     alto: number;

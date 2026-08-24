@@ -268,6 +268,12 @@ export function parseMidiBriefFromText(text: string, bpmFallback = 120): MidiBri
     mood === 'romantic'
   const velocityBase = soft ? 54 : mood === 'energetic' ? 82 : 68
   const keyLabel = key.label
+  const lower = text.toLowerCase()
+  const bpmHit =
+    lower.match(/\b(\d{2,3})\s*bpm\b/) ||
+    lower.match(/\bbpm\s*(?:a|de|=|:)?\s*(\d{2,3})\b/) ||
+    lower.match(/\btempo\s*(?:a|de|=|:)?\s*(\d{2,3})\b/)
+  const bpm = bpmHit ? Math.max(20, Math.min(400, Number(bpmHit[1]))) : bpmFallback
 
   return {
     keyRoot: key.root,
@@ -276,7 +282,7 @@ export function parseMidiBriefFromText(text: string, bpmFallback = 120): MidiBri
     keyExplicit: key.explicit,
     degrees: degrees ?? defaultProgression(scale, mood),
     minutes,
-    bpm: bpmFallback,
+    bpm,
     articulation,
     velocityBase,
     velocityAccent: velocityBase + (soft ? 10 : 16),

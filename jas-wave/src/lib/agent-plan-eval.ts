@@ -204,13 +204,17 @@ export function syncPlanAfterDawChange(projectId: string, state: DAWState): Plan
   return ev
 }
 
-export function ensurePlanFromCompose(projectId: string, plan: ProjectPlanData): void {
+export function ensurePlanFromCompose(
+  projectId: string,
+  plan: ProjectPlanData,
+  opts?: { force?: boolean },
+): void {
   const existing = getAgentDoc(projectId, PLAN_SLUG)
   const emptyish =
     !existing ||
     existing.content.trim() === DEFAULT_PLAN_MD.trim() ||
     parseTasks(existing.content).every((t) => /añade tareas/i.test(t.text))
-  if (emptyish) {
+  if (opts?.force || emptyish) {
     writeAgentDoc(projectId, PLAN_SLUG, planMarkdownFromProjectPlan(plan), {
       origin: 'ai',
       preserveUserNotes: true,

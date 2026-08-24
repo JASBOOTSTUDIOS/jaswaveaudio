@@ -77,6 +77,10 @@ public:
   void closeEditor();
   bool hasEditor() const;
 
+  /** Persistencia IComponent::getState / setState (y controller si aplica). */
+  bool getStateChunk(std::vector<uint8_t>& out, std::string& err);
+  bool setStateChunk(const uint8_t* data, size_t nbytes, std::string& err);
+
   const std::string& path() const { return path_; }
   const std::string& slotId() const { return slotId_; }
   void setSlotId(std::string id) { slotId_ = std::move(id); }

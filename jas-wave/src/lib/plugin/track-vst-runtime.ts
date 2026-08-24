@@ -201,6 +201,7 @@ export async function ensureTrackVstPlugin(
         pluginId: existing.pluginId,
       })
     }
+    await restorePluginStateAfterLoad(trackId, plugin)
     return true
   }
 
@@ -251,6 +252,7 @@ export async function ensureTrackVstPlugin(
         byTrack.set(trackId, loaded)
         setActiveVstVoiceTarget({ slotId, path, trackId, pluginId: plugin.id })
       }
+      await restorePluginStateAfterLoad(trackId, plugin)
       emitRuntime()
       return true
     } catch {
@@ -487,5 +489,129 @@ export async function setSlotParameter(
     return !!raw?.ok
   } catch {
     return false
+  }
+}
+
+export async function getSlotPluginStateBase64(slotId: string): Promise<string | null> {
+  try {
+    const raw = (await window.electron?.pluginHostSend?.({
+      type: 'getPluginState',
+      slotId,
+    })) as { ok?: boolean; stateBase64?: string }
+    if (!raw?.ok || !raw.stateBase64) return null
+    return raw.stateBase64
+  } catch {
+    return null
+  }
+}
+
+export async function setSlotPluginStateBase64(slotId: string, stateBase64: string): Promise<boolean> {
+  try {
+    const raw = (await window.electron?.pluginHostSend?.({
+      type: 'setPluginState',
+      slotId,
+      stateBase64,
+    })) as { ok?: boolean }
+    return !!raw?.ok
+  } catch {
+    return false
+  }
+}
+
+/** Lee params (+ chunk VST2/VST3) del host y los escribe en DAWState.plugins. */
+export async function snapshotLoadedPluginsIntoProject(
+  tienda: import('../../../../shared/src/state/tienda').TiendaDAW,
+): Promise<void> {
+  const tracks = tienda.obtenerEstado().project.tracks ?? []
+  for (const t of tracks) {
+    const plugins = t.plugins ?? []
+    for (const p of plugins) {
+      const path = extractHostPluginPath(p.descripcion)
+      if (!path) continue
+      const slotId = slotIdForTrackPlugin(t.id, p.id)
+      if (!bySlot.has(slotId)) continue
+      const rawParams = await listSlotParameters(slotId)
+      const parametros = rawParams.map((rp) => ({
+        id: String(rp.parameterId),
+        nombre: rp.name || String(rp.parameterId),
+        valor: Number(rp.normalizedValue) || 0,
+        minimo: 0,
+        maximo: 1,
+        paso: 0.001,
+        unidad: '',
+        etiqueta: rp.name || String(rp.parameterId),
+      }))
+      const chunk = await getSlotPluginStateBase64(slotId)
+      const live = tienda.obtenerEstado().project.tracks.find((x) => x.id === t.id)
+      const chain = live?.plugins ?? plugins
+      const nextPlugins = chain.map((pl) =>
+        pl.id === p.id
+          ? {
+              ...pl,
+              parametros,
+              ...(chunk
+                ? { estadoPluginBase64: chunk }
+                : pl.estadoPluginBase64
+                  ? { estadoPluginBase64: pl.estadoPluginBase64 }
+                  : {}),
+              estado: 'cargado' as const,
+            }
+          : pl,
+      )
+      await tienda.executor.execute('track.update', {
+        trackId: t.id,
+        datos: { plugins: nextPlugins },
+      })
+    }
+  }
+  const masterLive = tienda.obtenerEstado().project.master
+  const master = masterLive?.plugins ?? []
+  for (const p of master) {
+    const path = extractHostPluginPath(p.descripcion)
+    if (!path) continue
+    const slotId = slotIdForTrackPlugin('master', p.id)
+    if (!bySlot.has(slotId)) continue
+    const rawParams = await listSlotParameters(slotId)
+    const parametros = rawParams.map((rp) => ({
+      id: String(rp.parameterId),
+      nombre: rp.name || String(rp.parameterId),
+      valor: Number(rp.normalizedValue) || 0,
+      minimo: 0,
+      maximo: 1,
+      paso: 0.001,
+      unidad: '',
+      etiqueta: rp.name || String(rp.parameterId),
+    }))
+    const chunk = await getSlotPluginStateBase64(slotId)
+    const mNow = tienda.obtenerEstado().project.master
+    const chain = mNow?.plugins ?? master
+    const nextPlugins = chain.map((pl) =>
+      pl.id === p.id
+        ? {
+            ...pl,
+            parametros,
+            ...(chunk
+              ? { estadoPluginBase64: chunk }
+              : pl.estadoPluginBase64
+                ? { estadoPluginBase64: pl.estadoPluginBase64 }
+                : {}),
+            estado: 'cargado' as const,
+          }
+        : pl,
+    )
+    await tienda.executor.execute('project.update', {
+      datos: { master: { ...mNow, plugins: nextPlugins } },
+    })
+  }
+}
+
+async function restorePluginStateAfterLoad(trackId: string, plugin: PluginInfo): Promise<void> {
+  const slotId = slotIdForTrackPlugin(trackId, plugin.id)
+  if (plugin.estadoPluginBase64) {
+    await setSlotPluginStateBase64(slotId, plugin.estadoPluginBase64)
+  }
+  for (const p of plugin.parametros ?? []) {
+    if (p.id == null || p.valor == null) continue
+    await setSlotParameter(slotId, p.id, p.valor)
   }
 }

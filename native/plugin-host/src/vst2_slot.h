@@ -47,6 +47,11 @@ public:
   void setEditorBounds(int x, int y, int w, int h);
   void closeEditor();
   bool hasEditor() const;
+  /** Llamar desde el message pump (effEditIdle). */
+  void idleEditor();
+  /** Chunk de programa/banco (effGetChunk / effSetChunk). */
+  bool getStateChunk(std::vector<uint8_t>& out, std::string& err);
+  bool setStateChunk(const uint8_t* data, size_t nbytes, std::string& err);
 
   const std::string& path() const { return path_; }
   const std::string& slotId() const { return slotId_; }
