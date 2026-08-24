@@ -280,6 +280,22 @@ void readerLoop() {
 
 }  // namespace
 
+void jaswave_mix_bus_push_stem(uint16_t trackIndex, const float* interleavedStereo,
+                               uint32_t frames) {
+#ifdef _WIN32
+  StemRing* ring = ringFor(trackIndex);
+  if (!ring || !interleavedStereo || frames == 0) return;
+  markLive(trackIndex);
+  for (uint32_t i = 0; i < frames; ++i) {
+    if (!pushFrame(*ring, interleavedStereo[i * 2], interleavedStereo[i * 2 + 1])) return;
+  }
+#else
+  (void)trackIndex;
+  (void)interleavedStereo;
+  (void)frames;
+#endif
+}
+
 bool jaswave_mix_bus_start(std::string& pipeName, std::string& err) {
   jaswave_mix_bus_stop();
 #ifdef _WIN32

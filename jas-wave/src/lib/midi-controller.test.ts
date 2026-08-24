@@ -102,7 +102,7 @@ describe('pad sustain (CC64)', () => {
   })
 
   it('no silencia una tecla que sigue bajada al soltar el pedal', () => {
-    let s = padNoteOn(padPedal(createPadSustain(), 127).next, 60)
+    const s = padNoteOn(padPedal(createPadSustain(), 127).next, 60)
     const lift = padPedal(s, 0)
     assert.equal(lift.release.includes(60), false)
   })

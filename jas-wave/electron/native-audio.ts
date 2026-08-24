@@ -40,7 +40,6 @@ export function getNativeAudio(): NativeBinding | null {
   loadAttempted = true
   for (const root of resolveNativeRoots()) {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const mod = require(root) as {
         isAvailable?: () => boolean
         raw?: NativeBinding | null

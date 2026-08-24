@@ -498,6 +498,36 @@ static uint32_t gOfflineTotal{0};
 static uint32_t gOfflineDone{0};
 static std::atomic<bool> gOfflineCancel{false};
 static bool gOfflineRunning{false};
+static uint16_t gOfflineBits{16};
+
+static int b64Val(char c) {
+  if (c >= 'A' && c <= 'Z') return c - 'A';
+  if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+  if (c >= '0' && c <= '9') return c - '0' + 52;
+  if (c == '+') return 62;
+  if (c == '/') return 63;
+  return -1;
+}
+
+/** Base64 → bytes (estándar, ignora '=' y saltos). */
+static bool decodeBase64(const std::string& in, std::vector<uint8_t>& out) {
+  out.clear();
+  out.reserve((in.size() / 4) * 3 + 3);
+  int val = 0;
+  int bits = 0;
+  for (char c : in) {
+    if (c == '=' || c == '\n' || c == '\r') continue;
+    const int d = b64Val(c);
+    if (d < 0) return false;
+    val = (val << 6) | d;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push_back(static_cast<uint8_t>((val >> bits) & 0xFF));
+    }
+  }
+  return true;
+}
 
 static float softLimitSample(float x) {
   /* Más headroom para baterías (BFD): evita brickwall y deja margen de suma. */
@@ -666,7 +696,7 @@ static void applyPdc(float* l, float* r, int frames, float* dL, float* dR, uint3
 }
 
 static void renderMix(float* interleaved, uint32_t frameCount) {
-  applyLiveMidiFromWinmm();
+  if (!gOfflineRunning) applyLiveMidiFromWinmm();
   const int frames = static_cast<int>(std::min<uint32_t>(frameCount, 8192));
   if (frames <= 0) return;
   jaswave_mix_bus_begin_block(static_cast<uint32_t>(frames));
@@ -1739,6 +1769,8 @@ static void handleLine(const std::string& line) {
     gOfflineCancel.store(false);
     gOfflinePcm.clear();
     if (gOfflineTotal > 0) gOfflinePcm.reserve(static_cast<size_t>(gOfflineTotal) * 2u);
+    const double bits = getNumberField(line, "bitDepth", 16);
+    gOfflineBits = bits >= 24 ? 24u : 16u;
     gOfflineRunning = true;
     jaswave_audio_set_renderer(nullptr);
     jaswave_mix_bus_set_offline(true);
@@ -1765,6 +1797,38 @@ static void handleLine(const std::string& line) {
     if (frames == 0) {
       replyOk("\"progress\":1,\"doneFrames\":" + std::to_string(gOfflineDone));
       return;
+    }
+    // Stems inline (bounce con contenido real): decodificar y empujar directo.
+    {
+      const auto spos = line.find("\"stems\"");
+      if (spos != std::string::npos) {
+        const size_t arrStart = line.find('[', spos);
+        const size_t arrEnd = line.find(']', arrStart == std::string::npos ? 0 : arrStart);
+        if (arrStart != std::string::npos && arrEnd != std::string::npos) {
+          static std::vector<uint8_t> bytes;
+          static std::vector<float> pcm;
+          size_t p = arrStart + 1;
+          while (p < arrEnd) {
+            const size_t objStart = line.find('{', p);
+            if (objStart == std::string::npos || objStart > arrEnd) break;
+            const size_t objEnd = line.find('}', objStart);
+            if (objEnd == std::string::npos || objEnd > arrEnd) break;
+            const std::string obj = line.substr(objStart, objEnd - objStart + 1);
+            const double tiNum = getNumberField(obj, "trackIndex", -1);
+            if (tiNum >= 0 && tiNum < JASWAVE_MIX_MAX_TRACKS) {
+              const std::string b64 = getStringField(obj, "b64");
+              if (!b64.empty() && decodeBase64(b64, bytes)) {
+                const size_t nSamples = bytes.size() / 4;
+                pcm.resize(nSamples);
+                if (nSamples > 0) std::memcpy(pcm.data(), bytes.data(), nSamples * sizeof(float));
+                jaswave_mix_bus_push_stem(static_cast<uint16_t>(tiNum), pcm.data(),
+                                          static_cast<uint32_t>(nSamples / 2));
+              }
+            }
+            p = objEnd + 1;
+          }
+        }
+      }
     }
     std::vector<float> block(static_cast<size_t>(frames) * 2u, 0.f);
     renderMix(block.data(), frames);
@@ -1824,7 +1888,7 @@ static void handleLine(const std::string& line) {
     }
 #endif
     const uint16_t numCh = 2;
-    const uint16_t bits = 16;
+    const uint16_t bits = gOfflineBits >= 24 ? 24 : 16;
     const uint32_t byteRate = sr * numCh * (bits / 8);
     const uint16_t blockAlign = numCh * (bits / 8);
     const uint32_t dataSize = frames * blockAlign;
@@ -1851,12 +1915,29 @@ static void handleLine(const std::string& line) {
     w16(bits);
     std::fwrite("data", 1, 4, f);
     w32(dataSize);
+    auto randUnit = []() {
+      return static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
+    };
     for (uint32_t i = 0; i < frames * 2; ++i) {
       float x = gOfflinePcm[i];
       if (x < -1.f) x = -1.f;
       if (x > 1.f) x = 1.f;
-      const int16_t s = x < 0 ? static_cast<int16_t>(x * 32768.f) : static_cast<int16_t>(x * 32767.f);
-      w16(static_cast<uint16_t>(s));
+      // Dithering TPDF: suma de dos uniforms → triangular en ±1 LSB.
+      const float lsb = bits == 24 ? (1.f / 8388608.f) : (1.f / 32768.f);
+      x += (randUnit() + randUnit() - 1.f) * lsb;
+      if (x < -1.f) x = -1.f;
+      if (x > 1.f) x = 1.f;
+      if (bits == 24) {
+        const int v = static_cast<int>(x * 8388607.f);
+        const unsigned char b3[3] = {static_cast<unsigned char>(v & 255),
+                                     static_cast<unsigned char>((v >> 8) & 255),
+                                     static_cast<unsigned char>((v >> 16) & 255)};
+        std::fwrite(b3, 1, 3, f);
+      } else {
+        const int16_t s =
+            x < 0 ? static_cast<int16_t>(x * 32768.f) : static_cast<int16_t>(x * 32767.f);
+        w16(static_cast<uint16_t>(s));
+      }
     }
     std::fclose(f);
     const std::string path = gOfflineOutPath;
@@ -1865,7 +1946,7 @@ static void handleLine(const std::string& line) {
     jaswave_mix_bus_set_offline(false);
     jaswave_audio_set_renderer(renderMix);
     replyOk("\"path\":\"" + jsonEscape(path) + "\",\"frames\":" + std::to_string(frames) +
-            ",\"sampleRate\":" + std::to_string(sr));
+            ",\"sampleRate\":" + std::to_string(sr) + ",\"bitDepth\":" + std::to_string(bits));
     return;
   }
   if (type == "focusEditor" || type == "crashReport") {

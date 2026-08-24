@@ -167,17 +167,17 @@ function romanToDegree(tok: string): number | null {
 /** Nashville 1–7 o romanos vi-IV-I-iii. */
 export function inferProgressionFromText(text: string): number[] | null {
   const roman = text.match(
-    /\b((?:vii|vi|iv|iii|ii|i|v)[°o]?(?:\s*[-–—\/]\s*(?:vii|vi|iv|iii|ii|i|v)[°o]?){1,7})\b/i,
+    /\b((?:vii|vi|iv|iii|ii|i|v)[°o]?(?:\s*[-–—/]\s*(?:vii|vi|iv|iii|ii|i|v)[°o]?){1,7})\b/i,
   )
   if (roman) {
-    const parts = roman[1]!.split(/\s*[-–—\/]\s*/)
+    const parts = roman[1]!.split(/\s*[-–—/]\s*/)
     const degs = parts.map(romanToDegree).filter((n): n is number => n != null)
     if (degs.length >= 2 && parts.every((p) => ROMAN_TOKEN.test(p.trim()))) return degs
   }
 
-  const nums = text.match(/\b([1-7](?:\s*[-–—,\/]\s*[1-7]){1,7})\b/)
+  const nums = text.match(/\b([1-7](?:\s*[-–—,/]\s*[1-7]){1,7})\b/)
   if (nums) {
-    const seq = nums[1]!.split(/\s*[-–—,\/]\s*/).map((n) => Number(n))
+    const seq = nums[1]!.split(/\s*[-–—,/]\s*/).map((n) => Number(n))
     if (seq.length >= 2 && seq.every((n) => n >= 1 && n <= 7)) return seq
   }
   return null

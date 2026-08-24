@@ -24,7 +24,7 @@ export function parsePlanFromText(text: string): ProjectPlanData | null {
   const match = /<<<PLAN\s*([\s\S]*?)\s*PLAN>>>/i.exec(text)
   if (!match) return null
   try {
-    let raw = match[1].trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim()
+    const raw = match[1].trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim()
     const parsed = JSON.parse(raw) as Record<string, unknown>
     const pistas = Array.isArray(parsed.pistas)
       ? parsed.pistas

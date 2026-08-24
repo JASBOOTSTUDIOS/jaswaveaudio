@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useDAW } from '@/src/context/daw-context'
-import { runNativeBounce } from '@/src/lib/bounce-service'
+import { runNativeBounce, buildRuntimeBounceContent } from '@/src/lib/bounce-service'
 import type { RenderJob } from '../../shared/src/types/render'
 
 type Props = {
@@ -15,6 +15,7 @@ type Props = {
 export function ExportBounceDialog({ open, onClose }: Props) {
   const tienda = useDAW()
   const [endSec, setEndSec] = useState(30)
+  const [bitDepth, setBitDepth] = useState(24)
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState(0)
   const [message, setMessage] = useState('')
@@ -43,7 +44,7 @@ export function ExportBounceDialog({ open, onClose }: Props) {
         endSec,
         outputPath: path || undefined,
         sampleRate: 48000,
-        bitDepth: 16,
+        bitDepth,
       })
       if (!r.success || !r.result) {
         throw new Error(String(r.error ?? 'render.start falló'))
@@ -51,7 +52,11 @@ export function ExportBounceDialog({ open, onClose }: Props) {
       const job = r.result as RenderJob
       startedId = job.id
       setJobId(job.id)
-      const done = await runNativeBounce(job, (_n, payload) => {
+      const content = buildRuntimeBounceContent(tienda.obtenerEstado(), {
+        startSec: 0,
+        endSec,
+      })
+      const done = await runNativeBounce(job, content, (_n, payload) => {
         if (typeof payload.progress === 'number') {
           setProgress(Math.round(Number(payload.progress) * 100))
         }
@@ -78,7 +83,7 @@ export function ExportBounceDialog({ open, onClose }: Props) {
     } finally {
       setBusy(false)
     }
-  }, [endSec, tienda])
+  }, [endSec, bitDepth, tienda])
 
   const cancel = useCallback(async () => {
     if (!jobId) return
@@ -92,7 +97,7 @@ export function ExportBounceDialog({ open, onClose }: Props) {
       <div className="w-full max-w-md rounded-lg border border-border bg-panel p-4 shadow-xl">
         <h2 className="text-sm font-semibold text-foreground">Exportar bounce (WAV)</h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          Misma cadena nativa que Play (stems → FX → master). Solo PCM16 estéreo.
+          Misma cadena nativa que Play (stems → FX → master). WAV PCM16/24 estéreo.
         </p>
         <label className="mt-4 flex items-center justify-between gap-3 text-xs">
           <span>Duración (s)</span>
@@ -105,6 +110,18 @@ export function ExportBounceDialog({ open, onClose }: Props) {
             onChange={(e) => setEndSec(Math.max(1, Number(e.target.value) || 1))}
             className="w-24 rounded border border-border bg-panel-raised px-2 py-1"
           />
+        </label>
+        <label className="mt-2 flex items-center justify-between gap-3 text-xs">
+          <span>Profundidad</span>
+          <select
+            value={bitDepth}
+            disabled={busy}
+            onChange={(e) => setBitDepth(Number(e.target.value) === 24 ? 24 : 16)}
+            className="w-24 rounded border border-border bg-panel-raised px-2 py-1"
+          >
+            <option value={16}>PCM 16-bit</option>
+            <option value={24}>PCM 24-bit</option>
+          </select>
         </label>
         <div className="mt-3 h-2 overflow-hidden rounded bg-panel-raised">
           <div className="h-full bg-accent-amber transition-all" style={{ width: `${progress}%` }} />

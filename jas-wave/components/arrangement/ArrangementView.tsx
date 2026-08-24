@@ -5,7 +5,7 @@ import { createProjection } from '@/lib/timeline-projection'
 import { TRACKS, type Track as UiTrack } from '@/lib/daw-data'
 import { useDAW, useDAWState } from '../../src/context/daw-context'
 import type { DAWState } from '../../../shared/src'
-import { linealADb, panADisplay, msATiempoFormateado, beatsASegundos, msACompasBeat } from '@/lib/audio-conversions'
+import { linealADb, panADisplay } from '@/lib/audio-conversions'
 import { ConfirmDialog } from '../ui/confirm-dialog'
 import { StereoWaveform } from '../stereo-waveform'
 import { requestOpenTool } from '@/src/workspace/types'
@@ -13,7 +13,6 @@ import { TrackButton } from './TrackButton'
 import { TimelineRuler } from './TimelineRuler'
 import { GridLayer } from './GridLayer'
 import { PlayheadOverlay } from './PlayheadOverlay'
-import { TrackCanvas } from './TrackCanvas'
 import { ArrangeBoard } from './ArrangeBoard'
 import { TrackAddPluginButton } from './TrackAddPluginButton'
 import { MidiClipPreview } from './MidiClipPreview'
@@ -109,8 +108,6 @@ export function ArrangementView() {
 
   const { seekToBeats, clips, addClipFromFile, getPositionMs } = usePlaybackActions()
   const timelineRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
-  const headersScrollRef = useRef<HTMLDivElement>(null)
   const lanesScrollRef = useRef<HTMLDivElement>(null)
   const rulerScrollRef = useRef<HTMLDivElement>(null)
   const syncingScroll = useRef(false)
@@ -118,7 +115,6 @@ export function ArrangementView() {
 
   const [dragging, setDragging] = useState(false)
   const [playheadTooltip, setPlayheadTooltip] = useState<{ beat: number; bar: number; beatInBar: number } | null>(null)
-  const [trackAreaHeight, setTrackAreaHeight] = useState(0)
   const [viewportWidth, setViewportWidth] = useState(800)
   const [liveScrollX, setLiveScrollX] = useState(0)
 
@@ -148,7 +144,6 @@ export function ArrangementView() {
     }
     return Math.ceil(maxBeat / beatsPerBar + 16) * beatsPerBar
   }, [sharedTracks])
-  const TOTAL_BARS = TOTAL_BEATS / beatsPerBar
 
   const toggles = useMemo<Record<string, TrackToggle>>(() => {
     const map: Record<string, TrackToggle> = {}
@@ -199,13 +194,6 @@ export function ArrangementView() {
     if (el.clientWidth > 0) setViewportWidth(el.clientWidth)
     return () => obs.disconnect()
   }, [])
-
-  // Actualizar altura del área de pistas para regla y líneas
-  useEffect(() => {
-    if (timelineRef.current) {
-      setTrackAreaHeight(timelineRef.current.scrollHeight)
-    }
-  }, [tracks.length, zoom])
 
   const handleAddTrack = async (tipo: 'audio' | 'midi') => {
     const count = sharedTracks.length + 1
@@ -497,7 +485,6 @@ export function ArrangementView() {
   }, [scrollLeft])
 
   const tracksHeight = Math.max(tracks.length * ROW_H, ROW_H)
-  const TRACK_HEADER_W = 300
 
   const syncFromLanes = useCallback(() => {
     if (syncingScroll.current) return

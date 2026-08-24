@@ -176,7 +176,7 @@ export function pluginParamTarget(
 }
 
 export function looksLikeSmcMixer(name: string): boolean {
-  return /smc[\s\-]*mix|m-?vave|m\s*wave/i.test(name)
+  return /smc[\s-]*mix|m-?vave|m\s*wave/i.test(name)
 }
 
 /** Modo CC / User del M-VAVE SMC-MIXER: faders CC40–47, knobs CC30–37. */
