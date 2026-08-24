@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
-import type { AudioTrack } from '../../shared/src/types/tracks'
 import type { Clip } from '../../shared/src/types/clips'
 import type { DAWState } from '../../shared/src/types/state'
 import type { PluginInfo } from '../../shared/src/types/entidades'
@@ -8,7 +7,6 @@ import {
   Volume2,
   VolumeX,
   Headphones,
-  Mic2,
   Circle,
   Trash2,
   Link2,
@@ -125,7 +123,6 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
   const pan = panADisplay(track.paneo ?? 0)
   const isAudio = track.tipo === 'audio'
   const isMidi = track.tipo === 'midi' || track.tipo === 'instrumento'
-  const audioTrack = track as AudioTrack
   const plugins = track.plugins ?? []
 
   const updateTrack = (datos: Record<string, unknown>) => {
@@ -492,7 +489,7 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
               </div>
             ) : (
               <ul className="flex flex-col gap-2">
-                {plugins.map((p, index) => (
+                {plugins.map((p) => (
                   <li
                     key={p.id}
                     className="flex items-start gap-2 rounded-md border border-border bg-panel-raised/60 px-2.5 py-2"

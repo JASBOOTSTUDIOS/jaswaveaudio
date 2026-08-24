@@ -1315,7 +1315,6 @@ export class WebAudioEngine {
     const vel = Math.max(0.05, Math.min(1, velocity / 127))
     const dur = Math.max(0.04, durationSec)
     const attack = Math.min(0.01, dur * 0.15)
-    const release = Math.min(0.08, dur * 0.3)
     const peak = Math.max(0.0002, 0.12 * vel)
 
     const osc = ctx.createOscillator()

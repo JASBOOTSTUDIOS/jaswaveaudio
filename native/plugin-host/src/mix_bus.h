@@ -23,6 +23,10 @@ void jaswave_mix_bus_add(float* interleavedStereo, uint32_t frames);
 /** Extrae stem de una pista (silencio si vacío). Audio thread. */
 void jaswave_mix_bus_pull_stem(uint16_t trackIndex, float* interleavedStereo, uint32_t frames);
 
+/** Push directo de stem (mismo formato que el pipe). Bounce offline. */
+void jaswave_mix_bus_push_stem(uint16_t trackIndex, const float* interleavedStereo,
+                               uint32_t frames);
+
 bool jaswave_mix_bus_running();
 void jaswave_mix_bus_set_input_rate(uint32_t hz);
 void jaswave_mix_bus_set_output_rate(uint32_t hz);

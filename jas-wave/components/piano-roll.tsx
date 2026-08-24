@@ -43,7 +43,6 @@ const KEY_H_BASE = 14
 const LOWEST = 24
 const HIGHEST = 96
 const KEYS = HIGHEST - LOWEST + 1
-const SNAP_DIVISIONS = [1, 0.5, 0.25, 0.125, 0.0625] as const
 /** Altura de la regla temporal — debe coincidir con PianoRollTimelineRuler. */
 const RULER_H = 22
 

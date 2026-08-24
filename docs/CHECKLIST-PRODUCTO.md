@@ -10,16 +10,16 @@ Hoy: arrange, mixer, piano roll, transporte, metrónomo, clips, Soft Pad, VST3 (
 ## Bloqueantes (sin esto no es un DAW de producción)
 
 ### 1. Exportar / bounce
-- [ ] Bounce / render offline a **WAV**
+- [x] Bounce / render offline a **WAV** (PCM16/24 con dithering TPDF; notas VST + clips + Soft Pad; LUFS adjunto)
 - [ ] Exportar **FLAC** y **MP3**
-- [ ] Rango (todo el proyecto o selección de tiempo)
-- [ ] Progreso y cancelar
+- [x] Rango (todo el proyecto o selección de tiempo)
+- [x] Progreso y cancelar
 - [ ] Stems por pista (después del bounce mix)
 
 ### 2. Un motor, no dos
 - [ ] Playback nativo de clips (hoy: Web Audio → pipe → host)
 - [ ] Freeze de pista
-- [ ] Render offline = el mismo audio que Play
+- [x] Render offline = el mismo audio que Play (stems pre-renderizados inline por paso; live MIDI gateada)
 - [ ] Addon `native/audio-engine` fuera de stub o retirado del camino
 
 ### 3. Mezcla de estudio

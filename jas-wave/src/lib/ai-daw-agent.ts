@@ -45,7 +45,6 @@ import {
   type PluginUsageGuide,
 } from './plugin-knowledge'
 import type { PluginInfo } from '../../../shared/src/types/entidades'
-import { parsePlanFromText } from './project-plan'
 import type { ProjectPlanData, ProjectPlanTrack } from './project-plan'
 import {
   bindAgentDocsDisk,
@@ -1282,8 +1281,14 @@ export async function executeDawActions(
           if (action.type === 'render.start' && r.success && r.result) {
             const job = r.result as import('../../../shared/src/types/render').RenderJob
             try {
-              const { runNativeBounce } = await import('@/src/lib/bounce-service')
-              const done = await runNativeBounce(job)
+              const { runNativeBounce, buildRuntimeBounceContent } = await import(
+                '@/src/lib/bounce-service'
+              )
+              const content = buildRuntimeBounceContent(tienda.obtenerEstado(), {
+                startSec: job.start.segundos ?? 0,
+                endSec: job.end.segundos,
+              })
+              const done = await runNativeBounce(job, content)
               results.push({
                 type: action.type,
                 success: done.status === 'completed',

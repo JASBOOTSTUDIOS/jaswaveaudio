@@ -15,10 +15,6 @@ function createZeroPosition(): TimePosition {
   }
 }
 
-function beatsToSeconds(beats: number, bpm: number): number {
-  return (beats * 60) / bpm
-}
-
 function secondsToBeats(seconds: number, bpm: number): number {
   return (seconds * bpm) / 60
 }

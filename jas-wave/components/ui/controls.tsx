@@ -3,7 +3,6 @@ import {
   DB_SUPERIOR,
   DB_INFERIOR,
   DB_ESCALA,
-  formatearDb,
   dbAPorcentaje,
 } from '@/lib/audio-conversions'
 

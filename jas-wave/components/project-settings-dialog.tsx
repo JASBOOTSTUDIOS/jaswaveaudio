@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { FolderOpen, Save, Music2, AudioLines, Settings2, Keyboard, ListOrdered, Shield, Bot, Piano } from 'lucide-react'
+import { FolderOpen, Music2, AudioLines, Settings2, Keyboard, ListOrdered, Shield, Bot, Piano } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import type { DAWState } from '../../shared/src/types/state'
 import { ACCIONES_ATAJO, ATAJOS_POR_DEFECTO } from '../../shared/src'
@@ -34,11 +34,6 @@ interface ProjectSettingsDialogProps {
 const SAMPLE_RATES = [44100, 48000, 88200, 96000, 192000]
 const BIT_DEPTHS = [16, 24, 32]
 const BUFFER_SIZES = [64, 128, 256, 512, 1024, 2048, 4096]
-
-const COMPASES_COMUNES = [
-  [4, 4], [3, 4], [2, 4], [5, 4], [7, 4],
-  [6, 8], [3, 8], [5, 8], [7, 8], [9, 8], [12, 8],
-] as const
 
 type SettingsTab = 'general' | 'audio' | 'midi' | 'rutas' | 'atajos' | 'comandos' | 'permisos' | 'ia'
 
@@ -407,7 +402,7 @@ function AudioTab() {
 
   useEffect(() => {
     void refreshDevices()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [])
 
   const guardarProyecto = (next?: { sampleRate?: number; bufferSize?: number; dispositivoSalida?: string }) => {
@@ -1183,7 +1178,6 @@ function AiTab() {
   const [draftCustom, setDraftCustom] = useState<AiProviderCustom>({ ...DEFAULT_CUSTOM_OPENAI })
 
   const active = useMemo(() => getActiveProvider(settings), [settings])
-  const preset = PROVIDER_PRESETS[active.kind]
   const draftPreset = PROVIDER_PRESETS[draftKind]
 
   const persist = (next: AiSettings) => {

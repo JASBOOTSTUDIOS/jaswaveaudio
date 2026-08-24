@@ -106,18 +106,6 @@ function VstNativeEditor({
   const pluginPath = extractHostPluginPath(plugin.descripcion ?? '')
   const pitches = [60, 62, 64, 65, 67, 69, 71, 72]
 
-  function readBounds() {
-    const el = hostRef.current
-    if (!el) return { x: 0, y: 48, w: 800, h: 500 }
-    const r = el.getBoundingClientRect()
-    return {
-      x: Math.round(r.left),
-      y: Math.round(r.top),
-      w: Math.max(120, Math.round(r.width)),
-      h: Math.max(120, Math.round(r.height)),
-    }
-  }
-
   async function openEditor() {
     if (!pluginPath) {
       setStatus('error')
@@ -150,20 +138,6 @@ function VstNativeEditor({
       setStatus('error')
       setMessage(reply.message || 'No se pudo abrir el editor VST')
     }
-  }
-
-  async function syncBounds() {
-    if (status !== 'open') return
-    const bridge = createElectronPluginHostBridge()
-    const b = readBounds()
-    await bridge.send({
-      type: 'setEditorBounds',
-      slotId,
-      x: b.x,
-      y: b.y,
-      w: b.w,
-      h: b.h,
-    })
   }
 
   async function closeEditor() {

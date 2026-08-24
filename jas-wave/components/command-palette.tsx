@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { Search, Command, ArrowRight } from 'lucide-react'
+import { Command, ArrowRight } from 'lucide-react'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { DAWState } from '../../shared/src'
 import { getActionSystemFromWindow } from '@/hooks/use-shortcut-dispatcher'
