@@ -3,6 +3,7 @@ import { ArrangeView } from '@/components/arrange-view'
 import { Mixer } from '@/components/mixer'
 import { CoProducerPanel } from '@/components/coproducer-panel'
 import { AgentDocsPanel } from '@/components/agent-docs-panel'
+import { DocsExplorerPanel } from '@/components/docs-explorer-panel'
 import { TrackDetailPanel } from '@/components/track-detail-panel'
 import { PianoRollToolPanel } from '@/components/piano-roll'
 import { InstrumentsPanel } from '@/components/instruments-panel'
@@ -34,6 +35,8 @@ export function ToolHost({ toolId }: { toolId: ToolId }) {
       return <CoProducerPanel />
     case 'docs':
       return <AgentDocsPanel />
+    case 'docs-explorer':
+      return <DocsExplorerPanel />
     case 'arrange':
       return <ArrangeView />
     case 'mixer':

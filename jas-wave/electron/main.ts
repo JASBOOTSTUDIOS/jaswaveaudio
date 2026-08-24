@@ -270,6 +270,26 @@ ipcMain.handle('file-read', async (_event: IpcMainInvokeEvent, ruta: string) => 
   return contenido
 })
 
+ipcMain.handle('file-list-dir', async (_event: IpcMainInvokeEvent, dir: string) => {
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true })
+    return {
+      success: true,
+      entries: entries.map((e) => ({
+        name: e.name,
+        isDirectory: e.isDirectory(),
+        isFile: e.isFile(),
+      })),
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'list failed',
+      entries: [] as Array<{ name: string; isDirectory: boolean; isFile: boolean }>,
+    }
+  }
+})
+
 ipcMain.handle('file-exists', async (_event: IpcMainInvokeEvent, ruta: string) => {
   try {
     await fs.access(ruta)

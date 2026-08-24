@@ -23,6 +23,13 @@ function EditableStat({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(String(value))
   const inputRef = useRef<HTMLInputElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const valueRef = useRef(value)
+  const stepRef = useRef(step)
+  const onCommitRef = useRef(onCommit)
+  valueRef.current = value
+  stepRef.current = step
+  onCommitRef.current = onCommit
 
   useEffect(() => {
     if (editing) {
@@ -30,6 +37,21 @@ function EditableStat({
       inputRef.current?.select()
     }
   }, [editing])
+
+  // Listener nativo: React onWheel es passive y no permite preventDefault.
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => {
+      e.preventDefault()
+      const fine = e.shiftKey ? 0.1 : 1
+      const delta = e.deltaY < 0 ? stepRef.current * fine : -stepRef.current * fine
+      const next = Math.round((valueRef.current + delta) * 100) / 100
+      onCommitRef.current(Math.max(min, Math.min(max, next)))
+    }
+    el.addEventListener('wheel', handler, { passive: false })
+    return () => el.removeEventListener('wheel', handler)
+  }, [min, max])
 
   const commit = () => {
     const num = Number(draft)
@@ -39,19 +61,11 @@ function EditableStat({
     setEditing(false)
   }
 
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault()
-    const fine = e.shiftKey ? 0.1 : 1
-    const delta = e.deltaY < 0 ? step * fine : -step * fine
-    const next = Math.round((value + delta) * 100) / 100
-    onCommit(Math.max(min, Math.min(max, next)))
-  }
-
   return (
     <div
+      ref={rootRef}
       className="flex flex-col items-center leading-none cursor-pointer select-none"
       onDoubleClick={() => { setDraft(String(value)); setEditing(true) }}
-      onWheel={handleWheel}
     >
       {editing ? (
         <input
@@ -97,6 +111,13 @@ function TimeSigEditor({
   const [denDraft, setDenDraft] = useState(String(denominador))
   const numRef = useRef<HTMLInputElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
+  const wheelTargetRef = useRef<HTMLDivElement>(null)
+  const numeradorRef = useRef(numerador)
+  const denominadorRef = useRef(denominador)
+  const onCommitRef = useRef(onCommit)
+  numeradorRef.current = numerador
+  denominadorRef.current = denominador
+  onCommitRef.current = onCommit
 
   useEffect(() => {
     if (editing) {
@@ -116,6 +137,25 @@ function TimeSigEditor({
     return () => document.removeEventListener('mousedown', handler)
   }, [showPicker])
 
+  // Listener nativo: React onWheel es passive y no permite preventDefault.
+  useEffect(() => {
+    const el = wheelTargetRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => {
+      e.preventDefault()
+      const idx = COMPASES_COMUNES.findIndex(
+        ([n, d]) => n === numeradorRef.current && d === denominadorRef.current,
+      )
+      const next = e.deltaY < 0
+        ? (idx + 1) % COMPASES_COMUNES.length
+        : (idx - 1 + COMPASES_COMUNES.length) % COMPASES_COMUNES.length
+      const [n, d] = COMPASES_COMUNES[next]
+      onCommitRef.current(n, d)
+    }
+    el.addEventListener('wheel', handler, { passive: false })
+    return () => el.removeEventListener('wheel', handler)
+  }, [editing])
+
   const commit = () => {
     const n = Number(numDraft)
     const d = Number(denDraft)
@@ -123,16 +163,6 @@ function TimeSigEditor({
       onCommit(n, d)
     }
     setEditing(false)
-  }
-
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault()
-    const idx = COMPASES_COMUNES.findIndex(([n, d]) => n === numerador && d === denominador)
-    const next = e.deltaY < 0
-      ? (idx + 1) % COMPASES_COMUNES.length
-      : (idx - 1 + COMPASES_COMUNES.length) % COMPASES_COMUNES.length
-    const [n, d] = COMPASES_COMUNES[next]
-    onCommit(n, d)
   }
 
   return (
@@ -165,10 +195,11 @@ function TimeSigEditor({
           />
         </div>
       ) : (
-        <div className="flex flex-col items-center"
+        <div
+          ref={wheelTargetRef}
+          className="flex flex-col items-center"
           onClick={() => setShowPicker(!showPicker)}
           onDoubleClick={() => { setNumDraft(String(numerador)); setDenDraft(String(denominador)); setEditing(true) }}
-          onWheel={handleWheel}
         >
           <div className="flex items-baseline gap-0.5">
             <span className="font-mono text-[15px] font-semibold text-foreground hover:text-accent-amber transition-colors">

@@ -3,6 +3,7 @@ export type DockZone = 'left' | 'center' | 'right' | 'bottom'
 export type ToolId =
   | 'coproducer'
   | 'docs'
+  | 'docs-explorer'
   | 'arrange'
   | 'mixer'
   | 'library'
@@ -35,8 +36,15 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
   },
   docs: {
     id: 'docs',
-    title: 'Plan / Docs',
-    description: 'plan.md y documentos Markdown editables',
+    title: 'Docs',
+    description: 'Tabs de edición y vista de Markdown del proyecto',
+    defaultZone: 'left',
+    singleton: true,
+  },
+  'docs-explorer': {
+    id: 'docs-explorer',
+    title: 'Explorador',
+    description: 'Árbol de docs/ del proyecto (plan.md y contextos)',
     defaultZone: 'left',
     singleton: true,
   },
@@ -135,7 +143,7 @@ export type WorkspaceLayout = {
 
 export const DEFAULT_WORKSPACE: WorkspaceLayout = {
   zones: {
-    left: ['coproducer', 'docs', 'library', 'instruments'],
+    left: ['coproducer', 'docs-explorer', 'docs', 'library', 'instruments'],
     center: ['arrange'],
     right: ['track-detail', 'fx-chain', 'plugin-editor', 'midi-map', 'meters', 'routing', 'settings'],
     bottom: ['mixer', 'piano-roll'],
