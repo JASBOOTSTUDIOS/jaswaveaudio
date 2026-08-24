@@ -20,7 +20,7 @@ export const AGENT_MODE_META: Record<
   },
   think: {
     label: 'Pensar',
-    hint: 'Arreglo profundo: género, mapa MIDI, VSTs, dinámica',
+    hint: 'Razona el arreglo; no muta hasta Construir',
     insert: 'piensa el arreglo completo y muéstrame una vista previa',
   },
 }
@@ -68,31 +68,43 @@ export function modePromptBlock(mode: AgentMode): string {
   if (mode === 'plan') {
     return [
       '## Modo: PLAN',
-      'NO mutes el DAW. Devuelve un plan de producción (pistas, VST del catálogo, mapas MIDI, dinámica).',
-      'Bloque obligatorio:',
-      '<<<PLAN',
-      '{"nombre","bpm","tonalidad","minutos","pensamiento","pistas":[{"nombre","rol","pluginNombre","articulacion","notasUso"}]}',
-      'PLAN>>>',
-      'El cliente mostrará una vista previa y guardará/actualizará plan.md (editable por el usuario).',
-      'También puedes emitir <<<DOC plan.md ... DOC>>>. No pises la sección «Notas del usuario».',
+      'NO mutes el DAW (no crees/borres pistas, clips ni plugins).',
+      'Si faltan datos (BPM, tonalidad, género, duración), PREGUNTA; si ya hay suficiente, cierra el plan.',
+      'OBLIGATORIO: escribe el plan en plan.md con este bloque (markdown completo):',
+      '<<<DOC plan.md',
+      '# Plan: …',
+      '## Intención',
+      '…',
+      '## Por implementar',
+      '- [ ] Pista «…» (rol · VST …)',
+      '## En curso',
+      '## Implementado',
+      '## Evaluación',
+      '## Notas del usuario',
+      'DOC>>>',
+      'También emite <<<PLAN {json} PLAN>>> con nombre, bpm, tonalidad, minutos, pensamiento, pistas[].',
+      'Puedes usar doc.write { slug:"plan.md", content }. ACTIONS de DAW solo como borrador (aplicar:false); el usuario pulsará Construir.',
     ].join('\n')
   }
   if (mode === 'think') {
     return [
       '## Modo: PENSAMIENTO PROFUNDO',
-      'Eres ingeniero de sonido y arreglista. Razona género, instrumentación, rango MIDI de CADA VST (no asumas piano), velocidades, densidad y forma.',
-      'Si el usuario pide un proyecto / canción completa: emite daw.musicBuild { prompt, aplicar }. NO uses un mega-tool ni inventes VSTs. El cliente orquesta track.*, midi.*, plugin.*, marker.* y valida MIDI.',
-      'Después de ejecutar, el harness de producción inspecciona el DAW (acciones fallidas, MIDI vacío, VST en error, pistas sin instrumento). Si hay errores, recibirás turnos de reparación: SOLO arregla lo roto, no rehacas el proyecto. Si un VST falla, cambia de plugin o Soft Pad; no insistas en el mismo. Luego un turno de juicio vs plan.md.',
-      'Si un VST no es piano/guitarra (batería, orquesta, keyswitches, kits), consulta el mapa de notas del catálogo / plugin.lookup.',
-      'Puedes emitir plugin.lookup { nombre } antes de escribir MIDI para ese instrumento.',
+      'Eres ingeniero de sonido y arreglista. Razona género, instrumentación, rango MIDI de CADA VST, velocidades, densidad y forma.',
+      'NO mutes el DAW. Pregunta solo lo imprescindible; si el usuario ya pidió una canción, redacta el plan.',
+      'OBLIGATORIO al cerrar el razonamiento: actualizar plan.md con <<<DOC plan.md … DOC>>> (Intención + Por implementar con checkboxes por pista/VST/BPM).',
+      'También emite <<<PLAN {"nombre","bpm","tonalidad","minutos","pensamiento","pistas":[…]} PLAN>>>.',
+      'Si propones ACTIONS de DAW, usar aplicar:false. Si propones tempo, ponlo en el PLAN y en plan.md (ej. 72 BPM).',
+      'Proyecto completo: daw.musicBuild { prompt, aplicar:false }. plugin.lookup y doc.write están permitidos.',
+      'NO digas que ya aplicaste cambios en el arrange: el cliente bloquea mutaciones hasta Construir.',
     ].join('\n')
   }
   return [
     '## Modo: CREACIÓN',
     'Ejecuta en el DAW. Si el plan.md existe, síguelo (el usuario puede haberlo editado).',
-    'Si es un clip suelto: daw.generateMidiSong con pistaId y aplicar:true.',
+    'Si es un clip suelto: daw.generateMidiSong con pistaId y aplicar:true. Si mencionas BPM, incluye también project.setBpm.',
     'Si es una canción / proyecto completo: daw.musicBuild { aplicar:true, prompt }. Orquesta pistas, VSTs del catálogo, MIDI validado y mezcla por rol. No inventes plugins.',
     'Si es un arreglo corto ya planeado: daw.composeProject { aplicar:true, pistas:[...] }.',
-    'Al terminar, el harness verifica el DAW y puede pedir reparaciones (clips vacíos, VST fallido). No repitas daw.musicBuild. Actualiza Evaluación (juicio) e Implementado. Puedes usar doc.evaluate o <<<DOC plan.md.',
+    'Acciones destructivas (borrar pistas/clips/todo) requerirán confirmación del usuario en el chat.',
+    'Al terminar, el harness verifica el DAW y puede pedir reparaciones. No repitas daw.musicBuild. Actualiza Evaluación e Implementado.',
   ].join('\n')
 }

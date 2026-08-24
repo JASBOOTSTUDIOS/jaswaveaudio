@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <mutex>
 #include <vector>
@@ -70,6 +71,7 @@ struct Vst2Slot::Impl {
   std::atomic<bool> playing{false};
   VstTimeInfo timeInfo{};
   HWND editorHwnd{nullptr};
+  HWND shellHwnd{nullptr};  // top-level cuando no hay parent Electron
   std::vector<float> inL, inR, outL, outR;
   std::vector<float*> inPtrs, outPtrs;
 
@@ -79,6 +81,8 @@ struct Vst2Slot::Impl {
     switch (opcode) {
       case audioMasterVersion:
         return 2400;
+      case audioMasterWantMidi:
+        return 1;
       case audioMasterGetVendorString:
         if (ptr) std::strncpy(static_cast<char*>(ptr), "JasWave", 63);
         return 1;
@@ -113,8 +117,6 @@ struct Vst2Slot::Impl {
         return self ? self->blockSize : 512;
       case audioMasterGetCurrentProcessLevel:
         return kVstProcessLevelRealtime;
-      case audioMasterWantMidi:
-        return 1;
       case audioMasterSizeWindow:
         if (self && self->editorHwnd) {
           SetWindowPos(self->editorHwnd, nullptr, 0, 0, static_cast<int>(index),
@@ -159,16 +161,15 @@ struct Vst2Slot::Impl {
       e.deltaFrames = std::max(0, std::min(e.deltaFrames, frames - 1));
       ptrs.push_back(reinterpret_cast<VstEvent*>(&e));
     }
-    // VstEvents with flexible array — build contiguous block
-    const size_t bytes = sizeof(int32_t) + sizeof(intptr_t) + sizeof(VstEvent*) * ptrs.size();
-    std::vector<uint8_t> raw(bytes);
+    // offsetof(events) es 16 en x64 (padding tras numEvents); no usar 4+8=12.
+    const size_t header = offsetof(VstEvents, events);
+    const size_t bytes = header + sizeof(VstEvent*) * ptrs.size();
+    std::vector<uint8_t> raw(bytes, 0);
     auto* ev = reinterpret_cast<VstEvents*>(raw.data());
     ev->numEvents = static_cast<int32_t>(ptrs.size());
     ev->reserved = 0;
-    for (size_t i = 0; i < ptrs.size(); ++i) {
-      // Overlay events array manually
-      reinterpret_cast<VstEvent**>(raw.data() + sizeof(int32_t) + sizeof(intptr_t))[i] = ptrs[i];
-    }
+    auto** dest = reinterpret_cast<VstEvent**>(raw.data() + header);
+    for (size_t i = 0; i < ptrs.size(); ++i) dest[i] = ptrs[i];
     effect->dispatcher(effect, effProcessEvents, 0, 0, ev, 0.f);
   }
 
@@ -184,6 +185,45 @@ struct Vst2Slot::Impl {
     if (midiQueue.size() < 512) midiQueue.push_back(e);
   }
 };
+namespace {
+
+#ifdef _WIN32
+constexpr UINT_PTR kEditIdleTimer = 1;
+constexpr char kVst2ShellClass[] = "JasWaveVst2Shell";
+
+LRESULT CALLBACK vst2ShellWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+  if (msg == WM_TIMER && wp == kEditIdleTimer) {
+    auto* effect = reinterpret_cast<AEffect*>(GetWindowLongPtrA(hwnd, GWLP_USERDATA));
+    if (effect) effect->dispatcher(effect, effEditIdle, 0, 0, nullptr, 0.f);
+    return 0;
+  }
+  if (msg == WM_CLOSE) {
+    ShowWindow(hwnd, SW_HIDE);
+    return 0;
+  }
+  if (msg == WM_DESTROY) {
+    KillTimer(hwnd, kEditIdleTimer);
+    return 0;
+  }
+  return DefWindowProcA(hwnd, msg, wp, lp);
+}
+
+void registerVst2ShellClass() {
+  static bool once = false;
+  if (once) return;
+  once = true;
+  WNDCLASSEXA wc{};
+  wc.cbSize = sizeof(wc);
+  wc.lpfnWndProc = vst2ShellWndProc;
+  wc.hInstance = GetModuleHandleA(nullptr);
+  wc.lpszClassName = kVst2ShellClass;
+  wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+  wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+  RegisterClassExA(&wc);
+}
+#endif
+
+}  // namespace
 
 bool Vst2Slot::isPe64Dll(const std::string& path) {
   uint16_t machine = 0;
@@ -375,22 +415,61 @@ bool Vst2Slot::openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h,
     return false;
   }
   closeEditor();
-  HWND parent = reinterpret_cast<HWND>(parentHwnd);
-  if (!parent) {
-    err = "parentHwnd inválido";
-    return false;
-  }
+  registerVst2ShellClass();
   ERect* rect = nullptr;
   impl_->effect->dispatcher(impl_->effect, effEditGetRect, 0, 0, &rect, 0.f);
-  const int ew = rect ? (rect->right - rect->left) : w;
-  const int eh = rect ? (rect->bottom - rect->top) : h;
-  impl_->editorHwnd = CreateWindowExA(0, "STATIC", "", WS_CHILD | WS_VISIBLE, x, y, ew, eh, parent,
-                                      nullptr, GetModuleHandleA(nullptr), nullptr);
+  const int ew = rect ? (rect->right - rect->left) : (w > 0 ? w : 800);
+  const int eh = rect ? (rect->bottom - rect->top) : (h > 0 ? h : 500);
+  const int vw = ew < 200 ? 800 : ew;
+  const int vh = eh < 150 ? 500 : eh;
+
+  HWND parent = parentHwnd ? reinterpret_cast<HWND>(parentHwnd) : nullptr;
+  // Como VST3: si Electron no pasa HWND (evita deadlock), ventana top-level propia.
+  if (!parent || !IsWindow(parent)) {
+    HINSTANCE inst = GetModuleHandleA(nullptr);
+    int sx = x;
+    int sy = y;
+    if (sx <= 0 && sy <= 0) {
+      const int sw = GetSystemMetrics(SM_CXSCREEN);
+      const int sh = GetSystemMetrics(SM_CYSCREEN);
+      sx = std::max(40, (sw - vw) / 2);
+      sy = std::max(40, (sh - vh) / 2);
+    }
+    impl_->shellHwnd = CreateWindowExA(
+        WS_EX_APPWINDOW, kVst2ShellClass, "JasWave VST2",
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_VISIBLE |
+            WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+        sx, sy, vw + 16, vh + 40, nullptr, nullptr, inst, nullptr);
+    if (!impl_->shellHwnd) {
+      err = "CreateWindow shell VST2 falló";
+      return false;
+    }
+    SetWindowLongPtrA(impl_->shellHwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(impl_->effect));
+    SetTimer(impl_->shellHwnd, kEditIdleTimer, 16, nullptr);
+    parent = impl_->shellHwnd;
+    x = 0;
+    y = 0;
+  }
+
+  impl_->editorHwnd = CreateWindowExA(0, "STATIC", "", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, x, y,
+                                      vw, vh, parent, nullptr, GetModuleHandleA(nullptr), nullptr);
   if (!impl_->editorHwnd) {
     err = "CreateWindow editor falló";
+    if (impl_->shellHwnd) {
+      KillTimer(impl_->shellHwnd, kEditIdleTimer);
+      DestroyWindow(impl_->shellHwnd);
+      impl_->shellHwnd = nullptr;
+    }
     return false;
   }
   impl_->effect->dispatcher(impl_->effect, effEditOpen, 0, 0, impl_->editorHwnd, 0.f);
+  if (impl_->shellHwnd) {
+    ShowWindow(impl_->shellHwnd, SW_SHOW);
+    UpdateWindow(impl_->shellHwnd);
+    SetForegroundWindow(impl_->shellHwnd);
+  }
+  // Idle inmediato: muchos VST2 no pintan hasta el primer effEditIdle.
+  impl_->effect->dispatcher(impl_->effect, effEditIdle, 0, 0, nullptr, 0.f);
   return true;
 #else
   (void)parentHwnd;
@@ -423,11 +502,62 @@ void Vst2Slot::closeEditor() {
     DestroyWindow(impl_->editorHwnd);
     impl_->editorHwnd = nullptr;
   }
+  if (impl_->shellHwnd) {
+    KillTimer(impl_->shellHwnd, kEditIdleTimer);
+    DestroyWindow(impl_->shellHwnd);
+    impl_->shellHwnd = nullptr;
+  }
 #endif
+}
+
+void Vst2Slot::idleEditor() {
+  if (impl_->effect && impl_->editorHwnd) {
+    impl_->effect->dispatcher(impl_->effect, effEditIdle, 0, 0, nullptr, 0.f);
+  }
 }
 
 bool Vst2Slot::hasEditor() const {
   return impl_->effect && (impl_->effect->flags & effFlagsHasEditor);
+}
+
+bool Vst2Slot::getStateChunk(std::vector<uint8_t>& out, std::string& err) {
+  out.clear();
+  if (!impl_->effect) {
+    err = "Sin effect";
+    return false;
+  }
+  if (!(impl_->effect->flags & effFlagsProgramChunks)) {
+    err = "Plugin sin chunks";
+    return false;
+  }
+  void* data = nullptr;
+  const intptr_t n = impl_->effect->dispatcher(impl_->effect, effGetChunk, 0, 0, &data, 0.f);
+  if (n <= 0 || !data) {
+    err = "effGetChunk vacío";
+    return false;
+  }
+  out.resize(static_cast<size_t>(n));
+  std::memcpy(out.data(), data, static_cast<size_t>(n));
+  return true;
+}
+
+bool Vst2Slot::setStateChunk(const uint8_t* data, size_t nbytes, std::string& err) {
+  if (!impl_->effect) {
+    err = "Sin effect";
+    return false;
+  }
+  if (!(impl_->effect->flags & effFlagsProgramChunks) || !data || nbytes == 0) {
+    err = "Chunk inválido";
+    return false;
+  }
+  const intptr_t r =
+      impl_->effect->dispatcher(impl_->effect, effSetChunk, 0, static_cast<intptr_t>(nbytes),
+                                const_cast<uint8_t*>(data), 0.f);
+  if (r == 0) {
+    err = "effSetChunk falló";
+    return false;
+  }
+  return true;
 }
 
 void Vst2Slot::waitNotProcessing() {

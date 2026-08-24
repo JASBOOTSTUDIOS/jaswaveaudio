@@ -529,6 +529,24 @@ static bool decodeBase64(const std::string& in, std::vector<uint8_t>& out) {
   return true;
 }
 
+static std::string encodeBase64(const uint8_t* data, size_t n) {
+  static const char* kTbl =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string out;
+  out.reserve(((n + 2) / 3) * 4);
+  for (size_t i = 0; i < n; i += 3) {
+    const uint32_t b0 = data[i];
+    const uint32_t b1 = i + 1 < n ? data[i + 1] : 0;
+    const uint32_t b2 = i + 2 < n ? data[i + 2] : 0;
+    const uint32_t triple = (b0 << 16) | (b1 << 8) | b2;
+    out.push_back(kTbl[(triple >> 18) & 63]);
+    out.push_back(kTbl[(triple >> 12) & 63]);
+    out.push_back(i + 1 < n ? kTbl[(triple >> 6) & 63] : '=');
+    out.push_back(i + 2 < n ? kTbl[triple & 63] : '=');
+  }
+  return out;
+}
+
 static float softLimitSample(float x) {
   /* Más headroom para baterías (BFD): evita brickwall y deja margen de suma. */
   const float y = x * 0.72f;
@@ -1630,6 +1648,48 @@ static void handleLine(const std::string& line) {
     }
     slot->setParameterNormalized(paramId, value);
     replyOk("\"slotId\":\"" + jsonEscape(slotId) + "\",\"paramId\":" + std::to_string(paramId));
+    return;
+  }
+  if (type == "getPluginState") {
+    std::string slotId = getStringField(line, "slotId");
+    if (slotId.empty()) slotId = gActiveSlot;
+    std::lock_guard<std::mutex> lock(gSlotsMutex);
+    auto* slot = findSlotUnlocked(slotId);
+    if (!slot) {
+      replyFail("PluginNotFound", "slot no cargado: " + slotId);
+      return;
+    }
+    std::vector<uint8_t> bytes;
+    std::string err;
+    if (!slot->getStateChunk(bytes, err)) {
+      replyFail("NoChunk", err);
+      return;
+    }
+    replyOk("\"slotId\":\"" + jsonEscape(slotId) + "\",\"stateBase64\":\"" +
+            jsonEscape(encodeBase64(bytes.data(), bytes.size())) + "\"");
+    return;
+  }
+  if (type == "setPluginState") {
+    std::string slotId = getStringField(line, "slotId");
+    if (slotId.empty()) slotId = gActiveSlot;
+    const std::string b64 = getStringField(line, "stateBase64");
+    std::vector<uint8_t> bytes;
+    if (b64.empty() || !decodeBase64(b64, bytes) || bytes.empty()) {
+      replyFail("InvalidArgs", "stateBase64 inválido");
+      return;
+    }
+    std::lock_guard<std::mutex> lock(gSlotsMutex);
+    auto* slot = findSlotUnlocked(slotId);
+    if (!slot) {
+      replyFail("PluginNotFound", "slot no cargado: " + slotId);
+      return;
+    }
+    std::string err;
+    if (!slot->setStateChunk(bytes.data(), bytes.size(), err)) {
+      replyFail("SetChunkFailed", err);
+      return;
+    }
+    replyOk("\"slotId\":\"" + jsonEscape(slotId) + "\"");
     return;
   }
   if (type == "openEditor") {

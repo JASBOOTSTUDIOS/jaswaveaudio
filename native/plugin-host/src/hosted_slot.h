@@ -102,6 +102,19 @@ public:
   }
   bool hasEditor() const { return vst2_ ? vst2_->hasEditor() : vst3_->hasEditor(); }
 
+  bool getStateChunk(std::vector<uint8_t>& out, std::string& err) {
+    if (vst2_) return vst2_->getStateChunk(out, err);
+    if (vst3_) return vst3_->getStateChunk(out, err);
+    err = "sin slot";
+    return false;
+  }
+  bool setStateChunk(const uint8_t* data, size_t nbytes, std::string& err) {
+    if (vst2_) return vst2_->setStateChunk(data, nbytes, err);
+    if (vst3_) return vst3_->setStateChunk(data, nbytes, err);
+    err = "sin slot";
+    return false;
+  }
+
   const std::string& path() const { return vst2_ ? vst2_->path() : vst3_->path(); }
   const std::string& slotId() const { return vst2_ ? vst2_->slotId() : vst3_->slotId(); }
   void setSlotId(std::string id) {

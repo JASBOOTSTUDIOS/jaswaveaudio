@@ -17,6 +17,7 @@
 #include "public.sdk/source/vst/hosting/parameterchanges.h"
 #include "public.sdk/source/vst/hosting/plugprovider.h"
 #include "public.sdk/source/vst/hosting/processdata.h"
+#include "pluginterfaces/base/ibstream.h"
 #include "pluginterfaces/gui/iplugview.h"
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 #include "pluginterfaces/vst/ivstcomponent.h"
@@ -126,6 +127,56 @@ std::string vstStringToUtf8(const String128 s) {
   }
   return out;
 }
+
+/** IBStream en memoria (evita depender de memorystream.cpp del SDK). */
+struct BufStream : public IBStream {
+  std::vector<uint8_t> buf;
+  int64 cursor{0};
+
+  tresult PLUGIN_API queryInterface(const TUID _iid, void** obj) override {
+    QUERY_INTERFACE(_iid, obj, FUnknown::iid, IBStream)
+    QUERY_INTERFACE(_iid, obj, IBStream::iid, IBStream)
+    *obj = nullptr;
+    return kNoInterface;
+  }
+  uint32 PLUGIN_API addRef() override { return 1000; }
+  uint32 PLUGIN_API release() override { return 1000; }
+
+  tresult PLUGIN_API read(void* buffer, int32 numBytes, int32* numBytesRead) override {
+    if (!buffer || numBytes < 0) return kInvalidArgument;
+    const int64 avail = static_cast<int64>(buf.size()) - cursor;
+    const int32 n = static_cast<int32>(std::min<int64>(numBytes, std::max<int64>(0, avail)));
+    if (n > 0) std::memcpy(buffer, buf.data() + cursor, static_cast<size_t>(n));
+    cursor += n;
+    if (numBytesRead) *numBytesRead = n;
+    return kResultOk;
+  }
+  tresult PLUGIN_API write(void* buffer, int32 numBytes, int32* numBytesWritten) override {
+    if (!buffer || numBytes < 0) return kInvalidArgument;
+    const size_t need = static_cast<size_t>(cursor + numBytes);
+    if (buf.size() < need) buf.resize(need);
+    std::memcpy(buf.data() + cursor, buffer, static_cast<size_t>(numBytes));
+    cursor += numBytes;
+    if (numBytesWritten) *numBytesWritten = numBytes;
+    return kResultOk;
+  }
+  tresult PLUGIN_API seek(int64 pos, int32 mode, int64* result) override {
+    int64 next = cursor;
+    if (mode == kIBSeekSet) next = pos;
+    else if (mode == kIBSeekCur) next = cursor + pos;
+    else if (mode == kIBSeekEnd) next = static_cast<int64>(buf.size()) + pos;
+    else return kInvalidArgument;
+    if (next < 0) return kInvalidArgument;
+    cursor = next;
+    if (result) *result = cursor;
+    return kResultOk;
+  }
+  tresult PLUGIN_API tell(int64* pos) override {
+    if (!pos) return kInvalidArgument;
+    *pos = cursor;
+    return kResultOk;
+  }
+};
 
 } // namespace
 
@@ -785,4 +836,95 @@ bool Vst3Slot::hasEditor() const {
 #else
   return false;
 #endif
+}
+
+bool Vst3Slot::getStateChunk(std::vector<uint8_t>& out, std::string& err) {
+  out.clear();
+  if (!impl_->component) {
+    err = "Sin IComponent";
+    return false;
+  }
+  BufStream comp;
+  if (impl_->component->getState(&comp) != kResultOk || comp.buf.empty()) {
+    err = "IComponent::getState vacío/falló";
+    return false;
+  }
+  BufStream ctrl;
+  if (impl_->controller) {
+    impl_->controller->getState(&ctrl);  // opcional
+  }
+  // Formato: magic "JW3S" + u32 LE lenComp + comp + u32 LE lenCtrl + ctrl
+  out.reserve(8 + comp.buf.size() + ctrl.buf.size());
+  out.push_back('J');
+  out.push_back('W');
+  out.push_back('3');
+  out.push_back('S');
+  auto putU32 = [&](uint32_t v) {
+    out.push_back(static_cast<uint8_t>(v & 0xff));
+    out.push_back(static_cast<uint8_t>((v >> 8) & 0xff));
+    out.push_back(static_cast<uint8_t>((v >> 16) & 0xff));
+    out.push_back(static_cast<uint8_t>((v >> 24) & 0xff));
+  };
+  putU32(static_cast<uint32_t>(comp.buf.size()));
+  out.insert(out.end(), comp.buf.begin(), comp.buf.end());
+  putU32(static_cast<uint32_t>(ctrl.buf.size()));
+  out.insert(out.end(), ctrl.buf.begin(), ctrl.buf.end());
+  return true;
+}
+
+bool Vst3Slot::setStateChunk(const uint8_t* data, size_t nbytes, std::string& err) {
+  if (!impl_->component || !data || nbytes < 8) {
+    err = "Chunk VST3 inválido";
+    return false;
+  }
+  auto readU32 = [](const uint8_t* p) -> uint32_t {
+    return uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
+  };
+
+  const uint8_t* compPtr = nullptr;
+  size_t compLen = 0;
+  const uint8_t* ctrlPtr = nullptr;
+  size_t ctrlLen = 0;
+
+  if (nbytes >= 4 && data[0] == 'J' && data[1] == 'W' && data[2] == '3' && data[3] == 'S') {
+    size_t off = 4;
+    if (off + 4 > nbytes) {
+      err = "Chunk truncado";
+      return false;
+    }
+    compLen = readU32(data + off);
+    off += 4;
+    if (off + compLen + 4 > nbytes) {
+      err = "Chunk component truncado";
+      return false;
+    }
+    compPtr = data + off;
+    off += compLen;
+    ctrlLen = readU32(data + off);
+    off += 4;
+    if (off + ctrlLen > nbytes) {
+      err = "Chunk controller truncado";
+      return false;
+    }
+    ctrlPtr = ctrlLen ? data + off : nullptr;
+  } else {
+    // Blob crudo = solo component (compat).
+    compPtr = data;
+    compLen = nbytes;
+  }
+
+  BufStream comp;
+  comp.buf.assign(compPtr, compPtr + compLen);
+  comp.cursor = 0;
+  if (impl_->component->setState(&comp) != kResultOk) {
+    err = "IComponent::setState falló";
+    return false;
+  }
+  if (impl_->controller && ctrlPtr && ctrlLen > 0) {
+    BufStream ctrl;
+    ctrl.buf.assign(ctrlPtr, ctrlPtr + ctrlLen);
+    ctrl.cursor = 0;
+    impl_->controller->setState(&ctrl);
+  }
+  return true;
 }

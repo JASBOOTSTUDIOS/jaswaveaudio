@@ -32,7 +32,18 @@ import {
   executeDawActions,
   formatActionResultsForUser,
   type ActionResult,
+  type DawAction,
 } from '@/src/lib/ai-daw-agent'
+import {
+  forcePreviewAplicar,
+  isMutatingAction,
+  modeBlocksMutation,
+  partitionActions,
+} from '@/src/lib/ai-action-policy'
+import { appendAiDawAudit } from '@/src/lib/ai-daw-audit-store'
+import { PendingActionsCard } from '@/components/pending-actions-card'
+import { DestructiveConfirmCard } from '@/components/destructive-confirm-card'
+import { AiAuditPanel } from '@/components/ai-audit-panel'
 import { MidiGenerationPreview, type MidiPreviewData } from '@/components/midi-generation-preview'
 import { ProjectPlanPreview } from '@/components/project-plan-preview'
 import { MusicBuildPreview } from '@/components/music-build-preview'
@@ -66,6 +77,7 @@ import {
   createConversation,
   deleteConversation,
   setActiveConversationId,
+  setChatProjectScope,
   appendMessage,
   updateMessageContent,
   getConversation,
@@ -74,8 +86,9 @@ import {
 } from '@/src/lib/ai-chat-store'
 import { JasWaveLogo } from '@/components/brand'
 import { ChatMarkdown } from '@/components/chat-markdown'
+import type { TiendaDAW } from '../../shared/src/state/tienda'
 import type { DAWState } from '../../shared/src/types/state'
-import { applyMarkdownDocsFromModel, bindAgentDocsDisk } from '@/src/lib/agent-docs'
+import { applyMarkdownDocsFromModel, bindAgentDocsDisk, parseDocBlocksFromText } from '@/src/lib/agent-docs'
 import { ensurePlanFromCompose, syncPlanAfterDawChange, type PlanEvaluation } from '@/src/lib/agent-plan-eval'
 import {
   buildHarnessReviewMessage,
@@ -95,9 +108,10 @@ function finishAgentTurn(
   state: DAWState,
   results: ActionResult[],
   modelText?: string,
-  opts?: { preferModelEval?: boolean },
-): { extra: string; evaluation: PlanEvaluation | null; mutated: boolean } {
+  opts?: { preferModelEval?: boolean; forcePlanMd?: boolean; planFromModel?: ProjectPlanData | null },
+): { extra: string; evaluation: PlanEvaluation | null; mutated: boolean; docsWritten: string[] } {
   bindAgentDocsDisk(projectId, state.project?.ruta)
+
   const planHit = results.find(
     (r) =>
       (r.type === 'daw.composeProject' && (r.data as { kind?: string } | undefined)?.kind === 'projectPlan') ||
@@ -107,18 +121,27 @@ function finishAgentTurn(
     const data = planHit.data as { kind?: string }
     if (data.kind === 'musicBuild') {
       const build = data as MusicBuildResult
-      ensurePlanFromCompose(projectId, specToProjectPlan(build.spec, build.applied))
+      ensurePlanFromCompose(projectId, specToProjectPlan(build.spec, build.applied), {
+        force: opts?.forcePlanMd,
+      })
     } else {
-      ensurePlanFromCompose(projectId, planHit.data as import('@/src/lib/project-plan').ProjectPlanData)
+      ensurePlanFromCompose(projectId, planHit.data as import('@/src/lib/project-plan').ProjectPlanData, {
+        force: opts?.forcePlanMd,
+      })
     }
+  } else if (opts?.planFromModel) {
+    ensurePlanFromCompose(projectId, opts.planFromModel, { force: true })
   }
-  const skipSync = new Set(['doc.list', 'doc.read', 'doc.evaluate'])
+
+  const skipSync = new Set(['doc.list', 'doc.read', 'doc.evaluate', 'doc.write', 'doc.create', 'doc.append'])
   const mutated = results.some((r) => r.success && !skipSync.has(r.type))
   let extra = ''
   let evaluation: PlanEvaluation | null = null
+  let docsWritten: string[] = []
   const applyDocs = () => {
     const written = modelText ? applyMarkdownDocsFromModel(projectId, modelText) : []
-    if (written.length) extra = [extra, `Docs: ${written.join(', ')}`].filter(Boolean).join('\n')
+    docsWritten = written
+    if (written.length) extra = [extra, `Docs actualizados: ${written.join(', ')}`].filter(Boolean).join('\n')
     return written
   }
   if (opts?.preferModelEval) {
@@ -134,8 +157,23 @@ function finishAgentTurn(
       if (evaluation?.summary) extra = [extra, evaluation.summary].filter(Boolean).join('\n')
     }
   }
-  if (extra || planHit || evaluation) requestOpenTool('docs', { zone: 'left' })
-  return { extra, evaluation, mutated }
+
+  // Si el modelo no mandó <<<DOC>>> pero sí <<<PLAN>>>, forzar plan.md
+  if (
+    opts?.forcePlanMd &&
+    opts.planFromModel &&
+    !docsWritten.includes('plan.md') &&
+    !parseDocBlocksFromText(modelText || '').some((b) => b.slug === 'plan.md')
+  ) {
+    ensurePlanFromCompose(projectId, opts.planFromModel, { force: true })
+    docsWritten = [...docsWritten, 'plan.md']
+    extra = [extra, 'Docs actualizados: plan.md (desde <<<PLAN>>>)'].filter(Boolean).join('\n')
+  }
+
+  if (extra || planHit || evaluation || docsWritten.length || opts?.planFromModel) {
+    requestOpenTool('docs', { zone: 'left' })
+  }
+  return { extra, evaluation, mutated, docsWritten }
 }
 
 function pickMusicBuild(results: ActionResult[]): MusicBuildResult | undefined {
@@ -145,11 +183,133 @@ function pickMusicBuild(results: ActionResult[]): MusicBuildResult | undefined {
   return hit?.data as MusicBuildResult | undefined
 }
 
+type ProcessActionsOutcome = {
+  results: ActionResult[]
+  pendingActions?: StoredChatMessage['pendingActions']
+  confirmActions?: StoredChatMessage['confirmActions']
+  ranMutations: boolean
+}
+
+function resultsOrPending(out: ProcessActionsOutcome): ActionResult[] {
+  if (out.results.length) return out.results
+  const pending = out.pendingActions?.actions ?? []
+  if (pending.length) {
+    return pending.map((a) => ({
+      type: a.type,
+      success: true,
+      message: `Propuesto: ${a.type} (Construir para aplicar)`,
+    }))
+  }
+  const confirm = out.confirmActions?.actions ?? []
+  return confirm.map((a) => ({
+    type: a.type,
+    success: true,
+    message: `Pendiente de confirmación: ${a.type}`,
+  }))
+}
+
+/** Gate por modo: plan/think → pending; create → confirm destructivas; resto ejecuta. */
+async function processActionsForMode(opts: {
+  tienda: TiendaDAW
+  actions: DawAction[]
+  resolvedMode: AgentMode
+  userText: string
+  conversationId: string
+  messageId: string
+  source: 'model_actions' | 'fallback'
+}): Promise<ProcessActionsOutcome> {
+  const { tienda, resolvedMode, userText, conversationId, messageId, source } = opts
+  let actions = forcePreviewAplicar(opts.actions, resolvedMode)
+  const ctx = { conversationId, messageId, agentMode: resolvedMode, source }
+
+  for (const a of actions) {
+    appendAiDawAudit({
+      ...ctx,
+      tool: a.type,
+      params: { ...(a.payload ?? {}) },
+      status: 'proposed',
+    })
+  }
+
+  if (modeBlocksMutation(resolvedMode)) {
+    const readonly = actions.filter((a) => !isMutatingAction(a))
+    const pending = actions.filter(isMutatingAction)
+    let results: ActionResult[] = []
+    if (readonly.length) {
+      results = await executeDawActions(tienda, readonly, {
+        agentMode: resolvedMode,
+        forceApply: false,
+        source,
+        conversationId,
+        messageId,
+      })
+    }
+    for (const a of pending) {
+      appendAiDawAudit({
+        ...ctx,
+        tool: a.type,
+        params: { ...(a.payload ?? {}) },
+        status: 'skipped_by_mode',
+        result: { success: false, message: 'Pendiente de Construir' },
+      })
+    }
+    return {
+      results,
+      pendingActions:
+        pending.length > 0
+          ? { status: 'pending', actions: pending, agentMode: resolvedMode }
+          : undefined,
+      ranMutations: false,
+    }
+  }
+
+  const { readonly, mutating, destructive } = partitionActions(actions, userText)
+  const toRun = [...readonly, ...mutating]
+  let results: ActionResult[] = []
+  if (toRun.length) {
+    results = await executeDawActions(tienda, toRun, {
+      agentMode: resolvedMode,
+      forceApply: false,
+      source,
+      conversationId,
+      messageId,
+    })
+  }
+  if (destructive.length) {
+    for (const a of destructive) {
+      appendAiDawAudit({
+        ...ctx,
+        tool: a.type,
+        params: { ...(a.payload ?? {}) },
+        status: 'pending_confirm',
+        result: { success: false, message: 'Esperando confirmación del usuario' },
+      })
+    }
+  }
+  return {
+    results,
+    confirmActions:
+      destructive.length > 0
+        ? {
+            status: 'pending',
+            actions: destructive,
+            reason: 'Esta acción borra o altera contenido de forma irreversible. ¿Confirmas?',
+          }
+        : undefined,
+    ranMutations: results.some((r) => r.success && isMutatingAction({ type: r.type })),
+  }
+}
+
+
 export function CoProducerPanel() {
   const [inputMessage, setInputMessage] = useState('')
-  const [conversation, setConversation] = useState<ChatConversation>(() => ensureActiveConversation())
+  const [conversation, setConversation] = useState<ChatConversation>(() =>
+    ensureActiveConversation('default'),
+  )
   const [historyOpen, setHistoryOpen] = useState(false)
-  const [conversations, setConversations] = useState<ChatConversation[]>(() => listConversations())
+  const [conversations, setConversations] = useState<ChatConversation[]>(() =>
+    listConversations('default'),
+  )
   const [isGenerating, setIsGenerating] = useState(false)
   const [aiStatus, setAiStatus] = useState<'unknown' | 'online' | 'offline' | 'misconfigured'>('unknown')
   const [statusDetail, setStatusDetail] = useState('')
@@ -166,9 +326,13 @@ export function CoProducerPanel() {
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const dawStore = useDAW()
+  const projectId = useDAWState((state) => state.project?.id || 'default')
   const projectName = useDAWState((state) => state.project?.nombre || 'Nuevo Proyecto')
   const trackCount = useDAWState((state) => state.project?.tracks?.length ?? 0)
-  const messages = conversation.messages.filter((m) => m.role === 'user' || m.role === 'assistant')
+  const messages =
+    conversation.projectId === projectId
+      ? conversation.messages.filter((m) => m.role === 'user' || m.role === 'assistant')
+      : []
   const citedMessages = citedIds
     .map((id) => messages.find((m) => m.id === id))
     .filter((m): m is StoredChatMessage => Boolean(m))
@@ -238,8 +402,15 @@ export function CoProducerPanel() {
   }
 
   const refreshHistoryList = useCallback(() => {
-    setConversations(listConversations())
-  }, [])
+    setConversations(listConversations(projectId))
+  }, [projectId])
+
+  useEffect(() => {
+    setChatProjectScope(projectId)
+    const next = ensureActiveConversation(projectId)
+    setConversation(next)
+    setConversations(listConversations(projectId))
+  }, [projectId])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -294,15 +465,15 @@ export function CoProducerPanel() {
 
   const switchConversation = (id: string) => {
     const c = getConversation(id)
-    if (!c) return
-    setActiveConversationId(id)
+    if (!c || c.projectId !== projectId) return
+    setActiveConversationId(id, projectId)
     setConversation(c)
     setHistoryOpen(false)
   }
 
   const startNewChat = () => {
-    const c = createConversation()
-    setActiveConversationId(c.id)
+    const c = createConversation('Nueva conversación', projectId)
+    setActiveConversationId(c.id, projectId)
     setConversation(c)
     refreshHistoryList()
     setHistoryOpen(false)
@@ -311,7 +482,7 @@ export function CoProducerPanel() {
   const removeChat = (id: string) => {
     deleteConversation(id)
     if (conversation.id === id) {
-      const next = ensureActiveConversation()
+      const next = ensureActiveConversation(projectId)
       setConversation(next)
     }
     refreshHistoryList()
@@ -373,17 +544,35 @@ export function CoProducerPanel() {
       let actionsSummary = ''
       let lastResults: ActionResult[] = []
       let modelRaw = ''
+      let pendingActions: StoredChatMessage['pendingActions']
+      let confirmActions: StoredChatMessage['confirmActions']
+      let ranMutations = false
+      let parsedPlanForDocs: ProjectPlanData | null = null
+      const resolvedMode = detectAgentMode(userText, agentMode)
 
       if (!local) {
         if (!window.electron?.aiChat) {
           // Sin Electron: si pide crear, ejecutamos igual en el DAW local
           const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
           if (forced.length) {
-            const results = await executeDawActions(dawStore, forced)
-            lastResults = results
-            actionsSummary = formatActionResultsForUser(results)
+            const out = await processActionsForMode({
+              tienda: dawStore,
+              actions: forced,
+              resolvedMode,
+              userText,
+              conversationId: conversation.id,
+              messageId: assistantMsgId,
+              source: 'fallback',
+            })
+            lastResults = out.results
+            pendingActions = out.pendingActions
+            confirmActions = out.confirmActions
+            ranMutations = out.ranMutations
+            actionsSummary = formatActionResultsForUser(resultsOrPending(out))
             accumulated = [
-              'He aplicado los cambios directamente en JasWave (sin modelo remoto).',
+              modeBlocksMutation(resolvedMode)
+                ? 'Propuesta lista — pulsa Construir para aplicar (sin modelo remoto).'
+                : 'He aplicado los cambios directamente en JasWave (sin modelo remoto).',
               actionsSummary,
             ].join('\n\n')
           } else {
@@ -400,7 +589,6 @@ export function CoProducerPanel() {
           const cfg = loadAiSettings()
           const provider = getActiveProvider(cfg)
           const systemContext = buildAgentSystemPrompt(state, userText, agentMode, messages)
-          const resolvedMode = detectAgentMode(userText, agentMode)
           const think = resolvedMode === 'think'
           const modelUser = formatUserTurnWithCitations(userText, cited)
           const prior = historyWithCitedPins(refreshed?.messages ?? messages, cited, [
@@ -426,6 +614,7 @@ export function CoProducerPanel() {
               modelRaw = raw
               let actions = parseActionsFromText(raw)
               const parsedPlan = parsePlanFromText(raw)
+              if (parsedPlan) parsedPlanForDocs = parsedPlan
               if (parsedPlan && !actions.some((a) => a.type === 'daw.composeProject' || a.type === 'daw.musicBuild')) {
                 if (wantsFullProject(userText)) {
                   actions = [
@@ -465,13 +654,25 @@ export function CoProducerPanel() {
 
               let text = stripActionsBlock(raw)
               if (actions.length > 0) {
-                const results = await executeDawActions(dawStore, actions)
-                lastResults = results
-                actionsSummary = formatActionResultsForUser(results)
+                const out = await processActionsForMode({
+                  tienda: dawStore,
+                  actions,
+                  resolvedMode,
+                  userText,
+                  conversationId: conversation.id,
+                  messageId: assistantMsgId,
+                  source: parseActionsFromText(raw).length ? 'model_actions' : 'fallback',
+                })
+                lastResults = out.results
+                pendingActions = out.pendingActions
+                confirmActions = out.confirmActions
+                ranMutations = out.ranMutations
+                actionsSummary = formatActionResultsForUser(resultsOrPending(out))
                 if (!text.trim() || /ableton|logic pro|no puedo generar|<<<ACTIONS/i.test(text)) {
-                  text = 'Listo — cambios aplicados en JasWave.'
+                  text = modeBlocksMutation(resolvedMode)
+                    ? 'Plan listo — revisa la propuesta y pulsa Construir si quieres aplicarla.'
+                    : 'Listo — cambios aplicados en JasWave.'
                 }
-                // Texto limpio; el resumen de acciones va aparte (actionsSummary), no duplicado
                 accumulated = text
               } else {
                 accumulated = text || 'Hecho.'
@@ -479,13 +680,25 @@ export function CoProducerPanel() {
               setAiStatus('online')
               setStatusDetail('')
             } else {
-              // Si el modelo falla pero el usuario pidió crear, igual generamos desde el brief
               const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
               if (forced.length) {
-                const results = await executeDawActions(dawStore, forced)
-                lastResults = results
-                actionsSummary = formatActionResultsForUser(results)
-                accumulated = `El modelo no devolvió texto usable; apliqué tu brief en el DAW.\n\n${actionsSummary}`
+                const out = await processActionsForMode({
+                  tienda: dawStore,
+                  actions: forced,
+                  resolvedMode,
+                  userText,
+                  conversationId: conversation.id,
+                  messageId: assistantMsgId,
+                  source: 'fallback',
+                })
+                lastResults = out.results
+                pendingActions = out.pendingActions
+                confirmActions = out.confirmActions
+                ranMutations = out.ranMutations
+                actionsSummary = formatActionResultsForUser(resultsOrPending(out))
+                accumulated = modeBlocksMutation(resolvedMode)
+                  ? `El modelo no devolvió texto usable; dejé una propuesta lista para Construir.\n\n${actionsSummary}`
+                  : `El modelo no devolvió texto usable; apliqué tu brief en el DAW.\n\n${actionsSummary}`
               } else {
                 accumulated = formatAiUserError({
                   error: result.error || 'No se pudo obtener respuesta del modelo.',
@@ -501,10 +714,23 @@ export function CoProducerPanel() {
             const message = err instanceof Error ? err.message : 'Error de comunicación con el motor de IA'
             const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
             if (forced.length) {
-              const results = await executeDawActions(dawStore, forced)
-              lastResults = results
-              actionsSummary = formatActionResultsForUser(results)
-              accumulated = 'Hubo un error de red con el modelo; apliqué la generación en el DAW.'
+              const out = await processActionsForMode({
+                tienda: dawStore,
+                actions: forced,
+                resolvedMode,
+                userText,
+                conversationId: conversation.id,
+                messageId: assistantMsgId,
+                source: 'fallback',
+              })
+              lastResults = out.results
+              pendingActions = out.pendingActions
+              confirmActions = out.confirmActions
+              ranMutations = out.ranMutations
+              actionsSummary = formatActionResultsForUser(resultsOrPending(out))
+              accumulated = modeBlocksMutation(resolvedMode)
+                ? 'Hubo un error de red; dejé una propuesta para Construir.'
+                : 'Hubo un error de red con el modelo; apliqué la generación en el DAW.'
             } else {
               accumulated = formatAiUserError({
                 error: message,
@@ -524,6 +750,10 @@ export function CoProducerPanel() {
         dawStore.obtenerEstado(),
         lastResults,
         modelRaw,
+        {
+          forcePlanMd: modeBlocksMutation(resolvedMode) || Boolean(parsedPlanForDocs),
+          planFromModel: parsedPlanForDocs,
+        },
       )
       if (firstReview.extra) {
         actionsSummary = [actionsSummary, firstReview.extra].filter(Boolean).join('\n')
@@ -533,6 +763,8 @@ export function CoProducerPanel() {
         Boolean(window.electron?.aiChat) &&
         !local &&
         !ac.signal.aborted &&
+        ranMutations &&
+        !modeBlocksMutation(resolvedMode) &&
         harnessReviewNeeded(lastResults) &&
         (firstReview.mutated || Boolean(firstReview.evaluation))
       if (canReview) {
@@ -564,7 +796,15 @@ export function CoProducerPanel() {
             abort: ac.signal,
             chat: chatOnce,
             parseActions: parseActionsFromText,
-            execute: (actions) => executeDawActions(dawStore, actions),
+            execute: (actions) =>
+              executeDawActions(dawStore, actions, {
+                agentMode: 'create',
+                forceApply: true,
+                source: 'harness',
+                conversationId: conversation.id,
+                messageId: assistantMsgId,
+                respectModeGate: false,
+              }),
             getState: () => dawStore.obtenerEstado(),
             afterTurn: (turnResults, raw) => {
               const step = finishAgentTurn(
@@ -621,7 +861,14 @@ export function CoProducerPanel() {
             const reviewActions = parseActionsFromText(reviewRaw)
             let reviewResults: ActionResult[] = []
             if (reviewActions.length) {
-              reviewResults = await executeDawActions(dawStore, reviewActions)
+              reviewResults = await executeDawActions(dawStore, reviewActions, {
+                agentMode: 'create',
+                forceApply: true,
+                source: 'harness',
+                conversationId: conversation.id,
+                messageId: assistantMsgId,
+                respectModeGate: false,
+              })
               lastResults = [...lastResults, ...reviewResults]
             }
             const second = finishAgentTurn(
@@ -679,6 +926,8 @@ export function CoProducerPanel() {
         midiPreview,
         projectPlan,
         musicBuild,
+        pendingActions,
+        confirmActions,
       )
       const after = getConversation(conversation.id)
       if (after) setConversation(after)
@@ -727,13 +976,25 @@ export function CoProducerPanel() {
           const state = dawStore.obtenerEstado()
           if (/crea|midi|piano|proyecto|plan/i.test(userText)) {
             const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
-            const results = await executeDawActions(dawStore, forced)
+            const resolvedMode = detectAgentMode(userText, agentMode)
+            const out = await processActionsForMode({
+              tienda: dawStore,
+              actions: forced,
+              resolvedMode,
+              userText,
+              conversationId: conversation.id,
+              messageId: assistantMsgId,
+              source: 'fallback',
+            })
+            const results = out.results
             const firstReview = finishAgentTurn(
               dawStore.obtenerEstado().project.id,
               dawStore.obtenerEstado(),
               results,
             )
-            const summary = [formatActionResultsForUser(results), firstReview.extra].filter(Boolean).join('\n')
+            const summary = [formatActionResultsForUser(resultsOrPending(out)), firstReview.extra]
+              .filter(Boolean)
+              .join('\n')
             const midiPreview = (() => {
               const hit = results.find(
                 (r) =>
@@ -764,6 +1025,8 @@ export function CoProducerPanel() {
                 ? projectPlan.applied
                   ? `Proyecto aplicado: ${projectPlan.nombre}.`
                   : `Plan listo: ${projectPlan.tracks.length} pistas. Revisa y aplica cuando quieras.`
+                : out.pendingActions
+                  ? 'Propuesta lista — pulsa Construir para aplicar.'
                 : midiPreview
                   ? midiPreview.status === 'applied'
                     ? `Clip aplicado: ${midiPreview.keyLabel}.`
@@ -773,6 +1036,8 @@ export function CoProducerPanel() {
               midiPreview,
               projectPlan,
               musicBuild,
+              out.pendingActions,
+              out.confirmActions,
             )
           } else {
             const reply =
@@ -911,6 +1176,7 @@ export function CoProducerPanel() {
               </div>
             ))
           )}
+          <AiAuditPanel />
         </div>
       )}
 
@@ -1010,6 +1276,33 @@ export function CoProducerPanel() {
                     <ChatMarkdown text={msg.actionsSummary} />
                   </div>
                 ) : null}
+                {msg.pendingActions ? (
+                  <PendingActionsCard
+                    conversationId={conversation.id}
+                    messageId={msg.id}
+                    actions={msg.pendingActions.actions}
+                    agentMode={msg.pendingActions.agentMode}
+                    status={msg.pendingActions.status}
+                    onDone={() => {
+                      const after = getConversation(conversation.id)
+                      if (after) setConversation(after)
+                    }}
+                  />
+                ) : null}
+                {msg.confirmActions ? (
+                  <DestructiveConfirmCard
+                    conversationId={conversation.id}
+                    messageId={msg.id}
+                    actions={msg.confirmActions.actions}
+                    reason={msg.confirmActions.reason}
+                    status={msg.confirmActions.status}
+                    onDone={() => {
+                      const after = getConversation(conversation.id)
+                      if (after) setConversation(after)
+                    }}
+                  />
+                ) : null}
+                {msg.role === 'assistant' ? <AiAuditPanel messageId={msg.id} compact /> : null}
                 {msg.midiPreview ? (
                   <MidiGenerationPreview
                     preview={msg.midiPreview}

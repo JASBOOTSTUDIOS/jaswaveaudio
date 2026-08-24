@@ -39,6 +39,13 @@ async function persistirRutaYGuardar(tienda: TiendaDAW, ruta: string): Promise<R
 }
 
 export async function guardarProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
+  try {
+    const { snapshotLoadedPluginsIntoProject } = await import('./plugin/track-vst-runtime')
+    await snapshotLoadedPluginsIntoProject(tienda)
+  } catch {
+    /* best-effort: guardar aunque falle el snapshot VST */
+  }
+
   const state = tienda.obtenerEstado()
 
   if (!state.project.ruta && window.electron?.dialogSave) {
@@ -57,6 +64,12 @@ export async function guardarProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO>
 
 export async function guardarProyectoComoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
   if (!window.electron?.dialogSave) return { success: false, error: 'No dialog available' }
+  try {
+    const { snapshotLoadedPluginsIntoProject } = await import('./plugin/track-vst-runtime')
+    await snapshotLoadedPluginsIntoProject(tienda)
+  } catch {
+    /* ignore */
+  }
   const state = tienda.obtenerEstado()
   const dialog = await window.electron.dialogSave(nombreSugeridoDialogo(state.project.nombre))
   if (dialog.canceled || !dialog.filePath) return { success: false, error: 'Canceled', canceled: true }
