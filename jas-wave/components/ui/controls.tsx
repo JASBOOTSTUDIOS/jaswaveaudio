@@ -7,6 +7,60 @@ import {
   dbAPorcentaje,
 } from '@/lib/audio-conversions'
 
+/**
+ * VU tipo DAW: verde (seguro) → amarillo (caliente) → rojo (cerca de 0 dBFS).
+ * El degradado está anclado a la altura completa del fader; se recorta por nivel.
+ */
+const METER_LEVEL_GRADIENT =
+  'linear-gradient(to top, #16a34a 0%, #22c55e 55%, #eab308 78%, #ef4444 92%, #dc2626 100%)'
+
+const METER_LEVEL_GRADIENT_H =
+  'linear-gradient(to right, #16a34a 0%, #22c55e 55%, #eab308 78%, #ef4444 92%, #dc2626 100%)'
+
+/** Barra de nivel vertical (faders). `level` lineal 0..1. */
+export function LevelMeterBar({
+  level,
+  className = '',
+}: {
+  level: number
+  className?: string
+}) {
+  const pct = Math.min(100, Math.max(0, level * 100))
+  if (pct < 0.05) return null
+  return (
+    <div
+      className={`pointer-events-none absolute bottom-0 left-1/2 top-0 w-1.5 -translate-x-1/2 rounded-sm ${className}`}
+      style={{
+        background: METER_LEVEL_GRADIENT,
+        clipPath: `inset(${100 - pct}% 0 0 0)`,
+      }}
+      aria-hidden
+    />
+  )
+}
+
+/** Barra horizontal (entrada / strips compactos). */
+export function LevelMeterBarHorizontal({
+  level,
+  className = '',
+}: {
+  level: number
+  className?: string
+}) {
+  const pct = Math.min(100, Math.max(0, level * 100))
+  if (pct < 0.05) return null
+  return (
+    <div
+      className={`pointer-events-none h-full w-full rounded-sm ${className}`}
+      style={{
+        background: METER_LEVEL_GRADIENT_H,
+        clipPath: `inset(0 ${100 - pct}% 0 0)`,
+      }}
+      aria-hidden
+    />
+  )
+}
+
 interface FaderProps {
   db: number
   color: string
@@ -68,12 +122,7 @@ export function FaderControl({
         className="relative w-4 cursor-ns-resize touch-none focus:outline-none"
       >
         <div className="absolute left-1/2 top-0 h-full w-0.5 -translate-x-1/2 rounded-full bg-panel-raised" />
-        {typeof meter === 'number' && meter > 0.01 && (
-          <div
-            className="pointer-events-none absolute bottom-0 left-1/2 w-1.5 -translate-x-1/2 rounded-sm bg-accent-amber/80"
-            style={{ height: `${Math.min(100, Math.max(0, meter * 100))}%` }}
-          />
-        )}
+        {typeof meter === 'number' && meter > 0.0005 && <LevelMeterBar level={meter} />}
         <div
           className="absolute left-1/2 w-0.5 -translate-x-1/2 rounded-full"
           style={{ top: `calc(${top}% - 8px)`, bottom: 0, backgroundColor: color, opacity: 0.6 }}

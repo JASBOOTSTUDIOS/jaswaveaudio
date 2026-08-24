@@ -281,16 +281,26 @@ void writeAsioChannel(void* dest, const float* src, int frames, long type, bool 
       {
         auto* d = static_cast<int32_t*>(dest);
         for (int i = 0; i < frames; ++i) {
-          const float s = std::max(-1.f, std::min(1.f, src[i]));
-          d[i] = static_cast<int32_t>(s * 2147483647.f);
+          double s = static_cast<double>(src[i]);
+          if (s > 1.0) s = 1.0;
+          if (s < -1.0) s = -1.0;
+          const double scaled = s * 2147483647.0;
+          const double clamped =
+              scaled > 2147483647.0 ? 2147483647.0 : (scaled < -2147483647.0 ? -2147483647.0 : scaled);
+          d[i] = static_cast<int32_t>(std::lrint(clamped));
         }
         break;
       }
     case ASIOSTInt32LSB24: {
       auto* d = static_cast<int32_t*>(dest);
       for (int i = 0; i < frames; ++i) {
-        const float s = std::max(-1.f, std::min(1.f, src[i]));
-        d[i] = static_cast<int32_t>(s * 8388607.f) << 8;
+        double s = static_cast<double>(src[i]);
+        if (s > 1.0) s = 1.0;
+        if (s < -1.0) s = -1.0;
+        const double scaled = s * 8388607.0;
+        const double clamped =
+            scaled > 8388607.0 ? 8388607.0 : (scaled < -8388607.0 ? -8388607.0 : scaled);
+        d[i] = static_cast<int32_t>(std::lrint(clamped)) << 8;
       }
       break;
     }
@@ -772,8 +782,11 @@ bool jaswave_asio_start(const std::string& driverName, uint32_t sampleRate, uint
   std::cerr << "[jaswave-plugin-host] ASIO buf min=" << minB << " max=" << maxB << " pref=" << prefB
             << " gran=" << gran << " want=" << bufferSize << "\n";
   long want = static_cast<long>(bufferSize);
-  /* REAPER usa el tamaño del panel ASIO (preferred). Forzar otro size en UMC/Behringer tumba el driver. */
-  long buf = prefB > 0 ? prefB : snapAsioBuffer(want, minB, maxB, prefB, gran);
+  if (want <= 0) want = prefB > 0 ? prefB : 256;
+  /* Solo snapeo al rango/granularidad del driver — no forzar piso artificial. */
+  const long buf = snapAsioBuffer(want, minB, maxB, prefB > 0 ? prefB : want, gran);
+  std::cerr << "[jaswave-plugin-host] ASIO using buffer=" << buf << " (driver min=" << minB
+            << " max=" << maxB << " pref=" << prefB << ")\n";
 
   auto fillInfos = [&](long nIn, long nOut) -> long {
     long n = 0;

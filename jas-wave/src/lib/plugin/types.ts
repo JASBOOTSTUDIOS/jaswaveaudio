@@ -3,7 +3,7 @@
  * Aislamiento híbrido: builtin in-process · terceros out-of-process.
  */
 
-export type PluginFormat = 'builtin' | 'vst3' | 'au' | 'lv2' | 'clap'
+export type PluginFormat = 'builtin' | 'vst3' | 'vst2' | 'au' | 'lv2' | 'clap'
 
 /** Dónde vive el runtime de la instancia (ADR-0011 opción C). */
 export type PluginIsolationMode = 'in-process' | 'out-of-process'

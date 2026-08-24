@@ -384,7 +384,7 @@ export function readAudioDevicePrefs(): AudioDevicePrefs | null {
       backend: String(p.backend || 'auto'),
       deviceId: String(p.deviceId || ''),
       sampleRate: Number(p.sampleRate) || 48000,
-      bufferSize: Number(p.bufferSize) || 512,
+      bufferSize: Number(p.bufferSize) || 256,
       exclusive: !!p.exclusive,
     }
   } catch {
@@ -427,10 +427,11 @@ function onChunk(chunk: Buffer) {
     const line = buffer.slice(0, idx).trim()
     buffer = buffer.slice(idx + 1)
     if (!line) continue
-    // Ignorar logs no-JSON en stdout
     if (line[0] !== '{') continue
     try {
-      settlePending(JSON.parse(line) as PluginHostRpcResult)
+      const parsed = JSON.parse(line) as PluginHostRpcResult & { type?: string }
+      if (parsed && parsed.type === 'midiIn') continue
+      settlePending(parsed)
     } catch {
       settlePending({
         ok: false,
@@ -441,11 +442,47 @@ function onChunk(chunk: Buffer) {
   }
 }
 
+type NativeMidiListener = (msg: { id: string; data: number[] }) => void
+const nativeMidiListeners = new Set<NativeMidiListener>()
+
+export function subscribeNativeMidi(cb: NativeMidiListener): () => void {
+  nativeMidiListeners.add(cb)
+  return () => nativeMidiListeners.delete(cb)
+}
+
+function emitNativeMidi(id: string, data: number[]) {
+  for (const l of nativeMidiListeners) {
+    try {
+      l({ id, data })
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function parseHostLogLine(raw: string) {
+  const text = raw.trimEnd()
+  const parts = text.split('\n')
+  for (const line of parts) {
+    const t = line.trim()
+    if (t.startsWith('JW_MIDI ')) {
+      try {
+        const payload = JSON.parse(t.slice(8)) as { id?: string; data?: number[] }
+        if (payload?.id && Array.isArray(payload.data)) emitNativeMidi(payload.id, payload.data)
+      } catch {
+        /* ignore */
+      }
+      continue
+    }
+    if (t) console.error('[plugin-host]', t)
+  }
+}
+
 function wireChild(proc: ChildProcessWithoutNullStreams) {
   buffer = ''
   proc.stdout.on('data', onChunk)
   proc.stderr.on('data', (d: Buffer) => {
-    console.error('[plugin-host]', d.toString('utf8').trimEnd())
+    parseHostLogLine(d.toString('utf8'))
   })
   proc.on('exit', (code, signal) => {
     // El exit del host anterior no debe tumbar el RPC ni el puntero del host nuevo.
@@ -551,7 +588,16 @@ function pumpQueue() {
 export function sendPluginHostMidi(cmd: Record<string, unknown>): void {
   if (!child || child.killed || !child.stdin.writable) return
   const type = typeof cmd.type === 'string' ? cmd.type : ''
-  if (type !== 'noteOn' && type !== 'noteOff' && type !== 'allNotesOff' && type !== 'midiCc' && type !== 'setTransport') return
+  if (
+    type !== 'noteOn' &&
+    type !== 'noteOff' &&
+    type !== 'allNotesOff' &&
+    type !== 'midiCc' &&
+    type !== 'setTransport' &&
+    type !== 'setLiveMidiTargets'
+  ) {
+    return
+  }
   try {
     child.stdin.write(JSON.stringify(cmd) + '\n')
   } catch {
@@ -1051,8 +1097,8 @@ export function sendPluginHostCommand(
       : timeoutMs
 
   // MIDI: host no responde — no usar la cola RPC (bloquearía load/ping).
-  if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setMixInputRate' || type === 'setSlotMix' || type === 'setMasterMix' || type === 'setTrackGraph') {
-    if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport') {
+  if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setMixInputRate' || type === 'setSlotMix' || type === 'setMasterMix' || type === 'setTrackGraph' || type === 'setLiveMidiTargets') {
+    if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setLiveMidiTargets') {
       sendPluginHostMidi(cmd)
       return Promise.resolve({
         ok: true,

@@ -1,8 +1,9 @@
 import { useMemo, useCallback, useEffect, useRef, useState } from 'react'
-import { Minus, SlidersHorizontal, Wand2, Shuffle } from 'lucide-react'
+import { Minus, SlidersHorizontal, Wand2, Shuffle, Headphones } from 'lucide-react'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { Track as SharedTrack, AudioTrack } from '../../shared/src/types/tracks'
 import type { DAWState } from '../../shared/src/types/state'
+import type { PluginInfo } from '../../shared/src/types/entidades'
 import {
   DB_SUPERIOR,
   DB_INFERIOR,
@@ -11,10 +12,15 @@ import {
   formatearDb,
   panADisplay,
 } from '@/lib/audio-conversions'
-import { FaderControl, KnobControl } from './ui/controls'
-import { TrackFxButton } from '@/components/fx-chain-panel'
+import { FaderControl, KnobControl, LevelMeterBarHorizontal } from './ui/controls'
+import { ChannelFxBank } from '@/components/channel-fx-bank'
+import { TrackMidiInput } from '@/components/track-midi-input'
+import { TrackAudioInput } from '@/components/track-audio-input'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
+import { midiInputOf } from '@/src/lib/midi-track-io'
+import { audioInputOf } from '@/src/lib/audio-track-io'
 import { audioEngine } from '@/lib/audio-engine'
+import { refreshNativeMixMeters, setMixMeterTrackOrder } from '@/src/lib/plugin/native-mix-meters'
 
 type MixerRow = {
   id: string
@@ -28,6 +34,9 @@ type MixerRow = {
   pan: number
   fxCount: number
   tipo: string
+  plugins: PluginInfo[]
+  entrada?: string
+  dispositivoEntrada?: string
 }
 
 function toMixerRow(track: SharedTrack): MixerRow {
@@ -44,6 +53,9 @@ function toMixerRow(track: SharedTrack): MixerRow {
     pan: panADisplay(track.paneo),
     fxCount: track.plugins?.length ?? 0,
     tipo: track.tipo,
+    plugins: track.plugins ?? [],
+    entrada: midiInputOf(track) || undefined,
+    dispositivoEntrada: audioInputOf(track) || undefined,
   }
 }
 
@@ -91,18 +103,36 @@ export function Mixer() {
   useEffect(() => {
     let raf = 0
     let last = 0
+    let cancelled = false
     const ids = trackIdsKey.split('|').filter(Boolean)
+    // Solo alinear el mapa de medidores; no rewirear stems aquí (lo hace track-vst-runtime).
+    setMixMeterTrackOrder(ids)
     const tick = (now: number) => {
+      if (cancelled) return
       if (now - last >= 50) {
         last = now
-        const next: Record<string, number> = { master: audioEngine.getMasterMeterLevel() }
-        for (const id of ids) next[id] = audioEngine.getMeterLevel(id)
-        setMeters(next)
+        const apply = () => {
+          if (cancelled) return
+          const next: Record<string, number> = { master: audioEngine.getMasterMeterLevel() }
+          for (const id of ids) {
+            next[id] = audioEngine.getMeterLevel(id)
+            next[`in:${id}`] = audioEngine.getInputMeterLevel(id)
+          }
+          setMeters(next)
+        }
+        if (audioEngine.usesNativeOutput()) {
+          void refreshNativeMixMeters().then(apply)
+        } else {
+          apply()
+        }
       }
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf)
+    }
   }, [trackIdsKey])
 
   useEffect(() => {
@@ -223,7 +253,7 @@ export function Mixer() {
             ref={(el) => {
               stripRefs.current.set(track.id, el)
             }}
-            className={`flex shrink-0 flex-col border-r border-border px-2 py-2 ${collapsed ? 'w-[52px]' : 'w-[92px]'} ${
+            className={`flex shrink-0 flex-col border-r border-border px-2 py-2 ${collapsed ? 'w-[52px]' : 'w-[124px]'} ${
               selectedTrackId === track.id ? 'bg-accent-amber/10' : ''
             }`}
           >
@@ -237,6 +267,11 @@ export function Mixer() {
             {(track.tipo === 'midi' || track.tipo === 'instrumento') && (
               <p className="mb-1 text-center text-[8px] font-semibold uppercase tracking-wider text-accent-amber">
                 MIDI
+              </p>
+            )}
+            {track.tipo === 'audio' && (
+              <p className="mb-1 text-center text-[8px] font-semibold uppercase tracking-wider text-muted-foreground">
+                AUDIO+MIDI
               </p>
             )}
 
@@ -259,14 +294,15 @@ export function Mixer() {
               </TrackButton>
             </div>
 
-            {/* i / rec / FX */}
-            <div className="mb-2 flex items-center justify-center gap-1">
+            {/* IN / rec */}
+            <div className="mb-1 flex items-center justify-center gap-1">
               <TrackButton
                 label={`Monitor de entrada ${track.name}`}
                 active={track.input}
+                activeClass="bg-accent-cyan text-background"
                 onClick={() => handleToggleMonitor(track.id)}
               >
-                i
+                <Headphones className="size-2.5" />
               </TrackButton>
               <TrackButton
                 label={`Armar grabación ${track.name}`}
@@ -277,8 +313,34 @@ export function Mixer() {
                   className={`size-1.5 rounded-full ${track.armed ? 'bg-background' : 'bg-muted-foreground'}`}
                 />
               </TrackButton>
-              <TrackFxButton trackId={track.id} trackName={track.name} count={track.fxCount} />
             </div>
+            {(track.tipo === 'midi' || track.tipo === 'instrumento' || track.tipo === 'audio') && !collapsed ? (
+              <div className="mb-1">
+                <TrackMidiInput trackId={track.id} assignedId={track.entrada} compact />
+              </div>
+            ) : null}
+            {track.tipo === 'audio' && !collapsed ? (
+              <div className="mb-1">
+                <TrackAudioInput trackId={track.id} assignedId={track.dispositivoEntrada} compact />
+                {(track.input || track.armed) ? (
+                  <div
+                    className="mt-0.5 h-1 overflow-hidden rounded-full bg-panel-raised"
+                    title="Nivel de entrada"
+                  >
+                    <LevelMeterBarHorizontal level={meters[`in:${track.id}`] ?? 0} />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {!collapsed ? (
+              <div className="mb-2">
+                <ChannelFxBank
+                  trackId={track.id}
+                  trackName={track.name}
+                  plugins={track.plugins}
+                />
+              </div>
+            ) : null}
 
             {/* Knob de balance */}
             <KnobControl value={track.pan} color={track.color} onChange={(pan) => handleChangePan(track.id, pan)} size="size-9" />
@@ -303,15 +365,15 @@ export function Mixer() {
             />
           </div>
         ))}
-        <div key={masterTrack.id} className="flex w-[92px] shrink-0 flex-col border-r border-border px-2 py-2">
+        <div key={masterTrack.id} className="flex w-[124px] shrink-0 flex-col border-r border-border px-2 py-2">
           <p className="mb-1.5 truncate text-center text-[11px] font-medium text-foreground" title={masterTrack.name}>
             {masterTrack.name}
           </p>
-          <div className="mb-1 flex justify-center">
-            <TrackFxButton
+          <div className="mb-1">
+            <ChannelFxBank
               trackId="master"
               trackName="Master"
-              count={(master?.plugins ?? []).length}
+              plugins={master?.plugins ?? []}
             />
           </div>
 

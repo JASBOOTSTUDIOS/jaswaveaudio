@@ -5,18 +5,31 @@
 
 import { persistPluginCatalog } from './catalog-store'
 import { isolationForFormat } from './isolation-policy'
-import { guessIsInstrument } from './plugin-info-adapter'
+import { guessIsInstrument, VST2_NOT_HOSTED_MSG } from './plugin-info-adapter'
 import { pluginRegistry } from './registry'
 import { expandPluginSearchPath, pluginSearchPaths } from './search-paths'
 import type { PluginDescriptor, PluginHostDiscoveredPlugin } from './types'
 
-function hashId(pathStr: string): string {
+function hashId(pathStr: string, format: PluginDescriptor['format'] = 'vst3'): string {
   let h = 2166136261
   for (let i = 0; i < pathStr.length; i++) {
     h ^= pathStr.charCodeAt(i)
     h = Math.imul(h, 16777619)
   }
-  return `vst3.${(h >>> 0).toString(16)}`
+  return `${format}.${(h >>> 0).toString(16)}`
+}
+
+function discoveredFormat(item: PluginHostDiscoveredPlugin): PluginDescriptor['format'] {
+  const raw = (item.format || '').toLowerCase()
+  if (raw === 'vst2') return 'vst2'
+  if (raw === 'vst3') return 'vst3'
+  const p = item.path || ''
+  if (/\.dll$/i.test(p)) return 'vst2'
+  return 'vst3'
+}
+
+export function catalogPluginInsertable(d: Pick<PluginDescriptor, 'format' | 'hostReady'>): boolean {
+  return (d.format === 'vst3' || d.format === 'vst2') && d.hostReady
 }
 
 export function descriptorFromDiscovered(
@@ -24,11 +37,15 @@ export function descriptorFromDiscovered(
   vendor = '—',
 ): PluginDescriptor {
   const pluginPath = item.path
-  const name = item.name || pluginPath.replace(/^.*[/\\]/, '').replace(/\.vst3$/i, '')
+  const format = discoveredFormat(item)
+  const name =
+    item.name ||
+    pluginPath.replace(/^.*[/\\]/, '').replace(/\.(vst3|dll)$/i, '')
   const isInstrument = guessIsInstrument(name, pluginPath)
+  const hostReady = item.hostReady === true
   return {
-    pluginId: hashId(pluginPath),
-    format: 'vst3',
+    pluginId: hashId(pluginPath, format),
+    format,
     vendor,
     name,
     version: 'unknown',
@@ -41,16 +58,16 @@ export function descriptorFromDiscovered(
     supportsAudioInput: !isInstrument,
     supportsAudioOutput: true,
     supportsSidechain: false,
-    supportsEditor: item.editorReady !== false,
+    supportsEditor: hostReady && item.editorReady !== false,
     parameterCount: 0,
     scanStatus: 'ok',
-    // hostReady = process/audio. La UI nativa usa editorReady vía jaswave-vst3-editor.
-    hostReady: item.hostReady === true,
-    isolation: isolationForFormat('vst3'),
-    scanError:
-      item.hostReady === true
-        ? undefined
-        : 'En catálogo (disco). Audio VST3 pendiente; UI nativa si editorhost está compilado.',
+    hostReady,
+    isolation: isolationForFormat(format),
+    scanError: hostReady
+      ? undefined
+      : format === 'vst2'
+        ? VST2_NOT_HOSTED_MSG
+        : 'En catálogo (disco). Audio pendiente; UI nativa si editorhost está compilado.',
   }
 }
 
@@ -62,7 +79,7 @@ export type DiscoverResult = {
 }
 
 /**
- * Usa el host process (via callback RPC) para listar .vst3 en rutas habilitadas.
+ * Usa el host process (via callback RPC) para listar .vst3 y .dll (VST2) en rutas habilitadas.
  */
 export async function discoverVst3Plugins(
   rpc: (cmd: { type: 'discover'; path: string }) => Promise<{

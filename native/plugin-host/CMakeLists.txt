@@ -26,10 +26,12 @@ if(HAS_VST3_SDK)
   add_executable(jaswave-plugin-host
     src/main.cpp
     src/vst3_slot.cpp
+    src/vst2_slot.cpp
     src/audio_output.cpp
     src/asio_output.cpp
     src/asio_com.c
     src/mix_bus.cpp
+    src/midi_winmm.cpp
     "${VST3_SDK_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp"
     "${VST3_SDK_DIR}/public.sdk/source/vst/hosting/module_win32.cpp"
   )
@@ -37,11 +39,12 @@ if(HAS_VST3_SDK)
   target_include_directories(jaswave-plugin-host PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/vendor"
+    "${CMAKE_CURRENT_SOURCE_DIR}/vendor/vst2"
     "${VST3_SDK_DIR}"
   )
   target_link_libraries(jaswave-plugin-host PRIVATE sdk_hosting)
   if(WIN32)
-    target_link_libraries(jaswave-plugin-host PRIVATE ole32 oleaut32 uuid)
+    target_link_libraries(jaswave-plugin-host PRIVATE ole32 oleaut32 uuid winmm)
   endif()
   message(STATUS "jaswave-plugin-host: VST3 audio+editor (miniaudio)")
 else()

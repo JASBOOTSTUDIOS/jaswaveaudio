@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, LayoutGrid, Mic2, MoreVertical, Circle, Music, Upload, FileAudio } from 'lucide-react'
+import { Plus, LayoutGrid, Mic2, MoreVertical, Circle, Music, Upload, FileAudio, Headphones } from 'lucide-react'
 import { usePlaybackActions } from '@/components/playback-provider'
 import { createProjection } from '@/lib/timeline-projection'
 import { TRACKS, type Track as UiTrack } from '@/lib/daw-data'
@@ -17,7 +17,10 @@ import { TrackCanvas } from './TrackCanvas'
 import { ArrangeBoard } from './ArrangeBoard'
 import { TrackAddPluginButton } from './TrackAddPluginButton'
 import { MidiClipPreview } from './MidiClipPreview'
-import { TrackFxButton } from '@/components/fx-chain-panel'
+import { ChannelFxBank } from '@/components/channel-fx-bank'
+import { TrackMidiInput } from '@/components/track-midi-input'
+import { TrackAudioInput } from '@/components/track-audio-input'
+import type { PluginInfo } from '../../../shared/src/types/entidades'
 import {
   ROW_H,
   HEADER_H,
@@ -32,13 +35,23 @@ import { getSelectedTrackId, selectTrackPayload } from '@/src/lib/selection-help
 
 export { ARRANGE_MIN_ZOOM, ARRANGE_MAX_ZOOM } from './constants'
 
-type UiLikeTrack = UiTrack & { muted?: boolean; solo?: boolean; input?: boolean; armed?: boolean }
+type UiLikeTrack = UiTrack & {
+  muted?: boolean
+  solo?: boolean
+  input?: boolean
+  armed?: boolean
+  tipo?: string
+  entrada?: string
+  dispositivoEntrada?: string
+  plugins?: PluginInfo[]
+}
 
 type TrackToggle = { muted: boolean; solo: boolean; input: boolean; armed: boolean }
 
 function toUiLikeTrack(track: unknown): UiLikeTrack {
   const anyTrack = track as Record<string, unknown>
   const ui = TRACKS.find((t) => t.id === String(anyTrack.id ?? ''))
+  const cfg = anyTrack.configuracion as { monitorizarEntrada?: boolean } | undefined
   return {
     id: String(anyTrack.id ?? ''),
     name: ui?.name ?? String(anyTrack.nombre ?? ''),
@@ -48,8 +61,17 @@ function toUiLikeTrack(track: unknown): UiLikeTrack {
     pan: typeof anyTrack.paneo === 'number' ? panADisplay(anyTrack.paneo) : ui?.pan ?? 0,
     muted: Boolean(anyTrack.silenciada),
     solo: Boolean(anyTrack.soloActiva),
-    input: Boolean(anyTrack.entrada),
+    input: Boolean(cfg?.monitorizarEntrada),
     armed: Boolean(anyTrack.armada),
+    tipo: String(anyTrack.tipo ?? ''),
+    entrada: typeof anyTrack.entrada === 'string' ? anyTrack.entrada : '',
+    dispositivoEntrada:
+      typeof anyTrack.dispositivoEntrada === 'string'
+        ? anyTrack.dispositivoEntrada
+        : typeof anyTrack.entrada === 'string'
+          ? anyTrack.entrada
+          : '',
+    plugins: Array.isArray(anyTrack.plugins) ? (anyTrack.plugins as PluginInfo[]) : [],
   }
 }
 
@@ -218,10 +240,7 @@ export function ArrangementView() {
     } else if (key === 'armed') {
       void tienda.executor.execute('track.update', { trackId: id, datos: { armada: next } })
     } else if (key === 'input') {
-      void tienda.executor.execute('track.update', {
-        trackId: id,
-        datos: { configuracion: { monitorizarEntrada: next } },
-      })
+      void tienda.executor.execute('track.toggleMonitor', { trackId: id })
     }
   }
 
@@ -747,8 +766,7 @@ export function ArrangementView() {
               armed: false,
             }
             const isSelected = selectedTrackId === track.id
-            const pluginCount =
-              sharedTracks.find((t) => t.id === track.id)?.plugins?.length ?? 0
+            const isMidi = track.tipo === 'midi' || track.tipo === 'instrumento'
             return (
               <div
                 key={track.id}
@@ -761,7 +779,7 @@ export function ArrangementView() {
                     selectTrack(track.id)
                   }
                 }}
-                className={`flex cursor-pointer items-center gap-2 border-b border-border pr-2 ${
+                className={`flex cursor-pointer items-stretch gap-1 border-b border-border pr-1 ${
                   isSelected ? 'bg-accent-amber/15' : 'hover:bg-panel-raised/40'
                 }`}
                 style={{ height: ROW_H }}
@@ -770,40 +788,53 @@ export function ArrangementView() {
                   className="h-full w-1 shrink-0"
                   style={{ backgroundColor: track.color }}
                 />
-                <Mic2 className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
-                  {track.name}
-                </span>
-                <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-                  <TrackFxButton
+                <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-0.5">
+                  <div className="flex min-w-0 items-center gap-1">
+                    <Mic2 className="size-3 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground">
+                      {track.name}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                    <TrackButton
+                      label={`Silenciar ${track.name}`}
+                      active={t.muted}
+                      onClick={() => toggle(track.id, 'muted')}
+                    >
+                      M
+                    </TrackButton>
+                    <TrackButton
+                      label={`Solo ${track.name}`}
+                      active={t.solo}
+                      activeClass="bg-track-vocals text-background"
+                      onClick={() => toggle(track.id, 'solo')}
+                    >
+                      S
+                    </TrackButton>
+                    <TrackButton
+                      label={`Monitor de entrada ${track.name}`}
+                      active={t.input}
+                      activeClass="bg-accent-cyan text-background"
+                      onClick={() => toggle(track.id, 'input')}
+                    >
+                      <Headphones className="size-2.5" />
+                    </TrackButton>
+                    <TrackAddPluginButton trackId={track.id} trackName={track.name} />
+                  </div>
+                  {(isMidi || track.tipo === 'audio') ? (
+                    <TrackMidiInput trackId={track.id} assignedId={track.entrada} compact />
+                  ) : null}
+                  {track.tipo === 'audio' ? (
+                    <TrackAudioInput trackId={track.id} assignedId={track.dispositivoEntrada} compact />
+                  ) : null}
+                  <ChannelFxBank
                     trackId={track.id}
                     trackName={track.name}
-                    count={pluginCount}
+                    plugins={track.plugins ?? []}
+                    compact
                   />
-                  <TrackAddPluginButton trackId={track.id} trackName={track.name} />
-                  <TrackButton
-                    label={`Silenciar ${track.name}`}
-                    active={t.muted}
-                    onClick={() => toggle(track.id, 'muted')}
-                  >
-                    M
-                  </TrackButton>
-                  <TrackButton
-                    label={`Solo ${track.name}`}
-                    active={t.solo}
-                    activeClass="bg-track-vocals text-background"
-                    onClick={() => toggle(track.id, 'solo')}
-                  >
-                    S
-                  </TrackButton>
-                  <TrackButton
-                    label={`Entrada ${track.name}`}
-                    active={t.input}
-                    activeClass="bg-track-fx text-background"
-                    onClick={() => toggle(track.id, 'input')}
-                  >
-                    i
-                  </TrackButton>
+                </div>
+                <div className="flex flex-col items-center justify-center gap-0.5" onClick={(e) => e.stopPropagation()}>
                   <button
                     type="button"
                     onClick={() => toggle(track.id, 'armed')}

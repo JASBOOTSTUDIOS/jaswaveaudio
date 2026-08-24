@@ -13,10 +13,14 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    strictPort: true,
   },
   resolve: {
     alias: {
       '@': resolve(__dirname, ''),
+      react: resolve(__dirname, 'node_modules/react'),
+      'react-dom': resolve(__dirname, 'node_modules/react-dom'),
     },
+    dedupe: ['react', 'react-dom'],
   },
 })

@@ -5,13 +5,13 @@
   "productName": "JasWave",
   "main": "build/electron/electron/main.js",
   "scripts": {
-    "dev": "tsc -p tsconfig.electron.json && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 concurrently \"vite\" \"wait-on http://localhost:5173 && tsx scripts/start-electron.ts .\"",
+    "dev": "tsc -p tsconfig.electron.json && tsx scripts/free-vite-port.ts && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 concurrently -k \"vite --strictPort --port 5173\" \"wait-on http://localhost:5173 && tsx scripts/start-electron.ts .\"",
     "web:dev": "vite",
     "build": "tsc -b && vite build && tsc -p tsconfig.electron.json",
     "preview": "vite preview",
     "electron:build": "npm run build && electron-builder",
     "lint": "eslint .",
-    "test:plugins": "tsx --test src/lib/plugin/hybrid-host.test.ts src/lib/plugin/audio-engine-robust.test.ts src/lib/midi-agent.test.ts src/lib/midi-controller.test.ts src/lib/plugin-knowledge.test.ts src/lib/plugin/plugin-parameter-intel.test.ts src/lib/agent-docs.test.ts src/lib/agent-harness.test.ts src/lib/music-build/music-build.test.ts",
+    "test:plugins": "tsx --test src/lib/plugin/hybrid-host.test.ts src/lib/plugin/audio-engine-robust.test.ts src/lib/midi-agent.test.ts src/lib/midi-controller.test.ts src/lib/midi-map.test.ts src/lib/midi-track-io.test.ts src/lib/audio-track-io.test.ts src/lib/encode-wav.test.ts src/lib/plugin-knowledge.test.ts src/lib/plugin/plugin-parameter-intel.test.ts src/lib/plugin/plugin-info-adapter.test.ts src/lib/plugin/discovery.test.ts src/lib/agent-docs.test.ts src/lib/agent-harness.test.ts src/lib/music-build/music-build.test.ts",
     "plugin-host:ping": "node ../native/plugin-host/scripts/ping.cjs"
   },
   "dependencies": {

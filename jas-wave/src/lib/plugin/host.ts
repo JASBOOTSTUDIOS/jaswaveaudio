@@ -21,12 +21,12 @@ export {
   listScanFolders,
 } from './search-paths-store'
 export { isolationForFormat } from './isolation-policy'
-export { discoverVst3Plugins, descriptorFromDiscovered } from './discovery'
+export { discoverVst3Plugins, descriptorFromDiscovered, catalogPluginInsertable } from './discovery'
 
 /** Rutas típicas Windows (metadatos; no se cargan DLL). */
 export const DEFAULT_VST3_SCAN_PATHS_WIN = pluginSearchPaths
   .list()
-  .filter((p) => p.format === 'vst3')
+  .filter((p) => p.format === 'vst3' || p.format === 'vst2')
   .map((p) => p.path)
 
 export async function listAvailablePlugins(): Promise<PluginDescriptor[]> {

@@ -4,6 +4,7 @@
 
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { crearEstadoInicial } from '../../../shared/src'
+import { esNombreSinTitulo, nombreAlGuardar } from '../../../shared/src/project/ciclo-vida'
 import { clearSessionSnapshot, saveSessionNow } from './session-persist'
 
 export type ResultadoIO = {
@@ -20,17 +21,30 @@ function mensajeError(error: ResultadoIO['error']): string | undefined {
   return error.message ?? error.code
 }
 
+function rutaNormalizada(filePath: string): string {
+  return filePath.endsWith('.jaswave') ? filePath : `${filePath}.jaswave`
+}
+
+function nombreSugeridoDialogo(nombre: string | undefined): string | undefined {
+  if (!nombre || esNombreSinTitulo(nombre)) return undefined
+  return `${nombre}.jaswave`
+}
+
+async function persistirRutaYGuardar(tienda: TiendaDAW, ruta: string): Promise<ResultadoIO> {
+  const nombre = nombreAlGuardar(tienda.obtenerEstado().project.nombre, ruta)
+  const upd = await tienda.executor.execute('project.update', { datos: { ruta, nombre } })
+  if (!upd.success) return { success: false, error: upd.error }
+  const result = await tienda.executor.execute('project.save', { ruta })
+  return { success: result.success, error: result.error, path: ruta }
+}
+
 export async function guardarProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
   const state = tienda.obtenerEstado()
 
   if (!state.project.ruta && window.electron?.dialogSave) {
-    const dialog = await window.electron.dialogSave()
+    const dialog = await window.electron.dialogSave(nombreSugeridoDialogo(state.project.nombre))
     if (dialog.canceled || !dialog.filePath) return { success: false, error: 'Canceled', canceled: true }
-    const ruta = dialog.filePath.endsWith('.jaswave') ? dialog.filePath : `${dialog.filePath}.jaswave`
-    const upd = await tienda.executor.execute('project.update', { datos: { ruta } })
-    if (!upd.success) return { success: false, error: upd.error }
-    const result = await tienda.executor.execute('project.save', { ruta })
-    return { success: result.success, error: result.error, path: ruta }
+    return persistirRutaYGuardar(tienda, rutaNormalizada(dialog.filePath))
   }
 
   if (!state.project.ruta) {
@@ -43,13 +57,10 @@ export async function guardarProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO>
 
 export async function guardarProyectoComoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
   if (!window.electron?.dialogSave) return { success: false, error: 'No dialog available' }
-  const dialog = await window.electron.dialogSave()
+  const state = tienda.obtenerEstado()
+  const dialog = await window.electron.dialogSave(nombreSugeridoDialogo(state.project.nombre))
   if (dialog.canceled || !dialog.filePath) return { success: false, error: 'Canceled', canceled: true }
-  const ruta = dialog.filePath.endsWith('.jaswave') ? dialog.filePath : `${dialog.filePath}.jaswave`
-  const upd = await tienda.executor.execute('project.update', { datos: { ruta } })
-  if (!upd.success) return { success: false, error: upd.error }
-  const result = await tienda.executor.execute('project.save', { ruta })
-  return { success: result.success, error: result.error, path: ruta }
+  return persistirRutaYGuardar(tienda, rutaNormalizada(dialog.filePath))
 }
 
 export async function abrirProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {

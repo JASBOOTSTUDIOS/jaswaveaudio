@@ -124,7 +124,7 @@ export interface BaseTrack {
 
 export interface AudioTrack extends BaseTrack {
   tipo: 'audio';
-  clips: import('./clips').AudioClip[];
+  clips: Array<import('./clips').AudioClip | import('./clips').MidiClip>;
   entrada?: string;
   salida?: string;
   waveform?: number[];
@@ -354,7 +354,7 @@ export function esTrackDeAudio(track: Track): boolean {
 }
 
 export function esTrackDeMidi(track: Track): boolean {
-  return track.tipo === 'midi' || track.tipo === 'instrumento';
+  return track.tipo === 'midi' || track.tipo === 'instrumento' || track.tipo === 'audio';
 }
 
 export function esTrackDeControl(track: Track): boolean {

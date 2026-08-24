@@ -6,8 +6,9 @@ import { AgentDocsPanel } from '@/components/agent-docs-panel'
 import { TrackDetailPanel } from '@/components/track-detail-panel'
 import { PianoRollToolPanel } from '@/components/piano-roll'
 import { InstrumentsPanel } from '@/components/instruments-panel'
-import { PluginEditorPanel } from '@/components/plugin-editor-panel'
 import { FxChainPanel } from '@/components/fx-chain-panel'
+import { PluginEditorPanel } from '@/components/plugin-editor-panel'
+import { MidiMapPanel } from '@/components/midi-map-panel'
 import { SettingsPanel } from '@/components/project-settings-dialog'
 import { useDAWState } from '@/src/context/daw-context'
 import type { ToolId } from '@/src/workspace/types'
@@ -47,6 +48,8 @@ export function ToolHost({ toolId }: { toolId: ToolId }) {
       return <FxChainPanel />
     case 'plugin-editor':
       return <PluginEditorPanel />
+    case 'midi-map':
+      return <MidiMapPanel />
     case 'settings':
       return <SettingsPanel />
     case 'library':

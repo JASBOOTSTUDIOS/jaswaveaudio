@@ -24,7 +24,7 @@ import { pluginRegistry } from './plugin/registry'
 import { descriptorToPluginInfo } from './plugin/plugin-info-adapter'
 import {
   ensureTrackVstPlugin,
-  extractVst3Path,
+  extractHostPluginPath,
   listSlotParameters,
   setSlotParameter,
   slotIdForTrackPlugin,
@@ -191,6 +191,10 @@ export function buildAgentSystemPrompt(
     '- midi.humanize | midi.transpose | midi.quantize | midi.makeStaccato | midi.makeLegato { pistaId, clipId, ... }',
     '- fxChain.copy | fxChain.paste { trackId, plugins? }',
     '- fxChain.loadPreset { trackId, presetId, nombre, plugins:[...] }',
+    '- render.start { format:"wav", startSec?, endSec?, outputPath?, sampleRate? }',
+    '- render.cancel { renderJobId } | render.getStatus { renderJobId }',
+    '- analysis.loudness { source?: "render"|"play", jobId? }  ← LUFS reales post-bounce',
+    '- analysis.compareTarget { target: "streaming"|"club"|"cd", jobId? }',
     docsPromptActions(),
     '',
     'MIDI: cada nota necesita velocidad propia (1-127). Sustain de piano/pad = midi.setCC cc:64. Al Stop/Pause el host envía panic (CC64=0 + all notes off).',
@@ -374,7 +378,7 @@ export function fallbackActionsFromUserIntent(
 }
 
 function isMidiCapableTrack(tipo: string | undefined): boolean {
-  return tipo === 'midi' || tipo === 'instrumento'
+  return tipo === 'midi' || tipo === 'instrumento' || tipo === 'audio'
 }
 
 async function resolveMidiTrackForClip(
@@ -495,7 +499,7 @@ async function collectLiveParameters(
     summary: string
   }> = []
   for (const pl of targets) {
-    const path = extractVst3Path(pl.descripcion ?? '')
+    const path = extractHostPluginPath(pl.descripcion ?? '')
     const hostId = trackId === 'master' || trackId === '__master__' ? 'master' : trackId
     const slotId = slotIdForTrackPlugin(hostId, pl.id)
     if (path) {
@@ -1267,6 +1271,45 @@ export async function executeDawActions(
               ? { planned: ev.planned, done: ev.done, missing: ev.missing, extraTracks: ev.extraTracks }
               : undefined,
           })
+          break
+        }
+        case 'render.start':
+        case 'render.cancel':
+        case 'render.getStatus':
+        case 'analysis.loudness':
+        case 'analysis.compareTarget': {
+          const r = await tienda.executor.execute(action.type, (action.payload ?? {}) as Record<string, unknown>)
+          if (action.type === 'render.start' && r.success && r.result) {
+            const job = r.result as import('../../../shared/src/types/render').RenderJob
+            try {
+              const { runNativeBounce } = await import('@/src/lib/bounce-service')
+              const done = await runNativeBounce(job)
+              results.push({
+                type: action.type,
+                success: done.status === 'completed',
+                message:
+                  done.status === 'completed'
+                    ? `Bounce OK ${done.outputPath} (${done.loudness?.integrated?.toFixed(1) ?? '?'} LUFS)`
+                    : done.error ?? done.status,
+                data: done,
+              })
+            } catch (e) {
+              results.push({
+                type: action.type,
+                success: false,
+                message: e instanceof Error ? e.message : String(e),
+              })
+            }
+          } else {
+            results.push({
+              type: action.type,
+              success: r.success,
+              message: r.success
+                ? JSON.stringify(r.result)
+                : r.error?.message ?? `Error ${action.type}`,
+              data: r.result,
+            })
+          }
           break
         }
         default:

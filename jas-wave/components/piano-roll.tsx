@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Piano } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
-import { usePlaybackClock } from '@/components/playback-provider'
+import { usePlaybackActions } from '@/components/playback-provider'
 import type { DAWState } from '../../shared/src/types/state'
 import type { MidiNote } from '../../shared/src/types/clips'
 import { adaptiveGridForZoom } from '../../shared/src/midi/grid'
@@ -15,6 +15,11 @@ import type { MidiClipExpression } from '../../shared/src/types/clips'
 import { GROOVE_LIBRARY } from '../../shared/src/midi/groove'
 import { getUndockUrlFocus } from '@/lib/undock-window'
 import { listMidiClips, resolvePianoRollClip } from '@/src/lib/selection-helpers'
+import {
+  routeMidiToTrack,
+  setPreferredVstPreviewTrack,
+} from '@/src/lib/plugin/vst-voice-router'
+import { ensureTrackVstPluginsForProject } from '@/src/lib/plugin/track-vst-runtime'
 
 type PianoRollProps = {
   trackId: string
@@ -29,6 +34,8 @@ type LocalNote = {
   inicio: number
   duracion: number
   velocidad: number
+  canal?: number
+  mute?: boolean
 }
 
 const KEY_H_BASE = 14
@@ -36,6 +43,8 @@ const LOWEST = 24
 const HIGHEST = 96
 const KEYS = HIGHEST - LOWEST + 1
 const SNAP_DIVISIONS = [1, 0.5, 0.25, 0.125, 0.0625] as const
+/** Altura de la regla temporal — debe coincidir con PianoRollTimelineRuler. */
+const RULER_H = 22
 
 function noteName(pitch: number): string {
   const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
@@ -64,8 +73,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   const bpm = useDAWState((s: DAWState) => s.project?.bpm?.valor ?? 120)
   const beatsPerBar = useDAWState((s: DAWState) => s.project?.timeSignature?.numerador ?? 4)
   const isPlaying = useDAWState((s: DAWState) => s.transport?.reproduciendo === true)
-  const { positionMs: livePositionMs } = usePlaybackClock()
-  const transportSec = livePositionMs / 1000
+  const { getPositionMs } = usePlaybackActions()
 
   const [notes, setNotes] = useState<LocalNote[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -81,14 +89,20 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   const [herramienta, setHerramienta] = useState<PianoRollTool>('seleccionar')
   const [clipboard, setClipboard] = useState<LocalNote[]>([])
   const [soloClip, setSoloClip] = useState(false)
+  const [followPlayhead, setFollowPlayhead] = useState(true)
+  const [quantizeMode, setQuantizeMode] = useState<'start' | 'end' | 'both'>('start')
+  const [quantizeStrength, setQuantizeStrength] = useState(1)
   const [lasso, setLasso] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
   const useCanvas = shouldUseCanvasNotes(notes.length)
   const scrollRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
+  const playheadRef = useRef<HTMLDivElement>(null)
   const notesRef = useRef(notes)
   const selectedRef = useRef(selectedIds)
   notesRef.current = notes
   selectedRef.current = selectedIds
+
+  const clipStartBeat = clip?.inicio ?? 0
 
   useEffect(() => {
     if (!clip || clip.tipo !== 'midi') return
@@ -99,6 +113,8 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         inicio: n.inicio,
         duracion: n.duracion,
         velocidad: n.velocidad,
+        canal: n.canal,
+        mute: n.mute,
       })),
     )
     setDirty(false)
@@ -111,18 +127,42 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
     return Math.max(clip?.duracion ?? 4, fromNotes, 16)
   }, [notes, clip?.duracion])
 
+  useEffect(() => {
+    let raf = 0
+    const tick = () => {
+      const el = playheadRef.current
+      const scroll = scrollRef.current
+      if (el) {
+        const absBeats = (getPositionMs() / 1000) * (bpm / 60)
+        const rel = absBeats - clipStartBeat
+        const inView = rel >= -0.05 && rel <= durationBeats + 0.05
+        el.style.visibility = inView ? 'visible' : 'hidden'
+        const x = rel * pxPerBeat
+        el.style.transform = `translate3d(${x}px,0,0)`
+        if (followPlayhead && isPlaying && scroll && inView) {
+          const viewL = scroll.scrollLeft
+          const viewR = viewL + scroll.clientWidth
+          const margin = scroll.clientWidth * 0.15
+          if (x < viewL + margin || x > viewR - margin) {
+            scroll.scrollLeft = Math.max(0, x - scroll.clientWidth * 0.3)
+          }
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [getPositionMs, bpm, clipStartBeat, durationBeats, pxPerBeat, followPlayhead, isPlaying])
+
   const gridWidth = durationBeats * pxPerBeat
   const gridHeight = KEYS * keyH
   const gridLines = useMemo(() => {
-    const all = adaptiveGridForZoom(pxPerBeat)
+    const all = adaptiveGridForZoom(pxPerBeat, beatsPerBar)
     const bar = all.filter((l) => l.kind === 'bar')
     const beat = all.filter((l) => l.kind === 'beat')
-    // Solo la subdivision más fina — evita miles de nodos DOM que congelan la UI
     const sub = all.filter((l) => l.kind === 'subdivision').slice(-1)
-    return [...bar, ...beat, ...sub].filter(
-      (l) => durationBeats / l.spacingBeats <= 512,
-    )
-  }, [pxPerBeat, durationBeats])
+    return [...bar, ...beat, ...sub].filter((l) => durationBeats / l.spacingBeats <= 512)
+  }, [pxPerBeat, durationBeats, beatsPerBar])
 
   const snapBeat = useCallback(
     (beats: number) => (snapOn ? Math.max(0, quantizeBeats(beats, snapDiv, 1)) : Math.max(0, beats)),
@@ -140,6 +180,8 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
           inicio: n.inicio,
           duracion: n.duracion,
           velocidad: n.velocidad,
+          canal: n.canal ?? 0,
+          ...(n.mute !== undefined ? { mute: n.mute } : {}),
         })),
         duracion: Math.max(
           clip?.duracion ?? 4,
@@ -153,11 +195,6 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
 
   const previewNote = (pitch: number, velocity = 90) => audioEngine.noteOn(pitch, velocity)
   const releaseNote = (pitch: number) => audioEngine.noteOff(pitch)
-
-  // Playhead relativo al clip (beats)
-  const clipStartBeat = clip?.inicio ?? 0
-  const playheadBeat = (transportSec * bpm) / 60 - clipStartBeat
-  const showPlayhead = playheadBeat >= -0.05 && playheadBeat <= durationBeats + 0.05
 
   const addNoteAt = (clientX: number, clientY: number, gridEl: HTMLDivElement, dragDur = false) => {
     const rect = gridEl.getBoundingClientRect()
@@ -258,14 +295,78 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
 
   const quantizeSelected = useCallback(() => {
     const ids = selectedRef.current
-    const next = notesRef.current.map((n) => {
-      if (ids.size > 0 && !ids.has(n.id)) return n
-      return { ...n, inicio: snapBeat(n.inicio) }
-    })
-    setNotes(next)
-    setDirty(true)
-    void persist(next)
-  }, [persist, snapBeat])
+    const noteIds = ids.size > 0 ? [...ids] : undefined
+    void tienda.executor
+      .execute('midi.quantize', {
+        pistaId: trackId,
+        clipId,
+        gridBeats: snapDiv,
+        strength: quantizeStrength,
+        mode: quantizeMode,
+        noteIds,
+      })
+      .catch(() => {
+        const next = notesRef.current.map((n) => {
+          if (ids.size > 0 && !ids.has(n.id)) return n
+          return { ...n, inicio: snapBeat(n.inicio) }
+        })
+        setNotes(next)
+        setDirty(true)
+        void persist(next)
+      })
+  }, [tienda, trackId, clipId, snapDiv, quantizeStrength, quantizeMode, persist, snapBeat])
+
+  const scaleVelocitySelected = useCallback(
+    (factor: number) => {
+      const ids = selectedRef.current
+      const noteIds = ids.size > 0 ? [...ids] : undefined
+      void tienda.executor
+        .execute('midi.setVelocity', {
+          pistaId: trackId,
+          clipId,
+          relativeFactor: factor,
+          noteIds,
+        })
+        .catch(() => {
+          const next = notesRef.current.map((n) => {
+            if (ids.size > 0 && !ids.has(n.id)) return n
+            return {
+              ...n,
+              velocidad: Math.max(1, Math.min(127, Math.round(n.velocidad * factor))),
+            }
+          })
+          setNotes(next)
+          setDirty(true)
+          void persist(next)
+        })
+    },
+    [tienda, trackId, clipId, persist],
+  )
+
+  const setVelocitySelected = useCallback(
+    (velocity: number) => {
+      const ids = selectedRef.current
+      const v = Math.max(1, Math.min(127, Math.round(velocity)))
+      const noteIds = ids.size > 0 ? [...ids] : undefined
+      void tienda.executor
+        .execute('midi.setVelocity', {
+          pistaId: trackId,
+          clipId,
+          velocity: v,
+          noteIds,
+        })
+        .catch(() => {
+          const next = notesRef.current.map((n) => {
+            if (ids.size > 0 && !ids.has(n.id)) return n
+            return { ...n, velocidad: v }
+          })
+          setNotes(next)
+          setDirty(true)
+          void persist(next)
+        })
+    },
+    [tienda, trackId, clipId, persist],
+  )
 
   const copySelected = useCallback(() => {
     const ids = selectedRef.current
@@ -465,10 +566,16 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         showExpression={showExpression}
         onToggleExpression={() => setShowExpression((v) => !v)}
         onQuantize={quantizeSelected}
+        quantizeMode={quantizeMode}
+        onQuantizeMode={setQuantizeMode}
+        quantizeStrength={quantizeStrength}
+        onQuantizeStrength={setQuantizeStrength}
         onDuplicate={duplicateSelected}
         onDelete={deleteSelected}
         onTranspose={transposeSelected}
         onNudge={nudgeSelected}
+        onVelocitySet={setVelocitySelected}
+        onVelocityScale={scaleVelocitySelected}
         showShortcuts={showShortcuts}
         onToggleShortcuts={() => setShowShortcuts((v) => !v)}
         grooves={GROOVE_LIBRARY.map((g) => ({ id: g.id, nombre: g.nombre }))}
@@ -493,7 +600,128 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         clipDuracionBeats={clip.duracion ?? durationBeats}
         soloClip={soloClip}
         onSoloClipChange={setSoloClip}
+        followPlayhead={followPlayhead}
+        onFollowPlayheadChange={setFollowPlayhead}
       />
+
+      {selectedIds.size > 0 && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-2 py-1 text-[10px] text-muted-foreground">
+          <span className="font-semibold text-foreground">
+            {selectedIds.size === 1 ? 'Nota' : `${selectedIds.size} notas`}
+          </span>
+          {selectedIds.size === 1 &&
+            (() => {
+              const n = notes.find((x) => selectedIds.has(x.id))
+              if (!n) return null
+              return (
+                <>
+                  <label className="flex items-center gap-1">
+                    Pitch
+                    <input
+                      type="number"
+                      min={LOWEST}
+                      max={HIGHEST}
+                      value={n.pitch}
+                      className="h-5 w-12 rounded border border-border bg-background px-1"
+                      onChange={(e) => {
+                        const pitch = Math.max(LOWEST, Math.min(HIGHEST, Number(e.target.value) || n.pitch))
+                        const next = notes.map((x) => (x.id === n.id ? { ...x, pitch } : x))
+                        setNotes(next)
+                        setDirty(true)
+                        void persist(next)
+                      }}
+                    />
+                  </label>
+                  <label className="flex items-center gap-1">
+                    Inicio
+                    <input
+                      type="number"
+                      step={0.01}
+                      min={0}
+                      value={Number(n.inicio.toFixed(3))}
+                      className="h-5 w-16 rounded border border-border bg-background px-1"
+                      onChange={(e) => {
+                        const inicio = snapBeat(Math.max(0, Number(e.target.value) || 0))
+                        const next = notes.map((x) => (x.id === n.id ? { ...x, inicio } : x))
+                        setNotes(next)
+                        setDirty(true)
+                        void persist(next)
+                      }}
+                    />
+                  </label>
+                  <label className="flex items-center gap-1">
+                    Dur
+                    <input
+                      type="number"
+                      step={0.01}
+                      min={0.01}
+                      value={Number(n.duracion.toFixed(3))}
+                      className="h-5 w-16 rounded border border-border bg-background px-1"
+                      onChange={(e) => {
+                        const duracion = Math.max(snapDiv / 2, Number(e.target.value) || snapDiv)
+                        const next = notes.map((x) => (x.id === n.id ? { ...x, duracion } : x))
+                        setNotes(next)
+                        setDirty(true)
+                        void persist(next)
+                      }}
+                    />
+                  </label>
+                  <label className="flex items-center gap-1">
+                    Vel
+                    <input
+                      type="number"
+                      min={1}
+                      max={127}
+                      value={n.velocidad}
+                      className="h-5 w-12 rounded border border-border bg-background px-1"
+                      onChange={(e) => {
+                        const velocidad = Math.max(1, Math.min(127, Number(e.target.value) || 1))
+                        const next = notes.map((x) => (x.id === n.id ? { ...x, velocidad } : x))
+                        setNotes(next)
+                        setDirty(true)
+                        void persist(next)
+                      }}
+                    />
+                  </label>
+                  <label className="flex items-center gap-1">
+                    Ch
+                    <input
+                      type="number"
+                      min={0}
+                      max={15}
+                      value={n.canal ?? 0}
+                      className="h-5 w-10 rounded border border-border bg-background px-1"
+                      onChange={(e) => {
+                        const canal = Math.max(0, Math.min(15, Number(e.target.value) || 0))
+                        const next = notes.map((x) => (x.id === n.id ? { ...x, canal } : x))
+                        setNotes(next)
+                        setDirty(true)
+                        void persist(next)
+                      }}
+                    />
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(n.mute)}
+                      onChange={(e) => {
+                        const mute = e.target.checked
+                        const next = notes.map((x) => (x.id === n.id ? { ...x, mute } : x))
+                        setNotes(next)
+                        setDirty(true)
+                        void persist(next)
+                      }}
+                    />
+                    Mute
+                  </label>
+                </>
+              )
+            })()}
+          {selectedIds.size > 1 && (
+            <span>Edición grupal: mover / duración / velocity en grid o Vel±</span>
+          )}
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1">
         <div className="w-14 shrink-0 overflow-hidden border-r border-border bg-panel-raised">
@@ -648,7 +876,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                       : 'border-border/14'
               return Array.from({ length: count }).map((_, i) => {
                 if (line.kind !== 'bar') {
-                  const beatsFromBar = (i * line.spacingBeats) % 4
+                  const beatsFromBar = (i * line.spacingBeats) % beatsPerBar
                   if (Math.abs(beatsFromBar) < 1e-9) return null
                 }
                 return (
@@ -661,12 +889,11 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
               })
             })}
 
-            {showPlayhead && (
-              <div
-                className={`pointer-events-none absolute top-0 z-20 w-px ${isPlaying ? 'bg-accent-amber' : 'bg-foreground/50'}`}
-                style={{ left: playheadBeat * pxPerBeat, height: gridHeight + velLaneH }}
-              />
-            )}
+            <div
+              ref={playheadRef}
+              className={`pointer-events-none absolute top-0 left-0 z-20 w-px ${isPlaying ? 'bg-accent-amber' : 'bg-foreground/50'}`}
+              style={{ height: gridHeight + velLaneH, visibility: 'hidden' }}
+            />
 
             {lasso && (
               <div
@@ -690,28 +917,83 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                 keyH={keyH}
                 highest={HIGHEST}
                 lowest={LOWEST}
-                onHit={(id, ev) => {
-                  if (!id) return
-                  const n = notes.find((x) => x.id === id)
+                onHit={(hit, ev) => {
+                  if (!hit) return
+                  const n = notes.find((x) => x.id === hit.id)
                   if (!n) return
                   if (herramienta === 'borrar') {
-                    const next = notes.filter((x) => x.id !== id)
+                    const next = notes.filter((x) => x.id !== hit.id)
                     setNotes(next)
                     setDirty(true)
                     void persist(next)
                     return
                   }
+                  const ids =
+                    selectedIds.has(hit.id) && selectedIds.size > 0
+                      ? selectedIds
+                      : new Set([hit.id])
                   setSelectedIds((prev) => {
                     if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
                       const next = new Set(prev)
-                      if (next.has(id)) next.delete(id)
-                      else next.add(id)
+                      if (next.has(hit.id)) next.delete(hit.id)
+                      else next.add(hit.id)
                       return next
                     }
-                    return new Set([id])
+                    return ids
                   })
                   previewNote(n.pitch, n.velocidad)
-                  window.setTimeout(() => releaseNote(n.pitch), 160)
+                  if (ev.button !== 0) return
+                  const edge = hit.edge
+                  const startX = ev.clientX
+                  const startY = ev.clientY
+                  const origins = new Map(
+                    notes.filter((x) => ids.has(x.id)).map((x) => [x.id, { ...x }]),
+                  )
+                  const move = (e2: PointerEvent) => {
+                    const dx = e2.clientX - startX
+                    const dy = e2.clientY - startY
+                    setNotes((prev) =>
+                      prev.map((x) => {
+                        const o = origins.get(x.id)
+                        if (!o) return x
+                        if (edge === 'end') {
+                          return {
+                            ...x,
+                            duracion: Math.max(snapDiv / 2, snapBeat(o.duracion + dx / pxPerBeat)),
+                          }
+                        }
+                        if (edge === 'start') {
+                          const newInicio = snapBeat(o.inicio + dx / pxPerBeat)
+                          const end = o.inicio + o.duracion
+                          return {
+                            ...x,
+                            inicio: Math.min(newInicio, end - snapDiv / 2),
+                            duracion: Math.max(snapDiv / 2, end - Math.min(newInicio, end - snapDiv / 2)),
+                          }
+                        }
+                        return {
+                          ...x,
+                          inicio: snapBeat(o.inicio + dx / pxPerBeat),
+                          pitch: Math.max(
+                            LOWEST,
+                            Math.min(HIGHEST, o.pitch - Math.round(dy / keyH)),
+                          ),
+                        }
+                      }),
+                    )
+                    setDirty(true)
+                  }
+                  const up = () => {
+                    window.removeEventListener('pointermove', move)
+                    window.removeEventListener('pointerup', up)
+                    releaseNote(n.pitch)
+                    setNotes((prev) => {
+                      void persist(prev)
+                      return prev
+                    })
+                  }
+                  window.addEventListener('pointermove', move)
+                  window.addEventListener('pointerup', up)
                 }}
               />
             )}
@@ -759,7 +1041,10 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                     if (e.button !== 0) return
                     e.stopPropagation()
                     if (herramienta === 'borrar') return
-                    const edge = e.clientX - e.currentTarget.getBoundingClientRect().left > width - 6
+                    const rect = e.currentTarget.getBoundingClientRect()
+                    const localX = e.clientX - rect.left
+                    const edge: false | 'start' | 'end' =
+                      localX > width - 6 ? 'end' : localX < 6 ? 'start' : false
                     const ids =
                       selectedIds.has(n.id) && selectedIds.size > 0
                         ? selectedIds
@@ -778,10 +1063,22 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                         prev.map((x) => {
                           const o = origins.get(x.id)
                           if (!o) return x
-                          if (edge && ids.size === 1) {
+                          if (edge === 'end') {
                             return {
                               ...x,
                               duracion: Math.max(snapDiv / 2, snapBeat(o.duracion + dx / pxPerBeat)),
+                            }
+                          }
+                          if (edge === 'start') {
+                            const newInicio = snapBeat(o.inicio + dx / pxPerBeat)
+                            const end = o.inicio + o.duracion
+                            return {
+                              ...x,
+                              inicio: Math.min(newInicio, end - snapDiv / 2),
+                              duracion: Math.max(
+                                snapDiv / 2,
+                                end - Math.min(newInicio, end - snapDiv / 2),
+                              ),
                             }
                           }
                           return {
@@ -882,38 +1179,38 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
               </div>
             )}
           </div>
+
+          {showExpression && (
+            <PianoRollExpressionLanes
+              width={gridWidth}
+              durationBeats={durationBeats}
+              pxPerBeat={pxPerBeat}
+              expression={clip.expression}
+              onSetCc={(cc, puntos) => {
+                void tienda.executor.execute('midi.setCC', {
+                  pistaId: trackId,
+                  clipId,
+                  cc,
+                  puntos,
+                })
+              }}
+              onSetPitchBend={(puntos) => {
+                void tienda.executor.execute('midi.setPitchBend', {
+                  pistaId: trackId,
+                  clipId,
+                  puntos,
+                })
+              }}
+            />
+          )}
         </div>
       </div>
-
-      {showExpression && (
-        <PianoRollExpressionLanes
-          width={gridWidth}
-          durationBeats={durationBeats}
-          pxPerBeat={pxPerBeat}
-          expression={clip.expression}
-          onSetCc={(cc, puntos) => {
-            void tienda.executor.execute('midi.setCC', {
-              pistaId: trackId,
-              clipId,
-              cc,
-              puntos,
-            })
-          }}
-          onSetPitchBend={(puntos) => {
-            void tienda.executor.execute('midi.setPitchBend', {
-              pistaId: trackId,
-              clipId,
-              puntos,
-            })
-          }}
-        />
-      )}
 
             <div className="flex h-7 shrink-0 items-center gap-3 border-t border-border px-3 text-[10px] text-muted-foreground">
         <span className="flex items-center gap-1">
           <Plus className="size-3" /> Doble clic o modo Dibujar = crear nota · Alt+arrastrar = duracion · Lasso = seleccionar
         </span>
-        <span>Pulsa ? para ver atajos · V/D/E herramientas · Supr borrar</span>
+        <span>Pulsa ? para ver atajos · V/D/E herramientas · Supr borrar · Follow playhead activo</span>
       </div>
     </div>
   )

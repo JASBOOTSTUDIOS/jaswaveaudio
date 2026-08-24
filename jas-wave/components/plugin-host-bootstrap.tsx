@@ -5,7 +5,10 @@
 import { useEffect } from 'react'
 import { audioEngine } from '@/lib/audio-engine'
 import { isUndockWindow } from '@/lib/undock-window'
-import { hydratePluginCatalog } from '@/src/lib/plugin/catalog-store'
+import {
+  hydratePluginCatalog,
+  promoteCachedVst3WhenHostReady,
+} from '@/src/lib/plugin/catalog-store'
 import {
   createElectronPluginHostBridge,
   pluginManager,
@@ -20,7 +23,8 @@ export function PluginHostBootstrap() {
     pluginManager.attachHostBridge(createElectronPluginHostBridge())
     // Satélite: no arrancar device ni tap PCM (un solo cliente ASIO / un solo pipe).
     if (isUndockWindow()) return
-    void refreshPluginHostAvailability().then(() => {
+    void refreshPluginHostAvailability().then((ok) => {
+      if (ok) promoteCachedVst3WhenHostReady()
       void audioEngine.armNativeMixOutput()
     })
   }, [])

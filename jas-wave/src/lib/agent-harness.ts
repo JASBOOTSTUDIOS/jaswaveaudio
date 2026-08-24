@@ -172,7 +172,7 @@ export function inspectDawHealth(
       if (pl.estado === 'error') pluginErrors.push(`${t.nombre || t.id}/${pl.nombre}`)
     }
     const clips = t.clips ?? []
-    const isMidi = t.tipo === 'midi' || t.tipo === 'instrumento'
+    const isMidi = t.tipo === 'midi' || t.tipo === 'instrumento' || t.tipo === 'audio'
     let notes = 0
     for (const c of clips) {
       const n = clipNoteCount(c)

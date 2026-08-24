@@ -85,6 +85,15 @@ import {
   crearComandoFxChainLoadPreset,
   crearComandoFxChainSavePreset,
 } from '../commands/plugin-commands';
+import {
+  crearComandoRenderStart,
+  crearComandoRenderCancel,
+  crearComandoRenderGetStatus,
+} from '../commands/render-commands';
+import {
+  crearComandoAnalysisLoudness,
+  crearComandoAnalysisCompareTarget,
+} from '../commands/analysis-commands';
 
 /**
  * Crea un evento de dominio estandarizado para el bus.
@@ -194,6 +203,11 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoFxChainPasteUndo(), registry);
   registrar(crearComandoFxChainLoadPreset(), registry);
   registrar(crearComandoFxChainSavePreset(), registry);
+  registrar(crearComandoRenderStart(), registry);
+  registrar(crearComandoRenderCancel(), registry);
+  registrar(crearComandoRenderGetStatus(), registry);
+  registrar(crearComandoAnalysisLoudness(), registry);
+  registrar(crearComandoAnalysisCompareTarget(), registry);
 }
 /**
  * Alias de `registrarComandosBuiltin` para registrar comandos de proyecto.

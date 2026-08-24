@@ -12,6 +12,7 @@ export type ToolId =
   | 'instruments'
   | 'fx-chain'
   | 'plugin-editor'
+  | 'midi-map'
   | 'piano-roll'
   | 'settings'
 
@@ -102,6 +103,13 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     defaultZone: 'right',
     singleton: true,
   },
+  'midi-map': {
+    id: 'midi-map',
+    title: 'MIDI Learn',
+    description: 'Asigna nota, CC o tecla a una función del DAW',
+    defaultZone: 'right',
+    singleton: true,
+  },
   'piano-roll': {
     id: 'piano-roll',
     title: 'Piano roll',
@@ -129,7 +137,7 @@ export const DEFAULT_WORKSPACE: WorkspaceLayout = {
   zones: {
     left: ['coproducer', 'docs', 'library', 'instruments'],
     center: ['arrange'],
-    right: ['track-detail', 'fx-chain', 'plugin-editor', 'meters', 'routing', 'settings'],
+    right: ['track-detail', 'fx-chain', 'plugin-editor', 'midi-map', 'meters', 'routing', 'settings'],
     bottom: ['mixer', 'piano-roll'],
   },
   activeTab: {

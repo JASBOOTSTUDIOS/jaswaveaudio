@@ -87,6 +87,7 @@ function buildAppMenu() {
         { type: 'separator' },
         { label: 'Paleta de comandos', accelerator: 'CmdOrCtrl+Shift+P', click: () => sendMenuAction('ventana.paletaComandos') },
         { label: 'Atajos de teclado…', click: () => sendMenuAction('ventana.atajos') },
+        { label: 'Control MIDI / MIDI Learn', accelerator: 'CmdOrCtrl+Shift+M', click: () => sendMenuAction('ventana.midiMap') },
       ],
     },
     {
@@ -148,17 +149,37 @@ app.whenReady().then(() => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.jaswave.app')
   }
-  session.defaultSession.setPermissionRequestHandler((_wc: unknown, permission: string, callback: (ok: boolean) => void) => {
-    callback(
-      permission === 'midi' ||
-        permission === 'media' ||
-        permission === 'audioCapture' ||
-        permission === 'mediaKeySystem',
+  session.defaultSession.setPermissionRequestHandler(
+    (_wc: unknown, perm: string, callback: (ok: boolean) => void) => {
+      callback(
+        perm === 'midi' ||
+          perm === 'midiSysex' ||
+          perm === 'media' ||
+          perm === 'audioCapture' ||
+          perm === 'mediaKeySystem',
+      )
+    },
+  )
+  session.defaultSession.setPermissionCheckHandler((_wc: unknown, perm: string) => {
+    return (
+      perm === 'midi' ||
+      perm === 'midiSysex' ||
+      perm === 'media' ||
+      perm === 'audioCapture'
     )
   })
-  session.defaultSession.setPermissionCheckHandler((_wc: unknown, permission: string) => {
-    return permission === 'midi' || permission === 'media' || permission === 'audioCapture'
-  })
+  try {
+    session.defaultSession.setDevicePermissionHandler((details: { deviceType?: string }) => {
+      return (
+        details?.deviceType === 'midi' ||
+        details?.deviceType === 'hid' ||
+        details?.deviceType === 'audio' ||
+        details?.deviceType === 'unknown'
+      )
+    })
+  } catch {
+    /* Electron viejo sin device permission handler */
+  }
   buildAppMenu()
   createWindow()
 })
@@ -218,6 +239,32 @@ ipcMain.handle('file-save', async (_event: IpcMainInvokeEvent, ruta: string, con
   }
 })
 
+ipcMain.handle('file-save-binary', async (_event: IpcMainInvokeEvent, ruta: string, data: Uint8Array | ArrayBuffer) => {
+  try {
+    await fs.mkdir(path.dirname(ruta), { recursive: true })
+    const buf = Buffer.from(data instanceof ArrayBuffer ? new Uint8Array(data) : data)
+    await fs.writeFile(ruta, buf)
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
+  }
+})
+
+ipcMain.handle('file-read-binary', async (_event: IpcMainInvokeEvent, ruta: string) => {
+  const buf = await fs.readFile(ruta)
+  return buf
+})
+
+ipcMain.handle('recordings-dir', async (_event: IpcMainInvokeEvent, projectPath?: string) => {
+  const base =
+    typeof projectPath === 'string' && projectPath.trim()
+      ? path.dirname(projectPath)
+      : app.getPath('userData')
+  const dir = path.join(base, 'media', 'grabaciones')
+  await fs.mkdir(dir, { recursive: true })
+  return dir
+})
+
 ipcMain.handle('file-read', async (_event: IpcMainInvokeEvent, ruta: string) => {
   const contenido = await fs.readFile(ruta, 'utf-8')
   return contenido
@@ -237,11 +284,12 @@ ipcMain.handle('file-size', async (_event: IpcMainInvokeEvent, ruta: string) => 
   return stat.size
 })
 
-ipcMain.handle('dialog-save', async () => {
+ipcMain.handle('dialog-save', async (_event: IpcMainInvokeEvent, defaultPath?: string) => {
   if (!mainWindow) return { canceled: true }
   const result = await dialog.showSaveDialog(mainWindow, {
     filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }],
-    properties: ['createPanel'],
+    ...(typeof defaultPath === 'string' && defaultPath ? { defaultPath } : {}),
+    properties: ['createDirectory', 'showOverwriteConfirmation'],
   })
   return result
 })
@@ -304,7 +352,7 @@ ipcMain.handle('project-save-as', async (_event: IpcMainInvokeEvent, projectId: 
   if (!mainWindow) return { success: false, canceled: true }
   const result = await dialog.showSaveDialog(mainWindow, {
     filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }],
-    properties: ['createPanel'],
+    properties: ['createDirectory', 'showOverwriteConfirmation'],
   })
   if (result.canceled || !result.filePath) return { success: false, canceled: true }
   try {
@@ -492,7 +540,14 @@ const {
   stopPluginHost,
   isEditorHostCommand,
   setPluginHostAudioDevice,
+  subscribeNativeMidi,
 } = require('./plugin-host-bridge')
+
+subscribeNativeMidi((msg: { id: string; data: number[] }) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('native-midi', msg)
+  }
+})
 
 ipcMain.handle('plugin-host-status', async (e: IpcMainInvokeEvent) => {
   if (!senderIsSatellite(e.sender)) await ensurePluginHostStarted()

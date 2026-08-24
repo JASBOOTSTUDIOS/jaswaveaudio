@@ -22,6 +22,9 @@ describe('isolation policy', () => {
   it('vst3 → out-of-process', () => {
     assert.equal(isolationForFormat('vst3'), 'out-of-process')
   })
+  it('vst2 → out-of-process (hosting real x64)', () => {
+    assert.equal(isolationForFormat('vst2'), 'out-of-process')
+  })
 })
 
 describe('descriptorToPluginInfo (no-engaño)', () => {

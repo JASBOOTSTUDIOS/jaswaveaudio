@@ -27,6 +27,8 @@ bool jaswave_mix_bus_running();
 void jaswave_mix_bus_set_input_rate(uint32_t hz);
 void jaswave_mix_bus_set_output_rate(uint32_t hz);
 void jaswave_mix_bus_reset();
+/** Modo bounce: begin_block fija budget=frames sin PLL/lockstep en vivo. */
+void jaswave_mix_bus_set_offline(bool offline);
 
 constexpr uint16_t JASWAVE_MIX_DAW_BUS = 0xFFFF;
 constexpr uint32_t JASWAVE_MIX_MAGIC = 0x4A575354u;  // 'JWST'

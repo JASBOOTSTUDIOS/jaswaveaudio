@@ -1,6 +1,6 @@
 /** Constantes compartidas del Arrangement (ADR-0010). */
 
-export const ROW_H = 72
+export const ROW_H = 132
 export const HEADER_H = 40
 export const MIN_TOTAL_BEATS = 640
 /** Zoom base: px por beat a zoom=1 */

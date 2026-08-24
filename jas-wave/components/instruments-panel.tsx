@@ -18,10 +18,14 @@ import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 import {
   pluginManager,
   refreshPluginHostAvailability,
+  catalogPluginInsertable,
   type PluginDescriptor,
 } from '@/src/lib/plugin-host'
-import { hydratePluginCatalog } from '@/src/lib/plugin/catalog-store'
-import { descriptorToPluginInfo, softPadPluginInfo } from '@/src/lib/plugin/plugin-info-adapter'
+import {
+  hydratePluginCatalog,
+  promoteCachedVst3WhenHostReady,
+} from '@/src/lib/plugin/catalog-store'
+import { descriptorToPluginInfo, softPadPluginInfo, VST2_NOT_HOSTED_MSG } from '@/src/lib/plugin/plugin-info-adapter'
 import { openPluginEditor } from '@/src/lib/plugin/plugin-editor-store'
 import {
   addCustomScanFolder,
@@ -76,7 +80,7 @@ export function InstrumentsPanel() {
   const refreshCatalogUi = useCallback(() => {
     hydratePluginCatalog()
     pluginManager.ensureBuiltins()
-    setVstList(pluginManager.listAvailable().filter((p) => p.format === 'vst3'))
+    setVstList(pluginManager.listAvailable().filter((p) => p.format === 'vst3' || p.format === 'vst2'))
   }, [])
 
   const syncCapabilities = useCallback(() => {
@@ -100,8 +104,8 @@ export function InstrumentsPanel() {
       syncCapabilities()
       setScanMsg(
         result.registered
-          ? `${result.registered} VST3 en catálogo (añádelos a una pista desde Inspector → Plugins)`
-          : result.error || 'No se encontraron .vst3 en las carpetas habilitadas',
+          ? `${result.registered} plugins en catálogo (.vst3 y .dll VST2 x64 hosteables).`
+          : result.error || 'No se encontraron .vst3 ni .dll en las carpetas habilitadas',
       )
     } catch (e) {
       setScanMsg(e instanceof Error ? e.message : 'Error de escaneo')
@@ -148,9 +152,28 @@ export function InstrumentsPanel() {
       setScanMsg('Selecciona una pista en el arrangement (icono piano en la cabecera).')
       return
     }
+    let plugin = d
+    if (plugin !== 'softpad' && !catalogPluginInsertable(plugin)) {
+      // Caché vieja: host ya listo pero hostReady=false → promover VST3 y reintentar.
+      if (plugin.format === 'vst3' && plugin.path) {
+        const staleId = plugin.pluginId
+        await refreshPluginHostAvailability()
+        promoteCachedVst3WhenHostReady()
+        const refreshed = pluginManager.listAvailable().find((p) => p.pluginId === staleId)
+        if (refreshed && catalogPluginInsertable(refreshed)) plugin = refreshed
+      }
+    }
+    if (plugin !== 'softpad' && !catalogPluginInsertable(plugin)) {
+      setScanMsg(
+        plugin.format === 'vst2' && !plugin.hostReady
+          ? `«${plugin.name}»: ${VST2_NOT_HOSTED_MSG}`
+          : `«${plugin.name}» no está listo para audio (host no disponible). Escanea de nuevo con el host en marcha.`,
+      )
+      return
+    }
     const track = tienda.obtenerEstado().project?.tracks?.find((t) => t.id === selectedTrackId)
     if (!track) return
-    const info = d === 'softpad' ? softPadPluginInfo() : descriptorToPluginInfo(d)
+    const info = plugin === 'softpad' ? softPadPluginInfo() : descriptorToPluginInfo(plugin)
     await tienda.executor.execute('plugin.insert', {
       trackId: track.id,
       plugin: info,
@@ -171,6 +194,7 @@ export function InstrumentsPanel() {
       pluginName: info.nombre,
       zone: 'right',
     })
+    refreshCatalogUi()
   }
 
   return (
@@ -368,7 +392,7 @@ export function InstrumentsPanel() {
 
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-foreground">
-              Catálogo VST3 ({vstList.length})
+              Catálogo VST ({vstList.length})
             </div>
             <button
               type="button"
@@ -398,8 +422,20 @@ export function InstrumentsPanel() {
                   className="flex items-start gap-2 border-b border-border/40 px-2 py-1.5 last:border-b-0"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[11px] font-medium text-foreground">{p.name}</div>
-                    <div className="truncate text-[9px] text-muted-foreground">{p.path}</div>
+                    <div className="truncate text-[11px] font-medium text-foreground">
+                      {p.name}
+                      <span className="ml-1 font-normal text-muted-foreground">
+                        {p.format === 'vst2' ? 'VST2' : 'VST3'}
+                      </span>
+                    </div>
+                    <div className="truncate text-[9px] text-muted-foreground">
+                      {!catalogPluginInsertable(p)
+                        ? p.format === 'vst2'
+                          ? 'Requiere host VST2 · '
+                          : 'Host pendiente · '
+                        : ''}
+                      {p.path}
+                    </div>
                   </div>
                   <button
                     type="button"

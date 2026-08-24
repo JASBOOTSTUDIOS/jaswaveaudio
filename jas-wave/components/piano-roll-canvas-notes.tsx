@@ -1,6 +1,6 @@
 /**
  * Capa de notas del piano roll en Canvas (virtualización para clips densos).
- * Hit-test en coordenadas de grid; no monta un DOM node por nota.
+ * Hit-test + edge; gestos de drag los maneja el padre vía onHit.
  */
 
 import { useEffect, useRef } from 'react'
@@ -13,6 +13,8 @@ export type CanvasNote = {
   velocidad: number
 }
 
+export type CanvasHit = { id: string; edge: false | 'start' | 'end' }
+
 type Props = {
   notes: CanvasNote[]
   selectedIds: Set<string>
@@ -22,7 +24,7 @@ type Props = {
   keyH: number
   highest: number
   lowest: number
-  onHit?: (noteId: string | null, ev: PointerEvent) => void
+  onHit?: (hit: CanvasHit | null, ev: PointerEvent) => void
 }
 
 export function PianoRollCanvasNotes({
@@ -59,37 +61,41 @@ export function PianoRollCanvasNotes({
       const h = keyH - 2
       const alpha = 0.35 + (n.velocidad / 127) * 0.55
       const selected = selectedIds.has(n.id)
-      ctx.fillStyle = selected ? `rgba(251, 191, 36, ${Math.min(1, alpha + 0.2)})` : `rgba(139, 92, 246, ${alpha})`
+      ctx.fillStyle = selected
+        ? `rgba(251, 191, 36, ${Math.min(1, alpha + 0.2)})`
+        : `rgba(139, 92, 246, ${alpha})`
       ctx.strokeStyle = selected ? 'rgba(251, 191, 36, 1)' : 'rgba(196, 181, 253, 0.45)'
       ctx.lineWidth = selected ? 1.5 : 1
-    ctx.beginPath()
-    const r = 2
-    ctx.moveTo(left + r, top)
-    ctx.arcTo(left + w, top, left + w, top + h, r)
-    ctx.arcTo(left + w, top + h, left, top + h, r)
-    ctx.arcTo(left, top + h, left, top, r)
-    ctx.arcTo(left, top, left + w, top, r)
-    ctx.closePath()
-    ctx.fill()
-    ctx.stroke()
-      // resize handle
+      ctx.beginPath()
+      const r = 2
+      ctx.moveTo(left + r, top)
+      ctx.arcTo(left + w, top, left + w, top + h, r)
+      ctx.arcTo(left + w, top + h, left, top + h, r)
+      ctx.arcTo(left, top + h, left, top, r)
+      ctx.arcTo(left, top, left + w, top, r)
+      ctx.closePath()
+      ctx.fill()
+      ctx.stroke()
       ctx.fillStyle = 'rgba(255,255,255,0.2)'
       ctx.fillRect(left + w - 3, top, 3, h)
     }
   }, [notes, selectedIds, width, height, pxPerBeat, keyH, highest])
 
-  const hitTest = (clientX: number, clientY: number, el: HTMLCanvasElement): string | null => {
+  const hitTest = (clientX: number, clientY: number, el: HTMLCanvasElement): CanvasHit | null => {
     const rect = el.getBoundingClientRect()
     const x = clientX - rect.left
     const y = clientY - rect.top
-    // top-most last drawn ≈ higher in array end; search reverse
     for (let i = notesRef.current.length - 1; i >= 0; i--) {
       const n = notesRef.current[i]!
       const top = (highest - n.pitch) * keyH + 1
       const left = n.inicio * pxPerBeat
       const w = Math.max(6, n.duracion * pxPerBeat)
       const h = keyH - 2
-      if (x >= left && x <= left + w && y >= top && y <= top + h) return n.id
+      if (x >= left && x <= left + w && y >= top && y <= top + h) {
+        if (x > left + w - 6) return { id: n.id, edge: 'end' }
+        if (x < left + 6) return { id: n.id, edge: 'start' }
+        return { id: n.id, edge: false }
+      }
     }
     return null
   }
@@ -101,8 +107,8 @@ export function PianoRollCanvasNotes({
       style={{ width, height }}
       onPointerDown={(e) => {
         if (!onHit) return
-        const id = hitTest(e.clientX, e.clientY, e.currentTarget)
-        onHit(id, e.nativeEvent)
+        const hit = hitTest(e.clientX, e.clientY, e.currentTarget)
+        onHit(hit, e.nativeEvent)
       }}
     />
   )

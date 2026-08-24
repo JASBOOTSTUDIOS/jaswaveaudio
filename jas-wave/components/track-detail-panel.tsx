@@ -29,13 +29,15 @@ import { ConfirmDialog } from './ui/confirm-dialog'
 import { requestOpenTool } from '@/src/workspace/types'
 import { audioEngine } from '@/lib/audio-engine'
 import { hydratePluginCatalog } from '@/src/lib/plugin/catalog-store'
-import { pluginManager } from '@/src/lib/plugin-host'
+import { pluginManager, catalogPluginInsertable } from '@/src/lib/plugin-host'
 import {
   descriptorToPluginInfo,
   softPadPluginInfo,
 } from '@/src/lib/plugin/plugin-info-adapter'
 import { openPluginEditor } from '@/src/lib/plugin/plugin-editor-store'
 import { openFxChain } from '@/src/lib/plugin/fx-chain-store'
+import { TrackMidiInput } from '@/components/track-midi-input'
+import { TrackAudioInput } from '@/components/track-audio-input'
 import type { PluginDescriptor } from '@/src/lib/plugin/types'
 
 const TRACK_COLORS = [
@@ -322,32 +324,39 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
               <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Monitor / entrada
               </span>
-              {isAudio ? (
+              {isAudio || isMidi ? (
                 <button
                   type="button"
                   onClick={() => {
-                    const monitor = Boolean(audioTrack.configuracion?.monitorizarEntrada)
-                    updateTrack({
-                      configuracion: {
-                        ...(audioTrack.configuracion ?? {}),
-                        monitorizarEntrada: !monitor,
-                      },
-                    })
+                    void tienda.executor.execute('track.toggleMonitor', { trackId: track.id })
                   }}
                   className={`flex items-center gap-1.5 rounded px-2.5 py-1.5 text-[10px] font-semibold transition-colors ${
-                    audioTrack.configuracion?.monitorizarEntrada
+                    track.configuracion?.monitorizarEntrada
                       ? 'bg-accent-cyan/20 text-accent-cyan'
                       : 'bg-panel-raised text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  <Mic2 className="size-3" />
+                  <Headphones className="size-3" />
                   INPUT MONITOR
                 </button>
-              ) : (
-                <p className="max-w-[160px] text-[11px] text-muted-foreground">
-                  Pista MIDI: el audio llega desde el instrumento asignado en Plugins.
-                </p>
-              )}
+              ) : null}
+              {isMidi || isAudio ? (
+                <div className="mt-1">
+                  <TrackMidiInput trackId={track.id} assignedId={track.entrada} />
+                </div>
+              ) : null}
+              {isAudio ? (
+                <div className="mt-1">
+                  <TrackAudioInput
+                    trackId={track.id}
+                    assignedId={
+                      'dispositivoEntrada' in track && typeof track.dispositivoEntrada === 'string'
+                        ? track.dispositivoEntrada
+                        : track.entrada
+                    }
+                  />
+                </div>
+              ) : null}
               <div className="mt-2 flex items-center gap-1.5 rounded bg-panel-raised px-2.5 py-1.5 text-[10px] text-muted-foreground">
                 <Link2 className="size-3" />
                 Envíos: {(track.envios ?? []).length || 'ninguno'}
@@ -426,8 +435,14 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                   {catalog.map((d) => (
                     <option key={d.pluginId} value={d.pluginId}>
                       {d.name}
-                      {d.format === 'vst3' ? ' (VST3)' : ''}
-                      {!d.hostReady && d.format !== 'builtin' ? ' · pendiente' : ''}
+                      {d.format === 'vst3' ? ' (VST3)' : d.format === 'vst2' ? ' (VST2)' : ''}
+                      {d.format === 'vst2'
+                        ? d.hostReady
+                          ? ''
+                          : ' · no hosteable'
+                        : !d.hostReady && d.format !== 'builtin'
+                          ? ' · pendiente'
+                          : ''}
                     </option>
                   ))}
                 </select>
@@ -436,6 +451,7 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                   onClick={() => {
                     void (async () => {
                       const d = catalog.find((x) => x.pluginId === pickId)
+                      if (d && !catalogPluginInsertable(d)) return
                       const info = d
                         ? descriptorToPluginInfo(d)
                         : pickId === 'jaswave.softpad'
@@ -462,8 +478,8 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 </button>
               </div>
               <p className="text-[9px] text-muted-foreground">
-                Soft Pad no se asigna solo: insértalo desde el catálogo. VST: MIDI al Plugin Host
-                cuando el load confirma.
+                Soft Pad no se asigna solo: insértalo desde el catálogo. VST3: MIDI al Plugin Host
+                cuando el load confirma. VST2 solo aparece en catálogo (sin hosting).
               </p>
             </div>
 

@@ -5,7 +5,7 @@
 
 import type { PluginInfo } from '../../../../shared/src/types/entidades'
 import {
-  extractVst3Path,
+  extractHostPluginPath,
   guessIsInstrument,
   isBuiltinPlugin,
   isLikelyAudioFx,
@@ -15,19 +15,23 @@ import { encodeTrackGraph } from './track-graph-encoding'
 import { audioEngine } from '@/lib/audio-engine'
 import type { HostParameterRaw } from './plugin-parameter-intel'
 
-export { extractVst3Path }
+export { extractHostPluginPath, extractHostPluginPath as extractVst3Path }
 
 export function isBuiltinInstrument(plugin: PluginInfo): boolean {
   return isBuiltinPlugin(plugin)
 }
 
 export function isVstInstrumentPlugin(plugin: PluginInfo, path: string): boolean {
-  return (
+  if (
     plugin.tipo === 'instrumento' ||
     plugin.categoria === 'instrumento' ||
     plugin.categoria === 'synth' ||
     guessIsInstrument(plugin.nombre, path)
-  )
+  ) {
+    return true
+  }
+  // Alineado con findTrackPlaybackInstrument: VST no-FX puede recibir MIDI (p.ej. BFD).
+  return !isLikelyAudioFx(plugin.nombre, path)
 }
 
 /** Instrumento de playback de la cadena: VST si hay uno; si no, Soft Pad solo si está insertado. */
@@ -42,7 +46,7 @@ export function findTrackPlaybackInstrument(
       if (!builtin) builtin = p
       continue
     }
-    const path = extractVst3Path(p.descripcion)
+    const path = extractHostPluginPath(p.descripcion)
     if (!path) continue
     if (!firstVst) firstVst = { plugin: p, path }
     if (isVstInstrumentPlugin(p, path)) return { kind: 'vst', plugin: p, path }
@@ -112,6 +116,16 @@ export function getLoadedInstrumentForTrack(trackId: string): LoadedPlugin | nul
   return byTrack.get(trackId) ?? null
 }
 
+export function listLoadedSlots(): Array<{
+  trackId: string
+  pluginId: string
+  path: string
+  slotId: string
+  instrument: boolean
+}> {
+  return [...bySlot.values()].map((p) => ({ ...p }))
+}
+
 export function forgetHostPlugins(): void {
   bySlot.clear()
   byTrack.clear()
@@ -150,12 +164,12 @@ export async function syncLoadedSlotsWithProject(
   for (const t of tracks) {
     for (const p of t.plugins ?? []) {
       if (isBuiltinInstrument(p)) continue
-      if (extractVst3Path(p.descripcion)) live.add(slotIdForTrackPlugin(t.id, p.id))
+      if (extractHostPluginPath(p.descripcion)) live.add(slotIdForTrackPlugin(t.id, p.id))
     }
   }
   for (const p of masterPlugins ?? []) {
     if (isBuiltinInstrument(p)) continue
-    if (extractVst3Path(p.descripcion)) live.add(slotIdForTrackPlugin('master', p.id))
+    if (extractHostPluginPath(p.descripcion)) live.add(slotIdForTrackPlugin('master', p.id))
   }
   for (const slotId of [...bySlot.keys()]) {
     if (!live.has(slotId)) await releaseSlot(slotId)
@@ -168,7 +182,7 @@ export async function ensureTrackVstPlugin(
   trackId: string,
   plugin: PluginInfo,
 ): Promise<boolean> {
-  const path = extractVst3Path(plugin.descripcion)
+  const path = extractHostPluginPath(plugin.descripcion)
   if (!path) return false
   const slotId = slotIdForTrackPlugin(trackId, plugin.id)
   const instrument = isVstInstrumentPlugin(plugin, path)
@@ -260,7 +274,7 @@ export async function ensureProjectVstInstruments(
     for (const p of t.plugins ?? []) {
       if (p.bypass) continue
       if (isBuiltinInstrument(p)) continue
-      const path = extractVst3Path(p.descripcion)
+      const path = extractHostPluginPath(p.descripcion)
       if (!path) continue
       const ok = await ensureTrackVstPlugin(t.id, p)
       if (ok && isVstInstrumentPlugin(p, path)) {
@@ -270,7 +284,7 @@ export async function ensureProjectVstInstruments(
   }
   for (const p of masterPlugins ?? []) {
     if (p.bypass || isBuiltinInstrument(p)) continue
-    if (!extractVst3Path(p.descripcion)) continue
+    if (!extractHostPluginPath(p.descripcion)) continue
     await ensureTrackVstPlugin('master', p)
   }
   return map
@@ -296,7 +310,7 @@ export function syncReaperTrackGraph(
     const slots: Array<{ slotId: string; instrument: boolean; bypass: boolean }> = []
     for (const p of t.plugins ?? []) {
       if (isBuiltinInstrument(p)) continue
-      const path = extractVst3Path(p.descripcion)
+      const path = extractHostPluginPath(p.descripcion)
       if (!path) continue
       const slotId = slotIdForTrackPlugin(t.id, p.id)
       if (!bySlot.has(slotId)) continue
@@ -318,7 +332,7 @@ export function syncReaperTrackGraph(
   const master: Array<{ slotId: string; instrument: boolean; bypass: boolean }> = []
   for (const p of masterPlugins ?? []) {
     if (isBuiltinInstrument(p)) continue
-    const path = extractVst3Path(p.descripcion)
+    const path = extractHostPluginPath(p.descripcion)
     if (!path) continue
     const slotId = slotIdForTrackPlugin('master', p.id)
     if (!bySlot.has(slotId)) continue

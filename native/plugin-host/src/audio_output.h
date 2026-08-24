@@ -27,7 +27,7 @@ struct JaswaveAudioConfig {
   std::string backend;    // auto|wasapi|wasapi_exclusive|dsound|winmm|asio|jack|coreaudio|alsa|pulse
   std::string deviceId;   // vacío = default del backend
   uint32_t sampleRate{48000};
-  uint32_t bufferSize{512};
+  uint32_t bufferSize{256};
   bool exclusive{false};
 };
 

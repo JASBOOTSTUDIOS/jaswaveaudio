@@ -15,6 +15,7 @@ import {
   recorderNoteOff,
   recorderNoteOn,
 } from './midi-note-recorder'
+import { createPadSustain, padNoteOff, padNoteOn, padPedal } from './midi-sustain'
 
 describe('parseMidiMessage', () => {
   it('note on / note off / note on vel 0', () => {
@@ -83,5 +84,26 @@ describe('midi-note-recorder', () => {
   it('span mínimo de un beat', () => {
     const span = clipSpanBeats([{ pitch: 60, inicio: 0, duracion: 0.25, velocidad: 90, canal: 0, source: 'recorded' }])
     assert.equal(span.duracion, 1)
+  })
+})
+
+describe('pad sustain (CC64)', () => {
+  it('mantiene la nota al soltar tecla con pedal y la apaga al soltar pedal', () => {
+    let s = createPadSustain()
+    s = padNoteOn(s, 60)
+    let off = padNoteOff(s, 60)
+    assert.equal(off.silence, true)
+    s = padPedal(off.next, 127).next
+    s = padNoteOn(s, 64)
+    off = padNoteOff(s, 64)
+    assert.equal(off.silence, false)
+    const lift = padPedal(off.next, 0)
+    assert.deepEqual(lift.release, [64])
+  })
+
+  it('no silencia una tecla que sigue bajada al soltar el pedal', () => {
+    let s = padNoteOn(padPedal(createPadSustain(), 127).next, 60)
+    const lift = padPedal(s, 0)
+    assert.equal(lift.release.includes(60), false)
   })
 })

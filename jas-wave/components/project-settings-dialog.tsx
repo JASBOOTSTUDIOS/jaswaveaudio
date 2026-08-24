@@ -348,7 +348,7 @@ function AudioTab() {
   const project = useDAWState((s: DAWState) => s.project)
   const [sampleRate, setSampleRate] = useState(48000)
   const [bitDepth, setBitDepth] = useState(24)
-  const [bufferSize, setBufferSize] = useState(512)
+  const [bufferSize, setBufferSize] = useState(256)
   const [backends, setBackends] = useState<AudioBackendInfo[]>([])
   const [devices, setDevices] = useState<AudioDeviceInfo[]>([])
   const [backend, setBackend] = useState('auto')
@@ -361,7 +361,7 @@ function AudioTab() {
     if (project) {
       setSampleRate(project.sampleRate ?? 48000)
       setBitDepth(project.bitDepth ?? 24)
-      setBufferSize(project.configuracion?.bufferSize ?? 512)
+      setBufferSize(project.configuracion?.bufferSize ?? 256)
     }
   }, [project])
 
@@ -615,7 +615,18 @@ function AudioTab() {
           />
         </Field>
         <Field label="Buffer Size">
-          <Select value={bufferSize} onChange={(v) => setBufferSize(v)} options={BUFFER_SIZES} render={(v) => `${v} samples`} />
+          <Select
+            value={bufferSize}
+            onChange={(v) => setBufferSize(v)}
+            options={BUFFER_SIZES}
+            render={(v) => `${v} samples`}
+          />
+          <p className="mt-1 text-[9px] text-muted-foreground">
+            El tamaño lo eliges tú; ASIO lo ajusta a su rango (min/max/preferred del driver).
+            {(backend === 'asio' || runtime?.backend === 'asio') && bufferSize < 512
+              ? ' Aviso: con VSTi pesados (BFD) un buffer bajo puede producir xruns/cortes.'
+              : ''}
+          </p>
         </Field>
       </div>
 
@@ -709,7 +720,8 @@ function MidiTab() {
     <div className="flex flex-col gap-4">
       <p className="text-[12px] text-muted-foreground">
         El teclado o pad entra a la pista MIDI seleccionada (o a las armadas). Arma la pista, pulsa
-        Grabar y toca: se crea un clip. Sustain (CC64) y otros CC van al VST de esa pista.
+        Grabar y toca: se crea un clip. En Windows los dispositivos se enumeran por WinMM (como
+        REAPER), no solo por Web MIDI.
       </p>
 
       <Field label="Controlador de entrada">

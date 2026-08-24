@@ -366,18 +366,14 @@ void Vst3Slot::unload() {
 
 void Vst3Slot::noteOn(int pitch, float velocity, int delaySamples) {
   std::lock_guard<std::mutex> lock(impl_->midiMutex);
-  if (impl_->midiQueue.size() > 2048) {
-    impl_->midiQueue.erase(impl_->midiQueue.begin(), impl_->midiQueue.begin() + 512);
-  }
+  if (impl_->midiQueue.size() > 8192) return;
   impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOn, static_cast<int16_t>(pitch),
                               std::clamp(velocity, 0.f, 1.f), 0, 0, std::max(0, delaySamples)});
 }
 
 void Vst3Slot::noteOff(int pitch, int delaySamples) {
   std::lock_guard<std::mutex> lock(impl_->midiMutex);
-  if (impl_->midiQueue.size() > 2048) {
-    impl_->midiQueue.erase(impl_->midiQueue.begin(), impl_->midiQueue.begin() + 512);
-  }
+  if (impl_->midiQueue.size() > 16384) return;
   impl_->midiQueue.push_back(
       {Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(pitch), 0.f, 0, 0, std::max(0, delaySamples)});
 }
@@ -387,9 +383,7 @@ void Vst3Slot::midiCc(int cc, int value, int delaySamples) {
   const int v = std::clamp(value, 0, 127);
   {
     std::lock_guard<std::mutex> lock(impl_->midiMutex);
-    if (impl_->midiQueue.size() > 2048) {
-      impl_->midiQueue.erase(impl_->midiQueue.begin(), impl_->midiQueue.begin() + 512);
-    }
+    if (impl_->midiQueue.size() > 16384) return;
     impl_->midiQueue.push_back({Vst3MidiEvent::Kind::ControlChange, 0, 0.f, static_cast<int16_t>(c),
                                 static_cast<int16_t>(v), std::max(0, delaySamples)});
   }
@@ -397,11 +391,15 @@ void Vst3Slot::midiCc(int cc, int value, int delaySamples) {
   FUnknownPtr<IMidiMapping> mapping(impl_->controller);
   if (!mapping) return;
   ParamID pid = 0;
-  if (mapping->getMidiControllerAssignment(0, 0, static_cast<CtrlNumber>(c), pid) == kResultOk) {
-    const ParamValue nv = v >= 127 ? 1.0 : (v <= 0 ? 0.0 : static_cast<ParamValue>(v) / 127.0);
-    impl_->controller->setParamNormalized(pid, nv);
-    std::lock_guard<std::mutex> lock(impl_->paramMutex);
-    impl_->paramQueue.push_back({pid, nv});
+  const ParamValue nv = v >= 127 ? 1.0 : (v <= 0 ? 0.0 : static_cast<ParamValue>(v) / 127.0);
+  bool mapped = false;
+  for (int16_t ch = 0; ch < 16 && !mapped; ++ch) {
+    if (mapping->getMidiControllerAssignment(0, ch, static_cast<CtrlNumber>(c), pid) == kResultOk) {
+      impl_->controller->setParamNormalized(pid, nv);
+      std::lock_guard<std::mutex> lock(impl_->paramMutex);
+      impl_->paramQueue.push_back({pid, nv});
+      mapped = true;
+    }
   }
 }
 
@@ -565,6 +563,8 @@ void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* o
         e.noteOn.tuning = 0;
         e.noteOn.noteId = ev.pitch;
       } else if (ev.kind == Vst3MidiEvent::Kind::ControlChange) {
+        // JUCE y varios wrappers leen CC aquí (el nombre "Out" es histórico).
+        // El sustain real también va por IMidiMapping → IParameterChanges en midiCc().
         e.type = Event::kLegacyMIDICCOutEvent;
         e.midiCCOut.channel = 0;
         e.midiCCOut.controlNumber = static_cast<uint8>(ev.cc);

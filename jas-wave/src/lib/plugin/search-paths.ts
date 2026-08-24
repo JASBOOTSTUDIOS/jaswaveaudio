@@ -5,7 +5,7 @@
 export type PluginSearchPath = {
   id: string
   path: string
-  format: 'vst3' | 'au' | 'lv2' | 'clap' | 'any'
+  format: 'vst3' | 'vst2' | 'au' | 'lv2' | 'clap' | 'any'
   enabled: boolean
   kind: 'standard' | 'custom'
 }
@@ -59,6 +59,34 @@ export function defaultVst3SearchPaths(platform: NodeJS.Platform | string = 'win
       id: 'win-local-vst3',
       path: '%LOCALAPPDATA%/Programs/Common/VST3',
       format: 'vst3',
+      enabled: true,
+      kind: 'standard',
+    },
+    {
+      id: 'win-vst2-program',
+      path: '%ProgramFiles%/VSTPlugins',
+      format: 'vst2',
+      enabled: true,
+      kind: 'standard',
+    },
+    {
+      id: 'win-vst2-program-x86',
+      path: '%ProgramFiles(x86)%/VSTPlugins',
+      format: 'vst2',
+      enabled: true,
+      kind: 'standard',
+    },
+    {
+      id: 'win-vst2-steinberg',
+      path: '%ProgramFiles%/Steinberg/VstPlugins',
+      format: 'vst2',
+      enabled: true,
+      kind: 'standard',
+    },
+    {
+      id: 'win-vst2-common',
+      path: '%CommonProgramFiles%/VST2',
+      format: 'vst2',
       enabled: true,
       kind: 'standard',
     },

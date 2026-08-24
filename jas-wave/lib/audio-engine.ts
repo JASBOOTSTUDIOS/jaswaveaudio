@@ -9,12 +9,19 @@
 
 import { preferredTrackPlaysSoftPad, routeMidiToActiveVst, getPreferredPreviewTrackId, trackChannelIsAudible } from '@/src/lib/plugin/vst-voice-router'
 import { allNotesOffAllTracks, sendVstCc, sendVstNote, setHostTransportPlaying } from '@/src/lib/plugin/track-vst-runtime'
+import {
+  getNativeMasterPeak,
+  getNativeMaxStemPeak,
+  getNativeTrackPeak,
+  setMixMeterTrackOrder,
+} from '@/src/lib/plugin/native-mix-meters'
 import pcmTapProcessorUrl from './pcm-tap-processor.js?url'
 import {
   encodeStemPacket,
   JASWAVE_MIX_DAW_BUS,
 } from '@/src/lib/plugin/track-graph-encoding'
 import { peakFromByteTimeDomain } from './audio-dsp'
+import { ensureMicPermission, listAudioInputs, refreshAudioInputs } from '@/src/lib/audio-inputs'
 
 export interface TrackAudioConfig {
   id: string
@@ -63,6 +70,20 @@ type TrackAudioNode = {
   stemIndex?: number
 }
 
+type InputCaptureSession = {
+  deviceKey: string
+  stream: MediaStream
+  source: MediaStreamAudioSourceNode
+  tap: AudioWorkletNode | ScriptProcessorNode
+  silent: GainNode
+  chunksL: Float32Array[]
+  chunksR: Float32Array[]
+  frames: number
+  peak: number
+  capturing: boolean
+  monitors: Set<string>
+}
+
 export class WebAudioEngine {
   private audioCtx: AudioContext | null = null
   private masterGain: GainNode | null = null
@@ -92,15 +113,8 @@ export class WebAudioEngine {
   /** Voces programadas de reproducción MIDI (timeline). */
   private activeMidiNodes: Array<{ osc: OscillatorNode; gain: GainNode }> = []
   private midiScheduleTimer: ReturnType<typeof setInterval> | null = null
-  private recStream: MediaStream | null = null
-  private recSource: MediaStreamAudioSourceNode | null = null
-  private recTap: AudioWorkletNode | ScriptProcessorNode | null = null
-  private recSilent: GainNode | null = null
-  private recChunksL: Float32Array[] = []
-  private recChunksR: Float32Array[] = []
-  private recFrames = 0
-  private recPeak = 0
-  private recMonitorTrackId: string | null = null
+  private recSessions = new Map<string, InputCaptureSession>()
+  private recTrackDevice = new Map<string, string>()
   private pendingMidiClips: MidiClipPlaybackInfo[] = []
   private pendingTracksConfig: TrackAudioConfig[] = []
   private midiScheduledUntilSec = 0
@@ -573,12 +587,6 @@ export class WebAudioEngine {
     }
   }
 
-  public getMasterMeterLevel(): number {
-    if (!this.masterAnalyser || !this.masterMeterData) return 0
-    this.masterAnalyser.getByteTimeDomainData(this.masterMeterData)
-    return peakFromByteTimeDomain(this.masterMeterData)
-  }
-
   public getTrackNode(trackId: string) {
     const ctx = this.ensureContext()
     if (!this.trackNodes.has(trackId)) {
@@ -673,6 +681,7 @@ export class WebAudioEngine {
     trackIds.forEach((id, i) => {
       if (i < 64) this.trackStemIndex.set(id, i)
     })
+    setMixMeterTrackOrder(trackIds)
     const wantStem = this.nativeOutput && trackIds.length > 0
     if (wantStem === this.stemMode) {
       // Re-wire existing nodes if indices changed
@@ -1368,118 +1377,322 @@ export class WebAudioEngine {
   }
 
   public getMeterLevel(trackId: string): number {
-    const node = this.trackNodes.get(trackId)
-    if (!node) return 0
-    node.analyser.getByteTimeDomainData(node.dataArray)
-    return peakFromByteTimeDomain(node.dataArray)
-  }
-
-  public getInputMeterLevel(): number {
-    return this.recPeak
-  }
-
-  public isCapturingInput(): boolean {
-    return this.recStream != null
-  }
-
-  /**
-   * Captura el dispositivo de entrada por defecto. Monitor opcional a una pista armada.
-   * Tope ~5 min para no llenar memoria.
-   */
-  public async startInputCapture(monitorTrackId?: string | null): Promise<boolean> {
-    await this.abortInputCapture()
-    const ctx = this.ensureContext()
-    if (ctx.state === 'suspended') {
-      try {
-        await ctx.resume()
-      } catch {
-        return false
-      }
+    let native = 0
+    if (this.usesNativeOutput()) {
+      const p = getNativeTrackPeak(trackId)
+      if (p != null) native = p
     }
-    if (!navigator.mediaDevices?.getUserMedia) return false
+    const node = this.trackNodes.get(trackId)
+    let web = 0
+    if (node) {
+      node.analyser.getByteTimeDomainData(node.dataArray)
+      web = peakFromByteTimeDomain(node.dataArray)
+    }
+    // Preferir lo que se mueva: VST vive en el host; clips/Soft Pad en Web Audio.
+    const peak = Math.max(native, web)
+    // Curva suave para VU legible a niveles bajos (-24 dB ≈ visible).
+    if (peak <= 0) return 0
+    return Math.min(1, Math.pow(peak, 0.6))
+  }
+
+  public getMasterMeterLevel(): number {
+    let native = 0
+    if (this.usesNativeOutput()) {
+      native = Math.max(getNativeMasterPeak(), getNativeMaxStemPeak())
+    }
+    let web = 0
+    if (this.masterAnalyser && this.masterMeterData) {
+      this.masterAnalyser.getByteTimeDomainData(this.masterMeterData)
+      web = peakFromByteTimeDomain(this.masterMeterData)
+    }
+    const peak = Math.max(native, web)
+    if (peak <= 0) return 0
+    return Math.min(1, Math.pow(peak, 0.6))
+  }
+
+  public getInputMeterLevel(deviceOrTrackId?: string): number {
+    if (!deviceOrTrackId) {
+      let max = 0
+      for (const s of this.recSessions.values()) if (s.peak > max) max = s.peak
+      return max
+    }
+    const byTrack = this.recTrackDevice.get(deviceOrTrackId)
+    const session = this.recSessions.get(byTrack ?? deviceOrTrackId) ?? this.recSessions.get(deviceOrTrackId)
+    return session?.peak ?? 0
+  }
+
+  public isCapturingInput(deviceKey?: string): boolean {
+    if (deviceKey == null) {
+      for (const s of this.recSessions.values()) if (s.capturing) return true
+      return false
+    }
+    return Boolean(this.recSessions.get(deviceKey)?.capturing)
+  }
+
+  public listAudioInputs() {
+    return listAudioInputs()
+  }
+
+  public async ensureMicPermission(): Promise<boolean> {
+    return ensureMicPermission()
+  }
+
+  public async refreshAudioInputs() {
+    return refreshAudioInputs()
+  }
+
+  private sessionKey(deviceId?: string | null): string {
+    return (deviceId ?? '').trim()
+  }
+
+  private async ensureWorkletModule(ctx: AudioContext): Promise<boolean> {
+    if (this.workletModuleReady) return true
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      })
-      this.recStream = stream
-      this.recChunksL = []
-      this.recChunksR = []
-      this.recFrames = 0
-      this.recPeak = 0
-      this.recMonitorTrackId = monitorTrackId ?? null
-      const source = ctx.createMediaStreamSource(stream)
-      this.recSource = source
-      const tap = ctx.createScriptProcessor(1024, 2, 2)
-      tap.onaudioprocess = (ev) => this.onRecProcess(ev)
-      this.recTap = tap
-      const silent = ctx.createGain()
-      silent.gain.value = 0
-      this.recSilent = silent
-      source.connect(tap)
-      tap.connect(silent)
-      silent.connect(ctx.destination)
-      if (monitorTrackId) {
-        try {
-          source.connect(this.getTrackNode(monitorTrackId).gain)
-        } catch {
-          /* ignore */
-        }
-      }
+      await ctx.audioWorklet.addModule(pcmTapProcessorUrl)
+      this.workletModuleReady = true
       return true
     } catch {
-      await this.abortInputCapture()
       return false
     }
   }
 
-  private onRecProcess(ev: AudioProcessingEvent): void {
-    const input = ev.inputBuffer
-    const n = input.length
-    const l = input.getChannelData(0)
-    const r = input.numberOfChannels > 1 ? input.getChannelData(1) : l
-    const maxFrames = Math.floor(this.getSampleRate() * 300)
-    if (this.recFrames + n > maxFrames) {
-      ev.outputBuffer.getChannelData(0).fill(0)
-      if (ev.outputBuffer.numberOfChannels > 1) ev.outputBuffer.getChannelData(1).fill(0)
-      return
+  private connectMonitor(session: InputCaptureSession, trackId: string): void {
+    if (session.monitors.has(trackId)) return
+    try {
+      session.source.connect(this.getTrackNode(trackId).gain)
+      session.monitors.add(trackId)
+      this.recTrackDevice.set(trackId, session.deviceKey)
+    } catch {
+      /* ignore */
     }
-    const cl = new Float32Array(n)
-    const cr = new Float32Array(n)
-    cl.set(l)
-    cr.set(r)
-    this.recChunksL.push(cl)
-    this.recChunksR.push(cr)
-    this.recFrames += n
-    let peak = this.recPeak * 0.98
+  }
+
+  private disconnectMonitor(session: InputCaptureSession, trackId: string): void {
+    if (!session.monitors.has(trackId)) return
+    try {
+      session.source.disconnect(this.getTrackNode(trackId).gain)
+    } catch {
+      /* ignore */
+    }
+    session.monitors.delete(trackId)
+    if (this.recTrackDevice.get(trackId) === session.deviceKey) this.recTrackDevice.delete(trackId)
+  }
+
+  private ingestCapture(session: InputCaptureSession, l: Float32Array, r: Float32Array): void {
+    const n = l.length
+    let peak = session.peak * 0.98
     for (let i = 0; i < n; i++) {
       const a = Math.abs(l[i])
       const b = Math.abs(r[i])
       if (a > peak) peak = a
       if (b > peak) peak = b
     }
-    this.recPeak = peak > 1 ? 1 : peak
-    ev.outputBuffer.getChannelData(0).fill(0)
-    if (ev.outputBuffer.numberOfChannels > 1) ev.outputBuffer.getChannelData(1).fill(0)
+    session.peak = peak > 1 ? 1 : peak
+    if (!session.capturing) return
+    const maxFrames = Math.floor(this.getSampleRate() * 300)
+    if (session.frames + n > maxFrames) return
+    session.chunksL.push(Float32Array.from(l))
+    session.chunksR.push(Float32Array.from(r))
+    session.frames += n
   }
 
-  public async abortInputCapture(): Promise<void> {
-    this.teardownInputCapture()
-    this.recChunksL = []
-    this.recChunksR = []
-    this.recFrames = 0
-    this.recPeak = 0
+  private async makeCaptureTap(
+    ctx: AudioContext,
+    session: InputCaptureSession,
+  ): Promise<AudioWorkletNode | ScriptProcessorNode> {
+    const ok = await this.ensureWorkletModule(ctx)
+    if (ok) {
+      const node = new AudioWorkletNode(ctx, 'jaswave-pcm-tap', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+        channelCount: 2,
+        channelCountMode: 'explicit',
+        processorOptions: { stemIndex: -1 },
+      })
+      node.port.onmessage = (ev: MessageEvent) => {
+        const pcm = (ev.data as { pcm?: Float32Array })?.pcm
+        if (!pcm || pcm.length < 2) return
+        const frames = pcm.length >> 1
+        const l = new Float32Array(frames)
+        const r = new Float32Array(frames)
+        for (let i = 0; i < frames; i++) {
+          l[i] = pcm[i * 2]
+          r[i] = pcm[i * 2 + 1]
+        }
+        this.ingestCapture(session, l, r)
+      }
+      return node
+    }
+    const tap = ctx.createScriptProcessor(1024, 2, 2)
+    tap.onaudioprocess = (ev) => {
+      const input = ev.inputBuffer
+      const l = input.getChannelData(0)
+      const r = input.numberOfChannels > 1 ? input.getChannelData(1) : l
+      this.ingestCapture(session, l, r)
+      ev.outputBuffer.getChannelData(0).fill(0)
+      if (ev.outputBuffer.numberOfChannels > 1) ev.outputBuffer.getChannelData(1).fill(0)
+    }
+    return tap
   }
 
-  /** Detiene captura y devuelve un AudioBuffer estéreo, o null si no hay audio. */
-  public async stopInputCapture(bufferKey: string): Promise<{ buffer: AudioBuffer; duration: number } | null> {
-    const frames = this.recFrames
-    const chunksL = this.recChunksL
-    const chunksR = this.recChunksR
-    this.teardownInputCapture()
-    this.recChunksL = []
-    this.recChunksR = []
-    this.recFrames = 0
-    this.recPeak = 0
+  private async ensureCaptureSession(deviceId?: string | null): Promise<InputCaptureSession | null> {
+    const key = this.sessionKey(deviceId)
+    const existing = this.recSessions.get(key)
+    if (existing) return existing
+    // Con salida ASIO/nativa, getUserMedia sobre la misma tarjeta produce
+    // monitor hardware / eco aunque el soft-monitor esté OFF. Grabación PCM
+    // vía Chromium queda deshabilitada mientras el host nativo posee el device.
+    if (this.usesNativeOutput()) return null
+    const ctx = this.ensureContext()
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume()
+      } catch {
+        return null
+      }
+    }
+    if (!navigator.mediaDevices?.getUserMedia) return null
+    try {
+      const audio: MediaTrackConstraints = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      }
+      if (key) audio.deviceId = { exact: key }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio })
+      const source = ctx.createMediaStreamSource(stream)
+      const silent = ctx.createGain()
+      silent.gain.value = 0
+      const session: InputCaptureSession = {
+        deviceKey: key,
+        stream,
+        source,
+        tap: ctx.createGain() as unknown as ScriptProcessorNode,
+        silent,
+        chunksL: [],
+        chunksR: [],
+        frames: 0,
+        peak: 0,
+        capturing: false,
+        monitors: new Set(),
+      }
+      const tap = await this.makeCaptureTap(ctx, session)
+      session.tap = tap
+      source.connect(tap)
+      tap.connect(silent)
+      // Gain 0 → destination solo para mantener el grafo/worklet vivo; no hay señal.
+      silent.connect(ctx.destination)
+      this.recSessions.set(key, session)
+      return session
+    } catch {
+      return null
+    }
+  }
+
+  private teardownSession(session: InputCaptureSession): void {
+    for (const id of [...session.monitors]) this.disconnectMonitor(session, id)
+    try {
+      session.tap.disconnect()
+    } catch {
+      /* ignore */
+    }
+    try {
+      session.silent.disconnect()
+    } catch {
+      /* ignore */
+    }
+    try {
+      session.source.disconnect()
+    } catch {
+      /* ignore */
+    }
+    for (const t of session.stream.getTracks()) {
+      try {
+        t.stop()
+      } catch {
+        /* ignore */
+      }
+    }
+    this.recSessions.delete(session.deviceKey)
+  }
+
+  private maybeTeardown(session: InputCaptureSession): void {
+    if (session.capturing || session.monitors.size > 0) return
+    this.teardownSession(session)
+  }
+
+  public async setInputMonitor(trackId: string, deviceId: string | undefined, on: boolean): Promise<void> {
+    const prevKey = this.recTrackDevice.get(trackId)
+    const nextKey = this.sessionKey(deviceId)
+    if (prevKey != null && prevKey !== nextKey) {
+      const prev = this.recSessions.get(prevKey)
+      if (prev) {
+        this.disconnectMonitor(prev, trackId)
+        this.maybeTeardown(prev)
+      }
+    }
+    if (!on) {
+      const session = this.recSessions.get(nextKey)
+      if (session) {
+        this.disconnectMonitor(session, trackId)
+        this.maybeTeardown(session)
+      }
+      return
+    }
+    const session = await this.ensureCaptureSession(deviceId)
+    if (!session) return
+    this.connectMonitor(session, trackId)
+  }
+
+  /**
+   * Abre (o reutiliza) la captura del dispositivo. Monitor opcional.
+   * Tope ~5 min de PCM en RAM.
+   */
+  public async startInputCapture(opts?: {
+    deviceId?: string | null
+    monitorTrackId?: string | null
+  }): Promise<boolean> {
+    const session = await this.ensureCaptureSession(opts?.deviceId)
+    if (!session) return false
+    session.chunksL = []
+    session.chunksR = []
+    session.frames = 0
+    session.peak = 0
+    session.capturing = true
+    if (opts?.monitorTrackId) this.connectMonitor(session, opts.monitorTrackId)
+    return true
+  }
+
+  public async abortInputCapture(deviceId?: string | null): Promise<void> {
+    if (deviceId == null) {
+      for (const s of [...this.recSessions.values()]) this.teardownSession(s)
+      return
+    }
+    const session = this.recSessions.get(this.sessionKey(deviceId))
+    if (!session) return
+    session.capturing = false
+    session.chunksL = []
+    session.chunksR = []
+    session.frames = 0
+    this.maybeTeardown(session)
+  }
+
+  /** Detiene acumulación y devuelve un AudioBuffer estéreo, o null si no hay audio. */
+  public async stopInputCapture(
+    bufferKey: string,
+    deviceId?: string | null,
+  ): Promise<{ buffer: AudioBuffer; duration: number } | null> {
+    const session = this.recSessions.get(this.sessionKey(deviceId))
+    if (!session) return null
+    const frames = session.frames
+    const chunksL = session.chunksL
+    const chunksR = session.chunksR
+    session.capturing = false
+    session.chunksL = []
+    session.chunksR = []
+    session.frames = 0
+    this.maybeTeardown(session)
     if (frames < 64) return null
     const ctx = this.ensureContext()
     const buffer = ctx.createBuffer(2, frames, ctx.sampleRate)
@@ -1495,46 +1708,6 @@ export class WebAudioEngine {
     }
     this.audioBuffers.set(bufferKey, buffer)
     return { buffer, duration: buffer.duration }
-  }
-
-  private teardownInputCapture(): void {
-    const monitorId = this.recMonitorTrackId
-    this.recMonitorTrackId = null
-    try {
-      this.recTap?.disconnect()
-    } catch {
-      /* ignore */
-    }
-    try {
-      this.recSilent?.disconnect()
-    } catch {
-      /* ignore */
-    }
-    try {
-      this.recSource?.disconnect()
-    } catch {
-      /* ignore */
-    }
-    if (monitorId && this.recSource) {
-      try {
-        this.recSource.disconnect(this.getTrackNode(monitorId).gain)
-      } catch {
-        /* ignore */
-      }
-    }
-    this.recTap = null
-    this.recSilent = null
-    this.recSource = null
-    if (this.recStream) {
-      for (const t of this.recStream.getTracks()) {
-        try {
-          t.stop()
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-    this.recStream = null
   }
 
   // ── Metrónomo ────────────────────────────────────────────────

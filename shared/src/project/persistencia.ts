@@ -113,7 +113,7 @@ export const cargarProyecto = async (ruta: string, fileService: FileService): Pr
       }
     }
 
-    return proyectoReconstruido;
+    return { ...proyectoReconstruido, ruta, modificado: false };
   } catch (e) {
     if (e instanceof Error && e.message.includes('corrupto')) {
       throw e;

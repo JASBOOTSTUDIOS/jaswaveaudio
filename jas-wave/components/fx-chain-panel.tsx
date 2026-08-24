@@ -26,13 +26,14 @@ import { openPluginEditor } from '@/src/lib/plugin/plugin-editor-store'
 import { selectTrackPayload } from '@/src/lib/selection-helpers'
 import { requestOpenTool } from '@/src/workspace/types'
 import { hydratePluginCatalog } from '@/src/lib/plugin/catalog-store'
-import { pluginManager } from '@/src/lib/plugin-host'
+import { pluginManager, catalogPluginInsertable } from '@/src/lib/plugin-host'
 import {
   descriptorToPluginInfo,
-  extractVst3Path,
+  extractHostPluginPath,
   isBuiltinPlugin,
   pluginRuntimeCaption,
   softPadPluginInfo,
+  VST2_NOT_HOSTED_MSG,
 } from '@/src/lib/plugin/plugin-info-adapter'
 import type { PluginDescriptor } from '@/src/lib/plugin/types'
 import { audioEngine } from '@/lib/audio-engine'
@@ -59,7 +60,7 @@ function isMissing(p: PluginInfo): boolean {
   if (isBuiltinPlugin(p)) return false
   if (/missing|faltante/i.test(p.nombre)) return true
   if (p.estado === 'error') return true
-  return !extractVst3Path(p.descripcion ?? '')
+  return !extractHostPluginPath(p.descripcion ?? '')
 }
 
 export function FxChainPanel() {
@@ -128,6 +129,14 @@ export function FxChainPanel() {
           ? descriptorToPluginInfo(d)
           : null
     if (!info) return
+    if (d && !catalogPluginInsertable(d) && pickId !== 'jaswave.softpad') {
+      setMsg(
+        d.format === 'vst2' && !d.hostReady
+          ? VST2_NOT_HOSTED_MSG
+          : 'Este plugin no está listo para el host de audio.',
+      )
+      return
+    }
     setBusy(true)
     try {
       await tienda.executor.execute('plugin.insert', {
@@ -384,7 +393,7 @@ export function FxChainPanel() {
             {catalog.map((d) => (
               <option key={d.pluginId} value={d.pluginId}>
                 {d.name}
-                {d.format === 'vst3' ? ' (VST3)' : ''}
+                {d.format === 'vst3' ? ' (VST3)' : d.format === 'vst2' ? ' (VST2 · solo catálogo)' : ''}
               </option>
             ))}
           </select>

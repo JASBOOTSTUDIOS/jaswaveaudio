@@ -10,6 +10,7 @@ export * from './clips';
 export * from './routing';
 export * from './mezcla';
 export * from './analisis';
+export * from './render';
 export * from './metadata';
 export * from './state';
 export * from './serializable';

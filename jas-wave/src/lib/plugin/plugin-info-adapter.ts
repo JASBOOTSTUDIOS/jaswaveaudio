@@ -7,25 +7,43 @@ import type { PluginInfo } from '../../../../shared/src/types/entidades'
 import type { PluginDescriptor } from './types'
 
 const INSTRUMENT_RE =
-  /sampler|synth|piano|keys|organ|drum|bass|guitar|violin|pad|lead|kontakt|sforzando|decent|instrument|vsti|analog|arturia|lab\s*v|omnisphere|serum|vital|keyscape|play\b|workstation|engine/i
+  /sampler|synth|piano|keys|organ|drum|drums|kit\b|bfd|bfdplayer|player|bass|guitar|violin|pad|lead|kontakt|sforzando|decent|instrument|vsti|analog|arturia|lab\s*v|omnisphere|serum|vital|keyscape|play\b|workstation|engine|addictive|ezdrummer|superior\s*drum|battery|groove\s*agent|studi\s*drummer/i
 
 const FX_RE =
-  /reverb|delay|compress|eq\b|equaliz|limiter|saturat|gate\b|chorus|flanger|phaser|utility|maximizer|imager|exciter|de-?ess|transient|clipper/i
+  /reverb|delay|compress|eq\b|pro-?q|equaliz|limiter|saturat|gate\b|chorus|flanger|phaser|utility|maximizer|imager|exciter|de-?ess|transient|clipper|valhalla|room\b|plate\b|verb\b/i
+
+/** Mensaje cuando un VST2 no es hosteable (p. ej. DLL 32-bit). */
+export const VST2_NOT_HOSTED_MSG =
+  'VST2 no hosteable (requiere DLL x64). Usa la edición .vst3 si existe.'
 
 export function isLikelyAudioFx(name: string, path?: string): boolean {
   return FX_RE.test(name) || (!!path && FX_RE.test(path))
 }
 
+/**
+ * Heurística de instrumento. Si el nombre sugiere FX claro, no es instrumento.
+ * Nombres ambiguos (BFDPlayer, kits, etc.) cuentan como instrumento.
+ */
 export function guessIsInstrument(name: string, path?: string): boolean {
-  return INSTRUMENT_RE.test(name) || (!!path && INSTRUMENT_RE.test(path))
+  const hay = `${name} ${path ?? ''}`
+  if (isLikelyAudioFx(name, path) && !INSTRUMENT_RE.test(hay)) return false
+  return INSTRUMENT_RE.test(hay)
 }
 
-export function extractVst3Path(descripcion: string): string {
+/** Ruta de plugin hosteable (.vst3 o .dll VST2) desde `plugin.descripcion`. */
+export function extractHostPluginPath(descripcion: string): string {
   const raw = (descripcion || '').trim()
   if (!raw) return ''
   const cut = raw.split(' · ')[0]?.trim() ?? raw
-  if (cut.toLowerCase().endsWith('.vst3')) return cut
-  return raw.toLowerCase().includes('.vst3') ? cut : ''
+  const lower = cut.toLowerCase()
+  if (lower.endsWith('.vst3') || lower.endsWith('.dll')) return cut
+  if (raw.toLowerCase().includes('.vst3') || raw.toLowerCase().includes('.dll')) return cut
+  return ''
+}
+
+/** @deprecated Prefer extractHostPluginPath (también acepta .dll). */
+export function extractVst3Path(descripcion: string): string {
+  return extractHostPluginPath(descripcion)
 }
 
 export function isBuiltinPlugin(plugin: Pick<PluginInfo, 'licencia' | 'nombre'>): boolean {
@@ -44,7 +62,7 @@ export function pluginRuntimeCaption(
   if (plugin.bypass) return 'bypass (dominio; sin DSP de cadena)'
   if (isBuiltinPlugin(plugin)) return 'in-process · audible (Soft Pad / builtin)'
   if (plugin.estado === 'error') return 'error · host no confirmó esta instancia'
-  if (!extractVst3Path(plugin.descripcion ?? '')) return 'MISSING · sin ruta .vst3'
+  if (!extractHostPluginPath(plugin.descripcion ?? '')) return 'MISSING · sin ruta de plugin (.vst3/.dll)'
   if (opts?.audioReady) return 'host listo · UI+audio misma instancia'
   return 'en proyecto · host no confirmado (sin Soft Pad automático)'
 }

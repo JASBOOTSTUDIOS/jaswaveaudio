@@ -13,10 +13,13 @@ contextBridge.exposeInMainWorld('electron', {
         });
     },
     fileSave: (ruta, contenido) => ipcRenderer.invoke('file-save', ruta, contenido),
+    fileSaveBinary: (ruta, data) => ipcRenderer.invoke('file-save-binary', ruta, data),
     fileRead: (ruta) => ipcRenderer.invoke('file-read', ruta),
+    fileReadBinary: (ruta) => ipcRenderer.invoke('file-read-binary', ruta),
     fileExists: (ruta) => ipcRenderer.invoke('file-exists', ruta),
     fileSize: (ruta) => ipcRenderer.invoke('file-size', ruta),
-    dialogSave: () => ipcRenderer.invoke('dialog-save'),
+    recordingsDir: (projectPath) => ipcRenderer.invoke('recordings-dir', projectPath),
+    dialogSave: (defaultPath) => ipcRenderer.invoke('dialog-save', defaultPath),
     dialogOpen: () => ipcRenderer.invoke('dialog-open'),
     dialogOpenDirectory: () => ipcRenderer.invoke('dialog-open-directory'),
     projectSave: (projectId, data) => ipcRenderer.invoke('project-save', projectId, data),
@@ -82,4 +85,9 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.send('plugin-host-pcm', u8);
     },
     pluginHostStop: () => ipcRenderer.invoke('plugin-host-stop'),
+    onNativeMidi: (callback) => {
+        const handler = (_event, msg) => callback(msg);
+        ipcRenderer.on('native-midi', handler);
+        return () => ipcRenderer.removeListener('native-midi', handler);
+    },
 });

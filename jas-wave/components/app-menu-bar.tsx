@@ -24,6 +24,7 @@ export type MenuActionId =
   | 'ventana.panelDerecho'
   | 'ventana.paletaComandos'
   | 'ventana.atajos'
+  | 'ventana.midiMap'
   | 'transporte.reproducir'
   | 'transporte.detener'
   | 'transporte.grabar'
@@ -33,6 +34,7 @@ export type MenuActionId =
   | 'pista.nueva'
   | 'pista.nuevaMidi'
   | 'ventana.ajustes'
+  | 'archivo.exportarBounce'
 
 type MenuItem =
   | { type: 'action'; id: MenuActionId; label: string; shortcut?: string }
@@ -50,6 +52,7 @@ const MENUS: MenuGroup[] = [
       { type: 'separator' },
       { type: 'action', id: 'proyecto.guardar', label: 'Guardar', shortcut: 'Ctrl+S' },
       { type: 'action', id: 'proyecto.guardarComo', label: 'Guardar como…', shortcut: 'Ctrl+Shift+S' },
+      { type: 'action', id: 'archivo.exportarBounce', label: 'Exportar bounce WAV…' },
       { type: 'separator' },
       { type: 'action', id: 'proyecto.cerrar', label: 'Cerrar proyecto' },
       { type: 'action', id: 'app.salir', label: 'Salir', shortcut: 'Alt+F4' },
@@ -85,6 +88,7 @@ const MENUS: MenuGroup[] = [
       { type: 'separator' },
       { type: 'action', id: 'ventana.paletaComandos', label: 'Paleta de comandos', shortcut: 'Ctrl+K' },
       { type: 'action', id: 'ventana.atajos', label: 'Atajos de teclado…' },
+      { type: 'action', id: 'ventana.midiMap', label: 'Control MIDI / MIDI Learn…' },
     ],
   },
   {
