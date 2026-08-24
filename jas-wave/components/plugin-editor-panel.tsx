@@ -20,7 +20,7 @@ import {
 } from '@/src/lib/plugin/vst-voice-router'
 import {
   ensureTrackVstInstrument,
-  extractVst3Path,
+  extractHostPluginPath,
   getLastVstLoadError,
   slotIdForTrackPlugin,
 } from '@/src/lib/plugin/track-vst-runtime'
@@ -103,7 +103,7 @@ function VstNativeEditor({
   const [message, setMessage] = useState<string>('')
   const hostRef = useRef<HTMLDivElement>(null)
   const slotId = slotIdForTrackPlugin(trackId, plugin.id)
-  const pluginPath = extractVst3Path(plugin.descripcion ?? '')
+  const pluginPath = extractHostPluginPath(plugin.descripcion ?? '')
   const pitches = [60, 62, 64, 65, 67, 69, 71, 72]
 
   function readBounds() {
@@ -121,7 +121,7 @@ function VstNativeEditor({
   async function openEditor() {
     if (!pluginPath) {
       setStatus('error')
-      setMessage('Este plugin no tiene ruta .vst3 en el proyecto (MISSING).')
+      setMessage('Este plugin no tiene ruta de plugin (.vst3/.dll) en el proyecto (MISSING).')
       return
     }
     setStatus('opening')

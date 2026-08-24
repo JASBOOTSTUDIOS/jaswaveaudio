@@ -1,6 +1,11 @@
 /**
  * Controladores MIDI: thru al instrumento de la pista + grabación en clips.
  * Solo ventana principal (un cliente Web MIDI).
+ *
+ * Notas/CC del host nativo (WinMM) van al VST en el audio thread.
+ * Aquí no se reenvían al VST (evitar duplicados y pérdidas).
+ *
+ * Thru y grabación van por pista: dispositivo asignado + monitor (IN) / armado.
  */
 
 import { useEffect, useRef } from 'react'
@@ -8,7 +13,7 @@ import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { audioEngine } from '@/lib/audio-engine'
 import { isUndockWindow } from '@/lib/undock-window'
 import { segundosABeats } from '@/lib/audio-conversions'
-import { midiController, type MidiParsed } from '@/src/lib/midi-controller'
+import { midiController, type MidiParsed, type MidiSource } from '@/src/lib/midi-controller'
 import {
   clipSpanBeats,
   createMidiRecorder,
@@ -18,45 +23,112 @@ import {
   recorderNoteOn,
   type MidiRecorderState,
 } from '@/src/lib/midi-note-recorder'
-import { sendVstCc, getLoadedInstrumentForTrack } from '@/src/lib/plugin/track-vst-runtime'
+import { createPadSustain, padNoteOff, padNoteOn, padPedal } from '@/src/lib/midi-sustain'
+import {
+  sendVstCc,
+  getLoadedInstrumentForTrack,
+  subscribeVstRuntime,
+} from '@/src/lib/plugin/track-vst-runtime'
+import { midiMapStore } from '@/src/lib/midi-map-store'
+import { buildMidiMapCatalog } from '@/src/lib/midi-map'
+import {
+  attachMidiMapHost,
+  dispatchMidiMapMessage,
+  installMidiMapKeyListener,
+  setMidiMapTargetIndex,
+} from '@/src/lib/midi-map-runtime'
 import { routeMidiToTrack } from '@/src/lib/plugin/vst-voice-router'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
-import type { DAWState } from '../../shared/src/types/state'
+import {
+  assignedMidiDevice,
+  isMidiLikeTrack,
+  midiInputOf,
+  midiLiveTargetIds,
+  midiNativeLiveTargetIds,
+  midiRecordTargetIds,
+  toMidiRouteTrack,
+  type MidiRouteTrack,
+} from '@/src/lib/midi-track-io'
 
-function isMidiTrack(tipo: string | undefined): boolean {
-  return tipo === 'midi' || tipo === 'instrumento'
+let padSustain = createPadSustain()
+
+function sendLiveMidiTargets(tracks: MidiRouteTrack[]): void {
+  const ids = midiNativeLiveTargetIds(tracks)
+  const slots: string[] = []
+  const deviceIds: string[] = []
+  for (const id of ids) {
+    const slot = getLoadedInstrumentForTrack(id)?.slotId
+    if (!slot) continue
+    const t = tracks.find((x) => x.id === id)
+    slots.push(slot)
+    deviceIds.push(assignedMidiDevice(t ?? { id }))
+  }
+  const ch = midiController.getChannel()
+  const eat = midiMapStore.eatCsv()
+  const cmd = {
+    type: 'setLiveMidiTargets' as const,
+    slotIds: slots.join(','),
+    deviceIds: deviceIds.join(','),
+    channel: ch === 'omni' ? -1 : ch,
+    eatCcs: eat.ccs,
+    eatNotes: eat.notes,
+  }
+  try {
+    const api = window.electron
+    if (typeof api?.pluginHostMidi === 'function') {
+      api.pluginHostMidi(cmd)
+      return
+    }
+    void api?.pluginHostSend?.(cmd)
+  } catch {
+    /* ignore */
+  }
 }
 
-function midiTargetIds(state: DAWState): string[] {
-  const tracks = state.project?.tracks ?? []
-  const armed = tracks.filter((t) => t.armada && isMidiTrack(t.tipo))
-  if (armed.length) return armed.map((t) => t.id)
-  const sel = getSelectedTrackId(state)
-  const track = tracks.find((t) => t.id === sel)
-  if (track && isMidiTrack(track.tipo)) return [track.id]
-  return []
-}
-
-function playLive(trackIds: string[], selectedId: string | null, msg: MidiParsed): void {
-  if (msg.kind !== 'noteOn' && msg.kind !== 'noteOff') {
-    if (msg.kind === 'cc') {
+function playLive(
+  trackIds: string[],
+  selectedId: string | null,
+  msg: MidiParsed,
+  source?: MidiSource,
+): void {
+  if (trackIds.length === 0) return
+  if (msg.kind === 'cc') {
+    if (source !== 'native') {
       for (const id of trackIds) {
         const slot = getLoadedInstrumentForTrack(id)?.slotId
         if (slot) sendVstCc(slot, msg.cc, msg.value)
       }
     }
+    if (msg.cc === 64 || msg.cc === 66) {
+      const hasSoft = trackIds.some((id) => !getLoadedInstrumentForTrack(id))
+      if (hasSoft) {
+        const { next, release } = padPedal(padSustain, msg.value)
+        padSustain = next
+        for (const pitch of release) audioEngine.noteOff(pitch)
+      }
+    }
     return
   }
+  if (msg.kind !== 'noteOn' && msg.kind !== 'noteOff') return
   const on = msg.kind === 'noteOn'
   const vel = on ? msg.velocity : 0
   let any = false
   for (const id of trackIds) {
+    if (source === 'native' && getLoadedInstrumentForTrack(id)) continue
     if (routeMidiToTrack(id, on, msg.pitch, vel)) any = true
   }
   if (any) return
-  if (selectedId && trackIds.includes(selectedId)) {
-    if (on) audioEngine.noteOn(msg.pitch, vel)
-    else audioEngine.noteOff(msg.pitch)
+  const wantPad =
+    Boolean(selectedId && trackIds.includes(selectedId)) ||
+    trackIds.some((id) => !getLoadedInstrumentForTrack(id))
+  if (!wantPad) return
+  if (on) {
+    padSustain = padNoteOn(padSustain, msg.pitch)
+    audioEngine.noteOn(msg.pitch, vel)
+  } else {
+    const { next, silence } = padNoteOff(padSustain, msg.pitch)
+    padSustain = next
+    if (silence) audioEngine.noteOff(msg.pitch)
   }
 }
 
@@ -66,23 +138,66 @@ export function MidiControllerHost() {
   const playing = useDAWState((s) => Boolean(s.transport?.reproduciendo))
   const bpm = useDAWState((s) => s.project?.bpm?.valor ?? 120)
   const midiInPref = useDAWState((s) => s.project?.configuracion?.dispositivoMidiEntrada)
+  const tracks = useDAWState((s) => s.project?.tracks ?? [])
+  const routeSig = useDAWState((s) =>
+    (s.project?.tracks ?? [])
+      .map(
+        (t) =>
+          `${t.id}:${t.tipo}:${t.armada ? 1 : 0}:${midiInputOf(t)}:${t.configuracion?.monitorizarEntrada ? 1 : 0}`,
+      )
+      .join('|'),
+  )
 
-  const recRef = useRef<MidiRecorderState | null>(null)
+  const recMapRef = useRef<Map<string, MidiRecorderState>>(new Map())
   const recStartSecRef = useRef(0)
   const recStartPerfRef = useRef(0)
   const wasRecRef = useRef(false)
   const playingRef = useRef(playing)
   const bpmRef = useRef(bpm)
-  const targetsRef = useRef<string[]>([])
+  const tracksRef = useRef<MidiRouteTrack[]>(tracks)
   const selectedRef = useRef<string | null>(null)
 
   playingRef.current = playing
   bpmRef.current = bpm
+  tracksRef.current = tracks.map(toMidiRouteTrack)
 
   const selectedId = useDAWState((s) => getSelectedTrackId(s))
   selectedRef.current = selectedId
-  const targetSig = useDAWState((s) => midiTargetIds(s).join(','))
-  targetsRef.current = targetSig ? targetSig.split(',') : []
+
+  useEffect(() => {
+    attachMidiMapHost({
+      executeCommand: (type, payload) => {
+        void tienda.executor.execute(type, payload)
+      },
+      getTracks: () => tienda.obtenerEstado().project?.tracks ?? [],
+      getLiveTrackIds: () => midiNativeLiveTargetIds(tracksRef.current),
+    })
+    const stopKeys = installMidiMapKeyListener()
+    return () => {
+      stopKeys()
+      attachMidiMapHost(null)
+    }
+  }, [tienda])
+
+  const trackCount = useDAWState((s) => s.project?.tracks?.length ?? 0)
+  useEffect(() => {
+    setMidiMapTargetIndex(buildMidiMapCatalog(Math.max(trackCount, 8)))
+  }, [trackCount])
+
+  useEffect(() => {
+    const push = () => sendLiveMidiTargets(tracksRef.current)
+    push()
+    const unsubRt = subscribeVstRuntime(push)
+    const unsubDev = midiController.subscribeDevices(push)
+    const unsubMap = midiMapStore.subscribe(push)
+    const offRestart = window.electron?.onPluginHostRestarted?.(push)
+    return () => {
+      unsubRt()
+      unsubDev()
+      unsubMap()
+      offRestart?.()
+    }
+  }, [routeSig])
 
   useEffect(() => {
     if (isUndockWindow()) return
@@ -98,18 +213,28 @@ export function MidiControllerHost() {
 
   useEffect(() => {
     if (isUndockWindow()) return
-    return midiController.subscribeMessages((msg) => {
-      const targets = targetsRef.current
-      playLive(targets, selectedRef.current, msg)
-      const rec = recRef.current
-      if (!rec || (msg.kind !== 'noteOn' && msg.kind !== 'noteOff')) return
+    return midiController.subscribeMessages((msg, _t, source, deviceId) => {
+      const list = tracksRef.current
+      const id = deviceId ?? ''
+      if (dispatchMidiMapMessage(msg)) return
+      playLive(midiLiveTargetIds(list, id), selectedRef.current, msg, source)
+      if (recMapRef.current.size === 0) return
+      if (msg.kind !== 'noteOn' && msg.kind !== 'noteOff') return
+      const recIds = midiRecordTargetIds(list, id)
+      if (recIds.length === 0) return
       const now = playingRef.current
         ? audioEngine.getTimelineSeconds()
         : recStartSecRef.current + (performance.now() - recStartPerfRef.current) / 1000
-      recRef.current =
-        msg.kind === 'noteOn'
-          ? recorderNoteOn(rec, msg.pitch, msg.velocity, now, msg.channel)
-          : recorderNoteOff(rec, msg.pitch, now, msg.channel)
+      for (const trackId of recIds) {
+        const rec = recMapRef.current.get(trackId)
+        if (!rec) continue
+        recMapRef.current.set(
+          trackId,
+          msg.kind === 'noteOn'
+            ? recorderNoteOn(rec, msg.pitch, msg.velocity, now, msg.channel)
+            : recorderNoteOff(rec, msg.pitch, now, msg.channel),
+        )
+      }
     })
   }, [])
 
@@ -118,42 +243,35 @@ export function MidiControllerHost() {
     if (recording && !wasRecRef.current) {
       wasRecRef.current = true
       const armedMidi = (tienda.obtenerEstado().project?.tracks ?? []).filter(
-        (t) => t.armada && isMidiTrack(t.tipo),
+        (t) => t.armada && isMidiLikeTrack(t.tipo) && assignedMidiDevice(t).length > 0,
       )
-      if (armedMidi.length === 0) {
-        recRef.current = null
-        return
-      }
+      recMapRef.current = new Map()
+      if (armedMidi.length === 0) return
       recStartSecRef.current = audioEngine.getTimelineSeconds()
       recStartPerfRef.current = performance.now()
-      recRef.current = createMidiRecorder(recStartSecRef.current)
-      if (!playingRef.current) {
-        void tienda.executor.execute('transport.toggle', {})
+      for (const t of armedMidi) {
+        recMapRef.current.set(t.id, createMidiRecorder(recStartSecRef.current))
       }
       return
     }
     if (!recording && wasRecRef.current) {
       wasRecRef.current = false
-      const rec = recRef.current
-      recRef.current = null
-      if (!rec) return
+      const recs = recMapRef.current
+      recMapRef.current = new Map()
+      if (recs.size === 0) return
       const endSec = playingRef.current
         ? audioEngine.getTimelineSeconds()
         : recStartSecRef.current + (performance.now() - recStartPerfRef.current) / 1000
-      const raw = flushRecorder(rec, endSec)
       const grid = midiController.getQuantizeGridBeats()
-      const drafts = recordedToClipNotes(raw, rec.startSec, bpmRef.current, grid)
-      if (drafts.length === 0) return
-      const span = clipSpanBeats(drafts, 1)
-      const startBeats = segundosABeats(rec.startSec, bpmRef.current)
-      const armed = (tienda.obtenerEstado().project?.tracks ?? []).filter(
-        (t) => t.armada && isMidiTrack(t.tipo),
-      )
-      if (armed.length === 0) return
       void (async () => {
-        for (const t of armed) {
+        for (const [trackId, rec] of recs) {
+          const raw = flushRecorder(rec, endSec)
+          const drafts = recordedToClipNotes(raw, rec.startSec, bpmRef.current, grid)
+          if (drafts.length === 0) continue
+          const span = clipSpanBeats(drafts, 1)
+          const startBeats = segundosABeats(rec.startSec, bpmRef.current)
           await tienda.executor.execute('midi.clip.create', {
-            pistaId: t.id,
+            pistaId: trackId,
             nombre: 'Grabación MIDI',
             inicio: startBeats,
             duracion: span.duracion,

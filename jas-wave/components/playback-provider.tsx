@@ -19,6 +19,22 @@ import { useImportProgress } from '@/src/context/import-progress-context'
 import { extractStereoPeaks, packStereoPeaks } from '@/lib/stereo-peaks'
 import { nativeAudioBridge } from '@/src/lib/native-audio-bridge'
 import {
+  audioInputOf,
+  audioMonitorTargetIds,
+  audioRecordTargetIds,
+  groupArmedAudioByDevice,
+  isAudioRecordTrack,
+  toAudioRouteTrack,
+} from '@/src/lib/audio-track-io'
+import { isMidiLikeTrack } from '@/src/lib/midi-track-io'
+import { encodeWavFromAudioBuffer } from '@/src/lib/encode-wav'
+import {
+  loadRecordingBytes,
+  makeRecordingFileName,
+  recordingBasename,
+  saveRecordingWav,
+} from '@/src/lib/audio-recording-persist'
+import {
   ensureProjectVstInstruments,
   findTrackPlaybackInstrument,
   getLoadedInstrumentForTrack,
@@ -119,6 +135,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   const transportMetronomo = useDAWState((s) => Boolean(s.transport?.metronomo?.activo))
   const transportPosSegundos = useDAWState((s) => s.transport?.posicion?.segundos ?? 0)
   const sharedTracks = useDAWState((s) => s.project?.tracks || [])
+  const projectRuta = useDAWState((s) => s.project?.ruta)
   const selectedTrackId = useDAWState((s) => getSelectedTrackId(s))
   const vstRuntimeGen = useSyncExternalStore(subscribeVstRuntime, getVstRuntimeGeneration, () => 0)
 
@@ -181,6 +198,8 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   const [positionMs, setPositionMs] = useState(0)
 
   const playing = transportStatePlaying
+  const playingRef = useRef(playing)
+  playingRef.current = playing
   const recording = transportGrabacion === 'grabando'
   const looping = transportLoopActivo
   const metronomeOn = transportMetronomo
@@ -599,56 +618,156 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   const recStartBeatsRef = useRef(0)
   const wasRecordingRef = useRef(false)
+  const recPlanRef = useRef<{ deviceKey: string; trackIds: string[] }[]>([])
+
+  const audioIoSig = useMemo(
+    () =>
+      sharedTracks
+        .map(
+          (t) =>
+            `${t.id}:${t.tipo}:${audioInputOf(t)}:${t.armada ? 1 : 0}:${t.configuracion?.monitorizarEntrada ? 1 : 0}`,
+        )
+        .join('|'),
+    [sharedTracks],
+  )
+
+  useEffect(() => {
+    if (satellite) return
+    const routes = sharedTracks.map((t) => toAudioRouteTrack(t))
+    const monitorIds = new Set(audioMonitorTargetIds(routes))
+    for (const t of routes) {
+      if (!isAudioRecordTrack(t.tipo)) continue
+      void audioEngine.setInputMonitor(t.id, audioInputOf(t) || undefined, monitorIds.has(t.id))
+    }
+  }, [satellite, audioIoSig, sharedTracks])
+
+  const hydratedSourcesRef = useRef(new Set<string>())
+  useEffect(() => {
+    if (satellite) return
+    for (const trk of sharedTracks) {
+      if (!Array.isArray(trk.clips)) continue
+      for (const clip of trk.clips) {
+        if (!esAudioClip(clip)) continue
+        const sourceId = clip.source?.ruta
+        if (!sourceId || audioEngine.getAudioBuffer(sourceId)) continue
+        if (!recordingBasename(sourceId) && !/\.wav$/i.test(sourceId)) continue
+        if (hydratedSourcesRef.current.has(sourceId)) continue
+        hydratedSourcesRef.current.add(sourceId)
+        void loadRecordingBytes(sourceId, projectRuta).then((bytes) => {
+          if (!bytes) {
+            hydratedSourcesRef.current.delete(sourceId)
+            return
+          }
+          void audioEngine.decodeArrayBuffer(sourceId, bytes)
+        })
+      }
+    }
+  }, [satellite, sharedTracks, projectRuta])
 
   useEffect(() => {
     if (satellite) return
     const recOn = recording
     if (recOn && !wasRecordingRef.current) {
-      const armed = sharedTracks.filter((t) => t.armada)
-      if (armed.length === 0) {
+      const routes = sharedTracks.map((t) => toAudioRouteTrack(t))
+      const armedAudioIds = audioRecordTargetIds(routes)
+      const armedMidi = sharedTracks.filter((t) => t.armada && isMidiLikeTrack(t.tipo))
+      if (armedAudioIds.length === 0 && armedMidi.length === 0) {
+        tienda.busEventos.emit('comando.fallido', {
+          type: 'transport.toggleRecord',
+          error: 'Arma una pista de audio o MIDI',
+        })
         void tienda.executor.execute('transport.toggleRecord', {})
         return
       }
       wasRecordingRef.current = true
       recStartBeatsRef.current = Math.max(0, positionMsRef.current / msPerBeatRef.current)
-      const armedAudio = armed.filter((t) => t.tipo !== 'midi' && t.tipo !== 'instrumento')
-      if (armedAudio.length === 0) return
-      const monitor =
-        armedAudio.find((t) =>
-          Boolean((t as { configuracion?: { monitorizarEntrada?: boolean } }).configuracion?.monitorizarEntrada),
-        )?.id ?? null
-      void audioEngine.startInputCapture(monitor).then((ok) => {
-        if (!ok) {
-          wasRecordingRef.current = false
-          void tienda.executor.execute('transport.toggleRecord', {})
+      tienda.busEventos.emit('grabacion.iniciada', {})
+      if (!playingRef.current) {
+        void tienda.executor.execute('transport.toggle', {}).then((r) => {
+          if (!r.success) {
+            tienda.busEventos.emit('comando.fallido', {
+              type: 'transport.toggle',
+              error: r.error?.message,
+            })
+          }
+        })
+      }
+      if (armedAudioIds.length === 0) {
+        recPlanRef.current = []
+        return
+      }
+      const groups = groupArmedAudioByDevice(routes)
+      recPlanRef.current = [...groups.entries()].map(([deviceKey, trackIds]) => ({ deviceKey, trackIds }))
+      void (async () => {
+        let anyOk = false
+        let someFailed = false
+        for (const { deviceKey, trackIds } of recPlanRef.current) {
+          const monitorId = trackIds.find((id) => {
+            const t = routes.find((r) => r.id === id)
+            return Boolean(t?.configuracion?.monitorizarEntrada)
+          })
+          const ok = await audioEngine.startInputCapture({
+            deviceId: deviceKey || undefined,
+            monitorTrackId: monitorId ?? null,
+          })
+          if (ok) anyOk = true
+          else someFailed = true
         }
-      })
+        if (!anyOk) {
+          tienda.busEventos.emit('comando.fallido', {
+            type: 'transport.toggleRecord',
+            error: 'No se pudo acceder al micrófono o al dispositivo de entrada',
+          })
+          if (armedMidi.length === 0) {
+            wasRecordingRef.current = false
+            recPlanRef.current = []
+            void tienda.executor.execute('transport.toggleRecord', {})
+          }
+        } else if (someFailed) {
+          tienda.busEventos.emit('comando.fallido', {
+            type: 'transport.toggleRecord',
+            error: 'Algunos dispositivos de entrada no se pudieron abrir',
+          })
+        }
+      })()
       return
     }
     if (!recOn && wasRecordingRef.current) {
       wasRecordingRef.current = false
       const startBeats = recStartBeatsRef.current
-      const armed = sharedTracks.filter((t) => t.armada && t.tipo !== 'midi')
+      const plan = recPlanRef.current
+      recPlanRef.current = []
+      tienda.busEventos.emit('grabacion.detenida', {})
+      if (plan.length === 0) return
       void (async () => {
-        const key = `rec-${Date.now()}`
-        const result = await audioEngine.stopInputCapture(key)
-        if (!result || armed.length === 0) return
-        const durationBeats = segundosABeats(result.duration, BPM)
-        const buckets = Math.min(4096, Math.max(256, Math.floor(result.duration * 80)))
-        const waveform = packStereoPeaks(extractStereoPeaks(result.buffer, buckets))
-        for (const t of armed) {
-          await tienda.executor.execute('clip.create', {
-            pistaId: t.id,
-            nombre: 'Grabación',
-            inicio: startBeats,
-            duracion: durationBeats,
-            sourceId: key,
-            waveform,
-          })
+        for (const { deviceKey, trackIds } of plan) {
+          const memKey = `rec-${Date.now()}-${deviceKey || 'default'}`
+          const result = await audioEngine.stopInputCapture(memKey, deviceKey || undefined)
+          if (!result) continue
+          const durationBeats = segundosABeats(result.duration, BPM)
+          const buckets = Math.min(4096, Math.max(256, Math.floor(result.duration * 80)))
+          const waveform = packStereoPeaks(extractStereoPeaks(result.buffer, buckets))
+          const wav = encodeWavFromAudioBuffer(result.buffer)
+          const fileName = makeRecordingFileName(trackIds[0] ?? 'pista')
+          const saved = await saveRecordingWav(wav, fileName, projectRuta)
+          const sourceId = saved?.sourceId ?? memKey
+          if (saved && sourceId !== memKey) {
+            audioEngine.setAudioBuffer(sourceId, result.buffer)
+          }
+          for (const trackId of trackIds) {
+            await tienda.executor.execute('clip.create', {
+              pistaId: trackId,
+              nombre: 'Grabación',
+              inicio: startBeats,
+              duracion: durationBeats,
+              sourceId,
+              waveform,
+            })
+          }
         }
       })()
     }
-  }, [recording, satellite, sharedTracks, tienda, BPM])
+  }, [recording, satellite, sharedTracks, tienda, BPM, projectRuta])
 
   const toggleLooping = useCallback(() => {
     void tienda.executor.execute('transport.toggleLoop', {})

@@ -27,7 +27,7 @@ export function persistPluginCatalog(extra?: PluginDescriptor[]): void {
   if (typeof localStorage === 'undefined') return
   const fromRegistry = pluginRegistry
     .list()
-    .filter((p) => p.format === 'vst3' || p.format === 'clap' || p.format === 'au' || p.format === 'lv2')
+    .filter((p) => p.format === 'vst3' || p.format === 'vst2' || p.format === 'clap' || p.format === 'au' || p.format === 'lv2')
   const merged = new Map<string, PluginDescriptor>()
   for (const p of [...fromRegistry, ...(extra ?? [])]) merged.set(p.pluginId, p)
   try {
@@ -42,6 +42,26 @@ export function hydratePluginCatalog(): PluginDescriptor[] {
   const list = read()
   for (const p of list) pluginRegistry.register(p)
   return list
+}
+
+/**
+ * Tras arrancar el Plugin Host: VST3 en disco con hostReady=false (caché vieja)
+ * vuelven a ser insertables. VST2 sigue necesitando discover (chequeo PE64).
+ */
+export function promoteCachedVst3WhenHostReady(): number {
+  let n = 0
+  for (const p of pluginRegistry.list()) {
+    if (p.format !== 'vst3' || !p.path || p.scanStatus !== 'ok' || p.hostReady) continue
+    pluginRegistry.register({
+      ...p,
+      hostReady: true,
+      supportsEditor: true,
+      scanError: undefined,
+    })
+    n++
+  }
+  if (n > 0) persistPluginCatalog()
+  return n
 }
 
 export function clearPluginCatalog(): void {

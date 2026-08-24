@@ -29,6 +29,8 @@ type Props = {
   clipDuracionBeats: number
   soloClip: boolean
   onSoloClipChange: (v: boolean) => void
+  followPlayhead?: boolean
+  onFollowPlayheadChange?: (v: boolean) => void
 }
 
 export function PianoRollTransport({
@@ -36,6 +38,8 @@ export function PianoRollTransport({
   clipDuracionBeats,
   soloClip,
   onSoloClipChange,
+  followPlayhead = true,
+  onFollowPlayheadChange,
 }: Props) {
   const tienda = useDAW()
   const transport = useDAWState((s: DAWState) => s.transport)
@@ -175,6 +179,21 @@ export function PianoRollTransport({
         {soloClip ? <Unlink className="size-3" /> : <Link2 className="size-3" />}
         {soloClip ? 'Solo clip' : 'Sincronizado'}
       </button>
+
+      {onFollowPlayheadChange && (
+        <button
+          type="button"
+          title="Seguir playhead al reproducir"
+          onClick={() => onFollowPlayheadChange(!followPlayhead)}
+          className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold ${
+            followPlayhead
+              ? 'bg-track-fx/20 text-track-fx'
+              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+          }`}
+        >
+          Follow
+        </button>
+      )}
 
       <span className="ml-auto flex items-center gap-1 text-[9px] text-muted-foreground">
         <Repeat className="size-3" />

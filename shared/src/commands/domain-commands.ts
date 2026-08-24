@@ -949,8 +949,8 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
       if (!pista) {
         throw new Error(`Pista no encontrada: ${payload.pistaId}`);
       }
-      if (pista.tipo !== 'midi' && pista.tipo !== 'instrumento') {
-        throw new Error(`La pista «${pista.nombre}» no es MIDI (tipo=${pista.tipo}). Crea una pista MIDI primero.`);
+      if (pista.tipo !== 'midi' && pista.tipo !== 'instrumento' && pista.tipo !== 'audio') {
+        throw new Error(`La pista «${pista.nombre}» no admite clips MIDI (tipo=${pista.tipo}).`);
       }
 
       const notas: MidiNote[] = (payload.notas ?? []).map((n) => ({
@@ -1486,8 +1486,8 @@ export function crearComandoMidiGenerate(): CommandDefinition<MidiGeneratePayloa
 
       const pista = estado.project.tracks.find((t) => t.id === payload.pistaId);
       if (!pista) throw new Error(`Pista no encontrada: ${payload.pistaId}`);
-      if (pista.tipo !== 'midi' && pista.tipo !== 'instrumento') {
-        throw new Error('La pista debe ser MIDI');
+      if (pista.tipo !== 'midi' && pista.tipo !== 'instrumento' && pista.tipo !== 'audio') {
+        throw new Error('La pista debe admitir MIDI (audio, midi o instrumento)');
       }
       const endBeat = generated.reduce((m, n) => Math.max(m, n.inicio + n.duracion), (payload.bars ?? 8) * 4);
       const duracion = Math.max(4, endBeat);

@@ -354,6 +354,7 @@ export function crearComandoMarkerCreate(): CommandDefinition<MarkerCreatePayloa
 export type ProjectUpdatePayload = {
   datos: Partial<{
     nombre: string;
+    ruta: string;
     sampleRate: number;
     bitDepth: number;
     bpm: { valor: number; tipo: string };
@@ -380,6 +381,7 @@ export function crearComandoProjectUpdate(): CommandDefinition<ProjectUpdatePayl
       const proyecto: ProjectState = {
         ...estado.project,
         ...(datos.nombre !== undefined ? { nombre: datos.nombre } : {}),
+        ...(datos.ruta !== undefined ? { ruta: datos.ruta } : {}),
         ...(datos.sampleRate !== undefined ? { sampleRate: datos.sampleRate } : {}),
         ...(datos.bitDepth !== undefined ? { bitDepth: datos.bitDepth } : {}),
         ...(datos.bpm !== undefined ? { bpm: { ...estado.project.bpm, ...datos.bpm } } : {}),

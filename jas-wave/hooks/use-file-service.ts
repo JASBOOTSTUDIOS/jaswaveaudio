@@ -18,10 +18,13 @@ declare global {
       onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => void
       getAppVersion: () => Promise<string>
       fileSave: (ruta: string, contenido: string) => Promise<{ success: boolean; error?: string }>
+      fileSaveBinary: (ruta: string, data: Uint8Array) => Promise<{ success: boolean; error?: string }>
       fileRead: (ruta: string) => Promise<string>
+      fileReadBinary: (ruta: string) => Promise<Uint8Array>
       fileExists: (ruta: string) => Promise<boolean>
       fileSize: (ruta: string) => Promise<number>
-      dialogSave: () => Promise<{ canceled: boolean; filePath?: string }>
+      recordingsDir: (projectPath?: string) => Promise<string>
+      dialogSave: (defaultPath?: string) => Promise<{ canceled: boolean; filePath?: string }>
       dialogOpen: () => Promise<{ canceled: boolean; filePaths?: string[] }>
       dialogOpenDirectory: () => Promise<{ canceled: boolean; filePaths?: string[] }>
       projectSave: (projectId: string, data: unknown) => Promise<{ success: boolean; path?: string; size?: number; error?: string }>
@@ -89,6 +92,7 @@ declare global {
       onPluginHostRestarted?: (callback: () => void) => () => void
       pluginHostPushPcm: (samples: Float32Array | ArrayBuffer | Uint8Array) => void
       pluginHostStop: () => Promise<{ ok: boolean }>
+      onNativeMidi?: (callback: (msg: { id: string; data: number[] }) => void) => () => void
     }
   }
 }

@@ -9,6 +9,9 @@ import {
   validarIntegridadProyecto,
   reconstruirRouting,
   verificarReferenciasAudio,
+  esNombreSinTitulo,
+  nombreDesdeRuta,
+  nombreAlGuardar,
 } from '../project/ciclo-vida';
 import { guardarProyecto, cargarProyecto, FileServiceMemoria } from '../project/persistencia';
 import type { ProjectState } from '../types/proyecto';
@@ -242,5 +245,20 @@ describe('guardarProyecto / cargarProyecto round-trip', () => {
     await fileService.guardar('refs.jaswave', JSON.stringify(archivo));
     const cargado = await cargarProyecto('refs.jaswave', fileService);
     expect(cargado.nombre).toBe('Refs');
+  });
+});
+
+describe('nombre de proyecto al guardar', () => {
+  it('detecta nombres sin título', () => {
+    expect(esNombreSinTitulo('Proyecto sin nombre')).toBe(true);
+    expect(esNombreSinTitulo('Untitled')).toBe(true);
+    expect(esNombreSinTitulo('Sin título')).toBe(true);
+    expect(esNombreSinTitulo('Mi canción')).toBe(false);
+  });
+
+  it('toma el nombre del archivo cuando el proyecto no tiene título', () => {
+    expect(nombreDesdeRuta('C:\\\\Users\\\\me\\\\PSR balada.jaswave')).toBe('PSR balada');
+    expect(nombreAlGuardar('Proyecto sin nombre', 'D:/music/Demo.jaswave')).toBe('Demo');
+    expect(nombreAlGuardar('Tema original', 'D:/music/otro.jaswave')).toBe('Tema original');
   });
 });

@@ -52,6 +52,7 @@ std::atomic<uint32_t> gDawLastPushGen{0};
 std::atomic<uint8_t> gSeen[JASWAVE_MIX_MAX_TRACKS]{};
 std::atomic<uint8_t> gDawSeen{0};
 std::atomic<uint32_t> gPullBudget{std::numeric_limits<uint32_t>::max()};
+std::atomic<bool> gOffline{false};
 
 constexpr uint32_t kLiveCallbacks = 8;
 constexpr uint32_t kTargetFill = 1024;
@@ -350,10 +351,20 @@ void jaswave_mix_bus_set_output_rate(uint32_t hz) {
 
 void jaswave_mix_bus_reset() { gWantReset.store(true, std::memory_order_release); }
 
+void jaswave_mix_bus_set_offline(bool offline) {
+  gOffline.store(offline, std::memory_order_release);
+}
+
 void jaswave_mix_bus_begin_block(uint32_t frames) {
   consumeResetIfNeeded();
   if (frames == 0) {
     gPullBudget.store(0, std::memory_order_relaxed);
+    return;
+  }
+
+  if (gOffline.load(std::memory_order_acquire)) {
+    gPullBudget.store(frames, std::memory_order_relaxed);
+    gCallbackGen.fetch_add(1, std::memory_order_relaxed);
     return;
   }
 

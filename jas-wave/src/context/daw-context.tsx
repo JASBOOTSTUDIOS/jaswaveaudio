@@ -16,6 +16,7 @@ import {
   toolRegistry,
   registrarMidiAiTools,
   registrarPluginTools,
+  registrarAnalysisTools,
 } from '../../../shared/src'
 import { configurarFileService } from '../../../shared/src/commands/project-commands'
 import { FileServiceElectron } from '@/src/lib/file-service'
@@ -45,6 +46,7 @@ function getSharedStore() {
     try {
       registrarMidiAiTools(toolRegistry, () => sharedStore!.obtenerEstado())
       registrarPluginTools(toolRegistry, () => sharedStore!.obtenerEstado())
+      registrarAnalysisTools(toolRegistry)
     } catch {
       /* HMR */
     }

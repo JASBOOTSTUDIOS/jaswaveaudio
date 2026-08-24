@@ -14,6 +14,7 @@ import {
 } from '../src/lib/project-io'
 import { executeOrNotify, redoOrNotify, undoOrNotify } from '../src/lib/execute-or-toast'
 import { dawClipboard, type ClipboardClip } from '../src/lib/daw-clipboard'
+import { requestOpenTool } from '../src/workspace/types'
 
 /**
  * Sistema unificado: ActionSystem → Command System.
@@ -361,6 +362,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       },
       'window.keyboardShortcuts': () => {
         window.dispatchEvent(new CustomEvent('open-shortcuts-dialog'))
+      },
+      'window.midiMap': () => {
+        requestOpenTool('midi-map')
       },
       'window.toggleLeft': () => {
         window.dispatchEvent(new CustomEvent('jaswave-toggle-zone', { detail: { zone: 'left' } }))

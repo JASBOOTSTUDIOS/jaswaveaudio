@@ -620,3 +620,31 @@ describe('Comandos Irreversibles', () => {
     expect(executor.obtenerEstado().project.nombre).toBe('B');
   });
 });
+
+describe('project.save persiste ruta y nombre', () => {
+  it('deja ruta, nombre del archivo y modificado=false tras guardar', async () => {
+    const { configurarFileService } = await import('../commands/project-commands');
+    const { FileServiceMemoria } = await import('../project/persistencia');
+    const registro = crearRegistroComandos();
+    registrarComandosBuiltin(registro);
+    configurarFileService(new FileServiceMemoria());
+    const executor = new CommandExecutor({
+      busEventos: new BusEventosMemoria({ capacidadBufferReplay: 100, tamanoBatch: 10 }),
+      pila: crearPilaDeshacerRehacer(100),
+      registro,
+      auditoria: crearRegistroAuditoria(),
+      estadoInicial: crearEstadoInicial(),
+    });
+
+    const upd = await executor.execute('project.update', { datos: { ruta: 'C:/tmp/Balada PSR.jaswave' } });
+    expect(upd.success).toBe(true);
+    expect(executor.obtenerEstado().project.ruta).toBe('C:/tmp/Balada PSR.jaswave');
+
+    const saved = await executor.execute('project.save', {});
+    expect(saved.success).toBe(true);
+    const project = executor.obtenerEstado().project;
+    expect(project.ruta).toBe('C:/tmp/Balada PSR.jaswave');
+    expect(project.nombre).toBe('Balada PSR');
+    expect(project.modificado).toBe(false);
+  });
+});

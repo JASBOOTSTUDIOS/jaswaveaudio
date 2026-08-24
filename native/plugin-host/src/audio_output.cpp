@@ -229,7 +229,7 @@ bool openDeviceLocked(JaswaveAudioConfig cfg, std::string& err) {
 #endif
   }
   if (cfg.sampleRate == 0) cfg.sampleRate = 48000;
-  if (cfg.bufferSize == 0) cfg.bufferSize = 512;
+  if (cfg.bufferSize == 0) cfg.bufferSize = 256;
   cfg.exclusive = cfg.exclusive || cfg.backend == "wasapi_exclusive";
 
 #ifdef _WIN32

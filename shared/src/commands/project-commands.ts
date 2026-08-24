@@ -20,7 +20,7 @@ import type { DAWState } from '../types/state';
 import type { ProjectState } from '../types/proyecto';
 import type { FileService } from '../project/persistencia';
 import { NombresEventos } from '../constants/nombres-eventos';
-import { proyectoNuevo } from '../project/ciclo-vida';
+import { proyectoNuevo, nombreAlGuardar } from '../project/ciclo-vida';
 import { crearValidadorConflictos } from '../state/validacion-conflictos';
 import { guardarProyecto, cargarProyecto } from '../project/persistencia';
 
@@ -123,19 +123,27 @@ export function crearComandoProjectSave(): CommandDefinition<ProjectSavePayload>
         throw new Error(resultado.errors[0]?.message || 'Conflicto al guardar el proyecto');
       }
 
-      await guardarProyecto(estado.project, ruta, fileService);
+      const rutaGuardada = `${ruta.replace(/\.jaswave$/i, '')}.jaswave`;
+      const nombre = nombreAlGuardar(estado.project.nombre, rutaGuardada);
+      const proyecto: ProjectState = {
+        ...estado.project,
+        ruta: rutaGuardada,
+        nombre,
+        modificado: false,
+        fechaModificacion: Date.now(),
+      };
 
-      const rutaGuardada = `${ruta.replace(/\.jaswave$/, '')}.jaswave`;
+      await guardarProyecto(proyecto, rutaGuardada, fileService);
 
       return {
-        state: estado,
+        state: { ...estado, project: proyecto },
         events: [
           {
              nombre: NombresEventos.guardado,
             version: 1,
             marcaTiempo: Date.now(),
             fuente: 'project-commands',
-            payload: { projectId: estado.project.id, ruta: rutaGuardada },
+            payload: { projectId: proyecto.id, ruta: rutaGuardada },
           },
         ],
         result: { ruta: rutaGuardada },
@@ -169,9 +177,14 @@ export function crearComandoProjectLoad(): CommandDefinition<ProjectLoadPayload>
       }
 
       const proyecto = await cargarProyecto(ruta, fileService);
+      const proyectoConRuta: ProjectState = {
+        ...proyecto,
+        ruta,
+        modificado: false,
+      };
 
       return {
-        state: { ...estado, project: proyecto },
+        state: { ...estado, project: proyectoConRuta },
         events: [
           {
              nombre: NombresEventos.cargado,

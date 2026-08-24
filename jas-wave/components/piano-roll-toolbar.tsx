@@ -99,10 +99,16 @@ export function PianoRollToolbar({
   showExpression,
   onToggleExpression,
   onQuantize,
+  quantizeMode,
+  onQuantizeMode,
+  quantizeStrength,
+  onQuantizeStrength,
   onDuplicate,
   onDelete,
   onTranspose,
   onNudge,
+  onVelocitySet,
+  onVelocityScale,
   showShortcuts,
   onToggleShortcuts,
   grooves,
@@ -126,10 +132,16 @@ export function PianoRollToolbar({
   showExpression: boolean
   onToggleExpression: () => void
   onQuantize: () => void
+  quantizeMode?: 'start' | 'end' | 'both'
+  onQuantizeMode?: (m: 'start' | 'end' | 'both') => void
+  quantizeStrength?: number
+  onQuantizeStrength?: (s: number) => void
   onDuplicate: () => void
   onDelete: () => void
   onTranspose: (semi: number) => void
   onNudge: (beats: number) => void
+  onVelocitySet?: (v: number) => void
+  onVelocityScale?: (factor: number) => void
   showShortcuts: boolean
   onToggleShortcuts: () => void
   grooves: { id: string; nombre: string }[]
@@ -201,8 +213,65 @@ export function PianoRollToolbar({
         <div className="mx-0.5 h-5 w-px bg-border" />
 
         <ToolBtn titulo="Cuantizar" atajo="Q" icon={Grid3x3} onClick={onQuantize} />
+        {onQuantizeMode && (
+          <select
+            value={quantizeMode ?? 'start'}
+            onChange={(e) => onQuantizeMode(e.target.value as 'start' | 'end' | 'both')}
+            className="h-6 rounded border border-border bg-background px-1 text-[10px]"
+            title="Modo cuantización"
+            aria-label="Modo cuantización"
+          >
+            <option value="start">Inicio</option>
+            <option value="end">Fin</option>
+            <option value="both">Ambos</option>
+          </select>
+        )}
+        {onQuantizeStrength && (
+          <select
+            value={quantizeStrength ?? 1}
+            onChange={(e) => onQuantizeStrength(Number(e.target.value))}
+            className="h-6 rounded border border-border bg-background px-1 text-[10px]"
+            title="Fuerza cuantización"
+            aria-label="Fuerza cuantización"
+          >
+            <option value={1}>100%</option>
+            <option value={0.75}>75%</option>
+            <option value={0.5}>50%</option>
+            <option value={0.25}>25%</option>
+          </select>
+        )}
         <ToolBtn titulo="Duplicar" atajo="Ctrl+D" icon={Copy} onClick={onDuplicate} />
         <ToolBtn titulo="Eliminar" atajo="Supr" icon={Trash2} onClick={onDelete} peligro />
+
+        {onVelocitySet && (
+          <>
+            <div className="mx-0.5 h-5 w-px bg-border" />
+            <button
+              type="button"
+              className="rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-panel-raised"
+              title="Velocidad fija 100"
+              onClick={() => onVelocitySet(100)}
+            >
+              Vel 100
+            </button>
+            <button
+              type="button"
+              className="rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-panel-raised"
+              title="Escalar velocity ×0.85"
+              onClick={() => onVelocityScale?.(0.85)}
+            >
+              Vel −
+            </button>
+            <button
+              type="button"
+              className="rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-panel-raised"
+              title="Escalar velocity ×1.15"
+              onClick={() => onVelocityScale?.(1.15)}
+            >
+              Vel +
+            </button>
+          </>
+        )}
 
         <div className="mx-0.5 h-5 w-px bg-border" />
 

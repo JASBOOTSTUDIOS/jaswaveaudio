@@ -1,5 +1,6 @@
 /**
- * Entrada MIDI hardware vía Web MIDI (Chromium/Electron).
+ * Entrada MIDI hardware: Web MIDI si el permiso lo permite, y WinMM nativo
+ * (plugin-host) en Windows — el mismo API que usa REAPER.
  * Un solo cliente: el host React en la ventana principal.
  */
 
@@ -26,7 +27,8 @@ const STORAGE_INPUT = 'jaswave.midi.inputId'
 const STORAGE_CHANNEL = 'jaswave.midi.channel'
 const STORAGE_GRID = 'jaswave.midi.quantizeGrid'
 
-type MsgListener = (msg: MidiParsed, timeSec: number) => void
+export type MidiSource = 'web' | 'native'
+type MsgListener = (msg: MidiParsed, timeSec: number, source?: MidiSource, deviceId?: string) => void
 
 let access: MIDIAccess | null = null
 let starting: Promise<boolean> | null = null
@@ -37,10 +39,16 @@ let runningStatus = 0
 let activityAt = 0
 let lastError: string | undefined
 const inputsBound = new Set<string>()
+let nativeDevices: MidiInputInfo[] = []
+let nativeAttached = false
 
 const deviceListeners = new Set<() => void>()
 const msgListeners = new Set<MsgListener>()
 const activityListeners = new Set<(at: number) => void>()
+
+function electronApi(): Window['electron'] | undefined {
+  return typeof window === 'undefined' ? undefined : window.electron
+}
 
 function loadInputId(): string {
   try {
@@ -91,16 +99,23 @@ function emitActivity(): void {
   for (const l of activityListeners) l(activityAt)
 }
 
-function onMidiEvent(ev: MIDIMessageEvent): void {
-  const data = ev.data
-  if (!data || data.length === 0) return
+function dispatchParsed(
+  data: ArrayLike<number>,
+  timeSec: number,
+  source: MidiSource,
+  deviceId: string,
+): void {
   const parsed = parseMidiMessage(data, runningStatus)
   runningStatus = parsed.runningStatus
   if (!parsed.msg) return
   if (!channelFilterAllows(channelFilter, parsed.msg.channel)) return
   emitActivity()
-  const t = typeof ev.timeStamp === 'number' ? ev.timeStamp / 1000 : performance.now() / 1000
-  for (const l of msgListeners) l(parsed.msg, t)
+  for (const l of msgListeners) l(parsed.msg, timeSec, source, deviceId)
+}
+
+function onNativeMidi(msg: { id: string; data: number[] }): void {
+  if (!msg.data?.length) return
+  dispatchParsed(msg.data, performance.now() / 1000, 'native', msg.id)
 }
 
 function unbindAll(): void {
@@ -114,10 +129,14 @@ function unbindAll(): void {
 function bindSelected(): void {
   if (!access) return
   unbindAll()
+  if (nativeDevices.length > 0) return
   access.inputs.forEach((input) => {
-    const match = selectedId === 'all' || input.id === selectedId
-    if (!match) return
-    input.onmidimessage = onMidiEvent
+    input.onmidimessage = (ev: MIDIMessageEvent) => {
+      const data = ev.data
+      if (!data || data.length === 0) return
+      const t = typeof ev.timeStamp === 'number' ? ev.timeStamp / 1000 : performance.now() / 1000
+      dispatchParsed(data, t, 'web', input.id)
+    }
     inputsBound.add(input.id)
   })
 }
@@ -135,36 +154,97 @@ function listFromAccess(): MidiInputInfo[] {
   return out.sort((a, b) => a.name.localeCompare(b.name, 'es'))
 }
 
+function listAllInputs(): MidiInputInfo[] {
+  if (nativeDevices.length > 0) {
+    return [...nativeDevices].sort((a, b) => a.name.localeCompare(b.name, 'es'))
+  }
+  return listFromAccess()
+}
+
+function attachNativeOnce(): void {
+  if (nativeAttached) return
+  const api = electronApi()
+  if (!api?.onNativeMidi) return
+  nativeAttached = true
+  api.onNativeMidi(onNativeMidi)
+  api.onPluginHostRestarted?.(() => {
+    void refreshNative().then(() => {
+      bindSelected()
+      emitDevices()
+    })
+  })
+}
+
+async function refreshNative(): Promise<void> {
+  const api = electronApi()
+  if (!api?.pluginHostSend) {
+    nativeDevices = []
+    return
+  }
+  try {
+    await api.pluginHostEnsure?.()
+    const raw = (await api.pluginHostSend({ type: 'listMidiDevices' })) as {
+      ok?: boolean
+      devices?: Array<{ id?: string; name?: string; manufacturer?: string }>
+    }
+    if (raw?.ok && Array.isArray(raw.devices)) {
+      nativeDevices = raw.devices
+        .filter((d): d is { id: string; name?: string; manufacturer?: string } => typeof d.id === 'string' && d.id.length > 0)
+        .map((d) => ({
+          id: d.id,
+          name: d.name || d.id,
+          manufacturer: d.manufacturer || 'WinMM',
+        }))
+    } else {
+      nativeDevices = []
+    }
+    await api.pluginHostSend({ type: 'openMidiInputs' })
+  } catch {
+    nativeDevices = []
+  }
+}
+
 export const midiController = {
   async start(): Promise<boolean> {
-    if (access) return true
     if (starting) return starting
-    if (typeof navigator === 'undefined' || typeof navigator.requestMIDIAccess !== 'function') {
-      lastError = 'Este entorno no expone Web MIDI.'
-      emitDevices()
-      return false
-    }
     starting = (async () => {
-      try {
-        access = await navigator.requestMIDIAccess({ sysex: false })
-        lastError = undefined
-        access.onstatechange = () => {
-          bindSelected()
-          emitDevices()
+      attachNativeOnce()
+      await refreshNative()
+      const hasNative = nativeDevices.length > 0
+
+      if (typeof navigator !== 'undefined' && typeof navigator.requestMIDIAccess === 'function') {
+        try {
+          if (!access) {
+            access = await navigator.requestMIDIAccess({ sysex: false })
+            access.onstatechange = () => {
+              bindSelected()
+              emitDevices()
+            }
+          }
+          lastError = undefined
+        } catch (e) {
+          access = null
+          if (!hasNative) {
+            lastError = e instanceof Error ? e.message : 'No se pudo abrir MIDI'
+          } else {
+            lastError = undefined
+          }
         }
-        bindSelected()
-        emitDevices()
-        return true
-      } catch (e) {
-        lastError = e instanceof Error ? e.message : 'No se pudo abrir MIDI'
-        access = null
-        emitDevices()
-        return false
-      } finally {
-        starting = null
+      } else if (!hasNative) {
+        lastError = 'Este entorno no expone Web MIDI.'
+      } else {
+        lastError = undefined
       }
+
+      bindSelected()
+      emitDevices()
+      return !!access || hasNative
     })()
-    return starting
+    try {
+      return await starting
+    } finally {
+      starting = null
+    }
   },
 
   stop(): void {
@@ -174,7 +254,7 @@ export const midiController = {
   },
 
   listInputs(): MidiInputInfo[] {
-    return listFromAccess()
+    return listAllInputs()
   },
 
   getSelectedId(): string {
@@ -209,7 +289,7 @@ export const midiController = {
   },
 
   getStatus(): MidiControllerStatus {
-    const devices = listFromAccess()
+    const devices = listAllInputs()
     const sel =
       selectedId === 'all'
         ? devices.length
@@ -217,7 +297,7 @@ export const midiController = {
           : 'Ningún controlador'
         : devices.find((d) => d.id === selectedId)?.name ?? 'No conectado'
     return {
-      ready: !!access,
+      ready: !!access || nativeDevices.length > 0,
       error: lastError,
       inputId: selectedId,
       inputName: sel,

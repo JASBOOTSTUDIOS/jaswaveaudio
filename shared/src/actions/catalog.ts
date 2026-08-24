@@ -483,6 +483,16 @@ export const ACTION_CATALOG: readonly ActionDefinition[] = [
     defaultShortcuts: ['Ctrl+Shift+,'],
   },
   {
+    id: 'window.midiMap',
+    name: 'Control MIDI / MIDI Learn',
+    description: 'Asigna notas, CC y teclas a comandos, mixer, sustain y plugins',
+    category: 'MIDI',
+    context: 'global',
+    risk: 'write',
+    aliases: ['ventana.midiMap', 'ventana.controlMidi'],
+    defaultShortcuts: ['Ctrl+Shift+M'],
+  },
+  {
     id: 'window.toggleLeft',
     name: 'Panel izquierdo',
     description: 'Muestra u oculta el panel izquierdo',

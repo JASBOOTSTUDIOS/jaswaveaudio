@@ -4,6 +4,7 @@ import { PlaybackProvider } from '@/components/playback-provider'
 import { CommandPalette } from '@/components/command-palette'
 import { useShortcutDispatcher } from '@/hooks/use-shortcut-dispatcher'
 import { ShortcutsDialog } from '@/components/shortcuts-dialog'
+import { ExportBounceDialog } from '@/components/export-bounce-dialog'
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -78,12 +79,22 @@ function UndockedToolApp({ toolId }: { toolId: ToolId }) {
 function AppShell() {
   const dispatcher = useShortcutDispatcher()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
   const { layout, setActiveTab, toggleZone, moveTool, toolsInZone, dockTool } = useWorkspace()
 
   useEffect(() => {
     const handler = () => setShortcutsOpen(true)
     window.addEventListener('open-shortcuts-dialog', handler)
     return () => window.removeEventListener('open-shortcuts-dialog', handler)
+  }, [])
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent<{ id?: string }>).detail?.id
+      if (id === 'archivo.exportarBounce') setExportOpen(true)
+    }
+    window.addEventListener('jaswave-menu-action', handler)
+    return () => window.removeEventListener('jaswave-menu-action', handler)
   }, [])
 
   useEffect(() => {
@@ -156,6 +167,7 @@ function AppShell() {
       <EventToasts />
       <ProjectCloseDialog />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} dispatcher={dispatcher} />
+      <ExportBounceDialog open={exportOpen} onClose={() => setExportOpen(false)} />
       <main className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground">
         <TitleBar />
         <AppMenuBar />

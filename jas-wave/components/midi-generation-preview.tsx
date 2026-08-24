@@ -88,7 +88,9 @@ export function MidiGenerationPreview({ preview, status = 'pending', onStatusCha
       stopPreview()
       const state = tienda.obtenerEstado()
       const selectedId = getSelectedTrackId(state)
-      const midiTracks = state.project.tracks.filter((t) => t.tipo === 'midi' || t.tipo === 'instrumento')
+      const midiTracks = state.project.tracks.filter(
+        (t) => t.tipo === 'midi' || t.tipo === 'instrumento' || t.tipo === 'audio',
+      )
       const preferred =
         (preview.pistaId && midiTracks.find((t) => t.id === preview.pistaId)) ||
         (selectedId && midiTracks.find((t) => t.id === selectedId)) ||

@@ -13,10 +13,13 @@ contextBridge.exposeInMainWorld('electron', {
     })
   },
   fileSave: (ruta: string, contenido: string) => ipcRenderer.invoke('file-save', ruta, contenido),
+  fileSaveBinary: (ruta: string, data: Uint8Array) => ipcRenderer.invoke('file-save-binary', ruta, data),
   fileRead: (ruta: string) => ipcRenderer.invoke('file-read', ruta),
+  fileReadBinary: (ruta: string) => ipcRenderer.invoke('file-read-binary', ruta),
   fileExists: (ruta: string) => ipcRenderer.invoke('file-exists', ruta),
   fileSize: (ruta: string) => ipcRenderer.invoke('file-size', ruta),
-  dialogSave: () => ipcRenderer.invoke('dialog-save'),
+  recordingsDir: (projectPath?: string) => ipcRenderer.invoke('recordings-dir', projectPath),
+  dialogSave: (defaultPath?: string) => ipcRenderer.invoke('dialog-save', defaultPath),
   dialogOpen: () => ipcRenderer.invoke('dialog-open'),
   dialogOpenDirectory: () => ipcRenderer.invoke('dialog-open-directory'),
   projectSave: (projectId: string, data: unknown) => ipcRenderer.invoke('project-save', projectId, data),
@@ -82,4 +85,9 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.send('plugin-host-pcm', u8)
   },
   pluginHostStop: () => ipcRenderer.invoke('plugin-host-stop'),
+  onNativeMidi: (callback: (msg: { id: string; data: number[] }) => void) => {
+    const handler = (_event: unknown, msg: { id: string; data: number[] }) => callback(msg)
+    ipcRenderer.on('native-midi', handler)
+    return () => ipcRenderer.removeListener('native-midi', handler)
+  },
 })

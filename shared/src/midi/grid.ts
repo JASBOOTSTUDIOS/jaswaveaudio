@@ -18,11 +18,11 @@ export interface GridLineSpec {
  * Dado px/beat (zoom horizontal), elige líneas principales/secundarias
  * sin saturar la vista.
  */
-export function adaptiveGridForZoom(pixelsPerBeat: number): GridLineSpec[] {
+export function adaptiveGridForZoom(pixelsPerBeat: number, beatsPerBar = 4): GridLineSpec[] {
   const lines: GridLineSpec[] = [];
+  const bar = Math.max(1, beatsPerBar);
 
-  // Siempre compás (4/4 por defecto en UI; el caller puede filtrar)
-  lines.push({ kind: 'bar', spacingBeats: 4 });
+  lines.push({ kind: 'bar', spacingBeats: bar });
 
   if (pixelsPerBeat >= 8) {
     lines.push({ kind: 'beat', spacingBeats: 1 });

@@ -55,7 +55,7 @@ export function upsertCcPoint(
 export function setCcLane(
   expression: MidiClipExpression,
   cc: number,
-  puntos: { tiempo: number; valor: number }[],
+  puntos: { id?: string; tiempo: number; valor: number }[],
   nombre?: string,
 ): MidiClipExpression {
   const lanes = (expression.cc ?? []).filter((l) => l.cc !== cc);
@@ -63,7 +63,7 @@ export function setCcLane(
     cc,
     nombre: nombre ?? `CC${cc}`,
     puntos: puntos.map((p) => ({
-      id: genId(),
+      id: p.id ?? genId(),
       tiempo: p.tiempo,
       valor: Math.max(0, Math.min(1, p.valor)),
       curva: 'linear' as const,
@@ -74,13 +74,13 @@ export function setCcLane(
 
 export function setPitchBendPoints(
   expression: MidiClipExpression,
-  puntos: { tiempo: number; valor: number }[],
+  puntos: { id?: string; tiempo: number; valor: number }[],
 ): MidiClipExpression {
   // valor: -1..1 → se almacena normalizado; MIDI raw = valor * 8191
   return {
     ...expression,
     pitchBend: puntos.map((p) => ({
-      id: genId(),
+      id: p.id ?? genId(),
       tiempo: p.tiempo,
       valor: Math.max(-1, Math.min(1, p.valor)),
       curva: 'smooth' as const,

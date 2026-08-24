@@ -96,6 +96,7 @@ function buildAppMenu() {
                 { type: 'separator' },
                 { label: 'Paleta de comandos', accelerator: 'CmdOrCtrl+Shift+P', click: () => sendMenuAction('ventana.paletaComandos') },
                 { label: 'Atajos de teclado…', click: () => sendMenuAction('ventana.atajos') },
+                { label: 'Control MIDI / MIDI Learn', accelerator: 'CmdOrCtrl+Shift+M', click: () => sendMenuAction('ventana.midiMap') },
             ],
         },
         {
@@ -145,15 +146,30 @@ app.whenReady().then(() => {
     if (process.platform === 'win32') {
         app.setAppUserModelId('com.jaswave.app');
     }
-    session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-        callback(permission === 'midi' ||
-            permission === 'media' ||
-            permission === 'audioCapture' ||
-            permission === 'mediaKeySystem');
+    session.defaultSession.setPermissionRequestHandler((_wc, perm, callback) => {
+        callback(perm === 'midi' ||
+            perm === 'midiSysex' ||
+            perm === 'media' ||
+            perm === 'audioCapture' ||
+            perm === 'mediaKeySystem');
     });
-    session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
-        return permission === 'midi' || permission === 'media' || permission === 'audioCapture';
+    session.defaultSession.setPermissionCheckHandler((_wc, perm) => {
+        return (perm === 'midi' ||
+            perm === 'midiSysex' ||
+            perm === 'media' ||
+            perm === 'audioCapture');
     });
+    try {
+        session.defaultSession.setDevicePermissionHandler((details) => {
+            return ((details === null || details === void 0 ? void 0 : details.deviceType) === 'midi' ||
+                (details === null || details === void 0 ? void 0 : details.deviceType) === 'hid' ||
+                (details === null || details === void 0 ? void 0 : details.deviceType) === 'audio' ||
+                (details === null || details === void 0 ? void 0 : details.deviceType) === 'unknown');
+        });
+    }
+    catch (_a) {
+        /* Electron viejo sin device permission handler */
+    }
     buildAppMenu();
     createWindow();
 });
@@ -209,6 +225,29 @@ ipcMain.handle('file-save', (_event, ruta, contenido) => __awaiter(void 0, void 
         return { success: false, error: err instanceof Error ? err.message : 'Unknown error' };
     }
 }));
+ipcMain.handle('file-save-binary', (_event, ruta, data) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        yield fs.mkdir(path.dirname(ruta), { recursive: true });
+        const buf = Buffer.from(data instanceof ArrayBuffer ? new Uint8Array(data) : data);
+        yield fs.writeFile(ruta, buf);
+        return { success: true };
+    }
+    catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : 'Unknown error' };
+    }
+}));
+ipcMain.handle('file-read-binary', (_event, ruta) => __awaiter(void 0, void 0, void 0, function* () {
+    const buf = yield fs.readFile(ruta);
+    return buf;
+}));
+ipcMain.handle('recordings-dir', (_event, projectPath) => __awaiter(void 0, void 0, void 0, function* () {
+    const base = typeof projectPath === 'string' && projectPath.trim()
+        ? path.dirname(projectPath)
+        : app.getPath('userData');
+    const dir = path.join(base, 'media', 'grabaciones');
+    yield fs.mkdir(dir, { recursive: true });
+    return dir;
+}));
 ipcMain.handle('file-read', (_event, ruta) => __awaiter(void 0, void 0, void 0, function* () {
     const contenido = yield fs.readFile(ruta, 'utf-8');
     return contenido;
@@ -226,13 +265,10 @@ ipcMain.handle('file-size', (_event, ruta) => __awaiter(void 0, void 0, void 0, 
     const stat = yield fs.stat(ruta);
     return stat.size;
 }));
-ipcMain.handle('dialog-save', () => __awaiter(void 0, void 0, void 0, function* () {
+ipcMain.handle('dialog-save', (_event, defaultPath) => __awaiter(void 0, void 0, void 0, function* () {
     if (!mainWindow)
         return { canceled: true };
-    const result = yield dialog.showSaveDialog(mainWindow, {
-        filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }],
-        properties: ['createPanel'],
-    });
+    const result = yield dialog.showSaveDialog(mainWindow, Object.assign(Object.assign({ filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }] }, (typeof defaultPath === 'string' && defaultPath ? { defaultPath } : {})), { properties: ['createDirectory', 'showOverwriteConfirmation'] }));
     return result;
 }));
 ipcMain.handle('dialog-open', () => __awaiter(void 0, void 0, void 0, function* () {
@@ -295,7 +331,7 @@ ipcMain.handle('project-save-as', (_event, projectId, data) => __awaiter(void 0,
         return { success: false, canceled: true };
     const result = yield dialog.showSaveDialog(mainWindow, {
         filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }],
-        properties: ['createPanel'],
+        properties: ['createDirectory', 'showOverwriteConfirmation'],
     });
     if (result.canceled || !result.filePath)
         return { success: false, canceled: true };
@@ -467,7 +503,13 @@ ipcMain.handle('native-audio-playhead', () => { var _a, _b; return (_b = (_a = g
 ipcMain.handle('native-audio-is-playing', () => { var _a, _b; return (_b = (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.isPlaying()) !== null && _b !== void 0 ? _b : false; });
 ipcMain.handle('native-audio-meter', () => { var _a, _b; return (_b = (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.getMeterPeak()) !== null && _b !== void 0 ? _b : 0; });
 // Plugin host híbrido (ADR-0011 C)
-const { ensurePluginHostStarted, getPluginHostStatus, sendPluginHostCommand, sendPluginHostMidi, pushPluginHostPcm, stopPluginHost, isEditorHostCommand, setPluginHostAudioDevice, } = require('./plugin-host-bridge');
+const { ensurePluginHostStarted, getPluginHostStatus, sendPluginHostCommand, sendPluginHostMidi, pushPluginHostPcm, stopPluginHost, isEditorHostCommand, setPluginHostAudioDevice, subscribeNativeMidi, } = require('./plugin-host-bridge');
+subscribeNativeMidi((msg) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed())
+            win.webContents.send('native-midi', msg);
+    }
+});
 ipcMain.handle('plugin-host-status', (e) => __awaiter(void 0, void 0, void 0, function* () {
     if (!senderIsSatellite(e.sender))
         yield ensurePluginHostStarted();

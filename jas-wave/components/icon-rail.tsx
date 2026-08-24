@@ -10,6 +10,7 @@ import {
   PanelLeft,
   PanelRight,
   PanelBottom,
+  Radio,
   type LucideIcon,
 } from 'lucide-react'
 import type { DockZone, ToolId } from '@/src/workspace/types'
@@ -22,6 +23,7 @@ const ITEMS: { id: ToolId; icon?: LucideIcon; label: string; brand?: 'logo' }[] 
   { id: 'instruments', icon: Piano, label: 'Instrumentos' },
   { id: 'fx-chain', icon: SlidersHorizontal, label: 'FX Chain' },
   { id: 'plugin-editor', icon: SlidersHorizontal, label: 'Editor de plugin' },
+  { id: 'midi-map', icon: Radio, label: 'MIDI Learn' },
   { id: 'arrange', icon: LayoutTemplate, label: 'Arrange' },
   { id: 'mixer', icon: SlidersHorizontal, label: 'Mixer' },
   { id: 'piano-roll', icon: Piano, label: 'Piano roll' },

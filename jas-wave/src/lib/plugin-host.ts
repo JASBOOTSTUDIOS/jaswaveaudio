@@ -25,7 +25,7 @@ export {
   type PluginInstanceRef,
 } from './plugin/host'
 
-export { discoverVst3Plugins, descriptorFromDiscovered } from './plugin/discovery'
+export { discoverVst3Plugins, descriptorFromDiscovered, catalogPluginInsertable } from './plugin/discovery'
 export {
   createElectronPluginHostBridge,
   refreshPluginHostAvailability,
