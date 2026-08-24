@@ -597,6 +597,7 @@ ipcMain.handle('native-audio-meter', () => getNativeAudio()?.getMeterPeak() ?? 0
 // Plugin host híbrido (ADR-0011 C)
 const {
   ensurePluginHostStarted,
+  ensureMixPipeConnected,
   getPluginHostStatus,
   sendPluginHostCommand,
   sendPluginHostMidi,
@@ -614,7 +615,10 @@ subscribeNativeMidi((msg: { id: string; data: number[] }) => {
 })
 
 ipcMain.handle('plugin-host-status', async (e: IpcMainInvokeEvent) => {
-  if (!senderIsSatellite(e.sender)) await ensurePluginHostStarted()
+  if (!senderIsSatellite(e.sender)) {
+    await ensurePluginHostStarted()
+    await ensureMixPipeConnected()
+  }
   return getPluginHostStatus()
 })
 ipcMain.handle('plugin-host-ensure', async (e: IpcMainInvokeEvent) => {
@@ -622,6 +626,7 @@ ipcMain.handle('plugin-host-ensure', async (e: IpcMainInvokeEvent) => {
     return { ok: !!getPluginHostStatus().vst3HostProcessAvailable, ...getPluginHostStatus() }
   }
   const ok = await ensurePluginHostStarted()
+  if (ok) await ensureMixPipeConnected()
   return { ok, ...getPluginHostStatus() }
 })
 ipcMain.on('plugin-host-midi', (e: IpcMainInvokeEvent, cmd: unknown) => {

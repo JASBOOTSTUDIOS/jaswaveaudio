@@ -1,6 +1,7 @@
 import { Construction, Library, Gauge, GitBranch, Piano, SlidersHorizontal } from 'lucide-react'
 import { ArrangeView } from '@/components/arrange-view'
 import { Mixer } from '@/components/mixer'
+import { MixAnalyzerPanel } from '@/components/mix-analyzer-panel'
 import { CoProducerPanel } from '@/components/coproducer-panel'
 import { AgentDocsPanel } from '@/components/agent-docs-panel'
 import { DocsExplorerPanel } from '@/components/docs-explorer-panel'
@@ -59,12 +60,7 @@ export function ToolHost({ toolId }: { toolId: ToolId }) {
     case 'library':
       return <LibraryPanel />
     case 'meters':
-      return (
-        <div className="flex h-full flex-col items-center justify-center gap-2 bg-panel text-muted-foreground">
-          <Gauge className="size-8 opacity-40" />
-          <span className="text-[12px]">Medidores — próximamente</span>
-        </div>
-      )
+      return <MixAnalyzerPanel />
     case 'routing':
       return (
         <div className="flex h-full flex-col items-center justify-center gap-2 bg-panel text-muted-foreground">

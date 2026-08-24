@@ -1,0 +1,38 @@
+[
+  {
+    "type": "audio.setDevice",
+    "payload": {
+      "backend": "asio",
+      "deviceId": "asio:UMC ASIO Driver",
+      "sampleRate": 48000,
+      "bufferSize": 1024
+    }
+  },
+  {
+    "type": "daw.musicBuild",
+    "payload": {
+      "prompt": "worship soft ballad Am 72 bpm piano bass drums guitar pad",
+      "aplicar": true,
+      "bpm": 72,
+      "nombre": "CLI Timing Test",
+      "minutos": 1,
+      "genero": "worship",
+      "tonalidad": "Am",
+      "progresion": [1, 6, 4, 5],
+      "secciones": [
+        { "name": "Intro", "bars": 4, "kind": "intro", "density": 0.35 },
+        { "name": "Verse", "bars": 8, "kind": "verse", "density": 0.5 },
+        { "name": "Chorus", "bars": 8, "kind": "chorus", "density": 0.75 },
+        { "name": "Outro", "bars": 4, "kind": "outro", "density": 0.3 }
+      ],
+      "pistas": [
+        { "nombre": "Batería", "rol": "drums", "tipo": "midi", "articulacion": "kit" },
+        { "nombre": "Bajo", "rol": "bass", "tipo": "midi", "articulacion": "bass" },
+        { "nombre": "Guitarra", "rol": "guitar", "tipo": "midi", "articulacion": "finger" },
+        { "nombre": "Piano", "rol": "piano", "tipo": "midi", "articulacion": "block" },
+        { "nombre": "Pad", "rol": "pad", "tipo": "midi", "articulacion": "pad" }
+      ]
+    }
+  },
+  { "type": "master.update", "payload": { "datos": { "volumen": 0.88 } } }
+]

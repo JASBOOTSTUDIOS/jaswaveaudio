@@ -557,7 +557,7 @@ ipcMain.handle('native-audio-playhead', () => { var _a, _b; return (_b = (_a = g
 ipcMain.handle('native-audio-is-playing', () => { var _a, _b; return (_b = (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.isPlaying()) !== null && _b !== void 0 ? _b : false; });
 ipcMain.handle('native-audio-meter', () => { var _a, _b; return (_b = (_a = getNativeAudio()) === null || _a === void 0 ? void 0 : _a.getMeterPeak()) !== null && _b !== void 0 ? _b : 0; });
 // Plugin host híbrido (ADR-0011 C)
-const { ensurePluginHostStarted, getPluginHostStatus, sendPluginHostCommand, sendPluginHostMidi, pushPluginHostPcm, stopPluginHost, isEditorHostCommand, setPluginHostAudioDevice, subscribeNativeMidi, } = require('./plugin-host-bridge');
+const { ensurePluginHostStarted, ensureMixPipeConnected, getPluginHostStatus, sendPluginHostCommand, sendPluginHostMidi, pushPluginHostPcm, stopPluginHost, isEditorHostCommand, setPluginHostAudioDevice, subscribeNativeMidi, } = require('./plugin-host-bridge');
 subscribeNativeMidi((msg) => {
     for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed())
@@ -565,8 +565,10 @@ subscribeNativeMidi((msg) => {
     }
 });
 ipcMain.handle('plugin-host-status', (e) => __awaiter(void 0, void 0, void 0, function* () {
-    if (!senderIsSatellite(e.sender))
+    if (!senderIsSatellite(e.sender)) {
         yield ensurePluginHostStarted();
+        yield ensureMixPipeConnected();
+    }
     return getPluginHostStatus();
 }));
 ipcMain.handle('plugin-host-ensure', (e) => __awaiter(void 0, void 0, void 0, function* () {
@@ -574,6 +576,8 @@ ipcMain.handle('plugin-host-ensure', (e) => __awaiter(void 0, void 0, void 0, fu
         return Object.assign({ ok: !!getPluginHostStatus().vst3HostProcessAvailable }, getPluginHostStatus());
     }
     const ok = yield ensurePluginHostStarted();
+    if (ok)
+        yield ensureMixPipeConnected();
     return Object.assign({ ok }, getPluginHostStatus());
 }));
 ipcMain.on('plugin-host-midi', (e, cmd) => {

@@ -207,7 +207,7 @@ export function buildAgentSystemPrompt(
     '- fxChain.loadPreset { trackId, presetId, nombre, plugins:[...] }',
     '- render.start { format:"wav"|"flac"|"mp3", startSec?, endSec?, stems?, normalize?: "peak"|"lufs"|false, listenTarget?, outputPath?, sampleRate?, bitDepth?, bitrate? }',
     '- render.cancel { renderJobId } | render.getStatus { renderJobId }',
-    '- analysis.loudness | analysis.spectrum | analysis.stereo | analysis.fullReport { jobId? }',
+    '- analysis.loudness | analysis.spectrum | analysis.stereo | analysis.fullReport { jobId? } | analysis.timing',
     '- analysis.compareTarget { target: "streaming"|"club"|"cd", jobId? }',
     '- daw.masterPass { target?: "streaming"|"club"|"cd", genero?, minutes? }',
     '- automation.setCurve { trackId, parametro: "volumen"|"paneo"|paramId, puntos:[{tiempo,valor}] }',
@@ -1522,6 +1522,21 @@ export async function executeDawActions(
           })
           break
         }
+        case 'analysis.timing': {
+          const { audioEngine } = await import('@/lib/audio-engine')
+          const d = audioEngine.getTimingDiagnostics()
+          const skewVsAhead = Math.abs(d.skewMs - d.pathAheadMs)
+          const ok = !d.playing || skewVsAhead < 40
+          results.push({
+            type: action.type,
+            success: true,
+            message: ok
+              ? `Timing OK · ahead ${d.pathAheadMs.toFixed(0)} ms · buf ${d.bufferSize} · ${d.sampleRate} Hz`
+              : `Timing sospechoso · skew ${d.skewMs.toFixed(0)} ms vs ahead ${d.pathAheadMs.toFixed(0)} ms · buf ${d.bufferSize}`,
+            data: { ...d, ok, skewVsAheadMs: skewVsAhead },
+          })
+          break
+        }
         case 'render.start':
         case 'render.cancel':
         case 'render.getStatus':
@@ -1669,6 +1684,12 @@ export async function executeDawActions(
         case 'audio.ensureBest': {
           const { ensureBestAudioDevice } = await import('./audio-device-cli')
           const r = await ensureBestAudioDevice(tienda, p.preferName ? String(p.preferName) : 'UMC')
+          results.push({ type: action.type, success: r.ok, message: r.message, data: r })
+          break
+        }
+        case 'audio.armNative': {
+          const { armNativeAudioOutput } = await import('./audio-device-cli')
+          const r = await armNativeAudioOutput()
           results.push({ type: action.type, success: r.ok, message: r.message, data: r })
           break
         }

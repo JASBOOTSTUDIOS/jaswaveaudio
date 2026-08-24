@@ -343,7 +343,7 @@ function AudioTab() {
   const project = useDAWState((s: DAWState) => s.project)
   const [sampleRate, setSampleRate] = useState(48000)
   const [bitDepth, setBitDepth] = useState(24)
-  const [bufferSize, setBufferSize] = useState(256)
+  const [bufferSize, setBufferSize] = useState(1024)
   const [backends, setBackends] = useState<AudioBackendInfo[]>([])
   const [devices, setDevices] = useState<AudioDeviceInfo[]>([])
   const [backend, setBackend] = useState('auto')
@@ -356,7 +356,7 @@ function AudioTab() {
     if (project) {
       setSampleRate(project.sampleRate ?? 48000)
       setBitDepth(project.bitDepth ?? 24)
-      setBufferSize(project.configuracion?.bufferSize ?? 256)
+      setBufferSize(project.configuracion?.bufferSize ?? 1024)
     }
   }, [project])
 
@@ -625,10 +625,10 @@ function AudioTab() {
             render={(v) => `${v} samples`}
           />
           <p className="mt-1 text-[9px] text-muted-foreground">
-            Para baja latencia usa 256–512 samples (~6–12 ms a 44.1 kHz). 1024+ se siente lento al
-            tocar. ASIO ajusta al rango del driver (min/max/preferred).
-            {(backend === 'asio' || runtime?.backend === 'asio') && bufferSize < 256
-              ? ' Aviso: buffers muy bajos con VSTi pesados (BFD) pueden causar xruns.'
+            Recomendado 1024 a 48 kHz con ASIO (UMC): menos underruns y menos crackle en el sistema.
+            256–512 solo si necesitas latencia mínima al tocar y el CPU aguanta.
+            {(backend === 'asio' || runtime?.backend === 'asio') && bufferSize < 512
+              ? ' Aviso: buffers bajos + VSTi pesados pueden causar xruns y notificaciones del SO crujientes.'
               : ''}
           </p>
         </Field>

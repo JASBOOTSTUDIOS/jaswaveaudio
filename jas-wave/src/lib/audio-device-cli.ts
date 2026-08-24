@@ -112,7 +112,7 @@ export async function setAudioDevice(
         },
       },
     })
-    void audioEngine.rearmAfterDeviceChange(audio.sampleRate)
+    await audioEngine.rearmAfterDeviceChange(audio.sampleRate)
     notifyUi({ audio, source: 'cli' })
   }
 
@@ -126,7 +126,9 @@ export async function setAudioDevice(
   }
 }
 
-/** Elige ASIO preferido (UMC / nombre) o el primer ASIO disponible; fallback WASAPI. */
+/** Elige ASIO preferido (UMC / nombre) o el primer ASIO disponible; fallback WASAPI.
+ * Preferencia estable: 48 kHz + buffer 1024 (menos underruns / menos crackle en el SO).
+ */
 export async function ensureBestAudioDevice(
   tienda: TiendaDAW,
   preferName?: string,
@@ -134,28 +136,6 @@ export async function ensureBestAudioDevice(
   const listed = await listAudioDevices()
   if (!listed.ok) {
     return { ok: false, message: listed.message || 'listAudioDevices falló' }
-  }
-  const current = listed.audio
-  if (current?.running && current.backend === 'asio') {
-    // Ya hay ASIO corriendo — sincroniza proyecto/UI
-    const st = tienda.obtenerEstado()
-    await tienda.executor.execute('project.update', {
-      datos: {
-        sampleRate: current.sampleRate,
-        configuracion: {
-          ...st.project?.configuracion,
-          bufferSize: current.bufferSize,
-          dispositivoSalida: current.deviceId,
-          audioBackend: current.backend,
-        },
-      },
-    })
-    notifyUi({ audio: current, source: 'cli-ensure' })
-    return {
-      ok: true,
-      message: `Ya en uso: ${current.backend} · ${current.deviceName} · ${current.sampleRate} Hz / ${current.bufferSize}`,
-      audio: current,
-    }
   }
 
   const devices = listed.devices ?? []
@@ -166,14 +146,42 @@ export async function ensureBestAudioDevice(
     asio.find((d) => /umc|focusrite|yamaha|steinberg|rme|m-wave/i.test(d.name)) ||
     asio[0]
 
+  const TARGET_SR = 48000
+  const TARGET_BUF = 1024
+
   if (pick) {
-    // Prefer buffer del driver (pref ~1024 en UMC) y 48k si el proyecto lo pide, si no 44.1
-    const sr = tienda.obtenerEstado().project?.sampleRate || 48000
+    const current = listed.audio
+    const alreadyOk =
+      current?.running &&
+      current.backend === 'asio' &&
+      current.deviceId === pick.id &&
+      Number(current.sampleRate) === TARGET_SR &&
+      Number(current.bufferSize) >= TARGET_BUF
+    if (alreadyOk) {
+      const st = tienda.obtenerEstado()
+      await tienda.executor.execute('project.update', {
+        datos: {
+          sampleRate: current.sampleRate,
+          configuracion: {
+            ...st.project?.configuracion,
+            bufferSize: current.bufferSize,
+            dispositivoSalida: current.deviceId,
+            audioBackend: current.backend,
+          },
+        },
+      })
+      notifyUi({ audio: current, source: 'cli-ensure' })
+      return {
+        ok: true,
+        message: `Ya estable: ${current.backend} · ${current.deviceName} · ${current.sampleRate} Hz / ${current.bufferSize}`,
+        audio: current,
+      }
+    }
     return setAudioDevice(tienda, {
       backend: 'asio',
       deviceId: pick.id,
-      sampleRate: sr >= 48000 ? 48000 : 44100,
-      bufferSize: 512,
+      sampleRate: TARGET_SR,
+      bufferSize: TARGET_BUF,
     })
   }
 
@@ -182,9 +190,26 @@ export async function ensureBestAudioDevice(
     return setAudioDevice(tienda, {
       backend: 'wasapi',
       deviceId: wasapi.id,
-      sampleRate: 48000,
-      bufferSize: 512,
+      sampleRate: TARGET_SR,
+      bufferSize: TARGET_BUF,
     })
   }
   return { ok: false, message: 'No hay dispositivos ASIO/WASAPI disponibles' }
+}
+
+/** Fuerza Soft Pad/clips → pipe → ASIO (un solo device). */
+export async function armNativeAudioOutput(): Promise<{
+  ok: boolean
+  message: string
+  timing?: ReturnType<typeof audioEngine.getTimingDiagnostics>
+}> {
+  const ok = await audioEngine.armNativeMixOutput()
+  const timing = audioEngine.getTimingDiagnostics()
+  return {
+    ok,
+    message: ok
+      ? `Native mix armado · ahead ${timing.pathAheadMs.toFixed(0)} ms · buf ${timing.bufferSize}`
+      : `Native mix NO armado: ${timing.lastArmError || 'desconocido'}`,
+    timing,
+  }
 }

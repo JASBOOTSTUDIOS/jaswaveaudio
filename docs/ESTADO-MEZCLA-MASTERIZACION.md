@@ -15,7 +15,9 @@
 |-------|--------|---------|
 | Composición | ✅ | `daw.musicBuild` / spec IA |
 | Mezcla básica | ✅ | Vol/pan/mute/solo + FX + **automatización** vol/pan + **sends** (estado + bounce; live taps host parcial) |
-| Monitorización | ✅ | Peaks nativos |
+| Monitorización | ✅ | Peaks nativos + panel **Medidores** (espectro live, estéreo, LUFS bounce, timing) |
+| Sync Soft Pad/ASIO | ✅ | `nativePathAheadSec` incluye ring fill; Soft Pad único (sin dual VST) evita flam/CPU |
+| Audio estable | ✅ | Preferencia 48 kHz / buffer 1024 (`audio.ensureBest`); `analysis.timing` |
 | Masterización | ✅ | `daw.masterPass` + `analysis.fullReport` / compareTarget + true-peak / espectro / correlación |
 | Entrega | ✅ | WAV + stems + normalize; FLAC/MP3 vía ffmpeg opcional |
 | Freeze | ✅ | `track.freeze` / `unfreeze` (stem → clip + bypass) |
