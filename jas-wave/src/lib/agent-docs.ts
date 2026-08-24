@@ -43,6 +43,12 @@ type ElectronDocsFs = {
   fileSave?: (ruta: string, contenido: string) => Promise<{ success: boolean; error?: string }>
   fileRead?: (ruta: string) => Promise<string>
   fileExists?: (ruta: string) => Promise<boolean>
+  fileListDir?: (
+    dir: string,
+  ) => Promise<{
+    success?: boolean
+    entries?: Array<{ name: string; isDirectory: boolean; isFile: boolean }>
+  }>
 }
 
 function electronFs(): ElectronDocsFs | undefined {
@@ -70,15 +76,44 @@ function writeDocsToDisk(projectRuta: string, docs: AgentDoc[]): void {
   void Promise.all(docs.map((d) => fs.fileSave!(`${folder}${sep}${d.slug}`, d.content))).catch(() => undefined)
 }
 
+/** Lista slugs `.md` en `{proyecto}/docs/` (disco). */
+export async function listDocsSlugsOnDisk(projectRuta?: string): Promise<string[]> {
+  const fs = electronFs()
+  if (!fs?.fileListDir || !projectRuta) return []
+  const folder = docsFolderForProject(projectRuta)
+  try {
+    const listed = await fs.fileListDir(folder)
+    const names = (listed.entries ?? [])
+      .filter((e) => e.isFile && /\.md$/i.test(e.name))
+      .map((e) => e.name.toLowerCase())
+    return [...new Set(names)].sort((a, b) => {
+      if (a === PLAN_SLUG) return -1
+      if (b === PLAN_SLUG) return 1
+      return a.localeCompare(b)
+    })
+  } catch {
+    return []
+  }
+}
+
 export async function hydrateAgentDocsFromDisk(projectId: string, projectRuta?: string): Promise<void> {
   bindAgentDocsDisk(projectId, projectRuta)
   const fs = electronFs()
   if (!fs?.fileRead || !projectRuta) return
   const folder = docsFolderForProject(projectRuta)
   const sep = folder.includes('\\') ? '\\' : '/'
+  // Asegura carpeta docs/ escribiendo plan si hace falta
+  if (fs.fileSave) {
+    const planPath = `${folder}${sep}${PLAN_SLUG}`
+    const exists = fs.fileExists ? await fs.fileExists(planPath) : false
+    if (!exists) {
+      const plan = listAgentDocs(projectId).find((d) => d.slug === PLAN_SLUG)
+      await fs.fileSave(planPath, plan?.content ?? DEFAULT_PLAN_MD)
+    }
+  }
   const current = listAgentDocs(projectId)
-  const slugs = new Set(current.map((d) => d.slug))
-  slugs.add(PLAN_SLUG)
+  const diskSlugs = await listDocsSlugsOnDisk(projectRuta)
+  const slugs = new Set([...current.map((d) => d.slug), ...diskSlugs, PLAN_SLUG])
   let changed = false
   const next = [...current]
   for (const slug of slugs) {

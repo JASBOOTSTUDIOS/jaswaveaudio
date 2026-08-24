@@ -94,7 +94,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       return
     }
     ch.onmessage = (ev) => {
-      const data = ev.data as { type?: string; toolId?: string }
+      const data = ev.data as { type?: string; toolId?: string; floatHost?: string }
       if (data.type === 'dock-tool' && data.toolId && data.toolId in TOOL_CATALOG) {
         const toolId = data.toolId as ToolId
         setLayout((prev) => {
@@ -115,6 +115,34 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           closeToolWindow?: (id: string) => Promise<void>
         }
         void api?.closeToolWindow?.(toolId)
+        return
+      }
+      // Mover herramienta a una ventana flotante existente (sin abrir otra).
+      if (
+        data.type === 'steal-tool-to-float' &&
+        data.toolId &&
+        data.toolId in TOOL_CATALOG &&
+        data.floatHost
+      ) {
+        const toolId = data.toolId as ToolId
+        setLayout((prev) => {
+          const cleaned = stripTool(prev, toolId)
+          return {
+            ...cleaned,
+            undocked: cleaned.undocked.includes(toolId)
+              ? cleaned.undocked
+              : [...cleaned.undocked, toolId],
+          }
+        })
+        try {
+          ch.postMessage({
+            type: 'float-accept-tab',
+            toolId,
+            floatHost: data.floatHost,
+          })
+        } catch {
+          /* ignore */
+        }
       }
     }
     return () => ch.close()
@@ -185,6 +213,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         extra.clipId = hit.clipId
       }
     }
+    // Docs flotante: llevar explorador + editor juntos como tabs
+    if (toolId === 'docs' || toolId === 'docs-explorer') {
+      extra.tabs = 'docs-explorer,docs'
+    }
     if (!api?.openToolWindow) {
       const params = new URLSearchParams({ undock: toolId, ...extra })
       const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`
@@ -193,12 +225,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       await api.openToolWindow(toolId, title, extra)
     }
     setLayout((prev) => {
-      const cleaned = stripTool(prev, toolId)
+      let next = stripTool(prev, toolId)
+      const companions =
+        toolId === 'docs' || toolId === 'docs-explorer'
+          ? (['docs', 'docs-explorer'] as ToolId[]).filter((id) => id !== toolId)
+          : []
+      for (const c of companions) {
+        next = stripTool(next, c)
+        if (!next.undocked.includes(c)) next = { ...next, undocked: [...next.undocked, c] }
+      }
       return {
-        ...cleaned,
-        undocked: cleaned.undocked.includes(toolId)
-          ? cleaned.undocked
-          : [...cleaned.undocked, toolId],
+        ...next,
+        undocked: next.undocked.includes(toolId)
+          ? next.undocked
+          : [...next.undocked, toolId],
       }
     })
   }, [daw])

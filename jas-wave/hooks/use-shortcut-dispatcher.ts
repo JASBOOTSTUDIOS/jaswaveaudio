@@ -15,6 +15,7 @@ import {
 import { executeOrNotify, redoOrNotify, undoOrNotify } from '../src/lib/execute-or-toast'
 import { dawClipboard, type ClipboardClip } from '../src/lib/daw-clipboard'
 import { requestOpenTool } from '../src/workspace/types'
+import { bumpUiZoom } from '../src/lib/docs-editor-store'
 
 /**
  * Sistema unificado: ActionSystem → Command System.
@@ -319,12 +320,14 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         window.dispatchEvent(
           new CustomEvent('jaswave-zoom-horizontal', { detail: { zoom: Math.min(256, z * 1.25) } }),
         )
+        bumpUiZoom(0.05)
       },
       'timeline.zoomOut': () => {
         const z = st().ui?.zoomHorizontal ?? 1
         window.dispatchEvent(
           new CustomEvent('jaswave-zoom-horizontal', { detail: { zoom: Math.max(0.15, z / 1.25) } }),
         )
+        bumpUiZoom(-0.05)
       },
       'timeline.zoomToProject': () => {
         void executeOrNotify(tienda, 'ui.setZoom', { horizontal: 1, vertical: 1 })

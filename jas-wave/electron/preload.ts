@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electron', {
   fileRead: (ruta: string) => ipcRenderer.invoke('file-read', ruta),
   fileReadBinary: (ruta: string) => ipcRenderer.invoke('file-read-binary', ruta),
   fileExists: (ruta: string) => ipcRenderer.invoke('file-exists', ruta),
+  fileListDir: (dir: string) => ipcRenderer.invoke('file-list-dir', dir),
   fileSize: (ruta: string) => ipcRenderer.invoke('file-size', ruta),
   recordingsDir: (projectPath?: string) => ipcRenderer.invoke('recordings-dir', projectPath),
   dialogSave: (defaultPath?: string) => ipcRenderer.invoke('dialog-save', defaultPath),

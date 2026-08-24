@@ -11,6 +11,7 @@ import {
   PanelRight,
   PanelBottom,
   Radio,
+  FolderOpen,
   type LucideIcon,
 } from 'lucide-react'
 import type { DockZone, ToolId } from '@/src/workspace/types'
@@ -18,7 +19,8 @@ import { JasWaveAppIcon, JasWaveLogo } from '@/components/brand'
 
 const ITEMS: { id: ToolId; icon?: LucideIcon; label: string; brand?: 'logo' }[] = [
   { id: 'coproducer', brand: 'logo', label: 'Asistente Jas' },
-  { id: 'docs', icon: FileText, label: 'Plan / Docs' },
+  { id: 'docs-explorer', icon: FolderOpen, label: 'Explorador' },
+  { id: 'docs', icon: FileText, label: 'Docs' },
   { id: 'library', icon: Library, label: 'Biblioteca' },
   { id: 'instruments', icon: Piano, label: 'Instrumentos' },
   { id: 'fx-chain', icon: SlidersHorizontal, label: 'FX Chain' },
