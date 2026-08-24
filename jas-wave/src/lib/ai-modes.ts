@@ -15,7 +15,7 @@ export const AGENT_MODE_META: Record<
   },
   create: {
     label: 'Crear',
-    hint: 'Ejecuta pistas, clips y plugins en el proyecto',
+    hint: 'Ejecuta y repara hasta completar el plan',
     insert: 'crea esto en el DAW',
   },
   think: {
@@ -89,22 +89,23 @@ export function modePromptBlock(mode: AgentMode): string {
   if (mode === 'think') {
     return [
       '## Modo: PENSAMIENTO PROFUNDO',
-      'Eres ingeniero de sonido y arreglista. Razona género, instrumentación, rango MIDI de CADA VST, velocidades, densidad y forma.',
-      'NO mutes el DAW. Pregunta solo lo imprescindible; si el usuario ya pidió una canción, redacta el plan.',
-      'OBLIGATORIO al cerrar el razonamiento: actualizar plan.md con <<<DOC plan.md … DOC>>> (Intención + Por implementar con checkboxes por pista/VST/BPM).',
-      'También emite <<<PLAN {"nombre","bpm","tonalidad","minutos","pensamiento","pistas":[…]} PLAN>>>.',
-      'Si propones ACTIONS de DAW, usar aplicar:false. Si propones tempo, ponlo en el PLAN y en plan.md (ej. 72 BPM).',
-      'Proyecto completo: daw.musicBuild { prompt, aplicar:false }. plugin.lookup y doc.write están permitidos.',
-      'NO digas que ya aplicaste cambios en el arrange: el cliente bloquea mutaciones hasta Construir.',
+      'Eres ingeniero de sonido y arreglista senior. El arreglo lo defines TÚ (cualquier género), no una plantilla fija.',
+      '- Declara genero, tonalidad, BPM, secciones con degrees+density, y pistas con rol/articulación/VST.',
+      '- Contraste armónico entre secciones; evita ser muy basico salvo que el género/usuario lo pida.',
+      'NO mutes el DAW. OBLIGATORIO: plan.md + <<<PLAN … PLAN>>>.',
+      'Vista previa: daw.musicBuild { aplicar:false, prompt, genero, progresion, secciones, pistas }.',
+      'plugin.lookup / library.preset.search / plugin.probe permitidos. NO digas que ya aplicaste cambios.',
     ].join('\n')
   }
   return [
     '## Modo: CREACIÓN',
-    'Ejecuta en el DAW. Si el plan.md existe, síguelo (el usuario puede haberlo editado).',
-    'Si es un clip suelto: daw.generateMidiSong con pistaId y aplicar:true. Si mencionas BPM, incluye también project.setBpm.',
-    'Si es una canción / proyecto completo: daw.musicBuild { aplicar:true, prompt }. Orquesta pistas, VSTs del catálogo, MIDI validado y mezcla por rol. No inventes plugins.',
-    'Si es un arreglo corto ya planeado: daw.composeProject { aplicar:true, pistas:[...] }.',
-    'Acciones destructivas (borrar pistas/clips/todo) requerirán confirmación del usuario en el chat.',
-    'Al terminar, el harness verifica el DAW y puede pedir reparaciones. No repitas daw.musicBuild. Actualiza Evaluación e Implementado.',
+    'Ejecuta en el DAW. Si plan.md existe, síguelo hasta vaciar «Por implementar».',
+    'Persiste: el harness inspecciona el proyecto real (pistas/plugins/notas) y te devolverá errores con debug. No digas "listo" si el plan o el DAW siguen incompletos.',
+    'Canciones: daw.musicBuild { aplicar:true, prompt, genero, progresion, secciones, pistas } — spec completo.',
+    'Tras build: mezcla (track.update vol/pan), sends (bus.create/send.set), automatización si hace falta, master.update.',
+    'Entrega: daw.masterPass o render.start + analysis.fullReport + analysis.compareTarget. Exige AudioListenReport OK.',
+    'VSTs: plugin.probe → library.preset.apply o plugin.insert. No inventes plugins.',
+    'Si falla algo: repara el ítem concreto (clip/plugin/checkbox). No repitas daw.musicBuild completo.',
+    'Actualiza plan.md (Implementado / Por implementar / Evaluación) en cada cierre.',
   ].join('\n')
 }

@@ -22,6 +22,7 @@ import {
 } from '@/src/lib/plugin/track-graph-encoding'
 import { peakFromByteTimeDomain } from './audio-dsp'
 import { ensureMicPermission, listAudioInputs, refreshAudioInputs } from '@/src/lib/audio-inputs'
+import { normalizeSoftPadRole, scheduleRoleVoice, type SoftPadRole } from './role-voice'
 
 export interface TrackAudioConfig {
   id: string
@@ -33,6 +34,10 @@ export interface TrackAudioConfig {
   vstInstrumentSlotId?: string
   /** true = Soft Pad insertado en esta pista (no es fallback genérico). */
   softPadFallback?: boolean
+  /** Soft Pad + VST a la vez (audibilidad garantizada si el VST no tiene kit/preset). */
+  softPadDual?: boolean
+  /** Rol de pista → timbre Soft Pad (drums/bass/guitar/…). */
+  softPadRole?: SoftPadRole | string
 }
 
 export interface AudioClipPlaybackInfo {
@@ -110,8 +115,8 @@ export class WebAudioEngine {
   private stemScratch = new Map<string, Float32Array>()
   private audioBuffers = new Map<string, AudioBuffer>()
   private activeSources = new Map<string, AudioBufferSourceNode>()
-  /** Voces programadas de reproducción MIDI (timeline). */
-  private activeMidiNodes: Array<{ osc: OscillatorNode; gain: GainNode }> = []
+  /** Voces programadas de reproducción MIDI (timeline Soft Pad). */
+  private activeMidiNodes: Array<{ stop: (when: number, releaseSec?: number) => void }> = []
   private midiScheduleTimer: ReturnType<typeof setInterval> | null = null
   private recSessions = new Map<string, InputCaptureSession>()
   private recTrackDevice = new Map<string, string>()
@@ -1154,7 +1159,7 @@ export class WebAudioEngine {
     }, 40)
   }
 
-  /** Hot-patch: slot VST confirmado. Soft Pad solo si la pista lo tiene insertado. */
+  /** Hot-patch: slot VST confirmado. Soft Pad si está insertado (solo o dual con VST). */
   public patchTrackVstInstrument(
     trackId: string,
     slotId: string | undefined,
@@ -1167,7 +1172,8 @@ export class WebAudioEngine {
         ? {
             ...t,
             vstInstrumentSlotId: slotId,
-            softPadFallback: !slotId && insertedSoftPad,
+            softPadFallback: insertedSoftPad && !slotId,
+            softPadDual: insertedSoftPad && Boolean(slotId),
           }
         : t,
     )
@@ -1247,11 +1253,25 @@ export class WebAudioEngine {
         if (dur <= 0.02) continue
 
         try {
+          const wantPad = Boolean(cfg?.softPadFallback || (vstSlot && cfg?.softPadDual))
           if (vstSlot) {
             this.scheduleVstMidiNote(vstSlot, note.pitch, note.velocity, when, dur)
-          } else if (cfg?.softPadFallback) {
-            this.scheduleMidiVoice(ctx, trackNode.gain, note.pitch, note.velocity, when, dur)
-          } else {
+          }
+          if (wantPad || (!vstSlot && cfg?.softPadFallback)) {
+            const padVel =
+              vstSlot && cfg?.softPadDual
+                ? Math.max(1, Math.round(note.velocity * 0.55))
+                : note.velocity
+            this.scheduleMidiVoice(
+              ctx,
+              trackNode.gain,
+              note.pitch,
+              padVel,
+              when,
+              dur,
+              normalizeSoftPadRole(cfg?.softPadRole),
+            )
+          } else if (!vstSlot) {
             continue
           }
           this.midiVoiceKeys.add(key)
@@ -1310,29 +1330,18 @@ export class WebAudioEngine {
     velocity: number,
     when: number,
     durationSec: number,
+    role: SoftPadRole = 'default',
   ) {
-    const freq = 440 * Math.pow(2, (pitch - 69) / 12)
-    const vel = Math.max(0.05, Math.min(1, velocity / 127))
-    const dur = Math.max(0.04, durationSec)
-    const attack = Math.min(0.01, dur * 0.15)
-    const peak = Math.max(0.0002, 0.12 * vel)
-
-    const osc = ctx.createOscillator()
-    osc.type = 'sine'
-    osc.frequency.value = freq
-
-    const gain = ctx.createGain()
-    gain.gain.setValueAtTime(0.0001, when)
-    gain.gain.exponentialRampToValueAtTime(peak, when + attack)
-    gain.gain.exponentialRampToValueAtTime(0.0001, when + dur)
-
-    osc.connect(gain)
-    gain.connect(destination)
-
-    const startAt = Math.max(when, ctx.currentTime)
-    osc.start(startAt)
-    osc.stop(startAt + dur + 0.02)
-    this.activeMidiNodes.push({ osc, gain })
+    const handle = scheduleRoleVoice(
+      ctx,
+      destination,
+      pitch,
+      velocity,
+      Math.max(when, ctx.currentTime),
+      Math.max(0.04, durationSec),
+      role,
+    )
+    this.activeMidiNodes.push(handle)
   }
 
   /**
@@ -1354,11 +1363,10 @@ export class WebAudioEngine {
     }
     this.activeSources.clear()
 
+    const now = this.audioCtx?.currentTime ?? 0
     for (const voice of this.activeMidiNodes) {
       try {
-        voice.osc.stop()
-        voice.osc.disconnect()
-        voice.gain.disconnect()
+        voice.stop(now, 0.03)
       } catch {
         /* ignore */
       }

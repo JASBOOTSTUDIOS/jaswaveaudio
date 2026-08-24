@@ -30,6 +30,16 @@ export interface RenderJob {
     truePeak: number
     lufs: number
   }
+  /** Informe extendido post-bounce (P1/P7). */
+  analysis?: import('../audio/mix-analysis').MixAnalysisReport
+  listenReport?: import('../audio/mix-analysis').AudioListenReport
+  stemsPaths?: string[]
+  normalized?: boolean
+  /** Opciones pedidas al iniciar (persistidas en el job). */
+  normalize?: 'peak' | 'lufs' | false
+  normalizeTargetDb?: number
+  exportStems?: boolean
+  listenTarget?: 'streaming' | 'club' | 'cd'
 }
 
 export interface RenderStartPayload {
@@ -41,4 +51,9 @@ export interface RenderStartPayload {
   startSec?: number
   endSec?: number
   outputPath?: string
+  stems?: boolean
+  /** `true` se trata como `'lufs'` en render.start. */
+  normalize?: 'peak' | 'lufs' | boolean
+  normalizeTargetDb?: number
+  listenTarget?: 'streaming' | 'club' | 'cd'
 }

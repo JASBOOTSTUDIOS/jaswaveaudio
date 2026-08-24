@@ -1,130 +1,70 @@
 # Estado: Mezcla y Masterización — Auditoría y brechas
 
-> **Propósito:** documento de trabajo que responde «¿en qué estado está la mezcla/masterización y puede la IA llevar un proyecto de cero a master para distribución?». Detalla lo implementado, lo que falta y el plan para cerrar el ciclo.
-> **Fecha:** 2026-08-23 · Actualizar cuando cambie el pipeline de audio, el mixer o las tools de IA.
+> **Propósito:** documento de trabajo que responde «¿en qué estado está la mezcla/masterización y puede la IA llevar un proyecto de cero a master para distribución?».
+> **Fecha:** 2026-08-24 · Actualizar cuando cambie el pipeline de audio, el mixer o las tools de IA.
 > **Audiencia:** humanos + agentes de código (`AGENTS.md`).
-> **Docs relacionados:** `CHECKLIST-PRODUCTO.md`, `CONTEXTO-VST-AUDIO-APP-VS-DOCS.md`, `hoja-ruta/013-mixer.md`, `hoja-ruta/022-analisis.md`, `hoja-ruta/023-routing.md`, `hoja-ruta/034-automatizacion.md`, `hoja-ruta/035-render.md`, ADR-0012/0013/0014.
+> **Docs relacionados:** `CHECKLIST-PRODUCTO.md`, `AGENT-CONTROL-GAPS.md`, hoja-ruta 013/022/023/034/035.
 
 ---
 
 ## 1. Respuesta ejecutiva
 
-**¿Puede la IA hoy crear un proyecto completo desde cero hasta la masterización para distribución? PARCIAL — bounce WAV con contenido real + loudness sí; FLAC/MP3, sends y automatización aún no.**
+**¿Puede la IA hoy crear un proyecto completo desde cero hasta master para distribución? SÍ en el camino principal** (composición → mezcla → masterPass/bounce → AudioListenReport), con matices en sends nativos en vivo y FLAC/MP3 (requiere ffmpeg).
 
 | Etapa | Estado | Detalle |
 |-------|--------|---------|
-| Composición (estructura, pistas, VSTs, MIDI) | ✅ Hecho | `daw.musicBuild` / `daw.composeProject` orquestan por fases (ADR-0014) |
-| Mezcla básica | ✅ Parcial | Vol/pan/mute/solo + FX serial. **Sin** sends, sidechain ni automatización |
-| Monitorización (VU) | ✅ Hecho | Peaks nativos post-fader/master vía `getMixMeters` (mismo `renderMix` audible) |
-| Masterización informada | ✅ Parcial | `analysis.loudness` / `compareTarget` (BS.1770) sobre bounce; sin `daw.masterPass` |
-| Entrega / distribución | ✅ Parcial | Bounce WAV PCM16/24 con contenido real (`render.start` + `renderOffline*`); sin FLAC/MP3 |
-
-> **Corte 2026-08-23 (bounce con contenido real):** el bounce ya renderiza lo mismo que se oye en Play:
-> notas/CCs de clips MIDI → slots VST (delaySamples absolutos), clips de audio y Soft Pad → stems Web Audio
-> pre-renderizados e inyectados inline por paso; WAV PCM16/24 con dithering TPDF.
+| Composición | ✅ | `daw.musicBuild` / spec IA |
+| Mezcla básica | ✅ | Vol/pan/mute/solo + FX + **automatización** vol/pan + **sends** (estado + bounce; live taps host parcial) |
+| Monitorización | ✅ | Peaks nativos |
+| Masterización | ✅ | `daw.masterPass` + `analysis.fullReport` / compareTarget + true-peak / espectro / correlación |
+| Entrega | ✅ | WAV + stems + normalize; FLAC/MP3 vía ffmpeg opcional |
+| Freeze | ✅ | `track.freeze` / `unfreeze` (stem → clip + bypass) |
+| IA “escucha” | ✅ | `AudioListenReport` post-bounce; harness falla si listen/target mal |
 
 ---
 
-## 2. Qué existe hoy (mapa real)
+## 2. Qué existe (mapa 2026-08-24)
 
-### 2.1 Pipeline audible (estilo Reaper, ADR-0013 A+B en producción)
+### Análisis (`shared/src/audio/mix-analysis.ts`)
+- true-peak, crest, clipping, correlación L/R, bandas espectrales, `buildAudioListenReport`
+- Tools: `analysis.loudness|spectrum|stereo|fullReport|compareTarget`
+- Adjuntado a `RenderJob` (`analysis`, `listenReport`, `stemsPaths`)
 
-```
-Clips / Soft Pad (Web Audio, dry por pista)
-        ↓ stems JWST por pista (AudioWorklet, pcm-tap)
-jaswave-plugin-host: stem → FX_0…FX_N serial → fader/pan/mute → suma
-        ↓
-master.plugins serial → device (WASAPI/ASIO/miniaudio)
-```
+### Export / bounce
+- `render.start` acepta wav/flac/mp3, `stems`, `normalize`, `listenTarget`
+- Stems en `{bounce}-stems/stemN.wav`; normalize peak/lufs; ffmpeg IPC opcional
+- UI: `ExportBounceDialog`
 
-- PDC por pista en `renderMix`.
-- Resample por stem; playhead = `AudioContext`.
-- **Meters:** peaks en `renderMix` (`gMeterStemPeak` / `gMeterMasterPeak`) → IPC `getMixMeters` → `native-mix-meters.ts` → `audioEngine.getMeterLevel` / mixer RAF (~20 Hz).
+### MasterPass
+- `daw.masterPass` orquesta cadena master (catálogo VST) + bounce + iteración de fader vs target
 
-### 2.2 Mixer UI (`jas-wave/components/mixer.tsx`)
+### Automatización
+- `automation.setCurve` / `clear`; play ~20 Hz + bake en bounce; panel MVP en mixer
 
-| Criterio hoja-ruta 013 | Estado |
-|---|---|
-| Volumen / pan / mute / solo | ✅ |
-| Inserts visibles (FX chain) | ✅ |
-| Sends visibles | ❌ |
-| Master fader | ✅ |
-| VU meters | ✅ peaks del mix **nativo** (no solo Analysers Web Audio) |
+### Routing
+- `bus.create` (crea pista tipo bus), `send.set`, `sidechain.connect` (estado)
+- Mixer: knobs send; bounce suma sends al stem del bus
 
-### 2.3 FX Chains y plugins
+### Freeze
+- Cliente: solo → bounce → clip audio → `track.freeze` (bypass plugins)
 
-- Host VST3 OOP + **VST2 real** (`Vst2Slot` / `HostedSlot`): LoadLibrary + `processReplacing`, MIDI, editor HWND, solo **x64**. Discover marca `hostReady` si PE64.
-- **Compliance:** Steinberg ya no licencia VST2; headers mínimas en `native/plugin-host/vendor/vst2/` solo para hosting de DLLs del usuario.
-- Sync en caliente mute/solo/vol/pan/cadena durante Play.
-
-### 2.4 Bounce + loudness (contenido real)
-
-- Host: `renderOfflineStart` / `Step` / `Finish` / `Cancel` + `mix_bus` offline (sin PLL).
-  - `Step` acepta `stems:[{trackIndex,b64}]` (f32le interleaved base64) → push directo al ring (`jaswave_mix_bus_push_stem`) → sin carrera entre pipe de PCM y el paso.
-  - Live MIDI WinMM desactivado durante bounce (`renderMix` gatea por `gOfflineRunning`).
-- Contenido (`jas-wave/src/lib/`):
-  - `bounce-content.ts`: estado → notas/CCs/clips con tiempos absolutos; resolución VST slot / Soft Pad inyectable (`buildRuntimeBounceContent` en el servicio).
-  - `bounce-offline-audio.ts`: pre-render `OfflineAudioContext` por pista (clips con loop, voces sine Soft Pad) → stems DRY.
-  - `bounce-service.ts`: orquesta Start → programa notas/CCs VST con `delaySamples` absolutos (la cola por-slot del host los dispara sample-accurate) → pasos inline → Finish + BS.1770.
-- WAV: PCM16/24-bit con dithering TPDF; sample rate real del device (el pedido solo fija la tasa del bus).
-- Dominio: `render.start/cancel/getStatus`, eventos `render.*`, store `RenderJob`.
-- UI: Archivo → Exportar bounce WAV… (`ExportBounceDialog`, selector 16/24-bit); IA usa el mismo camino.
-- BS.1770-4 en TS (`shared/src/audio/loudness-bs1770.ts`); adjunto al job (decodifica WAV 16/24); tools `analysis.loudness` / `analysis.compareTarget`.
-
-### 2.5 IA — acciones
-
-Además de composición/mix/plugin.*: `render.start` (orquesta bounce nativo), `render.cancel/getStatus`, `analysis.loudness`, `analysis.compareTarget`.
+### Harness
+- Errores `listen-failed`, `compare-target`, `master-pass-target` además de plan-incomplete
 
 ---
 
-## 3. Brechas restantes
+## 3. Brechas restantes (menor)
 
-### G1 · Export — parcial
-- ✅ WAV PCM16/24 (dithering TPDF) + progreso + cancel + contenido real (VST, clips, Soft Pad).
-- ❌ FLAC/MP3, stems por pista, normalización al export.
-
-### G2 · Masterización — parcial
-- ✅ Medición post-render + compareTarget.
-- ❌ `daw.masterPass`, presets master por género, espectro/clipping tools.
-
-### G3 · Sends / sidechain — sin cambios
-Tipos en dominio; sin DSP/UI/comandos.
-
-### G4 / G5 / G6
-Automatización, freeze — pendientes. **Persistencia estado VST:** params + chunk (`estadoPluginBase64`) al guardar `.jaswave` (VST2 `effGetChunk` / VST3 `IComponent::getState`).
+- Sends **sample-accurate en host live** (taps post-fader en `renderMix`) — hoy bounce + knobs UI + suma offline.
+- Sidechain I/O en slots VST.
+- EQ/comp nativos propios (se usan VST de catálogo/biblioteca).
+- PCM al LLM: **fuera de alcance** (solo informe estructurado).
 
 ---
 
-## 4. Matriz de herramientas IA
-
-| Capacidad | Estado |
-|---|---|
-| Export/bounce WAV | ✅ `render.start/cancel/getStatus` |
-| Medir loudness | ✅ `analysis.loudness` |
-| Comparar vs target | ✅ `analysis.compareTarget` |
-| masterPass / sends / automation | ❌ |
-
----
-
-## 5. Plan (fases restantes)
-
-**Hecho en este corte:** Fase M (meters), VST2 hosting, R1 bounce WAV **con contenido real** (notas→VST, clips/Soft Pad→stems, PCM24+dither), R2 loudness+tools.
-
-**Pendiente:** R3 FLAC/MP3 + stems por pista, R5 sends/automatización/freeze.
-
-**Hecho (corte chat/VST):** R4 persistencia estado VST en proyecto; historial IA por `projectId`; VST2 MIDI+editor idle.
-
----
-
-## 6. Verificación
+## 4. Verificación
 
 ```bash
-cd shared && npm test && npx tsc --noEmit
-cd jas-wave && npm run test:plugins && npm run build
-# Rebuild host (Windows, cmake de VS):
-# & "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build native\plugin-host\build-vst3 --config Release
-# Reinicio total Electron + jaswave-plugin-host
+cd shared && npm test -- mix-analysis
+cd jas-wave && npx tsc --noEmit
 ```
-
-Play: Soft Pad / clip / VST3 / VST2 x64 → meters de pista y master se mueven.
-Archivo → Exportar bounce WAV (16/24-bit) → archivo **con audio** (mismo contenido que Play) + LUFS en diálogo.

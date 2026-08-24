@@ -41,6 +41,8 @@ export interface BounceTrack {
   stemIndex: number
   /** Soft Pad insertado (voces sintetizadas Web Audio). */
   softPad: boolean
+  /** Rol → timbre Soft Pad en bounce. */
+  softPadRole?: string
   notes: BounceNoteEvent[]
   ccs: BounceCcEvent[]
   audioClips: BounceAudioClip[]
@@ -75,6 +77,8 @@ type ClipLike = {
 
 type TrackLike = {
   id: string
+  nombre?: string
+  tags?: string[]
   clips?: ClipLike[]
   plugins?: unknown
 }
@@ -133,10 +137,19 @@ export function buildBounceContent(
     const slotId = resolved.slotId
     const softPad = resolved.softPad
 
+    const softPadRoleTag = (trk.tags ?? []).find((x) => /^role:/i.test(x))
+    const softPadRole =
+      softPadRoleTag?.replace(/^role:/i, '') ||
+      (trk.tags ?? []).find((x) =>
+        /^(drums|bass|guitar|piano|keys|pad|strings|choir|lead|brass|synth|percussion)$/i.test(x),
+      ) ||
+      trk.nombre
+
     const track: BounceTrack = {
       trackId: trk.id,
       stemIndex: i,
       softPad,
+      softPadRole: typeof softPadRole === 'string' ? softPadRole : undefined,
       notes: [],
       ccs: [],
       audioClips: [],

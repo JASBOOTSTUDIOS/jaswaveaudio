@@ -615,3 +615,66 @@ async function restorePluginStateAfterLoad(trackId: string, plugin: PluginInfo):
     await setSlotParameter(slotId, p.id, p.valor)
   }
 }
+
+export type PluginProbeResult = {
+  ok: boolean
+  pluginId?: string
+  path?: string
+  message: string
+  slotId?: string
+}
+
+/**
+ * Instancia temporal en el host para comprobar si el VST carga.
+ * Descarga el slot al terminar (no deja el plugin en el proyecto).
+ */
+export async function probePluginLoad(opts: {
+  path: string
+  pluginId?: string
+}): Promise<PluginProbeResult> {
+  const path = opts.path.trim()
+  if (!path) return { ok: false, message: 'Sin ruta de plugin' }
+  if (!window.electron?.pluginHostEnsure || !window.electron.pluginHostSend) {
+    return { ok: false, path, message: 'Plugin host no disponible' }
+  }
+  const slotId = `__probe_${Date.now().toString(36)}`
+  try {
+    await window.electron.pluginHostEnsure()
+    const audio = (await window.electron.pluginHostSend({ type: 'getAudioDevice' })) as {
+      audio?: { running?: boolean }
+    }
+    if (!audio?.audio?.running) {
+      await window.electron.pluginHostSend({ type: 'ensureAudio' })
+    }
+    const raw = await window.electron.pluginHostSend({
+      type: 'load',
+      path,
+      slotId,
+      pluginId: opts.pluginId ?? 'probe',
+      sampleRate: 48000,
+      blockSize: 512,
+    })
+    const ok = !!(raw && typeof raw === 'object' && (raw as { ok?: boolean }).ok)
+    const msg =
+      raw && typeof raw === 'object' && 'message' in raw
+        ? String((raw as { message: unknown }).message)
+        : ok
+          ? 'Carga OK'
+          : 'load falló'
+    await releaseSlot(slotId)
+    return { ok, pluginId: opts.pluginId, path, message: msg, slotId }
+  } catch (err) {
+    try {
+      await releaseSlot(slotId)
+    } catch {
+      /* ignore */
+    }
+    return {
+      ok: false,
+      pluginId: opts.pluginId,
+      path,
+      message: err instanceof Error ? err.message : 'probe falló',
+    }
+  }
+}
+

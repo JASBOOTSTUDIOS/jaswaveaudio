@@ -7,6 +7,7 @@ import { DocsExplorerPanel } from '@/components/docs-explorer-panel'
 import { TrackDetailPanel } from '@/components/track-detail-panel'
 import { PianoRollToolPanel } from '@/components/piano-roll'
 import { InstrumentsPanel } from '@/components/instruments-panel'
+import { LibraryPanel } from '@/components/library-panel'
 import { FxChainPanel } from '@/components/fx-chain-panel'
 import { PluginEditorPanel } from '@/components/plugin-editor-panel'
 import { MidiMapPanel } from '@/components/midi-map-panel'
@@ -15,7 +16,7 @@ import { useDAWState } from '@/src/context/daw-context'
 import type { ToolId } from '@/src/workspace/types'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 
-function PlaceholderTool({ title }: { title: string }) {
+function _PlaceholderTool({ title }: { title: string }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 bg-panel px-4 text-center">
       <Construction className="size-8 text-muted-foreground/40" />
@@ -56,7 +57,7 @@ export function ToolHost({ toolId }: { toolId: ToolId }) {
     case 'settings':
       return <SettingsPanel />
     case 'library':
-      return <PlaceholderTool title="Biblioteca de Audio" />
+      return <LibraryPanel />
     case 'meters':
       return (
         <div className="flex h-full flex-col items-center justify-center gap-2 bg-panel text-muted-foreground">

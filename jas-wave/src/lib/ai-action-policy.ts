@@ -7,11 +7,17 @@ import type { DawAction } from './ai-daw-agent'
 
 const READ_ONLY = new Set([
   'plugin.lookup',
+  'plugin.probe',
+  'library.preset.list',
+  'library.preset.search',
   'doc.evaluate',
   'doc.read',
   'doc.list',
   'analysis.loudness',
   'analysis.compareTarget',
+  'analysis.spectrum',
+  'analysis.stereo',
+  'analysis.fullReport',
   'render.getStatus',
 ])
 

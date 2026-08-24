@@ -1,0 +1,33 @@
+[
+  {
+    "type": "daw.musicBuild",
+    "payload": {
+      "prompt": "worship modern soft guitars piano bass drums pad, fingerpicking, 72 bpm, Am, 2 minutes",
+      "aplicar": true,
+      "bpm": 72,
+      "nombre": "Worship Soft Production",
+      "minutos": 2,
+      "genero": "worship",
+      "tonalidad": "Am",
+      "progresion": [1, 6, 4, 5, 1, 6, 3, 7],
+      "secciones": [
+        { "name": "Intro", "bars": 4, "kind": "intro", "density": 0.35 },
+        { "name": "Verse", "bars": 8, "kind": "verse", "density": 0.45 },
+        { "name": "Chorus", "bars": 8, "kind": "chorus", "density": 0.7 },
+        { "name": "Verse", "bars": 8, "kind": "verse", "density": 0.5 },
+        { "name": "Chorus", "bars": 8, "kind": "chorus", "density": 0.75 },
+        { "name": "Bridge", "bars": 4, "kind": "bridge", "density": 0.4 },
+        { "name": "Chorus", "bars": 8, "kind": "chorus", "density": 0.8 },
+        { "name": "Outro", "bars": 4, "kind": "outro", "density": 0.3 }
+      ],
+      "pistas": [
+        { "nombre": "Batería", "rol": "drums", "tipo": "midi", "articulacion": "kit", "pluginNombre": "BFD Player" },
+        { "nombre": "Bajo", "rol": "bass", "tipo": "midi", "articulacion": "bass", "pluginNombre": "DecentSampler" },
+        { "nombre": "Guitarra finger", "rol": "guitar", "tipo": "midi", "articulacion": "finger", "pluginNombre": "DecentSampler" },
+        { "nombre": "Guitarra ritmo", "rol": "guitar", "tipo": "midi", "articulacion": "strum", "pluginNombre": "DecentSampler" },
+        { "nombre": "Piano", "rol": "piano", "tipo": "midi", "articulacion": "block", "pluginNombre": "DecentSampler" },
+        { "nombre": "Pad", "rol": "pad", "tipo": "midi", "articulacion": "pad", "pluginNombre": "DecentSampler" }
+      ]
+    }
+  }
+]

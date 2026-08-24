@@ -229,6 +229,7 @@ export type ArrangementTrackDraft = {
   noteMapSummary: string
 }
 
+/** Fallback de roles por género cuando la IA NO envía `pistas[]`. Preferir spec de la IA. */
 const GENRE_ROLES: Record<string, InstrumentRole[]> = {
   rock: ['drums', 'bass', 'guitar', 'guitar', 'keys'],
   metal: ['drums', 'bass', 'guitar', 'guitar'],
@@ -240,11 +241,15 @@ const GENRE_ROLES: Record<string, InstrumentRole[]> = {
   latin: ['drums', 'percussion', 'bass', 'keys', 'guitar'],
   orchestral: ['strings', 'brass', 'woodwind', 'choir', 'percussion'],
   ballad: ['piano', 'pad', 'strings', 'bass'],
+  worship: ['drums', 'bass', 'guitar', 'guitar', 'piano', 'pad'],
+  gospel: ['drums', 'bass', 'piano', 'keys', 'choir', 'pad'],
   default: ['drums', 'bass', 'keys', 'pad', 'lead'],
 }
 
 export function inferGenreRoles(text: string): InstrumentRole[] {
   const t = text.toLowerCase()
+  if (/worship|alabanza|adoraci[oó]n|hillsong|bethel|elevation/.test(t)) return GENRE_ROLES.worship!
+  if (/gospel/.test(t)) return GENRE_ROLES.gospel!
   if (/metal|djent/.test(t)) return GENRE_ROLES.metal!
   if (/rock|indie/.test(t)) return GENRE_ROLES.rock!
   if (/edm|house|techno|danc/.test(t)) return GENRE_ROLES.edm!
@@ -268,6 +273,10 @@ function articulationForRole(role: InstrumentRole): ArrangementTrackDraft['artic
   return 'arp'
 }
 
+/**
+ * Borrador de pistas — SOLO fallback si Music Build / compose no reciben `pistas` de la IA.
+ * La creatividad de instrumentación debe venir del agente (rol + pluginId + presetId).
+ */
 export function draftArrangement(
   text: string,
   catalog: PluginDescriptor[],

@@ -5,6 +5,11 @@ const fsSync = require('fs')
 import type { IpcMainInvokeEvent } from 'electron'
 import { aiChat, aiHealth, legacyChatArgsToRequest, type AiChatRequest, type AiHealthRequest } from './ai-gateway'
 import { lookupPluginOnWeb } from './plugin-lookup'
+import {
+  resolveAgentBridgeReply,
+  startAgentBridge,
+  stopAgentBridge,
+} from './agent-bridge'
 
 let mainWindow: typeof BrowserWindow | null = null
 
@@ -182,6 +187,9 @@ app.whenReady().then(() => {
   }
   buildAppMenu()
   createWindow()
+  startAgentBridge({
+    getMainWindow: () => mainWindow as import('electron').BrowserWindow | null,
+  })
 })
 
 app.on('window-all-closed', () => {
@@ -191,6 +199,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  stopAgentBridge()
   try {
     require('./plugin-host-bridge').stopPluginHost()
   } catch {
@@ -205,6 +214,10 @@ app.on('activate', () => {
 })
 
 ipcMain.handle('get-app-version', () => app.getVersion())
+
+ipcMain.on('agent-bridge-reply', (_event: IpcMainInvokeEvent, id: string, result: unknown, error?: string) => {
+  resolveAgentBridgeReply(String(id), result, error ? String(error) : undefined)
+})
 
 ipcMain.handle('window-minimize', () => {
   if (mainWindow) mainWindow.minimize()
@@ -250,6 +263,37 @@ ipcMain.handle('file-save-binary', async (_event: IpcMainInvokeEvent, ruta: stri
   }
 })
 
+ipcMain.handle(
+  'ffmpeg-convert',
+  async (
+    _event: IpcMainInvokeEvent,
+    input: string,
+    output: string,
+    extraArgs: string[] = [],
+  ) => {
+    try {
+      const { spawn } = await import('node:child_process')
+      await fs.mkdir(path.dirname(output), { recursive: true })
+      const args = ['-y', '-i', input, ...extraArgs, output]
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn('ffmpeg', args, { windowsHide: true })
+        let err = ''
+        child.stderr?.on('data', (d: Buffer) => {
+          err += d.toString()
+        })
+        child.on('error', (e) => reject(e))
+        child.on('close', (code) => {
+          if (code === 0) resolve()
+          else reject(new Error(err.slice(-400) || `ffmpeg exit ${code}`))
+        })
+      })
+      return { ok: true, output }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  },
+)
+
 ipcMain.handle('file-read-binary', async (_event: IpcMainInvokeEvent, ruta: string) => {
   const buf = await fs.readFile(ruta)
   return buf
@@ -275,7 +319,7 @@ ipcMain.handle('file-list-dir', async (_event: IpcMainInvokeEvent, dir: string) 
     const entries = await fs.readdir(dir, { withFileTypes: true })
     return {
       success: true,
-      entries: entries.map((e) => ({
+      entries: entries.map((e: import('fs').Dirent) => ({
         name: e.name,
         isDirectory: e.isDirectory(),
         isFile: e.isFile(),
