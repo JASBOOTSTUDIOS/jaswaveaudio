@@ -5,6 +5,8 @@
   "description": "JasWave — AI-First Digital Audio Workstation",
   "scripts": {
     "dev": "cd jas-wave && npm run dev",
+    "cli": "cd jas-wave && npm run cli --",
+    "cli:watch": "cd jas-wave && npm run cli:watch",
     "build": "cd jas-wave && npm run build",
     "lint": "cd jas-wave && npm run lint",
     "test": "cd shared && npm test",

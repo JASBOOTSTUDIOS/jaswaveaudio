@@ -219,7 +219,7 @@ async function processActionsForMode(opts: {
   source: 'model_actions' | 'fallback'
 }): Promise<ProcessActionsOutcome> {
   const { tienda, resolvedMode, userText, conversationId, messageId, source } = opts
-  let actions = forcePreviewAplicar(opts.actions, resolvedMode)
+  const actions = forcePreviewAplicar(opts.actions, resolvedMode)
   const ctx = { conversationId, messageId, agentMode: resolvedMode, source }
 
   for (const a of actions) {

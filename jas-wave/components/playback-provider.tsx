@@ -40,13 +40,76 @@ import {
   getVstRuntimeGeneration,
   subscribeVstRuntime,
 } from '@/src/lib/plugin/track-vst-runtime'
+import { isBuiltinPlugin } from '@/src/lib/plugin/plugin-info-adapter'
 import { setPreferredVstPreviewTrack } from '@/src/lib/plugin/vst-voice-router'
 import { syncNativeChannelMix } from '@/src/lib/plugin/track-channel-mix'
+import { applyAutomationAtTime, applyParamAutomationAtTime } from '@/src/lib/automation-runtime'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 import { isUndockWindow } from '@/lib/undock-window'
 
 const MIN_TOTAL_BARS = 160
 const PPQ = 480
+
+function trackHasSoftPad(plugins: { bypass?: boolean; licencia?: string; nombre?: string }[] | undefined): boolean {
+  return (plugins ?? []).some(
+    (p) =>
+      !p.bypass &&
+      isBuiltinPlugin({
+        licencia: p.licencia ?? '',
+        nombre: p.nombre ?? '',
+      }),
+  )
+}
+
+function inferSoftPadRoleFromTrack(t: {
+  nombre?: string
+  tags?: string[]
+}): string | undefined {
+  const tag = (t.tags ?? []).find((x) => /^role:/i.test(x))
+  if (tag) return tag.replace(/^role:/i, '')
+  const hit = (t.tags ?? []).find((x) =>
+    /^(drums|bass|guitar|piano|keys|pad|strings|choir|lead|brass|synth|percussion)$/i.test(x),
+  )
+  if (hit) return hit.toLowerCase()
+  const n = String(t.nombre ?? '').toLowerCase()
+  if (/bater|drum|kit/.test(n)) return 'drums'
+  if (/bajo|bass/.test(n)) return 'bass'
+  if (/guitar/.test(n)) return 'guitar'
+  if (/piano/.test(n)) return 'piano'
+  if (/keys|teclado|organ/.test(n)) return 'keys'
+  if (/pad|ambient/.test(n)) return 'pad'
+  if (/string|cuerda/.test(n)) return 'strings'
+  if (/choir|coro/.test(n)) return 'choir'
+  if (/lead|melody/.test(n)) return 'lead'
+  return undefined
+}
+
+function trackAudioConfigFromShared(t: {
+  id: string
+  volumen?: number
+  paneo?: number
+  silenciada?: boolean
+  soloActiva?: boolean
+  nombre?: string
+  tags?: string[]
+  plugins?: { bypass?: boolean; licencia?: string; nombre?: string }[]
+}): TrackAudioConfig {
+  const hit = findTrackPlaybackInstrument(t.plugins as never)
+  const loaded = hit?.kind === 'vst' ? getLoadedInstrumentForTrack(t.id) : null
+  const hasSoftPad = trackHasSoftPad(t.plugins)
+  const hasVst = Boolean(loaded?.slotId)
+  return {
+    id: t.id,
+    volumen: typeof t.volumen === 'number' ? t.volumen : 0.8,
+    paneo: typeof t.paneo === 'number' ? t.paneo : 0,
+    silenciada: Boolean(t.silenciada),
+    soloActiva: Boolean(t.soloActiva),
+    vstInstrumentSlotId: loaded?.slotId,
+    softPadFallback: hasSoftPad && !hasVst,
+    softPadDual: hasSoftPad && hasVst,
+    softPadRole: inferSoftPadRoleFromTrack(t),
+  }
+}
 
 function esAudioClip(clip: unknown): clip is AudioClip {
   return (
@@ -147,12 +210,11 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     if (satellite) return
     return subscribeVstRuntime(() => {
       for (const t of sharedTracks) {
-        const hit = findTrackPlaybackInstrument(t.plugins)
-        const loaded = hit?.kind === 'vst' ? getLoadedInstrumentForTrack(t.id) : null
+        const cfg = trackAudioConfigFromShared(t)
         audioEngine.patchTrackVstInstrument(
           t.id,
-          loaded?.slotId,
-          hit?.kind === 'builtin',
+          cfg.vstInstrumentSlotId,
+          Boolean(cfg.softPadFallback || cfg.softPadDual),
         )
       }
     })
@@ -304,7 +366,10 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           const plugs = (t.plugins ?? [])
             .map((p) => `${p.id}:${p.bypass ? 1 : 0}`)
             .join(',')
-          return `${t.id}:${Boolean(t.silenciada)}:${Boolean(t.soloActiva)}:${typeof t.volumen === 'number' ? t.volumen : 0.8}:${typeof t.paneo === 'number' ? t.paneo : 0}:${plugs}`
+          const autos = (t.automatizaciones ?? [])
+            .map((a) => `${a.parametro}:${a.puntos?.length ?? 0}`)
+            .join(',')
+          return `${t.id}:${Boolean(t.silenciada)}:${Boolean(t.soloActiva)}:${typeof t.volumen === 'number' ? t.volumen : 0.8}:${typeof t.paneo === 'number' ? t.paneo : 0}:${plugs}:${autos}`
         })
         .join('|'),
     [sharedTracks],
@@ -320,22 +385,28 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (satellite) return
-    const tracksConfig: TrackAudioConfig[] = sharedTracks.map((t) => {
-      const hit = findTrackPlaybackInstrument(t.plugins)
-      const loaded = hit?.kind === 'vst' ? getLoadedInstrumentForTrack(t.id) : null
-      return {
-        id: t.id,
-        volumen: typeof t.volumen === 'number' ? t.volumen : 0.8,
-        paneo: typeof t.paneo === 'number' ? t.paneo : 0,
-        silenciada: Boolean(t.silenciada),
-        soloActiva: Boolean(t.soloActiva),
-        vstInstrumentSlotId: loaded?.slotId,
-        softPadFallback: hit?.kind === 'builtin',
-      }
-    })
+    const tracksConfig: TrackAudioConfig[] = sharedTracks.map((t) => trackAudioConfigFromShared(t))
     audioEngine.applyTracksConfig(tracksConfig)
     syncNativeChannelMix(sharedTracks, masterState)
   }, [satellite, trackMixSig, masterMixSig, sharedTracks, vstRuntimeGen, masterState])
+
+  // Automatización vol/pan en play: muestreo ~20 Hz del playhead
+  useEffect(() => {
+    if (satellite || !playing) return
+    let raf = 0
+    let last = 0
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick)
+      if (now - last < 50) return
+      last = now
+      const tSec = positionMsRef.current / 1000
+      const snapped = applyAutomationAtTime(sharedTracks, tSec)
+      syncNativeChannelMix(snapped, masterState)
+      applyParamAutomationAtTime(sharedTracks, tSec)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [satellite, playing, sharedTracks, masterState, trackMixSig])
 
   const clockRef = useRef<TransportClock | null>(null)
 
@@ -460,19 +531,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     }
 
     const trackAudioConfig = (): TrackAudioConfig[] =>
-      sharedTracks.map((t) => {
-        const hit = findTrackPlaybackInstrument(t.plugins)
-        const loaded = hit?.kind === 'vst' ? getLoadedInstrumentForTrack(t.id) : null
-        return {
-          id: t.id,
-          volumen: typeof t.volumen === 'number' ? t.volumen : 0.8,
-          paneo: typeof t.paneo === 'number' ? t.paneo : 0,
-          silenciada: Boolean(t.silenciada),
-          soloActiva: Boolean(t.soloActiva),
-          vstInstrumentSlotId: loaded?.slotId,
-          softPadFallback: hit?.kind === 'builtin',
-        }
-      })
+      sharedTracks.map((t) => trackAudioConfigFromShared(t))
 
     void (async () => {
       await audioEngine.armNativeMixOutput()
@@ -494,7 +553,11 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         const cfg = trackAudioConfig()
         audioEngine.applyTracksConfig(cfg)
         for (const t of cfg) {
-          audioEngine.patchTrackVstInstrument(t.id, t.vstInstrumentSlotId, t.softPadFallback)
+          audioEngine.patchTrackVstInstrument(
+            t.id,
+            t.vstInstrumentSlotId,
+            Boolean(t.softPadFallback || t.softPadDual),
+          )
         }
         syncNativeChannelMix(sharedTracks, masterState)
       })

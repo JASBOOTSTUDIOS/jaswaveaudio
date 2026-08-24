@@ -4,6 +4,7 @@
 
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import type { DAWState } from '../../../shared/src/types/state'
+import type { MusicBuildAiPartial } from './music-build/types'
 import {
   composeMidiFromBrief,
   hashSeed,
@@ -140,9 +141,13 @@ export function buildAgentSystemPrompt(
     modePromptBlock(resolvedMode),
     '',
     '## Rol: ingeniero de sonido / arreglista de JasWave',
-    'Controlas el proyecto REAL. Criterio de estudio: género, instrumento, velocidad por nota, articulación, rango MIDI, dinámica.',
+    'Controlas el proyecto REAL. TÚ decides el arreglo (género, forma, progresiones por sección, roles). El motor solo renderiza MIDI; NO asumas plantilla worship/pop.',
+    '- Obliga: en canciones declara genero + secciones[{nombre,bars,degrees,density}] + pistas[{nombre,rol,articulacion,pluginId?}].',
+    '- Armonía: cada sección puede tener su progresión (Nashville 1–7). Contraste verso≠coro≠puente.',
+    '- Anti-repetición y dinámica humanas. Tras generar, midi.humanize / applyGroove si suena mecánico.',
+    '- Instrumentos: catálogo VST + biblioteca del proyecto (library.preset.*). Antes de un VST dudoso: plugin.probe.',
     'NUNCA digas que uses Ableton/Logic. NUNCA digas que no puedes generar MIDI.',
-    'NUNCA uses una plantilla de canción ni asumas C menor si el usuario pidió otra tonalidad (p.ej. F#, 6-4-1-3).',
+    'NUNCA uses una plantilla fija ni asumas C menor si el usuario pidió otra tonalidad.',
     'Si pide solo un clip en la pista seleccionada: una acción de clip. Sin track.create.',
     'Responde al usuario SOLO en español natural (1-3 frases). NO pegues JSON ni bloques ACTIONS en el texto visible.',
     'Las acciones van SOLO dentro del bloque delimitado (el cliente las ejecuta y las oculta).',
@@ -162,14 +167,18 @@ export function buildAgentSystemPrompt(
     '- track.toggleMute|track.toggleSolo|track.toggleArm { trackId }',
     '- transport.toggle | transport.stop | transport.toggleLoop | transport.toggleMetronome | transport.toggleRecord',
     '- transport.seek { segundos }',
-    '- daw.musicBuild { aplicar, prompt, nombre?, bpm?, minutos? }',
-    '  ← Canción completa por fases (spec → marcadores → pistas → VST catálogo → MIDI validado → mix). No es createCompleteSong: orquesta track.*/midi.*/plugin.*/marker.*.',
-    '- daw.composeProject { aplicar, nombre?, bpm?, tonalidad?, minutos?, pistas:[{ nombre, rol, pluginNombre?, pluginId?, articulacion? }] }',
-    '  ← Arreglo ya listado: crea pistas, carga VST del catálogo y genera MIDI con el mapa de notas de CADA instrumento (batería ≠ piano).',
-    '- plugin.lookup { nombre }  ← manual + mapa MIDI (local y, si hace falta, internet)',
-    '  ← El cliente genera CADA nota (pitch, inicio, duración, velocidad) a partir del brief. Tú decides el criterio musical; no dejes progresión/tonalidad vacías si el usuario las dijo.',
-    '- midi.clip.create { pistaId, nombre?, inicio?, duracion?, notas:[{pitch,inicio,duracion,velocidad}] }  ← si ya tienes las notas',
-    '- midi.notes.set { pistaId, clipId, notas:[...] }  ← modificar un clip @mencionado',
+    '- daw.musicBuild { aplicar, prompt, nombre?, bpm?, minutos?, genero?, progresion?, secciones:[{nombre|name,bars|compases,degrees|progresion,density?}], pistas:[{nombre,rol,articulacion?,pluginId?,presetId?}] }',
+    '  ← TÚ defines el spec. El cliente mergea tu JSON sobre heurísticas. Preferible spec completo.',
+    '- daw.composeProject { aplicar, nombre?, bpm?, tonalidad?, minutos?, genero?, progresion?, secciones?, pistas:[...] }',
+    '- daw.generateMidiSong { aplicar, prompt?, progresion?, secciones?, genero?, articulacion?, minutos?, bpm?, seed?, pistaId? }',
+    '- plugin.lookup { nombre }  ← manual + mapa MIDI',
+    '- plugin.probe { pluginId? | path? | nombre? }  ← ¿carga en el host?',
+    '- library.preset.list | library.preset.search { query?, rol?, genero? }',
+    '- library.preset.save { trackId?, pluginInstanceId?, nombre, rol?, generoTags?, notas? }',
+    '- library.preset.apply { presetId, trackId }',
+    '- library.preset.audition { presetId, bars?, articulacion? }',
+    '- midi.clip.create { pistaId, nombre?, inicio?, duracion?, notas:[{pitch,inicio,duracion,velocidad}] }',
+    '- midi.notes.set { pistaId, clipId, notas:[...] }',
     '- midi.transpose { pistaId, clipId, semitonos, noteIds? }',
     '- midi.quantize { pistaId, clipId, gridBeats, strength? }',
     '- midi.humanize { pistaId, clipId, seed, timingAmount?, velocityAmount? }',
@@ -184,31 +193,34 @@ export function buildAgentSystemPrompt(
     '- clip.move { pistaId, clipId, inicio, pistaDestinoId? }',
     '- master.update { datos: { volumen?, paneo?, muted? } }',
     '- track.getFxChain { trackId }',
-    '- plugin.insert { trackId, plugin: { nombre, tipo, ... } }  ← elige del catálogo por nombre; no inventes VSTs que no existan',
+    '- plugin.insert { trackId, plugin: { nombre, tipo, estadoPluginBase64?, ... }, presetId? }',
     '- plugin.remove { trackId, pluginInstanceId }',
     '- plugin.move { trackId, pluginInstanceId, toIndex }',
     '- plugin.bypass { trackId, pluginInstanceId, bypass }',
     '- plugin.duplicate { trackId, pluginInstanceId }',
     '- plugin.replace { trackId, pluginInstanceId, plugin: {...} }',
     '- plugin.setParameter { trackId, pluginInstanceId, parameterId, normalizedValue 0..1, delta? }',
-    '- plugin.listParameters { trackId, pluginInstanceId? }  ← descubre knobs REALES del VST (IEditController). Obligatoria antes de tocar un plugin.',
-    '- plugin.searchParameters { trackId, query, pluginInstanceId? }  ← "brightness", "cutoff", "sustain", "attack"…',
+    '- plugin.listParameters { trackId, pluginInstanceId? }',
+    '- plugin.searchParameters { trackId, query, pluginInstanceId? }',
     '- plugin.getParameter { trackId, pluginInstanceId, parameterId }',
-    '- midi.setVelocity { pistaId, clipId, velocity? | relativeFactor?, noteIds? }',
-    '- midi.setCC { pistaId, clipId, cc, puntos:[{tiempo,valor:0..1}] }  ← CC64 = sustain',
-    '- midi.setPitchBend { pistaId, clipId, puntos:[{tiempo,valor:-1..1}] }',
-    '- midi.humanize | midi.transpose | midi.quantize | midi.makeStaccato | midi.makeLegato { pistaId, clipId, ... }',
     '- fxChain.copy | fxChain.paste { trackId, plugins? }',
     '- fxChain.loadPreset { trackId, presetId, nombre, plugins:[...] }',
-    '- render.start { format:"wav", startSec?, endSec?, outputPath?, sampleRate? }',
+    '- render.start { format:"wav"|"flac"|"mp3", startSec?, endSec?, stems?, normalize?: "peak"|"lufs"|false, listenTarget?, outputPath?, sampleRate?, bitDepth?, bitrate? }',
     '- render.cancel { renderJobId } | render.getStatus { renderJobId }',
-    '- analysis.loudness { source?: "render"|"play", jobId? }  ← LUFS reales post-bounce',
+    '- analysis.loudness | analysis.spectrum | analysis.stereo | analysis.fullReport { jobId? }',
     '- analysis.compareTarget { target: "streaming"|"club"|"cd", jobId? }',
+    '- daw.masterPass { target?: "streaming"|"club"|"cd", genero?, minutes? }',
+    '- automation.setCurve { trackId, parametro: "volumen"|"paneo"|paramId, puntos:[{tiempo,valor}] }',
+    '- automation.clear { trackId, parametro? }',
+    '- bus.create { nombre? } | send.set { trackId, busId, amount 0..1, preFader? } | sidechain.connect { origenTrackId, destinoTrackId }',
+    '- track.freeze { trackId } | track.unfreeze { trackId }',
+    '- audio.listDevices | audio.getDevice | audio.setDevice { backend, deviceId?, sampleRate?, bufferSize? } | audio.ensureBest { preferName? }',
     docsPromptActions(),
     '',
-    'MIDI: cada nota necesita velocidad propia (1-127). Sustain de piano/pad = midi.setCC cc:64. Al Stop/Pause el host envía panic (CC64=0 + all notes off).',
-    'VST: NUNCA simules la GUI. Usa plugin.listParameters / searchParameters y setParameter con ParamID del host. Si el nombre es opaco (P47) no inventes que es cutoff.',
-    'Si preguntan qué puede hacer un plugin, lista sus parámetros reales y elige el más cercano a la intención (brillo→cutoff, cola→release/reverb).',
+    'MIDI: velocidades propias por nota; densidad por sección. Sustain piano/pad = midi.setCC cc:64.',
+    'Arreglo: NO dejes que el motor invente la canción — manda genero/secciones/progresion en el payload.',
+    'VST: plugin.probe antes de confiar; library.preset.* para sonidos del proyecto. listParameters antes de setParameter.',
+    'Entrega: tras bounce/masterPass lee AudioListenReport (analysis.fullReport). NO digas "master listo" si listen.ok=false o compareTarget fuera de rango.',
   ].join('\n')
 }
 
@@ -783,12 +795,31 @@ export async function executeDawActions(
           const { executeMusicBuild, specToProjectPlan } = await import('./music-build')
           const promptText = String(p.prompt ?? p.nombre ?? '')
           const aplicar = p.aplicar === true || p.apply === true
+          const nested =
+            p.spec && typeof p.spec === 'object' ? (p.spec as Record<string, unknown>) : {}
+          const ai: MusicBuildAiPartial = {
+            nombre: p.nombre != null ? String(p.nombre ?? nested.nombre) : (nested.nombre != null ? String(nested.nombre) : undefined),
+            bpm: p.bpm != null ? (Number(p.bpm) as number) : (nested.bpm != null ? (Number(nested.bpm) as number) : undefined),
+            minutos: p.minutos != null ? (Number(p.minutos ?? nested.minutos ?? nested.minutes) as number) : (nested.minutos != null ? (Number(nested.minutos) as number) : (nested.minutes != null ? (Number(nested.minutes) as number) : undefined)),
+            tonalidad: p.tonalidad != null ? String(p.tonalidad ?? nested.tonalidad) : (nested.tonalidad != null ? String(nested.tonalidad) : undefined),
+            genero: p.genero != null ? String(p.genero ?? p.genre ?? nested.genero ?? nested.genre) : (p.genre != null ? String(p.genre) : (nested.genero != null ? String(nested.genero) : (nested.genre != null ? String(nested.genre) : undefined))),
+            progresion: (Array.isArray(p.progresion) ? (p.progresion as number[]) : (Array.isArray(p.progression) ? (p.progression as number[]) : (Array.isArray(nested.progresion) ? (nested.progresion as number[]) : (Array.isArray(nested.progression) ? (nested.progression as number[]) : undefined)))),
+            degrees: (Array.isArray(p.degrees) ? (p.degrees as number[]) : (Array.isArray(nested.degrees) ? (nested.degrees as number[]) : undefined)),
+            secciones: (Array.isArray(p.secciones) ? (p.secciones as NonNullable<MusicBuildAiPartial['secciones']>) : (Array.isArray(p.sections) ? (p.sections as NonNullable<MusicBuildAiPartial['secciones']>) : (Array.isArray(nested.secciones) ? (nested.secciones as NonNullable<MusicBuildAiPartial['secciones']>) : (Array.isArray(nested.sections) ? (nested.sections as NonNullable<MusicBuildAiPartial['secciones']>) : undefined)))),
+            sections: (Array.isArray(p.sections) ? (p.sections as NonNullable<MusicBuildAiPartial['sections']>) : (Array.isArray(nested.sections) ? (nested.sections as NonNullable<MusicBuildAiPartial['sections']>) : undefined)),
+            pistas: (Array.isArray(p.pistas) ? (p.pistas as NonNullable<MusicBuildAiPartial['pistas']>) : (Array.isArray(p.tracks) ? (p.tracks as NonNullable<MusicBuildAiPartial['pistas']>) : (Array.isArray(nested.pistas) ? (nested.pistas as NonNullable<MusicBuildAiPartial['pistas']>) : (Array.isArray(nested.tracks) ? (nested.tracks as NonNullable<MusicBuildAiPartial['pistas']>) : undefined)))),
+            tracks: (Array.isArray(p.tracks) ? (p.tracks as NonNullable<MusicBuildAiPartial['tracks']>) : (Array.isArray(nested.tracks) ? (nested.tracks as NonNullable<MusicBuildAiPartial['tracks']>) : undefined)),
+            keyRoot: p.keyRoot != null ? (Number(p.keyRoot) as number) : (nested.keyRoot != null ? (Number(nested.keyRoot) as number) : undefined),
+            scale: (p.scale === 'major' || p.scale === 'minor') ? p.scale : ((nested.scale === 'major' || nested.scale === 'minor') ? (nested.scale as 'major' | 'minor') : undefined),
+            keyLabel: p.keyLabel != null ? String(p.keyLabel ?? nested.keyLabel) : (nested.keyLabel != null ? String(nested.keyLabel) : undefined),
+          }
           const build = await executeMusicBuild(tienda, {
             prompt: promptText,
             aplicar,
             bpm: p.bpm != null ? Number(p.bpm) : undefined,
             nombre: p.nombre ? String(p.nombre) : undefined,
             minutos: p.minutos != null ? Number(p.minutos) : undefined,
+            ai,
           })
           const plan = specToProjectPlan(build.spec, build.applied)
           ensurePlanFromCompose(tienda.obtenerEstado().project.id, plan)
@@ -800,7 +831,7 @@ export async function executeDawActions(
             success: build.status !== 'failed',
             message: aplicar
               ? `Music Build «${build.spec.nombre}»: ${stageLine}`
-              : `Music Build planificado «${build.spec.nombre}»: ${build.spec.tracks.length} pistas · ${build.spec.sections.map((s) => s.name).join(' → ')}`,
+              : `Music Build planificado «${build.spec.nombre}»: ${build.spec.tracks.length} pistas · ${build.spec.sections.map((s) => s.name).join(' → ')}${build.spec.genero ? ` · ${build.spec.genero}` : ''}`,
             data: build,
           })
           break
@@ -876,11 +907,26 @@ export async function executeDawActions(
                     .join(', ')
             }
             if (t.tipo === 'audio') continue
-            const art = (t.articulacion as Articulation) || (t.rol === 'drums' ? 'drums' : t.rol === 'bass' ? 'bass' : 'arp')
+            const art = (t.articulacion as Articulation) || (t.rol === 'drums' ? 'drums' : t.rol === 'bass' ? 'bass' : 'pad')
             const brief = parseMidiBriefFromText(`${promptText} ${t.rol} ${t.nombre}`, plan.bpm)
             brief.articulation = art
             brief.minutes = plan.minutes
-            const song = composeMidiFromBrief(brief, { bpm: plan.bpm, seed: hashSeed(plan.nombre + t.nombre) })
+            if (Array.isArray(p.progresion) && (p.progresion as unknown[]).length >= 2) {
+              brief.degrees = (p.progresion as unknown[]).map((n) => Math.max(1, Math.min(7, Number(n))))
+            }
+            let barPlan: import('./midi-song-generator').MidiBarPlan[] | undefined
+            const secRaw = p.secciones ?? p.sections
+            if (Array.isArray(secRaw) && secRaw.length > 0) {
+              const { expandSectionsToBarPlan, normalizeAiSections } = await import('./music-build')
+              const sections = normalizeAiSections({ secciones: secRaw as never }) ?? []
+              if (sections.length) barPlan = expandSectionsToBarPlan(sections, brief.degrees)
+            }
+            const song = composeMidiFromBrief(brief, {
+              bpm: plan.bpm,
+              seed: hashSeed(plan.nombre + t.nombre),
+              barPlan,
+              aiDirected: !!barPlan?.length || Array.isArray(p.progresion),
+            })
             await tienda.executor.execute('midi.clip.create', {
               pistaId: trackId,
               nombre: t.nombre,
@@ -917,6 +963,9 @@ export async function executeDawActions(
           if (Array.isArray(p.progresion) && p.progresion.length >= 2) {
             brief.degrees = (p.progresion as unknown[]).map((n) => Math.max(1, Math.min(7, Number(n))))
           }
+          if (Array.isArray(p.progression) && p.progression.length >= 2) {
+            brief.degrees = (p.progression as unknown[]).map((n) => Math.max(1, Math.min(7, Number(n))))
+          }
           if (typeof p.articulacion === 'string') brief.articulation = p.articulacion as Articulation
           if (p.minutos != null) brief.minutes = Math.max(0.25, Number(p.minutos))
           const vel = p.velocidades as { base?: number; accent?: number } | undefined
@@ -932,7 +981,22 @@ export async function executeDawActions(
                 : hashSeed(String(p.seed))
               : hashSeed(promptText || brief.clipName)
 
-          const song = composeMidiFromBrief(brief, { seed, bpm })
+          let barPlan: import('./midi-song-generator').MidiBarPlan[] | undefined
+          const secRaw = p.secciones ?? p.sections
+          if (Array.isArray(secRaw) && secRaw.length > 0) {
+            const { expandSectionsToBarPlan, normalizeAiSections } = await import('./music-build')
+            const sections = normalizeAiSections({ secciones: secRaw as never }) ?? []
+            if (sections.length) {
+              barPlan = expandSectionsToBarPlan(sections, brief.degrees)
+            }
+          }
+
+          const song = composeMidiFromBrief(brief, {
+            seed,
+            bpm,
+            barPlan,
+            aiDirected: !!barPlan?.length || Array.isArray(p.progresion) || Array.isArray(p.progression),
+          })
           const nombre = String(p.nombre ?? brief.clipName)
           const mins = (song.durationBeats / Math.max(1, bpm)).toFixed(1)
           const apply = p.aplicar === true || p.apply === true
@@ -1082,6 +1146,18 @@ export async function executeDawActions(
         case 'plugin.insert': {
           const st = tienda.obtenerEstado()
           const trackId = String(p.trackId ?? getSelectedTrackId(st) ?? '')
+          const presetId = p.presetId ? String(p.presetId) : ''
+          if (presetId) {
+            const { libraryApplyPreset } = await import('./library/ops')
+            const applied = await libraryApplyPreset(tienda, { presetId, trackId })
+            results.push({
+              type: action.type,
+              success: applied.ok,
+              message: applied.message,
+              data: applied.probe,
+            })
+            break
+          }
           let plugin = p.plugin as Record<string, unknown> | undefined
           if (!plugin) {
             const byId = p.pluginId ? pluginRegistry.findById(String(p.pluginId)) : undefined
@@ -1099,11 +1175,16 @@ export async function executeDawActions(
             })
             break
           }
+          if (typeof p.estadoPluginBase64 === 'string') {
+            plugin = { ...plugin, estadoPluginBase64: p.estadoPluginBase64 }
+          }
           const r = await tienda.executor.execute('plugin.insert', { trackId, plugin, index: p.index })
           if (r.success) {
             try {
-              const { ensureTrackVstInstrument } = await import('./plugin/track-vst-runtime')
-              void ensureTrackVstInstrument(trackId, plugin as never)
+              const inserted =
+                tienda.obtenerEstado().project.tracks.find((t) => t.id === trackId)?.plugins?.at(-1) ??
+                (plugin as unknown as import('../../../shared/src/types/entidades').PluginInfo)
+              await ensureTrackVstPlugin(trackId, inserted as import('../../../shared/src/types/entidades').PluginInfo)
             } catch {
               /* host opcional */
             }
@@ -1112,9 +1193,112 @@ export async function executeDawActions(
             type: action.type,
             success: r.success,
             message: r.success
-              ? `Plugin «${String(plugin.nombre ?? 'plugin')}» en pista`
+              ? `Plugin «${String(plugin.nombre ?? plugin.name ?? '')}» insertado`
               : r.error?.message ?? 'Error plugin.insert',
-            data: r.result,
+          })
+          break
+        }
+        case 'plugin.probe': {
+          const { libraryProbeByRef } = await import('./library/ops')
+          const probe = await libraryProbeByRef({
+            pluginId: p.pluginId ? String(p.pluginId) : undefined,
+            path: p.path ? String(p.path) : undefined,
+            nombre: p.nombre ? String(p.nombre) : p.pluginName ? String(p.pluginName) : undefined,
+          })
+          results.push({
+            type: action.type,
+            success: probe.ok,
+            message: probe.ok ? `Probe OK: ${probe.path}` : `Probe falló: ${probe.message}`,
+            data: probe,
+          })
+          break
+        }
+        case 'library.preset.list': {
+          const { libraryList } = await import('./library/ops')
+          const list = libraryList(tienda)
+          results.push({
+            type: action.type,
+            success: true,
+            message: `${list.length} presets en biblioteca`,
+            data: {
+              presets: list.map((x) => ({
+                id: x.id,
+                nombre: x.nombre,
+                pluginNombre: x.pluginNombre,
+                rol: x.rol,
+                generoTags: x.generoTags,
+                probeOk: x.probeOk,
+              })),
+            },
+          })
+          break
+        }
+        case 'library.preset.search': {
+          const { librarySearch } = await import('./library/ops')
+          const list = librarySearch(tienda, {
+            query: p.query ? String(p.query) : undefined,
+            rol: p.rol ? String(p.rol) : undefined,
+            genero: p.genero ? String(p.genero) : p.genre ? String(p.genre) : undefined,
+          })
+          results.push({
+            type: action.type,
+            success: true,
+            message: `${list.length} presets`,
+            data: { presets: list },
+          })
+          break
+        }
+        case 'library.preset.save': {
+          const { librarySaveFromTrack } = await import('./library/ops')
+          const trackId = String(p.trackId ?? getSelectedTrackId(tienda.obtenerEstado()) ?? '')
+          const tags = Array.isArray(p.generoTags)
+            ? (p.generoTags as unknown[]).map(String)
+            : typeof p.genero === 'string'
+              ? [String(p.genero)]
+              : []
+          const saved = await librarySaveFromTrack(tienda, {
+            trackId,
+            pluginInstanceId: p.pluginInstanceId ? String(p.pluginInstanceId) : undefined,
+            nombre: String(p.nombre ?? 'Preset'),
+            rol: p.rol ? String(p.rol) : undefined,
+            generoTags: tags,
+            notas: p.notas ? String(p.notas) : undefined,
+          })
+          results.push({
+            type: action.type,
+            success: saved.ok,
+            message: saved.message,
+            data: saved.preset,
+          })
+          break
+        }
+        case 'library.preset.apply': {
+          const { libraryApplyPreset } = await import('./library/ops')
+          const trackId = String(p.trackId ?? getSelectedTrackId(tienda.obtenerEstado()) ?? '')
+          const applied = await libraryApplyPreset(tienda, {
+            presetId: String(p.presetId ?? ''),
+            trackId,
+          })
+          results.push({
+            type: action.type,
+            success: applied.ok,
+            message: applied.message,
+            data: applied.probe,
+          })
+          break
+        }
+        case 'library.preset.audition': {
+          const { libraryAuditionPreset } = await import('./library/ops')
+          const aud = await libraryAuditionPreset(tienda, {
+            presetId: String(p.presetId ?? ''),
+            bars: p.bars != null ? Number(p.bars) : 2,
+            articulacion: p.articulacion ? String(p.articulacion) : undefined,
+          })
+          results.push({
+            type: action.type,
+            success: aud.ok,
+            message: aud.message,
+            data: { trackId: aud.trackId },
           })
           break
         }
@@ -1342,7 +1526,15 @@ export async function executeDawActions(
         case 'render.cancel':
         case 'render.getStatus':
         case 'analysis.loudness':
-        case 'analysis.compareTarget': {
+        case 'analysis.compareTarget':
+        case 'analysis.spectrum':
+        case 'analysis.stereo':
+        case 'analysis.fullReport':
+        case 'automation.setCurve':
+        case 'automation.clear':
+        case 'bus.create':
+        case 'send.set':
+        case 'sidechain.connect': {
           const r = await tienda.executor.execute(action.type, (action.payload ?? {}) as Record<string, unknown>)
           if (action.type === 'render.start' && r.success && r.result) {
             const job = r.result as import('../../../shared/src/types/render').RenderJob
@@ -1350,20 +1542,43 @@ export async function executeDawActions(
               const { runNativeBounce, buildRuntimeBounceContent } = await import(
                 '@/src/lib/bounce-service'
               )
-              const content = buildRuntimeBounceContent(tienda.obtenerEstado(), {
+              const stBounce = tienda.obtenerEstado()
+              const content = buildRuntimeBounceContent(stBounce, {
                 startSec: job.start.segundos ?? 0,
                 endSec: job.end.segundos,
               })
-              const done = await runNativeBounce(job, content)
+              const done = await runNativeBounce(job, content, undefined, stBounce)
+              const listen = done.listenReport
+              const listenLine = listen
+                ? ` · listen: ${listen.ok ? 'OK' : 'ISSUE'} ${listen.summary}`
+                : ''
               results.push({
                 type: action.type,
                 success: done.status === 'completed',
                 message:
                   done.status === 'completed'
-                    ? `Bounce OK ${done.outputPath} (${done.loudness?.integrated?.toFixed(1) ?? '?'} LUFS)`
+                    ? `Bounce OK ${done.outputPath} (${done.loudness?.integrated?.toFixed(1) ?? '?'} LUFS)${listenLine}`
                     : done.error ?? done.status,
                 data: done,
               })
+              if (listen && stBounce.project.id) {
+                try {
+                  const { writeAgentDoc, PLAN_SLUG, getAgentDoc, setMarkdownSection } = await import(
+                    './agent-docs'
+                  )
+                  const prev = getAgentDoc(stBounce.project.id, PLAN_SLUG)?.content ?? '# Plan\n'
+                  if (!prev.includes(listen.summary.slice(0, 40))) {
+                    const next = setMarkdownSection(
+                      prev,
+                      'Evaluación',
+                      `AudioListenReport: ${listen.summary}\n`,
+                    )
+                    writeAgentDoc(stBounce.project.id, PLAN_SLUG, next, { origin: 'ai' })
+                  }
+                } catch {
+                  /* optional */
+                }
+              }
             } catch (e) {
               results.push({
                 type: action.type,
@@ -1381,6 +1596,91 @@ export async function executeDawActions(
               data: r.result,
             })
           }
+          break
+        }
+        case 'daw.masterPass': {
+          const { runMasterPass } = await import('./master-pass')
+          const p = (action.payload ?? {}) as {
+            target?: 'streaming' | 'club' | 'cd'
+            genero?: string
+            minutes?: number
+          }
+          const mp = await runMasterPass(tienda, p)
+          results.push({
+            type: action.type,
+            success: mp.ok,
+            message: mp.message,
+            data: mp,
+          })
+          break
+        }
+        case 'track.freeze': {
+          const { freezeTrack } = await import('./track-freeze')
+          const trackId = String((action.payload as { trackId?: string })?.trackId ?? '')
+          const fr = await freezeTrack(tienda, trackId)
+          results.push({ type: action.type, success: fr.ok, message: fr.message, data: fr })
+          break
+        }
+        case 'track.unfreeze': {
+          const { unfreezeTrack } = await import('./track-freeze')
+          const trackId = String((action.payload as { trackId?: string })?.trackId ?? '')
+          const fr = await unfreezeTrack(tienda, trackId)
+          results.push({ type: action.type, success: fr.ok, message: fr.message, data: fr })
+          break
+        }
+        case 'audio.listDevices': {
+          const { listAudioDevices } = await import('./audio-device-cli')
+          const r = await listAudioDevices()
+          results.push({
+            type: action.type,
+            success: r.ok,
+            message: r.ok
+              ? `${r.devices?.length ?? 0} dispositivos · actual: ${r.audio?.backend}/${r.audio?.deviceName || '?'}`
+              : r.message || 'list falló',
+            data: r,
+          })
+          break
+        }
+        case 'audio.getDevice': {
+          const { getAudioDevice } = await import('./audio-device-cli')
+          const r = await getAudioDevice()
+          results.push({
+            type: action.type,
+            success: r.ok,
+            message: r.audio
+              ? `${r.audio.backend} · ${r.audio.deviceName} · ${r.audio.sampleRate}Hz/${r.audio.bufferSize} running=${r.audio.running}`
+              : r.message || 'sin audio',
+            data: r,
+          })
+          break
+        }
+        case 'audio.setDevice': {
+          const { setAudioDevice } = await import('./audio-device-cli')
+          const r = await setAudioDevice(tienda, {
+            backend: String(p.backend ?? 'asio'),
+            deviceId: p.deviceId != null ? String(p.deviceId) : undefined,
+            sampleRate: p.sampleRate != null ? Number(p.sampleRate) : undefined,
+            bufferSize: p.bufferSize != null ? Number(p.bufferSize) : undefined,
+            exclusive: p.exclusive === true,
+          })
+          results.push({ type: action.type, success: r.ok, message: r.message, data: r })
+          break
+        }
+        case 'audio.ensureBest': {
+          const { ensureBestAudioDevice } = await import('./audio-device-cli')
+          const r = await ensureBestAudioDevice(tienda, p.preferName ? String(p.preferName) : 'UMC')
+          results.push({ type: action.type, success: r.ok, message: r.message, data: r })
+          break
+        }
+        case 'project.new': {
+          const nombre = String(p.nombre ?? 'Proyecto nuevo').trim() || 'Proyecto nuevo'
+          const r = await tienda.executor.execute('project.new', { nombre })
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success ? `Proyecto nuevo «${nombre}»` : r.error?.message ?? 'Error project.new',
+            data: r.result,
+          })
           break
         }
         default:

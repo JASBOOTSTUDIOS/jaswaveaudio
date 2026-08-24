@@ -1,5 +1,5 @@
 /**
- * Diálogo de bounce WAV + progreso.
+ * Diálogo de bounce/export WAV/FLAC/MP3 + stems + normalize + informe.
  */
 
 import { useCallback, useEffect, useState } from 'react'
@@ -16,6 +16,10 @@ export function ExportBounceDialog({ open, onClose }: Props) {
   const tienda = useDAW()
   const [endSec, setEndSec] = useState(30)
   const [bitDepth, setBitDepth] = useState(24)
+  const [format, setFormat] = useState<'wav' | 'flac' | 'mp3'>('wav')
+  const [stems, setStems] = useState(false)
+  const [normalize, setNormalize] = useState<'off' | 'peak' | 'lufs'>('off')
+  const [listenTarget, setListenTarget] = useState<'streaming' | 'club' | 'cd' | 'off'>('streaming')
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState(0)
   const [message, setMessage] = useState('')
@@ -36,15 +40,20 @@ export function ExportBounceDialog({ open, onClose }: Props) {
     setProgress(0)
     let startedId: string | null = null
     try {
+      const ext = format === 'wav' ? 'wav' : format
       const path =
-        (await window.electron?.dialogSave?.(`bounce-${Date.now()}.wav`)) || undefined
+        (await window.electron?.dialogSave?.(`bounce-${Date.now()}.${ext}`)) || undefined
       const r = await tienda.executor.execute('render.start', {
-        format: 'wav',
+        format,
         startSec: 0,
         endSec,
         outputPath: path || undefined,
         sampleRate: 48000,
         bitDepth,
+        stems,
+        normalize: normalize === 'off' ? false : normalize,
+        listenTarget: listenTarget === 'off' ? undefined : listenTarget,
+        bitrate: format === 'mp3' ? 192 : undefined,
       })
       if (!r.success || !r.result) {
         throw new Error(String(r.error ?? 'render.start falló'))
@@ -52,7 +61,8 @@ export function ExportBounceDialog({ open, onClose }: Props) {
       const job = r.result as RenderJob
       startedId = job.id
       setJobId(job.id)
-      const content = buildRuntimeBounceContent(tienda.obtenerEstado(), {
+      const st = tienda.obtenerEstado()
+      const content = buildRuntimeBounceContent(st, {
         startSec: 0,
         endSec,
       })
@@ -60,15 +70,19 @@ export function ExportBounceDialog({ open, onClose }: Props) {
         if (typeof payload.progress === 'number') {
           setProgress(Math.round(Number(payload.progress) * 100))
         }
-      })
+      }, st)
       if (done.status === 'cancelled') {
         setMessage('Cancelado')
       } else if (done.status === 'completed') {
         setProgress(100)
         const lufs = done.loudness?.integrated?.toFixed(1) ?? '?'
-        setMessage(`Listo: ${done.outputPath} · ${lufs} LUFS`)
+        const listen = done.listenReport?.summary ?? ''
+        const stemN = done.stemsPaths?.length ?? 0
+        setMessage(
+          `Listo: ${done.outputPath} · ${lufs} LUFS${stemN ? ` · ${stemN} stems` : ''}${listen ? ` · ${listen}` : ''}`,
+        )
         try {
-          await tienda.executor.execute('analysis.loudness', { source: 'render', jobId: done.id })
+          await tienda.executor.execute('analysis.fullReport', { jobId: done.id })
         } catch {
           /* ok */
         }
@@ -83,7 +97,7 @@ export function ExportBounceDialog({ open, onClose }: Props) {
     } finally {
       setBusy(false)
     }
-  }, [endSec, bitDepth, tienda])
+  }, [endSec, bitDepth, format, stems, normalize, listenTarget, tienda])
 
   const cancel = useCallback(async () => {
     if (!jobId) return
@@ -95,11 +109,24 @@ export function ExportBounceDialog({ open, onClose }: Props) {
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-md rounded-lg border border-border bg-panel p-4 shadow-xl">
-        <h2 className="text-sm font-semibold text-foreground">Exportar bounce (WAV)</h2>
+        <h2 className="text-sm font-semibold text-foreground">Exportar / bounce</h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          Misma cadena nativa que Play (stems → FX → master). WAV PCM16/24 estéreo.
+          Misma cadena nativa que Play. WAV siempre; FLAC/MP3 si ffmpeg está disponible.
         </p>
         <label className="mt-4 flex items-center justify-between gap-3 text-xs">
+          <span>Formato</span>
+          <select
+            value={format}
+            disabled={busy}
+            onChange={(e) => setFormat(e.target.value as 'wav' | 'flac' | 'mp3')}
+            className="w-28 rounded border border-border bg-panel-raised px-2 py-1"
+          >
+            <option value="wav">WAV</option>
+            <option value="flac">FLAC</option>
+            <option value="mp3">MP3</option>
+          </select>
+        </label>
+        <label className="mt-2 flex items-center justify-between gap-3 text-xs">
           <span>Duración (s)</span>
           <input
             type="number"
@@ -115,13 +142,51 @@ export function ExportBounceDialog({ open, onClose }: Props) {
           <span>Profundidad</span>
           <select
             value={bitDepth}
-            disabled={busy}
+            disabled={busy || format !== 'wav'}
             onChange={(e) => setBitDepth(Number(e.target.value) === 24 ? 24 : 16)}
             className="w-24 rounded border border-border bg-panel-raised px-2 py-1"
           >
             <option value={16}>PCM 16-bit</option>
             <option value={24}>PCM 24-bit</option>
           </select>
+        </label>
+        <label className="mt-2 flex items-center justify-between gap-3 text-xs">
+          <span>Normalizar</span>
+          <select
+            value={normalize}
+            disabled={busy}
+            onChange={(e) => setNormalize(e.target.value as 'off' | 'peak' | 'lufs')}
+            className="w-28 rounded border border-border bg-panel-raised px-2 py-1"
+          >
+            <option value="off">Off</option>
+            <option value="peak">Peak −1 dB</option>
+            <option value="lufs">LUFS −14</option>
+          </select>
+        </label>
+        <label className="mt-2 flex items-center justify-between gap-3 text-xs">
+          <span>Listen target</span>
+          <select
+            value={listenTarget}
+            disabled={busy}
+            onChange={(e) =>
+              setListenTarget(e.target.value as 'streaming' | 'club' | 'cd' | 'off')
+            }
+            className="w-28 rounded border border-border bg-panel-raised px-2 py-1"
+          >
+            <option value="streaming">Streaming</option>
+            <option value="club">Club</option>
+            <option value="cd">CD</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+        <label className="mt-2 flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={stems}
+            disabled={busy}
+            onChange={(e) => setStems(e.target.checked)}
+          />
+          Exportar stems por pista
         </label>
         <div className="mt-3 h-2 overflow-hidden rounded bg-panel-raised">
           <div className="h-full bg-accent-amber transition-all" style={{ width: `${progress}%` }} />
@@ -150,7 +215,7 @@ export function ExportBounceDialog({ open, onClose }: Props) {
               className="rounded bg-accent-amber/90 px-3 py-1.5 text-xs font-medium text-black"
               onClick={() => void start()}
             >
-              Bounce
+              Exportar
             </button>
           )}
         </div>

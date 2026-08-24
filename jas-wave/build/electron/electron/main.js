@@ -15,6 +15,7 @@ const fs = require('fs/promises');
 const fsSync = require('fs');
 const ai_gateway_1 = require("./ai-gateway");
 const plugin_lookup_1 = require("./plugin-lookup");
+const agent_bridge_1 = require("./agent-bridge");
 let mainWindow = null;
 /** Icono de app (ventana / taskbar). */
 function resolveAppIconPath() {
@@ -172,6 +173,9 @@ app.whenReady().then(() => {
     }
     buildAppMenu();
     createWindow();
+    (0, agent_bridge_1.startAgentBridge)({
+        getMainWindow: () => mainWindow,
+    });
 });
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
@@ -179,6 +183,7 @@ app.on('window-all-closed', () => {
     }
 });
 app.on('before-quit', () => {
+    (0, agent_bridge_1.stopAgentBridge)();
     try {
         require('./plugin-host-bridge').stopPluginHost();
     }
@@ -192,6 +197,9 @@ app.on('activate', () => {
     }
 });
 ipcMain.handle('get-app-version', () => app.getVersion());
+ipcMain.on('agent-bridge-reply', (_event, id, result, error) => {
+    (0, agent_bridge_1.resolveAgentBridgeReply)(String(id), result, error ? String(error) : undefined);
+});
 ipcMain.handle('window-minimize', () => {
     if (mainWindow)
         mainWindow.minimize();
@@ -236,6 +244,32 @@ ipcMain.handle('file-save-binary', (_event, ruta, data) => __awaiter(void 0, voi
         return { success: false, error: err instanceof Error ? err.message : 'Unknown error' };
     }
 }));
+ipcMain.handle('ffmpeg-convert', (_event_1, input_1, output_1, ...args_1) => __awaiter(void 0, [_event_1, input_1, output_1, ...args_1], void 0, function* (_event, input, output, extraArgs = []) {
+    try {
+        const { spawn } = yield Promise.resolve().then(() => require('node:child_process'));
+        yield fs.mkdir(path.dirname(output), { recursive: true });
+        const args = ['-y', '-i', input, ...extraArgs, output];
+        yield new Promise((resolve, reject) => {
+            var _a;
+            const child = spawn('ffmpeg', args, { windowsHide: true });
+            let err = '';
+            (_a = child.stderr) === null || _a === void 0 ? void 0 : _a.on('data', (d) => {
+                err += d.toString();
+            });
+            child.on('error', (e) => reject(e));
+            child.on('close', (code) => {
+                if (code === 0)
+                    resolve();
+                else
+                    reject(new Error(err.slice(-400) || `ffmpeg exit ${code}`));
+            });
+        });
+        return { ok: true, output };
+    }
+    catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+}));
 ipcMain.handle('file-read-binary', (_event, ruta) => __awaiter(void 0, void 0, void 0, function* () {
     const buf = yield fs.readFile(ruta);
     return buf;
@@ -251,6 +285,26 @@ ipcMain.handle('recordings-dir', (_event, projectPath) => __awaiter(void 0, void
 ipcMain.handle('file-read', (_event, ruta) => __awaiter(void 0, void 0, void 0, function* () {
     const contenido = yield fs.readFile(ruta, 'utf-8');
     return contenido;
+}));
+ipcMain.handle('file-list-dir', (_event, dir) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const entries = yield fs.readdir(dir, { withFileTypes: true });
+        return {
+            success: true,
+            entries: entries.map((e) => ({
+                name: e.name,
+                isDirectory: e.isDirectory(),
+                isFile: e.isFile(),
+            })),
+        };
+    }
+    catch (err) {
+        return {
+            success: false,
+            error: err instanceof Error ? err.message : 'list failed',
+            entries: [],
+        };
+    }
 }));
 ipcMain.handle('file-exists', (_event, ruta) => __awaiter(void 0, void 0, void 0, function* () {
     try {

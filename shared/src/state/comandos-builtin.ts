@@ -93,7 +93,23 @@ import {
 import {
   crearComandoAnalysisLoudness,
   crearComandoAnalysisCompareTarget,
+  crearComandoAnalysisSpectrum,
+  crearComandoAnalysisStereo,
+  crearComandoAnalysisFullReport,
 } from '../commands/analysis-commands';
+import {
+  crearComandoAutomationSetCurve,
+  crearComandoAutomationClear,
+} from '../commands/automation-commands';
+import {
+  crearComandoBusCreate,
+  crearComandoSendSet,
+  crearComandoSidechainConnect,
+} from '../commands/routing-commands';
+import {
+  crearComandoTrackFreeze,
+  crearComandoTrackUnfreeze,
+} from '../commands/freeze-commands';
 
 /**
  * Crea un evento de dominio estandarizado para el bus.
@@ -208,6 +224,16 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoRenderGetStatus(), registry);
   registrar(crearComandoAnalysisLoudness(), registry);
   registrar(crearComandoAnalysisCompareTarget(), registry);
+  registrar(crearComandoAnalysisSpectrum(), registry);
+  registrar(crearComandoAnalysisStereo(), registry);
+  registrar(crearComandoAnalysisFullReport(), registry);
+  registrar(crearComandoAutomationSetCurve(), registry);
+  registrar(crearComandoAutomationClear(), registry);
+  registrar(crearComandoBusCreate(), registry);
+  registrar(crearComandoSendSet(), registry);
+  registrar(crearComandoSidechainConnect(), registry);
+  registrar(crearComandoTrackFreeze(), registry);
+  registrar(crearComandoTrackUnfreeze(), registry);
 }
 /**
  * Alias de `registrarComandosBuiltin` para registrar comandos de proyecto.

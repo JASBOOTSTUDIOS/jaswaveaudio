@@ -100,7 +100,7 @@ describe('agent-harness producción', () => {
     )
   })
 
-  it('para el bucle si la firma de error no cambia', async () => {
+  it('para el bucle si la firma de error no cambia (stale limit)', async () => {
     const broken: ActionResult[] = [{ type: 'plugin.insert', success: false, message: 'boom' }]
     let chats = 0
     const out = await runHarnessFollowups({
@@ -109,18 +109,36 @@ describe('agent-harness producción', () => {
       evaluation: null,
       actionsSummary: '✗ boom',
       projectId: 'p1',
-      maxRepairTurns: 3,
+      maxRepairTurns: 5,
       chat: async () => {
         chats += 1
-        return { success: true, content: 'no pude\n<<<ACTIONS\n[]\nACTIONS>>>' }
+        return {
+          success: true,
+          content: `intento ${chats}\n<<<ACTIONS\n[{"type":"midi.notes.set","payload":{"clipId":"c${chats}"}}]\nACTIONS>>>`,
+        }
       },
-      parseActions: () => [{ type: 'plugin.insert', payload: { nombre: 'Analog Lab' } }],
+      parseActions: () => [{ type: 'midi.notes.set', payload: { pistaId: 't1', clipId: `c${chats}` } }],
       execute: async () => [{ type: 'plugin.insert', success: false, message: 'boom' }],
       getState: () => midiState({ nombre: 'X', notes: 4 }),
       formatResults: (r) => r.map((x) => x.message).join('\n'),
     })
     assert.equal(out.stoppedReason, 'no-progress')
-    assert.equal(chats, 1)
+    assert.ok(chats >= 2)
+  })
+
+  it('plan incompleto tras mutar es error reparable', () => {
+    const results: ActionResult[] = [{ type: 'track.create', success: true, message: 'ok' }]
+    const report = inspectDawHealth(midiState({ nombre: 'Bajo', notes: 8 }), results, {
+      planned: 2,
+      done: 0,
+      missing: ['Pista «Lead»', 'Pista «Pad»'],
+      extraTracks: [],
+      summary: '0/2',
+      markdown: '',
+    })
+    assert.ok(report.errors.some((e) => e.code === 'plan-incomplete'))
+    assert.ok(report.debugDump.includes('Bajo'))
+    assert.equal(harnessShouldRepair(report), true)
   })
 
   it('para si el modelo no emite acciones nuevas', async () => {

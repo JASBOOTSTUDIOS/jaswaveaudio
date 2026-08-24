@@ -92,6 +92,10 @@ declare global {
       onPluginHostRestarted?: (callback: () => void) => () => void
       pluginHostPushPcm: (samples: Float32Array | ArrayBuffer | Uint8Array) => void
       pluginHostStop: () => Promise<{ ok: boolean }>
+      onAgentBridgeRequest?: (
+        callback: (msg: { id: string; channel: string; payload: Record<string, unknown> }) => void,
+      ) => () => void
+      agentBridgeReply?: (id: string, result: unknown, error?: string) => void
       onNativeMidi?: (callback: (msg: { id: string; data: number[] }) => void) => () => void
     }
   }

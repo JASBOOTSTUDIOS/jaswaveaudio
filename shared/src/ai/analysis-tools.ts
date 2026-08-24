@@ -24,6 +24,33 @@ export function registrarAnalysisTools(registry: ToolRegistry): void {
       risk: 'read',
       tags: ['loudness', 'target', 'master'],
     },
+    {
+      type: 'analysis.spectrum',
+      name: 'analysis.spectrum',
+      version: '1.0.0',
+      description: 'Energía por bandas del último bounce',
+      category: 'audio',
+      risk: 'read',
+      tags: ['spectrum', 'eq'],
+    },
+    {
+      type: 'analysis.stereo',
+      name: 'analysis.stereo',
+      version: '1.0.0',
+      description: 'Correlación estéreo y clipping',
+      category: 'audio',
+      risk: 'read',
+      tags: ['stereo', 'correlation'],
+    },
+    {
+      type: 'analysis.fullReport',
+      name: 'analysis.fullReport',
+      version: '1.0.0',
+      description: 'AudioListenReport completo post-bounce',
+      category: 'audio',
+      risk: 'read',
+      tags: ['listen', 'master', 'report'],
+    },
   ]
 
   const viaCommand =

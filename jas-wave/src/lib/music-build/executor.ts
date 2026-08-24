@@ -4,13 +4,53 @@ import {
   hashSeed,
   parseMidiBriefFromText,
   type Articulation,
+  type MidiBarPlan,
 } from '../midi-song-generator'
 import { pluginRegistry } from '../plugin/registry'
-import { descriptorToPluginInfo } from '../plugin/plugin-info-adapter'
+import { descriptorToPluginInfo, softPadPluginInfo } from '../plugin/plugin-info-adapter'
 import { pickVstForRole, type InstrumentRole } from '../plugin-knowledge'
-import type { MusicBuildResult, MusicBuildSpec, MusicBuildStage, MidiValidationIssue } from './types'
-import { specFromPrompt } from './spec'
+import type {
+  MusicBuildAiPartial,
+  MusicBuildResult,
+  MusicBuildSpec,
+  MusicBuildStage,
+  MidiValidationIssue,
+  MusicSection,
+} from './types'
+import { buildMusicBuildSpec, mapSectionKind } from './spec'
 import { validateBuildNotes } from './validator'
+import { densityForSectionKind } from './form-density'
+
+/** Expande secciones IA → 1 plan por compás (grado + densidad). */
+export function expandSectionsToBarPlan(
+  sections: MusicSection[],
+  globalDegrees: number[],
+): MidiBarPlan[] {
+  const primary = globalDegrees.length >= 2 ? globalDegrees : [1, 4, 5, 1]
+  const out: MidiBarPlan[] = []
+  for (const s of sections) {
+    const kind = s.kind ?? mapSectionKind(s.name)
+    const prog = s.degrees && s.degrees.length >= 2 ? s.degrees : primary
+    const dens =
+      s.density != null && Number.isFinite(s.density)
+        ? Math.max(0.05, Math.min(1, s.density))
+        : densityForSectionKind(kind)
+    const n = Math.max(1, Math.min(64, s.bars || 4))
+    for (let i = 0; i < n; i++) {
+      out.push({
+        kind,
+        degree: prog[i % prog.length]!,
+        density: dens,
+      })
+    }
+  }
+  if (!out.length) {
+    for (let i = 0; i < 8; i++) {
+      out.push({ kind: 'verse', degree: primary[i % primary.length]!, density: 0.75 })
+    }
+  }
+  return out
+}
 
 const STAGE_DEFS: Array<{ id: MusicBuildStage['id']; label: string }> = [
   { id: 'spec', label: 'Especificación' },
@@ -19,7 +59,7 @@ const STAGE_DEFS: Array<{ id: MusicBuildStage['id']; label: string }> = [
   { id: 'tracks', label: 'Pistas' },
   { id: 'instruments', label: 'Instrumentos (catálogo)' },
   { id: 'midi', label: 'MIDI validado' },
-  { id: 'mix', label: 'Mezcla por rol' },
+  { id: 'mix', label: 'Mezcla de producción' },
   { id: 'validate', label: 'Validación' },
 ]
 
@@ -51,24 +91,69 @@ function colorForRole(rol: string): string {
 }
 
 function articulationOf(rol: string, explicit?: string): Articulation {
+  const ex = String(explicit ?? '')
+    .toLowerCase()
+    .trim()
   if (
-    explicit === 'drums' ||
-    explicit === 'bass' ||
-    explicit === 'strum' ||
-    explicit === 'arp' ||
-    explicit === 'pad' ||
-    explicit === 'melody' ||
-    explicit === 'block'
+    ex === 'drums' ||
+    ex === 'bass' ||
+    ex === 'strum' ||
+    ex === 'arp' ||
+    ex === 'pad' ||
+    ex === 'melody' ||
+    ex === 'block'
   ) {
-    return explicit
+    return ex
   }
+  if (ex === 'kit' || ex === 'percussion' || ex === 'perc') return 'drums'
+  if (ex === 'finger' || ex === 'fingerpicking' || ex === 'picking') return 'arp'
   if (rol === 'drums' || rol === 'percussion') return 'drums'
   if (rol === 'bass') return 'bass'
   if (rol === 'guitar') return 'strum'
   if (rol === 'pad' || rol === 'strings' || rol === 'choir') return 'pad'
   if (rol === 'lead' || rol === 'brass') return 'melody'
   if (rol === 'piano' || rol === 'keys') return 'block'
-  return 'arp'
+  return 'pad'
+}
+
+function resolveCatalogPlugin(t: {
+  pluginId?: string
+  pluginNombre?: string
+  rol: string
+}): ReturnType<typeof pluginRegistry.findById> {
+  const fuzzy = (q: string) => {
+    const hits = pluginRegistry.findByName(q)
+    if (hits[0]) return hits[0]
+    const compact = q.replace(/\s+/g, '').toLowerCase()
+    return pluginRegistry.list().find((d) => d.name.replace(/\s+/g, '').toLowerCase().includes(compact))
+  }
+  if (t.pluginId) {
+    const byId = pluginRegistry.findById(t.pluginId)
+    if (byId) return byId
+    const byIdAsName = fuzzy(t.pluginId)
+    if (byIdAsName) return byIdAsName
+  }
+  if (t.pluginNombre) {
+    const byName = fuzzy(t.pluginNombre)
+    if (byName) return byName
+  }
+  return pickVstForRole(pluginRegistry.list(), (t.rol as InstrumentRole) || 'unknown')
+}
+
+const SEND_BY_ROLE: Record<string, number> = {
+  drums: 0.18,
+  percussion: 0.22,
+  bass: 0.08,
+  guitar: 0.28,
+  piano: 0.32,
+  keys: 0.3,
+  pad: 0.42,
+  lead: 0.26,
+  strings: 0.38,
+  brass: 0.24,
+  choir: 0.4,
+  synth: 0.28,
+  fx: 0.35,
 }
 
 function initStages(): MusicBuildStage[] {
@@ -105,18 +190,33 @@ export function specToProjectPlan(spec: MusicBuildSpec, applied = false) {
 
 export async function executeMusicBuild(
   tienda: TiendaDAW,
-  opts: { prompt: string; aplicar: boolean; bpm?: number; nombre?: string; minutos?: number },
+  opts: {
+    prompt: string
+    aplicar: boolean
+    bpm?: number
+    nombre?: string
+    minutos?: number
+    /** Spec / campos parciales de la IA (gana sobre heurística). */
+    ai?: MusicBuildAiPartial | null
+    spec?: MusicBuildAiPartial | null
+  },
 ): Promise<MusicBuildResult> {
-  const spec = specFromPrompt(opts.prompt, opts.bpm)
-  if (opts.nombre) spec.nombre = opts.nombre
-  if (opts.minutos != null && Number.isFinite(opts.minutos)) spec.minutes = Math.max(0.25, Number(opts.minutos))
+  const aiPartial = opts.ai ?? opts.spec ?? null
+  const spec = buildMusicBuildSpec(opts.prompt, {
+    bpm: opts.bpm,
+    nombre: opts.nombre,
+    minutos: opts.minutos,
+    ai: aiPartial,
+  })
 
   const stages = initStages()
+  const genreBit = spec.genero ? ` · ${spec.genero}` : ''
+  const srcBit = spec.usedHeuristicFallback ? ' · +fallback' : ' · IA'
   setStage(
     stages,
     'spec',
     'ok',
-    `${spec.keyLabel} · ${spec.bpm} BPM · ${spec.minutes} min · ${spec.sections.length} secciones · ${spec.tracks.length} pistas`,
+    `${spec.keyLabel} · ${spec.bpm} BPM · ${spec.minutes} min · ${spec.sections.length} secciones · ${spec.tracks.length} pistas${genreBit}${srcBit}`,
   )
 
   if (!opts.aplicar) {
@@ -174,6 +274,16 @@ export async function executeMusicBuild(
       if (!createdTrack.success) continue
       const trackId = tienda.obtenerEstado().project.tracks.at(-1)?.id
       if (!trackId) continue
+      try {
+        await tienda.executor.execute('track.update', {
+          trackId,
+          datos: {
+            tags: [`role:${String(t.rol)}`, String(t.rol)],
+          },
+        })
+      } catch {
+        /* tags opcionales */
+      }
       created.push({ trackId, specIndex: i })
     }
     setStage(stages, 'tracks', created.length ? 'ok' : 'fail', `${created.length} pistas`)
@@ -184,20 +294,83 @@ export async function executeMusicBuild(
   }
 
   let instrumentsLoaded = 0
+  let softPads = 0
   setStage(stages, 'instruments', 'running')
+  const instrumentNotes: string[] = []
   for (const row of created) {
     const t = spec.tracks[row.specIndex]!
     if (t.tipo === 'audio') continue
-    const d =
-      (t.pluginId ? pluginRegistry.findById(t.pluginId) : undefined) ??
-      (t.pluginNombre ? pluginRegistry.findByName(t.pluginNombre)[0] : undefined) ??
-      pickVstForRole(pluginRegistry.list(), (t.rol as InstrumentRole) || 'unknown')
-    if (!d) continue
+
+    // Soft Pad siempre: audibilidad garantizada (underlay si hay VST sin kit/preset).
+    try {
+      await tienda.executor.execute('plugin.insert', {
+        trackId: row.trackId,
+        plugin: softPadPluginInfo(),
+      })
+      softPads += 1
+    } catch {
+      instrumentNotes.push(`${t.nombre}:softpad✗`)
+    }
+
+    if (t.presetId) {
+      try {
+        const { libraryApplyPreset } = await import('../library/ops')
+        const applied = await libraryApplyPreset(tienda, {
+          presetId: t.presetId,
+          trackId: row.trackId,
+        })
+        if (applied.ok) {
+          instrumentsLoaded += 1
+          instrumentNotes.push(`${t.nombre}:preset`)
+          continue
+        }
+        instrumentNotes.push(`${t.nombre}:preset✗`)
+      } catch {
+        instrumentNotes.push(`${t.nombre}:preset✗`)
+      }
+    }
+    const d = resolveCatalogPlugin({
+      pluginId: t.pluginId,
+      pluginNombre: t.pluginNombre,
+      rol: String(t.rol),
+    })
+    if (!d || d.format === 'builtin') {
+      instrumentNotes.push(`${t.nombre}:softpad`)
+      continue
+    }
+    if (d.path) {
+      try {
+        const { probePluginLoad } = await import('../plugin/track-vst-runtime')
+        const probe = await probePluginLoad({ path: d.path, pluginId: d.pluginId })
+        if (!probe.ok) {
+          instrumentNotes.push(`${t.nombre}:probe✗`)
+          const fallback = pickVstForRole(
+            pluginRegistry.list().filter((x) => x.pluginId !== d.pluginId && x.hostReady),
+            (t.rol as InstrumentRole) || 'unknown',
+          )
+          if (!fallback || fallback.format === 'builtin') continue
+          const info = descriptorToPluginInfo(fallback)
+          await tienda.executor.execute('plugin.insert', { trackId: row.trackId, plugin: info })
+          try {
+            const { ensureTrackVstInstrument } = await import('../plugin/track-vst-runtime')
+            await ensureTrackVstInstrument(row.trackId, info)
+          } catch {
+            /* host opcional */
+          }
+          t.pluginNombre = fallback.name
+          t.pluginId = fallback.pluginId
+          instrumentsLoaded += 1
+          continue
+        }
+      } catch {
+        /* probe optional */
+      }
+    }
     const info = descriptorToPluginInfo(d)
     await tienda.executor.execute('plugin.insert', { trackId: row.trackId, plugin: info })
     try {
       const { ensureTrackVstInstrument } = await import('../plugin/track-vst-runtime')
-      void ensureTrackVstInstrument(row.trackId, info)
+      await ensureTrackVstInstrument(row.trackId, info)
     } catch {
       /* host opcional */
     }
@@ -208,14 +381,15 @@ export async function executeMusicBuild(
   setStage(
     stages,
     'instruments',
-    instrumentsLoaded ? 'ok' : 'skip',
-    instrumentsLoaded
-      ? `${instrumentsLoaded} VST del catálogo`
-      : 'Sin VST de catálogo; se usa el instrumento builtin',
+    softPads || instrumentsLoaded ? 'ok' : 'skip',
+    softPads || instrumentsLoaded
+      ? `${softPads} Soft Pad · ${instrumentsLoaded} VST${instrumentNotes.length ? ` · ${instrumentNotes.slice(0, 4).join(', ')}` : ''}`
+      : 'Sin instrumentos',
   )
 
   const sectionBeats = spec.sections.reduce((n, s) => n + s.bars, 0) * 4
   const midiMinutes = Math.max(spec.minutes, sectionBeats / Math.max(1, spec.bpm))
+  const barPlan = expandSectionsToBarPlan(spec.sections, spec.degrees)
   const clipNotes: Array<{ trackName: string; rol: string; notes: ReturnType<typeof composeMidiFromBrief>['notes'] }> =
     []
 
@@ -223,17 +397,30 @@ export async function executeMusicBuild(
   for (const row of created) {
     const t = spec.tracks[row.specIndex]!
     if (t.tipo === 'audio') continue
-    const art = articulationOf(String(t.rol), t.articulacion ? String(t.articulacion) : undefined)
-    const brief = parseMidiBriefFromText(`${opts.prompt} ${t.rol} ${t.nombre}`, spec.bpm)
+    let art = articulationOf(String(t.rol), t.articulacion ? String(t.articulacion) : undefined)
+    const g = String(spec.genero ?? '').toLowerCase()
+    if ((g === 'worship' || g === 'gospel' || /worship|alabanza/.test(opts.prompt)) && String(t.rol) === 'guitar') {
+      art = 'arp' // fingerpicking suave
+    }
+    if ((g === 'worship' || g === 'gospel') && String(t.rol) === 'drums') {
+      // kits más abiertos / less busy vía density del plan
+    }
+    const brief = parseMidiBriefFromText(`${opts.prompt} ${spec.genero ?? ''} ${t.rol} ${t.nombre}`, spec.bpm)
     brief.articulation = art
     brief.minutes = midiMinutes
     brief.keyRoot = spec.keyRoot
     brief.scale = spec.scale
     brief.keyLabel = spec.keyLabel
     brief.degrees = spec.degrees.length ? spec.degrees : brief.degrees
+    if (g === 'worship' || g === 'gospel') {
+      brief.velocityBase = Math.min(brief.velocityBase, 78)
+      brief.velocityAccent = Math.min(brief.velocityAccent ?? 96, 96)
+    }
     const song = composeMidiFromBrief(brief, {
       bpm: spec.bpm,
-      seed: hashSeed(`${spec.nombre}|${t.nombre}|${art}`),
+      seed: hashSeed(`${spec.nombre}|${t.nombre}|${art}|${spec.genero ?? ''}|ai-form`),
+      barPlan,
+      aiDirected: !spec.usedHeuristicFallback || !!aiPartial,
     })
     clipNotes.push({ trackName: t.nombre, rol: String(t.rol), notes: song.notes })
     await tienda.executor.execute('midi.clip.create', {
@@ -257,6 +444,19 @@ export async function executeMusicBuild(
   )
 
   setStage(stages, 'mix', 'running')
+  let reverbBusId: string | undefined
+  try {
+    const busRes = await tienda.executor.execute('bus.create', {
+      nombre: 'Reverb FX',
+      tipo: 'fx',
+    })
+    if (busRes.success && busRes.result && typeof busRes.result === 'object') {
+      const rid = (busRes.result as { busId?: string }).busId
+      if (rid) reverbBusId = rid
+    }
+  } catch {
+    /* routing opcional */
+  }
   for (const row of created) {
     const t = spec.tracks[row.specIndex]!
     const mix = MIX_BY_ROLE[String(t.rol)] ?? { volumen: 0.72, paneo: 0 }
@@ -264,9 +464,29 @@ export async function executeMusicBuild(
       trackId: row.trackId,
       datos: { volumen: mix.volumen, paneo: mix.paneo },
     })
+    if (reverbBusId && t.tipo !== 'audio') {
+      const amount = SEND_BY_ROLE[String(t.rol)] ?? 0.25
+      try {
+        await tienda.executor.execute('send.set', {
+          trackId: row.trackId,
+          busId: reverbBusId,
+          amount,
+          nombre: 'Reverb',
+        })
+      } catch {
+        /* ignore */
+      }
+    }
   }
-  await tienda.executor.execute('master.update', { datos: { volumen: 0.92 } })
-  setStage(stages, 'mix', 'ok', 'Volumen y paneo por rol')
+  await tienda.executor.execute('master.update', { datos: { volumen: 0.88 } })
+  setStage(
+    stages,
+    'mix',
+    'ok',
+    reverbBusId
+      ? 'Vol/pan por rol · bus Reverb FX + sends'
+      : 'Volumen y paneo por rol',
+  )
 
   const blocking = issues.filter((i) => i.severity === 'error')
   setStage(

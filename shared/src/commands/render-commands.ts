@@ -46,7 +46,7 @@ function newId(): string {
 export function crearComandoRenderStart(): CommandDefinition<any> {
   return {
     type: 'render.start',
-    description: 'Inicia bounce/export WAV del proyecto',
+    description: 'Inicia bounce/export WAV/FLAC/MP3 del proyecto',
     risk: 'write',
     schema: {
       type: 'object',
@@ -58,13 +58,17 @@ export function crearComandoRenderStart(): CommandDefinition<any> {
         startSec: { type: 'number' },
         endSec: { type: 'number' },
         outputPath: { type: 'string' },
+        stems: { type: 'boolean' },
+        normalize: { type: ['string', 'boolean'] },
+        normalizeTargetDb: { type: 'number' },
+        listenTarget: { type: 'string', enum: ['streaming', 'club', 'cd'] },
       },
       additionalProperties: false,
     },
     handler: (estado: DAWState, payload: RenderStartPayload): StateTransition<RenderJob> => {
       const format = payload.format ?? 'wav'
-      if (format !== 'wav') {
-        throw new Error('Por ahora solo WAV (FLAC/MP3 en fases posteriores)')
+      if (format !== 'wav' && format !== 'flac' && format !== 'mp3') {
+        throw new Error(`Formato no soportado: ${format}`)
       }
       const startSec = payload.startSec ?? 0
       const endSec = payload.endSec
@@ -74,10 +78,16 @@ export function crearComandoRenderStart(): CommandDefinition<any> {
       if (renderJobActive()) {
         throw new Error('Ya hay un render en curso')
       }
+      const normalize =
+        payload.normalize === false || payload.normalize == null
+          ? false
+          : payload.normalize === true
+            ? 'lufs'
+            : payload.normalize
       const job: RenderJob = {
         id: newId(),
         projectId: estado.project.id,
-        format: 'wav',
+        format,
         sampleRate: payload.sampleRate ?? 48000,
         bitDepth: payload.bitDepth ?? 16,
         bitrate: payload.bitrate,
@@ -86,6 +96,10 @@ export function crearComandoRenderStart(): CommandDefinition<any> {
         progress: 0,
         status: 'pending',
         outputPath: payload.outputPath,
+        normalize,
+        normalizeTargetDb: payload.normalizeTargetDb,
+        exportStems: payload.stems === true,
+        listenTarget: payload.listenTarget,
       }
       renderJobPut(job)
       return {

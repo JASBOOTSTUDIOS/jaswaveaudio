@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { specFromPrompt } from './spec'
+import { expandSectionsToBarPlan } from './executor'
+import { mergeMusicBuildSpec, specFromPrompt } from './spec'
 import { validateMidiClip } from './validator'
+import { composeMidiFromBrief, parseMidiBriefFromText } from '../midi-song-generator'
 import type { GeneratedNote } from '../midi-song-generator'
 
 describe('music-build spec', () => {
@@ -25,6 +27,57 @@ describe('music-build spec', () => {
     const spec = specFromPrompt('Hazme una canción synthwave oscura, 120 BPM, A menor, 3:30.')
     assert.equal(spec.bpm, 120)
     assert.ok(spec.minutes >= 3.4 && spec.minutes <= 3.6)
+  })
+
+  it('merge IA gana sobre heurística (metal vs worship defaults)', () => {
+    const base = specFromPrompt('canción genérica')
+    const merged = mergeMusicBuildSpec(base, {
+      genero: 'metal',
+      progresion: [1, 6, 3, 7],
+      secciones: [
+        { nombre: 'Riff', bars: 4, degrees: [1, 1, 6, 6], density: 0.95 },
+        { nombre: 'Breakdown', bars: 4, degrees: [1, 7, 6, 5], density: 0.4, kind: 'breakdown' },
+      ],
+      pistas: [
+        { nombre: 'Drums', rol: 'drums', articulacion: 'drums' },
+        { nombre: 'Rhythm', rol: 'guitar', articulacion: 'strum' },
+      ],
+    })
+    assert.equal(merged.genero, 'metal')
+    assert.deepEqual(merged.degrees, [1, 6, 3, 7])
+    assert.equal(merged.sections.length, 2)
+    assert.deepEqual(merged.sections[0]!.degrees, [1, 1, 6, 6])
+    assert.equal(merged.tracks.length, 2)
+    assert.equal(merged.tracks[0]!.rol, 'drums')
+  })
+
+  it('barPlan metal ≠ ambient con el mismo motor', () => {
+    const metalPlan = expandSectionsToBarPlan(
+      [
+        { name: 'Riff', bars: 4, degrees: [1, 1, 6, 6], density: 1, kind: 'chorus' },
+        { name: 'Break', bars: 4, degrees: [1, 7, 6, 5], density: 0.3, kind: 'breakdown' },
+      ],
+      [1, 6, 3, 7],
+    )
+    const ambientPlan = expandSectionsToBarPlan(
+      [
+        { name: 'Pad A', bars: 4, degrees: [1, 4, 1, 5], density: 0.35, kind: 'intro' },
+        { name: 'Pad B', bars: 4, degrees: [6, 4, 1, 5], density: 0.5, kind: 'verse' },
+      ],
+      [1, 4, 5, 1],
+    )
+    const brief = parseMidiBriefFromText('pad Am', 100)
+    brief.articulation = 'pad'
+    brief.minutes = 0.5
+    brief.degrees = [1, 6, 3, 7]
+    const metal = composeMidiFromBrief(brief, { seed: 1, bpm: 140, barPlan: metalPlan, aiDirected: true })
+    brief.degrees = [1, 4, 5, 1]
+    const ambient = composeMidiFromBrief(brief, { seed: 1, bpm: 70, barPlan: ambientPlan, aiDirected: true })
+    assert.notEqual(
+      metal.notes.slice(0, 12).map((n) => n.pitch).join(','),
+      ambient.notes.slice(0, 12).map((n) => n.pitch).join(','),
+    )
+    assert.match(metal.structureLabel, /ai-form/)
   })
 })
 

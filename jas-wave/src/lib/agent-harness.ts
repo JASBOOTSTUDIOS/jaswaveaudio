@@ -11,10 +11,26 @@ import type { PlanEvaluation } from './agent-plan-eval'
 import type { ActionResult, DawAction } from './ai-daw-agent'
 import type { DAWState } from '../../../shared/src/types/state'
 
-const READ_ONLY = new Set(['doc.list', 'doc.read', 'doc.evaluate', 'plugin.lookup'])
+const READ_ONLY = new Set([
+  'doc.list',
+  'doc.read',
+  'doc.evaluate',
+  'plugin.lookup',
+  'plugin.probe',
+  'library.preset.list',
+  'library.preset.search',
+  'analysis.loudness',
+  'analysis.compareTarget',
+  'analysis.spectrum',
+  'analysis.stereo',
+  'analysis.fullReport',
+  'render.getStatus',
+])
 
-export const HARNESS_MAX_REPAIR_TURNS = 3
-export const HARNESS_MAX_ACTIONS_PER_REPAIR = 8
+export const HARNESS_MAX_REPAIR_TURNS = 8
+export const HARNESS_MAX_ACTIONS_PER_REPAIR = 12
+/** Cuántas veces seguidas puede repetirse la misma firma de error antes de parar. */
+export const HARNESS_STALE_LIMIT = 2
 
 export type DawHealthIssue = {
   severity: 'error' | 'warn'
@@ -33,6 +49,8 @@ export type DawHealthReport = {
     emptyMidiTracks: string[]
     plugins: number
   }
+  /** Dump legible del proyecto para el modelo (debug real). */
+  debugDump: string
 }
 
 export type HarnessFollowupTurn = {
@@ -130,6 +148,32 @@ function clipNoteCount(clip: unknown): number {
   return Array.isArray(notas) ? notas.length : 0
 }
 
+/** Inventario real del DAW para que el modelo debuggee sin inventar. */
+export function formatDawDebugDump(state: DAWState): string {
+  const tracks = state.project?.tracks ?? []
+  if (!tracks.length) return '(proyecto sin pistas)'
+  const lines: string[] = []
+  for (const t of tracks) {
+    const clips = t.clips ?? []
+    let notes = 0
+    for (const c of clips) notes += clipNoteCount(c)
+    const plugs = (t.plugins ?? [])
+      .map((p) => `${p.nombre}${p.estado === 'error' ? '[ERR]' : p.estado === 'cargado' ? '' : `[${p.estado ?? '?'}]`}`)
+      .join(', ')
+    lines.push(
+      `- «${t.nombre || t.id}» tipo=${t.tipo} vol=${Number(t.volumen ?? 1).toFixed(2)} pan=${Number(t.paneo ?? 0).toFixed(2)} clips=${clips.length} notas=${notes} plugins=[${plugs || '—'}]`,
+    )
+  }
+  const master = state.project?.master
+  if (master) {
+    const mp = (master.plugins ?? []).map((p) => p.nombre).join(', ')
+    lines.push(`- Master vol=${Number(master.volumen ?? 1).toFixed(2)} plugins=[${mp || '—'}]`)
+  }
+  const bpm = state.project?.bpm?.valor ?? state.transport?.bpm
+  if (bpm != null) lines.push(`- BPM=${bpm}`)
+  return lines.join('\n')
+}
+
 export function inspectDawHealth(
   state: DAWState,
   results: ActionResult[],
@@ -158,6 +202,7 @@ export function inspectDawHealth(
   const builtProject = results.some(
     (r) => r.success && (r.type === 'daw.musicBuild' || r.type === 'daw.composeProject'),
   )
+  const mutatedAny = results.some((r) => r.success && !READ_ONLY.has(r.type))
 
   const tracks = state.project?.tracks ?? []
   const emptyMidiTracks: string[] = []
@@ -204,8 +249,67 @@ export function inspectDawHealth(
       message: `Plugins en error: ${pluginErrors.slice(0, 8).join(', ')}`,
     })
   }
+  if (builtProject && tracks.length === 0) {
+    errors.push({
+      severity: 'error',
+      code: 'no-tracks',
+      message: 'Music Build/compose reportó OK pero el proyecto no tiene pistas.',
+    })
+  }
 
   for (const r of results) {
+    if (r.type === 'plugin.probe' && r.success === false) {
+      warnings.push({
+        severity: 'warn',
+        code: 'probe-failed',
+        message: r.message,
+      })
+    }
+    if (
+      (r.type === 'render.start' || r.type === 'daw.masterPass') &&
+      r.success &&
+      r.data &&
+      typeof r.data === 'object'
+    ) {
+      const data = r.data as {
+        listenReport?: { ok?: boolean; issues?: string[]; summary?: string }
+        listenSummary?: string
+        ok?: boolean
+        deltaDb?: number
+      }
+      const listen = data.listenReport
+      if (listen && listen.ok === false) {
+        errors.push({
+          severity: 'error',
+          code: 'listen-failed',
+          message: `AudioListenReport no OK: ${listen.issues?.join('; ') || listen.summary || 'issues'}`,
+        })
+      }
+      if (r.type === 'daw.masterPass' && data.ok === false) {
+        errors.push({
+          severity: 'error',
+          code: 'master-pass-target',
+          message: r.message || `MasterPass fuera de target (Δ ${data.deltaDb?.toFixed?.(1) ?? '?'} dB)`,
+        })
+      }
+      if (r.type === 'render.start' && !listen) {
+        warnings.push({
+          severity: 'warn',
+          code: 'listen-missing',
+          message: 'Bounce sin AudioListenReport — ejecuta analysis.fullReport',
+        })
+      }
+    }
+    if (r.type === 'analysis.compareTarget' && r.success && r.data && typeof r.data === 'object') {
+      const cmp = r.data as { deltaDb?: number; target?: string }
+      if (typeof cmp.deltaDb === 'number' && Math.abs(cmp.deltaDb) > 1.5) {
+        errors.push({
+          severity: 'error',
+          code: 'compare-target',
+          message: `Fuera de target ${cmp.target ?? ''}: Δ ${cmp.deltaDb.toFixed(1)} dB`,
+        })
+      }
+    }
     if (r.type !== 'daw.musicBuild' || !r.data) continue
     const build = r.data as {
       status?: string
@@ -237,7 +341,14 @@ export function inspectDawHealth(
     }
   }
 
-  if (evaluation?.missing.length) {
+  // Plan incompleto = error duro (el agente debe seguir hasta cerrar checkboxes o declarar bloqueo).
+  if (evaluation && evaluation.planned > 0 && evaluation.missing.length > 0 && (mutatedAny || builtProject)) {
+    errors.push({
+      severity: 'error',
+      code: 'plan-incomplete',
+      message: `Plan incompleto ${evaluation.done}/${evaluation.planned}: ${evaluation.missing.slice(0, 6).join('; ')}`,
+    })
+  } else if (evaluation?.missing.length) {
     warnings.push({
       severity: 'warn',
       code: 'plan-gap',
@@ -257,6 +368,7 @@ export function inspectDawHealth(
     warnings,
     failedActions,
     snapshot,
+    debugDump: formatDawDebugDump(state),
   }
 }
 
@@ -339,34 +451,42 @@ export function buildHarnessRepairMessage(opts: {
   turn: number
   maxTurns: number
 }): string {
-  const errors = opts.report.errors.map((e) => `- ${e.message}`).join('\n')
-  const warns = opts.report.warnings.map((e) => `- ${e.message}`).join('\n')
+  const errors = opts.report.errors.map((e) => `- [${e.code}] ${e.message}`).join('\n')
+  const warns = opts.report.warnings.map((e) => `- [${e.code}] ${e.message}`).join('\n')
   const snap = opts.report.snapshot
+  const planOnly = opts.report.errors.every((e) => e.code === 'plan-incomplete')
   return [
     `## Harness de producción — reparación ${opts.turn}/${opts.maxTurns}`,
-    'Eres el agente de JasWave (DAW). El usuario no debe ver JSON. Arregla SOLO lo roto.',
+    'Eres el agente de JasWave (DAW). El usuario no debe ver JSON. Persiste hasta que el DAW y el plan.md coincidan.',
     '',
     `Pedido original:\n${opts.userText}`,
     '',
-    '### Estado del DAW ahora',
+    '### Debug REAL del proyecto (no inventes pistas/plugins que no estén aquí)',
+    opts.report.debugDump || '(vacío)',
+    '',
+    '### Resumen',
     `Pistas: ${snap.tracks} · clips MIDI con notas: ${snap.midiClips} · plugins: ${snap.plugins}`,
     snap.emptyMidiTracks.length
       ? `MIDI vacío: ${snap.emptyMidiTracks.join(', ')}`
       : 'MIDI: sin pistas vacías detectadas.',
     '',
-    '### Errores (obligatorio resolver o declarar que el usuario debe decidir)',
+    '### Errores (obligatorio resolver o declarar bloqueo con CERO ACTIONS)',
     errors || '_Ninguno._',
     warns ? `### Avisos\n${warns}` : '',
     '',
     'Ya ejecutado (NO lo repitas si salió bien):',
     opts.actionsSummary || '(nada)',
     '',
-    'Reglas (como un agente de producción, no un chatbot):',
-    `- Máximo ${HARNESS_MAX_ACTIONS_PER_REPAIR} acciones.`,
+    'Reglas:',
+    `- Máximo ${HARNESS_MAX_ACTIONS_PER_REPAIR} acciones por turno; habrá hasta ${opts.maxTurns} turnos.`,
     '- NO hagas daw.musicBuild ni daw.composeProject de nuevo si ya se aplicó.',
-    '- NO crees pistas que ya existen. Completa clips/plugins/notas que faltan.',
-    '- Si un VST falló, elige otro del catálogo o Soft Pad; no insistas en el mismo path.',
-    '- Si no puedes arreglarlo sin una decisión del usuario, 2 frases y CERO ACTIONS.',
+    '- NO crees pistas que ya existen (mira el debug). Completa clips/plugins/notas / marca checkboxes del plan.',
+    '- Si el error es listen-failed / compare-target / master-pass-target: ajusta master/gain/limiter, re-bounce o daw.masterPass; NO digas listo sin AudioListenReport OK.',
+    '- Si el error es plan-incomplete: crea lo que falta O mueve el ítem a ## Implementado con doc.write si YA existe en el DAW.',
+    '- Si un VST falló: plugin.probe + otro del catálogo / library.preset / Soft Pad.',
+    planOnly
+      ? '- Este turno es cierre de plan: prioriza alinear plan.md con el DAW real.'
+      : '- Si no puedes arreglarlo sin decisión del usuario, 2 frases y CERO ACTIONS.',
     '',
     '<<<ACTIONS',
     '[{"type":"...","payload":{...}}]',
@@ -399,6 +519,7 @@ export async function runHarnessFollowups(opts: {
   let text = ''
   const turns: HarnessFollowupTurn[] = []
   let lastSig = ''
+  let staleCount = 0
   const attempted = seedAttemptedFingerprints(results)
 
   const done = (stoppedReason: HarnessStopReason, report?: DawHealthReport): HarnessFollowupResult => ({
@@ -416,7 +537,12 @@ export async function runHarnessFollowups(opts: {
     const report = inspectDawHealth(opts.getState(), results, evaluation)
     if (!harnessShouldRepair(report)) return done('healthy', report)
     const sig = healthSignature(report)
-    if (sig && sig === lastSig) return done('no-progress', report)
+    if (sig && sig === lastSig) {
+      staleCount += 1
+      if (staleCount >= HARNESS_STALE_LIMIT) return done('no-progress', report)
+    } else {
+      staleCount = 0
+    }
     lastSig = sig
     opts.onProgress?.({ turn: i, maxTurns, report })
 

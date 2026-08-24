@@ -405,6 +405,14 @@ function AudioTab() {
      
   }, [])
 
+  useEffect(() => {
+    const onChange = () => {
+      void refreshDevices()
+    }
+    window.addEventListener('jaswave-audio-device-changed', onChange)
+    return () => window.removeEventListener('jaswave-audio-device-changed', onChange)
+  }, [])
+
   const guardarProyecto = (next?: { sampleRate?: number; bufferSize?: number; dispositivoSalida?: string }) => {
     const sr = next?.sampleRate ?? sampleRate
     const buf = next?.bufferSize ?? bufferSize

@@ -21,6 +21,7 @@ import { midiInputOf } from '@/src/lib/midi-track-io'
 import { audioInputOf } from '@/src/lib/audio-track-io'
 import { audioEngine } from '@/lib/audio-engine'
 import { refreshNativeMixMeters, setMixMeterTrackOrder } from '@/src/lib/plugin/native-mix-meters'
+import { AutomationLanesPanel } from '@/components/automation-lanes-panel'
 
 type MixerRow = {
   id: string
@@ -94,6 +95,7 @@ export function Mixer() {
   const tienda = useDAW()
   const tracks = useDAWState((s: DAWState) => s.project?.tracks ?? [])
   const master = useDAWState((s: DAWState) => s.project?.master)
+  const routing = useDAWState((s: DAWState) => s.project?.routing)
   const collapsed = useDAWState((s: DAWState) => s.ui?.estadoMezcladorUI?.colapsado ?? false)
   const selectedTrackId = useDAWState((s: DAWState) => getSelectedTrackId(s))
   const stripRefs = useRef(new Map<string, HTMLDivElement | null>())
@@ -345,6 +347,42 @@ export function Mixer() {
             {/* Knob de balance */}
             <KnobControl value={track.pan} color={track.color} onChange={(pan) => handleChangePan(track.id, pan)} size="size-9" />
 
+            {/* Sends post-fader (MVP) */}
+            {!collapsed && (routing?.buses?.length ?? 0) > 0 ? (
+              <div className="mt-1 space-y-0.5">
+                {(routing?.buses ?? []).slice(0, 2).map((bus) => {
+                  const send = routing?.sends?.find(
+                    (e) => e.origenTrackId === track.id && e.destinoBusId === bus.id && e.activo,
+                  )
+                  const amount = Math.round((send?.cantidad ?? 0) * 100)
+                  return (
+                    <label
+                      key={bus.id}
+                      className="flex items-center gap-1 text-[8px] text-muted-foreground"
+                      title={`Send → ${bus.nombre}`}
+                    >
+                      <span className="w-6 truncate">{bus.nombre.slice(0, 3)}</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={amount}
+                        className="h-1 w-full accent-accent-amber"
+                        onChange={(e) => {
+                          const v = Number(e.target.value) / 100
+                          void tienda.executor.execute('send.set', {
+                            trackId: track.id,
+                            busId: bus.id,
+                            amount: v,
+                          })
+                        }}
+                      />
+                    </label>
+                  )
+                })}
+              </div>
+            ) : null}
+
             {/* Fader */}
             <div className="mt-2 flex-1">
               <FaderControl db={track.db} color={track.color} meter={meters[track.id] ?? 0} onChange={(db) => handleChangeDb(track.id, db)} showScale />
@@ -414,6 +452,7 @@ export function Mixer() {
           />
         </div>
       </div>
+      {!collapsed ? <AutomationLanesPanel /> : null}
     </section>
   )
 }

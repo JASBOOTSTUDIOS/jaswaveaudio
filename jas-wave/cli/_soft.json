@@ -1,0 +1,1 @@
+{"actions":[{"type":"track.update","payload":{"trackId":"1787597001859-y0v02","datos":{"silenciada":false,"volumen":0.9,"nombre":"Soft Pad check"}}},{"type":"transport.stop","payload":{}},{"type":"transport.seek","payload":{"segundos":0}}]}

@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('electron', {
   },
   fileSave: (ruta: string, contenido: string) => ipcRenderer.invoke('file-save', ruta, contenido),
   fileSaveBinary: (ruta: string, data: Uint8Array) => ipcRenderer.invoke('file-save-binary', ruta, data),
+  ffmpegConvert: (input: string, output: string, args?: string[]) =>
+    ipcRenderer.invoke('ffmpeg-convert', input, output, args ?? []),
   fileRead: (ruta: string) => ipcRenderer.invoke('file-read', ruta),
   fileReadBinary: (ruta: string) => ipcRenderer.invoke('file-read-binary', ruta),
   fileExists: (ruta: string) => ipcRenderer.invoke('file-exists', ruta),
@@ -86,6 +88,19 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.send('plugin-host-pcm', u8)
   },
   pluginHostStop: () => ipcRenderer.invoke('plugin-host-stop'),
+  onAgentBridgeRequest: (
+    callback: (msg: { id: string; channel: string; payload: Record<string, unknown> }) => void,
+  ) => {
+    const handler = (
+      _event: unknown,
+      msg: { id: string; channel: string; payload: Record<string, unknown> },
+    ) => callback(msg)
+    ipcRenderer.on('agent-bridge-request', handler)
+    return () => ipcRenderer.removeListener('agent-bridge-request', handler)
+  },
+  agentBridgeReply: (id: string, result: unknown, error?: string) => {
+    ipcRenderer.send('agent-bridge-reply', id, result, error)
+  },
   onNativeMidi: (callback: (msg: { id: string; data: number[] }) => void) => {
     const handler = (_event: unknown, msg: { id: string; data: number[] }) => callback(msg)
     ipcRenderer.on('native-midi', handler)

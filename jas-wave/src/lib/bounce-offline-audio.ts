@@ -8,6 +8,7 @@
  */
 
 import { audioEngine } from '@/lib/audio-engine'
+import { normalizeSoftPadRole, scheduleRoleVoice, type SoftPadRole } from '@/lib/role-voice'
 import type { BounceContent, BounceTrack } from './bounce-content'
 
 export type StemBuffers = Map<number, Float32Array>
@@ -79,7 +80,6 @@ function placeClip(
   }
 }
 
-/** Voz Soft Pad: igual que scheduleMidiVoice del motor (sine + envolvente). */
 function scheduleSoftPadVoice(
   ctx: BaseAudioContext,
   destination: AudioNode,
@@ -87,26 +87,17 @@ function scheduleSoftPadVoice(
   velocity: number,
   when: number,
   durationSec: number,
+  role: SoftPadRole = 'default',
 ): void {
-  const freq = 440 * Math.pow(2, (pitch - 69) / 12)
-  const vel = Math.max(0.05, Math.min(1, velocity / 127))
-  const dur = Math.max(0.04, durationSec)
-  const attack = Math.min(0.01, dur * 0.15)
-  const peak = Math.max(0.0002, 0.12 * vel)
-
-  const osc = ctx.createOscillator()
-  osc.type = 'sine'
-  osc.frequency.value = freq
-
-  const gain = ctx.createGain()
-  gain.gain.setValueAtTime(0.0001, when)
-  gain.gain.exponentialRampToValueAtTime(peak, when + attack)
-  gain.gain.exponentialRampToValueAtTime(0.0001, when + dur)
-
-  osc.connect(gain)
-  gain.connect(destination)
-  osc.start(Math.max(when, 0))
-  osc.stop(dur + 0.02)
+  scheduleRoleVoice(
+    ctx as OfflineAudioContext,
+    destination,
+    pitch,
+    velocity,
+    Math.max(0, when),
+    Math.max(0.04, durationSec),
+    role,
+  )
 }
 
 async function renderTrackStem(
@@ -140,7 +131,15 @@ async function renderTrackStem(
     for (const note of track.notes) {
       const when = note.startSec - opts.startSec
       if (when + note.durSec <= 0) continue
-      scheduleSoftPadVoice(ctx, gain, note.pitch, note.velocity, Math.max(0, when), note.durSec)
+      scheduleSoftPadVoice(
+        ctx,
+        gain,
+        note.pitch,
+        note.velocity,
+        Math.max(0, when),
+        note.durSec,
+        normalizeSoftPadRole(track.softPadRole),
+      )
     }
   }
 

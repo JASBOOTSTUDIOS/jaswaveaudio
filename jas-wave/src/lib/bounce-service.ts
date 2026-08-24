@@ -11,14 +11,22 @@
 import {
   measureLoudnessBs1770,
 } from '../../../shared/src/audio/loudness-bs1770'
+import {
+  applyGainToChannels,
+  buildAudioListenReport,
+  measureMixAnalysis,
+  normalizeGainForTarget,
+} from '../../../shared/src/audio/mix-analysis'
 import { renderJobGet, renderJobUpdate } from '../../../shared/src/render/job-store'
 import type { RenderJob } from '../../../shared/src/types/render'
+import { encodeWavPcm16 } from './encode-wav'
 import {
   findTrackPlaybackInstrument,
   getLoadedInstrumentForTrack,
   sendVstCc,
   sendVstNote,
 } from '@/src/lib/plugin/track-vst-runtime'
+import { isBuiltinPlugin } from '@/src/lib/plugin/plugin-info-adapter'
 import type { PluginInfo } from '../../../shared/src/types/entidades'
 import type {
   BounceContent,
@@ -26,6 +34,9 @@ import type {
 } from './bounce-content'
 import { buildBounceContent } from './bounce-content'
 import { prerenderWebStems } from './bounce-offline-audio'
+import { bakeVolumeAutomationIntoStem } from './automation-runtime'
+import { applySendsToStemBuffers } from './send-mix'
+import type { DAWState } from '../../../shared/src/types/state'
 
 const BLOCK = 512
 
@@ -75,15 +86,20 @@ function decodeWavPcm16Stereo(bin: Uint8Array): { l: Float32Array; r: Float32Arr
   return { l, r, sampleRate }
 }
 
-/** Resolución runtime de instrumento por pista (VST slot o Soft Pad). */
+/** Resolución runtime de instrumento por pista (VST slot y/o Soft Pad). */
 export function resolveBounceSlots(
   trackId: string,
   plugins: unknown,
 ): BounceSlotResolution {
-  const hit = findTrackPlaybackInstrument(plugins as PluginInfo[] | undefined)
-  if (!hit) return { softPad: false }
-  if (hit.kind === 'builtin') return { softPad: true }
-  return { slotId: getLoadedInstrumentForTrack(trackId)?.slotId, softPad: false }
+  const list = (plugins as PluginInfo[] | undefined) ?? []
+  const hit = findTrackPlaybackInstrument(list)
+  const hasSoftPad = list.some((p) => isBuiltinPlugin(p) && !p.bypass)
+  if (!hit && !hasSoftPad) return { softPad: false }
+  if (hit?.kind === 'builtin' || (hasSoftPad && !hit)) return { softPad: true }
+  return {
+    slotId: getLoadedInstrumentForTrack(trackId)?.slotId,
+    softPad: hasSoftPad,
+  }
 }
 
 /** Construye el contenido de bounce con resolución runtime de slots. */
@@ -117,6 +133,7 @@ export async function runNativeBounce(
   job: RenderJob,
   content: BounceContent,
   emit?: (nombre: string, payload: Record<string, unknown>) => void,
+  dawState?: DAWState,
 ): Promise<RenderJob> {
   const startSec = job.start.segundos ?? 0
   const endSec = job.end.segundos ?? startSec + 1
@@ -138,11 +155,30 @@ export async function runNativeBounce(
   emit?.('render.progress', { jobId: job.id, progress: 0 })
 
   // Stems Web Audio (clips de audio + Soft Pad), DRY por stemIndex.
-  const webStems = await prerenderWebStems(content, {
+  let webStems = await prerenderWebStems(content, {
     startSec,
     durationSec: duration,
     sampleRate: sr,
   })
+
+  // Automatización de volumen → bake en stems (el fader nativo queda en valor base)
+  if (dawState) {
+    const trackIndexById = new Map<string, number>()
+    content.tracks.forEach((t) => trackIndexById.set(t.trackId, t.stemIndex))
+    for (const bt of content.tracks) {
+      const pcm = webStems.get(bt.stemIndex)
+      if (!pcm) continue
+      const track = dawState.project.tracks.find((t) => t.id === bt.trackId)
+      const lane = track?.automatizaciones?.find(
+        (a) => a.parametro === 'volumen' || a.parametro === 'volume',
+      )
+      const baseVol = typeof track?.volumen === 'number' ? track.volumen : 0.8
+      if (lane) {
+        webStems.set(bt.stemIndex, bakeVolumeAutomationIntoStem(pcm, sr, startSec, lane, baseVol))
+      }
+    }
+    webStems = applySendsToStemBuffers(dawState, webStems, trackIndexById, sr, totalFrames)
+  }
 
   await hostSend({
     type: 'renderOfflineStart',
@@ -193,14 +229,17 @@ export async function runNativeBounce(
       [new Float32Array(Math.min(framesOut, 1)), new Float32Array(Math.min(framesOut, 1))],
       finishSr,
     )
+    let pcmL: Float32Array | null = null
+    let pcmR: Float32Array | null = null
     try {
       const bin = (await window.electron?.fileReadBinary?.(path)) as Uint8Array | undefined
       if (bin) {
         const pcm = decodeWavPcm16Stereo(bin)
         if (pcm && pcm.l.length > 1) {
           loudness = measureLoudnessBs1770([pcm.l, pcm.r], pcm.sampleRate || finishSr)
+          pcmL = pcm.l
+          pcmR = pcm.r
         } else if (bin && job.bitDepth === 24) {
-          // WAV 24-bit: decodificar manualmente para loudness
           const view = new DataView(bin.buffer, bin.byteOffset, bin.byteLength)
           const dataSize = view.getUint32(40, true)
           const numFrames = Math.floor(dataSize / 6)
@@ -216,6 +255,8 @@ export async function runNativeBounce(
           }
           if (numFrames > 1) {
             loudness = measureLoudnessBs1770([l, r], finishSr)
+            pcmL = l
+            pcmR = r
           }
         }
       }
@@ -223,14 +264,67 @@ export async function runNativeBounce(
       /* sin archivo legible */
     }
 
+    const channels =
+      pcmL && pcmR ? [pcmL, pcmR] : [new Float32Array(1), new Float32Array(1)]
+    let analysis = measureMixAnalysis(channels, finishSr)
+    let outPathFinal = path
+    let normalized = false
+
+    if ((job.normalize === 'peak' || job.normalize === 'lufs') && pcmL && pcmR) {
+      const normalizeTarget =
+        job.normalizeTargetDb ?? (job.normalize === 'lufs' ? -14 : -1)
+      const gain = normalizeGainForTarget(analysis, job.normalize, normalizeTarget)
+      const gained = applyGainToChannels([pcmL, pcmR], gain)
+      const wav = encodeWavPcm16(gained, finishSr)
+      const normPath = path.replace(/\.wav$/i, '.norm.wav')
+      await window.electron?.fileSaveBinary?.(normPath, wav)
+      outPathFinal = normPath
+      analysis = measureMixAnalysis(gained, finishSr)
+      loudness = analysis.loudness
+      normalized = true
+    }
+
+    if (job.format === 'flac' || job.format === 'mp3') {
+      const converted = await tryConvertWithFfmpeg(outPathFinal, job.format, job.bitrate)
+      if (converted) outPathFinal = converted
+    }
+
+    const listenReport = buildAudioListenReport(analysis, {
+      target: job.listenTarget,
+      maxTruePeakDb: -1,
+    })
+
+    const stemsPaths: string[] = []
+    if (job.exportStems && webStems.size) {
+      const base = outPathFinal.replace(/\.[^.]+$/, '')
+      const stemsDir = `${base}-stems`
+      for (const [stemIndex, pcm] of webStems) {
+        const framesStem = Math.floor(pcm.length / 2)
+        const l = new Float32Array(framesStem)
+        const r = new Float32Array(framesStem)
+        for (let i = 0; i < framesStem; i++) {
+          l[i] = pcm[i * 2]!
+          r[i] = pcm[i * 2 + 1]!
+        }
+        const stemPath = `${stemsDir}/stem${stemIndex}.wav`
+        const wav = encodeWavPcm16([l, r], finishSr)
+        await window.electron?.fileSaveBinary?.(stemPath, wav)
+        stemsPaths.push(stemPath)
+      }
+    }
+
     const completed = renderJobUpdate(job.id, {
       status: 'completed',
       progress: 100,
-      outputPath: path,
+      outputPath: outPathFinal,
       frames: framesOut,
       loudness,
+      analysis,
+      listenReport,
+      stemsPaths: stemsPaths.length ? stemsPaths : undefined,
+      normalized,
     })!
-    emit?.('render.completed', { jobId: job.id, path, loudness })
+    emit?.('render.completed', { jobId: job.id, path: outPathFinal, loudness, listenReport })
     return completed
   } catch (e) {
     // Restaurar el device aunque falle el bounce
@@ -241,4 +335,25 @@ export async function runNativeBounce(
     }
     throw e
   }
+}
+
+async function tryConvertWithFfmpeg(
+  wavPath: string,
+  format: 'flac' | 'mp3',
+  bitrate?: number,
+): Promise<string | null> {
+  try {
+    const out = wavPath.replace(/\.wav$/i, `.${format}`)
+    const api = window.electron as {
+      ffmpegConvert?: (input: string, output: string, args?: string[]) => Promise<{ ok: boolean }>
+    }
+    if (api.ffmpegConvert) {
+      const br = bitrate ? [`-b:a`, `${bitrate}k`] : format === 'mp3' ? ['-b:a', '192k'] : []
+      const r = await api.ffmpegConvert(wavPath, out, br)
+      if (r?.ok) return out
+    }
+  } catch {
+    /* optional */
+  }
+  return null
 }
