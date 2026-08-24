@@ -762,6 +762,16 @@ async function applyAudioDeviceOrFallback(
   if (prefs.backend === 'asio' && !isRiskyAsioPrefs(prefs)) {
     const current = await sendPluginHostCommand({ type: 'getAudioDevice' }, 8000)
     if (current.ok && current.audio?.running) {
+      const a = current.audio
+      const sameDevice =
+        String(a.backend || '') === 'asio' &&
+        String(a.deviceId || '') === String(prefs.deviceId || '') &&
+        Number(a.sampleRate || 0) === Number(prefs.sampleRate || 0) &&
+        Number(a.bufferSize || 0) === Number(prefs.bufferSize || 0)
+      if (sameDevice) {
+        if (persist) writeAudioDevicePrefs(prefs)
+        return current
+      }
       console.error(
         '[plugin-host] ASIO: se abre en proceso limpio (como REAPER), sin WASAPI previo en la tarjeta.',
       )

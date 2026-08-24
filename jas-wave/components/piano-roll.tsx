@@ -17,9 +17,10 @@ import { getUndockUrlFocus } from '@/lib/undock-window'
 import { listMidiClips, resolvePianoRollClip } from '@/src/lib/selection-helpers'
 import {
   routeMidiToTrack,
+  routeMidiToActiveVst,
   setPreferredVstPreviewTrack,
+  preferredTrackPlaysSoftPad,
 } from '@/src/lib/plugin/vst-voice-router'
-import { ensureTrackVstPluginsForProject } from '@/src/lib/plugin/track-vst-runtime'
 
 type PianoRollProps = {
   trackId: string
@@ -103,9 +104,17 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   selectedRef.current = selectedIds
 
   const clipStartBeat = clip?.inicio ?? 0
+  const trackPlugins = useDAWState((s: DAWState) => {
+    const tr = s.project.tracks.find((t) => t.id === trackId)
+    return tr?.plugins
+  })
+  const draggingRef = useRef(false)
+  const keysOffsetRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!clip || clip.tipo !== 'midi') return
+    // No pisar edición local (drag / inspector) con el store.
+    if (dirty || draggingRef.current) return
     setNotes(
       (clip.notas ?? []).map((n) => ({
         id: n.id,
@@ -117,10 +126,38 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         mute: n.mute,
       })),
     )
-    setDirty(false)
-  }, [clip, clipId, trackId])
+  }, [clip, clipId, trackId, dirty])
+
+  useEffect(() => {
+    setPreferredVstPreviewTrack(trackId, trackPlugins)
+    const hit = trackPlugins?.find((p) => !p.bypass)
+    if (hit) {
+      void import('@/src/lib/plugin/track-vst-runtime').then(
+        ({ ensureTrackVstInstrument, findTrackPlaybackInstrument }) => {
+          const play = findTrackPlaybackInstrument(trackPlugins)
+          if (play?.kind === 'vst' && play.plugin) {
+            void ensureTrackVstInstrument(trackId, play.plugin)
+          } else if (play?.kind !== 'builtin') {
+            void ensureTrackVstInstrument(trackId, hit)
+          }
+        },
+      )
+    }
+  }, [trackId, trackPlugins])
 
   useEffect(() => () => audioEngine.allNotesOff(), [])
+
+  const previewNote = (pitch: number, velocity = 90) => {
+    if (routeMidiToTrack(trackId, true, pitch, velocity)) return
+    if (routeMidiToActiveVst(true, pitch, velocity)) return
+    // Soft Pad solo si es el instrumento de la pista; si no, no enmascarar con pad.
+    if (preferredTrackPlaysSoftPad()) audioEngine.noteOn(pitch, velocity)
+  }
+  const releaseNote = (pitch: number) => {
+    if (routeMidiToTrack(trackId, false, pitch, 0)) return
+    if (routeMidiToActiveVst(false, pitch, 0)) return
+    if (preferredTrackPlaysSoftPad()) audioEngine.noteOff(pitch)
+  }
 
   const durationBeats = useMemo(() => {
     const fromNotes = notes.reduce((m, n) => Math.max(m, n.inicio + n.duracion), 4)
@@ -148,6 +185,10 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
           }
         }
       }
+      const keys = keysOffsetRef.current
+      if (keys && scroll) {
+        keys.style.transform = `translateY(${-scroll.scrollTop}px)`
+      }
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
@@ -171,30 +212,114 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
 
   const persist = useCallback(
     async (next: LocalNote[]) => {
-      await tienda.executor.execute('midi.notes.set', {
-        pistaId: trackId,
-        clipId,
-        notas: next.map((n) => ({
-          id: n.id,
-          pitch: n.pitch,
-          inicio: n.inicio,
-          duracion: n.duracion,
-          velocidad: n.velocidad,
-          canal: n.canal ?? 0,
-          ...(n.mute !== undefined ? { mute: n.mute } : {}),
-        })),
-        duracion: Math.max(
-          clip?.duracion ?? 4,
-          next.reduce((m, n) => Math.max(m, n.inicio + n.duracion), 4),
-        ),
-      })
-      setDirty(false)
+      try {
+        await tienda.executor.execute('midi.notes.set', {
+          pistaId: trackId,
+          clipId,
+          notas: next.map((n) => ({
+            id: n.id,
+            pitch: n.pitch,
+            inicio: n.inicio,
+            duracion: n.duracion,
+            velocidad: n.velocidad,
+            canal: n.canal ?? 0,
+            ...(n.mute !== undefined ? { mute: n.mute } : {}),
+          })),
+          duracion: Math.max(
+            clip?.duracion ?? 4,
+            next.reduce((m, n) => Math.max(m, n.inicio + n.duracion), 4),
+          ),
+        })
+        setDirty(false)
+      } finally {
+        draggingRef.current = false
+      }
     },
     [tienda, trackId, clipId, clip?.duracion],
   )
 
-  const previewNote = (pitch: number, velocity = 90) => audioEngine.noteOn(pitch, velocity)
-  const releaseNote = (pitch: number) => audioEngine.noteOff(pitch)
+  /** Arrastre de notas (individual o grupo) con pointer capture; no pisa el store hasta soltar. */
+  const beginNoteDrag = useCallback(
+    (
+      ev: Pick<PointerEvent, 'clientX' | 'clientY' | 'pointerId' | 'target'>,
+      hitId: string,
+      edge: false | 'start' | 'end',
+      previewPitch: number,
+      previewVel: number,
+    ) => {
+      if (herramienta === 'borrar') return
+      const ids =
+        selectedIds.has(hitId) && selectedIds.size > 0 ? selectedIds : new Set([hitId])
+      setSelectedIds(ids)
+      draggingRef.current = true
+      setDirty(true)
+      previewNote(previewPitch, previewVel)
+
+      const startX = ev.clientX
+      const startY = ev.clientY
+      const origins = new Map(
+        notesRef.current.filter((x) => ids.has(x.id)).map((x) => [x.id, { ...x }]),
+      )
+
+      const target = ev.target as HTMLElement | null
+      const pointerId = ev.pointerId
+      try {
+        target?.setPointerCapture?.(pointerId)
+      } catch {
+        /* ignore */
+      }
+
+      const move = (e2: PointerEvent) => {
+        const dx = e2.clientX - startX
+        const dy = e2.clientY - startY
+        setNotes((prev) =>
+          prev.map((x) => {
+            const o = origins.get(x.id)
+            if (!o) return x
+            if (edge === 'end') {
+              return {
+                ...x,
+                duracion: Math.max(snapDiv / 2, snapBeat(o.duracion + dx / pxPerBeat)),
+              }
+            }
+            if (edge === 'start') {
+              const newInicio = snapBeat(o.inicio + dx / pxPerBeat)
+              const end = o.inicio + o.duracion
+              return {
+                ...x,
+                inicio: Math.min(newInicio, end - snapDiv / 2),
+                duracion: Math.max(snapDiv / 2, end - Math.min(newInicio, end - snapDiv / 2)),
+              }
+            }
+            return {
+              ...x,
+              inicio: snapBeat(o.inicio + dx / pxPerBeat),
+              pitch: Math.max(LOWEST, Math.min(HIGHEST, o.pitch - Math.round(dy / keyH))),
+            }
+          }),
+        )
+      }
+      const up = () => {
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+        window.removeEventListener('pointercancel', up)
+        releaseNote(previewPitch)
+        try {
+          target?.releasePointerCapture?.(pointerId)
+        } catch {
+          /* ignore */
+        }
+        setNotes((prev) => {
+          void persist(prev)
+          return prev
+        })
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+      window.addEventListener('pointercancel', up)
+    },
+    [herramienta, selectedIds, snapDiv, snapBeat, pxPerBeat, keyH, persist],
+  )
 
   const addNoteAt = (clientX: number, clientY: number, gridEl: HTMLDivElement, dragDur = false) => {
     const rect = gridEl.getBoundingClientRect()
@@ -724,47 +849,53 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
       )}
 
       <div className="flex min-h-0 flex-1">
-        <div className="w-14 shrink-0 overflow-hidden border-r border-border bg-panel-raised">
-          <div style={{ height: gridHeight }}>
-            {Array.from({ length: KEYS }).map((_, i) => {
-              const pitch = HIGHEST - i
-              const black = isBlack(pitch)
-              const active = heldKey === pitch
-              const selectedHere = [...selectedIds].some((id) => notes.find((n) => n.id === id)?.pitch === pitch)
-              return (
-                <button
-                  key={pitch}
-                  type="button"
-                  onPointerDown={(e) => {
-                    e.preventDefault()
-                    ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
-                    setHeldKey(pitch)
-                    previewNote(pitch, 100)
-                  }}
-                  onPointerUp={() => {
-                    setHeldKey(null)
-                    releaseNote(pitch)
-                  }}
-                  onPointerCancel={() => {
-                    setHeldKey(null)
-                    releaseNote(pitch)
-                  }}
-                  className={`flex w-full items-center justify-end border-b border-border/40 pr-1 font-mono text-[9px] ${
-                    active
-                      ? 'bg-accent-amber/40 text-foreground'
-                      : selectedHere
-                        ? 'bg-accent-amber/15'
-                        : black
-                          ? 'bg-background/80 text-muted-foreground hover:bg-accent-amber/20'
-                          : 'bg-panel-raised text-foreground hover:bg-accent-amber/15'
-                  }`}
-                  style={{ height: keyH }}
-                  title={`${noteName(pitch)} · MIDI ${pitch}`}
-                >
-                  {pitch % 12 === 0 ? noteName(pitch) : ''}
-                </button>
-              )
-            })}
+        <div className="flex w-14 shrink-0 flex-col overflow-hidden border-r border-border bg-panel-raised">
+          {/* Misma altura que PianoRollTimelineRuler para alinear teclas ↔ notas */}
+          <div className="shrink-0 border-b border-border/60 bg-panel" style={{ height: RULER_H }} />
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <div ref={keysOffsetRef} style={{ height: gridHeight }}>
+              {Array.from({ length: KEYS }).map((_, i) => {
+                const pitch = HIGHEST - i
+                const black = isBlack(pitch)
+                const active = heldKey === pitch
+                const selectedHere = [...selectedIds].some(
+                  (id) => notes.find((n) => n.id === id)?.pitch === pitch,
+                )
+                return (
+                  <button
+                    key={pitch}
+                    type="button"
+                    onPointerDown={(e) => {
+                      e.preventDefault()
+                      ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+                      setHeldKey(pitch)
+                      previewNote(pitch, 100)
+                    }}
+                    onPointerUp={() => {
+                      setHeldKey(null)
+                      releaseNote(pitch)
+                    }}
+                    onPointerCancel={() => {
+                      setHeldKey(null)
+                      releaseNote(pitch)
+                    }}
+                    className={`flex w-full items-center justify-end border-b border-border/40 pr-1 font-mono text-[9px] ${
+                      active
+                        ? 'bg-accent-amber/40 text-foreground'
+                        : selectedHere
+                          ? 'bg-accent-amber/15'
+                          : black
+                            ? 'bg-background/80 text-muted-foreground hover:bg-accent-amber/20'
+                            : 'bg-panel-raised text-foreground hover:bg-accent-amber/15'
+                    }`}
+                    style={{ height: keyH }}
+                    title={`${noteName(pitch)} · MIDI ${pitch}`}
+                  >
+                    {pitch % 12 === 0 ? noteName(pitch) : ''}
+                  </button>
+                )
+              })}
+            </div>
           </div>
         </div>
 
@@ -773,7 +904,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
             pxPerBeat={pxPerBeat}
             durationBeats={durationBeats}
             beatsPerBar={beatsPerBar}
-            clipInicioBeats={clip.inicio ?? 0}
+            clipInicioBeats={clip?.inicio ?? 0}
             onSeekBeats={(absBeats) => {
               const sec = (absBeats * 60) / Math.max(1, bpm)
               void tienda.executor.execute('transport.seek', { segundos: sec })
@@ -919,81 +1050,27 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                 lowest={LOWEST}
                 onHit={(hit, ev) => {
                   if (!hit) return
-                  const n = notes.find((x) => x.id === hit.id)
+                  const n = notesRef.current.find((x) => x.id === hit.id)
                   if (!n) return
                   if (herramienta === 'borrar') {
-                    const next = notes.filter((x) => x.id !== hit.id)
+                    const next = notesRef.current.filter((x) => x.id !== hit.id)
                     setNotes(next)
                     setDirty(true)
                     void persist(next)
                     return
                   }
-                  const ids =
-                    selectedIds.has(hit.id) && selectedIds.size > 0
-                      ? selectedIds
-                      : new Set([hit.id])
-                  setSelectedIds((prev) => {
-                    if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
+                  if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
+                    setSelectedIds((prev) => {
                       const next = new Set(prev)
                       if (next.has(hit.id)) next.delete(hit.id)
                       else next.add(hit.id)
                       return next
-                    }
-                    return ids
-                  })
-                  previewNote(n.pitch, n.velocidad)
-                  if (ev.button !== 0) return
-                  const edge = hit.edge
-                  const startX = ev.clientX
-                  const startY = ev.clientY
-                  const origins = new Map(
-                    notes.filter((x) => ids.has(x.id)).map((x) => [x.id, { ...x }]),
-                  )
-                  const move = (e2: PointerEvent) => {
-                    const dx = e2.clientX - startX
-                    const dy = e2.clientY - startY
-                    setNotes((prev) =>
-                      prev.map((x) => {
-                        const o = origins.get(x.id)
-                        if (!o) return x
-                        if (edge === 'end') {
-                          return {
-                            ...x,
-                            duracion: Math.max(snapDiv / 2, snapBeat(o.duracion + dx / pxPerBeat)),
-                          }
-                        }
-                        if (edge === 'start') {
-                          const newInicio = snapBeat(o.inicio + dx / pxPerBeat)
-                          const end = o.inicio + o.duracion
-                          return {
-                            ...x,
-                            inicio: Math.min(newInicio, end - snapDiv / 2),
-                            duracion: Math.max(snapDiv / 2, end - Math.min(newInicio, end - snapDiv / 2)),
-                          }
-                        }
-                        return {
-                          ...x,
-                          inicio: snapBeat(o.inicio + dx / pxPerBeat),
-                          pitch: Math.max(
-                            LOWEST,
-                            Math.min(HIGHEST, o.pitch - Math.round(dy / keyH)),
-                          ),
-                        }
-                      }),
-                    )
-                    setDirty(true)
-                  }
-                  const up = () => {
-                    window.removeEventListener('pointermove', move)
-                    window.removeEventListener('pointerup', up)
-                    releaseNote(n.pitch)
-                    setNotes((prev) => {
-                      void persist(prev)
-                      return prev
                     })
+                    previewNote(n.pitch, n.velocidad)
+                    window.setTimeout(() => releaseNote(n.pitch), 180)
+                    return
                   }
-                  window.addEventListener('pointermove', move)
-                  window.addEventListener('pointerup', up)
+                  beginNoteDrag(ev, hit.id, hit.edge, n.pitch, n.velocidad)
                 }}
               />
             )}
@@ -1011,10 +1088,12 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                   data-note
                   role="button"
                   tabIndex={0}
-                  onClick={(e) => {
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return
                     e.stopPropagation()
+                    e.preventDefault()
                     if (herramienta === 'borrar') {
-                      const next = notes.filter((x) => x.id !== n.id)
+                      const next = notesRef.current.filter((x) => x.id !== n.id)
                       setNotes(next)
                       setSelectedIds((prev) => {
                         const s = new Set(prev)
@@ -1025,87 +1104,24 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                       void persist(next)
                       return
                     }
-                    setSelectedIds((prev) => {
-                      if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                      setSelectedIds((prev) => {
                         const next = new Set(prev)
                         if (next.has(n.id)) next.delete(n.id)
                         else next.add(n.id)
                         return next
-                      }
-                      return new Set([n.id])
-                    })
-                    previewNote(n.pitch, n.velocidad)
-                    window.setTimeout(() => releaseNote(n.pitch), 180)
-                  }}
-                  onPointerDown={(e) => {
-                    if (e.button !== 0) return
-                    e.stopPropagation()
-                    if (herramienta === 'borrar') return
+                      })
+                      previewNote(n.pitch, n.velocidad)
+                      window.setTimeout(() => releaseNote(n.pitch), 180)
+                      return
+                    }
                     const rect = e.currentTarget.getBoundingClientRect()
                     const localX = e.clientX - rect.left
                     const edge: false | 'start' | 'end' =
                       localX > width - 6 ? 'end' : localX < 6 ? 'start' : false
-                    const ids =
-                      selectedIds.has(n.id) && selectedIds.size > 0
-                        ? selectedIds
-                        : new Set([n.id])
-                    setSelectedIds(ids)
-                    previewNote(n.pitch, n.velocidad)
-                    const startX = e.clientX
-                    const startY = e.clientY
-                    const origins = new Map(
-                      notes.filter((x) => ids.has(x.id)).map((x) => [x.id, { ...x }]),
-                    )
-                    const move = (ev: PointerEvent) => {
-                      const dx = ev.clientX - startX
-                      const dy = ev.clientY - startY
-                      setNotes((prev) =>
-                        prev.map((x) => {
-                          const o = origins.get(x.id)
-                          if (!o) return x
-                          if (edge === 'end') {
-                            return {
-                              ...x,
-                              duracion: Math.max(snapDiv / 2, snapBeat(o.duracion + dx / pxPerBeat)),
-                            }
-                          }
-                          if (edge === 'start') {
-                            const newInicio = snapBeat(o.inicio + dx / pxPerBeat)
-                            const end = o.inicio + o.duracion
-                            return {
-                              ...x,
-                              inicio: Math.min(newInicio, end - snapDiv / 2),
-                              duracion: Math.max(
-                                snapDiv / 2,
-                                end - Math.min(newInicio, end - snapDiv / 2),
-                              ),
-                            }
-                          }
-                          return {
-                            ...x,
-                            inicio: snapBeat(o.inicio + dx / pxPerBeat),
-                            pitch: Math.max(
-                              LOWEST,
-                              Math.min(HIGHEST, o.pitch - Math.round(dy / keyH)),
-                            ),
-                          }
-                        }),
-                      )
-                      setDirty(true)
-                    }
-                    const up = () => {
-                      window.removeEventListener('pointermove', move)
-                      window.removeEventListener('pointerup', up)
-                      releaseNote(n.pitch)
-                      setNotes((prev) => {
-                        void persist(prev)
-                        return prev
-                      })
-                    }
-                    window.addEventListener('pointermove', move)
-                    window.addEventListener('pointerup', up)
+                    beginNoteDrag(e.nativeEvent, n.id, edge, n.pitch, n.velocidad)
                   }}
-                  className={`absolute z-10 rounded-sm border ${
+                  className={`absolute z-10 touch-none rounded-sm border ${
                     selected
                       ? 'border-accent-amber ring-1 ring-accent-amber'
                       : 'border-violet-300/40 hover:brightness-110'
@@ -1119,7 +1135,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                   }}
                   title={`${noteName(n.pitch)} · v${n.velocidad}`}
                 >
-                  <span className="absolute right-0 top-0 h-full w-1.5 cursor-e-resize rounded-r-sm bg-white/20" />
+                  <span className="pointer-events-none absolute right-0 top-0 h-full w-1.5 rounded-r-sm bg-white/20" />
                 </div>
               )
             })}
@@ -1185,7 +1201,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
               width={gridWidth}
               durationBeats={durationBeats}
               pxPerBeat={pxPerBeat}
-              expression={clip.expression}
+              expression={clip?.expression}
               onSetCc={(cc, puntos) => {
                 void tienda.executor.execute('midi.setCC', {
                   pistaId: trackId,

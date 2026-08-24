@@ -622,9 +622,10 @@ function AudioTab() {
             render={(v) => `${v} samples`}
           />
           <p className="mt-1 text-[9px] text-muted-foreground">
-            El tamaño lo eliges tú; ASIO lo ajusta a su rango (min/max/preferred del driver).
-            {(backend === 'asio' || runtime?.backend === 'asio') && bufferSize < 512
-              ? ' Aviso: con VSTi pesados (BFD) un buffer bajo puede producir xruns/cortes.'
+            Para baja latencia usa 256–512 samples (~6–12 ms a 44.1 kHz). 1024+ se siente lento al
+            tocar. ASIO ajusta al rango del driver (min/max/preferred).
+            {(backend === 'asio' || runtime?.backend === 'asio') && bufferSize < 256
+              ? ' Aviso: buffers muy bajos con VSTi pesados (BFD) pueden causar xruns.'
               : ''}
           </p>
         </Field>
