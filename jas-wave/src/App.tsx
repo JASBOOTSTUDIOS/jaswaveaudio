@@ -31,7 +31,7 @@ import { ImportProgressProvider } from '@/src/context/import-progress-context'
 import { PluginHostBootstrap } from '@/components/plugin-host-bootstrap'
 import { PluginHostLifecycle } from '@/components/plugin-host-lifecycle'
 import { MidiControllerHost } from '@/components/midi-controller-host'
-import { AgentAuditHost } from '@/src/lib/agent-audit-bridge'
+import { AgentAuditHost, AGENT_BRIDGE_REV } from '@/src/lib/agent-audit-bridge'
 import { PanelLeft, PanelRight, PanelBottom, Plus, X } from 'lucide-react'
 import { JasWaveAppIcon } from '@/components/brand'
 
@@ -388,7 +388,7 @@ export default function App() {
               <PluginHostBootstrap />
               <PluginHostLifecycle />
               <MidiControllerHost />
-              <AgentAuditHost />
+              <AgentAuditHost key={AGENT_BRIDGE_REV} />
               <AppShell />
             </WorkspaceProvider>
           )}

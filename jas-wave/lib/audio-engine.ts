@@ -100,6 +100,7 @@ export class WebAudioEngine {
   private preferredSampleRate = 48000
   private nativeOutput = false
   private nativeBufferSize = 512
+  private lastArmError: string | null = null
   private pcmTap: ScriptProcessorNode | null = null
   private pcmWorklet: AudioWorkletNode | null = null
   private workletModuleReady = false
@@ -242,12 +243,77 @@ export class WebAudioEngine {
     return this.playheadStartSec + Math.max(0, this.audioCtx.currentTime - this.startTime)
   }
 
-  /** Retraso estimado Web Audio tap → pipe → ASIO (doble buffer). */
+  /** Retraso estimado Soft Pad (Web Audio → tap → pipe → ring → ASIO). */
   public nativePathAheadSec(): number {
     const sr = this.audioCtx?.sampleRate ?? this.preferredSampleRate
-    const tap = 256
+    // Worklet pack = 256; ScriptProcessor fallback = 512
+    const tap = this.pcmTap && !this.pcmWorklet ? 512 : 256
     const buf = this.nativeBufferSize > 0 ? this.nativeBufferSize : 512
-    return (tap + buf * 2) / sr + 0.008
+    // mix_bus.cpp kTargetFill — Soft Pad se acumula aquí antes de salir al device
+    const ringTarget = 1024
+    // Doble buffer ASIO + margen IPC/scheduling
+    return (tap + ringTarget + buf * 2) / sr + 0.012
+  }
+
+  /** Info de sync para UI/CLI (timing playhead vs device). */
+  public getTimingDiagnostics(): {
+    sampleRate: number
+    bufferSize: number
+    nativeOutput: boolean
+    pathAheadSec: number
+    pathAheadMs: number
+    timelineSec: number
+    audibleSec: number
+    skewMs: number
+    playing: boolean
+    lastArmError: string | null
+  } {
+    const sr = this.audioCtx?.sampleRate ?? this.preferredSampleRate
+    const ahead = this.nativeOutput ? this.nativePathAheadSec() : 0
+    const timeline = this.getTimelineSeconds()
+    const audible = this.getAudibleTimelineSeconds()
+    return {
+      sampleRate: sr,
+      bufferSize: this.nativeBufferSize || 512,
+      nativeOutput: this.nativeOutput,
+      pathAheadSec: ahead,
+      pathAheadMs: ahead * 1000,
+      timelineSec: timeline,
+      audibleSec: audible,
+      skewMs: (timeline - audible) * 1000,
+      playing: this.isPlaying,
+      lastArmError: this.lastArmError,
+    }
+  }
+
+  public getMasterSpectrum(out?: Uint8Array): Uint8Array {
+    this.ensureContext()
+    const an = this.masterAnalyser
+    if (!an) return out ?? new Uint8Array(128)
+    if (an.fftSize < 2048) {
+      an.fftSize = 2048
+      this.masterMeterData = new Uint8Array(an.fftSize)
+    }
+    const need = an.frequencyBinCount
+    const buf =
+      out && out.length >= need
+        ? out
+        : new Uint8Array(need)
+    an.getByteFrequencyData(buf as unknown as Uint8Array<ArrayBuffer>)
+    return buf
+  }
+
+  /** Time-domain del master (byte waveform). */
+  public getMasterTimeDomain(out?: Uint8Array): Uint8Array {
+    this.ensureContext()
+    const an = this.masterAnalyser
+    if (!an) return out ?? new Uint8Array(256)
+    if (!this.masterMeterData || this.masterMeterData.length < an.fftSize) {
+      this.masterMeterData = new Uint8Array(an.fftSize)
+    }
+    const buf = out && out.length >= an.fftSize ? out : this.masterMeterData
+    an.getByteTimeDomainData(buf as unknown as Uint8Array<ArrayBuffer>)
+    return buf
   }
 
   /** Playhead audible (UI): coincide con lo que sale del device, no con Chromium. */
@@ -439,11 +505,13 @@ export class WebAudioEngine {
    * al named pipe. Si falla, deja los altavoces de Chromium.
    */
   public async armNativeMixOutput(): Promise<boolean> {
+    this.lastArmError = null
     const api = typeof window !== 'undefined' ? window.electron : undefined
     if (typeof window !== 'undefined') {
       try {
         const q = new URLSearchParams(window.location.search)
         if (q.get('undock') || window.location.hash.replace(/^#/, '').startsWith('undock/')) {
+          this.lastArmError = 'undock-window'
           this.setNativeOutput(false)
           return false
         }
@@ -452,6 +520,7 @@ export class WebAudioEngine {
       }
     }
     if (!api?.pluginHostEnsure || !api.pluginHostSend || !api.pluginHostPushPcm) {
+      this.lastArmError = 'no-plugin-host-api'
       this.setNativeOutput(false)
       return false
     }
@@ -459,23 +528,26 @@ export class WebAudioEngine {
       const ens = await api.pluginHostEnsure()
       const st = ens as { backend?: string; mixPipeConnected?: boolean } | undefined
       if (st?.backend && st.backend !== 'native') {
+        this.lastArmError = `host-backend=${st.backend}`
         this.setNativeOutput(false)
         return false
       }
       if (!st?.mixPipeConnected) {
+        this.lastArmError = 'mix-pipe-disconnected'
         this.setNativeOutput(false)
         return false
       }
       const raw = (await Promise.race([
         api.pluginHostSend({ type: 'ensureAudio' }),
         new Promise<null>((r) => setTimeout(() => r(null), 4000)),
-      ])) as { ok?: boolean; audio?: { sampleRate?: number; backend?: string } } | null
+      ])) as { ok?: boolean; audio?: { sampleRate?: number; backend?: string; bufferSize?: number } } | null
       if (!raw || raw.ok === false) {
+        this.lastArmError = 'ensureAudio-failed'
         this.setNativeOutput(false)
         return false
       }
       if (raw.audio?.sampleRate) this.setPreferredSampleRate(raw.audio.sampleRate)
-      const bufSz = (raw.audio as { bufferSize?: number } | undefined)?.bufferSize
+      const bufSz = raw.audio?.bufferSize
       if (bufSz && bufSz >= 16 && bufSz <= 8192) this.nativeBufferSize = bufSz
       this.pendingChromiumSink = await this.preferredChromiumSink(raw.audio?.backend)
       if (this.audioCtx && raw.audio?.backend === 'asio') this.disposeLiveContext()
@@ -503,8 +575,10 @@ export class WebAudioEngine {
           /* ignore */
         }
       }
+      if (!this.nativeOutput) this.lastArmError = 'setNativeOutput-false'
       return this.nativeOutput
-    } catch {
+    } catch (err) {
+      this.lastArmError = err instanceof Error ? err.message : 'arm-exception'
       this.setNativeOutput(false, true)
       return false
     }

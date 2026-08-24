@@ -79,7 +79,7 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
   meters: {
     id: 'meters',
     title: 'Medidores',
-    description: 'Niveles y análisis',
+    description: 'Espectro, estéreo, LUFS y sync de timing',
     defaultZone: 'right',
     singleton: true,
   },

@@ -2,7 +2,7 @@
  * Renderer: responde al agent-bridge (CLI) con snapshots, catálogo y TODAS las acciones IA.
  */
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useDAW } from '@/src/context/daw-context'
 import { audioEngine } from '@/lib/audio-engine'
 import {
@@ -273,17 +273,43 @@ export async function controlTransport(
 
 /** Misma vía que el chat IA: executeDawActions. */
 export async function runCliActions(tienda: TiendaDAW, actions: DawAction[]) {
-  const results = await executeDawActions(tienda, actions, {
-    agentMode: 'create',
-    forceApply: true,
-    respectModeGate: false,
-    source: 'cli',
-  })
+  // Fast-path timing (no depende de HMR del switch grande)
+  const expanded: DawAction[] = []
+  const early: Array<{ type: string; success: boolean; message: string; data?: unknown }> = []
+  for (const a of actions) {
+    if (a.type === 'analysis.timing') {
+      const d = audioEngine.getTimingDiagnostics()
+      const skewVsAhead = Math.abs(d.skewMs - d.pathAheadMs)
+      const ok = !d.playing || skewVsAhead < 40
+      early.push({
+        type: a.type,
+        success: true,
+        message: ok
+          ? `Timing OK · ahead ${d.pathAheadMs.toFixed(0)} ms · buf ${d.bufferSize} · ${d.sampleRate} Hz`
+          : `Timing sospechoso · skew ${d.skewMs.toFixed(0)} ms vs ahead ${d.pathAheadMs.toFixed(0)} ms · buf ${d.bufferSize}`,
+        data: { ...d, ok, skewVsAheadMs: skewVsAhead },
+      })
+    } else {
+      expanded.push(a)
+    }
+  }
+  const results = expanded.length
+    ? await executeDawActions(tienda, expanded, {
+        agentMode: 'create',
+        forceApply: true,
+        respectModeGate: false,
+        source: 'cli',
+      })
+    : []
+  const all = [...early, ...results]
   return {
-    ok: results.every((r) => r.success),
-    results,
+    ok: all.every((r) => r.success),
+    results: all,
   }
 }
+
+/** Bump en cada cambio del bridge para forzar remount tras HMR. */
+export const AGENT_BRIDGE_REV = 6
 
 /** Montar en App: escucha agent-bridge-request del main. */
 export function AgentAuditHost() {
@@ -338,7 +364,55 @@ export function AgentAuditHost() {
               api.agentBridgeReply?.(msg.id, null, 'Falta type o actions[]')
               return
             }
-            api.agentBridgeReply?.(msg.id, await runCliActions(tienda, actions))
+            // Separar analysis.timing / audio.armNative (inline) del resto
+            const special = actions.filter(
+              (a) => a.type === 'analysis.timing' || a.type === 'audio.armNative',
+            )
+            const otherActions = actions.filter(
+              (a) => a.type !== 'analysis.timing' && a.type !== 'audio.armNative',
+            )
+            const specialResults: Array<{
+              type: string
+              success: boolean
+              message: string
+              data?: unknown
+            }> = []
+            for (const a of special) {
+              if (a.type === 'analysis.timing') {
+                const d = audioEngine.getTimingDiagnostics()
+                const skewVsAhead = Math.abs(d.skewMs - d.pathAheadMs)
+                const ok =
+                  !d.playing ||
+                  (d.nativeOutput ? skewVsAhead < 40 : Math.abs(d.skewMs) < 80)
+                specialResults.push({
+                  type: 'analysis.timing',
+                  success: true,
+                  message: ok
+                    ? `Timing OK · ahead ${d.pathAheadMs.toFixed(0)} ms · buf ${d.bufferSize} · native=${d.nativeOutput}${d.lastArmError ? ` · armErr=${d.lastArmError}` : ''}`
+                    : `Timing sospechoso · skew ${d.skewMs.toFixed(0)} ms · ahead ${d.pathAheadMs.toFixed(0)} · native=${d.nativeOutput} · ${d.lastArmError || ''}`,
+                  data: { ...d, ok, skewVsAheadMs: skewVsAhead },
+                })
+              } else if (a.type === 'audio.armNative') {
+                const ok = await audioEngine.armNativeMixOutput()
+                const d = audioEngine.getTimingDiagnostics()
+                specialResults.push({
+                  type: 'audio.armNative',
+                  success: ok,
+                  message: ok
+                    ? `Native mix armado · ahead ${d.pathAheadMs.toFixed(0)} ms · buf ${d.bufferSize}`
+                    : `Native mix NO armado: ${d.lastArmError || 'desconocido'}`,
+                  data: d,
+                })
+              }
+            }
+            const other = otherActions.length
+              ? await runCliActions(tienda, otherActions)
+              : { ok: true, results: [] }
+            const results = [...(other.results || []), ...specialResults]
+            api.agentBridgeReply?.(msg.id, {
+              ok: results.every((r: { success?: boolean }) => r.success !== false),
+              results,
+            })
             return
           }
           api.agentBridgeReply?.(msg.id, null, `canal desconocido: ${msg.channel}`)
@@ -348,6 +422,12 @@ export function AgentAuditHost() {
       })()
     })
   }, [tienda])
+
+  // Re-suscribir el bridge tras HMR para no quedar con closures viejos
+  useEffect(() => {
+    const hot = (import.meta as ImportMeta & { hot?: { accept: (cb?: () => void) => void } }).hot
+    hot?.accept?.()
+  }, [])
 
   return null
 }

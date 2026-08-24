@@ -243,6 +243,21 @@ export function isMixPipeConnected(): boolean {
   return !!mixSock && !mixSock.destroyed && mixSock.writable
 }
 
+/** Reconecta el named pipe Soft Pad→ASIO si se cayó (p. ej. tras setAudioDevice). */
+export async function ensureMixPipeConnected(): Promise<boolean> {
+  if (isMixPipeConnected()) return true
+  if (backend !== 'native' || !started || !child?.pid) return false
+  mixSuppressReconnect = false
+  mixReconnectAttempts = 0
+  try {
+    const ping = await sendPluginHostCommand({ type: 'ping' }, 3000)
+    if (!ping.ok) return false
+    return await connectMixPipe(String(ping.mixPipe || ''), child.pid)
+  } catch {
+    return false
+  }
+}
+
 /** PCM interleaved f32le → named pipe del host. Cola FIFO (nunca latest-wins: eso desincroniza pistas). */
 export function pushPluginHostPcm(data: Buffer | ArrayBuffer | Float32Array | ArrayBufferView): void {
   if (!mixSock || mixSock.destroyed || !mixSock.writable) return
@@ -792,6 +807,7 @@ async function applyAudioDeviceOrFallback(
     )
     if (applied.ok) {
       if (persist) writeAudioDevicePrefs(prefs)
+      await ensureMixPipeConnected()
       notifyHostRestarted()
       return applied
     }

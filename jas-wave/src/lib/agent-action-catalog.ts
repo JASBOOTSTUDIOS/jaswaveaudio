@@ -31,6 +31,12 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     examplePayload: { aplicar: true, prompt: 'funk bass', minutos: 1 },
   },
   {
+    type: 'analysis.timing',
+    kind: 'agent',
+    description: 'Diagnóstico sync Soft Pad/ASIO (ahead, skew, buffer)',
+    examplePayload: {},
+  },
+  {
     type: 'daw.masterPass',
     kind: 'agent',
     description: 'Cadena master + bounce + compareTarget',
@@ -174,6 +180,12 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     description: 'Elige ASIO óptimo (UMC…) o WASAPI y sincroniza UI',
     examplePayload: { preferName: 'UMC' },
   },
+  {
+    type: 'audio.armNative',
+    kind: 'agent',
+    description: 'Arma Soft Pad/clips → pipe → ASIO (sync nativo)',
+    examplePayload: {},
+  },
 ]
 
 /** Tipos que executeDawActions entiende (unión útil para list/filter). */
@@ -234,6 +246,7 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'analysis.spectrum',
   'analysis.stereo',
   'analysis.fullReport',
+  'analysis.timing',
   'automation.setCurve',
   'automation.clear',
   'bus.create',
@@ -245,6 +258,7 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'audio.getDevice',
   'audio.setDevice',
   'audio.ensureBest',
+  'audio.armNative',
   'project.new',
   ...AGENT_ONLY_ACTIONS.map((a) => a.type),
 ]

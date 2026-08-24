@@ -97,7 +97,24 @@ function trackAudioConfigFromShared(t: {
   const hit = findTrackPlaybackInstrument(t.plugins as never)
   const loaded = hit?.kind === 'vst' ? getLoadedInstrumentForTrack(t.id) : null
   const hasSoftPad = trackHasSoftPad(t.plugins)
-  const hasVst = Boolean(loaded?.slotId)
+  /**
+   * Soft Pad insertado = fuente audible única (sin dual).
+   * Dual Soft Pad+VST provoca flam (latencias distintas) y sobrecarga ASIO
+   * (crackles / notificaciones del SO con buffer issues).
+   * VST queda en la cadena para cargar kit; MIDI va a Soft Pad hasta quitar Soft Pad.
+   */
+  if (hasSoftPad) {
+    return {
+      id: t.id,
+      volumen: typeof t.volumen === 'number' ? t.volumen : 0.8,
+      paneo: typeof t.paneo === 'number' ? t.paneo : 0,
+      silenciada: Boolean(t.silenciada),
+      soloActiva: Boolean(t.soloActiva),
+      softPadFallback: true,
+      softPadDual: false,
+      softPadRole: inferSoftPadRoleFromTrack(t),
+    }
+  }
   return {
     id: t.id,
     volumen: typeof t.volumen === 'number' ? t.volumen : 0.8,
@@ -105,8 +122,8 @@ function trackAudioConfigFromShared(t: {
     silenciada: Boolean(t.silenciada),
     soloActiva: Boolean(t.soloActiva),
     vstInstrumentSlotId: loaded?.slotId,
-    softPadFallback: hasSoftPad && !hasVst,
-    softPadDual: hasSoftPad && hasVst,
+    softPadFallback: false,
+    softPadDual: false,
     softPadRole: inferSoftPadRoleFromTrack(t),
   }
 }
@@ -534,7 +551,14 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       sharedTracks.map((t) => trackAudioConfigFromShared(t))
 
     void (async () => {
-      await audioEngine.armNativeMixOutput()
+      let armed = await audioEngine.armNativeMixOutput()
+      if (!armed) {
+        await new Promise((r) => setTimeout(r, 250))
+        armed = await audioEngine.armNativeMixOutput()
+      }
+      if (!armed) {
+        console.warn('[playback] native mix not armed', audioEngine.getTimingDiagnostics().lastArmError)
+      }
       const ctx = audioEngine.ensureContext()
       if (ctx.state === 'suspended') {
         try {
