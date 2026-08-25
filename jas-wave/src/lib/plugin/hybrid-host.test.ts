@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { PluginCompatibilityDatabase } from './compatibility-db'
-import { createFakePluginDescriptor, createSoftPadDescriptor, FAKE_PLUGIN_ID } from './fake-plugin'
+import { createFakePluginDescriptor, FAKE_PLUGIN_ID } from './fake-plugin'
 import { InProcessRuntime } from './in-process-runtime'
 import { isolationForFormat } from './isolation-policy'
 import { OutOfProcessRuntime, type PluginHostProcessBridge } from './out-of-process-runtime'
@@ -54,25 +54,18 @@ describe('descriptorToPluginInfo (no-engaño)', () => {
   })
 
   it('builtin listo sí es cargado', () => {
-    const info = descriptorToPluginInfo(createSoftPadDescriptor())
+    const info = descriptorToPluginInfo(createFakePluginDescriptor())
     assert.equal(info.estado, 'cargado')
   })
 })
 
 describe('InProcessRuntime', () => {
-  it('loads Soft Pad', async () => {
-    const rt = new InProcessRuntime()
-    const soft = createSoftPadDescriptor()
-    const inst = await rt.load(soft, { trackId: 't1', position: 0 })
-    assert.equal(inst.lifecycle, 'active')
-    assert.equal(inst.isolation, 'in-process')
-    assert.equal(inst.pluginId, 'jaswave.softpad')
-  })
-
   it('loads Fake Gain', async () => {
     const rt = new InProcessRuntime()
     const fake = createFakePluginDescriptor()
     const inst = await rt.load(fake, { trackId: 't1' })
+    assert.equal(inst.lifecycle, 'active')
+    assert.equal(inst.isolation, 'in-process')
     assert.equal(inst.pluginId, FAKE_PLUGIN_ID)
     await rt.setBypass(inst.instanceId, true)
     assert.equal(rt.get(inst.instanceId)?.lifecycle, 'bypassed')
@@ -140,7 +133,7 @@ describe('OutOfProcessRuntime', () => {
 describe('PluginManager', () => {
   it('loads builtin via manager', async () => {
     const mgr = new PluginManager()
-    const inst = await mgr.load('jaswave.softpad', { trackId: 'tr' })
+    const inst = await mgr.load(FAKE_PLUGIN_ID, { trackId: 'tr' })
     assert.equal(inst.isolation, 'in-process')
     await mgr.unload(inst.instanceId)
     assert.equal(mgr.get(inst.instanceId), undefined)

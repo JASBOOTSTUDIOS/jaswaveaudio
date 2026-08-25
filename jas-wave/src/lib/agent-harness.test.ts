@@ -84,13 +84,13 @@ describe('agent-harness producción', () => {
     const filtered = filterRedundantRepairActions(
       [
         { type: 'plugin.insert', payload: { nombre: 'Analog Lab' } },
-        { type: 'plugin.insert', payload: { nombre: 'JasWave Soft Pad' } },
+        { type: 'plugin.insert', payload: { nombre: 'JasWave Roles' } },
       ],
       [],
       attempted,
     )
     assert.equal(filtered.some((a) => String(a.payload?.nombre).includes('Analog')), false)
-    assert.equal(filtered[0]?.payload?.nombre, 'JasWave Soft Pad')
+    assert.equal(filtered[0]?.payload?.nombre, 'JasWave Roles')
   })
 
   it('fingerprint distingue pistas', () => {

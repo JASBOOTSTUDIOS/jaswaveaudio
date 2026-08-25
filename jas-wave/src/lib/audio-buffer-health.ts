@@ -1,0 +1,334 @@
+/**
+ * Diagnóstico de saturación / underrun del path Soft Pad → pipe → ring → ASIO.
+ * Usado por analysis.buffer (CLI + IA + Medidores).
+ */
+
+import { audioEngine } from '@/lib/audio-engine'
+
+export type MixRingStats = {
+  running: boolean
+  capacity: number
+  targetFill: number
+  highFill: number
+  dawFill: number
+  minLiveFill: number
+  maxLiveFill: number
+  liveTracks: number
+  pullBudget: number
+  inRate: number
+  outRate: number
+  underrunBlocks: number
+  overflowPushes: number
+  highFillDropFrames: number
+}
+
+export type BufferHealthReport = {
+  ok: boolean
+  status: 'healthy' | 'starving' | 'saturated' | 'disconnected' | 'unknown'
+  summary: string
+  issues: string[]
+  advice: string[]
+  sampleRate: number
+  bufferSize: number
+  nativeOutput: boolean
+  mixPipeConnected: boolean
+  mixQueueDepth: number
+  mixBackpressure: boolean
+  chromeBaseLatencyMs: number | null
+  chromeOutputLatencyMs: number | null
+  pathAheadMs: number
+  ring: MixRingStats | null
+  /** Fill del anillo vivo vs target (0 = vacío, 1 = target, >1 = por encima). */
+  fillRatioVsTarget: number | null
+  /** Fill vs highFill (1 = saturación). */
+  fillRatioVsHigh: number | null
+  underrunDelta: number
+  overflowDelta: number
+  highFillDropDelta: number
+  sampledMs: number
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((r) => setTimeout(r, ms))
+}
+
+async function readHostPipeStatus(): Promise<{
+  mixPipeConnected: boolean
+  mixQueueDepth: number
+  mixBackpressure: boolean
+  backend?: string
+}> {
+  const st = (await window.electron?.pluginHostStatus?.()) as
+    | {
+        mixPipeConnected?: boolean
+        mixQueueDepth?: number
+        mixBackpressure?: boolean
+        backend?: string
+      }
+    | undefined
+  return {
+    mixPipeConnected: Boolean(st?.mixPipeConnected),
+    mixQueueDepth: Number(st?.mixQueueDepth ?? 0),
+    mixBackpressure: Boolean(st?.mixBackpressure),
+    backend: st?.backend,
+  }
+}
+
+/** Snapshot rápido del ring (para medidor del transporte; sin muestreo largo). */
+export async function readMixRingFill(): Promise<{
+  fill: number
+  capacity: number
+  targetFill: number
+  highFill: number
+  liveTracks: number
+  /** 0 = vacío, ~0.5 = medio, 1 = lleno (respecto a highFill). */
+  level: number
+  connected: boolean
+} | null> {
+  const [pipe, ring] = await Promise.all([readHostPipeStatus(), readRingStats(false)])
+  if (!ring?.running) {
+    return {
+      fill: 0,
+      capacity: ring?.capacity ?? 8192,
+      targetFill: ring?.targetFill ?? 1024,
+      highFill: ring?.highFill ?? 3072,
+      liveTracks: 0,
+      level: 0,
+      connected: pipe.mixPipeConnected,
+    }
+  }
+  const fill = ring.liveTracks > 0 ? ring.minLiveFill : ring.dawFill
+  const high = Math.max(1, ring.highFill)
+  const level = Math.max(0, Math.min(1, fill / high))
+  return {
+    fill,
+    capacity: ring.capacity,
+    targetFill: ring.targetFill,
+    highFill: ring.highFill,
+    liveTracks: ring.liveTracks,
+    level,
+    connected: pipe.mixPipeConnected,
+  }
+}
+
+async function readRingStats(reset?: boolean): Promise<MixRingStats | null> {
+  const send = window.electron?.pluginHostSend
+  if (!send) return null
+  try {
+    const raw = (await Promise.race([
+      send({ type: 'getMixBufferStats', reset: Boolean(reset) }),
+      new Promise<null>((r) => setTimeout(() => r(null), 400)),
+    ])) as { ok?: boolean; mix?: MixRingStats } | null
+    if (!raw?.ok || !raw.mix) return null
+    return raw.mix
+  } catch {
+    return null
+  }
+}
+
+function chromeLatencies(): { base: number | null; output: number | null } {
+  try {
+    const ctx = audioEngine.getContext()
+    if (!ctx) return { base: null, output: null }
+    const base = typeof ctx.baseLatency === 'number' ? ctx.baseLatency * 1000 : null
+    const output =
+      typeof (ctx as AudioContext & { outputLatency?: number }).outputLatency === 'number'
+        ? ((ctx as AudioContext & { outputLatency?: number }).outputLatency ?? 0) * 1000
+        : null
+    return { base, output }
+  } catch {
+    return { base: null, output: null }
+  }
+}
+
+function judge(args: {
+  nativeOutput: boolean
+  mixPipeConnected: boolean
+  mixQueueDepth: number
+  mixBackpressure: boolean
+  ring: MixRingStats | null
+  underrunDelta: number
+  overflowDelta: number
+  highFillDropDelta: number
+  fillRatioVsTarget: number | null
+  fillRatioVsHigh: number | null
+  minRatioVsTarget?: number | null
+}): Pick<BufferHealthReport, 'ok' | 'status' | 'summary' | 'issues' | 'advice'> {
+  const issues: string[] = []
+  const advice: string[] = []
+
+  if (!args.nativeOutput || !args.mixPipeConnected) {
+    return {
+      ok: false,
+      status: 'disconnected',
+      summary: 'Mix nativo desconectado — el mix puede ir por Chromium (doble open / crackle)',
+      issues: [
+        !args.mixPipeConnected ? 'mix pipe desconectado' : '',
+        !args.nativeOutput ? 'nativeOutput=false' : '',
+      ].filter(Boolean),
+      advice: ['Ejecuta audio.armNative', 'audio.ensureBest { preferName: "UMC" }', 'Reinicia JasWave si el pipe no vuelve'],
+    }
+  }
+
+  if (args.mixQueueDepth > 48 || (args.mixBackpressure && args.mixQueueDepth > 8)) {
+    issues.push(
+      `Cola IPC saturada: depth=${args.mixQueueDepth}${args.mixBackpressure ? ' · backpressure' : ''}`,
+    )
+  }
+  if (args.overflowDelta > 0) {
+    issues.push(`Ring overflow: +${args.overflowDelta} pushes perdidos (productor más rápido que ASIO)`)
+  }
+  if (args.highFillDropDelta > 20000) {
+    issues.push(`High-fill drop: +${args.highFillDropDelta} frames descartados (emergencia ring lleno)`)
+  }
+  if (args.underrunDelta > 8) {
+    issues.push(`Underrun: +${args.underrunDelta} bloques con ring por debajo del buffer ASIO`)
+  }
+  if (args.fillRatioVsHigh != null && args.fillRatioVsHigh >= 0.92) {
+    issues.push(
+      `Ring cerca del techo (${(args.fillRatioVsHigh * 100).toFixed(0)}% de highFill) — saturación`,
+    )
+  }
+  const starveRatio = args.minRatioVsTarget ?? args.fillRatioVsTarget
+  if (starveRatio != null && starveRatio < 0.35 && (args.ring?.liveTracks ?? 0) > 0) {
+    issues.push(
+      `Ring bajo (${(starveRatio * 100).toFixed(0)}% del target) — riesgo de huecos/crackle`,
+    )
+  }
+
+  const saturated =
+    args.overflowDelta > 64 ||
+    args.mixQueueDepth > 16 ||
+    (args.mixBackpressure && args.mixQueueDepth > 8) ||
+    (args.fillRatioVsHigh != null && args.fillRatioVsHigh >= 0.95) ||
+    args.highFillDropDelta > 20000
+
+  const starving =
+    args.underrunDelta > 20 ||
+    (starveRatio != null &&
+      starveRatio < 0.2 &&
+      (args.ring?.liveTracks ?? 0) > 0 &&
+      args.underrunDelta > 8)
+
+  if (saturated) {
+    advice.push('Sube buffer ASIO a 1024 (audio.setDevice bufferSize:1024)')
+    advice.push('Baja pistas MIDI simultáneas o cierra editores VST pesados')
+    advice.push('Evita dual Chromium+ASIO: confirma nativeOutput=true')
+    return {
+      ok: false,
+      status: 'saturated',
+      summary: `Buffer saturado — ${issues[0] || 'relleno/cola altos'}`,
+      issues,
+      advice,
+    }
+  }
+
+  if (starving) {
+    advice.push('Confirma play + mix armado (audio.armNative)')
+    advice.push('Si underruns siguen: buffer 1024 y menos CPU (menos VSTs vacíos)')
+    return {
+      ok: false,
+      status: 'starving',
+      summary: `Buffer hambriento — ${issues[0] || 'underruns / fill bajo'}`,
+      issues,
+      advice,
+    }
+  }
+
+  if (!args.ring) {
+    return {
+      ok: true,
+      status: 'unknown',
+      summary: 'Host sin getMixBufferStats (binario viejo) — pipe OK; recompila plugin-host para fill real',
+      issues: [],
+      advice: ['Compila native/plugin-host build-vst3 Release y reinicia Electron'],
+    }
+  }
+
+  const fillPct =
+    args.fillRatioVsTarget != null ? `${(args.fillRatioVsTarget * 100).toFixed(0)}% del target` : 'n/a'
+  return {
+    ok: true,
+    status: 'healthy',
+    summary: `Buffer OK · fill ${fillPct} · live=${args.ring.liveTracks} · queue=${args.mixQueueDepth}`,
+    issues: [],
+    advice: [],
+  }
+}
+
+/**
+ * Muestrea el path de audio ~sampleMs y clasifica healthy/saturated/starving.
+ * reset:true pone a cero contadores nativos antes de medir el delta.
+ */
+export async function analyzeBufferHealth(opts?: {
+  sampleMs?: number
+  reset?: boolean
+}): Promise<BufferHealthReport> {
+  const sampleMs = Math.max(80, Math.min(2000, opts?.sampleMs ?? 400))
+  const reset = opts?.reset !== false
+
+  const timing = audioEngine.getTimingDiagnostics()
+  const chrome = chromeLatencies()
+
+  // Una sola pasada ligera: reset+sample en paralelo con pipe (antes 3×1.5s timeouts congelaban UI).
+  const [pipe0, a] = await Promise.all([readHostPipeStatus(), readRingStats(reset)])
+  await sleep(sampleMs)
+  const [pipe1, b] = await Promise.all([readHostPipeStatus(), readRingStats(false)])
+
+  const ring = b ?? a
+  const underrunDelta =
+    a && b ? Math.max(0, Number(b.underrunBlocks) - Number(a.underrunBlocks)) : 0
+  const overflowDelta =
+    a && b ? Math.max(0, Number(b.overflowPushes) - Number(a.overflowPushes)) : 0
+  const highFillDropDelta =
+    a && b ? Math.max(0, Number(b.highFillDropFrames) - Number(a.highFillDropFrames)) : 0
+
+  // Soft Pad (master-mix) llena dawFill; stems VST llenan maxLiveFill.
+  // Si liveTracks>0 pero stems vacíos, no ocultar dawFill (falso fill=0 / starving).
+  const dawFill = Number(ring?.dawFill ?? 0)
+  const maxLive = Number(ring?.maxLiveFill ?? 0)
+  const minLive = Number(ring?.minLiveFill ?? 0)
+  const fillSrc = Math.max(dawFill, maxLive)
+  const fillRatioVsTarget =
+    ring && ring.targetFill > 0 ? fillSrc / ring.targetFill : null
+  const fillRatioVsHigh = ring && ring.highFill > 0 ? fillSrc / ring.highFill : null
+
+  // Starving: el canal activo más bajo (si solo hay DAW, usa dawFill).
+  const minFill =
+    ring?.liveTracks && maxLive > 0 ? Math.min(minLive, dawFill || minLive) : dawFill
+  const minRatioVsTarget = ring && ring.targetFill > 0 ? minFill / ring.targetFill : null
+
+  const judged = judge({
+    nativeOutput: timing.nativeOutput,
+    mixPipeConnected: pipe1.mixPipeConnected,
+    mixQueueDepth: Math.max(pipe0.mixQueueDepth, pipe1.mixQueueDepth),
+    mixBackpressure: pipe0.mixBackpressure || pipe1.mixBackpressure,
+    ring,
+    underrunDelta,
+    overflowDelta,
+    highFillDropDelta,
+    fillRatioVsTarget,
+    fillRatioVsHigh,
+    minRatioVsTarget,
+  })
+
+  return {
+    ...judged,
+    sampleRate: timing.sampleRate,
+    bufferSize: timing.bufferSize,
+    nativeOutput: timing.nativeOutput,
+    mixPipeConnected: pipe1.mixPipeConnected,
+    mixQueueDepth: Math.max(pipe0.mixQueueDepth, pipe1.mixQueueDepth),
+    mixBackpressure: pipe0.mixBackpressure || pipe1.mixBackpressure,
+    chromeBaseLatencyMs: chrome.base,
+    chromeOutputLatencyMs: chrome.output,
+    pathAheadMs: timing.pathAheadMs,
+    ring,
+    fillRatioVsTarget,
+    fillRatioVsHigh,
+    underrunDelta,
+    overflowDelta,
+    highFillDropDelta,
+    sampledMs: sampleMs,
+  }
+}

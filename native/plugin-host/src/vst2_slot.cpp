@@ -69,6 +69,11 @@ struct Vst2Slot::Impl {
   std::mutex midiMu;
   std::vector<VstMidiEvent> midiQueue;
   std::atomic<bool> playing{false};
+  std::atomic<bool> crashed{false};
+  double tempo{120.0};
+  double ppqPos{0.0};
+  double samplePos{0.0};
+  bool transportChanged{true};
   VstTimeInfo timeInfo{};
   HWND editorHwnd{nullptr};
   HWND shellHwnd{nullptr};  // top-level cuando no hay parent Electron
@@ -81,6 +86,10 @@ struct Vst2Slot::Impl {
     switch (opcode) {
       case audioMasterVersion:
         return 2400;
+      case audioMasterCurrentId:
+        return effect ? effect->uniqueID : 0;
+      case audioMasterIdle:
+        return 0;
       case audioMasterWantMidi:
         return 1;
       case audioMasterGetVendorString:
@@ -91,6 +100,11 @@ struct Vst2Slot::Impl {
         return 1;
       case audioMasterGetVendorVersion:
         return 1000;
+      case audioMasterGetLanguage:
+        return 1;  // English
+      case audioMasterTempoAt:
+        if (!self) return static_cast<intptr_t>(120.0 * 10000.0);
+        return static_cast<intptr_t>(self->tempo * 10000.0);
       case audioMasterCanDo: {
         const char* s = static_cast<const char*>(ptr);
         if (!s) return 0;
@@ -98,19 +112,37 @@ struct Vst2Slot::Impl {
         if (std::strcmp(s, "sendVstMidiEvent") == 0) return 1;
         if (std::strcmp(s, "receiveVstEvents") == 0) return 1;
         if (std::strcmp(s, "receiveVstMidiEvent") == 0) return 1;
+        if (std::strcmp(s, "receiveVstTimeInfo") == 0) return 1;
         if (std::strcmp(s, "sizeWindow") == 0) return 1;
+        if (std::strcmp(s, "supplyIdle") == 0) return 1;
+        if (std::strcmp(s, "reportConnectionChanges") == 0) return 1;
         return 0;
       }
-      case audioMasterGetTime:
+      case audioMasterGetTime: {
         if (!self) return 0;
+        self->timeInfo.samplePos = self->samplePos;
         self->timeInfo.sampleRate = self->sampleRate;
-        self->timeInfo.tempo = 120.0;
+        self->timeInfo.nanoSeconds = 0;
+        self->timeInfo.ppqPos = self->ppqPos;
+        self->timeInfo.tempo = self->tempo > 1.0 ? self->tempo : 120.0;
+        self->timeInfo.barStartPos = std::floor(self->ppqPos / 4.0) * 4.0;
+        self->timeInfo.cycleStartPos = 0;
+        self->timeInfo.cycleEndPos = 0;
         self->timeInfo.timeSigNumerator = 4;
         self->timeInfo.timeSigDenominator = 4;
-        self->timeInfo.flags = kVstTempoValid | kVstTimeSigValid | kVstNanosValid;
-        if (self->playing.load(std::memory_order_relaxed))
-          self->timeInfo.flags |= kVstTransportPlaying;
+        self->timeInfo.smpteOffset = 0;
+        self->timeInfo.smpteFrameRate = 0;
+        self->timeInfo.samplesToNextClock = 0;
+        int32_t flags = kVstTempoValid | kVstTimeSigValid | kVstNanosValid | kVstPpqPosValid |
+                        kVstBarsValid;
+        if (self->playing.load(std::memory_order_relaxed)) flags |= kVstTransportPlaying;
+        if (self->transportChanged) {
+          flags |= kVstTransportChanged;
+          self->transportChanged = false;
+        }
+        self->timeInfo.flags = flags;
         return reinterpret_cast<intptr_t>(&self->timeInfo);
+      }
       case audioMasterGetSampleRate:
         return self ? static_cast<intptr_t>(self->sampleRate) : 48000;
       case audioMasterGetBlockSize:
@@ -123,6 +155,10 @@ struct Vst2Slot::Impl {
                        static_cast<int>(value), SWP_NOMOVE | SWP_NOZORDER);
         }
         return 1;
+      case audioMasterAutomate:
+      case audioMasterBeginEdit:
+      case audioMasterEndEdit:
+        return 0;
       default:
         (void)index;
         (void)value;
@@ -225,6 +261,72 @@ void registerVst2ShellClass() {
 
 }  // namespace
 
+#ifdef _WIN32
+namespace {
+
+struct SafeEntryCtx {
+  PluginEntryProc entry{nullptr};
+  audioMasterCallback cb{nullptr};
+  AEffect* effect{nullptr};
+  bool ok{false};
+};
+
+int vst2SehFilter(unsigned int /*code*/, struct _EXCEPTION_POINTERS* /*ep*/) {
+  return EXCEPTION_EXECUTE_HANDLER;
+}
+
+void safeVst2Entry(SafeEntryCtx* ctx) {
+  __try {
+    ctx->effect = ctx->entry(ctx->cb);
+    ctx->ok = true;
+  } __except (vst2SehFilter(GetExceptionCode(), GetExceptionInformation())) {
+    ctx->effect = nullptr;
+    ctx->ok = false;
+  }
+}
+
+struct SafeProcessCtx {
+  AEffect* fx{nullptr};
+  float** ins{nullptr};
+  float** outs{nullptr};
+  int frames{0};
+  bool ok{false};
+};
+
+void safeVst2ProcessReplacing(SafeProcessCtx* ctx) {
+  __try {
+    if (ctx->fx->processReplacing)
+      ctx->fx->processReplacing(ctx->fx, ctx->ins, ctx->outs, ctx->frames);
+    else if (ctx->fx->process)
+      ctx->fx->process(ctx->fx, ctx->ins, ctx->outs, ctx->frames);
+    ctx->ok = true;
+  } __except (vst2SehFilter(GetExceptionCode(), GetExceptionInformation())) {
+    ctx->ok = false;
+  }
+}
+
+struct SafeDispatchCtx {
+  AEffect* fx{nullptr};
+  int32_t op{0};
+  int32_t index{0};
+  intptr_t value{0};
+  void* ptr{nullptr};
+  float opt{0.f};
+  bool ok{false};
+};
+
+void safeVst2Dispatch(SafeDispatchCtx* ctx) {
+  __try {
+    ctx->fx->dispatcher(ctx->fx, ctx->op, ctx->index, ctx->value, ctx->ptr, ctx->opt);
+    ctx->ok = true;
+  } __except (vst2SehFilter(GetExceptionCode(), GetExceptionInformation())) {
+    ctx->ok = false;
+  }
+}
+
+}  // namespace
+#endif
+
 bool Vst2Slot::isPe64Dll(const std::string& path) {
   uint16_t machine = 0;
   if (!readPeMachine(path, machine)) return false;
@@ -250,21 +352,43 @@ bool Vst2Slot::load(const std::string& path, std::string& err) {
   auto entry = reinterpret_cast<PluginEntryProc>(GetProcAddress(impl_->module, "VSTPluginMain"));
   if (!entry) entry = reinterpret_cast<PluginEntryProc>(GetProcAddress(impl_->module, "main"));
   if (!entry) {
-    err = "DLL sin VSTPluginMain/main";
+    err = "DLL sin VSTPluginMain/main (no es VST2)";
     FreeLibrary(impl_->module);
     impl_->module = nullptr;
     return false;
   }
-  AEffect* fx = entry(&Impl::hostCallback);
+  SafeEntryCtx ctx{};
+  ctx.entry = entry;
+  ctx.cb = &Impl::hostCallback;
+  safeVst2Entry(&ctx);
+  AEffect* fx = ctx.ok ? ctx.effect : nullptr;
   if (!fx || fx->magic != kEffectMagic) {
-    err = "AEffect inválido (no es VST2)";
+    err = ctx.ok ? "AEffect inválido (no es VST2)" : "VST2 crasheó al abrir (SEH)";
     FreeLibrary(impl_->module);
     impl_->module = nullptr;
     return false;
   }
   fx->user = impl_.get();
   impl_->effect = fx;
-  fx->dispatcher(fx, effOpen, 0, 0, nullptr, 0.f);
+  SafeDispatchCtx openCtx{};
+  openCtx.fx = fx;
+  openCtx.op = effOpen;
+  safeVst2Dispatch(&openCtx);
+  if (!openCtx.ok) {
+    err = "VST2 crasheó en effOpen";
+    impl_->effect = nullptr;
+    FreeLibrary(impl_->module);
+    impl_->module = nullptr;
+    return false;
+  }
+  // Synths antiguos: declarar que el host envía MIDI.
+  if (fx->flags & effFlagsIsSynth) {
+    SafeDispatchCtx midiCtx{};
+    midiCtx.fx = fx;
+    midiCtx.op = effSetProgram;
+    safeVst2Dispatch(&midiCtx);
+  }
+  impl_->crashed.store(false);
   return true;
 #else
   err = "VST2 solo en Windows";
@@ -373,10 +497,21 @@ std::vector<Vst3ParamDesc> Vst2Slot::listParameters(int maxCount) {
   return out;
 }
 
-void Vst2Slot::setPlaying(bool playing) { impl_->playing.store(playing, std::memory_order_relaxed); }
+void Vst2Slot::setPlaying(bool playing) {
+  impl_->playing.store(playing, std::memory_order_relaxed);
+  impl_->transportChanged = true;
+}
+
+void Vst2Slot::setTransport(bool playing, double tempoBpm, double ppqPos) {
+  impl_->playing.store(playing, std::memory_order_relaxed);
+  if (tempoBpm > 1.0 && tempoBpm < 999.0) impl_->tempo = tempoBpm;
+  if (ppqPos >= 0.0) impl_->ppqPos = ppqPos;
+  impl_->transportChanged = true;
+}
 
 void Vst2Slot::process(const float* inL, const float* inR, float* outL, float* outR, int frames) {
-  if (!prepared_.load() || !impl_->effect || bypass_.load(std::memory_order_relaxed)) {
+  if (impl_->crashed.load(std::memory_order_relaxed) || !prepared_.load() || !impl_->effect ||
+      bypass_.load(std::memory_order_relaxed)) {
     if (inL && outL) std::memcpy(outL, inL, static_cast<size_t>(frames) * sizeof(float));
     else if (outL) std::memset(outL, 0, static_cast<size_t>(frames) * sizeof(float));
     if (inR && outR) std::memcpy(outR, inR, static_cast<size_t>(frames) * sizeof(float));
@@ -395,16 +530,37 @@ void Vst2Slot::process(const float* inL, const float* inR, float* outL, float* o
   std::memset(impl_->outL.data(), 0, static_cast<size_t>(frames) * sizeof(float));
   std::memset(impl_->outR.data(), 0, static_cast<size_t>(frames) * sizeof(float));
   impl_->flushMidi(frames);
+#ifdef _WIN32
+  SafeProcessCtx pctx{};
+  pctx.fx = fx;
+  pctx.ins = impl_->inPtrs.data();
+  pctx.outs = impl_->outPtrs.data();
+  pctx.frames = frames;
+  safeVst2ProcessReplacing(&pctx);
+  if (!pctx.ok) {
+    impl_->crashed.store(true, std::memory_order_relaxed);
+    bypass_.store(true, std::memory_order_relaxed);
+    if (outL) std::memset(outL, 0, static_cast<size_t>(frames) * sizeof(float));
+    if (outR) std::memset(outR, 0, static_cast<size_t>(frames) * sizeof(float));
+    inProcess_.store(false, std::memory_order_release);
+    return;
+  }
+#else
   if (fx->processReplacing) {
     fx->processReplacing(fx, impl_->inPtrs.data(), impl_->outPtrs.data(), frames);
   } else if (fx->process) {
     fx->process(fx, impl_->inPtrs.data(), impl_->outPtrs.data(), frames);
   }
+#endif
   if (outL) std::memcpy(outL, impl_->outL.data(), static_cast<size_t>(frames) * sizeof(float));
   if (outR) {
     if (nOut > 1) std::memcpy(outR, impl_->outR.data(), static_cast<size_t>(frames) * sizeof(float));
     else std::memcpy(outR, impl_->outL.data(), static_cast<size_t>(frames) * sizeof(float));
   }
+  // Avance de reloj VST2 (PPQ / samplePos) para LFO/arps sincronizados.
+  impl_->samplePos += static_cast<double>(frames);
+  const double bpm = impl_->tempo > 1.0 ? impl_->tempo : 120.0;
+  impl_->ppqPos += (static_cast<double>(frames) / impl_->sampleRate) * (bpm / 60.0);
   inProcess_.store(false, std::memory_order_release);
 }
 

@@ -39,6 +39,8 @@ public:
   void setParameterNormalized(uint32_t paramId, double normalized);
   std::vector<Vst3ParamDesc> listParameters(int maxCount = 400);
   void setPlaying(bool playing);
+  /** Transport real (tempo/PPQ) — muchos VST2 synth lo requieren para sonar bien. */
+  void setTransport(bool playing, double tempoBpm, double ppqPos = -1.0);
 
   void process(const float* inL, const float* inR, float* outL, float* outR, int frames);
   void process(float* outL, float* outR, int frames) { process(nullptr, nullptr, outL, outR, frames); }

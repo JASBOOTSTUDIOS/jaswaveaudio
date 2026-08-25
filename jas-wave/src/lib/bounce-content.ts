@@ -4,7 +4,7 @@
  * Convierte DAWState → eventos concretos con los que el Plugin Host
  * puede renderizar audio real:
  *  - notas/CCs de clips MIDI hacia slots VST (delaySamples absolutos)
- *  - clips de audio + voces Soft Pad (se pre-renderizan en Web Audio)
+ *  - clips de audio (se pre-renderizan en Web Audio)
  *
  * Los stems son DRY: fader/pan/mute/solo viven en el grafo nativo
  * (syncReaperTrackGraph), igual que en playback en vivo.
@@ -39,10 +39,6 @@ export interface BounceAudioClip {
 export interface BounceTrack {
   trackId: string
   stemIndex: number
-  /** Soft Pad insertado (voces sintetizadas Web Audio). */
-  softPad: boolean
-  /** Rol → timbre Soft Pad en bounce. */
-  softPadRole?: string
   notes: BounceNoteEvent[]
   ccs: BounceCcEvent[]
   audioClips: BounceAudioClip[]
@@ -92,16 +88,15 @@ export type BounceSourceState = {
 
 export interface BounceSlotResolution {
   slotId?: string
-  softPad: boolean
 }
 
-/** Resuelve instrumento activo de una pista (VST slot o Soft Pad insertado). */
+/** Resuelve instrumento activo de una pista (slot VST). */
 export type BounceSlotResolver = (
   trackId: string,
   plugins: unknown,
 ) => BounceSlotResolution
 
-const noResolver: BounceSlotResolver = () => ({ softPad: false })
+const noResolver: BounceSlotResolver = () => ({})
 
 const MAX_STEMS = 64
 
@@ -135,21 +130,10 @@ export function buildBounceContent(
     if (i >= MAX_STEMS) return
     const resolved = resolve(trk.id, trk.plugins)
     const slotId = resolved.slotId
-    const softPad = resolved.softPad
-
-    const softPadRoleTag = (trk.tags ?? []).find((x) => /^role:/i.test(x))
-    const softPadRole =
-      softPadRoleTag?.replace(/^role:/i, '') ||
-      (trk.tags ?? []).find((x) =>
-        /^(drums|bass|guitar|piano|keys|pad|strings|choir|lead|brass|synth|percussion)$/i.test(x),
-      ) ||
-      trk.nombre
 
     const track: BounceTrack = {
       trackId: trk.id,
       stemIndex: i,
-      softPad,
-      softPadRole: typeof softPadRole === 'string' ? softPadRole : undefined,
       notes: [],
       ccs: [],
       audioClips: [],

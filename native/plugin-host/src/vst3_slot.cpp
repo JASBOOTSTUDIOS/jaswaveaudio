@@ -358,8 +358,8 @@ bool Vst3Slot::prepare(double sampleRate, int32_t blockSize, std::string& err) {
   impl_->processContext = {};
   impl_->processContext.sampleRate = sampleRate;
   impl_->processContext.tempo = 120.0;
-  impl_->processContext.state = ProcessContext::kPlaying | ProcessContext::kTempoValid |
-                               ProcessContext::kProjectTimeMusicValid |
+  // Sin kPlaying al cargar: evita notas “fantasma” y gatea noteOn hasta play.
+  impl_->processContext.state = ProcessContext::kTempoValid | ProcessContext::kProjectTimeMusicValid |
                                ProcessContext::kContTimeValid;
   impl_->processContext.projectTimeMusic = 0;
   impl_->processContext.continousTimeSamples = 0;
@@ -466,7 +466,8 @@ void Vst3Slot::allNotesOff() {
   for (int p = 0; p < 128; ++p) {
     impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(p), 0.f});
   }
-  setPlaying(false);
+  // No tocar kPlaying aquí: el panic se usa también en play (mute/rearm) y
+  // setPlaying(false) dejaba el instrumento en silencio permanente.
 }
 
 void Vst3Slot::setParameterNormalized(uint32_t paramId, double normalized) {

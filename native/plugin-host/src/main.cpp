@@ -38,6 +38,9 @@
 #include "audio_output.h"
 #include "mix_bus.h"
 #include "midi_winmm.h"
+#include "transport_clock.h"
+#include "native_metronome.h"
+#include "clip_player.h"
 #endif
 
 static std::string jsonEscape(const std::string& s) {
@@ -713,10 +716,14 @@ static void applyPdc(float* l, float* r, int frames, float* dL, float* dR, uint3
   w = pos;
 }
 
+static double currentSampleRate();
+static uint32_t currentBlockSize();
+
 static void renderMix(float* interleaved, uint32_t frameCount) {
   if (!gOfflineRunning) applyLiveMidiFromWinmm();
   const int frames = static_cast<int>(std::min<uint32_t>(frameCount, 8192));
   if (frames <= 0) return;
+  jaswave::transport_clock_set_sample_rate(currentSampleRate());
   jaswave_mix_bus_begin_block(static_cast<uint32_t>(frames));
   std::fill(gMixL, gMixL + frames, 0.f);
   std::fill(gMixR, gMixR + frames, 0.f);
@@ -729,6 +736,7 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
     for (uint8_t t = 0; t < trackN && t < kMaxGraphTracks; ++t) {
       const RtTrackChain& tr = gRtTracks[idx][t];
       jaswave_mix_bus_pull_stem(tr.stemIndex, gStemInterleaved, static_cast<uint32_t>(frames));
+      jaswave::clip_render_stem(tr.stemIndex, gStemInterleaved, static_cast<uint32_t>(frames));
       for (int i = 0; i < frames; ++i) {
         gChainL[i] = gStemInterleaved[i * 2];
         gChainR[i] = gStemInterleaved[i * 2 + 1];
@@ -795,6 +803,7 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
         gMixR[i] += gTmpR[i];
       }
     }
+    jaswave::clip_render_mix(gMixL, gMixR, static_cast<uint32_t>(frames));
   }
 
   const float masterG = gMasterMuted.load(std::memory_order_relaxed)
@@ -816,6 +825,7 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
     interleaved[i * 2 + 0] = softLimitSample(interleaved[i * 2 + 0] + gTmpL[i]);
     interleaved[i * 2 + 1] = softLimitSample(interleaved[i * 2 + 1] + gTmpR[i]);
   }
+  jaswave::metronome_render(interleaved, static_cast<uint32_t>(frames));
   {
     float mp = 0.f;
     for (int i = 0; i < frames; ++i) {
@@ -826,6 +836,7 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
     }
     meterUpdatePeak(gMeterMasterPeak, mp > 1.f ? 1.f : mp);
   }
+  jaswave::transport_clock_advance(static_cast<uint32_t>(frames));
 }
 
 struct UiJob {
@@ -1595,10 +1606,128 @@ static void handleLine(const std::string& line) {
   }
   if (type == "setTransport") {
     const bool playing = getBoolField(line, "playing", false);
+    const double tempo = getNumberField(line, "tempo", 0.0);
+    const double ppq = getNumberField(line, "ppqPos", -1.0);
+    jaswave::transport_clock_set_sample_rate(currentSampleRate());
+    if (tempo > 0.0) jaswave::transport_clock_set_tempo(tempo);
+    if (ppq >= 0.0) jaswave::transport_clock_seek_ppq(ppq);
+    jaswave::transport_clock_set_playing(playing);
+    if (!playing) jaswave::clip_stop_all_scheduled();
+    const double hostTempo = jaswave::transport_clock_tempo();
+    const double hostPpq = jaswave::transport_clock_ppq();
     std::lock_guard<std::mutex> lock(gSlotsMutex);
     for (auto& [id, slot] : gSlots) {
-      if (slot) slot->setPlaying(playing);
+      if (!slot) continue;
+      if (slot->format() == HostedSlot::Format::Vst2)
+        slot->setTransport(playing, hostTempo, hostPpq);
+      else
+        slot->setPlaying(playing);
+      // Panic inmediato al pausar/parar: corta colas MIDI + voces (evita notas pegadas).
+      if (!playing) slot->allNotesOff();
     }
+    return;
+  }
+  if (type == "metronome.set") {
+    const bool enabled = getBoolField(line, "enabled", false);
+    const double bpm = getNumberField(line, "bpm", 0.0);
+    const int beats = static_cast<int>(getNumberField(line, "beatsPerBar", 0));
+    const float volume = static_cast<float>(getNumberField(line, "volume", -1.0));
+    jaswave::transport_clock_set_sample_rate(currentSampleRate());
+    if (bpm > 0.0) jaswave::transport_clock_set_tempo(bpm);
+    if (beats > 0) jaswave::transport_clock_set_beats_per_bar(beats);
+    if (volume >= 0.f) jaswave::metronome_set_volume(volume);
+    jaswave::metronome_set_enabled(enabled);
+    return;
+  }
+  if (type == "getTransportClock") {
+    const auto snap = jaswave::transport_clock_snapshot();
+    std::ostringstream js;
+    js << "\"playing\":" << (snap.playing ? "true" : "false")
+       << ",\"sampleRate\":" << snap.sampleRate
+       << ",\"samples\":" << snap.samples
+       << ",\"tempo\":" << snap.tempoBpm
+       << ",\"beatsPerBar\":" << snap.beatsPerBar
+       << ",\"ppqPos\":" << snap.ppqPos
+       << ",\"timelineSec\":" << snap.timelineSec
+       << ",\"metronome\":" << (jaswave::metronome_enabled() ? "true" : "false");
+    replyOk(js.str());
+    return;
+  }
+  if (type == "clip.load") {
+    const std::string clipId = getStringField(line, "clipId");
+    const std::string path = getStringField(line, "path");
+    std::string err;
+    bool ok = false;
+    if (!path.empty()) {
+      ok = jaswave::clip_load_path(clipId, path, err);
+    } else {
+      // pcmBase64: interleaved f32 LE
+      const std::string b64 = getStringField(line, "pcmBase64");
+      const uint32_t frames = static_cast<uint32_t>(getNumberField(line, "frames", 0));
+      const uint32_t channels = static_cast<uint32_t>(getNumberField(line, "channels", 2));
+      const uint32_t sr = static_cast<uint32_t>(getNumberField(line, "sampleRate", currentSampleRate()));
+      if (b64.empty() || frames == 0) {
+        replyFail("BadRequest", "clip.load requiere path o pcmBase64+frames");
+        return;
+      }
+      // Decode base64 inline (minimal)
+      auto b64val = [](char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+') return 62;
+        if (c == '/') return 63;
+        return -1;
+      };
+      std::vector<uint8_t> bytes;
+      bytes.reserve(b64.size() * 3 / 4);
+      int val = 0, valb = -8;
+      for (unsigned char c : b64) {
+        if (c == '=') break;
+        const int d = b64val(static_cast<char>(c));
+        if (d < 0) continue;
+        val = (val << 6) + d;
+        valb += 6;
+        if (valb >= 0) {
+          bytes.push_back(static_cast<uint8_t>((val >> valb) & 0xFF));
+          valb -= 8;
+        }
+      }
+      const size_t need = static_cast<size_t>(frames) * std::max(1u, channels) * sizeof(float);
+      if (bytes.size() < need) {
+        replyFail("BadRequest", "pcmBase64 corto");
+        return;
+      }
+      ok = jaswave::clip_load_pcm(clipId, reinterpret_cast<const float*>(bytes.data()), frames,
+                                  channels, sr, err);
+    }
+    if (!ok) {
+      replyFail("ClipLoadFailed", err.empty() ? "clip.load falló" : err);
+      return;
+    }
+    replyOk("\"clipId\":\"" + jsonEscape(clipId) + "\"");
+    return;
+  }
+  if (type == "clip.schedule") {
+    const std::string clipId = getStringField(line, "clipId");
+    const uint16_t trackIndex = static_cast<uint16_t>(getNumberField(line, "trackIndex", 0));
+    const int64_t startSample = static_cast<int64_t>(getNumberField(line, "startSample", 0));
+    const int64_t durationSamples = static_cast<int64_t>(getNumberField(line, "durationSamples", 0));
+    const int64_t sourceOffset = static_cast<int64_t>(getNumberField(line, "sourceOffsetSamples", 0));
+    const float gain = static_cast<float>(getNumberField(line, "gain", 1.0));
+    const float pan = static_cast<float>(getNumberField(line, "pan", 0.0));
+    jaswave::clip_schedule(clipId, trackIndex, startSample, durationSamples, sourceOffset, gain, pan);
+    return;
+  }
+  if (type == "clip.stopAll") {
+    jaswave::clip_stop_all_scheduled();
+    return;
+  }
+  if (type == "clip.unload") {
+    const std::string clipId = getStringField(line, "clipId");
+    if (clipId.empty()) jaswave::clip_unload_all();
+    else jaswave::clip_unload(clipId);
+    replyOk();
     return;
   }
   if (type == "listParameters") {
@@ -1777,6 +1906,30 @@ static void handleLine(const std::string& line) {
     replyOk("\"latencySamples\":" + std::to_string(lat) +
             ",\"graphDelaySamples\":" +
             std::to_string(gRtMaxDelay[gRtBuf.load(std::memory_order_acquire)]));
+    return;
+  }
+  if (type == "getMixBufferStats") {
+    if (getBoolField(line, "reset", false)) jaswave_mix_bus_reset_stats();
+    JaswaveMixBusStats st{};
+    jaswave_mix_bus_get_stats(st);
+    std::ostringstream js;
+    js << "\"mix\":{"
+       << "\"running\":" << (st.running ? "true" : "false")
+       << ",\"capacity\":" << st.capacity
+       << ",\"targetFill\":" << st.targetFill
+       << ",\"highFill\":" << st.highFill
+       << ",\"dawFill\":" << st.dawFill
+       << ",\"minLiveFill\":" << st.minLiveFill
+       << ",\"maxLiveFill\":" << st.maxLiveFill
+       << ",\"liveTracks\":" << st.liveTracks
+       << ",\"pullBudget\":" << st.pullBudget
+       << ",\"inRate\":" << st.inRate
+       << ",\"outRate\":" << st.outRate
+       << ",\"underrunBlocks\":" << st.underrunBlocks
+       << ",\"overflowPushes\":" << st.overflowPushes
+       << ",\"highFillDropFrames\":" << st.highFillDropFrames
+       << "}";
+    replyOk(js.str());
     return;
   }
   if (type == "getMixMeters") {

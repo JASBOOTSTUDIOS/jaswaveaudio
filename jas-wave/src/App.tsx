@@ -28,6 +28,7 @@ import { TOOL_CATALOG, type ToolId } from '@/src/workspace/types'
 import { MultiWindowSync } from '@/src/workspace/multi-window-sync'
 import { WorkspaceMenu } from '@/components/workspace/workspace-menu'
 import { ImportProgressProvider } from '@/src/context/import-progress-context'
+import { ProjectReadyProvider } from '@/src/context/project-ready-context'
 import { PluginHostBootstrap } from '@/components/plugin-host-bootstrap'
 import { PluginHostLifecycle } from '@/components/plugin-host-lifecycle'
 import { MidiControllerHost } from '@/components/midi-controller-host'
@@ -375,24 +376,26 @@ export default function App() {
   return (
     <DAWProvider>
       <ImportProgressProvider>
-        <PlaybackProvider>
-          {undockId ? (
-            <WorkspaceProvider>
-              <MultiWindowSync role="satellite" />
-              <PluginHostBootstrap />
-              <FloatingDockApp initialToolId={undockId} />
-            </WorkspaceProvider>
-          ) : (
-            <WorkspaceProvider>
-              <MultiWindowSync role="primary" />
-              <PluginHostBootstrap />
-              <PluginHostLifecycle />
-              <MidiControllerHost />
-              <AgentAuditHost key={AGENT_BRIDGE_REV} />
-              <AppShell />
-            </WorkspaceProvider>
-          )}
-        </PlaybackProvider>
+        <ProjectReadyProvider>
+          <PlaybackProvider>
+            {undockId ? (
+              <WorkspaceProvider>
+                <MultiWindowSync role="satellite" />
+                <PluginHostBootstrap />
+                <FloatingDockApp initialToolId={undockId} />
+              </WorkspaceProvider>
+            ) : (
+              <WorkspaceProvider>
+                <MultiWindowSync role="primary" />
+                <PluginHostBootstrap />
+                <PluginHostLifecycle />
+                <MidiControllerHost />
+                <AgentAuditHost key={AGENT_BRIDGE_REV} />
+                <AppShell />
+              </WorkspaceProvider>
+            )}
+          </PlaybackProvider>
+        </ProjectReadyProvider>
       </ImportProgressProvider>
     </DAWProvider>
   )

@@ -617,7 +617,7 @@ subscribeNativeMidi((msg: { id: string; data: number[] }) => {
 ipcMain.handle('plugin-host-status', async (e: IpcMainInvokeEvent) => {
   if (!senderIsSatellite(e.sender)) {
     await ensurePluginHostStarted()
-    await ensureMixPipeConnected()
+    // No ensureMixPipeConnected aquí: el UI pollea status y pelea con maxInstances=1.
   }
   return getPluginHostStatus()
 })

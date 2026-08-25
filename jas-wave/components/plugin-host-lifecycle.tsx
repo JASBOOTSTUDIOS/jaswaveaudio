@@ -11,7 +11,24 @@ import {
   syncLoadedSlotsWithProject,
   ensureProjectVstInstruments,
   forgetHostPlugins,
+  isBuiltinInstrument,
 } from '@/src/lib/plugin/track-vst-runtime'
+import { extractHostPluginPath } from '@/src/lib/plugin/plugin-info-adapter'
+import {
+  getProjectReadyGeneration,
+  invalidateProjectPlugins,
+  markProjectPluginsNotNeeded,
+  reportProjectPluginsSettled,
+} from '@/src/lib/project-ready'
+import type { PluginInfo } from '../../shared/src/types/entidades'
+
+function chainNeedsVst(plugins: PluginInfo[] | undefined): boolean {
+  for (const p of plugins ?? []) {
+    if (p.bypass || isBuiltinInstrument(p)) continue
+    if (extractHostPluginPath(p.descripcion, p.id)) return true
+  }
+  return false
+}
 
 export function PluginHostLifecycle() {
   const satellite = isUndockWindow()
@@ -30,17 +47,35 @@ export function PluginHostLifecycle() {
   const tracks = useDAWState((s: DAWState) => s.project?.tracks ?? [])
   const masterPlugins = useDAWState((s: DAWState) => s.project?.master?.plugins ?? [])
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const restartTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (satellite) return
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => {
       void (async () => {
-        await syncLoadedSlotsWithProject(tracks, masterPlugins)
-        await ensureProjectVstInstruments(
-          tracks.map((t) => ({ id: t.id, plugins: t.plugins })),
-          masterPlugins,
-        )
+        const gen = getProjectReadyGeneration()
+        const needs = tracks.some((t) => chainNeedsVst(t.plugins)) || chainNeedsVst(masterPlugins)
+        if (!needs) {
+          markProjectPluginsNotNeeded(gen)
+          await syncLoadedSlotsWithProject(tracks, masterPlugins)
+          return
+        }
+        invalidateProjectPlugins('plugin-signature')
+        try {
+          await syncLoadedSlotsWithProject(tracks, masterPlugins)
+          await ensureProjectVstInstruments(
+            tracks.map((t) => ({ id: t.id, plugins: t.plugins })),
+            masterPlugins,
+          )
+          reportProjectPluginsSettled(true, 'VSTs sincronizados', gen)
+        } catch (err) {
+          reportProjectPluginsSettled(
+            false,
+            err instanceof Error ? err.message : 'Error cargando VSTs',
+            gen,
+          )
+        }
       })()
     }, 400)
     return () => {
@@ -59,18 +94,34 @@ export function PluginHostLifecycle() {
     if (satellite) return
     const off = window.electron?.onPluginHostRestarted?.(() => {
       forgetHostPlugins()
-      const t = tracksRef.current
-      const m = masterRef.current
-      void (async () => {
-        await syncLoadedSlotsWithProject(t, m)
-        await ensureProjectVstInstruments(
-          t.map((tr) => ({ id: tr.id, plugins: tr.plugins })),
-          m,
-        )
-      })()
+      // Esperar a que ASIO/mix pipe estabilicen antes de re-cargar (evita stdin cerrado en cascada).
+      if (restartTimer.current) clearTimeout(restartTimer.current)
+      restartTimer.current = setTimeout(() => {
+        const t = tracksRef.current
+        const m = masterRef.current
+        void (async () => {
+          const gen = getProjectReadyGeneration()
+          invalidateProjectPlugins('host-restart')
+          try {
+            await syncLoadedSlotsWithProject(t, m)
+            await ensureProjectVstInstruments(
+              t.map((tr) => ({ id: tr.id, plugins: tr.plugins })),
+              m,
+            )
+            reportProjectPluginsSettled(true, 'VSTs tras restart', gen)
+          } catch (err) {
+            reportProjectPluginsSettled(
+              false,
+              err instanceof Error ? err.message : 'Error VST post-restart',
+              gen,
+            )
+          }
+        })()
+      }, 1500)
     })
     return () => {
       off?.()
+      if (restartTimer.current) clearTimeout(restartTimer.current)
     }
   }, [satellite])
 

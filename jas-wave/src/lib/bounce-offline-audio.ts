@@ -1,14 +1,13 @@
 /**
- * Pre-render offline del contenido Web Audio (clips de audio + Soft Pad).
+ * Pre-render offline del contenido Web Audio (clips de audio).
  *
- * Replica la colocación de clips y las voces sine del motor en vivo
- * (audio-engine.ts) sobre un OfflineAudioContext por pista, y devuelve
- * PCM estéreo interleave DRY por stemIndex (el fader/pan/mute lo aplica
- * el grafo nativo, igual que con los taps JWST en vivo).
+ * Replica la colocación de clips del motor en vivo (audio-engine.ts)
+ * sobre un OfflineAudioContext por pista, y devuelve PCM estéreo
+ * interleave DRY por stemIndex (el fader/pan/mute lo aplica el grafo
+ * nativo, igual que con los taps JWST en vivo).
  */
 
 import { audioEngine } from '@/lib/audio-engine'
-import { normalizeSoftPadRole, scheduleRoleVoice, type SoftPadRole } from '@/lib/role-voice'
 import type { BounceContent, BounceTrack } from './bounce-content'
 
 export type StemBuffers = Map<number, Float32Array>
@@ -80,33 +79,11 @@ function placeClip(
   }
 }
 
-function scheduleSoftPadVoice(
-  ctx: BaseAudioContext,
-  destination: AudioNode,
-  pitch: number,
-  velocity: number,
-  when: number,
-  durationSec: number,
-  role: SoftPadRole = 'default',
-): void {
-  scheduleRoleVoice(
-    ctx as OfflineAudioContext,
-    destination,
-    pitch,
-    velocity,
-    Math.max(0, when),
-    Math.max(0.04, durationSec),
-    role,
-  )
-}
-
 async function renderTrackStem(
   track: BounceTrack,
   opts: { startSec: number; durationSec: number; sampleRate: number },
 ): Promise<Float32Array | null> {
-  const needsWeb =
-    track.audioClips.length > 0 || (track.softPad && track.notes.length > 0)
-  if (!needsWeb) return null
+  if (track.audioClips.length === 0) return null
 
   const frames = Math.max(
     1,
@@ -127,28 +104,12 @@ async function renderTrackStem(
     placeClip(ctx, buffer, gain, clip, opts.startSec)
   }
 
-  if (track.softPad) {
-    for (const note of track.notes) {
-      const when = note.startSec - opts.startSec
-      if (when + note.durSec <= 0) continue
-      scheduleSoftPadVoice(
-        ctx,
-        gain,
-        note.pitch,
-        note.velocity,
-        Math.max(0, when),
-        note.durSec,
-        normalizeSoftPadRole(track.softPadRole),
-      )
-    }
-  }
-
   const rendered = await ctx.startRendering()
   return interleave(rendered, frames)
 }
 
 /**
- * Pre-renderiza todas las pistas con contenido Web Audio.
+ * Pre-renderiza todas las pistas con clips de audio Web Audio.
  * Devuelve Map<stemIndex, PCM interleaved estéreo>.
  */
 export async function prerenderWebStems(

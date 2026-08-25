@@ -28,15 +28,16 @@ import { requestOpenTool } from '@/src/workspace/types'
 import { audioEngine } from '@/lib/audio-engine'
 import { hydratePluginCatalog } from '@/src/lib/plugin/catalog-store'
 import { pluginManager, catalogPluginInsertable } from '@/src/lib/plugin-host'
-import {
-  descriptorToPluginInfo,
-  softPadPluginInfo,
-} from '@/src/lib/plugin/plugin-info-adapter'
+import { descriptorToPluginInfo } from '@/src/lib/plugin/plugin-info-adapter'
 import { openPluginEditor } from '@/src/lib/plugin/plugin-editor-store'
 import { openFxChain } from '@/src/lib/plugin/fx-chain-store'
 import { TrackMidiInput } from '@/components/track-midi-input'
 import { TrackAudioInput } from '@/components/track-audio-input'
 import type { PluginDescriptor } from '@/src/lib/plugin/types'
+import {
+  isJasWaveRolesDescriptor,
+  jasWaveRolesPluginInfo,
+} from '@/src/lib/plugin/jaswave-roles'
 
 const TRACK_COLORS = [
   '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899',
@@ -46,10 +47,6 @@ const TRACK_COLORS = [
 ]
 
 type InspectorTab = 'general' | 'audio' | 'apariencia' | 'plugins' | 'clip'
-
-function makeSoftPadPlugin(): PluginInfo {
-  return softPadPluginInfo()
-}
 
 function TabButton({
   id,
@@ -101,9 +98,9 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
     setCatalog(list)
     setPickId((prev) => {
       if (prev && list.some((x) => x.pluginId === prev)) return prev
+      const roles = list.find((x) => isJasWaveRolesDescriptor(x))
       const vst = list.find((x) => x.format === 'vst3')
-      const other = list.find((x) => x.pluginId !== 'jaswave.softpad')
-      return vst?.pluginId ?? other?.pluginId ?? list[0]?.pluginId ?? ''
+      return roles?.pluginId ?? vst?.pluginId ?? list[0]?.pluginId ?? ''
     })
   }, [tab])
 
@@ -449,17 +446,14 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                     void (async () => {
                       const d = catalog.find((x) => x.pluginId === pickId)
                       if (d && !catalogPluginInsertable(d)) return
-                      const info = d
-                        ? descriptorToPluginInfo(d)
-                        : pickId === 'jaswave.softpad'
-                          ? makeSoftPadPlugin()
-                          : null
+                      const rolesInfo =
+                        d && isJasWaveRolesDescriptor(d) ? jasWaveRolesPluginInfo() : null
+                      const info = rolesInfo ?? (d ? descriptorToPluginInfo(d) : null)
                       if (!info) return
                       await tienda.executor.execute('plugin.insert', {
                         trackId: track.id,
                         plugin: info,
                       })
-                      if (info.nombre.includes('Soft Pad')) audioEngine.ensureContext()
                       openPluginEditor({
                         trackId: track.id,
                         pluginId: info.id,
@@ -475,8 +469,8 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 </button>
               </div>
               <p className="text-[9px] text-muted-foreground">
-                Soft Pad no se asigna solo: insértalo desde el catálogo. VST3: MIDI al Plugin Host
-                cuando el load confirma. VST2 solo aparece en catálogo (sin hosting).
+                JasWave Roles u otros VST del catálogo. VST3/VST2 x64: MIDI al Plugin Host cuando
+                el load confirma.
               </p>
             </div>
 

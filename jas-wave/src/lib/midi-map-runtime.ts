@@ -20,8 +20,6 @@ import {
   getLoadedInstrumentForTrack,
   setSlotParameter,
 } from '@/src/lib/plugin/track-vst-runtime'
-import { createPadSustain, padPedal } from '@/src/lib/midi-sustain'
-import { audioEngine } from '@/lib/audio-engine'
 
 export type MidiMapRuntimeHost = {
   executeCommand: (type: string, payload: unknown) => void
@@ -32,7 +30,6 @@ export type MidiMapRuntimeHost = {
 let host: MidiMapRuntimeHost | null = null
 let targetsById = new Map<string, MidiMapTarget>()
 const lastToggleAt = new Map<string, number>()
-let pad = createPadSustain()
 
 export function attachMidiMapHost(next: MidiMapRuntimeHost | null): void {
   host = next
@@ -47,11 +44,6 @@ function sendLiveCc(cc: number, value: number): void {
   for (const id of ids) {
     const slot = getLoadedInstrumentForTrack(id)?.slotId
     if (slot) sendVstCc(slot, cc, value)
-  }
-  if (cc === 64 || cc === 66) {
-    const { next, release } = padPedal(pad, value)
-    pad = next
-    for (const pitch of release) audioEngine.noteOff(pitch)
   }
 }
 

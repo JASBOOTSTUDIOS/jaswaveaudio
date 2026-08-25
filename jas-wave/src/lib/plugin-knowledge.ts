@@ -200,6 +200,13 @@ export function scoreDescriptorForRole(d: PluginDescriptor, role: InstrumentRole
   if (role === 'guitar' && /guitar/.test(blob)) s += 6
   if (role === 'bass' && /bass|bajo/.test(blob)) s += 6
   if (role === 'piano' && /piano/.test(blob)) s += 6
+  // Preferir BFD Player / kits reales frente a toy drums
+  if (role === 'drums' && /\bbfd\b|bfdplayer|addictive|ezdrummer|superior|battery|groove\s*agent/i.test(blob)) s += 10
+  if (role === 'drums' && /jasboot|drum\s*pad/i.test(blob)) s -= 8
+  // JasWave Roles: instrumento nativo por rol (reemplazo Soft Pad)
+  if (/jaswave\s*roles|jaswaveroles/.test(blob) || (d.vendor === 'JasWave' && /roles/.test(blob))) {
+    s += 10
+  }
   if (d.isInstrument && role !== 'fx') s += 2
   if (d.isEffect && role === 'fx') s += 4
   if (!d.isInstrument && role !== 'fx') s -= 3

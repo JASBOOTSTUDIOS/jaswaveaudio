@@ -89,6 +89,19 @@ export async function abrirProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
   if (!loaded.success) {
     return { success: false, error: loaded.error ?? 'Error al cargar proyecto' }
   }
+  try {
+    const { migrateSoftPadPluginsInProject } = await import('./plugin/migrate-softpad-to-roles')
+    const project = tienda.obtenerEstado().project
+    const { migrated, removed } = migrateSoftPadPluginsInProject(project)
+    if (migrated + removed > 0) {
+      tienda.establecerEstado((s) => ({
+        ...s,
+        project: { ...project, modificado: true },
+      }))
+    }
+  } catch {
+    /* migración best-effort */
+  }
   return { success: true, path: result.path }
 }
 

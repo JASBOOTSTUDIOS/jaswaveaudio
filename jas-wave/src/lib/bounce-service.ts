@@ -4,7 +4,7 @@
  * Contenido real:
  *  - Notas/CCs de clips MIDI → slots VST con delaySamples absolutos
  *    (la cola por-slot del host los dispara sample-accurate).
- *  - Clips de audio / Soft Pad → pre-render OfflineAudioContext por pista,
+ *  - Clips de audio → pre-render OfflineAudioContext por pista,
  *    alimentados como paquetes JWST inline en cada renderOfflineStep.
  */
 
@@ -26,7 +26,6 @@ import {
   sendVstCc,
   sendVstNote,
 } from '@/src/lib/plugin/track-vst-runtime'
-import { isBuiltinPlugin } from '@/src/lib/plugin/plugin-info-adapter'
 import type { PluginInfo } from '../../../shared/src/types/entidades'
 import type {
   BounceContent,
@@ -86,19 +85,16 @@ function decodeWavPcm16Stereo(bin: Uint8Array): { l: Float32Array; r: Float32Arr
   return { l, r, sampleRate }
 }
 
-/** Resolución runtime de instrumento por pista (VST slot y/o Soft Pad). */
+/** Resolución runtime de instrumento por pista (solo slot VST). */
 export function resolveBounceSlots(
   trackId: string,
   plugins: unknown,
 ): BounceSlotResolution {
   const list = (plugins as PluginInfo[] | undefined) ?? []
   const hit = findTrackPlaybackInstrument(list)
-  const hasSoftPad = list.some((p) => isBuiltinPlugin(p) && !p.bypass)
-  if (!hit && !hasSoftPad) return { softPad: false }
-  if (hit?.kind === 'builtin' || (hasSoftPad && !hit)) return { softPad: true }
+  if (!hit || hit.kind !== 'vst') return {}
   return {
     slotId: getLoadedInstrumentForTrack(trackId)?.slotId,
-    softPad: hasSoftPad,
   }
 }
 

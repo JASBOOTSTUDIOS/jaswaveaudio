@@ -213,3 +213,26 @@ export async function armNativeAudioOutput(): Promise<{
     timing,
   }
 }
+
+/** Limpia plugins aislados tras crash del host (RAM + disco) y reintenta ASIO. */
+export async function clearPluginQuarantineAndRestore(tienda: TiendaDAW): Promise<{
+  ok: boolean
+  message: string
+  cleared?: number
+}> {
+  const send = window.electron?.pluginHostSend
+  if (!send) return { ok: false, message: 'Sin pluginHostSend' }
+  const raw = (await send({ type: 'clearPluginQuarantine' })) as {
+    ok?: boolean
+    message?: string
+    count?: number
+  }
+  const cleared = Number(raw.count ?? 0)
+  const ensure = await ensureBestAudioDevice(tienda, 'UMC')
+  const arm = await armNativeAudioOutput()
+  return {
+    ok: Boolean(raw.ok) && ensure.ok && arm.ok,
+    message: `${raw.message || `Cuarentena: ${cleared}`} · ${ensure.message} · ${arm.message}`,
+    cleared,
+  }
+}

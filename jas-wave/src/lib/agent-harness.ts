@@ -24,6 +24,9 @@ const READ_ONLY = new Set([
   'analysis.spectrum',
   'analysis.stereo',
   'analysis.fullReport',
+  'analysis.timing',
+  'analysis.buffer',
+  'analysis.fxBlame',
   'render.getStatus',
 ])
 
@@ -483,7 +486,7 @@ export function buildHarnessRepairMessage(opts: {
     '- NO crees pistas que ya existen (mira el debug). Completa clips/plugins/notas / marca checkboxes del plan.',
     '- Si el error es listen-failed / compare-target / master-pass-target: ajusta master/gain/limiter, re-bounce o daw.masterPass; NO digas listo sin AudioListenReport OK.',
     '- Si el error es plan-incomplete: crea lo que falta O mueve el ítem a ## Implementado con doc.write si YA existe en el DAW.',
-    '- Si un VST falló: plugin.probe + otro del catálogo / library.preset / Soft Pad.',
+    '- Si un VST falló: plugin.probe + otro del catálogo / library.preset / JasWave Roles.',
     planOnly
       ? '- Este turno es cierre de plan: prioriza alinear plan.md con el DAW real.'
       : '- Si no puedes arreglarlo sin decisión del usuario, 2 frases y CERO ACTIONS.',

@@ -19,7 +19,6 @@ import {
   routeMidiToTrack,
   routeMidiToActiveVst,
   setPreferredVstPreviewTrack,
-  preferredTrackPlaysSoftPad,
 } from '@/src/lib/plugin/vst-voice-router'
 
 type PianoRollProps = {
@@ -148,14 +147,11 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
 
   const previewNote = (pitch: number, velocity = 90) => {
     if (routeMidiToTrack(trackId, true, pitch, velocity)) return
-    if (routeMidiToActiveVst(true, pitch, velocity)) return
-    // Soft Pad solo si es el instrumento de la pista; si no, no enmascarar con pad.
-    if (preferredTrackPlaysSoftPad()) audioEngine.noteOn(pitch, velocity)
+    routeMidiToActiveVst(true, pitch, velocity)
   }
   const releaseNote = (pitch: number) => {
     if (routeMidiToTrack(trackId, false, pitch, 0)) return
-    if (routeMidiToActiveVst(false, pitch, 0)) return
-    if (preferredTrackPlaysSoftPad()) audioEngine.noteOff(pitch)
+    routeMidiToActiveVst(false, pitch, 0)
   }
 
   const durationBeats = useMemo(() => {

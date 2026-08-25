@@ -6,6 +6,8 @@
 import type { DAWState } from '../../../shared/src/types/state'
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { audioEngine } from '@/lib/audio-engine'
+import { markProjectBuffersNotNeeded, reportProjectBuffersSettled } from '@/src/lib/project-ready'
+import { migrateSoftPadPluginsInProject } from '@/src/lib/plugin/migrate-softpad-to-roles'
 
 const DB_NAME = 'jaswave-session-v1'
 const STORE = 'snapshots'
@@ -302,9 +304,15 @@ export async function clearSessionSnapshot(): Promise<void> {
 }
 
 export function applySessionProject(tienda: TiendaDAW, snap: SessionMeta | SessionSnapshot): void {
+  const project = snap.project
+  try {
+    migrateSoftPadPluginsInProject(project)
+  } catch (err) {
+    console.warn('[session-persist] softpad→roles migrate skipped', err)
+  }
   tienda.establecerEstado((s) => ({
     ...s,
-    project: snap.project,
+    project,
     transport: {
       ...s.transport,
       ...snap.transport,
@@ -438,6 +446,7 @@ export async function hydrateSession(
 
   if (skipAudio) {
     report(onProgress, 'done', 'Listo', 1)
+    markProjectBuffersNotNeeded()
     return true
   }
 
@@ -451,13 +460,16 @@ export async function hydrateSession(
         const n = Object.keys(audio).length
         if (n === 0) {
           report(onProgress, 'done', 'Sesión lista', 1)
+          markProjectBuffersNotNeeded()
           return
         }
         await restoreAudioChunked(audio, onProgress)
         report(onProgress, 'done', 'Sesión completa', 1)
+        reportProjectBuffersSettled(true, 'Sesión audio restaurada')
       } catch (err) {
         console.warn('[session-persist] background audio failed', err)
         report(onProgress, 'done', 'Interfaz lista (audio incompleto)', 1)
+        reportProjectBuffersSettled(false, 'Audio de sesión incompleto')
       }
     })()
     return true
@@ -467,5 +479,6 @@ export async function hydrateSession(
   const audio = await loadSessionAudio()
   await restoreAudioChunked(audio, onProgress)
   report(onProgress, 'done', 'Sesión restaurada', 1)
+  reportProjectBuffersSettled(true, 'Sesión audio restaurada')
   return true
 }

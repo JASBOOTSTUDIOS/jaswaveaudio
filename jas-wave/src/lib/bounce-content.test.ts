@@ -18,8 +18,8 @@ function estado(tracks: unknown[], bpm = BPM): BounceSourceState {
 }
 
 const vstResolver: BounceSlotResolver = (trackId) =>
-  trackId === 'synth' ? { slotId: `${trackId}:plugin-1`, softPad: false } : { softPad: false }
-const softPadResolver: BounceSlotResolver = (trackId) => ({ softPad: trackId === 'pad' })
+  trackId === 'synth' ? { slotId: `${trackId}:plugin-1` } : {}
+const emptyResolver: BounceSlotResolver = () => ({})
 
 describe('buildBounceContent', () => {
   it('convierte beats de notas a segundos absolutos con slot VST', () => {
@@ -75,7 +75,7 @@ describe('buildBounceContent', () => {
     assert.equal(content.tracks.length, 0)
   })
 
-  it('marca Soft Pad y no asigna slotId', () => {
+  it('MIDI sin slot VST sigue en contenido (slotId undefined)', () => {
     const st = estado([
       {
         id: 'pad',
@@ -90,9 +90,8 @@ describe('buildBounceContent', () => {
         ],
       },
     ])
-    const content = buildBounceContent(st, {}, softPadResolver)
+    const content = buildBounceContent(st, {}, emptyResolver)
     const trk = content.tracks[0]!
-    assert.equal(trk.softPad, true)
     assert.equal(trk.notes[0]!.slotId, undefined)
   })
 
@@ -155,7 +154,7 @@ describe('buildBounceContent', () => {
         ],
       },
     ])
-    const content = buildBounceContent(st, {}, softPadResolver)
+    const content = buildBounceContent(st, {}, emptyResolver)
     assert.equal(content.tracks.length, 1)
     assert.equal(content.tracks[0]!.trackId, 'pad')
     assert.equal(content.tracks[0]!.stemIndex, 1)

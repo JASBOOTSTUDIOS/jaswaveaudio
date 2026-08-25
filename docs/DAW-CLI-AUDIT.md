@@ -49,3 +49,25 @@ Payload: JSON inline, `@archivo.json`, o `-` (stdin).
 - Playback: `softPadDual` suena Soft Pad (timbre por rol) **y** VST a la vez si el kit/preset del VST está vacío.
 - Timbres por rol: `jas-wave/lib/role-voice.ts` (drums/bass/guitar/piano/pad/…).
 - Mezcla: bus `Reverb FX` + sends por rol.
+
+## Sync / underruns / metrónomo
+
+```bash
+npm run cli -- sync 10          # play + muestreo buffer/playhead (~10s)
+npm run cli -- action analysis.timing
+npm run cli -- action analysis.buffer @_buf-sample.json
+```
+
+`sync` escribe `cli/_probe-sync-out.json` (underruns, drift, fill). Exit 0 = estable.
+
+## Aislar FX que rompe el audio
+
+Con play audible (recomendado):
+
+```bash
+npm run cli -- action analysis.fxBlame '{"sampleMs":350,"settleMs":120}'
+# Solo una pista:
+npm run cli -- action analysis.fxBlame '{"trackId":"…","includeInstruments":true}'
+```
+
+Devuelve `suspects[]` ordenados por mejora al hacer bypass (buffer + peaks). Restaura la cadena al terminar. Si no hay sospechoso FX → Soft Pad/ASIO (`analysis.buffer`).

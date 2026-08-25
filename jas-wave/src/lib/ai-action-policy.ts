@@ -18,6 +18,9 @@ const READ_ONLY = new Set([
   'analysis.spectrum',
   'analysis.stereo',
   'analysis.fullReport',
+  'analysis.timing',
+  'analysis.buffer',
+  'analysis.fxBlame',
   'render.getStatus',
 ])
 

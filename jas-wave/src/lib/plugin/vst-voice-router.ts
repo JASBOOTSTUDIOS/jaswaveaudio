@@ -1,6 +1,5 @@
 /**
  * Preview MIDI: VST de la pista seleccionada si el host lo confirmó.
- * Soft Pad solo si está insertado en esa pista (o el editor/catálogo lo fuerza).
  */
 
 import {
@@ -62,10 +61,9 @@ export function getPreferredLoadedSlotId(): string | null {
   return getLoadedInstrumentForTrack(preferredTrackId)?.slotId ?? null
 }
 
-/** Piano-roll / teclas: Soft Pad únicamente si está en la FX Chain de la pista. */
+/** Soft Pad Web Audio eliminado — siempre false (JasWave Roles VST). */
 export function preferredTrackPlaysSoftPad(): boolean {
-  if (forceBuiltin) return true
-  return findTrackPlaybackInstrument(preferredPlugins)?.kind === 'builtin'
+  return false
 }
 
 function sendMidi(slotId: string, on: boolean, pitch: number, velocity: number): void {

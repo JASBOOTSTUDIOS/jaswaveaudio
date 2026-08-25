@@ -15,6 +15,10 @@ import {
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { executeDawActions, type DawAction } from './ai-daw-agent'
 import { mergeActionCatalog } from './agent-action-catalog'
+import {
+  actionRequiresProjectReady,
+  waitUntilProjectReady,
+} from './project-ready'
 
 export type AuditTrackLine = {
   id: string
@@ -92,7 +96,11 @@ export async function buildAuditSnapshot(tienda: TiendaDAW): Promise<AuditSnapsh
   const playing = Boolean(st.transport?.reproduciendo)
   const bpm = projectBpm(st)
 
-  await refreshNativeMixMeters().catch(() => undefined)
+  // Nunca bloquear el renderer: meters con timeout corto (host saturado ≠ hang UI).
+  await Promise.race([
+    refreshNativeMixMeters().catch(() => undefined),
+    new Promise<void>((r) => setTimeout(r, 200)),
+  ])
 
   const playheadSec = audioEngine.getAudibleTimelineSeconds()
   const enginePlaying = playheadSec >= 0 && playing
@@ -155,8 +163,15 @@ export async function buildAuditSnapshot(tienda: TiendaDAW): Promise<AuditSnapsh
 
   let hostOk: boolean | null = null
   try {
-    const status = await window.electron?.pluginHostStatus?.()
-    hostOk = Boolean(status?.vst3HostProcessAvailable || status?.nativePid)
+    const status = (await Promise.race([
+      window.electron?.pluginHostStatus?.() ?? Promise.resolve(null),
+      new Promise<null>((r) => setTimeout(() => r(null), 200)),
+    ])) as { vst3HostProcessAvailable?: boolean; nativePid?: number } | null | undefined
+    if (status) {
+      hostOk = Boolean(status.vst3HostProcessAvailable || status.nativePid)
+    } else {
+      hostOk = null
+    }
   } catch {
     hostOk = false
     issues.push('plugin-host status falló')
@@ -255,24 +270,35 @@ export async function controlTransport(
     await tienda.executor.execute('transport.stop', {})
     return { ok: true, playing: false, message: 'stop' }
   }
-  if (action === 'play') {
-    if (!playing) await tienda.executor.execute('transport.toggle', {})
-    return { ok: true, playing: true, message: 'play' }
+  if (action === 'play' || action === 'toggle') {
+    if (action === 'play' && playing) {
+      return { ok: true, playing: true, message: 'play' }
+    }
+    if (action === 'play' || !playing) {
+      await waitUntilProjectReady({ timeoutMs: 18_000, allowDegraded: true })
+    }
+    if (action === 'play') {
+      if (!tienda.obtenerEstado().transport?.reproduciendo) {
+        await tienda.executor.execute('transport.toggle', {})
+      }
+      return { ok: true, playing: true, message: 'play' }
+    }
+    await tienda.executor.execute('transport.toggle', {})
+    const next = Boolean(tienda.obtenerEstado().transport?.reproduciendo)
+    return { ok: true, playing: next, message: 'toggle' }
   }
   if (action === 'pause') {
     if (playing) await tienda.executor.execute('transport.toggle', {})
     return { ok: true, playing: false, message: 'pause' }
-  }
-  if (action === 'toggle') {
-    await tienda.executor.execute('transport.toggle', {})
-    const next = Boolean(tienda.obtenerEstado().transport?.reproduciendo)
-    return { ok: true, playing: next, message: 'toggle' }
   }
   return { ok: false, playing, message: `acción desconocida: ${action}` }
 }
 
 /** Misma vía que el chat IA: executeDawActions. */
 export async function runCliActions(tienda: TiendaDAW, actions: DawAction[]) {
+  if (actions.some((a) => actionRequiresProjectReady(a.type))) {
+    await waitUntilProjectReady({ timeoutMs: 18_000, allowDegraded: true })
+  }
   // Fast-path timing (no depende de HMR del switch grande)
   const expanded: DawAction[] = []
   const early: Array<{ type: string; success: boolean; message: string; data?: unknown }> = []
@@ -288,6 +314,50 @@ export async function runCliActions(tienda: TiendaDAW, actions: DawAction[]) {
           ? `Timing OK · ahead ${d.pathAheadMs.toFixed(0)} ms · buf ${d.bufferSize} · ${d.sampleRate} Hz`
           : `Timing sospechoso · skew ${d.skewMs.toFixed(0)} ms vs ahead ${d.pathAheadMs.toFixed(0)} ms · buf ${d.bufferSize}`,
         data: { ...d, ok, skewVsAheadMs: skewVsAhead },
+      })
+    } else if (a.type === 'analysis.buffer') {
+      const { analyzeBufferHealth } = await import('./audio-buffer-health')
+      const p = (a.payload ?? {}) as { sampleMs?: number; reset?: boolean }
+      const report = await analyzeBufferHealth({
+        sampleMs: typeof p.sampleMs === 'number' ? p.sampleMs : 400,
+        reset: p.reset !== false,
+      })
+      early.push({
+        type: a.type,
+        success: true,
+        message: `[${report.status}] ${report.summary}`,
+        data: report,
+      })
+    } else if (a.type === 'analysis.fxBlame') {
+      const { runFxBlame } = await import('./audio-fx-blame')
+      const p = (a.payload ?? {}) as {
+        sampleMs?: number
+        settleMs?: number
+        includeInstruments?: boolean
+        trackId?: string
+        maxCandidates?: number
+      }
+      const report = await runFxBlame({
+        getState: () => tienda.obtenerEstado(),
+        setBypass: async (trackId, pluginInstanceId, bypass) => {
+          const r = await tienda.executor.execute('plugin.bypass', {
+            trackId,
+            pluginInstanceId,
+            bypass,
+          })
+          return Boolean(r.success)
+        },
+        sampleMs: typeof p.sampleMs === 'number' ? p.sampleMs : 350,
+        settleMs: typeof p.settleMs === 'number' ? p.settleMs : 120,
+        includeInstruments: p.includeInstruments === true,
+        trackId: typeof p.trackId === 'string' ? p.trackId : undefined,
+        maxCandidates: typeof p.maxCandidates === 'number' ? p.maxCandidates : 24,
+      })
+      early.push({
+        type: a.type,
+        success: true,
+        message: report.summary,
+        data: report,
       })
     } else {
       expanded.push(a)
@@ -309,7 +379,7 @@ export async function runCliActions(tienda: TiendaDAW, actions: DawAction[]) {
 }
 
 /** Bump en cada cambio del bridge para forzar remount tras HMR. */
-export const AGENT_BRIDGE_REV = 6
+export const AGENT_BRIDGE_REV = 11
 
 /** Montar en App: escucha agent-bridge-request del main. */
 export function AgentAuditHost() {
@@ -364,12 +434,18 @@ export function AgentAuditHost() {
               api.agentBridgeReply?.(msg.id, null, 'Falta type o actions[]')
               return
             }
-            // Separar analysis.timing / audio.armNative (inline) del resto
+            // Separar analysis.timing / analysis.buffer / audio.armNative (inline) del resto
             const special = actions.filter(
-              (a) => a.type === 'analysis.timing' || a.type === 'audio.armNative',
+              (a) =>
+                a.type === 'analysis.timing' ||
+                a.type === 'analysis.buffer' ||
+                a.type === 'audio.armNative',
             )
             const otherActions = actions.filter(
-              (a) => a.type !== 'analysis.timing' && a.type !== 'audio.armNative',
+              (a) =>
+                a.type !== 'analysis.timing' &&
+                a.type !== 'analysis.buffer' &&
+                a.type !== 'audio.armNative',
             )
             const specialResults: Array<{
               type: string
@@ -391,6 +467,19 @@ export function AgentAuditHost() {
                     ? `Timing OK · ahead ${d.pathAheadMs.toFixed(0)} ms · buf ${d.bufferSize} · native=${d.nativeOutput}${d.lastArmError ? ` · armErr=${d.lastArmError}` : ''}`
                     : `Timing sospechoso · skew ${d.skewMs.toFixed(0)} ms · ahead ${d.pathAheadMs.toFixed(0)} · native=${d.nativeOutput} · ${d.lastArmError || ''}`,
                   data: { ...d, ok, skewVsAheadMs: skewVsAhead },
+                })
+              } else if (a.type === 'analysis.buffer') {
+                const { analyzeBufferHealth } = await import('./audio-buffer-health')
+                const p = (a.payload ?? {}) as { sampleMs?: number; reset?: boolean }
+                const report = await analyzeBufferHealth({
+                  sampleMs: typeof p.sampleMs === 'number' ? p.sampleMs : 400,
+                  reset: p.reset !== false,
+                })
+                specialResults.push({
+                  type: 'analysis.buffer',
+                  success: true,
+                  message: `[${report.status}] ${report.summary}`,
+                  data: report,
                 })
               } else if (a.type === 'audio.armNative') {
                 const ok = await audioEngine.armNativeMixOutput()

@@ -88,22 +88,14 @@ describe('midi-note-recorder', () => {
 })
 
 describe('pad sustain (CC64)', () => {
-  it('mantiene la nota al soltar tecla con pedal y la apaga al soltar pedal', () => {
+  it('es no-op tras eliminar Soft Pad Web Audio', () => {
     let s = createPadSustain()
     s = padNoteOn(s, 60)
-    let off = padNoteOff(s, 60)
+    const off = padNoteOff(s, 60)
     assert.equal(off.silence, true)
-    s = padPedal(off.next, 127).next
-    s = padNoteOn(s, 64)
-    off = padNoteOff(s, 64)
-    assert.equal(off.silence, false)
-    const lift = padPedal(off.next, 0)
-    assert.deepEqual(lift.release, [64])
-  })
-
-  it('no silencia una tecla que sigue bajada al soltar el pedal', () => {
-    const s = padNoteOn(padPedal(createPadSustain(), 127).next, 60)
-    const lift = padPedal(s, 0)
-    assert.equal(lift.release.includes(60), false)
+    const down = padPedal(off.next, 127)
+    assert.deepEqual(down.release, [])
+    const lift = padPedal(down.next, 0)
+    assert.deepEqual(lift.release, [])
   })
 })

@@ -35,9 +35,16 @@ function req(method, path, body) {
 }
 
 await req('POST', '/transport', { action: 'stop' })
-const arm = await req('POST', '/actions', {
+await new Promise((r) => setTimeout(r, 400))
+let arm = await req('POST', '/actions', {
   actions: [{ type: 'audio.armNative', payload: {} }],
 })
+if (!arm.results?.[0]?.success) {
+  await new Promise((r) => setTimeout(r, 600))
+  arm = await req('POST', '/actions', {
+    actions: [{ type: 'audio.armNative', payload: {} }],
+  })
+}
 console.log('ARM', JSON.stringify(arm.results?.[0] || arm, null, 2))
 
 await req('POST', '/actions', {

@@ -32,16 +32,15 @@ import {
   extractHostPluginPath,
   isBuiltinPlugin,
   pluginRuntimeCaption,
-  softPadPluginInfo,
   VST2_NOT_HOSTED_MSG,
 } from '@/src/lib/plugin/plugin-info-adapter'
 import type { PluginDescriptor } from '@/src/lib/plugin/types'
-import { audioEngine } from '@/lib/audio-engine'
 import {
   getVstRuntimeGeneration,
   isPluginAudioReady,
   subscribeVstRuntime,
 } from '@/src/lib/plugin/track-vst-runtime'
+import { isJasWaveRolesDescriptor, jasWaveRolesPluginInfo } from '@/src/lib/plugin/jaswave-roles'
 import { MASTER_FX_TRACK_ID, getFxChainClipboard } from '../../shared/src/commands/plugin-commands'
 
 function useFxFocus() {
@@ -90,9 +89,9 @@ export function FxChainPanel() {
     setCatalog(list)
     setPickId((prev) => {
       if (prev && list.some((x) => x.pluginId === prev)) return prev
+      const roles = list.find((x) => isJasWaveRolesDescriptor(x))
       const vst = list.find((x) => x.format === 'vst3')
-      const other = list.find((x) => x.pluginId !== 'jaswave.softpad')
-      return vst?.pluginId ?? other?.pluginId ?? list[0]?.pluginId ?? ''
+      return roles?.pluginId ?? vst?.pluginId ?? list[0]?.pluginId ?? ''
     })
   }, [focus?.trackId])
 
@@ -122,14 +121,11 @@ export function FxChainPanel() {
 
   const insertSelected = async () => {
     const d = catalog.find((x) => x.pluginId === pickId)
-    const info =
-      pickId === 'jaswave.softpad'
-        ? softPadPluginInfo()
-        : d
-          ? descriptorToPluginInfo(d)
-          : null
+    const rolesInfo =
+      d && isJasWaveRolesDescriptor(d) ? jasWaveRolesPluginInfo() : null
+    const info = rolesInfo ?? (d ? descriptorToPluginInfo(d) : null)
     if (!info) return
-    if (d && !catalogPluginInsertable(d) && pickId !== 'jaswave.softpad') {
+    if (d && !catalogPluginInsertable(d)) {
       setMsg(
         d.format === 'vst2' && !d.hostReady
           ? VST2_NOT_HOSTED_MSG
@@ -143,7 +139,6 @@ export function FxChainPanel() {
         trackId,
         plugin: info,
       })
-      if (info.nombre.includes('Soft Pad')) audioEngine.ensureContext()
       openPluginEditor({
         trackId,
         pluginId: info.id,
@@ -157,12 +152,9 @@ export function FxChainPanel() {
 
   const replaceSelected = async (pluginInstanceId: string) => {
     const d = catalog.find((x) => x.pluginId === pickId)
-    const info =
-      pickId === 'jaswave.softpad'
-        ? softPadPluginInfo()
-        : d
-          ? descriptorToPluginInfo(d)
-          : null
+    const rolesInfo =
+      d && isJasWaveRolesDescriptor(d) ? jasWaveRolesPluginInfo() : null
+    const info = rolesInfo ?? (d ? descriptorToPluginInfo(d) : null)
     if (!info) return
     await run('plugin.replace', { trackId, pluginInstanceId, plugin: info })
   }
@@ -368,8 +360,8 @@ export function FxChainPanel() {
       <div className="border-t border-border p-2">
         {msg ? <p className="mb-1 text-[10px] text-muted-foreground">{msg}</p> : null}
         <p className="mb-1 text-[10px] leading-relaxed text-muted-foreground">
-          Soft Pad no es el instrumento por defecto: insértalo desde el catálogo si lo quieres.
-          Un VST en la pista envía MIDI al plugin-host cuando el load confirma.
+          JasWave Roles (Roles.vst3) u otros VST se insertan desde el catálogo. Un VST en la
+          pista envía MIDI al plugin-host cuando el load confirma.
         </p>
         <div className="mb-1 flex items-center justify-between">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -393,7 +385,7 @@ export function FxChainPanel() {
             {catalog.map((d) => (
               <option key={d.pluginId} value={d.pluginId}>
                 {d.name}
-                {d.format === 'vst3' ? ' (VST3)' : d.format === 'vst2' ? ' (VST2 · solo catálogo)' : ''}
+                {d.format === 'vst3' ? ' (VST3)' : d.format === 'vst2' ? ' (VST2)' : ''}
               </option>
             ))}
           </select>
