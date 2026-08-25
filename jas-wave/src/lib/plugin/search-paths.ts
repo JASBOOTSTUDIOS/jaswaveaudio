@@ -90,6 +90,41 @@ export function defaultVst3SearchPaths(platform: NodeJS.Platform | string = 'win
       enabled: true,
       kind: 'standard',
     },
+    {
+      id: 'win-vst2-common-vst',
+      path: '%CommonProgramFiles%/VST',
+      format: 'vst2',
+      enabled: true,
+      kind: 'standard',
+    },
+    {
+      id: 'win-vst2-program-vst',
+      path: '%ProgramFiles%/VST',
+      format: 'vst2',
+      enabled: true,
+      kind: 'standard',
+    },
+    {
+      id: 'win-vst2-user',
+      path: '%USERPROFILE%/Documents/VST',
+      format: 'vst2',
+      enabled: true,
+      kind: 'standard',
+    },
+    {
+      id: 'win-vst2-fl-2025',
+      path: '%ProgramFiles%/Image-Line/FL Studio 2025/Plugins/VST',
+      format: 'vst2',
+      enabled: true,
+      kind: 'standard',
+    },
+    {
+      id: 'win-vst2-fl-shared',
+      path: '%ProgramFiles%/Image-Line/FL Studio 2025/Plugins/Fruity/Generators',
+      format: 'vst2',
+      enabled: false,
+      kind: 'standard',
+    },
   ]
 }
 

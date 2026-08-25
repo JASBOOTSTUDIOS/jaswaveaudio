@@ -90,6 +90,9 @@ declare global {
       pluginHostSend: (cmd: unknown) => Promise<unknown>
       pluginHostMidi: (cmd: unknown) => void
       onPluginHostRestarted?: (callback: () => void) => () => void
+      onPluginHostExited?: (
+        callback: (info?: { code?: number | null; signal?: string | null }) => void,
+      ) => () => void
       pluginHostPushPcm: (samples: Float32Array | ArrayBuffer | Uint8Array) => void
       pluginHostStop: () => Promise<{ ok: boolean }>
       onAgentBridgeRequest?: (

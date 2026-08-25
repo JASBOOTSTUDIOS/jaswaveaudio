@@ -7,7 +7,7 @@
 
 import { pluginCompatibilityDb } from './compatibility-db'
 import { discoverVst3Plugins, type DiscoverResult } from './discovery'
-import { createFakePluginDescriptor, createSoftPadDescriptor } from './fake-plugin'
+import { createFakePluginDescriptor } from './fake-plugin'
 import { InProcessRuntime } from './in-process-runtime'
 import {
   OutOfProcessRuntime,
@@ -39,9 +39,6 @@ export class PluginManager {
   }
 
   ensureBuiltins(): void {
-    if (!pluginRegistry.findById('jaswave.softpad')) {
-      pluginRegistry.register(createSoftPadDescriptor())
-    }
     if (!pluginRegistry.findById(createFakePluginDescriptor().pluginId)) {
       pluginRegistry.register(createFakePluginDescriptor())
     }

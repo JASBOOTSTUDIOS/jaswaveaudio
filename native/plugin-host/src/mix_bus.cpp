@@ -1,8 +1,8 @@
 /**
  * Rings SPSC por pista + bus DAW. Productor = pipe reader; consumidor = audio thread.
- * Overflow tira lo nuevo (el productor nunca toca gR).
- * Consumo lockstep entre stems vivos (un skip por pista desincroniza el mix).
- * Si el ring se llena (Chromium vs ASIO), se descarta el mismo nº de frames en todos.
+ * Chromium (sink none) y ASIO no comparten reloj: NO cortar audio al target.
+ * PLL: consume un poco más rápido/lento según fill (interpolación).
+ * Solo en emergencia (>~87% capacity) se descartan frames viejos.
  */
 
 #include "mix_bus.h"
@@ -53,10 +53,20 @@ std::atomic<uint8_t> gSeen[JASWAVE_MIX_MAX_TRACKS]{};
 std::atomic<uint8_t> gDawSeen{0};
 std::atomic<uint32_t> gPullBudget{std::numeric_limits<uint32_t>::max()};
 std::atomic<bool> gOffline{false};
+std::atomic<uint64_t> gUnderrunBlocks{0};
+std::atomic<uint64_t> gOverflowPushes{0};
+std::atomic<uint64_t> gHighFillDropFrames{0};
 
-constexpr uint32_t kLiveCallbacks = 8;
-constexpr uint32_t kTargetFill = 1024;
-constexpr uint32_t kHighFill = 3072;
+/** Cola generosa: el PLL absorbe drift; high solo para emergencia. */
+constexpr uint32_t kLiveCallbacks = 16;
+constexpr uint32_t kMinTarget = 256;
+constexpr uint32_t kMaxTarget = 2048;
+constexpr uint32_t kEmergencyFill = (kCap * 7) / 8;  // ~7168
+std::atomic<uint32_t> gAsioFrames{256};
+std::atomic<uint32_t> gTargetFill{768};
+std::atomic<uint32_t> gHighFill{2048};
+/** Ratio de consumo (1.0 = 1:1). Audio thread escribe; pullExact lee. */
+std::atomic<double> gPullRatio{1.0};
 
 #ifdef _WIN32
 HANDLE gPipe{INVALID_HANDLE_VALUE};
@@ -70,11 +80,56 @@ uint32_t availOf(StemRing& s) {
   return (w - r) & kMask;
 }
 
+void skipFrames(StemRing& s, uint32_t n) {
+  const uint32_t a = availOf(s);
+  if (n > a) n = a;
+  if (n == 0) return;
+  const uint32_t r = s.r.load(std::memory_order_relaxed);
+  s.r.store((r + n) & kMask, std::memory_order_release);
+  s.phase = 0.0;
+}
+
+void updateFillLimits(uint32_t asioFrames) {
+  if (asioFrames < 16) asioFrames = 16;
+  if (asioFrames > 4096) asioFrames = 4096;
+  gAsioFrames.store(asioFrames, std::memory_order_relaxed);
+  // ~4 bloques de cola para buffers grandes (menos underrun bajo VSTs pesados).
+  uint32_t target = asioFrames >= 512 ? asioFrames * 4 : asioFrames * 3;
+  if (target < kMinTarget) target = kMinTarget;
+  if (target > kMaxTarget) target = kMaxTarget;
+  uint32_t high = asioFrames * 8;
+  if (high < target + asioFrames * 2) high = target + asioFrames * 2;
+  if (high > kCap / 2) high = kCap / 2;
+  if (high <= target) high = target + asioFrames;
+  gTargetFill.store(target, std::memory_order_relaxed);
+  gHighFill.store(high, std::memory_order_relaxed);
+}
+
+/** Solo si el ring está casi lleno (evitar wrap). No usarlo como PLL. */
+void trimRingEmergency(StemRing& s) {
+  const uint32_t a = availOf(s);
+  if (a <= kEmergencyFill) return;
+  const uint32_t high = gHighFill.load(std::memory_order_relaxed);
+  const uint32_t want = high > kEmergencyFill / 2 ? high : kEmergencyFill / 2;
+  if (a <= want) return;
+  const uint32_t drop = a - want;
+  skipFrames(s, drop);
+  gHighFillDropFrames.fetch_add(drop, std::memory_order_relaxed);
+}
+
 bool pushFrame(StemRing& s, float l, float r) {
-  const uint32_t w = s.w.load(std::memory_order_relaxed);
-  const uint32_t next = (w + 1) & kMask;
-  const uint32_t rd = s.r.load(std::memory_order_acquire);
-  if (next == rd) return false;
+  uint32_t w = s.w.load(std::memory_order_relaxed);
+  uint32_t next = (w + 1) & kMask;
+  uint32_t rd = s.r.load(std::memory_order_acquire);
+  if (next == rd) {
+    // Lleno de verdad: descarta 1 viejo (último recurso; el PLL debería evitarlo).
+    skipFrames(s, 1);
+    gOverflowPushes.fetch_add(1, std::memory_order_relaxed);
+    w = s.w.load(std::memory_order_relaxed);
+    next = (w + 1) & kMask;
+    rd = s.r.load(std::memory_order_acquire);
+    if (next == rd) return false;
+  }
   s.buf[w * 2 + 0] = l;
   s.buf[w * 2 + 1] = r;
   s.w.store(next, std::memory_order_release);
@@ -104,15 +159,6 @@ bool genIsLive(uint32_t lastGen, uint32_t gen) {
   return (gen - lastGen) <= kLiveCallbacks;
 }
 
-void skipFrames(StemRing& s, uint32_t n) {
-  const uint32_t a = availOf(s);
-  if (n > a) n = a;
-  if (n == 0) return;
-  const uint32_t r = s.r.load(std::memory_order_relaxed);
-  s.r.store((r + n) & kMask, std::memory_order_release);
-  s.phase = 0.0;
-}
-
 void consumeResetIfNeeded() {
   if (!gWantReset.load(std::memory_order_acquire)) return;
   for (int i = 0; i < JASWAVE_MIX_MAX_TRACKS; ++i) {
@@ -127,6 +173,7 @@ void consumeResetIfNeeded() {
   gDaw.phase = 0.0;
   gDawSeen.store(0, std::memory_order_relaxed);
   gDawLastPushGen.store(0, std::memory_order_relaxed);
+  gPullRatio.store(1.0, std::memory_order_relaxed);
   gWantReset.store(false, std::memory_order_release);
 }
 
@@ -134,34 +181,18 @@ void pullExact(StemRing& s, float* interleaved, uint32_t frames, bool add) {
   if (frames == 0) return;
   const uint32_t inRate = gInRate.load(std::memory_order_relaxed);
   const uint32_t outRate = gOutRate.load(std::memory_order_relaxed);
-
-  const bool resample = inRate != 0 && outRate != 0 && inRate != outRate;
-  uint32_t r = s.r.load(std::memory_order_relaxed);
-  uint32_t avail = availOf(s);
-
-  if (!resample) {
-    for (uint32_t i = 0; i < frames; ++i) {
-      float l = 0.f, rr = 0.f;
-      if (avail > 0) {
-        l = s.buf[r * 2 + 0];
-        rr = s.buf[r * 2 + 1];
-        r = (r + 1) & kMask;
-        --avail;
-      }
-      if (add) {
-        interleaved[i * 2 + 0] += l;
-        interleaved[i * 2 + 1] += rr;
-      } else {
-        interleaved[i * 2 + 0] = l;
-        interleaved[i * 2 + 1] = rr;
-      }
-    }
-    s.r.store(r, std::memory_order_release);
-    return;
+  double step = gPullRatio.load(std::memory_order_relaxed);
+  if (step < 0.5) step = 0.5;
+  if (step > 2.0) step = 2.0;
+  if (inRate != 0 && outRate != 0 && inRate != outRate) {
+    step *= static_cast<double>(inRate) / static_cast<double>(outRate);
   }
 
-  const double step = static_cast<double>(inRate) / static_cast<double>(outRate);
+  uint32_t r = s.r.load(std::memory_order_relaxed);
+  uint32_t avail = availOf(s);
   double phase = s.phase;
+
+  // Siempre interpolar: con step≈1 es 1:1; el PLL ajusta step para seguir el reloj ASIO.
   for (uint32_t i = 0; i < frames; ++i) {
     float l = 0.f, rr = 0.f;
     if (avail > 0) {
@@ -207,7 +238,8 @@ void pullFrom(StemRing& s, float* interleaved, uint32_t frames, bool add) {
 #ifdef _WIN32
 void pushPacketFrames(uint16_t trackIndex, const float* interleaved, uint16_t frameCount) {
   StemRing* ring = ringFor(trackIndex);
-  if (!ring || !interleaved) return;
+  if (!ring || !interleaved || frameCount == 0) return;
+  trimRingEmergency(*ring);
   markLive(trackIndex);
   for (uint16_t i = 0; i < frameCount; ++i) {
     if (!pushFrame(*ring, interleaved[i * 2], interleaved[i * 2 + 1])) return;
@@ -237,14 +269,15 @@ void pushBytes(const uint8_t* data, size_t nbytes, std::vector<uint8_t>& remnant
       off += need;
       continue;
     }
-    // Legacy: consumir frames de 8 bytes hacia DAW bus
+    // Legacy: frames sueltos → DAW bus
     if (left < 8) break;
     float l = 0, r = 0;
     std::memcpy(&l, remnant.data() + off, 4);
     std::memcpy(&r, remnant.data() + off + 4, 4);
+    off += 8;
+    trimRingEmergency(gDaw);
     pushFrame(gDaw, l, r);
     markLive(JASWAVE_MIX_DAW_BUS);
-    off += 8;
   }
   if (off > 0) remnant.erase(remnant.begin(), remnant.begin() + static_cast<std::ptrdiff_t>(off));
   if (remnant.size() > 65536) remnant.clear();
@@ -285,6 +318,7 @@ void jaswave_mix_bus_push_stem(uint16_t trackIndex, const float* interleavedSter
 #ifdef _WIN32
   StemRing* ring = ringFor(trackIndex);
   if (!ring || !interleavedStereo || frames == 0) return;
+  trimRingEmergency(*ring);
   markLive(trackIndex);
   for (uint32_t i = 0; i < frames; ++i) {
     if (!pushFrame(*ring, interleavedStereo[i * 2], interleavedStereo[i * 2 + 1])) return;
@@ -332,6 +366,7 @@ bool jaswave_mix_bus_start(std::string& pipeName, std::string& err) {
   gCallbackGen.store(0, std::memory_order_relaxed);
   gPullBudget.store(std::numeric_limits<uint32_t>::max(), std::memory_order_relaxed);
   gWantReset.store(false, std::memory_order_relaxed);
+  updateFillLimits(256);
   gRun.store(true, std::memory_order_release);
   gReader = std::thread(readerLoop);
   return true;
@@ -378,22 +413,18 @@ void jaswave_mix_bus_begin_block(uint32_t frames) {
     return;
   }
 
-  if (gOffline.load(std::memory_order_acquire)) {
-    gPullBudget.store(frames, std::memory_order_relaxed);
-    gCallbackGen.fetch_add(1, std::memory_order_relaxed);
-    return;
-  }
+  updateFillLimits(frames);
 
-  const uint32_t inRate = gInRate.load(std::memory_order_relaxed);
-  const uint32_t outRate = gOutRate.load(std::memory_order_relaxed);
-  const bool resample = inRate != 0 && outRate != 0 && inRate != outRate;
-  if (resample) {
+  if (gOffline.load(std::memory_order_acquire)) {
+    gPullRatio.store(1.0, std::memory_order_relaxed);
     gPullBudget.store(frames, std::memory_order_relaxed);
     gCallbackGen.fetch_add(1, std::memory_order_relaxed);
     return;
   }
 
   const uint32_t gen = gCallbackGen.fetch_add(1, std::memory_order_relaxed) + 1;
+  const uint32_t target = gTargetFill.load(std::memory_order_relaxed);
+  const uint32_t high = gHighFill.load(std::memory_order_relaxed);
 
   uint32_t minAvail = std::numeric_limits<uint32_t>::max();
   bool anyLive = false;
@@ -415,17 +446,50 @@ void jaswave_mix_bus_begin_block(uint32_t frames) {
   }
 
   if (!anyLive) {
+    gPullRatio.store(1.0, std::memory_order_relaxed);
     gPullBudget.store(frames, std::memory_order_relaxed);
     return;
   }
 
-  if (minAvail > kHighFill) {
-    const uint32_t drop = std::min(minAvail - kTargetFill, frames);
-    for (int i = 0; i < liveN; ++i) skipFrames(*live[i], drop);
-    minAvail -= drop;
+  // Emergencia: ring casi lleno → recortar a high (no a target: eso causaba crackle).
+  if (minAvail > kEmergencyFill) {
+    const uint32_t want = high;
+    if (minAvail > want) {
+      const uint32_t drop = minAvail - want;
+      for (int i = 0; i < liveN; ++i) skipFrames(*live[i], drop);
+      minAvail = want;
+      gHighFillDropFrames.fetch_add(drop, std::memory_order_relaxed);
+    }
   }
 
-  gPullBudget.store(std::min(frames, minAvail), std::memory_order_relaxed);
+  // PLL: drenar saturación con más agresividad; reconstruir si está vacío.
+  {
+    const double t = target > 0 ? static_cast<double>(target) : 512.0;
+    const double err = (static_cast<double>(minAvail) - t) / t;
+    double adj = err * 0.06;
+    if (minAvail < frames * 2) {
+      if (adj > -0.06) adj = -0.06;
+    }
+    if (adj > 0.05) adj = 0.05;
+    if (adj < -0.06) adj = -0.06;
+    // Por encima de high: acelerar fuerte (hasta +12%) para vaciar antes del trim.
+    if (minAvail > high) {
+      double boost = (static_cast<double>(minAvail) - static_cast<double>(high)) / t * 0.12;
+      if (boost > 0.12) boost = 0.12;
+      if (boost > adj) adj = boost;
+    } else if (minAvail > target + (target >> 1)) {
+      // Entre 1.5×target y high: drenar con +5% extra.
+      if (adj < 0.05) adj = 0.05;
+    }
+    gPullRatio.store(1.0 + adj, std::memory_order_relaxed);
+  }
+
+  if (minAvail < frames) {
+    gUnderrunBlocks.fetch_add(1, std::memory_order_relaxed);
+  }
+
+  // Siempre intentar el bloque completo; pullExact rellena silencio si no hay samples.
+  gPullBudget.store(frames, std::memory_order_relaxed);
 }
 
 void jaswave_mix_bus_add(float* interleavedStereo, uint32_t frames) {
@@ -441,4 +505,48 @@ void jaswave_mix_bus_pull_stem(uint16_t trackIndex, float* interleavedStereo, ui
     return;
   }
   pullFrom(*ring, interleavedStereo, frames, false);
+}
+
+void jaswave_mix_bus_get_stats(JaswaveMixBusStats& out) {
+  out = {};
+  out.capacity = kCap;
+  out.targetFill = gTargetFill.load(std::memory_order_relaxed);
+  out.highFill = gHighFill.load(std::memory_order_relaxed);
+  out.running = gRun.load(std::memory_order_acquire);
+  out.inRate = gInRate.load(std::memory_order_relaxed);
+  out.outRate = gOutRate.load(std::memory_order_relaxed);
+  out.pullBudget = gPullBudget.load(std::memory_order_relaxed);
+  out.underrunBlocks = gUnderrunBlocks.load(std::memory_order_relaxed);
+  out.overflowPushes = gOverflowPushes.load(std::memory_order_relaxed);
+  out.highFillDropFrames = gHighFillDropFrames.load(std::memory_order_relaxed);
+  out.dawFill = availOf(gDaw);
+
+  const uint32_t gen = gCallbackGen.load(std::memory_order_relaxed);
+  uint32_t minLive = std::numeric_limits<uint32_t>::max();
+  uint32_t maxLive = 0;
+  uint32_t liveN = 0;
+  for (int i = 0; i < JASWAVE_MIX_MAX_TRACKS; ++i) {
+    if (!gSeen[i].load(std::memory_order_relaxed)) continue;
+    if (!genIsLive(gLastPushGen[i].load(std::memory_order_relaxed), gen)) continue;
+    const uint32_t a = availOf(gStems[i]);
+    minLive = std::min(minLive, a);
+    maxLive = std::max(maxLive, a);
+    ++liveN;
+  }
+  if (gDawSeen.load(std::memory_order_relaxed) &&
+      genIsLive(gDawLastPushGen.load(std::memory_order_relaxed), gen)) {
+    const uint32_t a = availOf(gDaw);
+    minLive = std::min(minLive, a);
+    maxLive = std::max(maxLive, a);
+    ++liveN;
+  }
+  out.liveTracks = liveN;
+  out.minLiveFill = liveN ? minLive : 0;
+  out.maxLiveFill = liveN ? maxLive : 0;
+}
+
+void jaswave_mix_bus_reset_stats() {
+  gUnderrunBlocks.store(0, std::memory_order_relaxed);
+  gOverflowPushes.store(0, std::memory_order_relaxed);
+  gHighFillDropFrames.store(0, std::memory_order_relaxed);
 }

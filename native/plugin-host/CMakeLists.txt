@@ -32,6 +32,9 @@ if(HAS_VST3_SDK)
     src/asio_com.c
     src/mix_bus.cpp
     src/midi_winmm.cpp
+    src/transport_clock.cpp
+    src/native_metronome.cpp
+    src/clip_player.cpp
     "${VST3_SDK_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp"
     "${VST3_SDK_DIR}/public.sdk/source/vst/hosting/module_win32.cpp"
   )
@@ -47,6 +50,10 @@ if(HAS_VST3_SDK)
     target_link_libraries(jaswave-plugin-host PRIVATE ole32 oleaut32 uuid winmm)
   endif()
   message(STATUS "jaswave-plugin-host: VST3 audio+editor (miniaudio)")
+
+  # --- JasWave Piano Synth VST3 ---
+  add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../piano-synth" piano-synth EXCLUDE_FROM_ALL)
+  message(STATUS "JasWavePiano: VST3 instrument (Karplus-Strong synthesis)")
 else()
   add_executable(jaswave-plugin-host src/main.cpp)
   message(STATUS "jaswave-plugin-host: discover-only (SDK/miniaudio missing)")

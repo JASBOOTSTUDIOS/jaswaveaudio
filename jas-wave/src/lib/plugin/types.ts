@@ -142,7 +142,36 @@ export type PluginHostProcessCommand =
   | { type: 'setParameter'; slotId: string; paramId: number; normalizedValue: number }
   | { type: 'getPluginState'; slotId: string }
   | { type: 'setPluginState'; slotId: string; stateBase64: string }
-  | { type: 'setTransport'; playing: boolean; tempo?: number }
+  | { type: 'setTransport'; playing: boolean; tempo?: number; ppqPos?: number }
+  | {
+      type: 'metronome.set'
+      enabled: boolean
+      bpm?: number
+      beatsPerBar?: number
+      volume?: number
+    }
+  | { type: 'getTransportClock' }
+  | {
+      type: 'clip.load'
+      clipId: string
+      path?: string
+      pcmBase64?: string
+      frames?: number
+      channels?: number
+      sampleRate?: number
+    }
+  | {
+      type: 'clip.schedule'
+      clipId: string
+      trackIndex: number
+      startSample: number
+      durationSamples: number
+      sourceOffsetSamples?: number
+      gain?: number
+      pan?: number
+    }
+  | { type: 'clip.stopAll' }
+  | { type: 'clip.unload'; clipId?: string }
   | { type: 'listAudioDevices' }
   | {
       type: 'setAudioDevice'

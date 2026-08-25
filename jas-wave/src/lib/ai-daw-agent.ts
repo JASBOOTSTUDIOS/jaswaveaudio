@@ -110,7 +110,7 @@ export function buildAgentSystemPrompt(
     instruments.length
       ? 'Instrumentos VST/builtin:\n' +
         instruments.map((d) => `  - ${d.name} [${d.format}] id=${d.pluginId} · ${d.vendor}`).join('\n')
-      : 'Instrumentos: (catálogo vacío — usa JasWave Soft Pad)',
+      : 'Instrumentos: (catálogo vacío — inserta JasWave Roles / VST)',
     effects.length
       ? 'Efectos:\n' + effects.map((d) => `  - ${d.name} [${d.format}] id=${d.pluginId}`).join('\n')
       : '',
@@ -207,8 +207,9 @@ export function buildAgentSystemPrompt(
     '- fxChain.loadPreset { trackId, presetId, nombre, plugins:[...] }',
     '- render.start { format:"wav"|"flac"|"mp3", startSec?, endSec?, stems?, normalize?: "peak"|"lufs"|false, listenTarget?, outputPath?, sampleRate?, bitDepth?, bitrate? }',
     '- render.cancel { renderJobId } | render.getStatus { renderJobId }',
-    '- analysis.loudness | analysis.spectrum | analysis.stereo | analysis.fullReport { jobId? } | analysis.timing',
+    '- analysis.loudness | analysis.spectrum | analysis.stereo | analysis.fullReport { jobId? } | analysis.timing | analysis.buffer | analysis.fxBlame',
     '- analysis.compareTarget { target: "streaming"|"club"|"cd", jobId? }',
+    '- analysis.fxBlame { sampleMs?, settleMs?, includeInstruments?, trackId? } — aísla qué VST empeora buffer/peaks',
     '- daw.masterPass { target?: "streaming"|"club"|"cd", genero?, minutes? }',
     '- automation.setCurve { trackId, parametro: "volumen"|"paneo"|paramId, puntos:[{tiempo,valor}] }',
     '- automation.clear { trackId, parametro? }',
@@ -528,7 +529,7 @@ async function collectLiveParameters(
     summary: string
   }> = []
   for (const pl of targets) {
-    const path = extractHostPluginPath(pl.descripcion ?? '')
+    const path = extractHostPluginPath(pl.descripcion ?? '', pl.id)
     const hostId = trackId === 'master' || trackId === '__master__' ? 'master' : trackId
     const slotId = slotIdForTrackPlugin(hostId, pl.id)
     if (path) {
@@ -570,6 +571,25 @@ export async function executeDawActions(
   const results: ActionResult[] = []
   const st = tienda.obtenerEstado()
   bindAgentDocsDisk(st.project?.id || 'default', st.project?.ruta)
+
+  if (actions.some((a) => {
+    const t = a.type
+    if (t.startsWith('analysis.')) return false
+    if (t === 'audio.listDevices' || t === 'audio.getDevice') return false
+    if (t === 'project.new' || t === 'project.load') return false
+    if (t === 'audio.armNative' || t === 'audio.ensureBest' || t === 'audio.setDevice') return false
+    return (
+      t.startsWith('transport.') ||
+      t.startsWith('daw.') ||
+      t.startsWith('plugin.') ||
+      t.startsWith('midi.') ||
+      t.startsWith('clip.') ||
+      t.startsWith('track.')
+    )
+  })) {
+    const { waitUntilProjectReady } = await import('./project-ready')
+    await waitUntilProjectReady({ timeoutMs: 18_000, allowDegraded: true })
+  }
 
   const mode = opts.agentMode ?? 'create'
   const source = opts.source ?? 'model_actions'
@@ -819,6 +839,7 @@ export async function executeDawActions(
             bpm: p.bpm != null ? Number(p.bpm) : undefined,
             nombre: p.nombre ? String(p.nombre) : undefined,
             minutos: p.minutos != null ? Number(p.minutos) : undefined,
+            softPadOnly: p.softPadOnly === true || p.soloSoftPad === true,
             ai,
           })
           const plan = specToProjectPlan(build.spec, build.applied)
@@ -1164,7 +1185,42 @@ export async function executeDawActions(
             const byName =
               (p.nombre ? pluginRegistry.findByName(String(p.nombre))[0] : undefined) ??
               (typeof p.pluginName === 'string' ? pluginRegistry.findByName(p.pluginName)[0] : undefined)
-            const d = byId ?? byName
+            let d = byId ?? byName
+            // path explícito gana al catálogo por nombre (evita «BFD Player» → Keyzone mal etiquetado).
+            if (typeof p.path === 'string' && p.path.trim()) {
+              const path = String(p.path).trim()
+              const name = String(p.nombre ?? p.pluginName ?? path.split(/[/\\]/).pop() ?? 'VST')
+              const catalogPath = (d?.path || '').replace(/\\/g, '/').toLowerCase()
+              const wantPath = path.replace(/\\/g, '/').toLowerCase()
+              if (!d || catalogPath !== wantPath) {
+                let hash = 0
+                for (let i = 0; i < path.length; i++) hash = ((hash << 5) - hash + path.charCodeAt(i)) | 0
+                const isDll = path.toLowerCase().endsWith('.dll')
+                const shortId = `${isDll ? 'vst2' : 'vst3'}.${(hash >>> 0).toString(16)}`
+                d = {
+                  pluginId: shortId,
+                  name,
+                  path,
+                  format: isDll ? 'vst2' : 'vst3',
+                  category: 'instrument',
+                  isInstrument: true,
+                  isEffect: false,
+                  vendor: '',
+                  version: '',
+                  hostReady: true,
+                  scanStatus: 'ok',
+                  supportsMidiInput: true,
+                  supportsMidiOutput: false,
+                  supportsAudioInput: false,
+                  supportsAudioOutput: true,
+                  supportsSidechain: false,
+                  supportsEditor: true,
+                  parameterCount: 0,
+                  isolation: 'out-of-process',
+                } as import('./plugin/types').PluginDescriptor
+                pluginRegistry.register(d)
+              }
+            }
             if (d) plugin = descriptorToPluginInfo(d) as unknown as Record<string, unknown>
           }
           if (!trackId || !plugin) {
@@ -1178,23 +1234,61 @@ export async function executeDawActions(
           if (typeof p.estadoPluginBase64 === 'string') {
             plugin = { ...plugin, estadoPluginBase64: p.estadoPluginBase64 }
           }
-          const r = await tienda.executor.execute('plugin.insert', { trackId, plugin, index: p.index })
+          if (!plugin.id) {
+            plugin = {
+              ...plugin,
+              id: `plugin-inst-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+            }
+          }
+          const insertPayload: Record<string, unknown> = { trackId, plugin }
+          if (p.index != null && Number.isFinite(Number(p.index))) {
+            insertPayload.index = Number(p.index)
+          }
+          const r = await tienda.executor.execute('plugin.insert', insertPayload)
+          let hostLoaded = false
+          let hostErr = ''
           if (r.success) {
             try {
-              const inserted =
-                tienda.obtenerEstado().project.tracks.find((t) => t.id === trackId)?.plugins?.at(-1) ??
-                (plugin as unknown as import('../../../shared/src/types/entidades').PluginInfo)
-              await ensureTrackVstPlugin(trackId, inserted as import('../../../shared/src/types/entidades').PluginInfo)
-            } catch {
-              /* host opcional */
+              const inserted = (tienda.obtenerEstado().project.tracks.find((t) => t.id === trackId)
+                ?.plugins?.at(-1) ?? plugin) as import('../../../shared/src/types/entidades').PluginInfo
+              const path =
+                extractHostPluginPath(inserted.descripcion ?? '', inserted.id) ||
+                (typeof p.path === 'string' ? p.path : '')
+              const withPath = path
+                ? ({ ...inserted, descripcion: path } as typeof inserted)
+                : inserted
+              if (path && !(inserted.descripcion || '').includes(path)) {
+                tienda.establecerEstado((s) => {
+                  const tracks = (s.project?.tracks ?? []).map((t) => {
+                    if (t.id !== trackId) return t
+                    return {
+                      ...t,
+                      plugins: (t.plugins ?? []).map((pl) =>
+                        pl.id === inserted.id ? { ...pl, descripcion: path } : pl,
+                      ),
+                    }
+                  })
+                  return { ...s, project: { ...s.project!, tracks } }
+                })
+              }
+              hostLoaded = await ensureTrackVstPlugin(trackId, withPath)
+              if (!hostLoaded) {
+                const { getLastVstLoadError } = await import('./plugin/track-vst-runtime')
+                hostErr = getLastVstLoadError() || 'host no cargó el VST'
+              }
+            } catch (e) {
+              hostErr = e instanceof Error ? e.message : 'host error'
             }
           }
           results.push({
             type: action.type,
             success: r.success,
             message: r.success
-              ? `Plugin «${String(plugin.nombre ?? plugin.name ?? '')}» insertado`
+              ? hostLoaded
+                ? `Plugin «${String(plugin.nombre ?? plugin.name ?? '')}» insertado y cargado en host`
+                : `Plugin «${String(plugin.nombre ?? plugin.name ?? '')}» en proyecto; host: ${hostErr || 'pendiente'}`
               : r.error?.message ?? 'Error plugin.insert',
+            data: r.success ? { hostLoaded, hostErr: hostErr || undefined } : undefined,
           })
           break
         }
@@ -1537,6 +1631,76 @@ export async function executeDawActions(
           })
           break
         }
+        case 'analysis.buffer': {
+          const { analyzeBufferHealth } = await import('./audio-buffer-health')
+          const p = (action.payload ?? {}) as { sampleMs?: number; reset?: boolean }
+          const report = await analyzeBufferHealth({
+            sampleMs: typeof p.sampleMs === 'number' ? p.sampleMs : 400,
+            reset: p.reset !== false,
+          })
+          results.push({
+            type: action.type,
+            success: true,
+            message: `[${report.status}] ${report.summary}`,
+            data: report,
+          })
+          break
+        }
+        case 'analysis.fxBlame': {
+          const { runFxBlame } = await import('./audio-fx-blame')
+          const p = (action.payload ?? {}) as {
+            sampleMs?: number
+            settleMs?: number
+            includeInstruments?: boolean
+            trackId?: string
+            maxCandidates?: number
+          }
+          const report = await runFxBlame({
+            getState: () => tienda.obtenerEstado(),
+            setBypass: async (trackId, pluginInstanceId, bypass) => {
+              const r = await tienda.executor.execute('plugin.bypass', {
+                trackId,
+                pluginInstanceId,
+                bypass,
+              })
+              return Boolean(r.success)
+            },
+            sampleMs: typeof p.sampleMs === 'number' ? p.sampleMs : 350,
+            settleMs: typeof p.settleMs === 'number' ? p.settleMs : 120,
+            includeInstruments: p.includeInstruments === true,
+            trackId: typeof p.trackId === 'string' ? p.trackId : undefined,
+            maxCandidates: typeof p.maxCandidates === 'number' ? p.maxCandidates : 24,
+          })
+          results.push({
+            type: action.type,
+            success: true,
+            message: report.summary,
+            data: report,
+          })
+          if (report.suspects[0] && tienda.obtenerEstado().project?.id) {
+            try {
+              const { writeAgentDoc, PLAN_SLUG, getAgentDoc, setMarkdownSection } = await import(
+                './agent-docs'
+              )
+              const pid = tienda.obtenerEstado().project.id
+              const prev = getAgentDoc(pid, PLAN_SLUG)?.content ?? '# Plan\n'
+              const block = [
+                `## FX blame (${new Date().toISOString().slice(0, 19)})`,
+                report.summary,
+                ...report.suspects.slice(0, 5).map(
+                  (s, i) =>
+                    `${i + 1}. **${s.pluginName}** @ ${s.trackName} (${s.role}) Δ${s.improvement} · ${s.confidence} — ${s.reason}`,
+                ),
+                ...report.advice.map((a) => `- ${a}`),
+              ].join('\n')
+              const next = setMarkdownSection(prev, 'FX blame', block)
+              writeAgentDoc(pid, PLAN_SLUG, next, { origin: 'ai' })
+            } catch {
+              /* docs opcionales */
+            }
+          }
+          break
+        }
         case 'render.start':
         case 'render.cancel':
         case 'render.getStatus':
@@ -1690,6 +1854,12 @@ export async function executeDawActions(
         case 'audio.armNative': {
           const { armNativeAudioOutput } = await import('./audio-device-cli')
           const r = await armNativeAudioOutput()
+          results.push({ type: action.type, success: r.ok, message: r.message, data: r })
+          break
+        }
+        case 'audio.clearQuarantine': {
+          const { clearPluginQuarantineAndRestore } = await import('./audio-device-cli')
+          const r = await clearPluginQuarantineAndRestore(tienda)
           results.push({ type: action.type, success: r.ok, message: r.message, data: r })
           break
         }

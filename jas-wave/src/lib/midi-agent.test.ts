@@ -44,7 +44,7 @@ function miniState(selectedId: string): DAWState {
           nombre: 'Piano Lead',
           tipo: 'midi',
           clips: [{ id: 'c1', nombre: 'Intro', tipo: 'midi' }],
-          plugins: [{ id: 'p1', nombre: 'JasWave Soft Pad', tipo: 'instrumento' }],
+          plugins: [{ id: 'p1', nombre: 'JasWave Roles', tipo: 'instrumento' }],
         },
       ],
     },

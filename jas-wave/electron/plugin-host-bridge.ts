@@ -7,8 +7,6 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import * as fs from 'fs'
-import * as net from 'net'
-import type { Socket } from 'net'
 import * as path from 'path'
 import { app, BrowserWindow } from 'electron'
 
@@ -110,14 +108,48 @@ let started = false
 let backend: 'native' | 'node' | 'none' = 'none'
 let startPromise: Promise<boolean> | null = null
 let lastError: string | undefined
-let mixSock: Socket | null = null
+/** Último `load` (para cuarentena si el host muere justo después). */
+let lastLoadPluginPath = ''
+let lastLoadPluginAt = 0
+let unexpectedExitTimes: number[] = []
+let autoRespawnTimer: ReturnType<typeof setTimeout> | null = null
+let mixSock: fs.WriteStream | null = null
 let mixBackpressure = false
 let mixPipePath = ''
 let mixQueue: Buffer[] = []
 let mixReconnectTimer: ReturnType<typeof setTimeout> | null = null
 let mixReconnectAttempts = 0
 let mixSuppressReconnect = false
+/** Evita close+connect concurrentes (maxInstances=1 en el named pipe del host). */
+let mixConnectLock: Promise<boolean> | null = null
+let lastMixConnectOkAt = 0
 
+/** Rate-limit Soft Pad→pipe en main (Chromium sink-none puede inundar tras N compases). */
+const MIX_MAGIC = 0x4a575354
+let mixPaceEpochMs = 0
+let mixPaceFrames = 0
+let mixPaceSr = 48000
+let mixPaceMaxAhead = 2048
+
+export function configureMixPcmPace(sampleRate?: number, bufferSize?: number): void {
+  if (sampleRate && sampleRate >= 8000 && sampleRate <= 192000) mixPaceSr = sampleRate
+  if (bufferSize && bufferSize >= 16 && bufferSize <= 8192) {
+    // ~1.5 bloques ASIO de holgura (antes 2× → saturaba tras Soft Pad multi-pista).
+    mixPaceMaxAhead = Math.max(Math.round(bufferSize * 1.5), 768)
+  }
+}
+
+export function resetMixPcmPace(): void {
+  mixPaceEpochMs = 0
+  mixPaceFrames = 0
+}
+
+function framesInMixPacket(buf: Buffer): number {
+  if (buf.byteLength >= 8 && buf.readUInt32LE(0) === MIX_MAGIC) {
+    return buf.readUInt16LE(6) || 0
+  }
+  return Math.floor(buf.byteLength / 8)
+}
 function sleepMs(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms))
 }
@@ -138,18 +170,61 @@ function closeMixPipe() {
   const s = mixSock
   mixSock = null
   try {
-    s.removeAllListeners()
+    // No quitar 'error' antes de destroy: writes pendientes emiten ERR_STREAM_DESTROYED
+    // y sin listener tumba el main process (uncaughtException).
+    s.removeAllListeners('drain')
+    s.removeAllListeners('open')
+    s.removeAllListeners('close')
+    s.removeAllListeners('error')
+    s.on('error', () => {
+      /* swallow late FS write-after-destroy */
+    })
+    if (typeof (s as fs.WriteStream & { end?: () => void }).end === 'function' && s.writable) {
+      try {
+        s.end()
+      } catch {
+        /* ignore */
+      }
+    }
     s.destroy()
   } catch {
     /* ignore */
   }
 }
 
+/** Write seguro al mix pipe (nunca lanza; reconecta si el stream murió). */
+function writeMixPipe(buf: Buffer): boolean {
+  const s = mixSock
+  if (!s || s.destroyed || !s.writable) return false
+  try {
+    return s.write(buf, (err) => {
+      if (!err) return
+      if (mixSock === s) {
+        mixSock = null
+        mixBackpressure = false
+        mixQueue = []
+      }
+      if (!mixSuppressReconnect) scheduleMixReconnect()
+    })
+  } catch {
+    if (mixSock === s) {
+      mixSock = null
+      mixBackpressure = false
+      mixQueue = []
+    }
+    if (!mixSuppressReconnect) scheduleMixReconnect()
+    return false
+  }
+}
+
 function flushMixPending() {
-  if (!mixSock || mixSock.destroyed || !mixSock.writable) return
+  if (!mixSock || mixSock.destroyed || !mixSock.writable) {
+    mixQueue = []
+    return
+  }
   while (mixQueue.length) {
     const p = mixQueue[0]!
-    const ok = mixSock.write(p)
+    const ok = writeMixPipe(p)
     mixQueue.shift()
     if (!ok) {
       mixBackpressure = true
@@ -160,49 +235,76 @@ function flushMixPending() {
 
 function scheduleMixReconnect() {
   if (mixSuppressReconnect || backend !== 'native' || !started) return
-  if (mixReconnectTimer || mixSock) return
+  if (mixReconnectTimer || isMixPipeConnected()) return
   if (mixReconnectAttempts >= 16) return
   mixReconnectAttempts += 1
-  const delay = Math.min(1500, 50 * mixReconnectAttempts)
+  const delay = Math.min(1500, 80 * mixReconnectAttempts)
   mixReconnectTimer = setTimeout(() => {
     mixReconnectTimer = null
-    if (mixSuppressReconnect || mixSock || !started) return
-    void connectMixPipe(mixPipePath, child?.pid).then((ok) => {
+    if (mixSuppressReconnect || isMixPipeConnected() || !started) return
+    void ensureMixPipeConnected().then((ok) => {
       if (ok) mixReconnectAttempts = 0
       else scheduleMixReconnect()
     })
   }, delay)
 }
 
+/**
+ * El host crea el pipe con PIPE_ACCESS_INBOUND (solo escribe el cliente).
+ * net.connect abre R/W y en Windows el socket se cierra al instante → storm de reconnect.
+ * Usamos WriteStream en modo 'w' (O_WRONLY).
+ */
 function connectMixPipeOnce(name: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const sock = net.connect({ path: name })
     let settled = false
+    let sock: fs.WriteStream | null = null
     const done = (ok: boolean) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       if (!ok) {
-        try {
-          sock.removeAllListeners()
-          sock.destroy()
-        } catch {
-          /* ignore */
-        }
-        if (mixSock === sock) mixSock = null
+    try {
+      sock?.removeAllListeners('drain')
+      sock?.removeAllListeners('open')
+      sock?.removeAllListeners('close')
+      sock?.removeAllListeners('error')
+      sock?.on('error', () => {})
+      sock?.destroy()
+    } catch {
+      /* ignore */
+    }
+        if (sock && mixSock === sock) mixSock = null
       }
       resolve(ok)
     }
     const timer = setTimeout(() => done(false), 1500)
-    sock.on('connect', () => {
-      mixSock = sock
+    try {
+      sock = fs.createWriteStream(name, { flags: 'w', autoClose: true, emitClose: true })
+    } catch {
+      done(false)
+      return
+    }
+    const stream = sock
+    stream.on('open', () => {
+      mixSock = stream
       mixBackpressure = false
       mixQueue = []
+      resetMixPcmPace()
       done(true)
     })
-    sock.on('error', () => done(false))
-    sock.on('close', () => {
-      if (mixSock === sock) {
+    stream.on('error', () => {
+      if (!settled) {
+        done(false)
+        return
+      }
+      if (mixSock === stream) {
+        mixSock = null
+        mixBackpressure = false
+        if (!mixSuppressReconnect) scheduleMixReconnect()
+      }
+    })
+    stream.on('close', () => {
+      if (mixSock === stream) {
         mixSock = null
         mixBackpressure = false
         if (!settled) {
@@ -212,35 +314,66 @@ function connectMixPipeOnce(name: string): Promise<boolean> {
         if (!mixSuppressReconnect) scheduleMixReconnect()
       }
     })
-    sock.on('drain', () => {
+    stream.on('drain', () => {
       mixBackpressure = false
       flushMixPending()
     })
   })
 }
 
-async function connectMixPipe(pipeName: string, pid?: number): Promise<boolean> {
-  closeMixPipe()
+async function connectMixPipeUnlocked(pipeName: string, pid?: number): Promise<boolean> {
   if (process.platform !== 'win32') return false
   const name =
     pipeName || (typeof pid === 'number' && pid > 0 ? `\\\\.\\pipe\\jaswave-mix-${pid}` : '')
   if (!name) return false
+  // Ya hay socket vivo: no tocar (maxInstances=1 → close+reconnect pelea con el reader).
+  if (isMixPipeConnected()) return true
+  // Tras un connect OK, ignorar ráfagas de ensure/status unos ms (evita storm).
+  if (Date.now() - lastMixConnectOkAt < 400) {
+    await sleepMs(80)
+    if (isMixPipeConnected()) return true
+  }
+  closeMixPipe()
   mixPipePath = name
   mixSuppressReconnect = false
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 12; i++) {
     if (mixSuppressReconnect) return false
+    if (isMixPipeConnected()) return true
     const ok = await connectMixPipeOnce(name)
     if (ok) {
       mixReconnectAttempts = 0
+      lastMixConnectOkAt = Date.now()
+      console.error(`[plugin-host] mix pipe connected ${name}`)
       return true
     }
-    await sleepMs(40 + i * 20)
+    await sleepMs(50 + i * 40)
   }
+  console.error(`[plugin-host] mix pipe connect FAILED ${name}`)
   return false
 }
 
+async function connectMixPipe(pipeName: string, pid?: number): Promise<boolean> {
+  while (mixConnectLock) {
+    try {
+      await mixConnectLock
+    } catch {
+      /* ignore */
+    }
+  }
+  // Tras esperar, otro caller pudo haber dejado el pipe listo.
+  const want =
+    pipeName || (typeof pid === 'number' && pid > 0 ? `\\\\.\\pipe\\jaswave-mix-${pid}` : '')
+  if (want && isMixPipeConnected() && mixPipePath === want) return true
+  const run = connectMixPipeUnlocked(pipeName, pid)
+  mixConnectLock = run
+  void run.finally(() => {
+    if (mixConnectLock === run) mixConnectLock = null
+  })
+  return run
+}
+
 export function isMixPipeConnected(): boolean {
-  return !!mixSock && !mixSock.destroyed && mixSock.writable
+  return !!mixSock && !mixSock.destroyed
 }
 
 /** Reconecta el named pipe Soft Pad→ASIO si se cayó (p. ej. tras setAudioDevice). */
@@ -252,13 +385,22 @@ export async function ensureMixPipeConnected(): Promise<boolean> {
   try {
     const ping = await sendPluginHostCommand({ type: 'ping' }, 3000)
     if (!ping.ok) return false
-    return await connectMixPipe(String(ping.mixPipe || ''), child.pid)
+    const fromPing = String(ping.mixPipe || '')
+    const ok = await connectMixPipe(fromPing, child.pid)
+    if (ok) return true
+    // Fallback: nombre canónico por PID (por si el JSON del ping viene mal escapado).
+    const byPid = `\\\\.\\pipe\\jaswave-mix-${child.pid}`
+    if (fromPing !== byPid) return await connectMixPipe(byPid, child.pid)
+    return false
   } catch {
     return false
   }
 }
 
-/** PCM interleaved f32le → named pipe del host. Cola FIFO (nunca latest-wins: eso desincroniza pistas). */
+/** PCM interleaved f32le → named pipe del host.
+ * Rate-limit a ~realtime+2 bloques ASIO (evita saturación del ring).
+ * Sin cola profunda: encolar JWST distintos desincroniza stems.
+ */
 export function pushPluginHostPcm(data: Buffer | ArrayBuffer | Float32Array | ArrayBufferView): void {
   if (!mixSock || mixSock.destroyed || !mixSock.writable) return
   let buf: Buffer
@@ -270,12 +412,39 @@ export function pushPluginHostPcm(data: Buffer | ArrayBuffer | Float32Array | Ar
     buf = Buffer.from(data)
   }
   if (buf.byteLength === 0) return
-  if (mixBackpressure || mixQueue.length) {
-    mixQueue.push(buf)
-    if (mixQueue.length > 256) mixQueue.pop()
+
+  const frames = framesInMixPacket(buf)
+  if (frames > 0) {
+    const now = Date.now()
+    if (!mixPaceEpochMs) {
+      mixPaceEpochMs = now
+      mixPaceFrames = 0
+    }
+    const elapsedSec = Math.max(0, (now - mixPaceEpochMs) / 1000)
+    // Tras freeze UI: resync con catch-up limitado (no 1 frame → underrun eterno).
+    if (elapsedSec > 0.35) {
+      mixPaceEpochMs = now
+      mixPaceFrames = Math.min(frames, mixPaceMaxAhead)
+    } else {
+      const expected = elapsedSec * mixPaceSr
+      if (mixPaceFrames > expected + mixPaceMaxAhead) {
+        return
+      }
+      mixPaceFrames += frames
+      if (elapsedSec > 1.25) {
+        const ahead = Math.max(0, mixPaceFrames - expected)
+        mixPaceEpochMs = now
+        mixPaceFrames = Math.min(ahead, mixPaceMaxAhead)
+      }
+    }
+  }
+
+  if (mixBackpressure || mixQueue.length > 0) {
+    // No crecer la cola: un solo pendiente como máximo.
+    if (mixQueue.length === 0) mixQueue.push(buf)
     return
   }
-  const ok = mixSock.write(buf)
+  const ok = writeMixPipe(buf)
   if (!ok) mixBackpressure = true
 }
 
@@ -298,6 +467,7 @@ function resolveNativeBinary(): string | null {
       : ['jaswave-plugin-host']
 
   const relativeDirs = [
+    path.join('native', 'plugin-host', 'build-vs', 'Release'),
     path.join('native', 'plugin-host', 'build-vst3', 'Release'),
     path.join('native', 'plugin-host', 'build-vst3', 'Debug'),
     path.join('native', 'plugin-host', 'build-vst3', 'bin', 'Release'),
@@ -371,22 +541,50 @@ function saveQuarantine(set: Set<string>) {
   try {
     fs.mkdirSync(path.dirname(pluginQuarantinePath()), { recursive: true })
     fs.writeFileSync(pluginQuarantinePath(), JSON.stringify({ paths: [...set] }, null, 2), 'utf8')
+    quarantineFileMtime = quarantineFileStamp()
   } catch (e) {
     console.error('[plugin-host] no se pudo guardar cuarentena de plugins', e)
   }
 }
 
 let quarantinedPlugins: Set<string> | null = null
+let quarantineFileMtime = 0
+
+function quarantineFileStamp(): number {
+  try {
+    return fs.statSync(pluginQuarantinePath()).mtimeMs
+  } catch {
+    return 0
+  }
+}
 
 function getQuarantine(): Set<string> {
-  if (!quarantinedPlugins) quarantinedPlugins = loadQuarantine()
+  const stamp = quarantineFileStamp()
+  // Si el usuario borró el JSON (o cambió), honrar disco — no quedarse con Set en RAM.
+  if (!quarantinedPlugins || stamp !== quarantineFileMtime) {
+    quarantinedPlugins = loadQuarantine()
+    quarantineFileMtime = stamp
+  }
   return quarantinedPlugins
+}
+
+/** Limpia cuarentena en RAM + disco (reintento de VST tras crash). */
+export function clearPluginQuarantine(): { cleared: number } {
+  const n = getQuarantine().size
+  quarantinedPlugins = new Set()
+  quarantineFileMtime = 0
+  try {
+    if (fs.existsSync(pluginQuarantinePath())) fs.unlinkSync(pluginQuarantinePath())
+  } catch {
+    /* ignore */
+  }
+  return { cleared: n }
 }
 
 function quarantineMessage(pluginPath: string): string {
   return (
     `«${pluginPath}» tumbó el Plugin Host (protección tipo Ableton/Bitwig: el plugin se aísla y no se recarga). ` +
-    `El DAW sigue en WASAPI. Para reintentarlo borra plugin-crash-quarantine.json en los datos de usuario.`
+    `El audio del device se restaura; el mix nativo sigue disponible. Para reintentarlo: audio.clearQuarantine o borra plugin-crash-quarantine.json.`
   )
 }
 
@@ -407,10 +605,16 @@ export function readAudioDevicePrefs(): AudioDevicePrefs | null {
   }
 }
 
+function applyMixPaceFromPrefs(prefs: AudioDevicePrefs | null | undefined): void {
+  if (!prefs) return
+  configureMixPcmPace(prefs.sampleRate, prefs.bufferSize)
+}
+
 export function writeAudioDevicePrefs(prefs: AudioDevicePrefs): void {
   try {
     fs.mkdirSync(path.dirname(audioPrefsPath()), { recursive: true })
     fs.writeFileSync(audioPrefsPath(), JSON.stringify(prefs, null, 2), 'utf8')
+    configureMixPcmPace(prefs.sampleRate, prefs.bufferSize)
   } catch (e) {
     console.error('[plugin-host] no se pudo guardar audio-device.json', e)
   }
@@ -499,13 +703,37 @@ function wireChild(proc: ChildProcessWithoutNullStreams) {
   proc.stderr.on('data', (d: Buffer) => {
     parseHostLogLine(d.toString('utf8'))
   })
+  // Sin esto, write EPIPE tras muerte del host tumba el main process.
+  proc.stdin.on('error', (err) => {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[plugin-host] stdin error:', msg)
+    if (child !== proc) return
+    closeMixPipe()
+    lastError = `Plugin Host stdin: ${msg}`
+    failAllRpc(lastError)
+  })
+  proc.on('error', (err) => {
+    console.error('[plugin-host] process error:', err instanceof Error ? err.message : err)
+  })
   proc.on('exit', (code, signal) => {
     // El exit del host anterior no debe tumbar el RPC ni el puntero del host nuevo.
     if (child !== proc) return
     started = false
     child = null
     backend = 'none'
+    closeMixPipe()
     lastError = `Plugin Host Process salió (code=${code}, signal=${signal})`
+    // Si un load reciente tumba el host (p.ej. 4Front Bass), aislar el plugin.
+    if (lastLoadPluginPath && Date.now() - lastLoadPluginAt < 20_000) {
+      const key = pluginKey(lastLoadPluginPath)
+      if (key && !getQuarantine().has(key)) {
+        getQuarantine().add(key)
+        saveQuarantine(getQuarantine())
+        console.error('[plugin-host] quarantine after host exit:', lastLoadPluginPath)
+        lastError = quarantineMessage(lastLoadPluginPath)
+      }
+      lastLoadPluginPath = ''
+    }
     settlePending({
       ok: false,
       code: 'HostNotReady',
@@ -518,7 +746,64 @@ function wireChild(proc: ChildProcessWithoutNullStreams) {
     if (process.env.JASWAVE_DEBUG_PLUGIN_HOST) {
       console.error('[plugin-host]', lastError)
     }
+    // Aviso a la UI para rearmar audio (metrónomo / Soft Pad / VSTs).
+    try {
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send('plugin-host-exited', { code, signal })
+      }
+    } catch {
+      /* ignore */
+    }
+    scheduleAutoRespawnAfterCrash()
   })
+}
+
+/** stdin.write que nunca lanza (EPIPE async + sync). */
+function writeHostStdin(line: string): boolean {
+  if (!child || child.killed || !child.stdin || !child.stdin.writable) return false
+  try {
+    return child.stdin.write(line, (err) => {
+      if (!err) return
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[plugin-host] stdin write callback:', msg)
+      closeMixPipe()
+      lastError = `Plugin Host stdin: ${msg}`
+      failAllRpc(lastError)
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[plugin-host] stdin write sync:', msg)
+    return false
+  }
+}
+
+/** Tras crash inesperado: reabrir host (sin matar Electron) + avisar UI. */
+function scheduleAutoRespawnAfterCrash() {
+  const now = Date.now()
+  unexpectedExitTimes = unexpectedExitTimes.filter((t) => now - t < 60_000)
+  unexpectedExitTimes.push(now)
+  if (unexpectedExitTimes.length >= 4) {
+    lastError =
+      'Plugin Host entró en crash-loop (¿plugin incompatible?). Reinicia JasWave o quita el VST problemático.'
+    console.error('[plugin-host]', lastError)
+    return
+  }
+  if (autoRespawnTimer) clearTimeout(autoRespawnTimer)
+  autoRespawnTimer = setTimeout(() => {
+    autoRespawnTimer = null
+    void (async () => {
+      if (child && !child.killed && started) return
+      const ok = await ensurePluginHostStarted()
+      if (!ok) return
+      const saved = readAudioDevicePrefs()
+      applyMixPaceFromPrefs(saved)
+      await applyAudioDeviceOrFallback(saved ?? wasapiPrefs(), {
+        persist: false,
+        sessionFallbackOk: true,
+      })
+      notifyHostRestarted()
+    })()
+  }, 500)
 }
 
 function spawnNative(bin: string): ChildProcessWithoutNullStreams {
@@ -585,15 +870,13 @@ function pumpQueue() {
   }, job.timeoutMs)
 
   pending = { resolve: job.resolve, timer }
-  try {
-    child.stdin.write(JSON.stringify(job.cmd) + '\n')
-  } catch (e) {
+  if (!writeHostStdin(JSON.stringify(job.cmd) + '\n')) {
     clearTimeout(timer)
     pending = null
     job.resolve({
       ok: false,
       code: 'HostNotReady',
-      message: e instanceof Error ? e.message : 'No se pudo escribir al plugin-host',
+      message: lastError || 'No se pudo escribir al plugin-host (stdin cerrado)',
     })
     pumpQueue()
   }
@@ -609,12 +892,15 @@ export function sendPluginHostMidi(cmd: Record<string, unknown>): void {
     type !== 'allNotesOff' &&
     type !== 'midiCc' &&
     type !== 'setTransport' &&
-    type !== 'setLiveMidiTargets'
+    type !== 'setLiveMidiTargets' &&
+    type !== 'metronome.set' &&
+    type !== 'clip.schedule' &&
+    type !== 'clip.stopAll'
   ) {
     return
   }
   try {
-    child.stdin.write(JSON.stringify(cmd) + '\n')
+    writeHostStdin(JSON.stringify(cmd) + '\n')
   } catch {
     /* ignore */
   }
@@ -785,6 +1071,7 @@ async function applyAudioDeviceOrFallback(
         Number(a.bufferSize || 0) === Number(prefs.bufferSize || 0)
       if (sameDevice) {
         if (persist) writeAudioDevicePrefs(prefs)
+        await ensureMixPipeConnected()
         return current
       }
       console.error(
@@ -828,6 +1115,7 @@ async function applyAudioDeviceOrFallback(
         )
         if (retry.ok) {
           if (persist) writeAudioDevicePrefs(prefs)
+          await ensureMixPipeConnected()
           notifyHostRestarted()
           return retry
         }
@@ -968,6 +1256,7 @@ async function tryStart(kind: 'native' | 'node'): Promise<boolean> {
     const mixPipe = ping.mixPipe || ''
     await connectMixPipe(mixPipe, child?.pid)
     const saved = readAudioDevicePrefs()
+    applyMixPaceFromPrefs(saved)
     let applied: PluginHostRpcResult
     if (saved && saved.backend === 'asio' && !isRiskyAsioPrefs(saved)) {
       // Como REAPER: ASIO en host virgen, sin abrir WASAPI antes en la misma tarjeta.
@@ -1041,13 +1330,16 @@ export function getPluginHostStatus() {
     vst3EditorAvailable: backend === 'native',
     vst3AudioAvailable: backend === 'native',
     mixPipeConnected: isMixPipeConnected(),
+    mixQueueDepth: mixQueue.length,
+    mixBackpressure,
+    mixPipePath: mixPipePath || '',
     nativePid: child?.pid ?? 0,
     openEditors: 0,
     backend,
     lastError,
     note:
       backend === 'native'
-        ? 'Plugin Host nativo: misma instancia UI+audio. Mixer DAW (clips/Soft Pad) + VST en el device elegido.'
+        ? 'Plugin Host nativo: misma instancia UI+audio. Mixer DAW (clips/Roles) + VST en el device elegido.'
         : backend === 'node'
           ? 'Plugin Host Node (solo discovery). Compila build-vst3 para audio/UI nativa.'
           : lastError
@@ -1058,7 +1350,15 @@ export function getPluginHostStatus() {
 
 export function ensurePluginHostStarted(): Promise<boolean> {
   if (startPromise) return startPromise
-  if (child && !child.killed && started) return Promise.resolve(true)
+  // Si estamos en node-host (solo discover) pero hay binario nativo, subir a native.
+  if (child && !child.killed && started) {
+    if (backend === 'native') return Promise.resolve(true)
+    if (backend === 'node' && resolveNativeBinary() && process.env.JASWAVE_PLUGIN_HOST !== 'node') {
+      stopPluginHost()
+    } else {
+      return Promise.resolve(true)
+    }
+  }
   startPromise = doStart().finally(() => {
     startPromise = null
   })
@@ -1100,6 +1400,10 @@ function failAllRpc(reason: string) {
 }
 
 export function stopPluginHost() {
+  if (autoRespawnTimer) {
+    clearTimeout(autoRespawnTimer)
+    autoRespawnTimer = null
+  }
   const reason = lastError || 'Plugin Host Process detenido.'
   failAllRpc(reason)
   killAudioChild()
@@ -1110,6 +1414,15 @@ export function sendPluginHostCommand(
   timeoutMs = 30_000,
 ): Promise<PluginHostRpcResult> {
   const type = typeof cmd.type === 'string' ? cmd.type : ''
+  if (type === 'clearPluginQuarantine') {
+    const r = clearPluginQuarantine()
+    return Promise.resolve({
+      ok: true,
+      processId: 'jaswave-plugin-host',
+      message: `Cuarentena limpia (${r.cleared} plugins)`,
+      count: r.cleared,
+    })
+  }
 
   const long =
     type === 'load' ||
@@ -1123,8 +1436,8 @@ export function sendPluginHostCommand(
       : timeoutMs
 
   // MIDI: host no responde — no usar la cola RPC (bloquearía load/ping).
-  if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setMixInputRate' || type === 'setSlotMix' || type === 'setMasterMix' || type === 'setTrackGraph' || type === 'setLiveMidiTargets') {
-    if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setLiveMidiTargets') {
+  if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setMixInputRate' || type === 'setSlotMix' || type === 'setMasterMix' || type === 'setTrackGraph' || type === 'setLiveMidiTargets' || type === 'metronome.set' || type === 'clip.schedule' || type === 'clip.stopAll') {
+    if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setLiveMidiTargets' || type === 'metronome.set' || type === 'clip.schedule' || type === 'clip.stopAll') {
       sendPluginHostMidi(cmd)
       return Promise.resolve({
         ok: true,
@@ -1133,11 +1446,7 @@ export function sendPluginHostCommand(
       })
     }
     if (child && !child.killed && child.stdin.writable) {
-      try {
-        child.stdin.write(JSON.stringify(cmd) + '\n')
-      } catch {
-        /* ignore */
-      }
+      writeHostStdin(JSON.stringify(cmd) + '\n')
     }
     return Promise.resolve({ ok: true, processId: 'jaswave-plugin-host' })
   }
@@ -1151,6 +1460,10 @@ export function sendPluginHostCommand(
   if (type === 'load' || type === 'openEditor') {
     const pluginPath = String(cmd.path || '')
     const key = pluginKey(pluginPath)
+    if (type === 'load' && pluginPath) {
+      lastLoadPluginPath = pluginPath
+      lastLoadPluginAt = Date.now()
+    }
     if (key && getQuarantine().has(key)) {
       return Promise.resolve({
         ok: false,
@@ -1159,15 +1472,39 @@ export function sendPluginHostCommand(
       })
     }
     return enqueue().then(async (result) => {
-      if (result.ok || !/salió \(code=/.test(String(result.message || ''))) return result
+      if (result.ok) {
+        if (type === 'load') {
+          lastLoadPluginPath = ''
+        }
+        return result
+      }
+      const msg = String(result.message || '')
+      const crashed =
+        /salió \(code=/.test(msg) ||
+        /Plugin Host stdin/i.test(msg) ||
+        /tumbó el Plugin Host/i.test(msg) ||
+        result.code === 'PluginCrashedHost'
+      if (!crashed) return result
       if (key) {
         getQuarantine().add(key)
         saveQuarantine(getQuarantine())
       }
       console.error('[plugin-host] plugin firewall (Ableton-style):', pluginPath, result.message)
-      await respawnNativeHost()
-      await applyAudioDeviceOrFallback(wasapiPrefs(), { persist: false, sessionFallbackOk: true })
-      notifyHostRestarted()
+      // El exit handler ya programa auto-respawn; solo forzar si aún no hay host.
+      if (!child || child.killed || !started) {
+        if (autoRespawnTimer) {
+          clearTimeout(autoRespawnTimer)
+          autoRespawnTimer = null
+        }
+        await respawnNativeHost()
+        // Restaurar device preferido (ASIO), no forzar WASAPI — Soft Pad necesita mix pipe.
+        const saved = readAudioDevicePrefs()
+        await applyAudioDeviceOrFallback(saved ?? wasapiPrefs(), {
+          persist: false,
+          sessionFallbackOk: true,
+        })
+        notifyHostRestarted()
+      }
       return {
         ok: false,
         code: 'PluginCrashedHost',

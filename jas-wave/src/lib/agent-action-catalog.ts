@@ -33,8 +33,22 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
   {
     type: 'analysis.timing',
     kind: 'agent',
-    description: 'Diagnóstico sync Soft Pad/ASIO (ahead, skew, buffer)',
+    description: 'Diagnóstico sync mix/ASIO (ahead, skew, buffer)',
     examplePayload: {},
+  },
+  {
+    type: 'analysis.buffer',
+    kind: 'agent',
+    description:
+      'Salud del buffer mix→pipe→ring→ASIO: fill, underruns, overflows, cola IPC (saturated/starving/healthy)',
+    examplePayload: { sampleMs: 400, reset: true },
+  },
+  {
+    type: 'analysis.fxBlame',
+    kind: 'agent',
+    description:
+      'Aísla qué FX/VST degrada el audio: bypass A/B + buffer/peaks; restaura la cadena al terminar',
+    examplePayload: { sampleMs: 350, settleMs: 120, includeInstruments: false },
   },
   {
     type: 'daw.masterPass',
@@ -52,7 +66,7 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     type: 'plugin.probe',
     kind: 'agent',
     description: 'Prueba carga de plugin en host',
-    examplePayload: { nombre: 'Soft Pad' },
+    examplePayload: { nombre: 'JasWave Roles' },
   },
   {
     type: 'plugin.listParameters',
@@ -183,7 +197,13 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
   {
     type: 'audio.armNative',
     kind: 'agent',
-    description: 'Arma Soft Pad/clips → pipe → ASIO (sync nativo)',
+    description: 'Arma clips/Roles → pipe → ASIO (sync nativo)',
+    examplePayload: {},
+  },
+  {
+    type: 'audio.clearQuarantine',
+    kind: 'agent',
+    description: 'Limpia VST aislados tras crash del host y restaura ASIO + mix',
     examplePayload: {},
   },
 ]
@@ -247,6 +267,8 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'analysis.stereo',
   'analysis.fullReport',
   'analysis.timing',
+  'analysis.buffer',
+  'analysis.fxBlame',
   'automation.setCurve',
   'automation.clear',
   'bus.create',
@@ -259,6 +281,7 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'audio.setDevice',
   'audio.ensureBest',
   'audio.armNative',
+  'audio.clearQuarantine',
   'project.new',
   ...AGENT_ONLY_ACTIONS.map((a) => a.type),
 ]

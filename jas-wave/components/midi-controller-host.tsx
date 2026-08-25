@@ -23,7 +23,6 @@ import {
   recorderNoteOn,
   type MidiRecorderState,
 } from '@/src/lib/midi-note-recorder'
-import { createPadSustain, padNoteOff, padNoteOn, padPedal } from '@/src/lib/midi-sustain'
 import {
   sendVstCc,
   getLoadedInstrumentForTrack,
@@ -49,8 +48,6 @@ import {
   toMidiRouteTrack,
   type MidiRouteTrack,
 } from '@/src/lib/midi-track-io'
-
-let padSustain = createPadSustain()
 
 function sendLiveMidiTargets(tracks: MidiRouteTrack[]): void {
   const ids = midiNativeLiveTargetIds(tracks)
@@ -87,7 +84,7 @@ function sendLiveMidiTargets(tracks: MidiRouteTrack[]): void {
 
 function playLive(
   trackIds: string[],
-  selectedId: string | null,
+  _selectedId: string | null,
   msg: MidiParsed,
   source?: MidiSource,
 ): void {
@@ -99,36 +96,14 @@ function playLive(
         if (slot) sendVstCc(slot, msg.cc, msg.value)
       }
     }
-    if (msg.cc === 64 || msg.cc === 66) {
-      const hasSoft = trackIds.some((id) => !getLoadedInstrumentForTrack(id))
-      if (hasSoft) {
-        const { next, release } = padPedal(padSustain, msg.value)
-        padSustain = next
-        for (const pitch of release) audioEngine.noteOff(pitch)
-      }
-    }
     return
   }
   if (msg.kind !== 'noteOn' && msg.kind !== 'noteOff') return
   const on = msg.kind === 'noteOn'
   const vel = on ? msg.velocity : 0
-  let any = false
   for (const id of trackIds) {
     if (source === 'native' && getLoadedInstrumentForTrack(id)) continue
-    if (routeMidiToTrack(id, on, msg.pitch, vel)) any = true
-  }
-  if (any) return
-  const wantPad =
-    Boolean(selectedId && trackIds.includes(selectedId)) ||
-    trackIds.some((id) => !getLoadedInstrumentForTrack(id))
-  if (!wantPad) return
-  if (on) {
-    padSustain = padNoteOn(padSustain, msg.pitch)
-    audioEngine.noteOn(msg.pitch, vel)
-  } else {
-    const { next, silence } = padNoteOff(padSustain, msg.pitch)
-    padSustain = next
-    if (silence) audioEngine.noteOff(msg.pitch)
+    routeMidiToTrack(id, on, msg.pitch, vel)
   }
 }
 

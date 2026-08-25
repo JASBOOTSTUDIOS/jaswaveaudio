@@ -15,7 +15,8 @@
     "plugin-host:ping": "node ../native/plugin-host/scripts/ping.cjs",
     "cli": "node cli/daw-cli.mjs",
     "cli:watch": "node cli/daw-cli.mjs watch --play",
-    "cli:audit": "node cli/daw-cli.mjs audit"
+    "cli:audit": "node cli/daw-cli.mjs audit",
+    "native:roles-vst": "cmake -B ../native/jaswave-roles-vst/build -S ../native/jaswave-roles-vst -G \"Visual Studio 17 2022\" -A x64 && cmake --build ../native/jaswave-roles-vst/build --config Release --target JasWaveRoles"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

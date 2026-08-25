@@ -25,7 +25,7 @@ import {
   hydratePluginCatalog,
   promoteCachedVst3WhenHostReady,
 } from '@/src/lib/plugin/catalog-store'
-import { descriptorToPluginInfo, softPadPluginInfo, VST2_NOT_HOSTED_MSG } from '@/src/lib/plugin/plugin-info-adapter'
+import { descriptorToPluginInfo, VST2_NOT_HOSTED_MSG } from '@/src/lib/plugin/plugin-info-adapter'
 import { openPluginEditor } from '@/src/lib/plugin/plugin-editor-store'
 import {
   addCustomScanFolder,
@@ -34,6 +34,13 @@ import {
   setScanFolderEnabled,
 } from '@/src/lib/plugin/search-paths-store'
 import type { PluginSearchPath } from '@/src/lib/plugin/search-paths'
+import {
+  applyJasWaveRolesParameter,
+  findJasWaveRolesDescriptor,
+  inferRoleFromTrack,
+  jasWaveRolesPluginInfo,
+} from '@/src/lib/plugin/jaswave-roles'
+import { ensureTrackVstInstrument } from '@/src/lib/plugin/track-vst-runtime'
 
 const WHITE = [60, 62, 64, 65, 67, 69, 71, 72]
 const BLACK = [
@@ -60,7 +67,7 @@ async function pickScanFolder(): Promise<string | null> {
 }
 
 /**
- * Panel de instrumentos: Soft Pad + carpetas + catálogo VST3 + añadir a pista.
+ * Panel de instrumentos: JasWave Roles + carpetas + catálogo VST3 + añadir a pista.
  */
 export function InstrumentsPanel() {
   const tienda = useDAW()
@@ -147,13 +154,45 @@ export function InstrumentsPanel() {
     await scanVst3()
   }
 
-  const addToSelectedTrack = async (d: PluginDescriptor | 'softpad') => {
+  const insertJasWaveRoles = async () => {
+    if (!selectedTrackId) {
+      setScanMsg('Selecciona una pista en el arrangement (icono piano en la cabecera).')
+      return
+    }
+    const info = jasWaveRolesPluginInfo()
+    if (!info) {
+      setScanMsg('Roles.vst3 no está instalado / no aparece en el catálogo. Escanea carpetas VST3.')
+      return
+    }
+    const track = tienda.obtenerEstado().project?.tracks?.find((t) => t.id === selectedTrackId)
+    if (!track) return
+    await tienda.executor.execute('plugin.insert', {
+      trackId: track.id,
+      plugin: info,
+    })
+    try {
+      await ensureTrackVstInstrument(track.id, info)
+      await applyJasWaveRolesParameter(track.id, info, inferRoleFromTrack(track))
+    } catch {
+      /* host opcional */
+    }
+    setScanMsg(`«${info.nombre}» añadido · rol ${inferRoleFromTrack(track)} · cargando en Plugin Host…`)
+    openPluginEditor({
+      trackId: track.id,
+      pluginId: info.id,
+      pluginName: info.nombre,
+      zone: 'right',
+    })
+    refreshCatalogUi()
+  }
+
+  const addToSelectedTrack = async (d: PluginDescriptor) => {
     if (!selectedTrackId) {
       setScanMsg('Selecciona una pista en el arrangement (icono piano en la cabecera).')
       return
     }
     let plugin = d
-    if (plugin !== 'softpad' && !catalogPluginInsertable(plugin)) {
+    if (!catalogPluginInsertable(plugin)) {
       // Caché vieja: host ya listo pero hostReady=false → promover VST3 y reintentar.
       if (plugin.format === 'vst3' && plugin.path) {
         const staleId = plugin.pluginId
@@ -163,7 +202,7 @@ export function InstrumentsPanel() {
         if (refreshed && catalogPluginInsertable(refreshed)) plugin = refreshed
       }
     }
-    if (plugin !== 'softpad' && !catalogPluginInsertable(plugin)) {
+    if (!catalogPluginInsertable(plugin)) {
       setScanMsg(
         plugin.format === 'vst2' && !plugin.hostReady
           ? `«${plugin.name}»: ${VST2_NOT_HOSTED_MSG}`
@@ -173,21 +212,13 @@ export function InstrumentsPanel() {
     }
     const track = tienda.obtenerEstado().project?.tracks?.find((t) => t.id === selectedTrackId)
     if (!track) return
-    const info = plugin === 'softpad' ? softPadPluginInfo() : descriptorToPluginInfo(plugin)
+    const info = descriptorToPluginInfo(plugin)
     await tienda.executor.execute('plugin.insert', {
       trackId: track.id,
       plugin: info,
     })
-    if (info.nombre.includes('Soft Pad')) audioEngine.ensureContext()
-    else {
-      const { ensureTrackVstInstrument } = await import('@/src/lib/plugin/track-vst-runtime')
-      void ensureTrackVstInstrument(track.id, info)
-    }
-    setScanMsg(
-      info.nombre.includes('Soft Pad')
-        ? `«${info.nombre}» añadido · audible en Play / piano roll`
-        : `«${info.nombre}» añadido · cargando audio en el Plugin Host…`,
-    )
+    void ensureTrackVstInstrument(track.id, info)
+    setScanMsg(`«${info.nombre}» añadido · cargando audio en el Plugin Host…`)
     openPluginEditor({
       trackId: track.id,
       pluginId: info.id,
@@ -212,14 +243,20 @@ export function InstrumentsPanel() {
             <p className="text-[11px] text-foreground">
               Añadir a pista: <span className="font-semibold">{selectedTrackName}</span>
             </p>
-            <button
-              type="button"
-              onClick={() => void addToSelectedTrack('softpad')}
-              className="inline-flex items-center justify-center gap-1 rounded-md bg-accent-amber/20 py-1.5 text-[11px] font-semibold text-accent-amber hover:bg-accent-amber/30"
-            >
-              <Plus className="size-3" />
-              Insertar Soft Pad
-            </button>
+            {findJasWaveRolesDescriptor() ? (
+              <button
+                type="button"
+                onClick={() => void insertJasWaveRoles()}
+                className="inline-flex items-center justify-center gap-1 rounded-md bg-accent-amber/20 py-1.5 text-[11px] font-semibold text-accent-amber hover:bg-accent-amber/30"
+              >
+                <Plus className="size-3" />
+                Insertar JasWave Roles
+              </button>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">
+                Roles.vst3 no está instalado / no aparece en el catálogo. Escanea carpetas VST3.
+              </p>
+            )}
           </div>
         ) : (
           <p className="text-[11px] text-muted-foreground">
@@ -233,9 +270,9 @@ export function InstrumentsPanel() {
           <div className="mb-2 flex items-start gap-2">
             <Sparkles className="mt-0.5 size-4 text-accent-amber" />
             <div>
-              <div className="text-[13px] font-semibold text-foreground">JasWave Soft Pad</div>
+              <div className="text-[13px] font-semibold text-foreground">Vista previa MIDI</div>
               <p className="text-[11px] text-muted-foreground">
-                Instrumento interno (in-process). Ideal para piano roll / MIDI preview.
+                Teclado local para probar notas. Para sonido de pista usa JasWave Roles u otro VST.
               </p>
             </div>
           </div>
@@ -457,9 +494,8 @@ export function InstrumentsPanel() {
         </div>
 
         <p className="mt-4 text-[10px] leading-relaxed text-muted-foreground">
-          Soft Pad es un instrumento interno: hay que insertarlo en la pista. No suena por
-          defecto. Un VST insertado se carga en el Plugin Host; Play y el piano-roll le envían
-          MIDI. La UI flotante es otra instancia (presets del editor no pasan al audio).
+          JasWave Roles es el instrumento nativo por rol (Roles.vst3). Insértalo en la pista o
+          elige otro VST del catálogo. Play y el piano-roll envían MIDI al Plugin Host.
         </p>
       </div>
     </div>

@@ -1,16 +1,17 @@
 # Plugin Host Process (ADR-0011 — aislamiento híbrido C)
 
-Proceso **separado** del main de Electron para plugins de terceros (VST3).
+Proceso **separado** del main de Electron para plugins de terceros (VST3 + VST2 x64).
 
 ## Capacidades (build-vst3 + SDK)
 
 | Capacidad | Estado |
 |-----------|--------|
-| Discover `.vst3` | ✅ |
-| Load + prepare + MIDI + audio (miniaudio) | ✅ |
+| Discover `.vst3` y `.dll` VST2 | ✅ |
+| Load + prepare + MIDI + audio (VST3 / VST2 x64) | ✅ |
 | Editor HWND **misma instancia** que process | ✅ (STA + GetMessage; no editorhost) |
 | Device WASAPI / Exclusive / DSound / WinMM / ASIO / JACK | ✅ seleccionable |
-| Soft Pad | in-process (Web Audio) |
+| Soft Pad | reemplazado por JasWaveRoles.vst3 (nativo) |
+| VST2 32-bit | ❌ (requiere bridge externo) |
 
 ## Build
 
@@ -26,7 +27,16 @@ cmake -B build-vst3 -S . -G "Visual Studio 18 2026" -A x64 ^
 cmake --build build-vst3 --config Release --target jaswave-plugin-host
 ```
 
-Electron **prefiere** `build-vst3/Release/jaswave-plugin-host.exe` automáticamente.
+## Build Roles VST3
+
+```bash
+cd native/jaswave-roles-vst
+cmake -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release --target JasWaveRoles
+```
+
+Instala en `%LOCALAPPDATA%\Programs\Common\VST3\JasWave\JasWaveRoles.vst3`.
+
 
 ## Protocolo
 

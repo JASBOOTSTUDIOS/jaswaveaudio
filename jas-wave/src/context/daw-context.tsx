@@ -161,6 +161,11 @@ export function useDAW() {
   return store
 }
 
+/** HMR-safe: null si el Provider aún no montó o el context se invalidó en Fast Refresh. */
+export function useDAWOptional(): TiendaDAW | null {
+  return useContext(DAWContext)
+}
+
 export function useDAWState<T>(selector: (state: DAWState) => T): T {
   const store = useDAW()
   const selectorRef = useRef(selector)
@@ -177,6 +182,35 @@ export function useDAWState<T>(selector: (state: DAWState) => T): T {
       return next
     },
     () => selectorRef.current(store.obtenerEstado()),
+  )
+}
+
+/** Igual que useDAWState pero no lanza si falta Provider (HMR / splash). */
+export function useDAWStateOptional<T>(
+  selector: (state: DAWState) => T,
+  fallback: T,
+): T {
+  const store = useDAWOptional()
+  const selectorRef = useRef(selector)
+  selectorRef.current = selector
+  const fallbackRef = useRef(fallback)
+  fallbackRef.current = fallback
+  const cachedRef = useRef<{ snapshot: T } | null>(null)
+
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      if (!store) return () => {}
+      return store.suscribir(onStoreChange)
+    },
+    () => {
+      if (!store) return fallbackRef.current
+      const next = selectorRef.current(store.obtenerEstado())
+      const prev = cachedRef.current
+      if (prev && snapshotsEqual(prev.snapshot, next)) return prev.snapshot
+      cachedRef.current = { snapshot: next }
+      return next
+    },
+    () => (store ? selectorRef.current(store.obtenerEstado()) : fallbackRef.current),
   )
 }
 

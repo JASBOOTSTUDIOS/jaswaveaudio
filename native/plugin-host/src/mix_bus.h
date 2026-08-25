@@ -34,6 +34,27 @@ void jaswave_mix_bus_reset();
 /** Modo bounce: begin_block fija budget=frames sin PLL/lockstep en vivo. */
 void jaswave_mix_bus_set_offline(bool offline);
 
+/** Snapshot del relleno de rings Soft Pad→ASIO (para CLI / IA / Medidores). */
+struct JaswaveMixBusStats {
+  uint32_t capacity = 0;
+  uint32_t targetFill = 0;
+  uint32_t highFill = 0;
+  uint32_t dawFill = 0;
+  uint32_t minLiveFill = 0;
+  uint32_t maxLiveFill = 0;
+  uint32_t liveTracks = 0;
+  uint32_t pullBudget = 0;
+  uint32_t inRate = 0;
+  uint32_t outRate = 0;
+  uint64_t underrunBlocks = 0;
+  uint64_t overflowPushes = 0;
+  uint64_t highFillDropFrames = 0;
+  bool running = false;
+};
+
+void jaswave_mix_bus_get_stats(JaswaveMixBusStats& out);
+void jaswave_mix_bus_reset_stats();
+
 constexpr uint16_t JASWAVE_MIX_DAW_BUS = 0xFFFF;
 constexpr uint32_t JASWAVE_MIX_MAGIC = 0x4A575354u;  // 'JWST'
 constexpr int JASWAVE_MIX_MAX_TRACKS = 64;

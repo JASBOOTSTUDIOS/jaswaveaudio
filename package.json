@@ -11,6 +11,7 @@
     "lint": "cd jas-wave && npm run lint",
     "test": "cd shared && npm test",
     "typecheck": "cd shared && npm run typecheck",
-    "native:build": "cd native/audio-engine && npm install && npm run build"
+    "native:build": "cd native/audio-engine && npm install && npm run build",
+    "native:roles-vst": "cd jas-wave && npm run native:roles-vst"
   }
 }

@@ -14,6 +14,9 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    watch: {
+      ignored: ['**/cli/**', '**/_*.mjs', '**/_*.json', '**/node_modules/**'],
+    },
   },
   resolve: {
     alias: {

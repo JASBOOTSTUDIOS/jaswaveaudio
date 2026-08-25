@@ -81,6 +81,15 @@ public:
     if (vst2_) vst2_->setPlaying(playing);
     else vst3_->setPlaying(playing);
   }
+  void setTransport(bool playing, double tempoBpm, double ppqPos = -1.0) {
+    if (vst2_) {
+      vst2_->setTransport(playing, tempoBpm, ppqPos);
+    } else if (vst3_) {
+      vst3_->setPlaying(playing);
+      // Tempo/PPQ: ProcessContext se avanza en process(); fijar posición al seek.
+      // (VST3 completo de tempo queda en setPlaying + host clock sync vía processContext en futuro.)
+    }
+  }
 
   void process(const float* inL, const float* inR, float* outL, float* outR, int frames) {
     if (vst2_) vst2_->process(inL, inR, outL, outR, frames);

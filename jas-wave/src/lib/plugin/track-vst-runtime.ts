@@ -9,13 +9,14 @@ import {
   guessIsInstrument,
   isBuiltinPlugin,
   isLikelyAudioFx,
+  resolveHostPluginPath,
 } from './plugin-info-adapter'
 import { setActiveVstVoiceTarget, getActiveVstVoiceTarget } from './vst-voice-router'
 import { encodeTrackGraph } from './track-graph-encoding'
 import { audioEngine } from '@/lib/audio-engine'
 import type { HostParameterRaw } from './plugin-parameter-intel'
 
-export { extractHostPluginPath, extractHostPluginPath as extractVst3Path }
+export { extractHostPluginPath, extractHostPluginPath as extractVst3Path, resolveHostPluginPath }
 
 export function isBuiltinInstrument(plugin: PluginInfo): boolean {
   return isBuiltinPlugin(plugin)
@@ -46,7 +47,7 @@ export function findTrackPlaybackInstrument(
       if (!builtin) builtin = p
       continue
     }
-    const path = extractHostPluginPath(p.descripcion)
+    const path = extractHostPluginPath(p.descripcion, p.id)
     if (!path) continue
     if (!firstVst) firstVst = { plugin: p, path }
     if (isVstInstrumentPlugin(p, path)) return { kind: 'vst', plugin: p, path }
@@ -164,12 +165,12 @@ export async function syncLoadedSlotsWithProject(
   for (const t of tracks) {
     for (const p of t.plugins ?? []) {
       if (isBuiltinInstrument(p)) continue
-      if (extractHostPluginPath(p.descripcion)) live.add(slotIdForTrackPlugin(t.id, p.id))
+      if (extractHostPluginPath(p.descripcion, p.id)) live.add(slotIdForTrackPlugin(t.id, p.id))
     }
   }
   for (const p of masterPlugins ?? []) {
     if (isBuiltinInstrument(p)) continue
-    if (extractHostPluginPath(p.descripcion)) live.add(slotIdForTrackPlugin('master', p.id))
+    if (extractHostPluginPath(p.descripcion, p.id)) live.add(slotIdForTrackPlugin('master', p.id))
   }
   for (const slotId of [...bySlot.keys()]) {
     if (!live.has(slotId)) await releaseSlot(slotId)
@@ -177,13 +178,30 @@ export async function syncLoadedSlotsWithProject(
 }
 
 let lastHostPid = 0
+/** Evita ensure concurrentes (lifecycle + play + host restart). */
+let ensureProjectInFlight: Promise<Map<string, string>> | null = null
+/** Paths en cuarentena ya avisados (no spamear consola). */
+const quarantineWarned = new Set<string>()
+
+function isHostDeadLoadError(msg: string): boolean {
+  return /stdin cerrado|Plugin Host stdin|salió \(code=|tumbó el Plugin Host|PluginCrashedHost|HostNotReady/i.test(
+    msg,
+  )
+}
+
+function isQuarantineLoadError(msg: string): boolean {
+  return /tumbó el Plugin Host|plugin-crash-quarantine|PluginCrashedHost|se aísla/i.test(msg)
+}
 
 export async function ensureTrackVstPlugin(
   trackId: string,
   plugin: PluginInfo,
 ): Promise<boolean> {
-  const path = extractHostPluginPath(plugin.descripcion)
-  if (!path) return false
+  const path = resolveHostPluginPath(plugin)
+  if (!path) {
+    lastVstLoadError = `Sin ruta .vst3/.dll en «${plugin.nombre}» (descripcion/id/catálogo)`
+    return false
+  }
   const slotId = slotIdForTrackPlugin(trackId, plugin.id)
   const instrument = isVstInstrumentPlugin(plugin, path)
   const st = typeof window !== 'undefined' ? await window.electron?.pluginHostStatus?.() : undefined
@@ -192,17 +210,32 @@ export async function ensureTrackVstPlugin(
   if (pid) lastHostPid = pid
   const existing = bySlot.get(slotId)
   if (existing?.path === path) {
-    if (instrument) {
-      byTrack.set(trackId, existing)
-      setActiveVstVoiceTarget({
-        slotId: existing.slotId,
-        path: existing.path,
-        trackId,
-        pluginId: existing.pluginId,
+    // Confirmar que el host sigue teniendo el slot (tras restart el mapa local miente).
+    let hostHas = false
+    try {
+      const raw = await window.electron?.pluginHostSend?.({
+        type: 'getLatency',
+        slotId,
       })
+      hostHas = !!(raw && typeof raw === 'object' && (raw as { ok?: boolean }).ok)
+    } catch {
+      hostHas = false
     }
-    await restorePluginStateAfterLoad(trackId, plugin)
-    return true
+    if (hostHas) {
+      if (instrument) {
+        byTrack.set(trackId, existing)
+        setActiveVstVoiceTarget({
+          slotId: existing.slotId,
+          path: existing.path,
+          trackId,
+          pluginId: existing.pluginId,
+        })
+      }
+      await restorePluginStateAfterLoad(trackId, plugin)
+      return true
+    }
+    bySlot.delete(slotId)
+    if (byTrack.get(trackId)?.slotId === slotId) byTrack.delete(trackId)
   }
 
   if (instrument) {
@@ -241,8 +274,16 @@ export async function ensureTrackVstPlugin(
           raw && typeof raw === 'object' && 'message' in raw
             ? String((raw as { message: unknown }).message)
             : 'load falló'
-        console.error('[track-vst] load failed', path, msg)
         lastVstLoadError = msg
+        const key = path.replace(/\//g, '\\').toLowerCase()
+        if (isQuarantineLoadError(msg)) {
+          if (!quarantineWarned.has(key)) {
+            quarantineWarned.add(key)
+            console.warn('[track-vst] skip (cuarentena)', path)
+          }
+        } else {
+          console.error('[track-vst] load failed', path, msg)
+        }
         return false
       }
       lastVstLoadError = ''
@@ -279,25 +320,48 @@ export async function ensureProjectVstInstruments(
   tracks: Array<{ id: string; plugins?: PluginInfo[] }>,
   masterPlugins?: PluginInfo[],
 ): Promise<Map<string, string>> {
-  const map = new Map<string, string>()
-  for (const t of tracks) {
-    for (const p of t.plugins ?? []) {
-      if (p.bypass) continue
-      if (isBuiltinInstrument(p)) continue
-      const path = extractHostPluginPath(p.descripcion)
-      if (!path) continue
-      const ok = await ensureTrackVstPlugin(t.id, p)
-      if (ok && isVstInstrumentPlugin(p, path)) {
-        map.set(t.id, slotIdForTrackPlugin(t.id, p.id))
+  if (ensureProjectInFlight) return ensureProjectInFlight
+
+  ensureProjectInFlight = (async () => {
+    const map = new Map<string, string>()
+    let hostDead = false
+
+    const tryOne = async (trackId: string, p: PluginInfo): Promise<boolean> => {
+      if (hostDead) return false
+      if (p.bypass || isBuiltinInstrument(p)) return false
+      const path = extractHostPluginPath(p.descripcion, p.id)
+      if (!path) return false
+      const ok = await ensureTrackVstPlugin(trackId, p)
+      // Solo abortar la cola si el host murió de verdad (no si el plugin está en cuarentena).
+      if (!ok && /stdin cerrado|HostNotReady|Plugin Host stdin/i.test(lastVstLoadError)) {
+        hostDead = true
+      }
+      return ok
+    }
+
+    for (const t of tracks) {
+      if (hostDead) break
+      for (const p of t.plugins ?? []) {
+        if (hostDead) break
+        const path = extractHostPluginPath(p.descripcion, p.id)
+        const ok = await tryOne(t.id, p)
+        if (ok && path && isVstInstrumentPlugin(p, path)) {
+          map.set(t.id, slotIdForTrackPlugin(t.id, p.id))
+        }
       }
     }
-  }
-  for (const p of masterPlugins ?? []) {
-    if (p.bypass || isBuiltinInstrument(p)) continue
-    if (!extractHostPluginPath(p.descripcion)) continue
-    await ensureTrackVstPlugin('master', p)
-  }
-  return map
+    if (!hostDead) {
+      for (const p of masterPlugins ?? []) {
+        if (hostDead) break
+        await tryOne('master', p)
+      }
+    }
+    return map
+  })().finally(() => {
+    ensureProjectInFlight = null
+  })
+
+  return ensureProjectInFlight
 }
 
 /** Publica el graph Reaper al host + layout de stems en Web Audio. */
@@ -320,7 +384,7 @@ export function syncReaperTrackGraph(
     const slots: Array<{ slotId: string; instrument: boolean; bypass: boolean }> = []
     for (const p of t.plugins ?? []) {
       if (isBuiltinInstrument(p)) continue
-      const path = extractHostPluginPath(p.descripcion)
+      const path = extractHostPluginPath(p.descripcion, p.id)
       if (!path) continue
       const slotId = slotIdForTrackPlugin(t.id, p.id)
       if (!bySlot.has(slotId)) continue
@@ -342,7 +406,7 @@ export function syncReaperTrackGraph(
   const master: Array<{ slotId: string; instrument: boolean; bypass: boolean }> = []
   for (const p of masterPlugins ?? []) {
     if (isBuiltinInstrument(p)) continue
-    const path = extractHostPluginPath(p.descripcion)
+    const path = extractHostPluginPath(p.descripcion, p.id)
     if (!path) continue
     const slotId = slotIdForTrackPlugin('master', p.id)
     if (!bySlot.has(slotId)) continue
@@ -435,9 +499,14 @@ export function allNotesOffAllTracks(): void {
   }
 }
 
-export function setHostTransportPlaying(playing: boolean, tempo?: number): void {
+export function setHostTransportPlaying(playing: boolean, tempo?: number, ppqPos?: number): void {
   try {
-    const cmd = { type: 'setTransport' as const, playing, tempo }
+    const cmd = {
+      type: 'setTransport' as const,
+      playing,
+      ...(tempo != null ? { tempo } : {}),
+      ...(ppqPos != null ? { ppqPos } : {}),
+    }
     const api = window.electron
     if (typeof api?.pluginHostMidi === 'function') {
       void api.pluginHostMidi(cmd)
@@ -526,7 +595,7 @@ export async function snapshotLoadedPluginsIntoProject(
   for (const t of tracks) {
     const plugins = t.plugins ?? []
     for (const p of plugins) {
-      const path = extractHostPluginPath(p.descripcion)
+      const path = extractHostPluginPath(p.descripcion, p.id)
       if (!path) continue
       const slotId = slotIdForTrackPlugin(t.id, p.id)
       if (!bySlot.has(slotId)) continue
@@ -567,7 +636,7 @@ export async function snapshotLoadedPluginsIntoProject(
   const masterLive = tienda.obtenerEstado().project.master
   const master = masterLive?.plugins ?? []
   for (const p of master) {
-    const path = extractHostPluginPath(p.descripcion)
+    const path = extractHostPluginPath(p.descripcion, p.id)
     if (!path) continue
     const slotId = slotIdForTrackPlugin('master', p.id)
     if (!bySlot.has(slotId)) continue

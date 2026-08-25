@@ -19,6 +19,7 @@
 | Master / entrega | `daw.masterPass`, `render.start` (+ stems/normalize/flac|mp3), `analysis.*` |
 | Freeze | `track.freeze` / `unfreeze` |
 | Escucha | `AudioListenReport` en job + plan Evaluación; harness gate |
+| Aislar FX malo | `analysis.fxBlame` (bypass A/B + buffer/peaks) |
 | Agente | Harness multi-turno + debug dump + plan-incomplete + listen/target |
 
 ## Brechas menores

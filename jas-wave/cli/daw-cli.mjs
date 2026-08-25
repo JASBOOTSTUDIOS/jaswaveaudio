@@ -4,7 +4,9 @@
  */
 
 import fs from 'node:fs'
+import path from 'node:path'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 
 const DEFAULT_PORT = Number(process.env.JASWAVE_AGENT_PORT || 18787)
 const BASE = `http://127.0.0.1:${DEFAULT_PORT}`
@@ -35,7 +37,22 @@ function parseJsonArg(raw) {
   if (raw === '-') {
     text = fs.readFileSync(0, 'utf8') || '{}'
   } else if (raw.startsWith('@')) {
-    text = fs.readFileSync(raw.slice(1), 'utf8')
+    const rel = raw.slice(1)
+    const candidates = [
+      rel,
+      path.join(process.cwd(), rel),
+      path.join(path.dirname(fileURLToPath(import.meta.url)), rel),
+      path.join(path.dirname(fileURLToPath(import.meta.url)), path.basename(rel)),
+    ]
+    const hit = candidates.find((p) => {
+      try {
+        return fs.existsSync(p) && fs.statSync(p).isFile()
+      } catch {
+        return false
+      }
+    })
+    if (!hit) throw new Error(`No se encontró archivo ${rel}`)
+    text = fs.readFileSync(hit, 'utf8')
   } else {
     text = raw
   }
@@ -81,6 +98,7 @@ Auditoría
   health                         Bridge + ventana
   audit                          Snapshot meters/playhead
   watch [--play] [-i ms]         Stream en vivo
+  sync [segundos] [intervalMs]   Probe underrun/drift/metrónomo (play+buffer)
   state                          Proyecto: pistas, clips, plugins, ids
 
 Acciones (vía executeDawActions, igual que el chat)
@@ -96,7 +114,7 @@ Audio (sale por la tarjeta; se refleja en Ajustes/proyecto)
   audio list | audio get | audio ensure [preferName]
   audio set '{"backend":"asio","deviceId":"…","sampleRate":48000,"bufferSize":512}'
 
-Payload: JSON inline, @archivo.json, o "-" (stdin).
+Payload: JSON inline, @archivo.json (cwd o cli/), o "-" (stdin).
 
 Ejemplos
   daw-cli action track.create '{"nombre":"Lead","tipo":"midi"}'
@@ -104,6 +122,7 @@ Ejemplos
   daw-cli action transport.toggle
   daw-cli action daw.musicBuild '{"aplicar":true,"prompt":"house 124","bpm":124}'
   daw-cli actions '[{"type":"track.create","payload":{"nombre":"Drums","tipo":"midi"}},{"type":"transport.toggle"}]'
+  daw-cli sync 10
   daw-cli watch --play
 
 Env: JASWAVE_AGENT_PORT  ·  App: npm run dev`)
@@ -128,6 +147,15 @@ async function main() {
       const s = await req('/audit')
       printSnapshot(s)
       process.exit(s.hangSuspect ? 3 : 0)
+    }
+
+    if (cmd === 'sync') {
+      const dur = argv[1] || '10'
+      const iv = argv[2] || '600'
+      const probe = path.join(path.dirname(fileURLToPath(import.meta.url)), '_probe-sync.mjs')
+      const { spawnSync } = await import('node:child_process')
+      const r = spawnSync(process.execPath, [probe, dur, iv], { stdio: 'inherit', env: process.env })
+      process.exit(r.status == null ? 1 : r.status)
     }
 
     if (cmd === 'state') {

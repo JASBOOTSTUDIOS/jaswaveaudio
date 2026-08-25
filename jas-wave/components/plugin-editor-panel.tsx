@@ -1,6 +1,6 @@
 /**
  * Panel IU de plugin (workspace tab `plugin-editor`).
- * Soft Pad: UI React + Web Audio. VST3: misma instancia (createView + process) en plugin-host.
+ * VST3/Roles: misma instancia (createView + process) en plugin-host.
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -20,74 +20,15 @@ import {
 } from '@/src/lib/plugin/vst-voice-router'
 import {
   ensureTrackVstInstrument,
-  extractHostPluginPath,
   getLastVstLoadError,
+  resolveHostPluginPath,
   slotIdForTrackPlugin,
 } from '@/src/lib/plugin/track-vst-runtime'
 import { requestOpenTool } from '@/src/workspace/types'
+import { JASWAVE_ROLES_NAME } from '@/src/lib/plugin/jaswave-roles'
 
 function useEditorFocus() {
   return useSyncExternalStore(subscribePluginEditorFocus, getPluginEditorFocus, () => null)
-}
-
-function SoftPadEditor({ plugin }: { plugin: PluginInfo }) {
-  const [gain, setGain] = useState(0.35)
-  const pitches = [60, 62, 64, 65, 67, 69, 71, 72]
-
-  useEffect(() => {
-    setForceBuiltinPreview(true)
-    setActiveVstVoiceTarget(null)
-    void audioEngine.ensureContext().resume()
-    return () => setForceBuiltinPreview(false)
-  }, [])
-
-  const play = async (pitch: number) => {
-    const ctx = audioEngine.ensureContext()
-    if (ctx.state === 'suspended') await ctx.resume()
-    audioEngine.noteOn(pitch, 100)
-  }
-
-  return (
-    <div className="flex flex-col gap-4 p-4">
-      <div className="flex items-start gap-2">
-        <Sparkles className="mt-0.5 size-4 text-accent-amber" />
-        <div>
-          <div className="text-[14px] font-semibold text-foreground">{plugin.nombre}</div>
-          <p className="text-[11px] text-muted-foreground">Editor in-process · JasWave Soft Pad</p>
-        </div>
-      </div>
-      <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
-        Nivel
-        <input
-          type="range"
-          min={0.05}
-          max={0.8}
-          step={0.01}
-          value={gain}
-          onChange={(e) => {
-            const v = Number(e.target.value)
-            setGain(v)
-            audioEngine.setSynthGain(v)
-          }}
-          className="flex-1"
-        />
-      </label>
-      <div className="flex flex-wrap gap-1">
-        {pitches.map((pitch) => (
-          <button
-            key={pitch}
-            type="button"
-            onPointerDown={() => void play(pitch)}
-            onPointerUp={() => audioEngine.noteOff(pitch)}
-            onPointerLeave={() => audioEngine.noteOff(pitch)}
-            className="rounded-md bg-background px-2.5 py-2 font-mono text-[11px] text-foreground ring-1 ring-border hover:ring-accent-amber"
-          >
-            {pitch}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
 }
 
 type EditorStatus = 'idle' | 'opening' | 'open' | 'error'
@@ -99,40 +40,66 @@ function VstNativeEditor({
   plugin: PluginInfo
   trackId: string
 }) {
+  const tienda = useDAW()
   const [status, setStatus] = useState<EditorStatus>('idle')
   const [message, setMessage] = useState<string>('')
   const hostRef = useRef<HTMLDivElement>(null)
   const slotId = slotIdForTrackPlugin(trackId, plugin.id)
-  const pluginPath = extractHostPluginPath(plugin.descripcion ?? '')
+  const pluginPath = resolveHostPluginPath(plugin)
   const pitches = [60, 62, 64, 65, 67, 69, 71, 72]
+  const isRoles = plugin.nombre.includes(JASWAVE_ROLES_NAME) || /jaswave\s*roles/i.test(plugin.nombre)
+  const openedOnce = useRef(false)
+
+  /** Persiste ruta en el proyecto si faltaba (inserts viejos / agent). */
+  function persistPathIfNeeded(path: string) {
+    if (!path || (plugin.descripcion || '').includes(path)) return
+    tienda.establecerEstado((s) => {
+      const tracks = (s.project?.tracks ?? []).map((t) => {
+        if (t.id !== trackId) return t
+        return {
+          ...t,
+          plugins: (t.plugins ?? []).map((p) =>
+            p.id === plugin.id ? { ...p, descripcion: path } : p,
+          ),
+        }
+      })
+      return { ...s, project: { ...s.project!, tracks } }
+    })
+  }
 
   async function openEditor() {
-    if (!pluginPath) {
+    const path = resolveHostPluginPath(plugin)
+    if (!path) {
       setStatus('error')
-      setMessage('Este plugin no tiene ruta de plugin (.vst3/.dll) en el proyecto (MISSING).')
+      setMessage(
+        'Este plugin no tiene ruta .vst3/.dll. Vuelve a insertarlo desde Instrumentos (así guarda el path).',
+      )
       return
     }
+    persistPathIfNeeded(path)
     setStatus('opening')
     setMessage('Cargando audio en el Plugin Host…')
     setForceBuiltinPreview(false)
-    const loaded = await ensureTrackVstInstrument(trackId, plugin)
+    const loaded = await ensureTrackVstInstrument(trackId, { ...plugin, descripcion: path })
     if (!loaded) {
       setStatus('error')
-      setMessage(`No se pudo cargar el VST en el host de audio.\n${pluginPath}`)
+      setMessage(
+        `No se pudo cargar el VST en el host.\n${getLastVstLoadError() || path}`,
+      )
       return
     }
-    setMessage('Abriendo UI nativa de esta instancia (mismo VST que suena)…')
+    setMessage('Abriendo UI nativa…')
     const bridge = createElectronPluginHostBridge()
     const reply = await bridge.send({
       type: 'openEditor',
-      path: pluginPath,
+      path,
       slotId,
       pluginId: plugin.id,
     })
     if (reply.ok) {
       setStatus('open')
       setMessage(
-        'UI y audio son la misma instancia. El teclado del plugin debe sonar por el driver seleccionado en Configuración → Audio.',
+        'UI y audio son la misma instancia. El teclado del plugin debe sonar por el driver de Configuración → Audio.',
       )
     } else {
       setStatus('error')
@@ -146,32 +113,49 @@ function VstNativeEditor({
     setActiveVstVoiceTarget(null)
     setStatus('idle')
     setMessage('')
+    openedOnce.current = false
   }
 
   useEffect(() => {
+    openedOnce.current = false
     void (async () => {
-      if (!pluginPath) return
+      const path = resolveHostPluginPath(plugin)
+      if (!path) {
+        setStatus('error')
+        setMessage(
+          'MISSING · sin ruta de plugin. Quita DecentSampler e insértalo de nuevo desde el catálogo.',
+        )
+        return
+      }
+      persistPathIfNeeded(path)
       setStatus('idle')
       setForceBuiltinPreview(false)
       setMessage('Cargando audio VST en el Plugin Host…')
-      const ok = await ensureTrackVstInstrument(trackId, plugin)
+      const ok = await ensureTrackVstInstrument(trackId, { ...plugin, descripcion: path })
+      if (!ok) {
+        setStatus('error')
+        setMessage(
+          getLastVstLoadError() ||
+            'Host no cargó este VST. Reinserta el plugin o revisa cuarentena.',
+        )
+        return
+      }
       setMessage(
-        ok
-          ? 'Host listo. Reabrir abre la UI de ESTA instancia (preset = sonido). Teclas del panel → MIDI al VST.'
-          : getLastVstLoadError() ||
-            'Host no cargó este VST. Si tumbó el proceso (p.ej. BFD), queda aislado y el audio sigue en WASAPI.',
+        isRoles
+          ? 'JasWave Roles listo. Abriendo UI…'
+          : 'Host listo. Abriendo UI nativa…',
       )
+      if (!openedOnce.current) {
+        openedOnce.current = true
+        await openEditor()
+      }
     })()
     return () => {
       setActiveVstVoiceTarget(null)
       void createElectronPluginHostBridge().send({ type: 'closeEditor', slotId })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slotId, pluginPath])
-
-  useEffect(() => {
-    // No syncBounds agresivo — evita saturar la cola del host
-  }, [status, slotId])
+  }, [slotId])
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -186,7 +170,9 @@ function VstNativeEditor({
                 ? 'Abriendo…'
                 : status === 'error'
                   ? message
-                  : 'VST3'}
+                  : isRoles
+                    ? 'JasWave Roles VST'
+                    : 'VST3'}
           </div>
         </div>
         <button
@@ -229,7 +215,6 @@ function VstNativeEditor({
         ))}
       </div>
 
-      {/* Superficie donde se embebe el HWND del plugin */}
       <div
         ref={hostRef}
         className="relative min-h-0 flex-1 bg-black"
@@ -239,7 +224,11 @@ function VstNativeEditor({
           <div className="flex h-full items-center justify-center px-4 text-center text-[11px] text-muted-foreground">
             {message || 'Cargando host de audio…'}
           </div>
-        ) : null}
+        ) : (
+          <div className="flex h-full items-center justify-center px-4 text-center text-[11px] text-muted-foreground/80">
+            UI nativa abierta en ventana flotante (mismo VST que el audio).
+          </div>
+        )}
       </div>
 
       {pluginPath ? (
@@ -282,8 +271,6 @@ export function PluginEditorPanel() {
     )
   }
 
-  const isSoftPad = plugin.nombre.includes('Soft Pad') || plugin.licencia === 'interno'
-
   return (
     <div className="flex h-full flex-col bg-panel">
       <div className="flex h-9 items-center gap-2 border-b border-border px-3">
@@ -292,7 +279,7 @@ export function PluginEditorPanel() {
           <div className="truncate text-[12px] font-semibold text-foreground">{plugin.nombre}</div>
           <div className="truncate text-[9px] text-muted-foreground">
             {trackName ? `Pista · ${trackName}` : 'Editor de plugin'}
-            {isSoftPad ? ' · audible' : ' · UI+audio misma instancia'}
+            {' · UI+audio misma instancia'}
           </div>
         </div>
         <button
@@ -315,11 +302,7 @@ export function PluginEditorPanel() {
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
-        {isSoftPad ? (
-          <SoftPadEditor plugin={plugin} />
-        ) : (
-          <VstNativeEditor plugin={plugin} trackId={focus.trackId} />
-        )}
+        <VstNativeEditor plugin={plugin} trackId={focus.trackId} />
       </div>
     </div>
   )

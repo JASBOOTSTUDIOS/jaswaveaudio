@@ -8,6 +8,7 @@ import { Activity, AudioLines, Disc3, Gauge, Timer } from 'lucide-react'
 import { audioEngine } from '@/lib/audio-engine'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { executeDawActions } from '@/src/lib/ai-daw-agent'
+import type { BufferHealthReport } from '@/src/lib/audio-buffer-health'
 import { getNativeMasterPeak } from '@/src/lib/plugin/native-mix-meters'
 import { cn } from '@/lib/utils'
 
@@ -46,6 +47,7 @@ export function MixAnalyzerPanel() {
   const [rms, setRms] = useState(0)
   const [corr, setCorr] = useState(1)
   const [timing, setTiming] = useState<TimingInfo | null>(null)
+  const [bufferHealth, setBufferHealth] = useState<BufferHealthReport | null>(null)
   const [listen, setListen] = useState<BounceListen | null>(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
@@ -151,6 +153,24 @@ export function MixAnalyzerPanel() {
         { type: 'audio.ensureBest', payload: { preferName: 'UMC' } },
       ])
       setMsg(results[0]?.message || 'Audio actualizado')
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const refreshBufferHealth = async () => {
+    setBusy(true)
+    setMsg('')
+    try {
+      const results = await executeDawActions(tienda, [
+        { type: 'analysis.buffer', payload: { sampleMs: 450, reset: true } },
+      ])
+      const r = results[0]
+      const data = r?.data as BufferHealthReport | undefined
+      if (data) setBufferHealth(data)
+      setMsg(r?.message || 'Buffer analizado')
     } catch (err) {
       setMsg(err instanceof Error ? err.message : String(err))
     } finally {
@@ -276,7 +296,75 @@ export function MixAnalyzerPanel() {
       <section className="space-y-1.5">
         <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
           <Timer className="size-3.5" /> Timing / buffer
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void refreshBufferHealth()}
+            className="ml-auto rounded border border-border/70 px-2 py-0.5 text-[10px] font-sans hover:bg-muted/40 disabled:opacity-50"
+          >
+            Analizar buffer
+          </button>
         </div>
+        {bufferHealth ? (
+          <div
+            className={cn(
+              'rounded border p-2 text-[11px] leading-relaxed',
+              bufferHealth.status === 'healthy'
+                ? 'border-emerald-800/50 bg-emerald-950/20'
+                : bufferHealth.status === 'saturated'
+                  ? 'border-red-700/60 bg-red-950/30'
+                  : bufferHealth.status === 'starving'
+                    ? 'border-amber-700/60 bg-amber-950/30'
+                    : 'border-border/50 bg-black/20',
+            )}
+          >
+            <div className="font-semibold uppercase tracking-wide">
+              {bufferHealth.status}
+              <span className="ml-2 font-normal normal-case text-muted-foreground">{bufferHealth.summary}</span>
+            </div>
+            {bufferHealth.ring ? (
+              <>
+                <div className="mt-1.5 h-2 overflow-hidden rounded bg-muted/40">
+                  <div
+                    className={cn(
+                      'h-2 rounded transition-all',
+                      (bufferHealth.fillRatioVsHigh ?? 0) > 0.9
+                        ? 'bg-red-500'
+                        : (bufferHealth.fillRatioVsTarget ?? 0) < 0.35
+                          ? 'bg-amber-400'
+                          : 'bg-emerald-500',
+                    )}
+                    style={{
+                      width: `${Math.min(100, Math.max(2, (bufferHealth.fillRatioVsHigh ?? 0) * 100))}%`,
+                    }}
+                  />
+                </div>
+                <div className="mt-1 font-mono text-[10px] text-muted-foreground">
+                  fill {bufferHealth.ring.minLiveFill}/{bufferHealth.ring.targetFill} target · high{' '}
+                  {bufferHealth.ring.highFill} · live {bufferHealth.ring.liveTracks} · queue{' '}
+                  {bufferHealth.mixQueueDepth}
+                  {bufferHealth.underrunDelta > 0 ? ` · +underrun ${bufferHealth.underrunDelta}` : ''}
+                  {bufferHealth.overflowDelta > 0 ? ` · +overflow ${bufferHealth.overflowDelta}` : ''}
+                  {bufferHealth.highFillDropDelta > 0
+                    ? ` · +drop ${bufferHealth.highFillDropDelta}`
+                    : ''}
+                </div>
+              </>
+            ) : (
+              <div className="mt-1 text-[10px] text-muted-foreground">
+                Ring nativo no disponible (recompila plugin-host). Cola IPC: {bufferHealth.mixQueueDepth}
+                {bufferHealth.mixBackpressure ? ' · backpressure' : ''}
+              </div>
+            )}
+            {bufferHealth.issues.length ? (
+              <ul className="mt-1 list-inside list-disc text-[10px] text-amber-200/90">
+                {bufferHealth.issues.map((i) => (
+                  <li key={i}>{i}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
         <div
           className={cn(
             'rounded border p-2 font-mono text-[11px] leading-relaxed',
@@ -290,7 +378,7 @@ export function MixAnalyzerPanel() {
                 {timing.nativeOutput ? ' · nativo' : ' · Chromium'}
               </div>
               <div>
-                Ahead Soft Pad→ASIO: {timing.pathAheadMs.toFixed(1)} ms
+                Ahead mix→ASIO: {timing.pathAheadMs.toFixed(1)} ms
               </div>
               <div>
                 Timeline {timing.timelineSec.toFixed(3)}s · audible {timing.audibleSec.toFixed(3)}s
@@ -304,8 +392,8 @@ export function MixAnalyzerPanel() {
           )}
         </div>
         <p className="text-[10px] leading-snug text-muted-foreground">
-          Si las notificaciones del PC crujen: usa 48 kHz / buffer 1024 (botón Estabilizar) y deja Soft Pad
-          como voz audible (sin dual VST vacío). ASIO exclusivo carga la UMC.
+          CLI/IA: <code className="text-[9px]">analysis.buffer</code> — saturado = ring/cola altos;
+          starving = underruns. Estabilizar = 48 kHz / 1024 + mix nativo.
         </p>
       </section>
     </div>

@@ -56,11 +56,14 @@ export async function refreshNativeMixMeters(): Promise<void> {
   if (!api?.pluginHostSend) return
   pollPromise = (async () => {
     try {
-      const raw = (await api.pluginHostSend({ type: 'getMixMeters' })) as {
+      const raw = (await Promise.race([
+        api.pluginHostSend({ type: 'getMixMeters' }),
+        new Promise<null>((r) => setTimeout(() => r(null), 250)),
+      ])) as {
         ok?: boolean
         masterPeak?: number
         tracks?: Array<{ index?: number; peak?: number }>
-      }
+      } | null
       if (!raw || raw.ok === false) return
       const now = performance.now()
       const hold = updatedAt > 0 && now - updatedAt < HOLD_MS
@@ -79,7 +82,7 @@ export async function refreshNativeMixMeters(): Promise<void> {
       }
       updatedAt = now
     } catch {
-      /* host no listo */
+      /* host ocupado — conservar peaks previos */
     }
   })().finally(() => {
     pollPromise = null

@@ -1,5 +1,6 @@
 /**
- * FakePlugin + Soft Pad — instrumentos/efectos de prueba (ADR-0011).
+ * FakePlugin — efecto de prueba in-process (ADR-0011).
+ * Soft Pad reemplazado por JasWaveRoles.vst3 nativo.
  */
 
 import { isolationForFormat } from './isolation-policy'
@@ -41,7 +42,6 @@ export function createFakePluginParameters(): PluginParameterMeta[] {
       max: 24,
       default: 0,
       unit: 'dB',
-      step: 0.1,
       automatable: true,
       readable: true,
       writable: true,
@@ -59,27 +59,4 @@ export function createFakePluginParameters(): PluginParameterMeta[] {
       writable: true,
     },
   ]
-}
-
-export function createSoftPadDescriptor(): PluginDescriptor {
-  return {
-    pluginId: 'jaswave.softpad',
-    format: 'builtin',
-    vendor: 'JasWave',
-    name: 'JasWave Soft Pad',
-    version: '1.0.0',
-    category: 'instrument',
-    isInstrument: true,
-    isEffect: false,
-    supportsMidiInput: true,
-    supportsMidiOutput: false,
-    supportsAudioInput: false,
-    supportsAudioOutput: true,
-    supportsSidechain: false,
-    supportsEditor: false,
-    parameterCount: 0,
-    scanStatus: 'ok',
-    hostReady: true,
-    isolation: isolationForFormat('builtin'),
-  }
 }
