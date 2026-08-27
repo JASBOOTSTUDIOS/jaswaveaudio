@@ -170,9 +170,9 @@ void JasWavePiano::renderizarAudio (Vst::ProcessData& data)
             mL += sample * bal;
             mR += sample * (1.f - pStereo * 0.2f);
         }
-        L[s] = mL * norm * 2.2f;
-        if (L != R) R[s] = mR * norm * 2.2f;
-        else L[s] = (mL + mR) * 0.5f * norm * 2.2f;
+        L[s] = mL * norm * 7.5f;
+        if (L != R) R[s] = mR * norm * 7.5f;
+        else L[s] = (mL + mR) * 0.5f * norm * 7.5f;
     }
     data.outputs[0].silenceFlags = 0;
 }

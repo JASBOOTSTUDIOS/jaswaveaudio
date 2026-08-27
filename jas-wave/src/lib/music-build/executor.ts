@@ -11,6 +11,7 @@ import { descriptorToPluginInfo } from '../plugin/plugin-info-adapter'
 import { pickVstForRole, type InstrumentRole } from '../plugin-knowledge'
 import {
   applyJasWaveRolesParameter,
+  ensureJasWaveRolesRegistered,
   findJasWaveRolesDescriptor,
   isJasWaveRolesDescriptor,
   jasWaveRolesPluginInfo,
@@ -63,6 +64,71 @@ export function expandSectionsToBarPlan(
   return out
 }
 
+/** Insert + load host obligatorio (1 intento + path LOCALAPPDATA forzado). */
+async function insertLoadInstrument(
+  tienda: TiendaDAW,
+  trackId: string,
+  info: import('../../../../shared/src/types/entidades').PluginInfo,
+  role?: string,
+): Promise<boolean> {
+  const { defaultJasWaveRolesPath } = await import('../plugin/jaswave-roles')
+  const { defaultJasWavePianoPath } = await import('../plugin/jaswave-piano')
+  const { resolveHostPluginPath } = await import('../plugin/plugin-info-adapter')
+  const { ensureTrackVstInstrument, getLastVstLoadError } = await import('../plugin/track-vst-runtime')
+
+  let forcedPath = resolveHostPluginPath(info)
+  if (/jaswave\s*piano/i.test(info.nombre)) forcedPath = defaultJasWavePianoPath() || forcedPath
+  if (/jaswave\s*roles/i.test(info.nombre)) forcedPath = defaultJasWaveRolesPath() || forcedPath
+  const toInsert = forcedPath ? { ...info, descripcion: forcedPath } : { ...info }
+
+  await tienda.executor.execute('plugin.insert', { trackId, plugin: toInsert })
+  const inserted =
+    (tienda.obtenerEstado().project.tracks.find((t) => t.id === trackId)?.plugins?.at(-1) as
+      | typeof info
+      | undefined) ?? toInsert
+  const withPath = {
+    ...inserted,
+    descripcion: forcedPath || resolveHostPluginPath(inserted) || String(inserted.descripcion || ''),
+  }
+
+  try {
+    await window.electron?.pluginHostEnsure?.()
+  } catch {
+    /* ignore */
+  }
+  const ok = await Promise.race([
+    ensureTrackVstInstrument(trackId, withPath),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 25000)),
+  ])
+  if (ok) {
+    // Persistir ruta en el estado (plugin.insert a veces deja descripcion vacía).
+    if (withPath.descripcion) {
+      try {
+        tienda.establecerEstado((s) => {
+          const tracks = s.project.tracks.map((t) => {
+            if (t.id !== trackId) return t
+            return {
+              ...t,
+              plugins: (t.plugins ?? []).map((p) =>
+                p.id === withPath.id ? { ...p, descripcion: withPath.descripcion } : p,
+              ),
+            }
+          })
+          return { ...s, project: { ...s.project, tracks } }
+        })
+      } catch {
+        /* best-effort */
+      }
+    }
+    if (role && /jaswave\s*roles/i.test(withPath.nombre)) {
+      await applyJasWaveRolesParameter(trackId, withPath, role)
+    }
+    return true
+  }
+  console.warn('[music-build] host load falló', withPath.nombre, getLastVstLoadError(), forcedPath)
+  return false
+}
+
 const STAGE_DEFS: Array<{ id: MusicBuildStage['id']; label: string }> = [
   { id: 'spec', label: 'Especificación' },
   { id: 'setup', label: 'Tempo y métrica' },
@@ -75,20 +141,20 @@ const STAGE_DEFS: Array<{ id: MusicBuildStage['id']; label: string }> = [
 ]
 
 const MIX_BY_ROLE: Record<string, { volumen: number; paneo: number }> = {
-  drums: { volumen: 0.84, paneo: 0 },
-  percussion: { volumen: 0.72, paneo: 0.14 },
-  bass: { volumen: 0.78, paneo: 0 },
-  guitar: { volumen: 0.68, paneo: -0.18 },
-  piano: { volumen: 0.7, paneo: -0.08 },
-  keys: { volumen: 0.68, paneo: 0.08 },
-  pad: { volumen: 0.52, paneo: 0.22 },
-  lead: { volumen: 0.74, paneo: 0.05 },
-  strings: { volumen: 0.62, paneo: -0.1 },
-  brass: { volumen: 0.64, paneo: 0.12 },
-  woodwind: { volumen: 0.6, paneo: -0.12 },
-  choir: { volumen: 0.58, paneo: 0.1 },
-  synth: { volumen: 0.66, paneo: 0 },
-  fx: { volumen: 0.4, paneo: 0.25 },
+  drums: { volumen: 1, paneo: 0 },
+  percussion: { volumen: 0.92, paneo: 0.14 },
+  bass: { volumen: 0.98, paneo: 0 },
+  guitar: { volumen: 0.9, paneo: -0.18 },
+  piano: { volumen: 0.95, paneo: -0.08 },
+  keys: { volumen: 0.92, paneo: 0.08 },
+  pad: { volumen: 0.82, paneo: 0.22 },
+  lead: { volumen: 0.96, paneo: 0.05 },
+  strings: { volumen: 0.88, paneo: -0.1 },
+  brass: { volumen: 0.9, paneo: 0.12 },
+  woodwind: { volumen: 0.86, paneo: -0.12 },
+  choir: { volumen: 0.85, paneo: 0.1 },
+  synth: { volumen: 0.92, paneo: 0 },
+  fx: { volumen: 0.7, paneo: 0.25 },
 }
 
 function colorForRole(rol: string): string {
@@ -277,8 +343,10 @@ export async function executeMusicBuild(
     bpm?: number
     nombre?: string
     minutos?: number
-    /** Solo Soft Pad (sin VST). Evita crashes/cuarentena en pruebas de buffer. */
+    /** Solo instrumentos nativos Piano/Roles (sin forzar BFD/catálogo externo). Alias: softPadOnly, nativeOnly. */
     softPadOnly?: boolean
+    rolesOnly?: boolean
+    nativeOnly?: boolean
     /** Spec / campos parciales de la IA (gana sobre heurística). */
     ai?: MusicBuildAiPartial | null
     spec?: MusicBuildAiPartial | null
@@ -378,45 +446,57 @@ export async function executeMusicBuild(
 
   let instrumentsLoaded = 0
   let rolesPads = 0
+  let instrumentsFailed = 0
   setStage(stages, 'instruments', 'running')
   const instrumentNotes: string[] = []
-  const softPadOnly = opts.softPadOnly === true
+  // rolesOnly (alias softPadOnly): Piano/Roles nativos sin forzar catálogo externo (BFD, etc.)
+  const rolesOnly =
+    opts.rolesOnly === true || opts.softPadOnly === true || opts.nativeOnly === true
+  ensureJasWavePianoRegistered()
+  ensureJasWaveRolesRegistered()
+  // Host vivo antes de cargar VSTs (tras masterPass/crash previos).
+  try {
+    await window.electron?.pluginHostEnsure?.()
+    await window.electron?.pluginHostSend?.({ type: 'ensureAudio' })
+  } catch {
+    /* ignore */
+  }
+
   for (const row of created) {
     const t = spec.tracks[row.specIndex]!
     if (t.tipo === 'audio') continue
-    // Preferir BFD Player en drums antes de resolver catálogo (GM: 36/38/42).
-    if (!softPadOnly && String(t.rol) === 'drums' && !t.pluginNombre && !t.pluginId) {
+    if (!rolesOnly && String(t.rol) === 'drums' && !t.pluginNombre && !t.pluginId) {
       t.pluginNombre = 'BFD Player'
     }
 
     let loadedVst = false
-    if (softPadOnly) {
-      // softPadOnly → Piano VST para piano/keys; Roles para el resto
-      try {
-        const rol = String(t.rol)
-        const wantPiano = rol === 'piano' || rol === 'keys'
-        ensureJasWavePianoRegistered()
-        const pianoInfo = wantPiano ? jasWavePianoPluginInfo() : null
-        const info = pianoInfo ?? jasWaveRolesPluginInfo()
-        if (info) {
-          await tienda.executor.execute('plugin.insert', { trackId: row.trackId, plugin: info })
-          const { ensureTrackVstInstrument } = await import('../plugin/track-vst-runtime')
-          await ensureTrackVstInstrument(row.trackId, info)
-          if (pianoInfo && info.id === pianoInfo.id) {
-            instrumentsLoaded += 1
-            instrumentNotes.push(`${t.nombre}:piano`)
-          } else {
-            await applyJasWaveRolesParameter(row.trackId, info, rol)
-            rolesPads += 1
-            instrumentNotes.push(`${t.nombre}:roles`)
-          }
-          loadedVst = true
-        }
-      } catch {
-        instrumentNotes.push(`${t.nombre}:roles✗`)
+    const rol = String(t.rol)
+    const markOk = (tag: string, isRoles: boolean) => {
+      loadedVst = true
+      if (isRoles) rolesPads += 1
+      else instrumentsLoaded += 1
+      instrumentNotes.push(`${t.nombre}:${tag}`)
+    }
+    const markFail = (tag: string) => {
+      instrumentsFailed += 1
+      instrumentNotes.push(`${t.nombre}:${tag}`)
+    }
+
+    if (rolesOnly) {
+      const wantPiano = rol === 'piano' || rol === 'keys'
+      const pianoInfo = wantPiano ? jasWavePianoPluginInfo() : null
+      const info = pianoInfo ?? jasWaveRolesPluginInfo()
+      if (!info) {
+        markFail('roles✗')
+        continue
       }
+      const ok = await insertLoadInstrument(tienda, row.trackId, info, wantPiano && pianoInfo ? undefined : rol)
+      if (ok) markOk(pianoInfo && info.id === pianoInfo.id ? 'piano' : 'roles', !(pianoInfo && info.id === pianoInfo.id))
+      else markFail('host✗')
+      await new Promise((r) => setTimeout(r, 350))
       continue
     }
+
     if (t.presetId) {
       try {
         const { libraryApplyPreset } = await import('../library/ops')
@@ -425,27 +505,28 @@ export async function executeMusicBuild(
           trackId: row.trackId,
         })
         if (applied.ok) {
-          instrumentsLoaded += 1
-          loadedVst = true
-          instrumentNotes.push(`${t.nombre}:preset`)
+          const { ensureProjectVstInstruments } = await import('../plugin/track-vst-runtime')
+          const st = tienda.obtenerEstado()
+          await ensureProjectVstInstruments(st.project.tracks, st.project.master?.plugins)
+          const { getLoadedInstrumentForTrack } = await import('../plugin/track-vst-runtime')
+          if (getLoadedInstrumentForTrack(row.trackId)) markOk('preset', false)
+          else markFail('preset✗host')
         } else {
-          instrumentNotes.push(`${t.nombre}:preset✗`)
+          markFail('preset✗')
         }
       } catch {
-        instrumentNotes.push(`${t.nombre}:preset✗`)
+        markFail('preset✗')
       }
     }
+
     if (!loadedVst) {
       let d = resolveCatalogPlugin({
         pluginId: t.pluginId,
         pluginNombre: t.pluginNombre,
-        rol: String(t.rol),
+        rol,
       })
-      // Piano/keys → JasWave Piano; resto sin catálogo → Roles
-      const rol = String(t.rol)
       if (!d || d.format === 'builtin') {
         if (rol === 'piano' || rol === 'keys') {
-          ensureJasWavePianoRegistered()
           d = findJasWavePianoDescriptor() ?? findJasWaveRolesDescriptor() ?? d
         } else {
           d = findJasWaveRolesDescriptor() ?? d
@@ -453,133 +534,103 @@ export async function executeMusicBuild(
       }
       if (d && d.format !== 'builtin') {
         if (d.path) {
-          try {
-            const { probePluginLoad } = await import('../plugin/track-vst-runtime')
-            const probe = await probePluginLoad({ path: d.path, pluginId: d.pluginId })
-            if (!probe.ok) {
-              instrumentNotes.push(`${t.nombre}:probe✗`)
-              const fallback =
-                pickVstForRole(
-                  pluginRegistry.list().filter((x) => x.pluginId !== d!.pluginId && x.hostReady),
-                  (t.rol as InstrumentRole) || 'unknown',
-                ) ?? findJasWaveRolesDescriptor()
-              if (fallback && fallback.format !== 'builtin') {
-                const info = descriptorToPluginInfo(fallback)
-                await tienda.executor.execute('plugin.insert', { trackId: row.trackId, plugin: info })
-                try {
-                  const { ensureTrackVstInstrument } = await import('../plugin/track-vst-runtime')
-                  await ensureTrackVstInstrument(row.trackId, info)
-                  if (isJasWaveRolesDescriptor(fallback)) {
-                    await applyJasWaveRolesParameter(row.trackId, info, String(t.rol))
-                    rolesPads += 1
-                  }
-                } catch {
-                  /* host opcional */
-                }
-                t.pluginNombre = fallback.name
-                t.pluginId = fallback.pluginId
-                instrumentsLoaded += 1
-                loadedVst = true
-              }
-            } else {
-              const info = descriptorToPluginInfo(d)
-              await tienda.executor.execute('plugin.insert', { trackId: row.trackId, plugin: info })
-              try {
-                const { ensureTrackVstInstrument } = await import('../plugin/track-vst-runtime')
-                await ensureTrackVstInstrument(row.trackId, info)
-                if (isJasWaveRolesDescriptor(d)) {
-                  await applyJasWaveRolesParameter(row.trackId, info, String(t.rol))
-                  rolesPads += 1
-                }
-              } catch {
-                /* host opcional */
-              }
-              t.pluginNombre = d.name
-              t.pluginId = d.pluginId
-              instrumentsLoaded += 1
-              loadedVst = true
-            }
-          } catch {
-            /* probe optional — intentar insert igual */
-            const info = descriptorToPluginInfo(d)
-            await tienda.executor.execute('plugin.insert', { trackId: row.trackId, plugin: info })
-            try {
-              const { ensureTrackVstInstrument } = await import('../plugin/track-vst-runtime')
-              await ensureTrackVstInstrument(row.trackId, info)
-              if (isJasWaveRolesDescriptor(d)) {
-                await applyJasWaveRolesParameter(row.trackId, info, String(t.rol))
-                rolesPads += 1
-              }
-            } catch {
-              /* host opcional */
-            }
+          const { probePluginLoad } = await import('../plugin/track-vst-runtime')
+          const probe = await probePluginLoad({ path: d.path, pluginId: d.pluginId })
+          if (!probe.ok) {
+            instrumentNotes.push(`${t.nombre}:probe✗`)
+            d =
+              pickVstForRole(
+                pluginRegistry.list().filter((x) => x.pluginId !== d!.pluginId && x.hostReady),
+                (t.rol as InstrumentRole) || 'unknown',
+              ) ?? findJasWaveRolesDescriptor() ?? d
+          }
+        }
+        if (d && d.format !== 'builtin') {
+          const info = descriptorToPluginInfo(d)
+          const isRoles = isJasWaveRolesDescriptor(d)
+          const ok = await insertLoadInstrument(tienda, row.trackId, info, isRoles ? rol : undefined)
+          if (ok) {
             t.pluginNombre = d.name
             t.pluginId = d.pluginId
-            instrumentsLoaded += 1
-            loadedVst = true
+            markOk(isRoles ? 'roles' : 'vst', isRoles)
+          } else {
+            markFail('host✗')
           }
-        } else {
-          const info = descriptorToPluginInfo(d)
-          await tienda.executor.execute('plugin.insert', { trackId: row.trackId, plugin: info })
-          try {
-            const { ensureTrackVstInstrument } = await import('../plugin/track-vst-runtime')
-            await ensureTrackVstInstrument(row.trackId, info)
-            if (isJasWaveRolesDescriptor(d)) {
-              await applyJasWaveRolesParameter(row.trackId, info, String(t.rol))
-              rolesPads += 1
-            }
-          } catch {
-            /* host opcional */
-          }
-          t.pluginNombre = d.name
-          t.pluginId = d.pluginId
-          instrumentsLoaded += 1
-          loadedVst = true
         }
       }
     }
+
     if (!loadedVst) {
-      try {
-        const rol = String(t.rol)
-        const wantPiano = rol === 'piano' || rol === 'keys'
-        ensureJasWavePianoRegistered()
-        const pianoInfo = wantPiano ? jasWavePianoPluginInfo() : null
-        const info = pianoInfo ?? jasWaveRolesPluginInfo()
-        if (info) {
-          await tienda.executor.execute('plugin.insert', {
-            trackId: row.trackId,
-            plugin: info,
-          })
-          const { ensureTrackVstInstrument } = await import('../plugin/track-vst-runtime')
-          await ensureTrackVstInstrument(row.trackId, info)
-          if (pianoInfo && info.id === pianoInfo.id) {
-            instrumentsLoaded += 1
-            instrumentNotes.push(`${t.nombre}:piano`)
-          } else {
-            await applyJasWaveRolesParameter(row.trackId, info, rol)
-            rolesPads += 1
-            instrumentNotes.push(`${t.nombre}:roles`)
-          }
-        } else {
-          instrumentNotes.push(`${t.nombre}:roles✗`)
-        }
-      } catch {
-        instrumentNotes.push(`${t.nombre}:roles✗`)
+      const wantPiano = rol === 'piano' || rol === 'keys'
+      const pianoInfo = wantPiano ? jasWavePianoPluginInfo() : null
+      const info = pianoInfo ?? jasWaveRolesPluginInfo()
+      if (!info) {
+        markFail('roles✗')
+      } else {
+        const ok = await insertLoadInstrument(
+          tienda,
+          row.trackId,
+          info,
+          pianoInfo && info.id === pianoInfo.id ? undefined : rol,
+        )
+        if (ok) markOk(pianoInfo && info.id === pianoInfo.id ? 'piano' : 'roles', !(pianoInfo && info.id === pianoInfo.id))
+        else markFail('host✗')
       }
     }
   }
-  setStage(
-    stages,
-    'instruments',
-    rolesPads || instrumentsLoaded ? 'ok' : 'skip',
-    rolesPads || instrumentsLoaded
-      ? `${rolesPads} Roles · ${instrumentsLoaded} VST${instrumentNotes.length ? ` · ${instrumentNotes.slice(0, 4).join(', ')}` : ''}`
-      : 'Sin instrumentos',
-  )
 
-  const sectionBeats = spec.sections.reduce((n, s) => n + s.bars, 0) * 4
-  const midiMinutes = Math.max(spec.minutes, sectionBeats / Math.max(1, spec.bpm))
-  const barPlan = expandSectionsToBarPlan(spec.sections, spec.degrees)
+  const instOk = rolesPads + instrumentsLoaded
+  const midiTrackCount = created.filter((r) => spec.tracks[r.specIndex]?.tipo !== 'audio').length
+  // Si quedaron pistas sin host: último intento ensureProjectVstInstruments sobre el estado
+  if (instOk < midiTrackCount && midiTrackCount > 0) {
+    try {
+      const { ensureProjectVstInstruments, getLoadedInstrumentForTrack } = await import(
+        '../plugin/track-vst-runtime'
+      )
+      const st = tienda.obtenerEstado()
+      await ensureProjectVstInstruments(st.project.tracks, st.project.master?.plugins)
+      let rescued = 0
+      for (const row of created) {
+        if (spec.tracks[row.specIndex]?.tipo === 'audio') continue
+        if (getLoadedInstrumentForTrack(row.trackId)) rescued += 1
+      }
+      if (rescued > instOk) {
+        instrumentsLoaded = Math.max(instrumentsLoaded, rescued - rolesPads)
+        instrumentNotes.push(`rescue:${rescued}`)
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  const instOkFinal = rolesPads + instrumentsLoaded
+  if (instOkFinal === 0 && midiTrackCount > 0) {
+    // No marcar failed aún: ensure final abajo puede rescatar; stage fail temporal
+    setStage(stages, 'instruments', 'fail', `Ningún instrumento en host · ${instrumentNotes.slice(0, 6).join(', ')}`)
+  } else if (instrumentsFailed > 0 && instOkFinal < midiTrackCount) {
+    setStage(
+      stages,
+      'instruments',
+      'ok',
+      `${rolesPads} Roles · ${instrumentsLoaded} VST · ${instrumentsFailed} fallos · ${instrumentNotes.slice(0, 4).join(', ')}`,
+    )
+  } else {
+    setStage(
+      stages,
+      'instruments',
+      instOkFinal ? 'ok' : 'skip',
+      instOkFinal
+        ? `${rolesPads} Roles · ${instrumentsLoaded} VST${instrumentNotes.length ? ` · ${instrumentNotes.slice(0, 4).join(', ')}` : ''}`
+        : 'Sin instrumentos',
+    )
+  }
+
+  // Respetar minutos pedidos: no alargar la canción por secciones heurísticas largas.
+  const midiMinutes = Math.max(0.25, Number(spec.minutes) || 1)
+  let barPlan = expandSectionsToBarPlan(spec.sections, spec.degrees)
+  const maxBars = Math.max(4, Math.ceil((midiMinutes * Math.max(1, spec.bpm)) / 4))
+  if (barPlan.length > maxBars) {
+    barPlan = barPlan.slice(0, maxBars)
+  }
   const clipNotes: Array<{ trackName: string; rol: string; notes: ReturnType<typeof composeMidiFromBrief>['notes'] }> =
     []
 
@@ -603,8 +654,8 @@ export async function executeMusicBuild(
     brief.keyLabel = spec.keyLabel
     brief.degrees = spec.degrees.length ? spec.degrees : brief.degrees
     if (g === 'worship' || g === 'gospel') {
-      brief.velocityBase = Math.min(brief.velocityBase, 78)
-      brief.velocityAccent = Math.min(brief.velocityAccent ?? 96, 96)
+      brief.velocityBase = Math.min(brief.velocityBase, 96)
+      brief.velocityAccent = Math.min(brief.velocityAccent ?? 112, 112)
     }
     const song = composeMidiFromBrief(brief, {
       bpm: spec.bpm,
@@ -635,21 +686,25 @@ export async function executeMusicBuild(
 
   setStage(stages, 'mix', 'running')
   let reverbBusId: string | undefined
-  try {
-    const busRes = await tienda.executor.execute('bus.create', {
-      nombre: 'Reverb FX',
-      tipo: 'fx',
-    })
-    if (busRes.success && busRes.result && typeof busRes.result === 'object') {
-      const rid = (busRes.result as { busId?: string }).busId
-      if (rid) reverbBusId = rid
+  // rolesOnly corto: sin bus Reverb (menos churn de graph/host; el silence P0 es piano dry).
+  const skipFxBus = opts.rolesOnly === true || opts.softPadOnly === true || opts.nativeOnly === true
+  if (!skipFxBus) {
+    try {
+      const busRes = await tienda.executor.execute('bus.create', {
+        nombre: 'Reverb FX',
+        tipo: 'fx',
+      })
+      if (busRes.success && busRes.result && typeof busRes.result === 'object') {
+        const rid = (busRes.result as { busId?: string }).busId
+        if (rid) reverbBusId = rid
+      }
+    } catch {
+      /* routing opcional */
     }
-  } catch {
-    /* routing opcional */
   }
   for (const row of created) {
     const t = spec.tracks[row.specIndex]!
-    const mix = MIX_BY_ROLE[String(t.rol)] ?? { volumen: 0.72, paneo: 0 }
+    const mix = MIX_BY_ROLE[String(t.rol)] ?? { volumen: 0.95, paneo: 0 }
     await tienda.executor.execute('track.update', {
       trackId: row.trackId,
       datos: { volumen: mix.volumen, paneo: mix.paneo },
@@ -668,7 +723,7 @@ export async function executeMusicBuild(
       }
     }
   }
-  await tienda.executor.execute('master.update', { datos: { volumen: 0.88 } })
+  await tienda.executor.execute('master.update', { datos: { volumen: 1 } })
   setStage(
     stages,
     'mix',
@@ -677,6 +732,34 @@ export async function executeMusicBuild(
       ? 'Vol/pan por rol · bus Reverb FX + sends'
       : 'Volumen y paneo por rol',
   )
+
+  // Rescue ligero: una sola pasada ensureProject (sin reintentos largos)
+  try {
+    const { ensureProjectVstInstruments, getLoadedInstrumentForTrack, getLastVstLoadError } = await import(
+      '../plugin/track-vst-runtime'
+    )
+    const st = tienda.obtenerEstado()
+    await Promise.race([
+      ensureProjectVstInstruments(st.project.tracks, st.project.master?.plugins),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('ensure timeout')), 20000)),
+    ])
+    // Graph: lo publica playback via registerProjectGraphResync / useEffect (evitar IPC
+    // extra aquí — puede colgar el bridge si el host reinició mid-load).
+    let loadedN = 0
+    for (const row of created) {
+      if (spec.tracks[row.specIndex]?.tipo === 'audio') continue
+      if (getLoadedInstrumentForTrack(row.trackId)) loadedN += 1
+    }
+    const midiN = created.filter((r) => spec.tracks[r.specIndex]?.tipo !== 'audio').length
+    if (loadedN > 0) {
+      setStage(stages, 'instruments', 'ok', `host ${loadedN}/${midiN}`)
+    } else if (midiN > 0 && stages.find((s) => s.id === 'instruments')?.status === 'fail') {
+      failed = true
+      setStage(stages, 'instruments', 'fail', `host 0/${midiN} · ${getLastVstLoadError() || 'sin slot'}`)
+    }
+  } catch (e) {
+    console.warn('[music-build] ensureProject rescue', e)
+  }
 
   const blocking = issues.filter((i) => i.severity === 'error')
   setStage(

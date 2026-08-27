@@ -15,9 +15,12 @@ export function encodeStemPacket(trackIndex: number, interleaved: Float32Array):
   return u8
 }
 
+export type GraphSend = { destStem: number; amount: number }
+
 /**
  * encoding Reaper graph:
- *   `idx~gain~pan~muted|slot:i|e:0,slot:e:1;...||masterSlot:e:0`
+ *   `idx~gain~pan~muted|slot:i:0,slot:e:1#dest:amt+dest2:amt2;...||masterSlot:e:0`
+ * Sends opcionales tras `#` (post-fader, sample-accurate en renderMix).
  */
 export function encodeTrackGraph(params: {
   tracks: Array<{
@@ -26,6 +29,7 @@ export function encodeTrackGraph(params: {
     pan: number
     muted: boolean
     slots: Array<{ slotId: string; instrument: boolean; bypass: boolean }>
+    sends?: GraphSend[]
   }>
   master: Array<{ slotId: string; instrument: boolean; bypass: boolean }>
 }): string {
@@ -33,7 +37,14 @@ export function encodeTrackGraph(params: {
     const slots = t.slots
       .map((s) => `${s.slotId}:${s.instrument ? 'i' : 'e'}:${s.bypass ? '1' : '0'}`)
       .join(',')
-    return `${t.stemIndex}~${t.gain}~${t.pan}~${t.muted ? '1' : '0'}|${slots}`
+    const sends =
+      t.sends && t.sends.length > 0
+        ? `#${t.sends
+            .filter((s) => s.amount > 0 && Number.isFinite(s.destStem))
+            .map((s) => `${s.destStem}:${s.amount}`)
+            .join('+')}`
+        : ''
+    return `${t.stemIndex}~${t.gain}~${t.pan}~${t.muted ? '1' : '0'}|${slots}${sends}`
   })
   const master = params.master
     .map((s) => `${s.slotId}:${s.instrument ? 'i' : 'e'}:${s.bypass ? '1' : '0'}`)

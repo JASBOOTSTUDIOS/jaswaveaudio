@@ -20,8 +20,14 @@ import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 import { midiInputOf } from '@/src/lib/midi-track-io'
 import { audioInputOf } from '@/src/lib/audio-track-io'
 import { audioEngine } from '@/lib/audio-engine'
-import { refreshNativeMixMeters, setMixMeterTrackOrder } from '@/src/lib/plugin/native-mix-meters'
-import { AutomationLanesPanel } from '@/components/automation-lanes-panel'
+import {
+  isNativeMeterHostAvailable,
+  refreshNativeMixMeters,
+  setMixMeterTrackOrder,
+} from '@/src/lib/plugin/native-mix-meters'
+import { extractHostPluginPath } from '@/src/lib/plugin/plugin-info-adapter'
+import { isBuiltinInstrument } from '@/src/lib/plugin/track-vst-runtime'
+import { AutomationLanesPanel, maybeWriteAutomationPoint } from '@/components/automation-lanes-panel'
 
 type MixerRow = {
   id: string
@@ -38,6 +44,13 @@ type MixerRow = {
   plugins: PluginInfo[]
   entrada?: string
   dispositivoEntrada?: string
+}
+
+function trackHasHostVst(plugins: PluginInfo[]): boolean {
+  return plugins.some((p) => {
+    if (isBuiltinInstrument(p)) return false
+    return !!extractHostPluginPath(p.descripcion ?? '', p.id)
+  })
 }
 
 function toMixerRow(track: SharedTrack): MixerRow {
@@ -122,7 +135,7 @@ export function Mixer() {
           }
           setMeters(next)
         }
-        if (audioEngine.usesNativeOutput()) {
+        if (isNativeMeterHostAvailable()) {
           void refreshNativeMixMeters().then(apply)
         } else {
           apply()
@@ -158,13 +171,18 @@ export function Mixer() {
     void tienda.executor.execute('track.toggleMonitor', { trackId: id })
   }
 
+  const playing = useDAWState((s: DAWState) => Boolean(s.transport?.reproduciendo))
+
   const handleChangeDb = (id: string, db: number) => {
     const volumen = db > DB_INFERIOR ? dbALineal(db) : 0
     void tienda.executor.execute('track.update', { trackId: id, datos: { volumen } })
+    maybeWriteAutomationPoint(tienda, id, 'volumen', volumen, playing)
   }
 
   const handleChangePan = (id: string, pan: number) => {
-    void tienda.executor.execute('track.update', { trackId: id, datos: { paneo: pan / 100 } })
+    const paneo = pan / 100
+    void tienda.executor.execute('track.update', { trackId: id, datos: { paneo } })
+    maybeWriteAutomationPoint(tienda, id, 'paneo', paneo, playing)
   }
 
   const trackList = useMemo(() => tracks.map(toMixerRow) as MixerRow[], [tracks])
@@ -319,6 +337,16 @@ export function Mixer() {
             {(track.tipo === 'midi' || track.tipo === 'instrumento' || track.tipo === 'audio') && !collapsed ? (
               <div className="mb-1">
                 <TrackMidiInput trackId={track.id} assignedId={track.entrada} compact />
+              </div>
+            ) : null}
+            {(track.tipo === 'midi' || track.tipo === 'instrumento') &&
+            trackHasHostVst(track.plugins) &&
+            !collapsed ? (
+              <div
+                className="mb-1 h-1 overflow-hidden rounded-full bg-panel-raised"
+                title="Nivel VST (post-fader)"
+              >
+                <LevelMeterBarHorizontal level={meters[track.id] ?? 0} />
               </div>
             ) : null}
             {track.tipo === 'audio' && !collapsed ? (

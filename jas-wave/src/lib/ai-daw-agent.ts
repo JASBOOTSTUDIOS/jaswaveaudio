@@ -165,8 +165,9 @@ export function buildAgentSystemPrompt(
     '- track.delete { trackId }',
     '- track.update { trackId, datos: { nombre?, color?, volumen? } }',
     '- track.toggleMute|track.toggleSolo|track.toggleArm { trackId }',
-    '- transport.toggle | transport.stop | transport.toggleLoop | transport.toggleMetronome | transport.toggleRecord',
+    '- transport.toggle | transport.stop | transport.toggleLoop | transport.toggleMetronome | transport.toggleRecord | transport.togglePunch | transport.toggleCountIn',
     '- transport.seek { segundos }',
+    '- automation.setCurve | automation.writePoint { trackId, parametro, tiempo?, valor?, puntos? } | automation.clear',
     '- daw.musicBuild { aplicar, prompt, nombre?, bpm?, minutos?, genero?, progresion?, secciones:[{nombre|name,bars|compases,degrees|progresion,density?}], pistas:[{nombre,rol,articulacion?,pluginId?,presetId?}] }',
     '  ← TÚ defines el spec. El cliente mergea tu JSON sobre heurísticas. Preferible spec completo.',
     '- daw.composeProject { aplicar, nombre?, bpm?, tonalidad?, minutos?, genero?, progresion?, secciones?, pistas:[...] }',
@@ -213,7 +214,7 @@ export function buildAgentSystemPrompt(
     '- daw.masterPass { target?: "streaming"|"club"|"cd", genero?, minutes? }',
     '- automation.setCurve { trackId, parametro: "volumen"|"paneo"|paramId, puntos:[{tiempo,valor}] }',
     '- automation.clear { trackId, parametro? }',
-    '- bus.create { nombre? } | send.set { trackId, busId, amount 0..1, preFader? } | sidechain.connect { origenTrackId, destinoTrackId }',
+    '- bus.create { nombre? } | send.set { trackId, busId, amount 0..1, preFader? } | sidechain.connect { origenTrackId, destinoTrackId } (estado; sin I/O host aún)',
     '- track.freeze { trackId } | track.unfreeze { trackId }',
     '- audio.listDevices | audio.getDevice | audio.setDevice { backend, deviceId?, sampleRate?, bufferSize? } | audio.ensureBest { preferName? }',
     docsPromptActions(),
@@ -727,7 +728,9 @@ export async function executeDawActions(
         case 'transport.stop':
         case 'transport.toggleLoop':
         case 'transport.toggleMetronome':
-        case 'transport.toggleRecord': {
+        case 'transport.toggleRecord':
+        case 'transport.togglePunch':
+        case 'transport.toggleCountIn': {
           const r = await tienda.executor.execute(action.type, {})
           results.push({
             type: action.type,
@@ -839,7 +842,12 @@ export async function executeDawActions(
             bpm: p.bpm != null ? Number(p.bpm) : undefined,
             nombre: p.nombre ? String(p.nombre) : undefined,
             minutos: p.minutos != null ? Number(p.minutos) : undefined,
-            softPadOnly: p.softPadOnly === true || p.soloSoftPad === true,
+            softPadOnly:
+              p.softPadOnly === true ||
+              p.soloSoftPad === true ||
+              p.rolesOnly === true ||
+              p.nativeOnly === true,
+            rolesOnly: p.rolesOnly === true || p.nativeOnly === true || p.softPadOnly === true,
             ai,
           })
           const plan = specToProjectPlan(build.spec, build.applied)
@@ -1710,6 +1718,7 @@ export async function executeDawActions(
         case 'analysis.stereo':
         case 'analysis.fullReport':
         case 'automation.setCurve':
+        case 'automation.writePoint':
         case 'automation.clear':
         case 'bus.create':
         case 'send.set':
@@ -1874,12 +1883,30 @@ export async function executeDawActions(
           })
           break
         }
-        default:
-          results.push({
-            type: action.type,
-            success: false,
-            message: `Acción no soportada: ${action.type}`,
-          })
+        default: {
+          // Fallback: cualquier comando registrado en shared (CLI/IA no quedan atrás del registry)
+          const def = tienda.registroComandos?.get?.(action.type)
+          if (def) {
+            const r = await tienda.executor.execute(
+              action.type,
+              (action.payload ?? {}) as Record<string, unknown>,
+            )
+            results.push({
+              type: action.type,
+              success: r.success,
+              message: r.success
+                ? `${action.type} OK`
+                : r.error?.message ?? `Error ${action.type}`,
+              data: r.result,
+            })
+          } else {
+            results.push({
+              type: action.type,
+              success: false,
+              message: `Acción no soportada: ${action.type}`,
+            })
+          }
+        }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)

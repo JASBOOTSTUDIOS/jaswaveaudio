@@ -8,7 +8,7 @@ import type { PluginDescriptor } from './types'
 import { pluginRegistry } from './registry'
 
 const INSTRUMENT_RE =
-  /sampler|synth|piano|keys|organ|drum|drums|kit\b|bfd|bfdplayer|player|bass|guitar|violin|pad|lead|kontakt|sforzando|decent|instrument|vsti|analog|arturia|lab\s*v|omnisphere|serum|vital|keyscape|play\b|workstation|engine|addictive|ezdrummer|superior\s*drum|battery|groove\s*agent|studi\s*drummer/i
+  /sampler|synth|piano|keys|organ|drum|drums|kit\b|bfd|bfdplayer|player|bass|guitar|violin|pad|lead|kontakt|sforzando|decent|instrument|vsti|analog|arturia|lab\s*v|omnisphere|serum|vital|keyscape|play\b|workstation|engine|addictive|ezdrummer|superior\s*drum|battery|groove\s*agent|studi\s*drummer|4front|jaswave/i
 
 const FX_RE =
   /reverb|delay|compress|eq\b|pro-?q|equaliz|limiter|saturat|gate\b|chorus|flanger|phaser|utility|maximizer|imager|exciter|de-?ess|transient|clipper|valhalla|room\b|plate\b|verb\b/i
@@ -69,7 +69,31 @@ export function resolveHostPluginPath(
         (!!name && d.name.trim().toLowerCase() === name) ||
         (!!name && name.length > 3 && d.name.toLowerCase().includes(name))),
   )
-  return hit?.path ?? ''
+  if (hit?.path) return hit.path
+  // Fallback nativo (lazy import evita ciclo con jaswave-piano/roles).
+  if (/jaswave\s*piano|jaswavepiano/i.test(name)) {
+    try {
+      return (
+        (
+          globalThis as unknown as { __jaswavePianoPath?: () => string }
+        ).__jaswavePianoPath?.() || ''
+      )
+    } catch {
+      return ''
+    }
+  }
+  if (/jaswave\s*roles|jaswaveroles/i.test(name)) {
+    try {
+      return (
+        (
+          globalThis as unknown as { __jaswaveRolesPath?: () => string }
+        ).__jaswaveRolesPath?.() || ''
+      )
+    } catch {
+      return ''
+    }
+  }
+  return ''
 }
 
 /** @deprecated Prefer extractHostPluginPath (también acepta .dll). */
@@ -77,8 +101,15 @@ export function extractVst3Path(descripcion: string): string {
   return extractHostPluginPath(descripcion)
 }
 
-export function isBuiltinPlugin(plugin: Pick<PluginInfo, 'licencia' | 'nombre'>): boolean {
-  return plugin.licencia === 'interno' || plugin.licencia === 'JasWave'
+export function isBuiltinPlugin(
+  plugin: Pick<PluginInfo, 'licencia' | 'nombre' | 'descripcion' | 'id'>,
+): boolean {
+  // Solo in-process: JasWave Piano/Roles VST3 también usan fabricante/licencia «JasWave»
+  // pero tienen ruta .vst3 — no deben excluirse del track graph (silencio con MIDI+slot).
+  if (plugin.licencia !== 'interno' && plugin.licencia !== 'JasWave') return false
+  const path = extractHostPluginPath(plugin.descripcion ?? '', plugin.id)
+  if (path) return false
+  return true
 }
 
 /** Caption de runtime para UI — no afirma audio si el host no confirmó el load. */

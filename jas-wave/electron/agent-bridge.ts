@@ -34,8 +34,21 @@ function askRenderer(channel: string, payload: Record<string, unknown>, timeoutM
     return Promise.reject(new Error('DAW no abierto (sin ventana principal)'))
   }
   const id = nextId()
+  // musicBuild / bounce pueden tardar; analysis.* no debe bloquear el bridge 10 min.
+  const actions = Array.isArray(payload.actions)
+    ? (payload.actions as Array<{ type?: string }>)
+    : payload.type
+      ? [{ type: String(payload.type) }]
+      : []
+  const onlyAnalysis =
+    actions.length > 0 &&
+    actions.every((a) => String(a.type || '').startsWith('analysis.') || a.type === 'audio.armNative')
   const long =
-    channel === 'actions.execute' || channel === 'command.execute' ? Math.max(timeoutMs, 600_000) : timeoutMs
+    channel === 'actions.execute' || channel === 'command.execute'
+      ? onlyAnalysis
+        ? Math.max(timeoutMs, 12_000)
+        : Math.max(timeoutMs, 600_000)
+      : timeoutMs
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id)

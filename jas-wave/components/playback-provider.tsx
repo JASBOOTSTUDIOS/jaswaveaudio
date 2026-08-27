@@ -35,10 +35,10 @@ import {
 } from '@/src/lib/audio-recording-persist'
 import {
   ensureProjectVstInstruments,
-  findTrackPlaybackInstrument,
   getLoadedInstrumentForTrack,
   getVstRuntimeGeneration,
-  slotIdForTrackPlugin,
+  registerProjectGraphResync,
+  startVstRuntimeWindowSync,
   subscribeVstRuntime,
 } from '@/src/lib/plugin/track-vst-runtime'
 import { setPreferredVstPreviewTrack } from '@/src/lib/plugin/vst-voice-router'
@@ -46,6 +46,11 @@ import { syncNativeChannelMix } from '@/src/lib/plugin/track-channel-mix'
 import { applyAutomationAtTime, applyParamAutomationAtTime } from '@/src/lib/automation-runtime'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 import { isUndockWindow } from '@/lib/undock-window'
+import {
+  startEditorPreviewFocusBridge,
+  subscribeEditorPreviewTrack,
+} from '@/src/lib/plugin/editor-preview-focus'
+import { publishPlayheadTick, startPlayheadSyncReceiver } from '@/src/lib/playhead-window-sync'
 import {
   getProjectReadyGeneration,
   markProjectBuffersNotNeeded,
@@ -69,13 +74,9 @@ function trackAudioConfigFromShared(
   },
   stemIndex = 0,
 ): TrackAudioConfig {
-  const hit = findTrackPlaybackInstrument(t.plugins as never)
-  const loaded = hit?.kind === 'vst' ? getLoadedInstrumentForTrack(t.id) : null
-
-  // Slot esperado aunque el host aún no haya confirmado load.
-  const vstSlot =
-    loaded?.slotId ??
-    (hit?.kind === 'vst' && hit.plugin.id ? slotIdForTrackPlugin(t.id, hit.plugin.id) : undefined)
+  // Solo slot host-confirmado: si inventamos el id esperado, el host loguea «slot no cargado» y hay silencio.
+  const loaded = getLoadedInstrumentForTrack(t.id)
+  const vstSlot = loaded?.slotId
 
   return {
     id: t.id,
@@ -174,6 +175,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   const transportMetronomo = useDAWState((s) => Boolean(s.transport?.metronomo?.activo))
   const transportPosSegundos = useDAWState((s) => s.transport?.posicion?.segundos ?? 0)
   const sharedTracks = useDAWState((s) => s.project?.tracks || [])
+  const projectRouting = useDAWState((s) => s.project?.routing ?? null)
   const projectRuta = useDAWState((s) => s.project?.ruta)
   const selectedTrackId = useDAWState((s) => getSelectedTrackId(s))
   const vstRuntimeGen = useSyncExternalStore(subscribeVstRuntime, getVstRuntimeGeneration, () => 0)
@@ -182,6 +184,26 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     const track = sharedTracks.find((t) => t.id === selectedTrackId)
     setPreferredVstPreviewTrack(selectedTrackId, track?.plugins)
   }, [selectedTrackId, sharedTracks])
+
+  useEffect(() => {
+    return startVstRuntimeWindowSync(satellite ? 'satellite' : 'primary')
+  }, [satellite])
+
+  useEffect(() => {
+    if (satellite) return
+    const stopFocus = startEditorPreviewFocusBridge()
+    const unsub = subscribeEditorPreviewTrack(() => {
+      syncNativeChannelMix(
+        tienda.obtenerEstado().project?.tracks ?? sharedTracks,
+        tienda.obtenerEstado().project?.master,
+        tienda.obtenerEstado().project?.routing ?? null,
+      )
+    })
+    return () => {
+      stopFocus()
+      unsub()
+    }
+  }, [satellite, tienda, sharedTracks])
 
   useEffect(() => {
     if (satellite) return
@@ -230,6 +252,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   }, [satellite, masterState?.volumen, masterState?.paneo, masterState?.muted])
 
   const [positionMs, setPositionMs] = useState(0)
+  const positionMsRef = useRef(0)
 
   const playing = transportStatePlaying
   const playingRef = useRef(playing)
@@ -246,8 +269,10 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         if (Math.abs(prev - sharedMs) > 1) return sharedMs
         return prev
       })
+      positionMsRef.current = sharedMs
+      if (!satellite) publishPlayheadTick(sharedMs, false)
     }
-  }, [transportPosSegundos, playing])
+  }, [transportPosSegundos, playing, satellite])
 
   // Map clips from shared store tracks (+ backfill peaks desde buffer en memoria)
   const peaksCacheRef = useRef<Map<string, number[]>>(new Map())
@@ -356,12 +381,34 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     return `${masterState.volumen ?? 1}:${masterState.muted ? 1 : 0}:${plugs}`
   }, [masterState])
 
+  const sharedTracksRef = useRef(sharedTracks)
+  const masterStateRef = useRef(masterState)
+  const routingRef = useRef(projectRouting)
+  sharedTracksRef.current = sharedTracks
+  masterStateRef.current = masterState
+  routingRef.current = projectRouting
+
+  useEffect(() => {
+    if (satellite) return
+    // Leer store fresco: tras musicBuild/ensure el load llama resync antes del render React;
+    // sharedTracksRef suele ir un tick atrás → graph sin slots → MIDI con slot en mapa pero silencio.
+    registerProjectGraphResync(() => {
+      const st = tienda.obtenerEstado()
+      syncNativeChannelMix(
+        st.project?.tracks ?? sharedTracksRef.current,
+        st.project?.master ?? masterStateRef.current,
+        st.project?.routing ?? routingRef.current,
+      )
+    })
+    return () => registerProjectGraphResync(null)
+  }, [satellite, tienda])
+
   useEffect(() => {
     if (satellite) return
     const tracksConfig: TrackAudioConfig[] = sharedTracks.map((t, i) => trackAudioConfigFromShared(t, i))
     audioEngine.applyTracksConfig(tracksConfig)
-    syncNativeChannelMix(sharedTracks, masterState)
-  }, [satellite, trackMixSig, masterMixSig, sharedTracks, vstRuntimeGen, masterState])
+    syncNativeChannelMix(sharedTracks, masterState, projectRouting)
+  }, [satellite, trackMixSig, masterMixSig, sharedTracks, vstRuntimeGen, masterState, projectRouting])
 
   // Automatización vol/pan en play: muestreo ~20 Hz del playhead
   useEffect(() => {
@@ -374,12 +421,12 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       last = now
       const tSec = positionMsRef.current / 1000
       const snapped = applyAutomationAtTime(sharedTracks, tSec)
-      syncNativeChannelMix(snapped, masterState)
+      syncNativeChannelMix(snapped, masterState, projectRouting)
       applyParamAutomationAtTime(sharedTracks, tSec)
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [satellite, playing, sharedTracks, masterState, trackMixSig])
+  }, [satellite, playing, sharedTracks, masterState, trackMixSig, projectRouting])
 
   const clockRef = useRef<TransportClock | null>(null)
 
@@ -411,7 +458,6 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   }, [BPM, BEATS_PER_BAR, clock, satellite])
 
   const lastStoreSyncRef = useRef(0)
-  const positionMsRef = useRef(0)
 
   // Inicializar buffers sintéticos de demostración en audioEngine
   useEffect(() => {
@@ -435,6 +481,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let lastUiMs = 0
+    let lastPub = 0
     const unsubscribe = clock.subscribe((position) => {
       const ms = position.segundos * 1000
       const loopMs = loopMsRef.current
@@ -446,15 +493,32 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         lastUiMs = ahora
         setPositionMs(clamped)
       }
+      // Satélites (piano roll flotante) necesitan playhead fluido.
+      if (!satellite && ahora - lastPub >= 33) {
+        lastPub = ahora
+        publishPlayheadTick(clamped, playingRef.current)
+      }
       // No escribir posición al store durante play (re-render global + BroadcastChannel = tirones)
     })
 
     return () => {
       unsubscribe()
     }
-  }, [clock, tienda])
+  }, [clock, tienda, satellite])
+
+  // Ventana undock: seguir el playhead de la principal en tiempo real.
+  useEffect(() => {
+    if (!satellite) return
+    return startPlayheadSyncReceiver((tick) => {
+      positionMsRef.current = tick.ms
+      setPositionMs((prev) => (Math.abs(prev - tick.ms) > 16 ? tick.ms : prev))
+    })
+  }, [satellite])
 
   const triggerAudioPlayback = useCallback(async (startMs: number, currentClips: LoadedClip[]) => {
+    // Estado fresco (CLI/musicBuild puede ir por delante del cierre React).
+    const freshTracks = tienda.obtenerEstado().project?.tracks ?? sharedTracks
+
     const playbackClips: AudioClipPlaybackInfo[] = currentClips
       .filter((c) => (c.kind ?? 'audio') !== 'midi')
       .map((c) => ({
@@ -465,47 +529,80 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         sourcePathOrId: c.sourceId,
       }))
 
+    // MIDI siempre desde el store: tras daw.musicBuild el play del bridge
+    // suele llegar antes de que React regenere `clips` → schedule vacío + silencio
+    // con audit.notes>0 y vstSlot presente.
     const midiClips: MidiClipPlaybackInfo[] = []
-    for (const c of currentClips) {
-      if (c.kind !== 'midi') continue
-      const trk = sharedTracks.find((t) => t.id === c.trackId)
-      const raw = trk?.clips?.find((x: { id: string }) => x.id === c.id) as
-        | {
-            notas?: Array<{ pitch: number; velocidad?: number; inicio: number; duracion: number; mute?: boolean }>
-            expression?: { cc?: Array<{ cc: number; puntos?: Array<{ tiempo: number; valor: number }> }> }
-          }
-        | undefined
-      const notas = Array.isArray(raw?.notas) ? raw.notas : []
-      const ccs: Array<{ cc: number; timeSec: number; value: number }> = []
-      for (const lane of raw?.expression?.cc ?? []) {
-        for (const pt of lane.puntos ?? []) {
-          const nrm = pt.valor <= 1 ? pt.valor : pt.valor / 127
-          ccs.push({
-            cc: lane.cc,
-            timeSec: c.inicioSeconds + beatsASegundos(pt.tiempo, BPM),
-            value: Math.max(0, Math.min(127, Math.round(nrm * 127))),
-          })
+    for (const trk of freshTracks) {
+      if (!Array.isArray(trk.clips)) continue
+      for (const rawClip of trk.clips) {
+        if (!esMidiClip(rawClip)) continue
+        const inicioBeats = rawClip.inicio ?? 0
+        const inicioSeconds = beatsASegundos(inicioBeats, BPM)
+        const raw = rawClip as {
+          id: string
+          notas?: Array<{ pitch: number; velocidad?: number; inicio: number; duracion: number; mute?: boolean }>
+          expression?: { cc?: Array<{ cc: number; puntos?: Array<{ tiempo: number; valor: number }> }> }
         }
+        const loaded = currentClips.find((c) => c.id === raw.id && c.kind === 'midi')
+        const fromClip = loaded && Array.isArray(loaded.notes) && loaded.notes.length > 0 ? loaded.notes : null
+        const fromStore = Array.isArray(raw.notas) ? raw.notas : []
+        const notas = fromClip
+          ? fromClip.map((n) => ({
+              pitch: n.pitch,
+              velocidad: n.velocidad,
+              inicio: n.inicio,
+              duracion: n.duracion,
+              mute: n.mute,
+            }))
+          : fromStore
+        const ccs: Array<{ cc: number; timeSec: number; value: number }> = []
+        for (const lane of raw.expression?.cc ?? []) {
+          for (const pt of lane.puntos ?? []) {
+            const nrm = pt.valor <= 1 ? pt.valor : pt.valor / 127
+            ccs.push({
+              cc: lane.cc,
+              timeSec: inicioSeconds + beatsASegundos(pt.tiempo, BPM),
+              value: Math.max(0, Math.min(127, Math.round(nrm * 127))),
+            })
+          }
+        }
+        if (notas.length === 0 && ccs.length === 0) continue
+        midiClips.push({
+          id: raw.id,
+          trackId: trk.id,
+          notes: notas
+            .filter((n) => !n.mute && Number.isFinite(n.pitch))
+            .map((n) => ({
+              pitch: n.pitch,
+              velocity: typeof n.velocidad === 'number' ? n.velocidad : 100,
+              startSec: inicioSeconds + beatsASegundos(n.inicio, BPM),
+              durationSec: Math.max(0.03, beatsASegundos(n.duracion, BPM)),
+            })),
+          ccs,
+        })
       }
-      if (notas.length === 0 && ccs.length === 0) continue
-      midiClips.push({
-        id: c.id,
-        trackId: c.trackId,
-        notes: notas
-          .filter((n) => !n.mute && Number.isFinite(n.pitch))
-          .map((n) => ({
-            pitch: n.pitch,
-            velocity: typeof n.velocidad === 'number' ? n.velocidad : 100,
-            startSec: c.inicioSeconds + beatsASegundos(n.inicio, BPM),
-            durationSec: Math.max(0.03, beatsASegundos(n.duracion, BPM)),
-          })),
-        ccs,
-      })
     }
 
     const trackAudioConfig = (): TrackAudioConfig[] =>
-      sharedTracks.map((t, i) => trackAudioConfigFromShared(t, i))
+      freshTracks.map((t, i) => trackAudioConfigFromShared(t, i))
 
+    if (midiClips.length === 0) {
+      const storeMidi = freshTracks.reduce((n, t) => {
+        for (const c of t.clips ?? []) {
+          if (esMidiClip(c) && Array.isArray((c as { notas?: unknown[] }).notas)) {
+            n += ((c as { notas: unknown[] }).notas).length
+          }
+        }
+        return n
+      }, 0)
+      if (storeMidi > 0 || currentClips.some((c) => c.kind === 'midi')) {
+        console.warn('[playback] clips MIDI sin notas resolubles', {
+          storeMidi,
+          loaded: currentClips.filter((c) => c.kind === 'midi').map((c) => ({ id: c.id, n: c.noteCount })),
+        })
+      }
+    }
     let armed = await audioEngine.armNativeMixOutput()
     if (!armed) {
       await new Promise((r) => setTimeout(r, 250))
@@ -514,24 +611,49 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     if (!armed) {
       console.warn('[playback] native mix not armed', audioEngine.getTimingDiagnostics().lastArmError)
     }
-    // Live path ya no requiere AudioContext (metrónomo/clips/MIDI → host).
-    // Decode/UI buffers pueden crear OfflineAudioContext bajo demanda.
-    // No bloquear Play en carga VST (antes hasta 8s → playhead congelado / UI desync).
-    // MIDI usa slotId esperado; al terminar el load se re-aplica config.
-    const loadP = ensureProjectVstInstruments(
-      sharedTracks.map((t) => ({ id: t.id, plugins: t.plugins })),
-      masterState?.plugins,
-    )
-    audioEngine.playClips(startMs / 1000, playbackClips, trackAudioConfig(), midiClips)
+    // Esperar load breve para tener slots antes del primer lookahead MIDI.
+    // Si ya hay slots, no re-ensure (load/getLatency en play congela stdin → silencio).
+    const alreadySlotted = trackAudioConfig().filter((t) => t.vstInstrumentSlotId).length
+    const loadP =
+      alreadySlotted > 0
+        ? Promise.resolve(new Map<string, string>())
+        : ensureProjectVstInstruments(
+            freshTracks.map((t) => ({ id: t.id, plugins: t.plugins })),
+            masterState?.plugins,
+          )
+    await Promise.race([loadP, new Promise<void>((r) => setTimeout(r, 3500))])
+    // Publicar graph con tracks frescos antes del primer noteOn (no esperar al then).
+    syncNativeChannelMix(freshTracks, masterState, projectRouting)
+    let cfg0 = trackAudioConfig()
+    let slotN = cfg0.filter((t) => t.vstInstrumentSlotId).length
+    const noteN = midiClips.reduce((n, c) => n + c.notes.length, 0)
+    if (noteN > 0 && slotN === 0) {
+      console.warn('[playback] MIDI con notas pero sin slots VST — esperando load…', {
+        noteN,
+        tracks: freshTracks.length,
+      })
+      await Promise.race([loadP, new Promise<void>((r) => setTimeout(r, 8000))])
+      syncNativeChannelMix(
+        tienda.obtenerEstado().project?.tracks ?? freshTracks,
+        tienda.obtenerEstado().project?.master ?? masterState,
+        tienda.obtenerEstado().project?.routing ?? projectRouting,
+      )
+      cfg0 = trackAudioConfig()
+      slotN = cfg0.filter((t) => t.vstInstrumentSlotId).length
+    }
+    if (noteN > 0 && slotN === 0) {
+      console.warn('[playback] MIDI con notas pero sin slots VST', { noteN, tracks: freshTracks.length })
+    }
+    audioEngine.playClips(startMs / 1000, playbackClips, cfg0, midiClips)
     void loadP.then(() => {
       const cfg = trackAudioConfig()
       audioEngine.applyTracksConfig(cfg)
       for (const t of cfg) {
         audioEngine.patchTrackVstInstrument(t.id, t.vstInstrumentSlotId)
       }
-      syncNativeChannelMix(sharedTracks, masterState)
+      syncNativeChannelMix(freshTracks, masterState, projectRouting)
     })
-  }, [sharedTracks, BPM, masterState])
+  }, [sharedTracks, BPM, masterState, projectRouting, tienda])
 
   // Sync clock & audio: Space = pause/resume en el playhead; Stop = cero
   positionMsRef.current = positionMs
@@ -736,6 +858,26 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     })
   }, [satellite, sharedTracks, projectRuta])
 
+  const countInActive = useDAWState((s) => Boolean(s.transport?.countIn?.activo))
+  const countInBars = useDAWState((s) => Math.max(1, s.transport?.countIn?.compases ?? 1))
+  const punchActive = useDAWState((s) => Boolean(s.transport?.punch?.activo))
+  const punchStartBeats = useDAWState((s) => s.transport?.punch?.inicio?.beats ?? 0)
+  const punchEndBeats = useDAWState((s) => s.transport?.punch?.fin?.beats ?? 0)
+  const punchActiveRef = useRef(punchActive)
+  const punchEndBeatsRef = useRef(punchEndBeats)
+  punchActiveRef.current = punchActive
+  punchEndBeatsRef.current = punchEndBeats
+  const recGenRef = useRef(0)
+
+  // Punch out: cortar grabación al salir de la ventana
+  useEffect(() => {
+    if (satellite || !recording || !punchActive) return
+    const posBeats = positionMs / Math.max(1e-6, msPerBeatRef.current)
+    if (posBeats >= punchEndBeats && punchEndBeats > punchStartBeats) {
+      void tienda.executor.execute('transport.toggleRecord', {})
+    }
+  }, [satellite, recording, punchActive, punchEndBeats, punchStartBeats, positionMs, tienda])
+
   useEffect(() => {
     if (satellite) return
     const recOn = recording
@@ -752,7 +894,14 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         return
       }
       wasRecordingRef.current = true
-      recStartBeatsRef.current = Math.max(0, positionMsRef.current / msPerBeatRef.current)
+      const gen = ++recGenRef.current
+      const transport = tienda.obtenerEstado().transport
+      const useCountIn = Boolean(transport.countIn?.activo)
+      const bars = Math.max(1, transport.countIn?.compases ?? 1)
+      const usePunch = Boolean(transport.punch?.activo)
+      const pStart = transport.punch?.inicio?.beats ?? 0
+      const pEnd = transport.punch?.fin?.beats ?? 0
+
       tienda.busEventos.emit('grabacion.iniciada', {})
       if (!playingRef.current) {
         void tienda.executor.execute('transport.toggle', {}).then((r) => {
@@ -764,13 +913,42 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           }
         })
       }
+      // Count-in: metrónomo + esperar N compases antes de capturar
+      if (useCountIn && !transport.metronomo?.activo) {
+        void tienda.executor.execute('transport.toggleMetronome', {})
+      }
+
       if (armedAudioIds.length === 0) {
         recPlanRef.current = []
+        // MIDI-only: count-in ajusta el inicio de captura en el host MIDI vía tiempo
+        const delayMs = useCountIn ? bars * BEATS_PER_BAR * (60000 / BPM) : 0
+        if (delayMs > 0) {
+          window.setTimeout(() => {
+            if (recGenRef.current !== gen || !wasRecordingRef.current) return
+            recStartBeatsRef.current = usePunch && pEnd > pStart
+              ? pStart
+              : Math.max(0, positionMsRef.current / msPerBeatRef.current)
+          }, delayMs)
+        } else {
+          recStartBeatsRef.current =
+            usePunch && pEnd > pStart
+              ? pStart
+              : Math.max(0, positionMsRef.current / msPerBeatRef.current)
+        }
         return
       }
       const groups = groupArmedAudioByDevice(routes)
       recPlanRef.current = [...groups.entries()].map(([deviceKey, trackIds]) => ({ deviceKey, trackIds }))
       void (async () => {
+        const delayMs = useCountIn ? bars * BEATS_PER_BAR * (60000 / BPM) : 0
+        if (delayMs > 0) {
+          await new Promise((r) => setTimeout(r, delayMs))
+        }
+        if (recGenRef.current !== gen || !wasRecordingRef.current) return
+        recStartBeatsRef.current =
+          usePunch && pEnd > pStart
+            ? pStart
+            : Math.max(0, positionMsRef.current / msPerBeatRef.current)
         let anyOk = false
         let someFailed = false
         for (const { deviceKey, trackIds } of recPlanRef.current) {
@@ -806,31 +984,57 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     }
     if (!recOn && wasRecordingRef.current) {
       wasRecordingRef.current = false
-      const startBeats = recStartBeatsRef.current
+      recGenRef.current += 1
+      let startBeats = recStartBeatsRef.current
       const plan = recPlanRef.current
       recPlanRef.current = []
       tienda.busEventos.emit('grabacion.detenida', {})
       if (plan.length === 0) return
+      const punchOn = punchActiveRef.current
+      const punchEnd = punchEndBeatsRef.current
       void (async () => {
         for (const { deviceKey, trackIds } of plan) {
           const memKey = `rec-${Date.now()}-${deviceKey || 'default'}`
           const result = await audioEngine.stopInputCapture(memKey, deviceKey || undefined)
           if (!result) continue
-          const durationBeats = segundosABeats(result.duration, BPM)
-          const buckets = Math.min(4096, Math.max(256, Math.floor(result.duration * 80)))
-          const waveform = packStereoPeaks(extractStereoPeaks(result.buffer, buckets))
-          const wav = encodeWavFromAudioBuffer(result.buffer)
+          let buffer = result.buffer
+          let durationSec = result.duration
+          let clipStart = startBeats
+          // Punch: recortar al fin de ventana si la toma se pasó
+          if (punchOn && punchEnd > clipStart) {
+            const maxBeats = punchEnd - clipStart
+            const maxSec = (maxBeats * 60) / BPM
+            if (durationSec > maxSec && maxSec > 0.05) {
+              const sr = buffer.sampleRate
+              const frames = Math.min(buffer.length, Math.floor(maxSec * sr))
+              const trimmed = new AudioBuffer({
+                length: frames,
+                numberOfChannels: buffer.numberOfChannels,
+                sampleRate: sr,
+              })
+              for (let c = 0; c < buffer.numberOfChannels; c++) {
+                trimmed.copyToChannel(buffer.getChannelData(c).subarray(0, frames), c)
+              }
+              buffer = trimmed
+              durationSec = frames / sr
+            }
+          }
+          const durationBeats = segundosABeats(durationSec, BPM)
+          if (durationBeats < 0.05) continue
+          const buckets = Math.min(4096, Math.max(256, Math.floor(durationSec * 80)))
+          const waveform = packStereoPeaks(extractStereoPeaks(buffer, buckets))
+          const wav = encodeWavFromAudioBuffer(buffer)
           const fileName = makeRecordingFileName(trackIds[0] ?? 'pista')
           const saved = await saveRecordingWav(wav, fileName, projectRuta)
           const sourceId = saved?.sourceId ?? memKey
           if (saved && sourceId !== memKey) {
-            audioEngine.setAudioBuffer(sourceId, result.buffer)
+            audioEngine.setAudioBuffer(sourceId, buffer)
           }
           for (const trackId of trackIds) {
             await tienda.executor.execute('clip.create', {
               pistaId: trackId,
               nombre: 'Grabación',
-              inicio: startBeats,
+              inicio: clipStart,
               duracion: durationBeats,
               sourceId,
               waveform,
@@ -839,7 +1043,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         }
       })()
     }
-  }, [recording, satellite, sharedTracks, tienda, BPM, projectRuta])
+  }, [recording, satellite, sharedTracks, tienda, BPM, projectRuta, BEATS_PER_BAR])
 
   const toggleLooping = useCallback(() => {
     void tienda.executor.execute('transport.toggleLoop', {})

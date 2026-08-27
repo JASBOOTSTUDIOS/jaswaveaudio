@@ -49,8 +49,13 @@ export const PIANO_ROLL_ATAJOS: { teclas: string; accion: string }[] = [
   { teclas: '+ / −', accion: 'Zoom horizontal' },
   { teclas: 'H', accion: 'Zoom vertical (altura de teclas)' },
   { teclas: '?', accion: 'Mostrar / ocultar atajos' },
+  { teclas: 'Alt+arrastrar nota', accion: 'Mover / redimensionar sin imán (preciso)' },
+  { teclas: 'Shift+arrastrar', accion: 'Movimiento fino (¼ del imán)' },
+  { teclas: 'Bordes de la nota', accion: 'Cambiar duración (inicio / final)' },
+  { teclas: 'Carril Velocidad', accion: 'Arrastrar barras = velocity 1–127' },
+  { teclas: 'Clic / teclado', accion: 'Audicionar nota en el VST de la pista' },
   { teclas: 'Doble clic', accion: 'Crear nota (modo dibujar o seleccionar)' },
-  { teclas: 'Alt+arrastrar', accion: 'Crear nota con duración' },
+  { teclas: 'Alt+arrastrar vacío', accion: 'Crear nota con duración' },
 ]
 
 type ToolBtnProps = {

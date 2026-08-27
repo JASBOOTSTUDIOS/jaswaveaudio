@@ -31,7 +31,7 @@ describe('Ciclo de vida del proyecto', () => {
   it('crea un proyecto nuevo con valores por defecto', () => {
     const proyecto = proyectoNuevo('Demo');
     expect(proyecto.nombre).toBe('Demo');
-    expect(proyecto.sampleRate).toBe(44100);
+    expect(proyecto.sampleRate).toBe(48000);
     expect(proyecto.bitDepth).toBe(24);
     expect(proyecto.bpm.valor).toBe(120);
     expect(proyecto.timeSignature.numerador).toBe(4);

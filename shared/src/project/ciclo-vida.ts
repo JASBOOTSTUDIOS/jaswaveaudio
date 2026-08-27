@@ -102,7 +102,7 @@ const proyectoNuevo = (nombre: string): ProjectState => {
       etiquetas: [],
     } as RoutingMatrix,
     master: {
-      volumen: 0.85,
+      volumen: 1,
       paneo: 0,
       muted: false,
       solo: false,

@@ -351,8 +351,8 @@ function crearPista(nombre: string, tipo: Track['tipo'] = 'audio', color?: strin
     tipo,
     rol: 'normal' as const,
     estado: 'activo' as const,
-    volumen: 0.8,
-    volumenOriginal: -12,
+    volumen: 1,
+    volumenOriginal: 0,
     paneo: 0,
     paneoOriginal: 0,
     silenciada: false,
@@ -2104,6 +2104,77 @@ export function crearComandoTransportToggleRecord(): CommandDefinition<Transport
         events: [],
         result: {},
       };
+    },
+  };
+}
+
+export type TransportTogglePunchPayload = Record<string, never>;
+
+export function crearComandoTransportTogglePunch(): CommandDefinition<TransportTogglePunchPayload> {
+  return {
+    type: 'transport.togglePunch',
+    inverseType: 'transport.togglePunch',
+    description: 'Activa/desactiva punch in/out (ventana de grabación)',
+    risk: 'write',
+    schema: { type: 'object', additionalProperties: false },
+    handler: (estado: DAWState): StateTransition<TransportTogglePunchPayload> => {
+      const punch = estado.transport.punch;
+      const activo = !punch.activo;
+      // Si se activa sin rango, usar loop o 0→8 compases
+      let inicio = punch.inicio;
+      let fin = punch.fin;
+      if (activo && fin.beats <= inicio.beats) {
+        const loop = estado.transport.loop;
+        if (loop.activo && loop.fin.beats > loop.inicio.beats) {
+          inicio = { ...loop.inicio };
+          fin = { ...loop.fin };
+        } else {
+          const bpm = estado.project.bpm?.valor ?? 120;
+          const beats = 8;
+          inicio = { ...inicio, beats: 0, segundos: 0 };
+          fin = {
+            ...fin,
+            beats,
+            segundos: (beats * 60) / bpm,
+          };
+        }
+      }
+      const transport: TransportState = {
+        ...estado.transport,
+        punch: {
+          ...punch,
+          activo,
+          inicio,
+          fin,
+          modo: activo ? 'both' : 'none',
+        },
+        modoGrabacion: activo ? 'punch' : estado.transport.modoGrabacion === 'punch' ? 'normal' : estado.transport.modoGrabacion,
+      };
+      return { state: { ...estado, transport }, events: [], result: {} };
+    },
+  };
+}
+
+export type TransportToggleCountInPayload = Record<string, never>;
+
+export function crearComandoTransportToggleCountIn(): CommandDefinition<TransportToggleCountInPayload> {
+  return {
+    type: 'transport.toggleCountIn',
+    inverseType: 'transport.toggleCountIn',
+    description: 'Activa/desactiva count-in (pre-roll) antes de grabar',
+    risk: 'write',
+    schema: { type: 'object', additionalProperties: false },
+    handler: (estado: DAWState): StateTransition<TransportToggleCountInPayload> => {
+      const countIn = estado.transport.countIn;
+      const transport: TransportState = {
+        ...estado.transport,
+        countIn: {
+          ...countIn,
+          activo: !countIn.activo,
+          compases: Math.max(1, countIn.compases || 1),
+        },
+      };
+      return { state: { ...estado, transport }, events: [], result: {} };
     },
   };
 }

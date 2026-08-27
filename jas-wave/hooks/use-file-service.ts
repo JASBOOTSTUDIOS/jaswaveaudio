@@ -12,6 +12,8 @@ declare global {
   interface Window {
     electron: {
       windowMinimize: () => Promise<void>
+      localAppData?: () => Promise<string>
+      localAppDataSync?: string
       windowMaximize: () => Promise<void>
       windowClose: () => Promise<void>
       windowIsMaximized: () => Promise<boolean>

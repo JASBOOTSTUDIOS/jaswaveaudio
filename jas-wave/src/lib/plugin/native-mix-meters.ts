@@ -18,8 +18,21 @@ let stemIdOrder: string[] = []
 /** Hold: no borrar picos a 0 entre polls lentos. */
 const HOLD_MS = 180
 
+export function isNativeMeterHostAvailable(): boolean {
+  return typeof window !== 'undefined' && !!window.electron?.pluginHostSend
+}
+
 export function setMixMeterTrackOrder(trackIds: string[]): void {
   stemIdOrder = trackIds.slice(0, 64)
+  if (!isNativeMeterHostAvailable() || trackIds.length === 0) return
+  try {
+    void window.electron!.pluginHostSend!({
+      type: 'setMeterTrackOrder',
+      ids: trackIds.slice(0, 64).join(','),
+    })
+  } catch {
+    /* ignore */
+  }
 }
 
 export function getMixMeterTrackOrder(): string[] {
@@ -58,7 +71,7 @@ export async function refreshNativeMixMeters(): Promise<void> {
     try {
       const raw = (await Promise.race([
         api.pluginHostSend({ type: 'getMixMeters' }),
-        new Promise<null>((r) => setTimeout(() => r(null), 250)),
+        new Promise<null>((r) => setTimeout(() => r(null), 500)),
       ])) as {
         ok?: boolean
         masterPeak?: number

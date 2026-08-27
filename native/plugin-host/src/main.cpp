@@ -461,6 +461,11 @@ struct RtChainSlot {
   bool instrument{false};
   bool bypass{false};
 };
+static constexpr int kMaxSends = 8;
+struct RtSend {
+  uint16_t destStem{0};
+  float amount{0.f};
+};
 struct RtTrackChain {
   uint16_t stemIndex{0};
   float gain{1.f};
@@ -469,7 +474,15 @@ struct RtTrackChain {
   uint16_t delaySamples{0};
   uint8_t slotCount{0};
   RtChainSlot slots[kMaxChainSlots]{};
+  uint8_t sendCount{0};
+  RtSend sends[kMaxSends]{};
 };
+
+/** Post-fader por pista (pass 1) + acumulado por stem (sends). */
+static float gPostL[kMaxGraphTracks][8192]{};
+static float gPostR[kMaxGraphTracks][8192]{};
+static float gStemAccL[kMaxGraphTracks][8192]{};
+static float gStemAccR[kMaxGraphTracks][8192]{};
 
 static RtTrackChain gRtTracks[2][kMaxGraphTracks]{};
 static uint8_t gRtTrackCount[2]{0, 0};
@@ -492,6 +505,21 @@ static uint32_t gPdcDawW{0};
 static std::atomic<float> gMeterStemPeak[kMaxGraphTracks]{};
 static std::atomic<float> gMeterMasterPeak{0.f};
 static constexpr float kMeterDecay = 0.92f;
+static char gMeterTrackOrder[kMaxGraphTracks][kSlotIdLen]{};
+static uint8_t gMeterTrackOrderN = 0;
+
+static int meterStemForTrackId(const std::string& trackId) {
+  for (uint8_t i = 0; i < gMeterTrackOrderN; ++i) {
+    if (trackId == gMeterTrackOrder[i]) return static_cast<int>(i);
+  }
+  return -1;
+}
+
+static int meterStemFromSlotId(const std::string& slotId) {
+  const size_t colon = slotId.find(':');
+  if (colon == std::string::npos || colon == 0) return -1;
+  return meterStemForTrackId(slotId.substr(0, colon));
+}
 
 static std::mutex gOfflineMu;
 static std::vector<float> gOfflinePcm;
@@ -551,15 +579,20 @@ static std::string encodeBase64(const uint8_t* data, size_t n) {
 }
 
 static float softLimitSample(float x) {
-  /* Más headroom para baterías (BFD): evita brickwall y deja margen de suma. */
-  const float y = x * 0.72f;
-  return std::tanh(y);
+  /* Transparente bajo ~0.95; solo suaviza overs (antes: ×0.72+tanh dejaba el DAW muy bajo vs YouTube). */
+  if (x > 0.95f) return 0.95f + 0.05f * std::tanh((x - 0.95f) * 8.f);
+  if (x < -0.95f) return -0.95f - 0.05f * std::tanh((-0.95f - x) * 8.f);
+  return x;
 }
 
-/** Trim fijo post-instrumento (~-7.5 dB) antes de sumar a la pista. */
-static constexpr float kInstrumentTrim = 0.42f;
+/** Sin atenuación post-instrumento (antes 0.42 / 0.85 dejaban canales flojos). */
+static constexpr float kInstrumentTrim = 1.f;
+
+/** Makeup por canal (~+12 dB) para acercar el nivel a un navegador/YouTube. */
+static constexpr float kChannelMakeup = 4.f;
 
 static void applyInstrumentTrim(float* l, float* r, int frames) {
+  if (kInstrumentTrim == 1.f) return;
   for (int i = 0; i < frames; ++i) {
     l[i] *= kInstrumentTrim;
     r[i] *= kInstrumentTrim;
@@ -588,12 +621,17 @@ struct TrackChainSlot {
   bool instrument{false};
   bool bypass{false};
 };
+struct TrackSend {
+  uint16_t destStem{0};
+  float amount{0.f};
+};
 struct TrackChain {
   uint16_t stemIndex{0};
   float gain{1.f};
   float pan{0.f};
   bool muted{false};
   std::vector<TrackChainSlot> slots;
+  std::vector<TrackSend> sends;
 };
 
 static void copySlotId(char* dst, const std::string& src) {
@@ -622,6 +660,14 @@ static void publishGraphUnlocked(const std::vector<TrackChain>& tracks,
       rs.instrument = cs.instrument;
       rs.bypass = cs.bypass;
       rs.slot = findSlotUnlocked(cs.slotId);
+    }
+    out.sendCount = 0;
+    for (const auto& sn : tr.sends) {
+      if (out.sendCount >= kMaxSends) break;
+      if (sn.amount <= 0.f || sn.destStem >= kMaxGraphTracks) continue;
+      RtSend& rs = out.sends[out.sendCount++];
+      rs.destStem = sn.destStem;
+      rs.amount = sn.amount;
     }
     ++tn;
   }
@@ -685,9 +731,9 @@ static void applyTrackGainPan(float* l, float* r, int frames, float gain, float 
     std::fill(r, r + frames, 0.f);
     return;
   }
-  const float g = std::max(0.f, std::min(2.f, gain));
+  const float g = std::max(0.f, std::min(4.f, gain * kChannelMakeup));
   const float p = std::max(-1.f, std::min(1.f, pan));
-  const float theta = (p + 1.f) * 0.7853981633974483f;  // (pan+1) * Ï€/4
+  const float theta = (p + 1.f) * 0.7853981633974483f;  // (pan+1) * π/4
   const float gL = g * std::cos(theta);
   const float gR = g * std::sin(theta);
   for (int i = 0; i < frames; ++i) {
@@ -734,6 +780,12 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
   if (useGraph) {
     const uint8_t trackN = gRtTrackCount[idx];
     for (uint8_t t = 0; t < trackN && t < kMaxGraphTracks; ++t) {
+      std::fill(gPostL[t], gPostL[t] + frames, 0.f);
+      std::fill(gPostR[t], gPostR[t] + frames, 0.f);
+      std::fill(gStemAccL[t], gStemAccL[t] + frames, 0.f);
+      std::fill(gStemAccR[t], gStemAccR[t] + frames, 0.f);
+    }
+    for (uint8_t t = 0; t < trackN && t < kMaxGraphTracks; ++t) {
       const RtTrackChain& tr = gRtTracks[idx][t];
       jaswave_mix_bus_pull_stem(tr.stemIndex, gStemInterleaved, static_cast<uint32_t>(frames));
       jaswave::clip_render_stem(tr.stemIndex, gStemInterleaved, static_cast<uint32_t>(frames));
@@ -768,9 +820,31 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
           meterUpdatePeak(gMeterStemPeak[si], blockPeakAbs(gChainL, gChainR, frames));
         }
       }
+      std::memcpy(gPostL[t], gChainL, static_cast<size_t>(frames) * sizeof(float));
+      std::memcpy(gPostR[t], gChainR, static_cast<size_t>(frames) * sizeof(float));
+      if (tr.stemIndex < kMaxGraphTracks) {
+        for (int i = 0; i < frames; ++i) {
+          gStemAccL[tr.stemIndex][i] += gChainL[i];
+          gStemAccR[tr.stemIndex][i] += gChainR[i];
+        }
+      }
+    }
+    // Pass 2: sends post-fader sample-accurate (origen → stem destino)
+    for (uint8_t t = 0; t < trackN && t < kMaxGraphTracks; ++t) {
+      const RtTrackChain& tr = gRtTracks[idx][t];
+      for (uint8_t s = 0; s < tr.sendCount; ++s) {
+        const RtSend& sn = tr.sends[s];
+        if (sn.amount <= 0.f || sn.destStem >= kMaxGraphTracks) continue;
+        for (int i = 0; i < frames; ++i) {
+          gStemAccL[sn.destStem][i] += gPostL[t][i] * sn.amount;
+          gStemAccR[sn.destStem][i] += gPostR[t][i] * sn.amount;
+        }
+      }
+    }
+    for (uint8_t stem = 0; stem < kMaxGraphTracks; ++stem) {
       for (int i = 0; i < frames; ++i) {
-        gMixL[i] += gChainL[i];
-        gMixR[i] += gChainR[i];
+        gMixL[i] += gStemAccL[stem][i];
+        gMixR[i] += gStemAccR[stem][i];
       }
     }
     const uint8_t masterN = gRtMasterCount[idx];
@@ -785,12 +859,13 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
   } else {
     // Legacy: suma paralela de todos los slots
     HostedSlot* snapshot[48]{};
+    char snapshotSlotId[48][kSlotIdLen]{};
     int n = 0;
     {
       std::lock_guard<std::mutex> lock(gSlotsMutex);
       for (auto& [id, slot] : gSlots) {
-        (void)id;
         if (!slot || !slot->isPrepared() || n >= 48) continue;
+        copySlotId(snapshotSlotId[n], id);
         snapshot[n++] = slot.get();
       }
     }
@@ -798,6 +873,13 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
       snapshot[s]->process(nullptr, nullptr, gTmpL, gTmpR, frames);
       applyInstrumentTrim(gTmpL, gTmpR, frames);
       snapshot[s]->applyMix(gTmpL, gTmpR, frames);
+      {
+        const int stem = meterStemFromSlotId(snapshotSlotId[s]);
+        if (stem >= 0 && stem < kMaxGraphTracks) {
+          meterUpdatePeak(gMeterStemPeak[stem],
+                          blockPeakAbs(gTmpL, gTmpR, frames));
+        }
+      }
       for (int i = 0; i < frames; ++i) {
         gMixL[i] += gTmpL[i];
         gMixR[i] += gTmpR[i];
@@ -806,9 +888,9 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
     jaswave::clip_render_mix(gMixL, gMixR, static_cast<uint32_t>(frames));
   }
 
-  const float masterG = gMasterMuted.load(std::memory_order_relaxed)
+  const float masterG = (gMasterMuted.load(std::memory_order_relaxed)
                             ? 0.f
-                            : gMasterGain.load(std::memory_order_relaxed);
+                            : gMasterGain.load(std::memory_order_relaxed)) * 1.35f;
   for (int i = 0; i < frames; ++i) {
     interleaved[i * 2 + 0] = gMixL[i] * masterG;
     interleaved[i * 2 + 1] = gMixR[i] * masterG;
@@ -1233,10 +1315,11 @@ static void executeUiJob(UiJob& job) {
   }
 }
 
-static void enqueueUiAsync(UiJob::Kind kind, const std::string& json) {
+static void enqueueUiAsync(UiJob::Kind kind, const std::string& json, bool replyWhenDone = false) {
   auto job = std::make_shared<UiJob>();
   job->kind = kind;
   job->json = json;
+  job->replyWhenDone = replyWhenDone;
   {
     std::lock_guard<std::mutex> lock(gUiQueueMu);
     gUiQueue.push_back(job);
@@ -1244,7 +1327,7 @@ static void enqueueUiAsync(UiJob::Kind kind, const std::string& json) {
 #ifdef _WIN32
   PostThreadMessageW(gMainThreadId, WM_JASWAVE_JOB, 0, 0);
 #endif
-  // NO bloquear stdin: noteOn/load deben seguir. Respuesta al terminar el job en UI.
+  // NO bloquear stdin: noteOn debe seguir mientras load corre en el hilo UI.
 }
 
 static void enqueueUiAndWait(const std::shared_ptr<UiJob>& job) {
@@ -1305,19 +1388,12 @@ static void drainUiQueue() {
 }
 
 static void handleLoad(const std::string& json) {
-  auto job = std::make_shared<UiJob>();
-  job->kind = UiJob::Kind::Load;
-  job->json = json;
-  job->replyWhenDone = true;
-  enqueueUiAndWait(job);
+  // Async: esperar aquí congela noteOn/getTransportClock → silencio a los ~3–4 s.
+  enqueueUiAsync(UiJob::Kind::Load, json, true);
 }
 
 static void handleUnload(const std::string& json) {
-  auto job = std::make_shared<UiJob>();
-  job->kind = UiJob::Kind::Unload;
-  job->json = json;
-  job->replyWhenDone = true;
-  enqueueUiAndWait(job);
+  enqueueUiAsync(UiJob::Kind::Unload, json, true);
 }
 
 static void handleUiRpc(UiJob::Kind kind, const std::string& json) {
@@ -1345,6 +1421,9 @@ static void handleNote(const std::string& json, bool on) {
     return;
   }
   if (on) {
+    // Preview / teclado: muchos VST3 ignoran MIDI si !kPlaying. No arrancar el
+    // transport clock del DAW — solo la bandera del slot.
+    slot->setPlaying(true);
     slot->noteOn(pitch, vel > 1.f ? vel / 127.f : vel, delay);
   } else {
     slot->noteOff(pitch, delay);
@@ -1429,7 +1508,7 @@ static void handleLine(const std::string& line) {
 #if defined(JASWAVE_HAS_VST3_SDK)
     if (type == "setMasterMix") {
       const float g = static_cast<float>(getNumberField(line, "gain", 1));
-      gMasterGain.store(std::max(0.f, std::min(2.f, g)), std::memory_order_relaxed);
+      gMasterGain.store(std::max(0.f, std::min(4.f, g)), std::memory_order_relaxed);
       gMasterMuted.store(getBoolField(line, "muted", false), std::memory_order_relaxed);
     } else {
       std::string slotId = getStringField(line, "slotId");
@@ -1490,7 +1569,7 @@ static void handleLine(const std::string& line) {
         if (colon != std::string::npos && colon < firstBar) {
           // idx only before |
         }
-        // Extended: idx~gain~pan~muted|slots
+        // Extended: idx~gain~pan~muted|slots#dest:amt+dest2:amt2
         size_t tilde = seg.find('~');
         if (tilde != std::string::npos && tilde < firstBar) {
           try {
@@ -1508,7 +1587,29 @@ static void handleLine(const std::string& line) {
           } catch (...) {
           }
         }
-        parseSlotList(seg.substr(firstBar + 1), tc.slots);
+        std::string afterBar = seg.substr(firstBar + 1);
+        size_t hash = afterBar.find('#');
+        std::string slotsPart = hash == std::string::npos ? afterBar : afterBar.substr(0, hash);
+        std::string sendsPart = hash == std::string::npos ? "" : afterBar.substr(hash + 1);
+        parseSlotList(slotsPart, tc.slots);
+        size_t sp = 0;
+        while (sp < sendsPart.size()) {
+          size_t plus = sendsPart.find('+', sp);
+          std::string tok =
+              sendsPart.substr(sp, plus == std::string::npos ? std::string::npos : plus - sp);
+          size_t colonS = tok.find(':');
+          if (colonS != std::string::npos) {
+            TrackSend sn;
+            try {
+              sn.destStem = static_cast<uint16_t>(std::stoi(tok.substr(0, colonS)));
+              sn.amount = std::stof(tok.substr(colonS + 1));
+              if (sn.amount > 0.f && sn.destStem < kMaxGraphTracks) tc.sends.push_back(sn);
+            } catch (...) {
+            }
+          }
+          if (plus == std::string::npos) break;
+          sp = plus + 1;
+        }
         if (tc.stemIndex < JASWAVE_MIX_MAX_TRACKS) tracks.push_back(std::move(tc));
       }
       if (semi == std::string::npos) break;
@@ -1930,6 +2031,22 @@ static void handleLine(const std::string& line) {
        << ",\"highFillDropFrames\":" << st.highFillDropFrames
        << "}";
     replyOk(js.str());
+    return;
+  }
+  if (type == "setMeterTrackOrder") {
+    const std::string ids = getStringField(line, "ids");
+    gMeterTrackOrderN = 0;
+    size_t p = 0;
+    while (p < ids.size() && gMeterTrackOrderN < kMaxGraphTracks) {
+      size_t comma = ids.find(',', p);
+      std::string tid = ids.substr(p, comma == std::string::npos ? std::string::npos : comma - p);
+      if (!tid.empty()) {
+        copySlotId(gMeterTrackOrder[gMeterTrackOrderN], tid);
+        ++gMeterTrackOrderN;
+      }
+      if (comma == std::string::npos) break;
+      p = comma + 1;
+    }
     return;
   }
   if (type == "getMixMeters") {

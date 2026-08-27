@@ -197,6 +197,7 @@ app.on('activate', () => {
     }
 });
 ipcMain.handle('get-app-version', () => app.getVersion());
+ipcMain.handle('env-local-appdata', () => process.env.LOCALAPPDATA || '');
 ipcMain.on('agent-bridge-reply', (_event, id, result, error) => {
     (0, agent_bridge_1.resolveAgentBridgeReply)(String(id), result, error ? String(error) : undefined);
 });
@@ -242,6 +243,25 @@ ipcMain.handle('file-save-binary', (_event, ruta, data) => __awaiter(void 0, voi
     }
     catch (err) {
         return { success: false, error: err instanceof Error ? err.message : 'Unknown error' };
+    }
+}));
+ipcMain.handle('ffmpeg-available', () => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { spawn } = yield Promise.resolve().then(() => require('node:child_process'));
+        yield new Promise((resolve, reject) => {
+            const child = spawn('ffmpeg', ['-version'], { windowsHide: true });
+            child.on('error', (e) => reject(e));
+            child.on('close', (code) => {
+                if (code === 0)
+                    resolve();
+                else
+                    reject(new Error(`ffmpeg exit ${code}`));
+            });
+        });
+        return { ok: true };
+    }
+    catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
 }));
 ipcMain.handle('ffmpeg-convert', (_event_1, input_1, output_1, ...args_1) => __awaiter(void 0, [_event_1, input_1, output_1, ...args_1], void 0, function* (_event, input, output, extraArgs = []) {
@@ -567,7 +587,7 @@ subscribeNativeMidi((msg) => {
 ipcMain.handle('plugin-host-status', (e) => __awaiter(void 0, void 0, void 0, function* () {
     if (!senderIsSatellite(e.sender)) {
         yield ensurePluginHostStarted();
-        yield ensureMixPipeConnected();
+        // No ensureMixPipeConnected aquí: el UI pollea status y pelea con maxInstances=1.
     }
     return getPluginHostStatus();
 }));

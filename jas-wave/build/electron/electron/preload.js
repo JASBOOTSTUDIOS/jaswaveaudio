@@ -3,6 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electron', {
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+    localAppData: () => ipcRenderer.invoke('env-local-appdata'),
+    /** Sync — preload tiene process.env; el renderer a menudo no. */
+    localAppDataSync: process.env.LOCALAPPDATA || '',
     windowMinimize: () => ipcRenderer.invoke('window-minimize'),
     windowMaximize: () => ipcRenderer.invoke('window-maximize'),
     windowClose: () => ipcRenderer.invoke('window-close'),
@@ -15,6 +18,7 @@ contextBridge.exposeInMainWorld('electron', {
     fileSave: (ruta, contenido) => ipcRenderer.invoke('file-save', ruta, contenido),
     fileSaveBinary: (ruta, data) => ipcRenderer.invoke('file-save-binary', ruta, data),
     ffmpegConvert: (input, output, args) => ipcRenderer.invoke('ffmpeg-convert', input, output, args !== null && args !== void 0 ? args : []),
+    ffmpegAvailable: () => ipcRenderer.invoke('ffmpeg-available'),
     fileRead: (ruta) => ipcRenderer.invoke('file-read', ruta),
     fileReadBinary: (ruta) => ipcRenderer.invoke('file-read-binary', ruta),
     fileExists: (ruta) => ipcRenderer.invoke('file-exists', ruta),
@@ -68,6 +72,11 @@ contextBridge.exposeInMainWorld('electron', {
         const handler = () => callback();
         ipcRenderer.on('plugin-host-restarted', handler);
         return () => ipcRenderer.removeListener('plugin-host-restarted', handler);
+    },
+    onPluginHostExited: (callback) => {
+        const handler = (_, info) => callback(info);
+        ipcRenderer.on('plugin-host-exited', handler);
+        return () => ipcRenderer.removeListener('plugin-host-exited', handler);
     },
     pluginHostPushPcm: (samples) => {
         // Siempre Uint8Array: ArrayBuffer puro a veces no sobrevive el clone IPC de Electron.

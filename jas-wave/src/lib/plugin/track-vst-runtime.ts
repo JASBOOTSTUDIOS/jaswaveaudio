@@ -15,6 +15,7 @@ import { setActiveVstVoiceTarget, getActiveVstVoiceTarget } from './vst-voice-ro
 import { encodeTrackGraph } from './track-graph-encoding'
 import { audioEngine } from '@/lib/audio-engine'
 import type { HostParameterRaw } from './plugin-parameter-intel'
+import { getEditorPreviewTrackId } from './editor-preview-focus'
 
 export { extractHostPluginPath, extractHostPluginPath as extractVst3Path, resolveHostPluginPath }
 
@@ -35,12 +36,12 @@ export function isVstInstrumentPlugin(plugin: PluginInfo, path: string): boolean
   return !isLikelyAudioFx(plugin.nombre, path)
 }
 
-/** Instrumento de playback de la cadena: VST si hay uno; si no, Soft Pad solo si está insertado. */
+/** Instrumento de playback: último VST instrumento de la cadena (evita Piano muerto + Roles vivo). */
 export function findTrackPlaybackInstrument(
   plugins: PluginInfo[] | undefined,
 ): { kind: 'builtin'; plugin: PluginInfo } | { kind: 'vst'; plugin: PluginInfo; path: string } | null {
   let builtin: PluginInfo | null = null
-  let firstVst: { plugin: PluginInfo; path: string } | null = null
+  let lastVst: { plugin: PluginInfo; path: string } | null = null
   for (const p of plugins ?? []) {
     if (p.bypass) continue
     if (isBuiltinInstrument(p)) {
@@ -49,12 +50,15 @@ export function findTrackPlaybackInstrument(
     }
     const path = extractHostPluginPath(p.descripcion, p.id)
     if (!path) continue
-    if (!firstVst) firstVst = { plugin: p, path }
-    if (isVstInstrumentPlugin(p, path)) return { kind: 'vst', plugin: p, path }
+    if (isVstInstrumentPlugin(p, path)) {
+      lastVst = { plugin: p, path }
+      continue
+    }
+    if (!lastVst && !isLikelyAudioFx(p.nombre, path)) {
+      lastVst = { plugin: p, path }
+    }
   }
-  if (firstVst && !isLikelyAudioFx(firstVst.plugin.nombre, firstVst.path)) {
-    return { kind: 'vst', plugin: firstVst.plugin, path: firstVst.path }
-  }
+  if (lastVst) return { kind: 'vst', plugin: lastVst.plugin, path: lastVst.path }
   return builtin ? { kind: 'builtin', plugin: builtin } : null
 }
 
@@ -81,9 +85,21 @@ type LoadedPlugin = {
 }
 
 /** Instrumento activo por pista (MIDI). */
-const byTrack = new Map<string, LoadedPlugin>()
+const g = globalThis as unknown as {
+  __jaswaveVstRuntime?: {
+    byTrack: Map<string, LoadedPlugin>
+    bySlot: Map<string, LoadedPlugin>
+  }
+}
+if (!g.__jaswaveVstRuntime) {
+  g.__jaswaveVstRuntime = {
+    byTrack: new Map(),
+    bySlot: new Map(),
+  }
+}
+const byTrack = g.__jaswaveVstRuntime.byTrack
 /** Todos los slots VST cargados (instrumento + efecto). */
-const bySlot = new Map<string, LoadedPlugin>()
+const bySlot = g.__jaswaveVstRuntime.bySlot
 const loadPromises = new Map<string, Promise<boolean>>()
 const runtimeListeners = new Set<() => void>()
 let runtimeGeneration = 0
@@ -96,6 +112,16 @@ export function getLastVstLoadError(): string {
 function emitRuntime() {
   runtimeGeneration += 1
   for (const l of runtimeListeners) l()
+  try {
+    if (typeof window !== 'undefined') {
+      const q = new URLSearchParams(window.location.search)
+      const undock =
+        Boolean(q.get('undock')) || window.location.hash.replace(/^#/, '').startsWith('undock/')
+      if (!undock) publishVstRuntimeSnapshot()
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 export function subscribeVstRuntime(listener: () => void): () => void {
@@ -114,7 +140,114 @@ export function isPluginAudioReady(trackId: string, pluginId: string): boolean {
 }
 
 export function getLoadedInstrumentForTrack(trackId: string): LoadedPlugin | null {
-  return byTrack.get(trackId) ?? null
+  const direct = byTrack.get(trackId)
+  if (direct) return direct
+  // Preferir el último instrumento cargado de la pista (cadena con varios VSTs).
+  let lastInst: LoadedPlugin | null = null
+  let fallback: LoadedPlugin | null = null
+  for (const p of bySlot.values()) {
+    if (p.trackId !== trackId) continue
+    if (p.instrument) lastInst = p
+    else if (!fallback) fallback = p
+  }
+  return lastInst ?? fallback
+}
+
+let resyncProjectGraph: (() => void) | null = null
+
+/** playback-provider registra syncNativeChannelMix para publicar graph tras load. */
+export function registerProjectGraphResync(fn: (() => void) | null): void {
+  resyncProjectGraph = fn
+}
+
+/** Audio corriendo. No pone transport.playing (eso mueve el playhead);
+ *  el host activa kPlaying del slot en cada noteOn de preview. */
+let hostMidiAudioReady = false
+let hostMidiAudioEnsure: Promise<void> | null = null
+
+export function ensureHostMidiAudible(): Promise<void> {
+  if (hostMidiAudioReady) return Promise.resolve()
+  if (hostMidiAudioEnsure) return hostMidiAudioEnsure
+  hostMidiAudioEnsure = (async () => {
+    try {
+      const api = window.electron
+      if (!api?.pluginHostSend) return
+      const raw = (await api.pluginHostSend({ type: 'getAudioDevice' })) as {
+        audio?: { running?: boolean }
+      }
+      if (!raw?.audio?.running) {
+        await api.pluginHostSend({ type: 'ensureAudio' })
+      }
+      hostMidiAudioReady = true
+    } catch {
+      /* ignore */
+    } finally {
+      hostMidiAudioEnsure = null
+    }
+  })()
+  return hostMidiAudioEnsure
+}
+
+export function rememberLoadedInstrument(plugin: {
+  trackId: string
+  pluginId: string
+  path: string
+  slotId: string
+  instrument: boolean
+}): void {
+  bySlot.set(plugin.slotId, plugin)
+  if (plugin.instrument) byTrack.set(plugin.trackId, plugin)
+}
+
+const RUNTIME_SYNC_CH = 'jaswave-vst-runtime-v1'
+
+export function publishVstRuntimeSnapshot(): void {
+  try {
+    const ch = new BroadcastChannel(RUNTIME_SYNC_CH)
+    ch.postMessage({ type: 'snapshot', slots: [...bySlot.values()] })
+    ch.close()
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Primary publica; satélites hidratan el mapa de slots (preview MIDI en undock). */
+export function startVstRuntimeWindowSync(role: 'primary' | 'satellite'): () => void {
+  try {
+    const ch = new BroadcastChannel(RUNTIME_SYNC_CH)
+    if (role === 'primary') {
+      ch.onmessage = (ev: MessageEvent) => {
+        const data = ev.data as { type?: string }
+        if (data?.type === 'request') publishVstRuntimeSnapshot()
+      }
+      publishVstRuntimeSnapshot()
+      return () => ch.close()
+    }
+    ch.onmessage = (ev: MessageEvent) => {
+      const data = ev.data as {
+        type?: string
+        slots?: Array<{
+          trackId: string
+          pluginId: string
+          path: string
+          slotId: string
+          instrument: boolean
+        }>
+      }
+      if (data?.type !== 'snapshot' || !Array.isArray(data.slots)) return
+      bySlot.clear()
+      byTrack.clear()
+      for (const p of data.slots) {
+        bySlot.set(p.slotId, p)
+        if (p.instrument) byTrack.set(p.trackId, p)
+      }
+      emitRuntime()
+    }
+    ch.postMessage({ type: 'request' })
+    return () => ch.close()
+  } catch {
+    return () => undefined
+  }
 }
 
 export function listLoadedSlots(): Array<{
@@ -199,6 +332,13 @@ export async function ensureTrackVstPlugin(
 ): Promise<boolean> {
   const path = resolveHostPluginPath(plugin)
   if (!path) {
+    const kept =
+      byTrack.get(trackId) ||
+      [...bySlot.values()].find((p) => p.trackId === trackId && p.instrument)
+    if (kept) {
+      byTrack.set(trackId, kept)
+      return true
+    }
     lastVstLoadError = `Sin ruta .vst3/.dll en «${plugin.nombre}» (descripcion/id/catálogo)`
     return false
   }
@@ -210,6 +350,19 @@ export async function ensureTrackVstPlugin(
   if (pid) lastHostPid = pid
   const existing = bySlot.get(slotId)
   if (existing?.path === path) {
+    // Durante play: no RPC getLatency/restore (compiten con noteOn en stdin).
+    if (audioEngine.getIsPlaying()) {
+      if (instrument) {
+        byTrack.set(trackId, existing)
+        setActiveVstVoiceTarget({
+          slotId: existing.slotId,
+          path: existing.path,
+          trackId,
+          pluginId: existing.pluginId,
+        })
+      }
+      return true
+    }
     // Confirmar que el host sigue teniendo el slot (tras restart el mapa local miente).
     let hostHas = false
     try {
@@ -232,10 +385,10 @@ export async function ensureTrackVstPlugin(
         })
       }
       await restorePluginStateAfterLoad(trackId, plugin)
+      resyncProjectGraph?.()
       return true
     }
-    bySlot.delete(slotId)
-    if (byTrack.get(trackId)?.slotId === slotId) byTrack.delete(trackId)
+    // getLatency falló: no borrar el mapa todavía — re-load abajo; si falla, conservar slot.
   }
 
   if (instrument) {
@@ -284,6 +437,11 @@ export async function ensureTrackVstPlugin(
         } else {
           console.error('[track-vst] load failed', path, msg)
         }
+        // Conservar slot previo si el re-load falla (evita silenciar MIDI mid-play).
+        if (existing) {
+          if (instrument) byTrack.set(trackId, existing)
+          return true
+        }
         return false
       }
       lastVstLoadError = ''
@@ -295,6 +453,7 @@ export async function ensureTrackVstPlugin(
       }
       await restorePluginStateAfterLoad(trackId, plugin)
       emitRuntime()
+      resyncProjectGraph?.()
       return true
     } catch {
       return false
@@ -321,6 +480,24 @@ export async function ensureProjectVstInstruments(
   masterPlugins?: PluginInfo[],
 ): Promise<Map<string, string>> {
   if (ensureProjectInFlight) return ensureProjectInFlight
+
+  // Durante play: no re-load ni getLatency en cadena (bloquea stdin del host →
+  // getTransportClock se congela → silencio MIDI con metrónomo aún vivo).
+  if (audioEngine.getIsPlaying()) {
+    const map = new Map<string, string>()
+    let missing = false
+    for (const t of tracks) {
+      const needsHost = (t.plugins ?? []).some((p) => {
+        if (p.bypass || isBuiltinInstrument(p)) return false
+        return Boolean(extractHostPluginPath(p.descripcion, p.id))
+      })
+      if (!needsHost) continue
+      const inst = getLoadedInstrumentForTrack(t.id)
+      if (inst) map.set(t.id, inst.slotId)
+      else missing = true
+    }
+    if (!missing) return map
+  }
 
   ensureProjectInFlight = (async () => {
     const map = new Map<string, string>()
@@ -375,17 +552,54 @@ export function syncReaperTrackGraph(
     soloActiva?: boolean
   }>,
   masterPlugins?: PluginInfo[],
+  routing?: {
+    sends?: Array<{
+      activo?: boolean
+      origenTrackId: string
+      destinoBusId: string
+      cantidad?: number
+    }>
+    buses?: Array<{ id: string }>
+  } | null,
 ): void {
   const anySolo = tracks.some((t) => t.soloActiva)
   audioEngine.setTrackStemLayout(tracks.map((t) => t.id))
 
+  const stemByTrackId = new Map(tracks.map((t, i) => [t.id, i]))
+  for (const b of routing?.buses ?? []) {
+    if (!stemByTrackId.has(b.id)) {
+      // bus id puede coincidir con track id; si no, se resuelve vía destinoBusId→track
+    }
+  }
+
+  const sendsBySrc = new Map<string, Array<{ destStem: number; amount: number }>>()
+  for (const send of routing?.sends ?? []) {
+    if (send.activo === false) continue
+    const amount = Math.max(0, Math.min(1, Number(send.cantidad ?? 0)))
+    if (amount <= 0) continue
+    let destStem = stemByTrackId.get(send.destinoBusId)
+    if (destStem == null) {
+      const bus = routing?.buses?.find((b) => b.id === send.destinoBusId)
+      if (bus) destStem = stemByTrackId.get(bus.id)
+    }
+    if (destStem == null) continue
+    const list = sendsBySrc.get(send.origenTrackId) ?? []
+    list.push({ destStem, amount })
+    sendsBySrc.set(send.origenTrackId, list)
+  }
+
   const graphTracks = tracks.map((t, stemIndex) => {
-    const muted = anySolo ? !t.soloActiva : Boolean(t.silenciada)
+    const previewId = getEditorPreviewTrackId()
+    const muted =
+      previewId === t.id ? false : anySolo ? !t.soloActiva : Boolean(t.silenciada)
     const slots: Array<{ slotId: string; instrument: boolean; bypass: boolean }> = []
     for (const p of t.plugins ?? []) {
-      if (isBuiltinInstrument(p)) continue
+      // VST3 con ruta: nunca tratar como builtin (licencia «JasWave» ≠ in-process).
       const path = extractHostPluginPath(p.descripcion, p.id)
-      if (!path) continue
+      if (!path) {
+        if (isBuiltinInstrument(p)) continue
+        continue
+      }
       const slotId = slotIdForTrackPlugin(t.id, p.id)
       if (!bySlot.has(slotId)) continue
       slots.push({
@@ -394,12 +608,21 @@ export function syncReaperTrackGraph(
         bypass: Boolean(p.bypass),
       })
     }
+    // Si el mapa tiene instrumento cargado pero el plugin del store no resolvió path/id
+    // (musicBuild insert vs id), el graph activo deja el slot huérfano → MIDI sin audio.
+    if (!slots.some((s) => s.instrument)) {
+      const loaded = getLoadedInstrumentForTrack(t.id)
+      if (loaded?.instrument && bySlot.has(loaded.slotId)) {
+        slots.unshift({ slotId: loaded.slotId, instrument: true, bypass: false })
+      }
+    }
     return {
       stemIndex,
-      gain: typeof t.volumen === 'number' ? t.volumen : 0.8,
+      gain: typeof t.volumen === 'number' ? t.volumen : 1,
       pan: typeof t.paneo === 'number' ? t.paneo : 0,
       muted,
       slots,
+      sends: sendsBySrc.get(t.id) ?? [],
     }
   })
 
@@ -591,6 +814,16 @@ export async function setSlotPluginStateBase64(slotId: string, stateBase64: stri
 export async function snapshotLoadedPluginsIntoProject(
   tienda: import('../../../../shared/src/state/tienda').TiendaDAW,
 ): Promise<void> {
+  // Asegura slots cargados antes de snapshot (evita guardar sin chunk en pistas recién abiertas).
+  try {
+    const st = tienda.obtenerEstado()
+    await ensureProjectVstInstruments(
+      (st.project.tracks ?? []).map((t) => ({ id: t.id, plugins: t.plugins })),
+      st.project.master?.plugins,
+    )
+  } catch {
+    /* best-effort */
+  }
   const tracks = tienda.obtenerEstado().project.tracks ?? []
   for (const t of tracks) {
     const plugins = t.plugins ?? []
@@ -611,6 +844,9 @@ export async function snapshotLoadedPluginsIntoProject(
         etiqueta: rp.name || String(rp.parameterId),
       }))
       const chunk = await getSlotPluginStateBase64(slotId)
+      if (!chunk) {
+        console.warn('[track-vst] snapshot sin chunk para', slotId, '— se conserva estado previo si existe')
+      }
       const live = tienda.obtenerEstado().project.tracks.find((x) => x.id === t.id)
       const chain = live?.plugins ?? plugins
       const nextPlugins = chain.map((pl) =>
@@ -676,8 +912,11 @@ export async function snapshotLoadedPluginsIntoProject(
 
 async function restorePluginStateAfterLoad(trackId: string, plugin: PluginInfo): Promise<void> {
   const slotId = slotIdForTrackPlugin(trackId, plugin.id)
+  // Chunk VST = fuente de verdad. No overlay de params (pisaría el estado del editor).
   if (plugin.estadoPluginBase64) {
-    await setSlotPluginStateBase64(slotId, plugin.estadoPluginBase64)
+    const ok = await setSlotPluginStateBase64(slotId, plugin.estadoPluginBase64)
+    if (ok) return
+    console.warn('[track-vst] setPluginState falló; fallback a parámetros', slotId)
   }
   for (const p of plugin.parametros ?? []) {
     if (p.id == null || p.valor == null) continue

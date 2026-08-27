@@ -54,6 +54,8 @@ import {
   crearComandoTransportToggleLoop,
   crearComandoTransportToggleMetronome,
   crearComandoTransportToggleRecord,
+  crearComandoTransportTogglePunch,
+  crearComandoTransportToggleCountIn,
   crearComandoProjectSetBpm,
 } from '../commands/domain-commands';
 import {
@@ -100,6 +102,7 @@ import {
 import {
   crearComandoAutomationSetCurve,
   crearComandoAutomationClear,
+  crearComandoAutomationWritePoint,
 } from '../commands/automation-commands';
 import {
   crearComandoBusCreate,
@@ -191,6 +194,8 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoTransportToggleLoop(), registry);
   registrar(crearComandoTransportToggleMetronome(), registry);
   registrar(crearComandoTransportToggleRecord(), registry);
+  registrar(crearComandoTransportTogglePunch(), registry);
+  registrar(crearComandoTransportToggleCountIn(), registry);
   registrar(crearComandoAtajoListar(), registry);
   registrar(crearComandoAtajoActualizar(), registry);
   registrar(crearComandoAtajoRestaurar(), registry);
@@ -229,6 +234,7 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoAnalysisFullReport(), registry);
   registrar(crearComandoAutomationSetCurve(), registry);
   registrar(crearComandoAutomationClear(), registry);
+  registrar(crearComandoAutomationWritePoint(), registry);
   registrar(crearComandoBusCreate(), registry);
   registrar(crearComandoSendSet(), registry);
   registrar(crearComandoSidechainConnect(), registry);

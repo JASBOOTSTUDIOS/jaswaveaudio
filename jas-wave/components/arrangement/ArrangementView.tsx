@@ -14,6 +14,7 @@ import { TimelineRuler } from './TimelineRuler'
 import { GridLayer } from './GridLayer'
 import { PlayheadOverlay } from './PlayheadOverlay'
 import { ArrangeBoard } from './ArrangeBoard'
+import { AutomationLanesPanel } from '@/components/automation-lanes-panel'
 import { TrackAddPluginButton } from './TrackAddPluginButton'
 import { MidiClipPreview } from './MidiClipPreview'
 import { ChannelFxBank } from '@/components/channel-fx-bank'
@@ -1110,6 +1111,7 @@ export function ArrangementView() {
           </>
         )}
       />
+      <AutomationLanesPanel />
     </div>
     </div>
   )

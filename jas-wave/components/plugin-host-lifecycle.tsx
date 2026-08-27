@@ -54,6 +54,9 @@ export function PluginHostLifecycle() {
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => {
       void (async () => {
+        const { audioEngine } = await import('@/lib/audio-engine')
+        // Evitar ensure/load mientras suena (stdin bloqueado → silencio MIDI).
+        if (audioEngine.getIsPlaying()) return
         const gen = getProjectReadyGeneration()
         const needs = tracks.some((t) => chainNeedsVst(t.plugins)) || chainNeedsVst(masterPlugins)
         if (!needs) {
@@ -108,6 +111,14 @@ export function PluginHostLifecycle() {
               t.map((tr) => ({ id: tr.id, plugins: tr.plugins })),
               m,
             )
+            // Mismos slotIds, proceso nuevo: reenviar MIDI o quedamos en silencio permanente.
+            const { audioEngine } = await import('@/lib/audio-engine')
+            const { getLoadedInstrumentForTrack } = await import('@/src/lib/plugin/track-vst-runtime')
+            for (const tr of t) {
+              const slot = getLoadedInstrumentForTrack(tr.id)?.slotId
+              if (slot) audioEngine.patchTrackVstInstrument(tr.id, slot)
+            }
+            audioEngine.rescheduleMidiAfterHostRestart()
             reportProjectPluginsSettled(true, 'VSTs tras restart', gen)
           } catch (err) {
             reportProjectPluginsSettled(

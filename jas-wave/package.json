@@ -3,19 +3,27 @@
   "version": "0.1.0",
   "private": true,
   "productName": "JasWave",
+  "author": "JasWave",
+  "description": "JasWave — AI-First Digital Audio Workstation",
   "main": "build/electron/electron/main.js",
   "scripts": {
     "dev": "tsc -p tsconfig.electron.json && tsx scripts/free-vite-port.ts && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 concurrently -k \"vite --strictPort --port 5173\" \"wait-on http://localhost:5173 && tsx scripts/start-electron.ts .\"",
     "web:dev": "vite",
     "build": "tsc -b && vite build && tsc -p tsconfig.electron.json",
     "preview": "vite preview",
-    "electron:build": "npm run build && electron-builder",
+    "stage:host": "node scripts/stage-plugin-host.mjs",
+    "electron:build": "npm run build && npm run stage:host && electron-builder --win nsis",
+    "pack:win": "npm run electron:build",
     "lint": "eslint .",
     "test:plugins": "tsx --test src/lib/plugin/hybrid-host.test.ts src/lib/plugin/audio-engine-robust.test.ts src/lib/midi-agent.test.ts src/lib/midi-controller.test.ts src/lib/midi-map.test.ts src/lib/midi-track-io.test.ts src/lib/audio-track-io.test.ts src/lib/bounce-content.test.ts src/lib/encode-wav.test.ts src/lib/plugin-knowledge.test.ts src/lib/plugin/plugin-parameter-intel.test.ts src/lib/plugin/plugin-info-adapter.test.ts src/lib/plugin/discovery.test.ts src/lib/agent-docs.test.ts src/lib/agent-harness.test.ts src/lib/music-build/music-build.test.ts",
     "plugin-host:ping": "node ../native/plugin-host/scripts/ping.cjs",
     "cli": "node cli/daw-cli.mjs",
     "cli:watch": "node cli/daw-cli.mjs watch --play",
     "cli:audit": "node cli/daw-cli.mjs audit",
+    "cli:certify": "node cli/_certify.mjs",
+    "cli:certify:quick": "node cli/_certify.mjs --quick",
+    "cli:certify:vst": "node cli/_e2e-decent-4front.mjs 14 && node cli/_test-three-vst.mjs",
+    "cli:soak-host": "node cli/_soak-host.mjs",
     "native:roles-vst": "cmake -B ../native/jaswave-roles-vst/build -S ../native/jaswave-roles-vst -G \"Visual Studio 17 2022\" -A x64 && cmake --build ../native/jaswave-roles-vst/build --config Release --target JasWaveRoles"
   },
   "dependencies": {
@@ -82,8 +90,23 @@
       "icon": "public/jaswave-icono-con-frecuencia.png"
     },
     "win": {
-      "target": "nsis",
-      "icon": "public/jaswave-icono-con-frecuencia.png"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "public/jaswave-icono-con-frecuencia.png",
+      "artifactName": "JasWave-Setup-${version}.${ext}",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "JasWave",
+      "perMachine": false
     },
     "linux": {
       "target": "AppImage",
