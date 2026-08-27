@@ -58,19 +58,36 @@ async function readHostPipeStatus(): Promise<{
   mixBackpressure: boolean
   backend?: string
 }> {
-  const st = (await window.electron?.pluginHostStatus?.()) as
-    | {
-        mixPipeConnected?: boolean
-        mixQueueDepth?: number
-        mixBackpressure?: boolean
-        backend?: string
-      }
-    | undefined
-  return {
-    mixPipeConnected: Boolean(st?.mixPipeConnected),
-    mixQueueDepth: Number(st?.mixQueueDepth ?? 0),
-    mixBackpressure: Boolean(st?.mixBackpressure),
-    backend: st?.backend,
+  const empty = {
+    mixPipeConnected: false,
+    mixQueueDepth: 0,
+    mixBackpressure: false,
+    backend: undefined as string | undefined,
+  }
+  const fn = window.electron?.pluginHostStatus
+  if (!fn) return empty
+  try {
+    const st = (await Promise.race([
+      fn(),
+      new Promise<null>((r) => setTimeout(() => r(null), 500)),
+    ])) as
+      | {
+          mixPipeConnected?: boolean
+          mixQueueDepth?: number
+          mixBackpressure?: boolean
+          backend?: string
+        }
+      | null
+      | undefined
+    if (!st) return empty
+    return {
+      mixPipeConnected: Boolean(st.mixPipeConnected),
+      mixQueueDepth: Number(st.mixQueueDepth ?? 0),
+      mixBackpressure: Boolean(st.mixBackpressure),
+      backend: st.backend,
+    }
+  } catch {
+    return empty
   }
 }
 

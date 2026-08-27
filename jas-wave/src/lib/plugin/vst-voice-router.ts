@@ -3,8 +3,11 @@
  */
 
 import {
+  ensureHostMidiAudible,
   findTrackPlaybackInstrument,
   getLoadedInstrumentForTrack,
+  rememberLoadedInstrument,
+  slotIdForTrackPlugin,
 } from './track-vst-runtime'
 import type { PluginInfo } from '../../../../shared/src/types/entidades'
 
@@ -67,43 +70,89 @@ export function preferredTrackPlaysSoftPad(): boolean {
 }
 
 function sendMidi(slotId: string, on: boolean, pitch: number, velocity: number): void {
-  try {
-    const api = window.electron
-    if (!api) return
-    const cmd = on
-      ? { type: 'noteOn' as const, slotId, pitch, velocity }
-      : { type: 'noteOff' as const, slotId, pitch }
-    if (typeof api.pluginHostMidi === 'function') {
-      void api.pluginHostMidi(cmd)
-      return
+  const fire = () => {
+    try {
+      const api = window.electron
+      if (!api) return
+      const cmd = on
+        ? { type: 'noteOn' as const, slotId, pitch, velocity }
+        : { type: 'noteOff' as const, slotId, pitch }
+      if (typeof api.pluginHostMidi === 'function') {
+        void api.pluginHostMidi(cmd)
+        return
+      }
+      void api.pluginHostSend?.(cmd)
+    } catch {
+      /* ignore */
     }
-    void api.pluginHostSend?.(cmd)
-  } catch {
-    /* ignore */
   }
+  if (on) {
+    void ensureHostMidiAudible().then(fire)
+    return
+  }
+  fire()
 }
 
-export function routeMidiToActiveVst(on: boolean, pitch: number, velocity = 90): boolean {
+/**
+ * Slot del host: mapa local, o id determinista (ventana undock sin lifecycle).
+ */
+function resolveTrackSlotId(trackId: string, plugins?: PluginInfo[]): string | null {
+  const loaded = getLoadedInstrumentForTrack(trackId)
+  if (loaded?.slotId) return loaded.slotId
+  const list = plugins ?? preferredPlugins
+  const hit = findTrackPlaybackInstrument(list)
+  if (!hit?.plugin) return null
+  const slotId = slotIdForTrackPlugin(trackId, hit.plugin.id)
+  const path =
+    (typeof hit.plugin.descripcion === 'string' && /\.vst3?/i.test(hit.plugin.descripcion)
+      ? hit.plugin.descripcion
+      : '') || hit.plugin.id
+  rememberLoadedInstrument({
+    trackId,
+    pluginId: hit.plugin.id,
+    path,
+    slotId,
+    instrument: true,
+  })
+  setActiveVstVoiceTarget({
+    slotId,
+    path,
+    trackId,
+    pluginId: hit.plugin.id,
+  })
+  return slotId
+}
+
+export function routeMidiToActiveVst(
+  on: boolean,
+  pitch: number,
+  velocity = 90,
+  opts?: { ignoreMute?: boolean },
+): boolean {
   if (forceBuiltin) return false
-  const slotId = active?.slotId ?? getPreferredLoadedSlotId()
+  const slotId =
+    active?.slotId ??
+    getPreferredLoadedSlotId() ??
+    (preferredTrackId ? resolveTrackSlotId(preferredTrackId, preferredPlugins) : null)
   if (!slotId) return false
   const trackId = active?.trackId ?? preferredTrackId
-  if (on && trackId && !trackChannelIsAudible(trackId)) return false
+  if (on && trackId && !opts?.ignoreMute && !trackChannelIsAudible(trackId)) return false
   sendMidi(slotId, on, pitch, velocity)
   return true
 }
 
-/** MIDI en vivo hacia el VST de una pista concreta (controlador / armado). */
+/** MIDI en vivo hacia el VST de una pista concreta (controlador / armado / piano roll). */
 export function routeMidiToTrack(
   trackId: string,
   on: boolean,
   pitch: number,
   velocity = 90,
+  opts?: { ignoreMute?: boolean; plugins?: PluginInfo[] },
 ): boolean {
   if (forceBuiltin) return false
-  const slotId = getLoadedInstrumentForTrack(trackId)?.slotId
+  const slotId = resolveTrackSlotId(trackId, opts?.plugins)
   if (!slotId) return false
-  if (on && !trackChannelIsAudible(trackId)) return false
+  if (on && !opts?.ignoreMute && !trackChannelIsAudible(trackId)) return false
   sendMidi(slotId, on, pitch, velocity)
   return true
 }

@@ -3,6 +3,9 @@ import type { IpcMainInvokeEvent } from 'electron'
 
 contextBridge.exposeInMainWorld('electron', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  localAppData: () => ipcRenderer.invoke('env-local-appdata'),
+  /** Sync — preload tiene process.env; el renderer a menudo no. */
+  localAppDataSync: process.env.LOCALAPPDATA || '',
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowMaximize: () => ipcRenderer.invoke('window-maximize'),
   windowClose: () => ipcRenderer.invoke('window-close'),
@@ -16,6 +19,7 @@ contextBridge.exposeInMainWorld('electron', {
   fileSaveBinary: (ruta: string, data: Uint8Array) => ipcRenderer.invoke('file-save-binary', ruta, data),
   ffmpegConvert: (input: string, output: string, args?: string[]) =>
     ipcRenderer.invoke('ffmpeg-convert', input, output, args ?? []),
+  ffmpegAvailable: () => ipcRenderer.invoke('ffmpeg-available'),
   fileRead: (ruta: string) => ipcRenderer.invoke('file-read', ruta),
   fileReadBinary: (ruta: string) => ipcRenderer.invoke('file-read-binary', ruta),
   fileExists: (ruta: string) => ipcRenderer.invoke('file-exists', ruta),

@@ -1062,6 +1062,7 @@ async function applyAudioDeviceOrFallback(
 
   if (prefs.backend === 'asio' && !isRiskyAsioPrefs(prefs)) {
     const current = await sendPluginHostCommand({ type: 'getAudioDevice' }, 8000)
+    let didRespawn = false
     if (current.ok && current.audio?.running) {
       const a = current.audio
       const sameDevice =
@@ -1080,6 +1081,7 @@ async function applyAudioDeviceOrFallback(
       if (!(await respawnNativeHost())) {
         return { ok: false, code: 'HostNotReady', message: lastError || 'No se pudo reiniciar el host.' }
       }
+      didRespawn = true
     }
     const applied = await sendPluginHostCommand(
       {
@@ -1095,7 +1097,8 @@ async function applyAudioDeviceOrFallback(
     if (applied.ok) {
       if (persist) writeAudioDevicePrefs(prefs)
       await ensureMixPipeConnected()
-      notifyHostRestarted()
+      // Solo avisar a la UI si el proceso murió: si no, forgetHostPlugins tumba el MIDI en play.
+      if (didRespawn) notifyHostRestarted()
       return applied
     }
     console.error('[plugin-host] setAudioDevice ASIO falló:', applied.message)
@@ -1116,7 +1119,7 @@ async function applyAudioDeviceOrFallback(
         if (retry.ok) {
           if (persist) writeAudioDevicePrefs(prefs)
           await ensureMixPipeConnected()
-          notifyHostRestarted()
+          if (didRespawn) notifyHostRestarted()
           return retry
         }
       }
@@ -1436,7 +1439,7 @@ export function sendPluginHostCommand(
       : timeoutMs
 
   // MIDI: host no responde — no usar la cola RPC (bloquearía load/ping).
-  if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setMixInputRate' || type === 'setSlotMix' || type === 'setMasterMix' || type === 'setTrackGraph' || type === 'setLiveMidiTargets' || type === 'metronome.set' || type === 'clip.schedule' || type === 'clip.stopAll') {
+  if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setMixInputRate' || type === 'setSlotMix' || type === 'setMasterMix' || type === 'setTrackGraph' || type === 'setMeterTrackOrder' || type === 'setLiveMidiTargets' || type === 'metronome.set' || type === 'clip.schedule' || type === 'clip.stopAll') {
     if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setLiveMidiTargets' || type === 'metronome.set' || type === 'clip.schedule' || type === 'clip.stopAll') {
       sendPluginHostMidi(cmd)
       return Promise.resolve({

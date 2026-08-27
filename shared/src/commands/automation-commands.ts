@@ -147,3 +147,75 @@ export function crearComandoAutomationClear(): CommandDefinition<any> {
     },
   }
 }
+
+/** Añade/actualiza un punto en la curva (write-on-play / touch). */
+export function crearComandoAutomationWritePoint(): CommandDefinition<any> {
+  return {
+    type: 'automation.writePoint',
+    description: 'Escribe un punto de automatización (merge en la curva existente)',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      required: ['trackId', 'parametro', 'tiempo', 'valor'],
+      properties: {
+        trackId: { type: 'string' },
+        parametro: { type: 'string' },
+        tiempo: { type: 'number' },
+        valor: { type: 'number' },
+        tolSec: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    handler: (estado: DAWState, payload): StateTransition<{ laneId: string }> => {
+      const trackId = String(payload.trackId)
+      const parametro = String(payload.parametro || 'volumen')
+      const tiempo = Number(payload.tiempo ?? 0)
+      const valor = Number(payload.valor ?? 0)
+      const tol = Math.max(0.01, Number(payload.tolSec ?? 0.05))
+      const tracks = estado.project.tracks.map((t) => {
+        if (t.id !== trackId) return t
+        const existing = (t.automatizaciones ?? []).filter((a) => a.parametro !== parametro)
+        const prev = (t.automatizaciones ?? []).find((a) => a.parametro === parametro)
+        let puntos: PuntoAutomatizacion[] = prev?.puntos ? [...prev.puntos] : []
+        const hit = puntos.findIndex((p) => Math.abs(p.tiempo - tiempo) <= tol)
+        const point: PuntoAutomatizacion = {
+          tiempo,
+          valor,
+          tipoCurva: 'lineal',
+          suavizado: 0,
+          tension: 0,
+          seleccionado: false,
+        }
+        if (hit >= 0) puntos[hit] = point
+        else {
+          puntos.push(point)
+          puntos.sort((a, b) => a.tiempo - b.tiempo)
+        }
+        const lane: AutomatizacionInfo = {
+          id: prev?.id ?? newId('auto'),
+          trackId,
+          parametro,
+          puntos,
+          grabando: true,
+          modo: 'touch',
+          escalaMinima: parametro === 'paneo' ? -1 : 0,
+          escalaMaxima: 1,
+          suavizado: 0,
+          resolucion: 0.01,
+          interpolacion: 'lineal',
+          habilitada: true,
+          color: '#38bdf8',
+        }
+        return { ...t, automatizaciones: [...existing, lane] }
+      })
+      const laneId =
+        tracks.find((t) => t.id === trackId)?.automatizaciones?.find((a) => a.parametro === parametro)?.id ??
+        ''
+      return {
+        state: { ...estado, project: { ...estado.project, tracks } },
+        events: [ev('automation.pointWritten', { trackId, parametro, tiempo, valor, laneId })],
+        result: { laneId },
+      }
+    },
+  }
+}

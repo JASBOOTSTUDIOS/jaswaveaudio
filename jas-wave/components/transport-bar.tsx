@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Piano } from 'lucide-react'
+import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Piano, Crosshair, Timer } from 'lucide-react'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { DAWState } from '../../shared/src'
 import { TransportPositionReadout } from './transport-position-readout'
@@ -380,6 +380,8 @@ export function TransportBar() {
   const isRecording = transport.grabacion === 'grabando'
   const isLooping = Boolean(transport.loop?.activo)
   const isMetronome = Boolean(transport.metronomo?.activo)
+  const isPunch = Boolean(transport.punch?.activo)
+  const isCountIn = Boolean(transport.countIn?.activo)
   const blocked = projectReady.blocking && !isPlaying
 
   const bpm = project.bpm?.valor ?? 120
@@ -409,6 +411,14 @@ export function TransportBar() {
 
   const toggleMetronome = async () => {
     await tienda.executor.execute('transport.toggleMetronome', {})
+  }
+
+  const togglePunch = async () => {
+    await tienda.executor.execute('transport.togglePunch', {})
+  }
+
+  const toggleCountIn = async () => {
+    await tienda.executor.execute('transport.toggleCountIn', {})
   }
 
   const setBpm = async (bpm: number) => {
@@ -480,6 +490,42 @@ export function TransportBar() {
           }`}
         >
           <Repeat className="size-4" />
+        </button>
+        <button
+          type="button"
+          onClick={togglePunch}
+          aria-label="Punch in/out"
+          aria-pressed={isPunch}
+          title={
+            isPunch
+              ? `Punch ${transport.punch?.inicio?.beats?.toFixed?.(1) ?? 0}–${transport.punch?.fin?.beats?.toFixed?.(1) ?? 0} beats`
+              : 'Punch in/out (ventana de grabación)'
+          }
+          className={`flex size-9 items-center justify-center rounded-md transition-colors ${
+            isPunch
+              ? 'bg-destructive/20 text-destructive'
+              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+          }`}
+        >
+          <Crosshair className="size-4" />
+        </button>
+        <button
+          type="button"
+          onClick={toggleCountIn}
+          aria-label="Count-in"
+          aria-pressed={isCountIn}
+          title={
+            isCountIn
+              ? `Count-in ${transport.countIn?.compases ?? 1} compás(es)`
+              : 'Count-in (pre-roll antes de grabar)'
+          }
+          className={`flex size-9 items-center justify-center rounded-md transition-colors ${
+            isCountIn
+              ? 'bg-accent-cyan/20 text-accent-cyan'
+              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+          }`}
+        >
+          <Timer className="size-4" />
         </button>
       </div>
 

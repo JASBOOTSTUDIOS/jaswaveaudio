@@ -76,8 +76,9 @@ export function PianoRollCanvasNotes({
       ctx.closePath()
       ctx.fill()
       ctx.stroke()
-      ctx.fillStyle = 'rgba(255,255,255,0.2)'
-      ctx.fillRect(left + w - 3, top, 3, h)
+      ctx.fillStyle = 'rgba(255,255,255,0.28)'
+      ctx.fillRect(left, top, 4, h)
+      ctx.fillRect(left + w - 4, top, 4, h)
     }
   }, [notes, selectedIds, width, height, pxPerBeat, keyH, highest])
 
@@ -92,8 +93,8 @@ export function PianoRollCanvasNotes({
       const w = Math.max(6, n.duracion * pxPerBeat)
       const h = keyH - 2
       if (x >= left && x <= left + w && y >= top && y <= top + h) {
-        if (x > left + w - 6) return { id: n.id, edge: 'end' }
-        if (x < left + 6) return { id: n.id, edge: 'start' }
+        if (x > left + w - 8) return { id: n.id, edge: 'end' }
+        if (x < left + 8) return { id: n.id, edge: 'start' }
         return { id: n.id, edge: false }
       }
     }

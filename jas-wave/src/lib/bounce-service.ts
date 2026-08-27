@@ -85,17 +85,18 @@ function decodeWavPcm16Stereo(bin: Uint8Array): { l: Float32Array; r: Float32Arr
   return { l, r, sampleRate }
 }
 
-/** Resolución runtime de instrumento por pista (solo slot VST). */
+/** Resolución runtime de instrumento por pista (solo slot VST host-loaded). */
 export function resolveBounceSlots(
   trackId: string,
   plugins: unknown,
 ): BounceSlotResolution {
+  const loaded = getLoadedInstrumentForTrack(trackId)
+  if (loaded?.slotId) return { slotId: loaded.slotId }
   const list = (plugins as PluginInfo[] | undefined) ?? []
   const hit = findTrackPlaybackInstrument(list)
   if (!hit || hit.kind !== 'vst') return {}
-  return {
-    slotId: getLoadedInstrumentForTrack(trackId)?.slotId,
-  }
+  // Dominio tiene instrumento pero host no confirmó load → bounce silencioso si no se asegura antes.
+  return {}
 }
 
 /** Construye el contenido de bounce con resolución runtime de slots. */
@@ -150,8 +151,36 @@ export async function runNativeBounce(
   renderJobUpdate(job.id, { status: 'rendering', progress: 0, outputPath: outPath })
   emit?.('render.progress', { jobId: job.id, progress: 0 })
 
-  // Stems Web Audio (clips de audio + Soft Pad), DRY por stemIndex.
-  let webStems = await prerenderWebStems(content, {
+  // Asegurar host loads y re-resolver slots (el content puede haberse construido antes del load).
+  let bounceContent = content
+  if (dawState?.project?.tracks?.length) {
+    const { ensureProjectVstInstruments } = await import('@/src/lib/plugin/track-vst-runtime')
+    await ensureProjectVstInstruments(dawState.project.tracks, dawState.project.master?.plugins)
+    bounceContent = buildRuntimeBounceContent(dawState, {
+      startSec,
+      endSec,
+    })
+  }
+
+  let midiNotes = 0
+  let midiWithSlot = 0
+  for (const track of bounceContent.tracks) {
+    for (const note of track.notes) {
+      midiNotes += 1
+      if (note.slotId) midiWithSlot += 1
+    }
+  }
+  if (midiNotes > 0 && midiWithSlot === 0) {
+    const msg =
+      'Bounce: pistas MIDI sin slot VST host-loaded (instrumentos no cargados). Nada que renderizar.'
+    renderJobUpdate(job.id, { status: 'failed', progress: 0, error: msg })
+    emit?.('render.error', { jobId: job.id, message: msg })
+    const cur = renderJobGet(job.id)
+    return cur ?? { ...job, status: 'failed' as const, error: msg }
+  }
+
+  // Stems Web Audio (clips de audio), DRY por stemIndex.
+  let webStems = await prerenderWebStems(bounceContent, {
     startSec,
     durationSec: duration,
     sampleRate: sr,
@@ -160,8 +189,8 @@ export async function runNativeBounce(
   // Automatización de volumen → bake en stems (el fader nativo queda en valor base)
   if (dawState) {
     const trackIndexById = new Map<string, number>()
-    content.tracks.forEach((t) => trackIndexById.set(t.trackId, t.stemIndex))
-    for (const bt of content.tracks) {
+    bounceContent.tracks.forEach((t) => trackIndexById.set(t.trackId, t.stemIndex))
+    for (const bt of bounceContent.tracks) {
       const pcm = webStems.get(bt.stemIndex)
       if (!pcm) continue
       const track = dawState.project.tracks.find((t) => t.id === bt.trackId)
@@ -188,7 +217,7 @@ export async function runNativeBounce(
   try {
     // Las colas MIDI por slot drenan solo cuando renderMix procesa bloques:
     // con el renderer offline activo ningún bloque se consume en vivo.
-    scheduleVstEvents(content, sr, startSec)
+    scheduleVstEvents(bounceContent, sr, startSec)
 
     let done = 0
     while (done < totalFrames) {
@@ -282,7 +311,14 @@ export async function runNativeBounce(
 
     if (job.format === 'flac' || job.format === 'mp3') {
       const converted = await tryConvertWithFfmpeg(outPathFinal, job.format, job.bitrate)
-      if (converted) outPathFinal = converted
+      if (converted) {
+        outPathFinal = converted
+      } else {
+        throw new Error(
+          `ffmpeg no disponible o falló la conversión a ${job.format.toUpperCase()}. ` +
+            `Se dejó WAV en ${outPathFinal}. Instala ffmpeg en PATH o exporta WAV.`,
+        )
+      }
     }
 
     const listenReport = buildAudioListenReport(analysis, {

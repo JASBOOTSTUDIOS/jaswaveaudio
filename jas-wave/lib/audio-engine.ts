@@ -13,10 +13,12 @@ import {
   getNativeMasterPeak,
   getNativeMaxStemPeak,
   getNativeTrackPeak,
+  isNativeMeterHostAvailable,
   setMixMeterTrackOrder,
 } from '@/src/lib/plugin/native-mix-meters'
 import {
   getCachedHostTransportClock,
+  isHostTransportClockStalled,
   hostClipLoadPath,
   hostClipLoadPcm,
   hostClipSchedule,
@@ -150,22 +152,48 @@ export class WebAudioEngine {
     return this.nativeOutput
   }
 
+  public getIsPlaying(): boolean {
+    return this.isPlaying
+  }
+
   public getSampleRate(): number {
     const host = getCachedHostTransportClock().sampleRate
     if (host >= 8000) return host
     return this.audioCtx?.sampleRate ?? this.preferredSampleRate
   }
 
-  /** Playhead — reloj de samples del Plugin Host. */
-  public getTimelineSeconds(): number {
-    if (this.isPlaying) {
-      const host = getCachedHostTransportClock()
-      if (host.playing || host.timelineSec > 0) return Math.max(0, host.timelineSec)
-      if (this.playWallEpochMs > 0) {
-        return this.playheadStartSec + Math.max(0, (performance.now() - this.playWallEpochMs) / 1000)
-      }
+  private wallClockSec(): number {
+    if (this.playWallEpochMs > 0) {
+      return this.playheadStartSec + Math.max(0, (performance.now() - this.playWallEpochMs) / 1000)
     }
     return this.playheadStartSec
+  }
+
+  /**
+   * Playhead UI — host samples; wall solo si el clock está congelado o aún no aplicó seek.
+   * No usar para programar MIDI (ver getMidiTimelineSeconds).
+   */
+  public getTimelineSeconds(): number {
+    if (!this.isPlaying) return this.playheadStartSec
+    const wall = this.wallClockSec()
+    const host = getCachedHostTransportClock()
+    if (host.playing && host.timelineSec >= 0) {
+      // Tras seek: host puede reportar timeline vieja por encima del wall.
+      if (host.timelineSec > wall + 0.35) return wall
+      if (isHostTransportClockStalled() && wall - host.timelineSec > 0.15) return wall
+      return Math.max(0, host.timelineSec)
+    }
+    return wall
+  }
+
+  /**
+   * Reloj MIDI = pared en play. El RPC getTransportClock comparte stdin con noteOn/load;
+   * si se atasca, un lookahead ligado al host deja de emitir notas para siempre mientras
+   * el playhead UI (wall) sigue. Delays noteOn son relativos al instante de envío.
+   */
+  private getMidiTimelineSeconds(): number {
+    if (!this.isPlaying) return this.playheadStartSec
+    return this.wallClockSec()
   }
 
   public getAudibleTimelineSeconds(): number {
@@ -963,19 +991,40 @@ export class WebAudioEngine {
     }, 80)
   }
 
-  /** Hot-patch: slot VST confirmado en runtime. */
+  /** Hot-patch: slot VST confirmado en runtime. No borrar si viene undefined (ensure fallido). */
   public patchTrackVstInstrument(trackId: string, slotId: string | undefined): void {
-    const prev = this.pendingTracksConfig.find((t) => t.id === trackId)
-    const slotChanged = Boolean(slotId) && slotId !== prev?.vstInstrumentSlotId
+    if (!slotId) return
     this.pendingTracksConfig = this.pendingTracksConfig.map((t) =>
       t.id === trackId ? { ...t, vstInstrumentSlotId: slotId } : t,
     )
-    // Notas saltadas mientras el slot no existía: reabrir la ventana actual.
-    if (slotChanged && this.isPlaying) {
-      const nowTimeline = this.getTimelineSeconds()
-      this.midiScheduledUntilSec = Math.min(this.midiScheduledUntilSec, nowTimeline)
+    // Siempre reabrir lookahead en play: tras restart del host el slotId es el mismo
+    // pero las noteOn ya se marcaron en midiVoiceKeys hacia un proceso muerto → silencio.
+    if (this.isPlaying) {
+      for (const clip of this.pendingMidiClips) {
+        if (clip.trackId !== trackId) continue
+        this.midiClipNoteCursor.delete(clip.id)
+        for (const k of [...this.midiVoiceKeys]) {
+          if (k.startsWith(clip.id + ':')) this.midiVoiceKeys.delete(k)
+        }
+        for (const k of [...this.midiCcKeys]) {
+          if (k.startsWith(clip.id + ':')) this.midiCcKeys.delete(k)
+        }
+      }
+      const nowTimeline = this.getMidiTimelineSeconds()
+      this.midiScheduledUntilSec = Math.max(0, nowTimeline - 0.02)
       this.scheduleMidiLookahead()
     }
+  }
+
+  /** Tras restart del Plugin Host: reenviar MIDI vivo (mismos slotIds, proceso nuevo). */
+  public rescheduleMidiAfterHostRestart(): void {
+    if (!this.isPlaying) return
+    this.midiVoiceKeys.clear()
+    this.midiCcKeys.clear()
+    this.midiClipNoteCursor.clear()
+    const nowTimeline = this.getMidiTimelineSeconds()
+    this.midiScheduledUntilSec = Math.max(0, nowTimeline - 0.02)
+    this.scheduleMidiLookahead()
   }
 
   private stopMidiScheduler() {
@@ -992,19 +1041,23 @@ export class WebAudioEngine {
   private scheduleMidiLookahead() {
     if (!this.isPlaying) return
     const horizon = 0.85
+    const nowTimeline = this.getMidiTimelineSeconds()
+    // Lookahead inflado o reloj que retrocedió: rebobinar o no habrá más noteOn.
+    if (this.midiScheduledUntilSec > nowTimeline + 0.35) {
+      this.midiScheduledUntilSec = Math.max(0, nowTimeline - 0.02)
+      this.midiClipNoteCursor.clear()
+    }
     const from = this.midiScheduledUntilSec
-    const nowTimeline = this.getTimelineSeconds()
     const windowStart = Math.max(from, nowTimeline - 0.05)
     const windowEnd = nowTimeline + horizon
     if (windowEnd <= windowStart) return
 
-    this.scheduleMidiClipsInWindow(windowStart, windowEnd)
+    this.scheduleMidiClipsInWindow(windowStart, windowEnd, nowTimeline)
     this.midiScheduledUntilSec = windowEnd
   }
 
-  private scheduleMidiClipsInWindow(windowStart: number, windowEnd: number) {
+  private scheduleMidiClipsInWindow(windowStart: number, windowEnd: number, nowTimeline = this.getMidiTimelineSeconds()) {
     const sr = this.getSampleRate()
-    const nowTimeline = this.getTimelineSeconds()
     const cfgById = new Map(this.pendingTracksConfig.map((t) => [t.id, t]))
 
     for (const clip of this.pendingMidiClips) {
@@ -1076,7 +1129,7 @@ export class WebAudioEngine {
     velocity: number,
     whenSec: number,
     durationSec: number,
-    nowTimeline = this.getTimelineSeconds(),
+    nowTimeline = this.getMidiTimelineSeconds(),
     sr = this.getSampleRate(),
   ) {
     const delayOn = Math.max(
@@ -1130,7 +1183,7 @@ export class WebAudioEngine {
 
   public getMeterLevel(trackId: string): number {
     let native = 0
-    if (this.usesNativeOutput()) {
+    if (isNativeMeterHostAvailable()) {
       const p = getNativeTrackPeak(trackId)
       if (p != null) native = p
     }
@@ -1149,7 +1202,7 @@ export class WebAudioEngine {
 
   public getMasterMeterLevel(): number {
     let native = 0
-    if (this.usesNativeOutput()) {
+    if (isNativeMeterHostAvailable()) {
       native = Math.max(getNativeMasterPeak(), getNativeMaxStemPeak())
     }
     let web = 0

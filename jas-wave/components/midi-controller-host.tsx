@@ -46,6 +46,7 @@ import {
   midiNativeLiveTargetIds,
   midiRecordTargetIds,
   toMidiRouteTrack,
+  trackMatchesMidiDevice,
   type MidiRouteTrack,
 } from '@/src/lib/midi-track-io'
 
@@ -82,13 +83,27 @@ function sendLiveMidiTargets(tracks: MidiRouteTrack[]): void {
   }
 }
 
+function trackUsesNativeLiveMidi(trackId: string, deviceId: string, tracks: MidiRouteTrack[]): boolean {
+  const t = tracks.find((x) => x.id === trackId)
+  if (!t) return false
+  return (
+    Boolean(t.configuracion?.monitorizarEntrada) &&
+    assignedMidiDevice(t).length > 0 &&
+    trackMatchesMidiDevice(t, deviceId)
+  )
+}
+
 function playLive(
   trackIds: string[],
   _selectedId: string | null,
   msg: MidiParsed,
   source?: MidiSource,
+  deviceId?: string,
+  tracks?: MidiRouteTrack[],
 ): void {
   if (trackIds.length === 0) return
+  const list = tracks ?? []
+  const dev = deviceId ?? ''
   if (msg.kind === 'cc') {
     if (source !== 'native') {
       for (const id of trackIds) {
@@ -102,7 +117,7 @@ function playLive(
   const on = msg.kind === 'noteOn'
   const vel = on ? msg.velocity : 0
   for (const id of trackIds) {
-    if (source === 'native' && getLoadedInstrumentForTrack(id)) continue
+    if (source === 'native' && trackUsesNativeLiveMidi(id, dev, list)) continue
     routeMidiToTrack(id, on, msg.pitch, vel)
   }
 }
@@ -127,6 +142,7 @@ export function MidiControllerHost() {
   const recStartSecRef = useRef(0)
   const recStartPerfRef = useRef(0)
   const wasRecRef = useRef(false)
+  const punchWindowRef = useRef<{ startSec: number; endSec: number } | null>(null)
   const playingRef = useRef(playing)
   const bpmRef = useRef(bpm)
   const tracksRef = useRef<MidiRouteTrack[]>(tracks)
@@ -192,7 +208,7 @@ export function MidiControllerHost() {
       const list = tracksRef.current
       const id = deviceId ?? ''
       if (dispatchMidiMapMessage(msg)) return
-      playLive(midiLiveTargetIds(list, id), selectedRef.current, msg, source)
+      playLive(midiLiveTargetIds(list, id), selectedRef.current, msg, source, id, list)
       if (recMapRef.current.size === 0) return
       if (msg.kind !== 'noteOn' && msg.kind !== 'noteOff') return
       const recIds = midiRecordTargetIds(list, id)
@@ -217,15 +233,44 @@ export function MidiControllerHost() {
     if (isUndockWindow()) return
     if (recording && !wasRecRef.current) {
       wasRecRef.current = true
-      const armedMidi = (tienda.obtenerEstado().project?.tracks ?? []).filter(
+      const st = tienda.obtenerEstado()
+      const armedMidi = (st.project?.tracks ?? []).filter(
         (t) => t.armada && isMidiLikeTrack(t.tipo) && assignedMidiDevice(t).length > 0,
       )
       recMapRef.current = new Map()
       if (armedMidi.length === 0) return
-      recStartSecRef.current = audioEngine.getTimelineSeconds()
-      recStartPerfRef.current = performance.now()
-      for (const t of armedMidi) {
-        recMapRef.current.set(t.id, createMidiRecorder(recStartSecRef.current))
+      const transport = st.transport
+      const useCountIn = Boolean(transport.countIn?.activo)
+      const bars = Math.max(1, transport.countIn?.compases ?? 1)
+      const beatsPerBar = st.project?.timeSignature?.numerador ?? 4
+      const bpm = bpmRef.current || 120
+      const delayMs = useCountIn ? bars * beatsPerBar * (60000 / bpm) : 0
+      const punchOn = Boolean(transport.punch?.activo)
+      const punchStartSec = transport.punch?.inicio?.segundos ?? 0
+      const punchEndSec = transport.punch?.fin?.segundos ?? 0
+      const startRec = () => {
+        if (!wasRecRef.current) return
+        const startSec =
+          punchOn && punchEndSec > punchStartSec
+            ? punchStartSec
+            : audioEngine.getTimelineSeconds()
+        recStartSecRef.current = startSec
+        recStartPerfRef.current = performance.now()
+        punchWindowRef.current =
+          punchOn && punchEndSec > punchStartSec
+            ? { startSec: punchStartSec, endSec: punchEndSec }
+            : null
+        for (const t of armedMidi) {
+          recMapRef.current.set(t.id, createMidiRecorder(startSec))
+        }
+      }
+      if (delayMs > 0) {
+        if (useCountIn && !transport.metronomo?.activo) {
+          void tienda.executor.execute('transport.toggleMetronome', {})
+        }
+        window.setTimeout(startRec, delayMs)
+      } else {
+        startRec()
       }
       return
     }
@@ -233,6 +278,7 @@ export function MidiControllerHost() {
       wasRecRef.current = false
       const recs = recMapRef.current
       recMapRef.current = new Map()
+      punchWindowRef.current = null
       if (recs.size === 0) return
       const endSec = playingRef.current
         ? audioEngine.getTimelineSeconds()
@@ -240,7 +286,17 @@ export function MidiControllerHost() {
       const grid = midiController.getQuantizeGridBeats()
       void (async () => {
         for (const [trackId, rec] of recs) {
-          const raw = flushRecorder(rec, endSec)
+          let raw = flushRecorder(rec, endSec)
+          const win = punchWindowRef.current
+          if (win) {
+            raw = raw
+              .map((n) => ({
+                ...n,
+                startSec: Math.max(n.startSec, win.startSec),
+                endSec: Math.min(n.endSec, win.endSec),
+              }))
+              .filter((n) => n.endSec > n.startSec + 0.01)
+          }
           const drafts = recordedToClipNotes(raw, rec.startSec, bpmRef.current, grid)
           if (drafts.length === 0) continue
           const span = clipSpanBeats(drafts, 1)

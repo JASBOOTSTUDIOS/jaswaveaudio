@@ -37,6 +37,7 @@ import { PanelLeft, PanelRight, PanelBottom, Plus, X } from 'lucide-react'
 import { JasWaveAppIcon } from '@/components/brand'
 
 function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
+  useShortcutDispatcher()
   const [tabs, setTabs] = useState<ToolId[]>(() => {
     try {
       const params = new URLSearchParams(window.location.search)

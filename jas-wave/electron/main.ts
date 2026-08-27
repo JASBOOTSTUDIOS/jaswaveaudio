@@ -35,9 +35,25 @@ function resolveAppIconPath(): string | undefined {
 }
 
 function sendMenuAction(id: string) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('menu-action', id)
+  const focused = BrowserWindow.getFocusedWindow()
+  // Transporte / proyecto: siempre en la ventana principal (motor de audio).
+  if (
+    String(id).startsWith('transporte.') ||
+    String(id).startsWith('proyecto.') ||
+    id === 'ventana.ajustes'
+  ) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('menu-action', id)
+    }
+    return
   }
+  const target =
+    focused && !focused.isDestroyed()
+      ? focused
+      : mainWindow && !mainWindow.isDestroyed()
+        ? mainWindow
+        : null
+  target?.webContents.send('menu-action', id)
 }
 
 function senderIsSatellite(sender: { getURL?: () => string } | null | undefined): boolean {
@@ -98,11 +114,11 @@ function buildAppMenu() {
     {
       label: 'Transporte',
       submenu: [
-        { label: 'Reproducir / Pausar', click: () => sendMenuAction('transporte.reproducir') },
-        { label: 'Detener', click: () => sendMenuAction('transporte.detener') },
+        { label: 'Reproducir / Pausar', accelerator: 'Space', click: () => sendMenuAction('transporte.reproducir') },
+        { label: 'Detener', accelerator: 'Enter', click: () => sendMenuAction('transporte.detener') },
         { label: 'Grabar', accelerator: 'CmdOrCtrl+R', click: () => sendMenuAction('transporte.grabar') },
         { type: 'separator' },
-        { label: 'Ir al inicio', click: () => sendMenuAction('transporte.inicio') },
+        { label: 'Ir al inicio', accelerator: 'Home', click: () => sendMenuAction('transporte.inicio') },
         { label: 'Bucle', click: () => sendMenuAction('transporte.loop') },
         { label: 'Metrónomo', click: () => sendMenuAction('transporte.metronomo') },
       ],
@@ -214,6 +230,7 @@ app.on('activate', () => {
 })
 
 ipcMain.handle('get-app-version', () => app.getVersion())
+ipcMain.handle('env-local-appdata', () => process.env.LOCALAPPDATA || '')
 
 ipcMain.on('agent-bridge-reply', (_event: IpcMainInvokeEvent, id: string, result: unknown, error?: string) => {
   resolveAgentBridgeReply(String(id), result, error ? String(error) : undefined)
@@ -260,6 +277,23 @@ ipcMain.handle('file-save-binary', async (_event: IpcMainInvokeEvent, ruta: stri
     return { success: true }
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
+  }
+})
+
+ipcMain.handle('ffmpeg-available', async () => {
+  try {
+    const { spawn } = await import('node:child_process')
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn('ffmpeg', ['-version'], { windowsHide: true })
+      child.on('error', (e) => reject(e))
+      child.on('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(`ffmpeg exit ${code}`))
+      })
+    })
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 })
 

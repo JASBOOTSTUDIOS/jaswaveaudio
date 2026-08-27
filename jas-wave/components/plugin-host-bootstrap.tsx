@@ -19,13 +19,18 @@ import {
   reportProjectDevice,
   reportProjectHost,
 } from '@/src/lib/project-ready'
-import { ensureJasWaveRolesRegistered } from '@/src/lib/plugin/jaswave-roles'
+import { ensureJasWaveRolesRegistered, setLocalAppDataHint } from '@/src/lib/plugin/jaswave-roles'
 import { ensureJasWavePianoRegistered } from '@/src/lib/plugin/jaswave-piano'
 
 export function PluginHostBootstrap() {
   useEffect(() => {
     hydratePluginCatalog()
     pluginManager.ensureBuiltins()
+    void window.electron?.localAppData?.().then((p: string) => {
+      if (p) setLocalAppDataHint(p)
+      ensureJasWaveRolesRegistered()
+      ensureJasWavePianoRegistered()
+    })
     ensureJasWaveRolesRegistered()
     ensureJasWavePianoRegistered()
     const gen = getProjectReadyGeneration()

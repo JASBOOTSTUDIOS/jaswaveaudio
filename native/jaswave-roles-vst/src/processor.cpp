@@ -394,7 +394,11 @@ void Processor::render(float* L, float* R, int32_t numSamples) {
       s = processFilter(v, s) * clampEnv(v.env);
       mix += s;
     }
-    mix = std::tanh(mix * 0.85f) * (0.25f + gainN_.load() * 1.5f);
+    /* Salida caliente (~+12 dB vs tanh*0.85 antiguo); soft-clip solo overs. */
+    const float makeup = 2.4f + gainN_.load() * 3.6f;
+    mix *= makeup;
+    if (mix > 0.95f) mix = 0.95f + 0.05f * std::tanh((mix - 0.95f) * 6.f);
+    else if (mix < -0.95f) mix = -0.95f - 0.05f * std::tanh((-mix - 0.95f) * 6.f);
     L[i] = mix;
     R[i] = mix;
   }

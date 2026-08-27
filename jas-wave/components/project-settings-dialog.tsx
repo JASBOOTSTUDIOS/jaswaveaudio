@@ -668,6 +668,28 @@ function AudioTab() {
             Panel ASIO
           </button>
         ) : null}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            void (async () => {
+              setBusy(true)
+              try {
+                const { clearPluginQuarantineAndRestore } = await import('@/src/lib/audio-device-cli')
+                const r = await clearPluginQuarantineAndRestore(tienda)
+                setStatus(r.message)
+              } catch (e) {
+                setStatus(e instanceof Error ? e.message : String(e))
+              } finally {
+                setBusy(false)
+              }
+            })()
+          }}
+          className="rounded-md border border-border px-3 py-1.5 text-[11px] text-foreground hover:bg-panel-raised disabled:opacity-50"
+          title="Limpia VSTs aislados tras crash del host y restaura ASIO/mix"
+        >
+          Limpiar cuarentena VST
+        </button>
       </div>
 
       {status ? <p className="text-[11px] text-muted-foreground">{status}</p> : null}

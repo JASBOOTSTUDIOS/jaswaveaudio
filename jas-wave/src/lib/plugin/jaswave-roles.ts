@@ -76,20 +76,58 @@ export function isJasWaveRolesDescriptor(d: PluginDescriptor): boolean {
   return /jaswave\s*roles|jaswaveroles/.test(blob) || (d.vendor === 'JasWave' && /roles/.test(blob))
 }
 
+/** Hint de %LOCALAPPDATA% (main/IPC o bootstrap) cuando el renderer no tiene process.env. */
+let localAppDataHint = ''
+
+export function setLocalAppDataHint(path: string): void {
+  const p = String(path || '').trim()
+  if (p) localAppDataHint = p.replace(/[/\\]+$/, '')
+}
+
+function resolveLocalAppData(): string {
+  if (typeof process !== 'undefined') {
+    const env = process.env?.LOCALAPPDATA?.trim()
+    if (env) return env.replace(/[/\\]+$/, '')
+    const profile = process.env?.USERPROFILE?.trim()
+    if (profile) return `${profile.replace(/[/\\]+$/, '')}\\AppData\\Local`
+  }
+  if (localAppDataHint) return localAppDataHint
+  try {
+    const sync = (window as unknown as { electron?: { localAppDataSync?: string } })?.electron
+      ?.localAppDataSync
+    if (sync && String(sync).trim()) return String(sync).trim().replace(/[/\\]+$/, '')
+  } catch {
+    /* ignore */
+  }
+  return ''
+}
+
 /** Ruta instalada por post-build de native/jaswave-roles-vst. */
 export function defaultJasWaveRolesPath(): string {
-  if (typeof process !== 'undefined' && process.env?.LOCALAPPDATA) {
-    return `${process.env.LOCALAPPDATA}\\Programs\\Common\\VST3\\JasWave\\JasWaveRoles.vst3`
-  }
-  // Renderer Electron (sin process.env): heurística vía userData no disponible; el host descubre por carpeta VST3.
-  return ''
+  const local = resolveLocalAppData()
+  if (local) return `${local}\\Programs\\Common\\VST3\\JasWave\\JasWaveRoles.vst3`
+  return 'C:\\Program Files\\Common Files\\VST3\\JasWave\\JasWaveRoles.vst3'
+}
+
+try {
+  ;(globalThis as unknown as { __jaswaveRolesPath?: () => string }).__jaswaveRolesPath =
+    defaultJasWaveRolesPath
+} catch {
+  /* ignore */
 }
 
 /** Registra descriptor Roles en catálogo si falta (path conocido o el pasado). */
 export function ensureJasWaveRolesRegistered(explicitPath?: string): PluginDescriptor | undefined {
-  const existing = findJasWaveRolesDescriptor()
-  if (existing?.path) return existing
   const path = (explicitPath || defaultJasWaveRolesPath()).trim()
+  const existing = findJasWaveRolesDescriptor()
+  if (existing?.path) {
+    // Corregir path si el registro previo usó Common Files vacío y ahora tenemos LOCALAPPDATA.
+    if (path && existing.path !== path && /AppData\\Local/i.test(path)) {
+      existing.path = path
+      pluginRegistry.register(existing)
+    }
+    return existing
+  }
   if (!path) return undefined
   let hash = 0
   for (let i = 0; i < path.length; i++) hash = ((hash << 5) - hash + path.charCodeAt(i)) | 0
@@ -161,11 +199,8 @@ export async function insertJasWaveRolesOnTrack(
   const info = jasWaveRolesPluginInfo()
   if (!info) return null
   await executeInsert(info)
-  try {
-    await ensureTrackVstInstrument(trackId, info)
-    await applyJasWaveRolesParameter(trackId, info, role)
-  } catch {
-    /* host opcional */
-  }
+  const loaded = await ensureTrackVstInstrument(trackId, info)
+  if (!loaded) return null
+  await applyJasWaveRolesParameter(trackId, info, role)
   return info
 }

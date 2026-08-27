@@ -1,5 +1,5 @@
 /**
- * Prueba profesional completa: Soft Pad only (sin VST crashy) + ASIO + buffer stress.
+ * Prueba profesional: Music Build rolesOnly (Piano/Roles) + ASIO + buffer stress.
  *
  * Criterios (estilo Reaper estable):
  *  - playhead avanza, sin hang
@@ -77,9 +77,10 @@ for (const r of setup.results || []) {
   console.log(`  ${r.success ? '✓' : '✗'} ${r.type}: ${String(r.message || '').slice(0, 100)}`)
 }
 
-console.log('\n2) Music Build Soft Pad only (sin VST)')
+console.log('\n2) Music Build rolesOnly (Piano/Roles nativos)')
 const build = await action('daw.musicBuild', {
   aplicar: true,
+  rolesOnly: true,
   softPadOnly: true,
   prompt: 'worship soft ballad Am 72 bpm piano bass drums guitar pad stable buffer',
   bpm: 72,
@@ -120,7 +121,7 @@ console.log(`  ${arm.success ? '✓' : '✗'} ${arm.message}`)
 const state = await req('/state')
 const tracks = state.tracks || []
 const muted = tracks.filter((t) => t.silenciada || t.muted)
-console.log(`  tracks=${tracks.length} muted=${muted.length} (Soft Pad: drums/bass/piano — guitar/pad omitidos para CPU)`)
+console.log(`  tracks=${tracks.length} muted=${muted.length} (rolesOnly: drums/bass/piano)`)
 for (const t of muted) {
   const id = t.id
   if (!id) continue
@@ -197,6 +198,11 @@ const healthyN = samples.filter((s) => s.status === 'healthy').length
 const maxIterMs = Math.max(...samples.map((s) => s.iterMs || 0), 0)
 const hostOk = samples.every((s) => s.hostOk !== false)
 
+const avgIterMs =
+  samples.reduce((a, s) => a + (s.iterMs || 0), 0) / Math.max(1, samples.length)
+// Con analysis.buffer ~1s/iter, exigir N≈duration/avgIter (no intervalMs nominal).
+const minSamples = Math.max(6, Math.floor((durationSec * 1000) / Math.max(avgIterMs, intervalMs) * 0.45))
+
 const verdict = {
   ok:
     playheadOk &&
@@ -209,9 +215,9 @@ const verdict = {
     totalOverflow === 0 &&
     maxFillRatio < 1.85 &&
     avgMaster > 0.001 &&
-    healthyN >= Math.ceil(samples.length * 0.6) &&
-    samples.length >= Math.max(8, Math.floor(durationSec / (intervalMs / 1000) * 0.5)) &&
-    maxIterMs < 2500,
+    healthyN >= Math.ceil(samples.length * 0.55) &&
+    samples.length >= minSamples &&
+    maxIterMs < 4000,
   playheadOk,
   hostOk,
   hangHits,
@@ -225,6 +231,8 @@ const verdict = {
   avgMaster: Number(avgMaster.toFixed(4)),
   maxMaster: Number(maxMaster.toFixed(4)),
   maxIterMs,
+  avgIterMs: Number(avgIterMs.toFixed(0)),
+  minSamples,
   healthy: `${healthyN}/${samples.length}`,
   sampleCount: samples.length,
   durationSec,

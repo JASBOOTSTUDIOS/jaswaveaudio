@@ -86,7 +86,7 @@ private:
   std::atomic<float> releaseN_{0.4f};
   std::atomic<float> cutoffN_{0.55f};
   std::atomic<float> resonanceN_{0.25f};
-  std::atomic<float> gainN_{0.7f};
+  std::atomic<float> gainN_{0.85f};
   std::atomic<float> voicesN_{0.5f};
   bool wasPlaying_{false};
   std::array<Voice, kMaxVoices> voices_{};

@@ -19,6 +19,7 @@ import {
   actionRequiresProjectReady,
   waitUntilProjectReady,
 } from './project-ready'
+import { getLoadedInstrumentForTrack } from './plugin/track-vst-runtime'
 
 export type AuditTrackLine = {
   id: string
@@ -33,6 +34,8 @@ export type AuditTrackLine = {
   plugins: string[]
   clips: number
   notes: number
+  /** Slot host confirmado; vacío = MIDI no llega al VST. */
+  vstSlot?: string
 }
 
 export type AuditSnapshot = {
@@ -115,6 +118,7 @@ export async function buildAuditSnapshot(tienda: TiendaDAW): Promise<AuditSnapsh
     const nativePeak = getNativeTrackPeak(t.id)
     const peak = Math.max(nativePeak ?? 0, webPeak)
     const plugs = (t.plugins ?? []).map((p) => p.nombre)
+    const vstSlot = getLoadedInstrumentForTrack(t.id)?.slotId
     return {
       id: t.id,
       name: t.nombre || t.id,
@@ -128,6 +132,7 @@ export async function buildAuditSnapshot(tienda: TiendaDAW): Promise<AuditSnapsh
       plugins: plugs,
       clips: clips.length,
       notes,
+      vstSlot,
     }
   })
 
@@ -318,16 +323,29 @@ export async function runCliActions(tienda: TiendaDAW, actions: DawAction[]) {
     } else if (a.type === 'analysis.buffer') {
       const { analyzeBufferHealth } = await import('./audio-buffer-health')
       const p = (a.payload ?? {}) as { sampleMs?: number; reset?: boolean }
-      const report = await analyzeBufferHealth({
-        sampleMs: typeof p.sampleMs === 'number' ? p.sampleMs : 400,
-        reset: p.reset !== false,
-      })
-      early.push({
-        type: a.type,
-        success: true,
-        message: `[${report.status}] ${report.summary}`,
-        data: report,
-      })
+      const sampleMs = typeof p.sampleMs === 'number' ? p.sampleMs : 400
+      const report = await Promise.race([
+        analyzeBufferHealth({
+          sampleMs,
+          reset: p.reset !== false,
+        }),
+        new Promise<null>((r) => setTimeout(() => r(null), Math.min(8000, sampleMs + 2500))),
+      ])
+      if (!report) {
+        early.push({
+          type: a.type,
+          success: false,
+          message: 'analysis.buffer timeout (host IPC lento)',
+          data: { status: 'unknown', ok: false },
+        })
+      } else {
+        early.push({
+          type: a.type,
+          success: true,
+          message: `[${report.status}] ${report.summary}`,
+          data: report,
+        })
+      }
     } else if (a.type === 'analysis.fxBlame') {
       const { runFxBlame } = await import('./audio-fx-blame')
       const p = (a.payload ?? {}) as {
@@ -379,7 +397,7 @@ export async function runCliActions(tienda: TiendaDAW, actions: DawAction[]) {
 }
 
 /** Bump en cada cambio del bridge para forzar remount tras HMR. */
-export const AGENT_BRIDGE_REV = 11
+export const AGENT_BRIDGE_REV = 12
 
 /** Montar en App: escucha agent-bridge-request del main. */
 export function AgentAuditHost() {
@@ -471,16 +489,29 @@ export function AgentAuditHost() {
               } else if (a.type === 'analysis.buffer') {
                 const { analyzeBufferHealth } = await import('./audio-buffer-health')
                 const p = (a.payload ?? {}) as { sampleMs?: number; reset?: boolean }
-                const report = await analyzeBufferHealth({
-                  sampleMs: typeof p.sampleMs === 'number' ? p.sampleMs : 400,
-                  reset: p.reset !== false,
-                })
-                specialResults.push({
-                  type: 'analysis.buffer',
-                  success: true,
-                  message: `[${report.status}] ${report.summary}`,
-                  data: report,
-                })
+                const sampleMs = typeof p.sampleMs === 'number' ? p.sampleMs : 400
+                const report = await Promise.race([
+                  analyzeBufferHealth({
+                    sampleMs,
+                    reset: p.reset !== false,
+                  }),
+                  new Promise<null>((r) => setTimeout(() => r(null), Math.min(8000, sampleMs + 2500))),
+                ])
+                if (!report) {
+                  specialResults.push({
+                    type: 'analysis.buffer',
+                    success: false,
+                    message: 'analysis.buffer timeout (host IPC lento)',
+                    data: { status: 'unknown', ok: false },
+                  })
+                } else {
+                  specialResults.push({
+                    type: 'analysis.buffer',
+                    success: true,
+                    message: `[${report.status}] ${report.summary}`,
+                    data: report,
+                  })
+                }
               } else if (a.type === 'audio.armNative') {
                 const ok = await audioEngine.armNativeMixOutput()
                 const d = audioEngine.getTimingDiagnostics()

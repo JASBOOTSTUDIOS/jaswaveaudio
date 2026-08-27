@@ -273,6 +273,19 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 onClick={() => void tienda.executor.execute('track.toggleSolo', { trackId: track.id })}
                 activeClass="bg-track-vocals/20 text-track-vocals"
               />
+              <ToggleChip
+                active={Boolean(track.frozen)}
+                label={track.frozen ? 'Unfreeze' : 'Freeze'}
+                icon={Waves}
+                onClick={() => {
+                  void (async () => {
+                    const { freezeTrack, unfreezeTrack } = await import('@/src/lib/track-freeze')
+                    if (track.frozen) await unfreezeTrack(tienda, track.id)
+                    else await freezeTrack(tienda, track.id)
+                  })()
+                }}
+                activeClass="bg-accent-amber/20 text-accent-amber"
+              />
               {isMidi && (
                 <button
                   type="button"

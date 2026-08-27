@@ -17,6 +17,7 @@
     "payload": {
       "prompt": "worship soft ballad Am 72 bpm piano bass drums guitar pad from scratch",
       "aplicar": true,
+      "rolesOnly": true,
       "bpm": 72,
       "nombre": "CLI From Scratch Timing",
       "minutos": 1,

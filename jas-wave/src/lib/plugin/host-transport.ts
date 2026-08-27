@@ -27,6 +27,10 @@ let cachedClock: HostTransportClock = {
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollInFlight = false
+/** Detección de clock congelado (samples sin avanzar con playing=true). */
+let lastSamplesSeen = -1
+let lastSamplesAtMs = 0
+let hostClockStalled = false
 
 function electronApi(): {
   pluginHostSend?: (cmd: Record<string, unknown>) => Promise<unknown>
@@ -37,6 +41,30 @@ function electronApi(): {
 
 export function getCachedHostTransportClock(): HostTransportClock {
   return cachedClock
+}
+
+/** true si el host reporta playing pero samples no avanzan (~250ms+). */
+export function isHostTransportClockStalled(): boolean {
+  return hostClockStalled
+}
+
+function noteClockProgress(clock: HostTransportClock): void {
+  const now = Date.now()
+  if (!clock.playing) {
+    hostClockStalled = false
+    lastSamplesSeen = clock.samples
+    lastSamplesAtMs = now
+    return
+  }
+  if (clock.samples !== lastSamplesSeen) {
+    lastSamplesSeen = clock.samples
+    lastSamplesAtMs = now
+    hostClockStalled = false
+    return
+  }
+  if (lastSamplesAtMs > 0 && now - lastSamplesAtMs > 250) {
+    hostClockStalled = true
+  }
 }
 
 export async function fetchHostTransportClock(): Promise<HostTransportClock | null> {
@@ -57,6 +85,7 @@ export async function fetchHostTransportClock(): Promise<HostTransportClock | nu
       timelineSec: Number(raw.timelineSec) || 0,
       metronome: !!raw.metronome,
     }
+    noteClockProgress(cachedClock)
     return cachedClock
   } catch {
     return null

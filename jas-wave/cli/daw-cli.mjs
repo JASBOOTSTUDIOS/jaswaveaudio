@@ -100,6 +100,7 @@ Auditoría
   watch [--play] [-i ms]         Stream en vivo
   sync [segundos] [intervalMs]   Probe underrun/drift/metrónomo (play+buffer)
   state                          Proyecto: pistas, clips, plugins, ids
+  certify [--quick|--full] [--skip-vst]  Suite de certificación CLI
 
 Acciones (vía executeDawActions, igual que el chat)
   list [--filter texto]          Catálogo completo
@@ -123,6 +124,7 @@ Ejemplos
   daw-cli action daw.musicBuild '{"aplicar":true,"prompt":"house 124","bpm":124}'
   daw-cli actions '[{"type":"track.create","payload":{"nombre":"Drums","tipo":"midi"}},{"type":"transport.toggle"}]'
   daw-cli sync 10
+  daw-cli certify --quick
   daw-cli watch --play
 
 Env: JASWAVE_AGENT_PORT  ·  App: npm run dev`)
@@ -137,6 +139,14 @@ async function main() {
   }
 
   try {
+    if (cmd === 'certify') {
+      const probe = path.join(path.dirname(fileURLToPath(import.meta.url)), '_certify.mjs')
+      const { spawnSync } = await import('node:child_process')
+      const args = argv.slice(1)
+      const r = spawnSync(process.execPath, [probe, ...args], { stdio: 'inherit', env: process.env })
+      process.exit(r.status == null ? 1 : r.status)
+    }
+
     if (cmd === 'health') {
       const h = await req('/health')
       console.log(JSON.stringify(h, null, 2))

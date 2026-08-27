@@ -24,6 +24,7 @@ export function ExportBounceDialog({ open, onClose }: Props) {
   const [progress, setProgress] = useState(0)
   const [message, setMessage] = useState('')
   const [jobId, setJobId] = useState<string | null>(null)
+  const [ffmpegOk, setFfmpegOk] = useState<boolean | null>(null)
 
   useEffect(() => {
     if (!open) {
@@ -31,8 +32,26 @@ export function ExportBounceDialog({ open, onClose }: Props) {
       setProgress(0)
       setMessage('')
       setJobId(null)
+      return
     }
+    void (async () => {
+      try {
+        const api = window.electron as { ffmpegAvailable?: () => Promise<{ ok?: boolean }> }
+        const r = await api.ffmpegAvailable?.()
+        const ok = Boolean(r?.ok)
+        setFfmpegOk(ok)
+        if (!ok && format !== 'wav') setFormat('wav')
+      } catch {
+        setFfmpegOk(false)
+        if (format !== 'wav') setFormat('wav')
+      }
+    })()
   }, [open])
+
+  // si ffmpeg no está, forzar WAV
+  useEffect(() => {
+    if (ffmpegOk === false && format !== 'wav') setFormat('wav')
+  }, [ffmpegOk, format])
 
   const start = useCallback(async () => {
     setBusy(true)
@@ -111,7 +130,12 @@ export function ExportBounceDialog({ open, onClose }: Props) {
       <div className="w-full max-w-md rounded-lg border border-border bg-panel p-4 shadow-xl">
         <h2 className="text-sm font-semibold text-foreground">Exportar / bounce</h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          Misma cadena nativa que Play. WAV siempre; FLAC/MP3 si ffmpeg está disponible.
+          Misma cadena nativa que Play. WAV siempre.
+          {ffmpegOk === false
+            ? ' FLAC/MP3 deshabilitados: instala ffmpeg en PATH.'
+            : ffmpegOk === true
+              ? ' FLAC/MP3 disponibles vía ffmpeg.'
+              : ' Comprobando ffmpeg…'}
         </p>
         <label className="mt-4 flex items-center justify-between gap-3 text-xs">
           <span>Formato</span>
@@ -122,8 +146,12 @@ export function ExportBounceDialog({ open, onClose }: Props) {
             className="w-28 rounded border border-border bg-panel-raised px-2 py-1"
           >
             <option value="wav">WAV</option>
-            <option value="flac">FLAC</option>
-            <option value="mp3">MP3</option>
+            <option value="flac" disabled={ffmpegOk === false}>
+              FLAC{ffmpegOk === false ? ' (sin ffmpeg)' : ''}
+            </option>
+            <option value="mp3" disabled={ffmpegOk === false}>
+              MP3{ffmpegOk === false ? ' (sin ffmpeg)' : ''}
+            </option>
           </select>
         </label>
         <label className="mt-2 flex items-center justify-between gap-3 text-xs">
