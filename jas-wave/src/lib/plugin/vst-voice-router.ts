@@ -70,27 +70,22 @@ export function preferredTrackPlaysSoftPad(): boolean {
 }
 
 function sendMidi(slotId: string, on: boolean, pitch: number, velocity: number): void {
-  const fire = () => {
-    try {
-      const api = window.electron
-      if (!api) return
-      const cmd = on
-        ? { type: 'noteOn' as const, slotId, pitch, velocity }
-        : { type: 'noteOff' as const, slotId, pitch }
-      if (typeof api.pluginHostMidi === 'function') {
-        void api.pluginHostMidi(cmd)
-        return
-      }
+  try {
+    const api = window.electron
+    if (!api) return
+    const cmd = on
+      ? { type: 'noteOn' as const, slotId, pitch, velocity }
+      : { type: 'noteOff' as const, slotId, pitch }
+    if (typeof api.pluginHostMidi === 'function') {
+      void api.pluginHostMidi(cmd)
+    } else {
       void api.pluginHostSend?.(cmd)
-    } catch {
-      /* ignore */
     }
+  } catch {
+    /* ignore */
   }
-  if (on) {
-    void ensureHostMidiAudible().then(fire)
-    return
-  }
-  fire()
+  // Audio en paralelo (no retrasar el primer noteOn).
+  if (on) void ensureHostMidiAudible()
 }
 
 /**
@@ -101,15 +96,16 @@ function resolveTrackSlotId(trackId: string, plugins?: PluginInfo[]): string | n
   if (loaded?.slotId) return loaded.slotId
   const list = plugins ?? preferredPlugins
   const hit = findTrackPlaybackInstrument(list)
-  if (!hit?.plugin) return null
-  const slotId = slotIdForTrackPlugin(trackId, hit.plugin.id)
+  const plugin = hit?.plugin ?? list?.find((p) => !p.bypass)
+  if (!plugin) return null
+  const slotId = slotIdForTrackPlugin(trackId, plugin.id)
   const path =
-    (typeof hit.plugin.descripcion === 'string' && /\.vst3?/i.test(hit.plugin.descripcion)
-      ? hit.plugin.descripcion
-      : '') || hit.plugin.id
+    (typeof plugin.descripcion === 'string' && /\.vst3?/i.test(plugin.descripcion)
+      ? plugin.descripcion
+      : '') || plugin.id
   rememberLoadedInstrument({
     trackId,
-    pluginId: hit.plugin.id,
+    pluginId: plugin.id,
     path,
     slotId,
     instrument: true,
@@ -118,7 +114,7 @@ function resolveTrackSlotId(trackId: string, plugins?: PluginInfo[]): string | n
     slotId,
     path,
     trackId,
-    pluginId: hit.plugin.id,
+    pluginId: plugin.id,
   })
   return slotId
 }

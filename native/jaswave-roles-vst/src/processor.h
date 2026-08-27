@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 namespace JasWaveRoles {
 
@@ -43,7 +44,7 @@ struct Voice {
   float filterZ1{0.f};
   float filterZ2{0.f};
   float noiseState{0.f};
-  int samplesLeft{0}; // one-shots (drums)
+  int samplesLeft{0};
   bool oneShot{false};
   std::array<Partial, 3> partials{};
 };
@@ -77,8 +78,10 @@ private:
   void setupVoice(Voice& v, int16_t pitch, float velocity, Role role);
   int32_t allocVoice(Role role);
   void render(float* L, float* R, int32_t numSamples);
+  void applyFx(float* L, float* R, int32_t numSamples);
   float nextOsc(Partial& p, float sr);
   float processFilter(Voice& v, float x);
+  void ensureFxBuffers(float sr);
 
   double sampleRate_{48000.0};
   std::atomic<int32_t> activeRole_{static_cast<int32_t>(Role::Default)};
@@ -88,10 +91,34 @@ private:
   std::atomic<float> resonanceN_{0.25f};
   std::atomic<float> gainN_{0.85f};
   std::atomic<float> voicesN_{0.5f};
+  std::atomic<float> driveN_{0.15f};
+  std::atomic<float> gateN_{0.0f};
+  std::atomic<float> chorusN_{0.2f};
+  std::atomic<float> delayN_{0.15f};
+  std::atomic<float> reverbN_{0.25f};
+  std::atomic<float> eqLowN_{0.5f};
+  std::atomic<float> eqHighN_{0.5f};
   bool wasPlaying_{false};
   std::array<Voice, kMaxVoices> voices_{};
   uint64_t ageCounter_{0};
   uint32_t noiseSeed_{0xA5A5A5A5u};
+
+  // FX state
+  float gateEnv_{0.f};
+  float eqLowZ_{0.f};
+  float eqHighZ_{0.f};
+  float chorusPhase_{0.f};
+  std::vector<float> delayBufL_{};
+  std::vector<float> delayBufR_{};
+  int delayWrite_{0};
+  std::vector<float> chorusBuf_{};
+  int chorusWrite_{0};
+  std::array<float, 4> revComb_{};
+  std::array<int, 4> revCombW_{};
+  std::vector<float> revCombBuf0_{};
+  std::vector<float> revCombBuf1_{};
+  std::vector<float> revCombBuf2_{};
+  std::vector<float> revCombBuf3_{};
 };
 
 } // namespace JasWaveRoles
