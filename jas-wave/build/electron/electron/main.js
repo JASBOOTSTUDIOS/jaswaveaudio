@@ -40,9 +40,22 @@ function resolveAppIconPath() {
     return undefined;
 }
 function sendMenuAction(id) {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('menu-action', id);
+    const focused = BrowserWindow.getFocusedWindow();
+    // Transporte / proyecto: siempre en la ventana principal (motor de audio).
+    if (String(id).startsWith('transporte.') ||
+        String(id).startsWith('proyecto.') ||
+        id === 'ventana.ajustes') {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('menu-action', id);
+        }
+        return;
     }
+    const target = focused && !focused.isDestroyed()
+        ? focused
+        : mainWindow && !mainWindow.isDestroyed()
+            ? mainWindow
+            : null;
+    target === null || target === void 0 ? void 0 : target.webContents.send('menu-action', id);
 }
 function senderIsSatellite(sender) {
     var _a, _b;
@@ -103,11 +116,11 @@ function buildAppMenu() {
         {
             label: 'Transporte',
             submenu: [
-                { label: 'Reproducir / Pausar', click: () => sendMenuAction('transporte.reproducir') },
-                { label: 'Detener', click: () => sendMenuAction('transporte.detener') },
+                { label: 'Reproducir / Pausar', accelerator: 'Space', click: () => sendMenuAction('transporte.reproducir') },
+                { label: 'Detener', accelerator: 'Enter', click: () => sendMenuAction('transporte.detener') },
                 { label: 'Grabar', accelerator: 'CmdOrCtrl+R', click: () => sendMenuAction('transporte.grabar') },
                 { type: 'separator' },
-                { label: 'Ir al inicio', click: () => sendMenuAction('transporte.inicio') },
+                { label: 'Ir al inicio', accelerator: 'Home', click: () => sendMenuAction('transporte.inicio') },
                 { label: 'Bucle', click: () => sendMenuAction('transporte.loop') },
                 { label: 'Metrónomo', click: () => sendMenuAction('transporte.metronomo') },
             ],
@@ -601,14 +614,11 @@ ipcMain.handle('plugin-host-ensure', (e) => __awaiter(void 0, void 0, void 0, fu
     return Object.assign({ ok }, getPluginHostStatus());
 }));
 ipcMain.on('plugin-host-midi', (e, cmd) => {
-    if (senderIsSatellite(e.sender))
-        return;
+    // Piano roll / teclado flotante (undock) también envían noteOn preview.
     const record = (cmd && typeof cmd === 'object' ? cmd : {});
     sendPluginHostMidi(record);
 });
 ipcMain.handle('plugin-host-midi', (e, cmd) => __awaiter(void 0, void 0, void 0, function* () {
-    if (senderIsSatellite(e.sender))
-        return { ok: true };
     const record = (cmd && typeof cmd === 'object' ? cmd : {});
     sendPluginHostMidi(record);
     return { ok: true };

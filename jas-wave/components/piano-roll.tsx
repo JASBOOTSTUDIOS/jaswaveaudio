@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Plus, Piano } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { usePlaybackActions } from '@/components/playback-provider'
@@ -154,7 +154,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
 
   useEffect(() => () => audioEngine.allNotesOff(), [])
 
-  const previewNote = (pitch: number, velocity = 90) => {
+  const previewNote = (pitch: number, velocity = 100) => {
     // ignoreMute: en el editor hay que oír la pista aunque otra esté en solo.
     if (
       routeMidiToTrack(trackId, true, pitch, velocity, {
@@ -171,6 +171,49 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
       return
     }
     routeMidiToActiveVst(false, pitch, 0, { ignoreMute: true })
+  }
+  const previewNoteRef = useRef(previewNote)
+  const releaseNoteRef = useRef(releaseNote)
+  previewNoteRef.current = previewNote
+  releaseNoteRef.current = releaseNote
+  const heldKeyRef = useRef<number | null>(null)
+
+  /** Glissando estilo REAPER en el teclado virtual (mantener clic y arrastrar). */
+  const onKeyboardPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const root = e.currentTarget
+    root.setPointerCapture(e.pointerId)
+    const rect = root.getBoundingClientRect()
+    const y = e.clientY - rect.top
+    const pitch = Math.max(LOWEST, Math.min(HIGHEST, HIGHEST - Math.floor(y / keyH)))
+    heldKeyRef.current = pitch
+    setHeldKey(pitch)
+    previewNoteRef.current(pitch, 110)
+  }
+  const onKeyboardPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (heldKeyRef.current == null) return
+    if (!(e.buttons & 1)) return
+    const root = e.currentTarget
+    const rect = root.getBoundingClientRect()
+    const y = e.clientY - rect.top
+    const pitch = Math.max(LOWEST, Math.min(HIGHEST, HIGHEST - Math.floor(y / keyH)))
+    if (pitch === heldKeyRef.current) return
+    releaseNoteRef.current(heldKeyRef.current)
+    heldKeyRef.current = pitch
+    setHeldKey(pitch)
+    previewNoteRef.current(pitch, 110)
+  }
+  const onKeyboardPointerEnd = (e: ReactPointerEvent<HTMLDivElement>) => {
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
+    const p = heldKeyRef.current
+    heldKeyRef.current = null
+    setHeldKey(null)
+    if (p != null) releaseNoteRef.current(p)
   }
 
   useEffect(() => {
@@ -284,7 +327,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
       draggingRef.current = true
       setDirty(true)
       let lastAuditionPitch = previewPitch
-      previewNote(previewPitch, previewVel)
+      previewNoteRef.current(previewPitch, Math.max(previewVel, 100))
 
       const startX = ev.clientX
       const startY = ev.clientY
@@ -350,9 +393,9 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
           if (primary) {
             const nextPitch = Math.max(LOWEST, Math.min(HIGHEST, primary.pitch - pitchStep))
             if (nextPitch !== lastAuditionPitch) {
-              releaseNote(lastAuditionPitch)
+              releaseNoteRef.current(lastAuditionPitch)
               lastAuditionPitch = nextPitch
-              previewNote(nextPitch, previewVel)
+              previewNoteRef.current(nextPitch, Math.max(previewVel, 100))
             }
           }
         }
@@ -361,7 +404,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         window.removeEventListener('pointermove', move)
         window.removeEventListener('pointerup', up)
         window.removeEventListener('pointercancel', up)
-        releaseNote(lastAuditionPitch)
+        releaseNoteRef.current(lastAuditionPitch)
         try {
           target?.releasePointerCapture?.(pointerId)
         } catch {
@@ -940,7 +983,15 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
           {/* Misma altura que PianoRollTimelineRuler para alinear teclas ↔ notas */}
           <div className="shrink-0 border-b border-border/60 bg-panel" style={{ height: RULER_H }} />
           <div className="min-h-0 flex-1 overflow-hidden">
-            <div ref={keysOffsetRef} style={{ height: gridHeight }}>
+            <div
+              ref={keysOffsetRef}
+              className="touch-none select-none"
+              style={{ height: gridHeight }}
+              onPointerDown={onKeyboardPointerDown}
+              onPointerMove={onKeyboardPointerMove}
+              onPointerUp={onKeyboardPointerEnd}
+              onPointerCancel={onKeyboardPointerEnd}
+            >
               {Array.from({ length: KEYS }).map((_, i) => {
                 const pitch = HIGHEST - i
                 const black = isBlack(pitch)
@@ -949,37 +1000,22 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                   (id) => notes.find((n) => n.id === id)?.pitch === pitch,
                 )
                 return (
-                  <button
+                  <div
                     key={pitch}
-                    type="button"
-                    onPointerDown={(e) => {
-                      e.preventDefault()
-                      ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
-                      setHeldKey(pitch)
-                      previewNote(pitch, 100)
-                    }}
-                    onPointerUp={() => {
-                      setHeldKey(null)
-                      releaseNote(pitch)
-                    }}
-                    onPointerCancel={() => {
-                      setHeldKey(null)
-                      releaseNote(pitch)
-                    }}
-                    className={`flex w-full items-center justify-end border-b border-border/40 pr-1 font-mono text-[9px] ${
+                    className={`pointer-events-none flex w-full items-center justify-end border-b border-border/40 pr-1 font-mono text-[9px] ${
                       active
                         ? 'bg-accent-amber/40 text-foreground'
                         : selectedHere
                           ? 'bg-accent-amber/15'
                           : black
-                            ? 'bg-background/80 text-muted-foreground hover:bg-accent-amber/20'
-                            : 'bg-panel-raised text-foreground hover:bg-accent-amber/15'
+                            ? 'bg-background/80 text-muted-foreground'
+                            : 'bg-panel-raised text-foreground'
                     }`}
                     style={{ height: keyH }}
                     title={`${noteName(pitch)} · MIDI ${pitch}`}
                   >
                     {pitch % 12 === 0 ? noteName(pitch) : ''}
-                  </button>
+                  </div>
                 )
               })}
             </div>

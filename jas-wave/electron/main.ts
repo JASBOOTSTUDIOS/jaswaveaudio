@@ -664,12 +664,11 @@ ipcMain.handle('plugin-host-ensure', async (e: IpcMainInvokeEvent) => {
   return { ok, ...getPluginHostStatus() }
 })
 ipcMain.on('plugin-host-midi', (e: IpcMainInvokeEvent, cmd: unknown) => {
-  if (senderIsSatellite(e.sender)) return
+  // Piano roll / teclado flotante (undock) también envían noteOn preview.
   const record = (cmd && typeof cmd === 'object' ? cmd : {}) as Record<string, unknown>
   sendPluginHostMidi(record)
 })
 ipcMain.handle('plugin-host-midi', async (e: IpcMainInvokeEvent, cmd: unknown) => {
-  if (senderIsSatellite(e.sender)) return { ok: true }
   const record = (cmd && typeof cmd === 'object' ? cmd : {}) as Record<string, unknown>
   sendPluginHostMidi(record)
   return { ok: true }

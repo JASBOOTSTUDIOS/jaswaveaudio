@@ -13,6 +13,28 @@ export const JASWAVE_ROLES_PARAM_ID = 0
 export const JASWAVE_ROLES_NAME = 'JasWave Roles'
 export const JASWAVE_ROLES_VENDOR = 'JasWave'
 
+/** Debe coincidir con native/jaswave-roles-vst/src/roles_map.h */
+export const ROLE_PARAM_DEFS: Array<{
+  id: number
+  label: string
+  defaultValue: number
+  group: 'synth' | 'fx'
+}> = [
+  { id: 1, label: 'Attack', defaultValue: 0.35, group: 'synth' },
+  { id: 2, label: 'Release', defaultValue: 0.4, group: 'synth' },
+  { id: 3, label: 'Cutoff', defaultValue: 0.55, group: 'synth' },
+  { id: 4, label: 'Resonance', defaultValue: 0.25, group: 'synth' },
+  { id: 5, label: 'Gain', defaultValue: 0.7, group: 'synth' },
+  { id: 6, label: 'Voices', defaultValue: 0.5, group: 'synth' },
+  { id: 7, label: 'Drive', defaultValue: 0.15, group: 'fx' },
+  { id: 8, label: 'Gate', defaultValue: 0, group: 'fx' },
+  { id: 9, label: 'Chorus', defaultValue: 0.2, group: 'fx' },
+  { id: 10, label: 'Delay', defaultValue: 0.15, group: 'fx' },
+  { id: 11, label: 'Reverb', defaultValue: 0.25, group: 'fx' },
+  { id: 12, label: 'EQ Low', defaultValue: 0.5, group: 'fx' },
+  { id: 13, label: 'EQ High', defaultValue: 0.5, group: 'fx' },
+]
+
 export type JasWaveRole =
   | 'drums'
   | 'bass'
@@ -147,7 +169,7 @@ export function ensureJasWaveRolesRegistered(explicitPath?: string): PluginDescr
     supportsAudioOutput: true,
     supportsSidechain: false,
     supportsEditor: true,
-    parameterCount: 7,
+    parameterCount: 14,
     scanStatus: 'ok',
     hostReady: true,
     isolation: 'out-of-process',

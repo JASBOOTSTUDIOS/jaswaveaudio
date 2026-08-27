@@ -35,6 +35,14 @@ inline constexpr int32_t kParamCutoffId = 3;
 inline constexpr int32_t kParamResonanceId = 4;
 inline constexpr int32_t kParamGainId = 5;
 inline constexpr int32_t kParamVoicesId = 6;
+inline constexpr int32_t kParamDriveId = 7;
+inline constexpr int32_t kParamGateId = 8;
+inline constexpr int32_t kParamChorusId = 9;
+inline constexpr int32_t kParamDelayId = 10;
+inline constexpr int32_t kParamReverbId = 11;
+inline constexpr int32_t kParamEqLowId = 12;
+inline constexpr int32_t kParamEqHighId = 13;
+inline constexpr int32_t kParamCount = 14;
 inline constexpr int32_t kNumRoles = static_cast<int32_t>(Role::Count);
 inline constexpr int32_t kMaxVoices = 64;
 
