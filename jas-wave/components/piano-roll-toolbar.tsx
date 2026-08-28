@@ -47,6 +47,8 @@ export const PIANO_ROLL_ATAJOS: { teclas: string; accion: string }[] = [
   { teclas: 'G', accion: 'Mostrar / ocultar velocidad' },
   { teclas: 'F', accion: 'Mostrar / ocultar expresión (CC)' },
   { teclas: '+ / −', accion: 'Zoom horizontal' },
+  { teclas: 'Ctrl + rueda', accion: 'Zoom horizontal (hacia el cursor)' },
+  { teclas: 'Ctrl+Shift + rueda', accion: 'Zoom vertical (altura de teclas)' },
   { teclas: 'H', accion: 'Zoom vertical (altura de teclas)' },
   { teclas: '?', accion: 'Mostrar / ocultar atajos' },
   { teclas: 'Alt+arrastrar nota', accion: 'Mover / redimensionar sin imán (preciso)' },

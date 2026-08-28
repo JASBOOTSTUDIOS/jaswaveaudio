@@ -210,31 +210,60 @@ void Processor::setupVoice(Voice& v, int16_t pitch, float velocity, Role role) {
   switch (role) {
     case Role::Drums:
     case Role::Percussion: {
+      // Kit orgánico (GM-ish): pitch sweep kick, snare body+noise, hats filtrados.
       v.oneShot = true;
-      v.filterCutoff = 4000.f;
-      v.filterQ = 0.7f;
-      if (pitch <= 40) {
-        setPartial(0, OscType::Sine, 55.f + (pitch - 36) * 2.f, 0.55f * vel);
-        setPartial(1, OscType::Triangle, 80.f, 0.25f * vel);
-        v.envTarget = 0.55f * vel;
-        v.attackInc = (v.envTarget - v.env) / std::max(1.f, 0.01f * sr);
-        v.releaseInc = v.envTarget / std::max(1.f, 0.35f * sr);
-        v.samplesLeft = static_cast<int>(0.45f * sr);
-      } else if (pitch <= 50) {
-        setPartial(0, OscType::Noise, 1800.f, 0.45f * vel);
-        setPartial(1, OscType::Triangle, 180.f, 0.2f * vel);
-        v.envTarget = 0.5f * vel;
-        v.attackInc = (v.envTarget - v.env) / std::max(1.f, 0.005f * sr);
-        v.releaseInc = v.envTarget / std::max(1.f, 0.18f * sr);
-        v.samplesLeft = static_cast<int>(0.22f * sr);
-        v.filterCutoff = 1800.f;
+      v.filterQ = 0.55f;
+      const bool perc = (role == Role::Percussion);
+      auto startDrum = [&](int8_t kind, float durSec, float body, float noise, float click,
+                           float pitchStart, float pitchEnd, float glide, float cutHz) {
+        v.drumKind = kind;
+        v.filterCutoff = cutHz;
+        v.bodyEnv = body * vel;
+        v.bodyDec = v.bodyEnv / std::max(1.f, durSec * sr * (0.55f + 0.45f * vel));
+        v.noiseEnv = noise * vel;
+        v.noiseDec = v.noiseEnv / std::max(1.f, durSec * sr * (kind >= 2 ? 0.35f : 0.55f));
+        v.clickEnv = click * vel;
+        v.clickDec = v.clickEnv / std::max(1.f, 0.006f * sr);
+        v.drumPitchHz = pitchStart;
+        v.drumPitchTarget = pitchEnd;
+        v.drumPitchGlide = glide;
+        v.envTarget = std::max({v.bodyEnv, v.noiseEnv, v.clickEnv});
+        v.env = v.envTarget;
+        v.attackInc = v.envTarget;
+        v.releaseInc = v.envTarget / std::max(1.f, durSec * sr);
+        v.samplesLeft = static_cast<int>(durSec * sr);
+        v.noiseHpZ_ = 0.f;
+      };
+
+      // GM / Music Build: 35-36 kick, 37 stick, 38/40 snare, 39 clap,
+      // 41-45 toms, 42/44 CH, 46 OH, 49/51 cymbal-ish, resto perc.
+      if (pitch <= 36 || pitch == 35) {
+        // Kick profundo con click y caída de pitch.
+        const float start = perc ? 95.f : (118.f + (36 - pitch) * 4.f);
+        startDrum(0, 0.42f + vel * 0.12f, 0.85f, 0.12f, 0.55f, start, 42.f + vel * 8.f,
+                  0.992f - vel * 0.004f, 1800.f);
+        setPartial(0, OscType::Sine, start, 0.f); // body vía renderDrum
+      } else if (pitch == 37) {
+        startDrum(6, 0.08f, 0.15f, 0.55f, 0.7f, 900.f, 700.f, 0.97f, 6500.f);
+      } else if (pitch == 38 || pitch == 40) {
+        startDrum(1, 0.22f + vel * 0.08f, 0.45f, 0.7f, 0.4f, 185.f, 160.f, 0.985f, 5200.f);
+      } else if (pitch == 39) {
+        startDrum(5, 0.18f, 0.2f, 0.85f, 0.65f, 600.f, 400.f, 0.97f, 7000.f);
+      } else if (pitch >= 41 && pitch <= 45) {
+        const float tomF = 90.f + (45 - pitch) * 28.f;
+        startDrum(4, 0.28f + vel * 0.1f, 0.7f, 0.18f, 0.35f, tomF * 1.55f, tomF, 0.988f, 3500.f);
+      } else if (pitch == 42 || pitch == 44 || pitch == 22) {
+        startDrum(2, 0.055f + vel * 0.03f, 0.05f, 0.55f, 0.25f, 9000.f, 7000.f, 0.95f, 11000.f);
+      } else if (pitch == 46 || pitch == 26) {
+        startDrum(3, 0.28f + vel * 0.15f, 0.08f, 0.5f, 0.2f, 8500.f, 5000.f, 0.96f, 10000.f);
+      } else if (pitch >= 49 && pitch <= 59) {
+        startDrum(3, 0.55f + vel * 0.25f, 0.12f, 0.55f, 0.3f, 7500.f, 3200.f, 0.978f, 9000.f);
+      } else if (pitch < 42) {
+        startDrum(0, 0.35f, 0.75f, 0.1f, 0.45f, 100.f, 48.f, 0.993f, 1600.f);
       } else {
-        setPartial(0, OscType::Noise, 7000.f + (pitch - 42) * 40.f, 0.22f * vel);
-        v.envTarget = 0.28f * vel;
-        v.attackInc = (v.envTarget - v.env) / std::max(1.f, 0.002f * sr);
-        v.releaseInc = v.envTarget / std::max(1.f, 0.06f * sr);
-        v.samplesLeft = static_cast<int>(0.08f * sr);
-        v.filterCutoff = 7000.f;
+        // Percusión / rim / shaker genérico
+        startDrum(6, 0.12f + vel * 0.08f, 0.2f, 0.55f, 0.4f, 1400.f + (pitch - 48) * 40.f,
+                  900.f, 0.97f, 8000.f);
       }
       break;
     }
@@ -333,7 +362,8 @@ void Processor::noteOff(int16_t pitch, int32_t /*sampleOffset*/) {
   for (auto& v : voices_) {
     if (!v.active || v.pitch != pitch) continue;
     if (v.oneShot) {
-      // Corte inmediato (pause / fin de nota): no dejar cola de 80ms pegada.
+      // Drums: dejar que el one-shot decaiga (más orgánico). Piano: corte.
+      if (v.drumKind >= 0) continue;
       v = Voice{};
       continue;
     }
@@ -390,12 +420,96 @@ float Processor::processFilter(Voice& v, float x) {
   return v.filterZ1;
 }
 
+float Processor::renderDrumSample(Voice& v, float sr) {
+  // Ruido blanco
+  noiseSeed_ = noiseSeed_ * 1664525u + 1013904223u;
+  const float white = (static_cast<int32_t>(noiseSeed_ >> 8) / 8388608.f) - 1.f;
+
+  // Pitch sweep (kick/tom): aproximación exponencial al target
+  const float prevPitch = v.drumPitchHz;
+  v.drumPitchHz += (v.drumPitchTarget - v.drumPitchHz) * (1.f - v.drumPitchGlide);
+  if ((prevPitch - v.drumPitchTarget) * (v.drumPitchHz - v.drumPitchTarget) <= 0.f)
+    v.drumPitchHz = v.drumPitchTarget;
+
+  auto& body = v.partials[0];
+  body.active = true;
+  body.type = OscType::Sine;
+  body.freqHz = std::max(20.f, v.drumPitchHz);
+  body.gain = 1.f;
+  float tone = nextOsc(body, sr);
+
+  // Segundo armónico suave (punch)
+  auto& harm = v.partials[1];
+  harm.active = true;
+  harm.type = OscType::Triangle;
+  harm.freqHz = std::max(20.f, v.drumPitchHz * 2.02f);
+  harm.gain = 1.f;
+  const float tone2 = nextOsc(harm, sr);
+
+  // HP noise para snare/hats
+  const float hpA = std::exp(-6.28318530718f * 1800.f / sr);
+  v.noiseHpZ_ = (1.f - hpA) * white + hpA * v.noiseHpZ_;
+  float noise = white - v.noiseHpZ_;
+
+  float s = 0.f;
+  const int k = v.drumKind;
+  if (k == 0) {
+    // Kick: sine + click noise corto
+    s = tone * v.bodyEnv * 0.95f + tone2 * v.bodyEnv * 0.12f + white * v.clickEnv * 0.35f;
+    // Soft saturation for body weight
+    s = std::tanh(s * 1.35f);
+  } else if (k == 1) {
+    // Snare: cuerpo + noise
+    s = tone * v.bodyEnv * 0.55f + noise * v.noiseEnv * 0.85f + white * v.clickEnv * 0.25f;
+    s = processFilter(v, s);
+  } else if (k == 2) {
+    // Closed hat
+    s = noise * v.noiseEnv * 0.9f + white * v.clickEnv * 0.2f;
+    v.filterCutoff = std::max(6000.f, v.filterCutoff);
+    s = processFilter(v, s);
+  } else if (k == 3) {
+    // Open hat / cymbal
+    s = noise * v.noiseEnv * 0.75f + tone2 * v.bodyEnv * 0.08f + white * v.clickEnv * 0.15f;
+    s = processFilter(v, s);
+  } else if (k == 4) {
+    // Tom
+    s = tone * v.bodyEnv * 0.9f + tone2 * v.bodyEnv * 0.18f + noise * v.noiseEnv * 0.15f;
+    s = std::tanh(s * 1.2f);
+  } else if (k == 5) {
+    // Clap: ráfagas de noise
+    const float burst = (v.samplesLeft % std::max(1, static_cast<int>(0.012f * sr)) < static_cast<int>(0.004f * sr))
+                            ? 1.f
+                            : 0.55f;
+    s = noise * v.noiseEnv * burst + white * v.clickEnv * 0.4f;
+    s = processFilter(v, s);
+  } else {
+    // Perc / stick / shaker
+    s = tone * v.bodyEnv * 0.35f + noise * v.noiseEnv * 0.7f + white * v.clickEnv * 0.3f;
+    s = processFilter(v, s);
+  }
+
+  v.bodyEnv = std::max(0.f, v.bodyEnv - v.bodyDec);
+  v.noiseEnv = std::max(0.f, v.noiseEnv - v.noiseDec);
+  v.clickEnv = std::max(0.f, v.clickEnv - v.clickDec);
+  v.env = std::max({v.bodyEnv, v.noiseEnv, v.clickEnv, 0.0001f});
+  return s;
+}
+
 void Processor::render(float* L, float* R, int32_t numSamples) {
   const float sr = static_cast<float>(sampleRate_);
   for (int32_t i = 0; i < numSamples; ++i) {
     float mix = 0.f;
     for (auto& v : voices_) {
       if (!v.active) continue;
+
+      if (v.drumKind >= 0) {
+        if (--v.samplesLeft <= 0 || v.env <= 0.0002f) {
+          v.active = false;
+          continue;
+        }
+        mix += renderDrumSample(v, sr);
+        continue;
+      }
 
       if (v.oneShot) {
         if (v.env < v.envTarget) v.env = std::min(v.envTarget, v.env + v.attackInc);

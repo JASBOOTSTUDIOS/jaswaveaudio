@@ -46,7 +46,19 @@ struct Voice {
   float noiseState{0.f};
   int samplesLeft{0};
   bool oneShot{false};
-  std::array<Partial, 3> partials{};
+  /** -1 = synth normal; 0 kick, 1 snare, 2 closed hat, 3 open hat, 4 tom, 5 clap, 6 perc */
+  int8_t drumKind{-1};
+  float drumPitchHz{60.f};
+  float drumPitchTarget{40.f};
+  float drumPitchGlide{0.998f};
+  float clickEnv{0.f};
+  float clickDec{0.f};
+  float noiseEnv{0.f};
+  float noiseDec{0.f};
+  float bodyEnv{0.f};
+  float bodyDec{0.f};
+  float noiseHpZ_{0.f};
+  std::array<Partial, 4> partials{};
 };
 
 class Processor : public Steinberg::Vst::AudioEffect {
@@ -81,6 +93,7 @@ private:
   void applyFx(float* L, float* R, int32_t numSamples);
   float nextOsc(Partial& p, float sr);
   float processFilter(Voice& v, float x);
+  float renderDrumSample(Voice& v, float sr);
   void ensureFxBuffers(float sr);
 
   double sampleRate_{48000.0};

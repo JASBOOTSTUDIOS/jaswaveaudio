@@ -137,6 +137,15 @@ function buildAppMenu() {
     ];
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
+function disablePageZoom(win) {
+    try {
+        // Ctrl+rueda / pinch no deben hacer zoom de página (rompe paneles undock).
+        void win.webContents.setVisualZoomLevelLimits(1, 1);
+    }
+    catch (_a) {
+        /* ignore */
+    }
+}
 function createWindow() {
     const icon = resolveAppIconPath();
     mainWindow = new BrowserWindow(Object.assign(Object.assign({ width: 1400, height: 900, minWidth: 1000, minHeight: 600, frame: false, backgroundColor: '#0b0d10' }, (icon ? { icon } : {})), { webPreferences: {
@@ -145,6 +154,7 @@ function createWindow() {
             nodeIntegration: false,
             sandbox: false,
         } }));
+    disablePageZoom(mainWindow);
     if (process.env.VITE_DEV_SERVER_URL) {
         mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
         mainWindow.webContents.openDevTools();
@@ -500,6 +510,7 @@ ipcMain.handle('tool-window-open', (_event, toolId, title, extra) => __awaiter(v
             nodeIntegration: false,
             sandbox: false,
         } }));
+    disablePageZoom(win);
     toolWindows.set(toolId, win);
     win.once('ready-to-show', () => {
         if (!win.isDestroyed())
