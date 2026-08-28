@@ -136,6 +136,15 @@ function buildAppMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
+function disablePageZoom(win: InstanceType<typeof BrowserWindow>) {
+  try {
+    // Ctrl+rueda / pinch no deben hacer zoom de página (rompe paneles undock).
+    void win.webContents.setVisualZoomLevelLimits(1, 1)
+  } catch {
+    /* ignore */
+  }
+}
+
 function createWindow() {
   const icon = resolveAppIconPath()
   mainWindow = new BrowserWindow({
@@ -153,6 +162,8 @@ function createWindow() {
       sandbox: false,
     },
   })
+
+  disablePageZoom(mainWindow)
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
@@ -545,6 +556,8 @@ ipcMain.handle('tool-window-open', async (_event: IpcMainInvokeEvent, toolId: st
       sandbox: false,
     },
   })
+
+  disablePageZoom(win)
 
   toolWindows.set(toolId, win)
   win.once('ready-to-show', () => {

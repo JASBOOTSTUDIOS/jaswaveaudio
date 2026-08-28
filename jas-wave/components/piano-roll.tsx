@@ -98,13 +98,18 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   const [quantizeStrength, setQuantizeStrength] = useState(1)
   const [lasso, setLasso] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
   const useCanvas = shouldUseCanvasNotes(notes.length)
+  const rootRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
   const notesRef = useRef(notes)
   const selectedRef = useRef(selectedIds)
+  const pxPerBeatRef = useRef(pxPerBeat)
+  const keyHRef = useRef(keyH)
   notesRef.current = notes
   selectedRef.current = selectedIds
+  pxPerBeatRef.current = pxPerBeat
+  keyHRef.current = keyH
 
   const clipStartBeat = clip?.inicio ?? 0
   const trackPlugins = useDAWState((s: DAWState) => {
@@ -218,6 +223,64 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
 
   useEffect(() => {
     void audioEngine.armNativeMixOutput()
+  }, [])
+
+  /** Ctrl/Cmd + rueda = zoom horizontal (hacia el cursor). Ctrl+Shift + rueda = zoom vertical.
+   *  Capture en window: en ventanas undock Chromium intercepta Ctrl+rueda como zoom de página. */
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      const root = rootRef.current
+      if (!root) return
+      const target = e.target
+      if (!(target instanceof Node) || !root.contains(target)) return
+
+      e.preventDefault()
+      e.stopPropagation()
+
+      const scroll = scrollRef.current
+      const factor = Math.exp(-e.deltaY * 0.0025)
+
+      if (e.shiftKey) {
+        const prev = keyHRef.current
+        const next = Math.min(28, Math.max(8, Math.round(prev * factor * 10) / 10))
+        if (next === prev) return
+        if (!scroll) {
+          keyHRef.current = next
+          setKeyH(next)
+          return
+        }
+        const rect = scroll.getBoundingClientRect()
+        const mouseY = e.clientY - rect.top - RULER_H
+        const contentY = scroll.scrollTop + Math.max(0, mouseY)
+        const ratio = contentY / Math.max(1, prev * KEYS)
+        keyHRef.current = next
+        setKeyH(next)
+        requestAnimationFrame(() => {
+          scroll.scrollTop = Math.max(0, ratio * next * KEYS - Math.max(0, mouseY))
+        })
+        return
+      }
+
+      const prev = pxPerBeatRef.current
+      const next = Math.min(256, Math.max(12, prev * factor))
+      if (Math.abs(next - prev) < 0.05) return
+      if (scroll) {
+        const rect = scroll.getBoundingClientRect()
+        const mouseX = e.clientX - rect.left
+        const beatUnder = (scroll.scrollLeft + mouseX) / prev
+        pxPerBeatRef.current = next
+        setPxPerBeat(next)
+        requestAnimationFrame(() => {
+          scroll.scrollLeft = Math.max(0, beatUnder * next - mouseX)
+        })
+      } else {
+        pxPerBeatRef.current = next
+        setPxPerBeat(next)
+      }
+    }
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => window.removeEventListener('wheel', onWheel, { capture: true })
   }, [])
 
   const durationBeats = useMemo(() => {
@@ -423,9 +486,10 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   )
 
   const addNoteAt = (clientX: number, clientY: number, gridEl: HTMLDivElement, dragDur = false) => {
+    // getBoundingClientRect ya refleja el scroll; no sumar scrollLeft/Top.
     const rect = gridEl.getBoundingClientRect()
-    const x = clientX - rect.left + (scrollRef.current?.scrollLeft ?? 0)
-    const y = clientY - rect.top + (scrollRef.current?.scrollTop ?? 0)
+    const x = clientX - rect.left
+    const y = clientY - rect.top
     const inicio = snapBeat(x / pxPerBeat)
     const pitch = Math.max(LOWEST, Math.min(HIGHEST, HIGHEST - Math.floor(y / keyH)))
     const note: LocalNote = {
@@ -794,6 +858,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
 
   return (
     <div
+      ref={rootRef}
       className={`flex flex-col bg-panel ${embedded ? 'h-[320px] border-t border-border' : 'h-full'}`}
       tabIndex={0}
     >
@@ -1057,44 +1122,73 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
               if ((e.target as HTMLElement).closest('[data-note]')) return
               addNoteAt(e.clientX, e.clientY, e.currentTarget)
             }}
+            onContextMenu={(e) => {
+              // Click derecho = marquee; no menú contextual del navegador.
+              e.preventDefault()
+            }}
             onPointerDown={(e) => {
-              if (e.button !== 0) return
-              if ((e.target as HTMLElement).closest('[data-note]')) return
-              const rect = e.currentTarget.getBoundingClientRect()
-              const x = e.clientX - rect.left + (scrollRef.current?.scrollLeft ?? 0)
-              const y = e.clientY - rect.top + (scrollRef.current?.scrollTop ?? 0)
+              const isRight = e.button === 2
+              const isLeft = e.button === 0
+              if (!isLeft && !isRight) return
+
+              const gridEl = e.currentTarget
+              const toLocal = (clientX: number, clientY: number) => {
+                const r = gridEl.getBoundingClientRect()
+                return { x: clientX - r.left, y: clientY - r.top }
+              }
+              const { x, y } = toLocal(e.clientX, e.clientY)
               if (y > gridHeight) return
 
-              if (herramienta === 'dibujar' || e.altKey) {
-                addNoteAt(e.clientX, e.clientY, e.currentTarget, true)
+              // Click derecho (o izquierdo en vacío con herramienta seleccionar):
+              // cuadro de selección, incluso empezando encima de una nota.
+              const overNote = Boolean((e.target as HTMLElement).closest('[data-note]'))
+              const wantLasso =
+                isRight ||
+                (isLeft &&
+                  !overNote &&
+                  herramienta !== 'dibujar' &&
+                  herramienta !== 'borrar' &&
+                  !e.altKey)
+
+              if (isLeft && !wantLasso) {
+                if (overNote) return
+                if (herramienta === 'dibujar' || e.altKey) {
+                  addNoteAt(e.clientX, e.clientY, e.currentTarget, true)
+                  return
+                }
+                if (herramienta === 'borrar') return
                 return
               }
-              if (herramienta === 'borrar') return
 
+              if (!wantLasso) return
+
+              e.preventDefault()
+              e.stopPropagation()
+              const additive = e.shiftKey || e.ctrlKey || e.metaKey
+              const notesAtStart = notesRef.current
               setLasso({ x0: x, y0: y, x1: x, y1: y })
+
               const move = (ev: PointerEvent) => {
-                const xx = ev.clientX - rect.left + (scrollRef.current?.scrollLeft ?? 0)
-                const yy = ev.clientY - rect.top + (scrollRef.current?.scrollTop ?? 0)
-                setLasso((L) => (L ? { ...L, x1: xx, y1: Math.min(yy, gridHeight) } : L))
+                const p = toLocal(ev.clientX, ev.clientY)
+                setLasso((L) => (L ? { ...L, x1: p.x, y1: Math.min(p.y, gridHeight) } : L))
               }
               const up = (ev: PointerEvent) => {
                 window.removeEventListener('pointermove', move)
                 window.removeEventListener('pointerup', up)
-                const xx = ev.clientX - rect.left + (scrollRef.current?.scrollLeft ?? 0)
-                const yy = Math.min(
-                  ev.clientY - rect.top + (scrollRef.current?.scrollTop ?? 0),
-                  gridHeight,
-                )
+                window.removeEventListener('pointercancel', up)
+                const p = toLocal(ev.clientX, ev.clientY)
+                const xx = p.x
+                const yy = Math.min(p.y, gridHeight)
                 const x0 = Math.min(x, xx)
                 const x1 = Math.max(x, xx)
                 const y0 = Math.min(y, yy)
                 const y1 = Math.max(y, yy)
                 setLasso(null)
                 if (Math.abs(x1 - x0) < 4 && Math.abs(y1 - y0) < 4) {
-                  if (!e.shiftKey && !e.ctrlKey && !e.metaKey) setSelectedIds(new Set())
+                  if (!additive) setSelectedIds(new Set())
                   return
                 }
-                const hit = notes.filter((n) => {
+                const hit = notesAtStart.filter((n) => {
                   const left = n.inicio * pxPerBeat
                   const right = left + Math.max(6, n.duracion * pxPerBeat)
                   const top = (HIGHEST - n.pitch) * keyH
@@ -1102,7 +1196,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                   return right >= x0 && left <= x1 && bottom >= y0 && top <= y1
                 })
                 setSelectedIds((prev) => {
-                  if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                  if (additive) {
                     const next = new Set(prev)
                     hit.forEach((n) => next.add(n.id))
                     return next
@@ -1112,6 +1206,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
               }
               window.addEventListener('pointermove', move)
               window.addEventListener('pointerup', up)
+              window.addEventListener('pointercancel', up)
             }}
           >
             {Array.from({ length: KEYS }).map((_, i) => {

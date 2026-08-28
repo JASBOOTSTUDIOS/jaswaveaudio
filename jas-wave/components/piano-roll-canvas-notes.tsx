@@ -107,13 +107,16 @@ export function PianoRollCanvasNotes({
       className="absolute left-0 top-0 z-10 touch-none"
       style={{ width, height }}
       onPointerDown={(e) => {
-        if (!onHit) return
+        // Click derecho: dejar burbujear al grid para marquee de selección.
+        if (e.button === 2) return
+        if (e.button !== 0 || !onHit) return
         const hit = hitTest(e.clientX, e.clientY, e.currentTarget)
         if (!hit) return
         e.stopPropagation()
         e.preventDefault()
         onHit(hit, e.nativeEvent)
       }}
+      onContextMenu={(e) => e.preventDefault()}
     />
   )
 }

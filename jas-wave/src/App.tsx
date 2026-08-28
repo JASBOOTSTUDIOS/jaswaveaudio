@@ -184,8 +184,10 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
           Volver todo
         </button>
       </div>
-      <div className="min-h-0 flex-1">
-        <ToolHost toolId={visible} />
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <div className="h-full min-h-0">
+          <ToolHost toolId={visible} />
+        </div>
       </div>
     </main>
   )
