@@ -4,8 +4,10 @@ import type { IpcMainInvokeEvent } from 'electron'
 contextBridge.exposeInMainWorld('electron', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   localAppData: () => ipcRenderer.invoke('env-local-appdata'),
+  userDataPath: () => ipcRenderer.invoke('user-data-path'),
   /** Sync — preload tiene process.env; el renderer a menudo no. */
   localAppDataSync: process.env.LOCALAPPDATA || '',
+  clipboardWriteText: (text: string) => ipcRenderer.invoke('clipboard-write-text', text),
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowMaximize: () => ipcRenderer.invoke('window-maximize'),
   windowClose: () => ipcRenderer.invoke('window-close'),
@@ -38,6 +40,7 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.invoke('ai-chat', payload, model, baseUrl, temperature),
   aiHealth: (payload?: unknown) => ipcRenderer.invoke('ai-health', payload),
   pluginLookup: (pluginName: string) => ipcRenderer.invoke('plugin-lookup', pluginName),
+  webSearch: (query: string) => ipcRenderer.invoke('web-search', query),
   dialogMessage: (type: string, title: string, message: string) => ipcRenderer.invoke('dialog-message', type, title, message),
   shellOpenExternal: (url: string) => ipcRenderer.invoke('shell-open-external', url),
   openToolWindow: (toolId: string, title: string, extra?: Record<string, string>) =>

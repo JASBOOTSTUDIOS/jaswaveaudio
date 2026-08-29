@@ -1,10 +1,11 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, session } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, Menu, session, clipboard } = require('electron')
 const path = require('path')
 const fs = require('fs/promises')
 const fsSync = require('fs')
 import type { IpcMainInvokeEvent } from 'electron'
 import { aiChat, aiHealth, legacyChatArgsToRequest, type AiChatRequest, type AiHealthRequest } from './ai-gateway'
 import { lookupPluginOnWeb } from './plugin-lookup'
+import { searchWeb } from './web-search'
 import {
   resolveAgentBridgeReply,
   startAgentBridge,
@@ -90,7 +91,7 @@ function buildAppMenu() {
         { label: 'Copiar', accelerator: 'CmdOrCtrl+C', click: () => sendMenuAction('edicion.copiar') },
         { label: 'Pegar', accelerator: 'CmdOrCtrl+V', click: () => sendMenuAction('edicion.pegar') },
         { label: 'Duplicar', accelerator: 'CmdOrCtrl+D', click: () => sendMenuAction('edicion.duplicar') },
-        { label: 'Eliminar', accelerator: 'Delete', click: () => sendMenuAction('edicion.eliminar') },
+        { label: 'Eliminar', click: () => sendMenuAction('edicion.eliminar') },
         { type: 'separator' },
         { label: 'Seleccionar todo', accelerator: 'CmdOrCtrl+A', click: () => sendMenuAction('edicion.seleccionarTodo') },
       ],
@@ -114,11 +115,12 @@ function buildAppMenu() {
     {
       label: 'Transporte',
       submenu: [
-        { label: 'Reproducir / Pausar', accelerator: 'Space', click: () => sendMenuAction('transporte.reproducir') },
-        { label: 'Detener', accelerator: 'Enter', click: () => sendMenuAction('transporte.detener') },
+        // Sin accelerator: Space/Enter deben llegar al renderer (p. ej. chat del agente).
+        { label: 'Reproducir / Pausar', click: () => sendMenuAction('transporte.reproducir') },
+        { label: 'Detener', click: () => sendMenuAction('transporte.detener') },
         { label: 'Grabar', accelerator: 'CmdOrCtrl+R', click: () => sendMenuAction('transporte.grabar') },
         { type: 'separator' },
-        { label: 'Ir al inicio', accelerator: 'Home', click: () => sendMenuAction('transporte.inicio') },
+        { label: 'Ir al inicio', click: () => sendMenuAction('transporte.inicio') },
         { label: 'Bucle', click: () => sendMenuAction('transporte.loop') },
         { label: 'Metrónomo', click: () => sendMenuAction('transporte.metronomo') },
       ],
@@ -241,7 +243,12 @@ app.on('activate', () => {
 })
 
 ipcMain.handle('get-app-version', () => app.getVersion())
+ipcMain.handle('clipboard-write-text', (_e: IpcMainInvokeEvent, text: unknown) => {
+  clipboard.writeText(String(text ?? ''))
+  return true
+})
 ipcMain.handle('env-local-appdata', () => process.env.LOCALAPPDATA || '')
+ipcMain.handle('user-data-path', () => app.getPath('userData'))
 
 ipcMain.on('agent-bridge-reply', (_event: IpcMainInvokeEvent, id: string, result: unknown, error?: string) => {
   resolveAgentBridgeReply(String(id), result, error ? String(error) : undefined)
@@ -511,6 +518,12 @@ ipcMain.handle('plugin-lookup', async (_event: IpcMainInvokeEvent, pluginName: u
   const name = String(pluginName ?? '').trim().slice(0, 120)
   if (name.length < 2) return []
   return lookupPluginOnWeb(name)
+})
+
+ipcMain.handle('web-search', async (_event: IpcMainInvokeEvent, query: unknown) => {
+  const q = String(query ?? '').trim().slice(0, 200)
+  if (q.length < 2) return []
+  return searchWeb(q)
 })
 
 ipcMain.handle('dialog-message', async (_event: IpcMainInvokeEvent, type: string, title: string, message: string) => {
