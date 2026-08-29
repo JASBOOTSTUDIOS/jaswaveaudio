@@ -344,13 +344,27 @@ export function parseDocBlocksFromText(text: string): Array<{ slug: string; cont
   return out
 }
 
-export function applyMarkdownDocsFromModel(projectId: string, text: string): string[] {
-  const written: string[] = []
+export function applyMarkdownDocsFromModel(
+  projectId: string,
+  text: string,
+): { slugs: string[]; edits: import('./chat-doc-edits').ChatDocEdit[] } {
+  const slugs: string[] = []
+  const edits: import('./chat-doc-edits').ChatDocEdit[] = []
   for (const b of parseDocBlocksFromText(text)) {
-    writeAgentDoc(projectId, b.slug, b.content, { origin: 'ai' })
-    written.push(b.slug)
+    const prev = getAgentDoc(projectId, b.slug)
+    const previousContent = prev?.content ?? ''
+    const doc = writeAgentDoc(projectId, b.slug, b.content, { origin: 'ai' })
+    slugs.push(b.slug)
+    edits.push({
+      slug: doc.slug,
+      title: doc.title,
+      action: prev ? 'write' : 'create',
+      previousContent,
+      newContent: doc.content,
+      updatedAt: doc.updatedAt,
+    })
   }
-  return written
+  return { slugs, edits }
 }
 
 export function formatDocsForPrompt(projectId: string, maxChars = 8000): string {

@@ -11,6 +11,7 @@ import {
   getNativeTrackPeak,
   hasFreshNativeMeters,
   refreshNativeMixMeters,
+  snapshotNativeSidechainPeaks,
 } from '@/src/lib/plugin/native-mix-meters'
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { executeDawActions, type DawAction } from './ai-daw-agent'
@@ -20,6 +21,7 @@ import {
   waitUntilProjectReady,
 } from './project-ready'
 import { getLoadedInstrumentForTrack } from './plugin/track-vst-runtime'
+import type { HarnessHealthContext } from './agent-harness'
 
 export type AuditTrackLine = {
   id: string
@@ -198,6 +200,37 @@ export async function buildAuditSnapshot(tienda: TiendaDAW): Promise<AuditSnapsh
     issues,
     hangSuspect,
     hangDetail,
+  }
+}
+
+/** Contexto para inspectDawHealth: peaks, slots host, hang. */
+export async function buildHarnessHealthContext(
+  tienda: TiendaDAW,
+  opts?: { sidechainApplied?: boolean },
+): Promise<HarnessHealthContext> {
+  const snap = await buildAuditSnapshot(tienda)
+  const st = tienda.obtenerEstado()
+  const sidechains = st.project?.routing?.sidechains?.filter((s) => s.activo !== false) ?? []
+  const sidechainHostRouted = sidechains.length > 0
+  const destIds = [...new Set(sidechains.map((s) => s.destinoTrackId).filter(Boolean))]
+  const sidechainPeaks = snapshotNativeSidechainPeaks(destIds.length ? destIds : getMixMeterTrackOrder())
+  return {
+    auditTracks: snap.tracks.map((t) => ({
+      id: t.id,
+      name: t.name,
+      notes: t.notes,
+      clips: t.clips,
+      peak: t.peak,
+      vstSlot: t.vstSlot,
+      plugins: t.plugins,
+    })),
+    masterPeak: snap.masterPeak,
+    hostOk: snap.hostOk,
+    auditIssues: snap.issues,
+    hangSuspect: snap.hangSuspect,
+    sidechainApplied: opts?.sidechainApplied ?? sidechains.length > 0,
+    sidechainHostRouted,
+    sidechainPeaks,
   }
 }
 

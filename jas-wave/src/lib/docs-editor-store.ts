@@ -111,6 +111,35 @@ export function bumpDocsTextZoom(delta: number): void {
   setDocsTextZoom(state.textZoom + delta)
 }
 
+/** True mientras el panel Docs está montado (herramienta activa / undock). */
+let docsPanelMounted = false
+
+export function setDocsPanelMounted(mounted: boolean): void {
+  docsPanelMounted = mounted
+}
+
+export function isDocsPanelMounted(): boolean {
+  return docsPanelMounted
+}
+
+/** Ctrl± debe ir al .md solo con foco en Docs o ventana undock de Docs. */
+export function isDocsZoomTarget(): boolean {
+  if (!docsPanelMounted) return false
+  try {
+    const q = new URLSearchParams(window.location.search)
+    if (q.get('undock') === 'docs') return true
+    const hash = window.location.hash.replace(/^#/, '')
+    if (hash.startsWith('undock/docs')) return true
+  } catch {
+    /* ignore */
+  }
+  const ae = document.activeElement
+  if (ae && typeof (ae as HTMLElement).closest === 'function') {
+    if ((ae as HTMLElement).closest('[data-docs-panel]')) return true
+  }
+  return false
+}
+
 /** Escucha sync desde otras ventanas. */
 export function startDocsEditorChannel(): () => void {
   try {

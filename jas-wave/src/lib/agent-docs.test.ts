@@ -91,6 +91,7 @@ describe('agent-harness', () => {
         extraTracks: [],
         summary: 'Falta el pad',
         markdown: '',
+        checks: [],
       },
     })
     assert.match(msg, /Intención/)
