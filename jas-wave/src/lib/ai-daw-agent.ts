@@ -23,6 +23,7 @@ import { getSelectedTrackId } from './selection-helpers'
 import { formatMentionsForPrompt, resolveAtMentions, type MentionableMessage } from './ai-mentions'
 import { pluginRegistry } from './plugin/registry'
 import { descriptorToPluginInfo } from './plugin/plugin-info-adapter'
+import { ensureKnownVstInRegistry } from './plugin/ensure-known-vst'
 import {
   ensureTrackVstPlugin,
   extractHostPluginPath,
@@ -145,7 +146,8 @@ export function buildAgentSystemPrompt(
     '- Obliga: en canciones declara genero + secciones[{nombre,bars,degrees,density}] + pistas[{nombre,rol,articulacion,pluginId?}].',
     '- Armonía: cada sección puede tener su progresión (Nashville 1–7). Contraste verso≠coro≠puente.',
     '- Anti-repetición y dinámica humanas. Tras generar, midi.humanize / applyGroove si suena mecánico.',
-    '- Instrumentos: catálogo VST + biblioteca del proyecto (library.preset.*). Antes de un VST dudoso: plugin.probe.',
+    '- Instrumentos: catálogo VST + biblioteca global y del proyecto (library.preset.*). Antes de un VST dudoso: plugin.probe.',
+    '  Preferir presetId en daw.musicBuild y library.preset.apply/search ANTES de plugin.setParameter.',
     'NUNCA digas que uses Ableton/Logic. NUNCA digas que no puedes generar MIDI.',
     'NUNCA uses una plantilla fija ni asumas C menor si el usuario pidió otra tonalidad.',
     'Si pide solo un clip en la pista seleccionada: una acción de clip. Sin track.create.',
@@ -174,10 +176,14 @@ export function buildAgentSystemPrompt(
     '- daw.generateMidiSong { aplicar, prompt?, progresion?, secciones?, genero?, articulacion?, minutos?, bpm?, seed?, pistaId? }',
     '- plugin.lookup { nombre }  ← manual + mapa MIDI',
     '- plugin.probe { pluginId? | path? | nombre? }  ← ¿carga en el host?',
-    '- library.preset.list | library.preset.search { query?, rol?, genero? }',
+    '- library.preset.list | library.preset.search { query?, rol?, genero?, scope?: "project"|"global"|"all" }',
     '- library.preset.save { trackId?, pluginInstanceId?, nombre, rol?, generoTags?, notas? }',
-    '- library.preset.apply { presetId, trackId }',
+    '- library.preset.saveGlobal { trackId?, nombre, rol?, generoTags?, notas? }  ← biblioteca cross-proyecto',
+    '- library.preset.listGlobal | library.preset.searchGlobal { query?, rol?, genero? }',
+    '- library.preset.promote { presetId }  ← proyecto → global',
+    '- library.preset.apply { presetId, trackId }  ← resuelve global o proyecto',
     '- library.preset.audition { presetId, bars?, articulacion? }',
+    '- library.preset.saveFxChainGlobal { trackId, nombre, rol?, generoTags? }',
     '- midi.clip.create { pistaId, nombre?, inicio?, duracion?, notas:[{pitch,inicio,duracion,velocidad}] }',
     '- midi.notes.set { pistaId, clipId, notas:[...] }',
     '- midi.transpose { pistaId, clipId, semitonos, noteIds? }',
@@ -190,8 +196,13 @@ export function buildAgentSystemPrompt(
     '- midi.applyGroove { pistaId, clipId, grooveId, strength?, seed? }',
     '- midi.setCC { pistaId, clipId, cc, puntos:[{tiempo,valor}] }',
     '- midi.setPitchBend { pistaId, clipId, puntos:[{tiempo,valor:-1..1}] }',
+    '- clip.create { pistaId, nombre?, inicio?, duracion?, sourceId?, waveform? }',
+    '- clip.split { pistaId, clipId, tiempo }',
+    '- clip.resize { pistaId, clipId, inicio?, duracion?, clipInicio? }',
     '- clip.delete { pistaId, clipId }',
     '- clip.move { pistaId, clipId, inicio, pistaDestinoId? }',
+    '- audio.import { filePath, trackId?, pistaId?, inicio?, startSec?, nombre? }',
+    '- reference.import { filePath, nombre? } | reference.toggleAB { mode?: "mix"|"reference"|"toggle" }',
     '- master.update { datos: { volumen?, paneo?, muted? } }',
     '- track.getFxChain { trackId }',
     '- plugin.insert { trackId, plugin: { nombre, tipo, estadoPluginBase64?, ... }, presetId? }',
@@ -214,14 +225,16 @@ export function buildAgentSystemPrompt(
     '- daw.masterPass { target?: "streaming"|"club"|"cd", genero?, minutes? }',
     '- automation.setCurve { trackId, parametro: "volumen"|"paneo"|paramId, puntos:[{tiempo,valor}] }',
     '- automation.clear { trackId, parametro? }',
-    '- bus.create { nombre? } | send.set { trackId, busId, amount 0..1, preFader? } | sidechain.connect { origenTrackId, destinoTrackId } (estado; sin I/O host aún)',
+    '- bus.create { nombre? } | send.set { trackId, busId, amount 0..1, preFader? }',
+    '- sidechain.connect — NO USAR en 1.0 (solo estado/meter; sin I/O audible a plugins)',
     '- track.freeze { trackId } | track.unfreeze { trackId }',
+    '- VST2 (.dll): solo x64 hosteable; preferir .vst3. Si falla MIDI/audio en VST2, usar edición VST3.',
     '- audio.listDevices | audio.getDevice | audio.setDevice { backend, deviceId?, sampleRate?, bufferSize? } | audio.ensureBest { preferName? }',
     docsPromptActions(),
     '',
     'MIDI: velocidades propias por nota; densidad por sección. Sustain piano/pad = midi.setCC cc:64.',
     'Arreglo: NO dejes que el motor invente la canción — manda genero/secciones/progresion en el payload.',
-    'VST: plugin.probe antes de confiar; library.preset.* para sonidos del proyecto. listParameters antes de setParameter.',
+    'VST: plugin.probe antes de confiar; library.preset.search/apply (global o proyecto) antes de plugin.setParameter. En Music Build usa presetId por pista.',
     'Entrega: tras bounce/masterPass lee AudioListenReport (analysis.fullReport). NO digas "master listo" si listen.ok=false o compareTarget fuera de rango.',
   ].join('\n')
 }
@@ -701,6 +714,18 @@ export async function executeDawActions(
           })
           break
         }
+        case 'track.move': {
+          const r = await tienda.executor.execute('track.move', {
+            trackId: String(p.trackId),
+            toIndex: Number(p.toIndex),
+          })
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success ? 'Pista reordenada' : r.error?.message ?? 'Error al mover',
+          })
+          break
+        }
         case 'track.update': {
           const r = await tienda.executor.execute('track.update', {
             trackId: String(p.trackId),
@@ -771,6 +796,51 @@ export async function executeDawActions(
           })
           break
         }
+        case 'clip.create': {
+          const r = await tienda.executor.execute('clip.create', {
+            pistaId: String(p.pistaId ?? p.trackId),
+            nombre: p.nombre as string | undefined,
+            inicio: p.inicio != null ? Number(p.inicio) : undefined,
+            duracion: p.duracion != null ? Number(p.duracion) : undefined,
+            color: p.color as string | undefined,
+            sourceId: p.sourceId as string | undefined,
+            waveform: p.waveform as number[] | undefined,
+          })
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success ? 'Clip creado' : r.error?.message ?? 'Error clip.create',
+          })
+          break
+        }
+        case 'clip.split': {
+          const r = await tienda.executor.execute('clip.split', {
+            pistaId: String(p.pistaId),
+            clipId: String(p.clipId),
+            tiempo: Number(p.tiempo),
+          })
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success ? 'Clip dividido' : r.error?.message ?? 'Error clip.split',
+          })
+          break
+        }
+        case 'clip.resize': {
+          const r = await tienda.executor.execute('clip.resize', {
+            pistaId: String(p.pistaId),
+            clipId: String(p.clipId),
+            inicio: p.inicio != null ? Number(p.inicio) : undefined,
+            duracion: p.duracion != null ? Number(p.duracion) : undefined,
+            clipInicio: p.clipInicio != null ? Number(p.clipInicio) : undefined,
+          })
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success ? 'Clip redimensionado' : r.error?.message ?? 'Error clip.resize',
+          })
+          break
+        }
         case 'clip.move': {
           const r = await tienda.executor.execute('clip.move', {
             pistaId: String(p.pistaId),
@@ -812,6 +882,46 @@ export async function executeDawActions(
             message: formatGuideForPrompt(guide),
             data: { kind: 'pluginGuide', ...guide },
           })
+          break
+        }
+        case 'web.search': {
+          const query = String(p.query ?? p.q ?? p.nombre ?? '').trim()
+          if (!query) {
+            results.push({ type: action.type, success: false, message: 'Falta query' })
+            break
+          }
+          if (!window.electron?.webSearch) {
+            results.push({ type: action.type, success: false, message: 'webSearch no disponible (Electron)' })
+            break
+          }
+          try {
+            const hits = (await window.electron.webSearch(query)) as Array<{
+              title: string
+              snippet: string
+              url: string
+            }>
+            const text =
+              hits.length === 0
+                ? '(sin resultados web)'
+                : hits
+                    .map(
+                      (h, i) =>
+                        `${i + 1}. ${h.title}\n   ${h.snippet}${h.url ? `\n   ${h.url}` : ''}`,
+                    )
+                    .join('\n')
+            results.push({
+              type: action.type,
+              success: true,
+              message: text,
+              data: { hits, query },
+            })
+          } catch (err) {
+            results.push({
+              type: action.type,
+              success: false,
+              message: err instanceof Error ? err.message : String(err),
+            })
+          }
           break
         }
         case 'daw.musicBuild': {
@@ -1190,10 +1300,16 @@ export async function executeDawActions(
           let plugin = p.plugin as Record<string, unknown> | undefined
           if (!plugin) {
             const byId = p.pluginId ? pluginRegistry.findById(String(p.pluginId)) : undefined
+            const nameQuery =
+              (p.nombre ? String(p.nombre) : '') ||
+              (typeof p.pluginName === 'string' ? p.pluginName : '') ||
+              (p.pluginId ? String(p.pluginId) : '')
             const byName =
               (p.nombre ? pluginRegistry.findByName(String(p.nombre))[0] : undefined) ??
-              (typeof p.pluginName === 'string' ? pluginRegistry.findByName(p.pluginName)[0] : undefined)
+              (typeof p.pluginName === 'string' ? pluginRegistry.findByName(p.pluginName)[0] : undefined) ??
+              (nameQuery ? ensureKnownVstInRegistry(nameQuery) : undefined)
             let d = byId ?? byName
+            if (!d && nameQuery) d = ensureKnownVstInRegistry(nameQuery)
             // path explícito gana al catálogo por nombre (evita «BFD Player» → Keyzone mal etiquetado).
             if (typeof p.path === 'string' && p.path.trim()) {
               const path = String(p.path).trim()
@@ -1317,11 +1433,12 @@ export async function executeDawActions(
         }
         case 'library.preset.list': {
           const { libraryList } = await import('./library/ops')
-          const list = libraryList(tienda)
+          const scope = p.scope ? String(p.scope) : 'project'
+          const list = await libraryList(tienda, scope as 'project' | 'global' | 'all')
           results.push({
             type: action.type,
             success: true,
-            message: `${list.length} presets en biblioteca`,
+            message: `${list.length} presets (${scope})`,
             data: {
               presets: list.map((x) => ({
                 id: x.id,
@@ -1329,23 +1446,53 @@ export async function executeDawActions(
                 pluginNombre: x.pluginNombre,
                 rol: x.rol,
                 generoTags: x.generoTags,
+                scope: x.scope ?? 'project',
+                type: x.type ?? 'plugin',
                 probeOk: x.probeOk,
               })),
             },
           })
           break
         }
+        case 'library.preset.listGlobal': {
+          const { libraryList } = await import('./library/ops')
+          const list = await libraryList(tienda, 'global')
+          results.push({
+            type: action.type,
+            success: true,
+            message: `${list.length} presets globales`,
+            data: { presets: list },
+          })
+          break
+        }
         case 'library.preset.search': {
           const { librarySearch } = await import('./library/ops')
-          const list = librarySearch(tienda, {
+          const list = await librarySearch(tienda, {
             query: p.query ? String(p.query) : undefined,
             rol: p.rol ? String(p.rol) : undefined,
             genero: p.genero ? String(p.genero) : p.genre ? String(p.genre) : undefined,
+            scope: p.scope ? (String(p.scope) as 'project' | 'global' | 'all') : 'all',
           })
           results.push({
             type: action.type,
             success: true,
             message: `${list.length} presets`,
+            data: { presets: list },
+          })
+          break
+        }
+        case 'library.preset.searchGlobal': {
+          const { librarySearch } = await import('./library/ops')
+          const list = await librarySearch(tienda, {
+            query: p.query ? String(p.query) : undefined,
+            rol: p.rol ? String(p.rol) : undefined,
+            genero: p.genero ? String(p.genero) : p.genre ? String(p.genre) : undefined,
+            scope: 'global',
+          })
+          results.push({
+            type: action.type,
+            success: true,
+            message: `${list.length} presets globales`,
             data: { presets: list },
           })
           break
@@ -1365,6 +1512,62 @@ export async function executeDawActions(
             rol: p.rol ? String(p.rol) : undefined,
             generoTags: tags,
             notas: p.notas ? String(p.notas) : undefined,
+            global: Boolean(p.global),
+          })
+          results.push({
+            type: action.type,
+            success: saved.ok,
+            message: saved.message,
+            data: saved.preset,
+          })
+          break
+        }
+        case 'library.preset.saveGlobal': {
+          const { librarySaveGlobalFromTrack } = await import('./library/ops')
+          const trackId = String(p.trackId ?? getSelectedTrackId(tienda.obtenerEstado()) ?? '')
+          const tags = Array.isArray(p.generoTags)
+            ? (p.generoTags as unknown[]).map(String)
+            : typeof p.genero === 'string'
+              ? [String(p.genero)]
+              : []
+          const saved = await librarySaveGlobalFromTrack(tienda, {
+            trackId,
+            pluginInstanceId: p.pluginInstanceId ? String(p.pluginInstanceId) : undefined,
+            nombre: String(p.nombre ?? 'Preset'),
+            rol: p.rol ? String(p.rol) : undefined,
+            generoTags: tags,
+            notas: p.notas ? String(p.notas) : undefined,
+          })
+          results.push({
+            type: action.type,
+            success: saved.ok,
+            message: saved.message,
+            data: saved.preset,
+          })
+          break
+        }
+        case 'library.preset.promote': {
+          const { libraryPromoteToGlobal } = await import('./library/ops')
+          const promoted = await libraryPromoteToGlobal(tienda, String(p.presetId ?? ''))
+          results.push({
+            type: action.type,
+            success: promoted.ok,
+            message: promoted.message,
+            data: promoted.preset,
+          })
+          break
+        }
+        case 'library.preset.saveFxChainGlobal': {
+          const { librarySaveFxChainGlobal } = await import('./library/ops')
+          const trackId = String(p.trackId ?? getSelectedTrackId(tienda.obtenerEstado()) ?? '')
+          const tags = Array.isArray(p.generoTags)
+            ? (p.generoTags as unknown[]).map(String)
+            : []
+          const saved = await librarySaveFxChainGlobal(tienda, {
+            trackId,
+            nombre: String(p.nombre ?? 'FX Chain'),
+            rol: p.rol ? String(p.rol) : undefined,
+            generoTags: tags,
           })
           results.push({
             type: action.type,
@@ -1587,11 +1790,24 @@ export async function executeDawActions(
             break
           }
           const projectId = tienda.obtenerEstado().project.id
+          const prev = getAgentDoc(projectId, slug)
+          const previousContent = prev?.content ?? ''
           const doc =
             action.type === 'doc.create'
               ? createAgentDoc(projectId, slug, content, 'ai')
               : writeAgentDoc(projectId, slug, content, { origin: 'ai' })
-          results.push({ type: action.type, success: true, message: `Documento ${doc.slug}`, data: { slug: doc.slug } })
+          results.push({
+            type: action.type,
+            success: true,
+            message: `Documento ${doc.slug}`,
+            data: {
+              slug: doc.slug,
+              title: doc.title,
+              action: action.type === 'doc.create' ? 'create' : 'write',
+              previousContent,
+              newContent: doc.content,
+            },
+          })
           break
         }
         case 'doc.append': {
@@ -1600,7 +1816,8 @@ export async function executeDawActions(
           const chunk = String(p.markdown ?? p.content ?? '')
           const section = p.section ? String(p.section) : ''
           const prev = getAgentDoc(projectId, slug)
-          let next = prev?.content ?? `# ${slug.replace(/\.md$/i, '')}\n`
+          const previousContent = prev?.content ?? ''
+          let next = previousContent || `# ${slug.replace(/\.md$/i, '')}\n`
           if (section) {
             const cur = getMarkdownSection(next, section)
             next = setMarkdownSection(next, section, [cur, chunk].filter(Boolean).join('\n\n'))
@@ -1608,7 +1825,18 @@ export async function executeDawActions(
             next = `${next.trimEnd()}\n\n${chunk}\n`
           }
           const doc = writeAgentDoc(projectId, slug, next, { origin: 'ai' })
-          results.push({ type: action.type, success: true, message: `Actualizado ${doc.slug}`, data: { slug: doc.slug } })
+          results.push({
+            type: action.type,
+            success: true,
+            message: `Actualizado ${doc.slug}`,
+            data: {
+              slug: doc.slug,
+              title: doc.title,
+              action: 'append',
+              previousContent,
+              newContent: doc.content,
+            },
+          })
           break
         }
         case 'doc.evaluate': {
@@ -1721,8 +1949,7 @@ export async function executeDawActions(
         case 'automation.writePoint':
         case 'automation.clear':
         case 'bus.create':
-        case 'send.set':
-        case 'sidechain.connect': {
+        case 'send.set': {
           const r = await tienda.executor.execute(action.type, (action.payload ?? {}) as Record<string, unknown>)
           if (action.type === 'render.start' && r.success && r.result) {
             const job = r.result as import('../../../shared/src/types/render').RenderJob
@@ -1736,6 +1963,10 @@ export async function executeDawActions(
                 endSec: job.end.segundos,
               })
               const done = await runNativeBounce(job, content, undefined, stBounce)
+              const { recordRenderOutput } = await import('@/src/lib/agent-certify-pipeline')
+              if (done.status === 'completed' && done.outputPath) {
+                recordRenderOutput(done.outputPath, done.loudness?.integrated ?? done.loudness?.lufs)
+              }
               const listen = done.listenReport
               const listenLine = listen
                 ? ` · listen: ${listen.ok ? 'OK' : 'ISSUE'} ${listen.summary}`
@@ -1784,6 +2015,15 @@ export async function executeDawActions(
               data: r.result,
             })
           }
+          break
+        }
+        case 'sidechain.connect': {
+          results.push({
+            type: action.type,
+            success: false,
+            message:
+              'sidechain.connect no es audible en 1.0 (solo estado/meter en host). Usa compresión VST con sidechain nativo del plugin o deja el ducking para post-1.0.',
+          })
           break
         }
         case 'daw.masterPass': {
@@ -1870,6 +2110,74 @@ export async function executeDawActions(
           const { clearPluginQuarantineAndRestore } = await import('./audio-device-cli')
           const r = await clearPluginQuarantineAndRestore(tienda)
           results.push({ type: action.type, success: r.ok, message: r.message, data: r })
+          break
+        }
+        case 'audio.import': {
+          try {
+            const { importAudioToTrack } = await import('./audio-import-agent')
+            const imp = await importAudioToTrack(tienda, {
+              filePath: String(p.filePath ?? ''),
+              trackId: p.trackId as string | undefined,
+              pistaId: p.pistaId as string | undefined,
+              inicio: p.inicio != null ? Number(p.inicio) : undefined,
+              startSec: p.startSec != null ? Number(p.startSec) : undefined,
+              nombre: p.nombre as string | undefined,
+            })
+            results.push({
+              type: action.type,
+              success: true,
+              message: `Audio importado en pista ${imp.trackId} (${imp.durationSec.toFixed(2)}s)`,
+              data: imp,
+            })
+          } catch (e) {
+            results.push({
+              type: action.type,
+              success: false,
+              message: e instanceof Error ? e.message : String(e),
+            })
+          }
+          break
+        }
+        case 'reference.import': {
+          try {
+            const { importReferenceTrack } = await import('./audio-import-agent')
+            const imp = await importReferenceTrack(tienda, {
+              filePath: String(p.filePath ?? ''),
+              nombre: p.nombre as string | undefined,
+            })
+            results.push({
+              type: action.type,
+              success: true,
+              message: `Referencia importada en pista ${imp.trackId}`,
+              data: imp,
+            })
+          } catch (e) {
+            results.push({
+              type: action.type,
+              success: false,
+              message: e instanceof Error ? e.message : String(e),
+            })
+          }
+          break
+        }
+        case 'reference.toggleAB': {
+          try {
+            const { toggleReferenceAb } = await import('./audio-import-agent')
+            const modeArg = p.mode as 'mix' | 'reference' | 'toggle' | undefined
+            const r = await toggleReferenceAb(tienda, modeArg)
+            results.push({
+              type: action.type,
+              success: true,
+              message: `A/B referencia: modo ${r.mode}`,
+              data: r,
+            })
+          } catch (e) {
+            results.push({
+              type: action.type,
+              success: false,
+              message: e instanceof Error ? e.message : String(e),
+            })
+          }
           break
         }
         case 'project.new': {

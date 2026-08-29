@@ -10,8 +10,8 @@ import {
   inspectDawHealth,
   runHarnessFollowups,
   seedAttemptedFingerprints,
-} from './agent-harness'
-import type { ActionResult } from './ai-daw-agent'
+} from '@jaswave/ai-harness'
+import type { HarnessActionResult } from '@jaswave/ai-harness'
 import type { DAWState } from '../../../shared/src/types/state'
 
 function midiState(opts: { nombre: string; notes: number; tipo?: 'midi' | 'audio' }): DAWState {
@@ -35,14 +35,14 @@ function midiState(opts: { nombre: string; notes: number; tipo?: 'midi' | 'audio
 
 describe('agent-harness producción', () => {
   it('no repara si el DAW está sano', () => {
-    const results: ActionResult[] = [{ type: 'track.create', success: true, message: 'ok' }]
+    const results: HarnessActionResult[] = [{ type: 'track.create', success: true, message: 'ok' }]
     const report = inspectDawHealth(midiState({ nombre: 'Bajo', notes: 8 }), results, null)
     assert.equal(report.ok, true)
     assert.equal(harnessShouldRepair(report), false)
   })
 
   it('marca acciones fallidas y MIDI vacío tras generar', () => {
-    const results: ActionResult[] = [
+    const results: HarnessActionResult[] = [
       { type: 'midi.clip.create', success: true, message: 'clip' },
       { type: 'plugin.insert', success: false, message: 'VST no carga' },
     ]
@@ -53,7 +53,7 @@ describe('agent-harness producción', () => {
   })
 
   it('marca instrumento faltante tras un musicBuild y plugins en error', () => {
-    const built: ActionResult[] = [{ type: 'daw.musicBuild', success: true, message: 'ok' }]
+    const built: HarnessActionResult[] = [{ type: 'daw.musicBuild', success: true, message: 'ok' }]
     const bare = inspectDawHealth(midiState({ nombre: 'Bajo', notes: 8 }), built, null)
     assert.ok(bare.errors.some((e) => e.code === 'missing-instrument'))
     const crashed = midiState({ nombre: 'Lead', notes: 4 })
@@ -65,7 +65,7 @@ describe('agent-harness producción', () => {
   })
 
   it('omite recrear un musicBuild que ya aplicó', () => {
-    const prev: ActionResult[] = [{ type: 'daw.musicBuild', success: true, message: 'ok' }]
+    const prev: HarnessActionResult[] = [{ type: 'daw.musicBuild', success: true, message: 'ok' }]
     const filtered = filterRedundantRepairActions(
       [
         { type: 'daw.musicBuild', payload: { aplicar: true, prompt: 'otra vez' } },
@@ -101,7 +101,7 @@ describe('agent-harness producción', () => {
   })
 
   it('para el bucle si la firma de error no cambia (stale limit)', async () => {
-    const broken: ActionResult[] = [{ type: 'plugin.insert', success: false, message: 'boom' }]
+    const broken: HarnessActionResult[] = [{ type: 'plugin.insert', success: false, message: 'boom' }]
     let chats = 0
     const out = await runHarnessFollowups({
       userText: 'pon analog lab',
@@ -127,7 +127,7 @@ describe('agent-harness producción', () => {
   })
 
   it('plan incompleto tras mutar es error reparable', () => {
-    const results: ActionResult[] = [{ type: 'track.create', success: true, message: 'ok' }]
+    const results: HarnessActionResult[] = [{ type: 'track.create', success: true, message: 'ok' }]
     const report = inspectDawHealth(midiState({ nombre: 'Bajo', notes: 8 }), results, {
       planned: 2,
       done: 0,
@@ -135,10 +135,44 @@ describe('agent-harness producción', () => {
       extraTracks: [],
       summary: '0/2',
       markdown: '',
+      checks: [],
     })
     assert.ok(report.errors.some((e) => e.code === 'plan-incomplete'))
     assert.ok(report.debugDump.includes('Bajo'))
     assert.equal(harnessShouldRepair(report), true)
+  })
+
+  it('host-slot-unconfirmed cuando hay notas pero sin slot audit', () => {
+    const built: HarnessActionResult[] = [{ type: 'daw.musicBuild', success: true, message: 'ok' }]
+    const st = midiState({ nombre: 'Lead', notes: 16 })
+    st.project!.tracks[0]!.plugins = [{ nombre: 'JasWave Roles', estado: 'cargado' } as never]
+    const report = inspectDawHealth(st, built, null, {
+      auditTracks: [
+        {
+          id: 't1',
+          name: 'Lead',
+          notes: 16,
+          clips: 1,
+          peak: 0,
+          plugins: ['JasWave Roles'],
+        },
+      ],
+    })
+    assert.ok(report.errors.some((e) => e.code === 'host-slot-unconfirmed'))
+  })
+
+  it('sidechain aplicado emite aviso unverified', () => {
+    const report = inspectDawHealth(midiState({ nombre: 'A', notes: 4 }), [], null, {
+      sidechainApplied: true,
+    })
+    assert.ok(report.warnings.some((w) => w.code === 'sidechain-unverified'))
+  })
+
+  it('acción no soportada usa code action-unsupported', () => {
+    const report = inspectDawHealth(midiState({ nombre: 'A', notes: 4 }), [
+      { type: 'foo.bar', success: false, message: 'Acción no soportada: foo.bar' },
+    ], null)
+    assert.ok(report.errors.some((e) => e.code === 'action-unsupported'))
   })
 
   it('para si el modelo no emite acciones nuevas', async () => {
