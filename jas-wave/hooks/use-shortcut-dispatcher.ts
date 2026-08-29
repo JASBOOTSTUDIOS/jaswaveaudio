@@ -3,6 +3,8 @@ import { useDAW, useDAWState } from '../src/context/daw-context'
 import {
   createActionSystem,
   DespachadorTeclado,
+  hasNonEmptyTextSelection,
+  shouldIgnoreGlobalShortcuts,
   type ActionSystem,
 } from '../../shared/src'
 import {
@@ -15,7 +17,7 @@ import {
 import { executeOrNotify, redoOrNotify, undoOrNotify } from '../src/lib/execute-or-toast'
 import { dawClipboard, type ClipboardClip } from '../src/lib/daw-clipboard'
 import { requestOpenTool } from '../src/workspace/types'
-import { bumpUiZoom } from '../src/lib/docs-editor-store'
+import { bumpUiZoom, bumpDocsTextZoom, isDocsZoomTarget, setDocsTextZoom } from '../src/lib/docs-editor-store'
 
 /**
  * Sistema unificado: ActionSystem → Command System.
@@ -133,12 +135,14 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       'editing.undo': () => { void undoOrNotify(tienda) },
       'editing.redo': () => { void redoOrNotify(tienda) },
       'editing.copy': () => {
+        if (hasNonEmptyTextSelection()) return
         const clips = collectSelectedClips()
         if (clips.length === 0) return
         dawClipboard.setClips(clips)
         tienda.busEventos.emit('portapapeles.copiado', { cantidad: clips.length })
       },
       'editing.cut': () => {
+        if (hasNonEmptyTextSelection()) return
         const clips = collectSelectedClips()
         if (clips.length === 0) return
         dawClipboard.setClips(clips)
@@ -316,6 +320,11 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       },
 
       'timeline.zoomIn': () => {
+        // Panel Docs con foco / undock Docs: Ctrl+= zoom tipográfico del .md.
+        if (isDocsZoomTarget()) {
+          bumpDocsTextZoom(0.1)
+          return
+        }
         const z = st().ui?.zoomHorizontal ?? 1
         window.dispatchEvent(
           new CustomEvent('jaswave-zoom-horizontal', { detail: { zoom: Math.min(256, z * 1.25) } }),
@@ -323,6 +332,10 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         bumpUiZoom(0.05)
       },
       'timeline.zoomOut': () => {
+        if (isDocsZoomTarget()) {
+          bumpDocsTextZoom(-0.1)
+          return
+        }
         const z = st().ui?.zoomHorizontal ?? 1
         window.dispatchEvent(
           new CustomEvent('jaswave-zoom-horizontal', { detail: { zoom: Math.max(0.15, z / 1.25) } }),
@@ -330,6 +343,10 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         bumpUiZoom(-0.05)
       },
       'timeline.zoomToProject': () => {
+        if (isDocsZoomTarget()) {
+          setDocsTextZoom(1)
+          return
+        }
         void executeOrNotify(tienda, 'ui.setZoom', { horizontal: 1, vertical: 1 })
       },
       'timeline.zoomToSelection': () => {
@@ -391,6 +408,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
     const onMenu = (ev: Event) => {
       const id = (ev as CustomEvent<{ id: string }>).detail?.id
       if (!id) return
+      if (shouldIgnoreGlobalShortcuts()) return
       // Menú usa IDs legacy → resolve via aliases
       const resolved = system.actions.resolveId(id) ?? id
       system.actions.execute(resolved)
@@ -401,6 +419,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       onMenuAction?: (cb: (id: string) => void) => () => void
     }
     const unsubNative = api?.onMenuAction?.((id) => {
+      if (shouldIgnoreGlobalShortcuts()) return
       const resolved = system.actions.resolveId(id) ?? id
       system.actions.execute(resolved)
     })
@@ -429,6 +448,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (paletaAbiertaRef.current && e.key !== 'Escape') return
+      if (shouldIgnoreGlobalShortcuts(e.target)) return
       system.handleKeyboardEvent(e)
     }
     window.addEventListener('keydown', handler)
