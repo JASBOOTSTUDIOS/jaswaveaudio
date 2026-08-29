@@ -9,6 +9,7 @@ import { audioEngine } from '@/lib/audio-engine'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { executeDawActions } from '@/src/lib/ai-daw-agent'
 import type { BufferHealthReport } from '@/src/lib/audio-buffer-health'
+import { useLiveBufferMeter } from '@/hooks/use-live-buffer-meter'
 import { getNativeMasterPeak } from '@/src/lib/plugin/native-mix-meters'
 import { cn } from '@/lib/utils'
 
@@ -48,6 +49,7 @@ export function MixAnalyzerPanel() {
   const [corr, setCorr] = useState(1)
   const [timing, setTiming] = useState<TimingInfo | null>(null)
   const [bufferHealth, setBufferHealth] = useState<BufferHealthReport | null>(null)
+  const liveBuffer = useLiveBufferMeter(playing)
   const [listen, setListen] = useState<BounceListen | null>(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
@@ -296,19 +298,80 @@ export function MixAnalyzerPanel() {
       <section className="space-y-1.5">
         <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
           <Timer className="size-3.5" /> Timing / buffer
+          <span className={cn(
+            'ml-1 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
+            liveBuffer?.status === 'healthy' && 'bg-emerald-950/50 text-emerald-300',
+            liveBuffer?.status === 'saturated' && 'bg-red-950/50 text-red-300',
+            liveBuffer?.status === 'starving' && 'bg-amber-950/50 text-amber-300',
+            liveBuffer?.status === 'disconnected' && 'bg-zinc-800 text-zinc-400',
+            (!liveBuffer || liveBuffer.status === 'unknown') && 'bg-muted/40 text-muted-foreground',
+          )}>
+            {liveBuffer?.status ?? '…'}
+          </span>
           <button
             type="button"
             disabled={busy}
             onClick={() => void refreshBufferHealth()}
             className="ml-auto rounded border border-border/70 px-2 py-0.5 text-[10px] font-sans hover:bg-muted/40 disabled:opacity-50"
           >
-            Analizar buffer
+            Diagnóstico
           </button>
         </div>
-        {bufferHealth ? (
+        {liveBuffer ? (
           <div
             className={cn(
               'rounded border p-2 text-[11px] leading-relaxed',
+              liveBuffer.status === 'healthy'
+                ? 'border-emerald-800/50 bg-emerald-950/20'
+                : liveBuffer.status === 'saturated'
+                  ? 'border-red-700/60 bg-red-950/30'
+                  : liveBuffer.status === 'starving'
+                    ? 'border-amber-700/60 bg-amber-950/30'
+                    : 'border-border/50 bg-black/20',
+            )}
+          >
+            <div className="font-semibold uppercase tracking-wide">
+              {liveBuffer.status}
+              <span className="ml-2 font-normal normal-case text-muted-foreground">{liveBuffer.hint}</span>
+            </div>
+            <div className="mt-1.5 h-3 overflow-hidden rounded bg-muted/40">
+              <div
+                className={cn(
+                  'h-3 rounded transition-[width] duration-75',
+                  liveBuffer.level > 0.9
+                    ? 'bg-red-500'
+                    : liveBuffer.levelVsTarget < 0.35
+                      ? 'bg-amber-400'
+                      : 'bg-emerald-500',
+                )}
+                style={{
+                  width: `${Math.min(100, Math.max(2, liveBuffer.level * 100))}%`,
+                }}
+              />
+            </div>
+            <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono text-[10px] text-muted-foreground">
+              <span>fill {liveBuffer.fill}/{liveBuffer.highFill}</span>
+              <span>target {liveBuffer.targetFill}</span>
+              <span>daw {liveBuffer.dawFill} · max {liveBuffer.maxLiveFill}</span>
+              <span>min {liveBuffer.minLiveFill} · live {liveBuffer.liveTracks}</span>
+              <span>queue {liveBuffer.mixQueueDepth}{liveBuffer.mixBackpressure ? ' BP' : ''}</span>
+              <span>in/out {liveBuffer.inRate}/{liveBuffer.outRate} Hz</span>
+              <span>underrun {liveBuffer.underrunBlocks}{(liveBuffer.underrunDelta ?? 0) > 0 ? ` (+${liveBuffer.underrunDelta})` : ''}</span>
+              <span>overflow {liveBuffer.overflowPushes}{(liveBuffer.overflowDelta ?? 0) > 0 ? ` (+${liveBuffer.overflowDelta})` : ''}</span>
+              {(liveBuffer.dropDelta ?? 0) > 0 || liveBuffer.highFillDropFrames > 0 ? (
+                <span className="col-span-2 text-red-300">
+                  drop frames {liveBuffer.highFillDropFrames}{(liveBuffer.dropDelta ?? 0) > 0 ? ` (+${liveBuffer.dropDelta})` : ''}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <p className="text-[10px] text-muted-foreground">Conectando medidor de buffer…</p>
+        )}
+        {bufferHealth ? (
+          <div
+            className={cn(
+              'rounded border p-2 text-[11px] leading-relaxed opacity-90',
               bufferHealth.status === 'healthy'
                 ? 'border-emerald-800/50 bg-emerald-950/20'
                 : bufferHealth.status === 'saturated'
@@ -319,7 +382,7 @@ export function MixAnalyzerPanel() {
             )}
           >
             <div className="font-semibold uppercase tracking-wide">
-              {bufferHealth.status}
+              Diagnóstico · {bufferHealth.status}
               <span className="ml-2 font-normal normal-case text-muted-foreground">{bufferHealth.summary}</span>
             </div>
             {bufferHealth.ring ? (

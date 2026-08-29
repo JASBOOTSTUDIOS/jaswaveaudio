@@ -11,7 +11,6 @@ import { routeMidiToActiveVst } from '@/src/lib/plugin/vst-voice-router'
 import { allNotesOffAllTracks, sendVstCc, sendVstNote, setHostTransportPlaying } from '@/src/lib/plugin/track-vst-runtime'
 import {
   getNativeMasterPeak,
-  getNativeMaxStemPeak,
   getNativeTrackPeak,
   isNativeMeterHostAvailable,
   setMixMeterTrackOrder,
@@ -29,6 +28,7 @@ import {
 } from '@/src/lib/plugin/host-transport'
 import pcmTapProcessorUrl from './pcm-tap-processor.js?url'
 import { peakFromByteTimeDomain } from './audio-dsp'
+import { synthDemoSamples } from './demo-synth'
 import { ensureMicPermission, listAudioInputs, refreshAudioInputs } from '@/src/lib/audio-inputs'
 
 export interface TrackAudioConfig {
@@ -758,100 +758,16 @@ export class WebAudioEngine {
   }
 
   /**
-   * Sintetizador procedural para generar pistas de demo con sonido real (Drums, Bass, Chords, Lead)
+   * Sintetizador procedural para generar pistas de demo con sonido real.
+   * DSP determinista en lib/demo-synth.ts (fase integrada, envolventes a cero,
+   * pico <= 0.92) → sin clicks ni recortes.
    */
   public generateDemoBuffer(type: 'drums' | 'bass' | 'chords' | 'lead' | 'synth', durationSec = 16): AudioBuffer {
     const sampleRate = this.audioCtx?.sampleRate ?? this.preferredSampleRate
-    const length = Math.floor(sampleRate * durationSec)
-    const buffer = new AudioBuffer({ numberOfChannels: 2, length, sampleRate })
-    const left = buffer.getChannelData(0)
-    const right = buffer.getChannelData(1)
-
-    const bpm = 134
-    const secondsPerBeat = 60 / bpm
-
-    if (type === 'drums') {
-      // Bombo (Kick), Tarola (Snare), HiHat
-      for (let i = 0; i < length; i++) {
-        const t = i / sampleRate
-        const beatPosition = (t / secondsPerBeat) % 4
-        
-        let kick = 0
-        const kickSubBeat = beatPosition % 1
-        if (kickSubBeat < 0.25) {
-          const freq = 120 * Math.exp(-kickSubBeat * 30)
-          kick = Math.sin(2 * Math.PI * freq * kickSubBeat) * Math.exp(-kickSubBeat * 15) * 0.8
-        }
-
-        let snare = 0
-        const snareBeat = (beatPosition + 3) % 2
-        if (snareBeat < 0.2) {
-          const noise = (Math.random() * 2 - 1) * Math.exp(-snareBeat * 20)
-          const tone = Math.sin(2 * Math.PI * 220 * snareBeat) * Math.exp(-snareBeat * 30)
-          snare = (noise * 0.6 + tone * 0.4) * 0.6
-        }
-
-        let hihat = 0
-        const hihatSub = (t / secondsPerBeat) % 0.5
-        if (hihatSub < 0.05) {
-          hihat = (Math.random() * 2 - 1) * Math.exp(-hihatSub * 60) * 0.2
-        }
-
-        const out = kick + snare + hihat
-        left[i] = out
-        right[i] = out
-      }
-    } else if (type === 'bass') {
-      const notes = [55, 55, 65, 58, 55, 62, 58, 60]
-      for (let i = 0; i < length; i++) {
-        const t = i / sampleRate
-        const step = Math.floor((t / (secondsPerBeat / 2)) % notes.length)
-        const noteFreq = notes[step]
-        const subBeat = (t / (secondsPerBeat / 2)) % 1
-        
-        const env = Math.exp(-subBeat * 4)
-        const phase = (t * noteFreq) % 1
-        const saw = (phase * 2 - 1) * env * 0.5
-        
-        left[i] = saw
-        right[i] = saw
-      }
-    } else if (type === 'chords') {
-      const chords = [
-        [220, 261.63, 329.63],
-        [174.61, 220, 261.63],
-        [261.63, 329.63, 392],
-        [196, 246.94, 293.66],
-      ]
-      for (let i = 0; i < length; i++) {
-        const t = i / sampleRate
-        const chordIndex = Math.floor((t / (secondsPerBeat * 4)) % chords.length)
-        const currentChord = chords[chordIndex]
-        let chordOut = 0
-
-        for (const freq of currentChord) {
-          chordOut += Math.sin(2 * Math.PI * freq * t) * 0.15
-        }
-
-        const env = 0.6 + 0.4 * Math.sin(2 * Math.PI * (t / (secondsPerBeat * 2)))
-        left[i] = chordOut * env
-        right[i] = chordOut * env
-      }
-    } else {
-      const arpeggio = [440, 523.25, 659.25, 783.99, 659.25, 523.25]
-      for (let i = 0; i < length; i++) {
-        const t = i / sampleRate
-        const step = Math.floor((t / (secondsPerBeat / 4)) % arpeggio.length)
-        const freq = arpeggio[step]
-        const subBeat = (t / (secondsPerBeat / 4)) % 1
-        const env = Math.exp(-subBeat * 6)
-        const val = Math.sin(2 * Math.PI * freq * t) * env * 0.3
-
-        left[i] = val
-        right[i] = val
-      }
-    }
-
+    const { left, right } = synthDemoSamples(type, sampleRate, durationSec)
+    const buffer = new AudioBuffer({ numberOfChannels: 2, length: left.length, sampleRate })
+    buffer.copyToChannel(left, 0)
+    buffer.copyToChannel(right, 1)
     return buffer
   }
 
@@ -864,6 +780,7 @@ export class WebAudioEngine {
     clips: AudioClipPlaybackInfo[],
     tracksConfig: TrackAudioConfig[],
     midiClips: MidiClipPlaybackInfo[] = [],
+    projectBpm?: number,
   ) {
     this.stopAllSources()
 
@@ -874,8 +791,11 @@ export class WebAudioEngine {
     this.resetPcmPace()
     startHostTransportClockPoll()
     const sr = this.getSampleRate()
-    const tempoGuess = getCachedHostTransportClock().tempo || 120
-    setHostTransportPlaying(true, tempoGuess, (this.playheadStartSec * tempoGuess) / 60)
+    const tempo =
+      projectBpm != null && projectBpm > 0
+        ? projectBpm
+        : getCachedHostTransportClock().tempo || 120
+    setHostTransportPlaying(true, tempo, (this.playheadStartSec * tempo) / 60)
     hostClipStopAll()
 
     const haySolos = tracksConfig.some((t) => t.soloActiva)
@@ -937,16 +857,19 @@ export class WebAudioEngine {
           const startSample = Math.round((this.playheadStartSec + delay) * sr)
           const durationSamples = Math.round(remainingDuration * sr)
           const sourceOffsetSamples = Math.round(offset * sr)
-          const gain = cfg?.silenciada && !haySolos ? 0 : cfg?.volumen ?? 1
-          const pan = cfg?.paneo ?? 0
+          // En modo stem el gain/pan viven únicamente en el graph del host
+          // (applyTrackGainPan). Pasar gain/pan aquí además los duplicaría.
+          // Solo en el path legacy (sin stem) el clip lleva su propio fader.
+          const clipGain = this.stemMode ? 1 : cfg?.silenciada && !haySolos ? 0 : cfg?.volumen ?? 1
+          const clipPan = this.stemMode ? 0 : cfg?.paneo ?? 0
           hostClipSchedule({
             clipId: clip.id,
             trackIndex: stem,
             startSample,
             durationSamples,
             sourceOffsetSamples,
-            gain,
-            pan,
+            gain: clipGain,
+            pan: clipPan,
           })
         } catch (err) {
           console.warn('[audio-engine] host clip start failed', clip.id, err)
@@ -1011,7 +934,7 @@ export class WebAudioEngine {
         }
       }
       const nowTimeline = this.getMidiTimelineSeconds()
-      this.midiScheduledUntilSec = Math.max(0, nowTimeline - 0.02)
+      this.midiScheduledUntilSec = this.playheadStartSec
       this.scheduleMidiLookahead()
     }
   }
@@ -1022,8 +945,7 @@ export class WebAudioEngine {
     this.midiVoiceKeys.clear()
     this.midiCcKeys.clear()
     this.midiClipNoteCursor.clear()
-    const nowTimeline = this.getMidiTimelineSeconds()
-    this.midiScheduledUntilSec = Math.max(0, nowTimeline - 0.02)
+    this.midiScheduledUntilSec = this.playheadStartSec
     this.scheduleMidiLookahead()
   }
 
@@ -1076,6 +998,9 @@ export class WebAudioEngine {
         const early = clip.notes[ni]!
         const earlyEnd = early.startSec + Math.max(0.03, early.durationSec)
         if (earlyEnd > windowStart) break
+        const earlyKey = clip.id + ':' + ni + ':' + early.pitch + ':' + early.startSec.toFixed(4)
+        // No descartar notas del inicio si el VST aún no estaba listo al primer lookahead.
+        if (!this.midiVoiceKeys.has(earlyKey) && earlyEnd > nowTimeline - 0.03) break
         ni += 1
       }
       this.midiClipNoteCursor.set(clip.id, ni)
@@ -1083,12 +1008,15 @@ export class WebAudioEngine {
       for (; ni < clip.notes.length; ni++) {
         const note = clip.notes[ni]!
         const noteStart = note.startSec
-        if (noteStart > windowEnd) break
+        if (noteStart > windowEnd) {
+          this.midiClipNoteCursor.set(clip.id, ni)
+          break
+        }
         const durRaw = Math.max(0.03, note.durationSec)
         const noteEnd = noteStart + durRaw
-        if (noteEnd <= windowStart) continue
         const key = clip.id + ':' + ni + ':' + note.pitch + ':' + noteStart.toFixed(4)
         if (this.midiVoiceKeys.has(key)) continue
+        if (noteEnd <= windowStart && noteEnd <= nowTimeline - 0.03) continue
 
         let dur = durRaw
         let whenSec = noteStart
@@ -1105,6 +1033,7 @@ export class WebAudioEngine {
           console.warn('[audio-engine] midi voice failed', err)
         }
       }
+      if (ni >= clip.notes.length) this.midiClipNoteCursor.set(clip.id, ni)
 
       const ccs = clip.ccs ?? []
       for (let ci = 0; ci < ccs.length; ci++) {
@@ -1136,8 +1065,9 @@ export class WebAudioEngine {
       0,
       Math.round((whenSec - nowTimeline + this.nativePathAheadSec()) * sr),
     )
-    const delayOff = delayOn + Math.max(32, Math.round(durationSec * sr))
-    sendVstNote(slotId, true, pitch, velocity, delayOn)
+    const lengthSamples = Math.max(32, Math.round(durationSec * sr))
+    const delayOff = delayOn + lengthSamples
+    sendVstNote(slotId, true, pitch, velocity, delayOn, lengthSamples)
     sendVstNote(slotId, false, pitch, 0, delayOff)
   }
 
@@ -1203,7 +1133,7 @@ export class WebAudioEngine {
   public getMasterMeterLevel(): number {
     let native = 0
     if (isNativeMeterHostAvailable()) {
-      native = Math.max(getNativeMasterPeak(), getNativeMaxStemPeak())
+      native = getNativeMasterPeak()
     }
     let web = 0
     if (this.masterAnalyser && this.masterMeterData) {

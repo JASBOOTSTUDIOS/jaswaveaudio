@@ -56,7 +56,8 @@ export async function freezeTrack(tienda: TiendaDAW, trackId: string): Promise<F
 
   const audioPath = done.outputPath
   // Limpiar clips MIDI previos (el audio congelado los sustituye)
-  for (const c of track.clips ?? []) {
+  const trackBeforeClips = tienda.obtenerEstado().project.tracks.find((t) => t.id === trackId)
+  for (const c of trackBeforeClips?.clips ?? []) {
     await tienda.executor.execute('clip.delete', { pistaId: trackId, clipId: c.id }).catch(() => undefined)
   }
   const clip = await tienda.executor.execute('clip.create', {
@@ -66,14 +67,21 @@ export async function freezeTrack(tienda: TiendaDAW, trackId: string): Promise<F
     duracion: endSec,
     sourceId: audioPath,
   })
-  const clipId =
-    clip.success && clip.result && typeof clip.result === 'object' && 'pistaId' in (clip.result as object)
-      ? String((track.clips ?? []).length)
-      : undefined
+  let clipId: string | undefined
+  if (clip.success && clip.result && typeof clip.result === 'object') {
+    const r = clip.result as { clipId?: string }
+    if (typeof r.clipId === 'string' && r.clipId) clipId = r.clipId
+  }
+  if (!clipId) {
+    const after = tienda.obtenerEstado().project.tracks.find((t) => t.id === trackId)
+    const last = (after?.clips ?? []).at(-1)
+    if (last?.id) clipId = last.id
+  }
 
   const fr = await tienda.executor.execute('track.freeze', {
     trackId,
     audioPath,
+    clipId,
   })
   if (!fr.success) {
     return { ok: false, message: fr.error?.message ?? 'track.freeze falló' }

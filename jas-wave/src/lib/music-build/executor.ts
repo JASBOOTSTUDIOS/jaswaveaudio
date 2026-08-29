@@ -8,6 +8,7 @@ import {
 } from '../midi-song-generator'
 import { pluginRegistry } from '../plugin/registry'
 import { descriptorToPluginInfo } from '../plugin/plugin-info-adapter'
+import { ensureKnownVstInRegistry } from '../plugin/ensure-known-vst'
 import { pickVstForRole, type InstrumentRole } from '../plugin-knowledge'
 import {
   applyJasWaveRolesParameter,
@@ -201,86 +202,20 @@ function resolveCatalogPlugin(t: {
   const fuzzy = (q: string) => {
     const hits = pluginRegistry.findByName(q)
     if (hits[0]) return hits[0]
+    const known = ensureKnownVstInRegistry(q)
+    if (known) return known
     const compact = q.replace(/\s+/g, '').toLowerCase()
     return pluginRegistry.list().find((d) => d.name.replace(/\s+/g, '').toLowerCase().includes(compact))
-  }
-  /** Alias locales frecuentes (usuario: Descent=DecentSampler, Font Piano→Kontakt). */
-  const KNOWN: Record<string, { name: string; path: string }> = {
-    descent: {
-      name: 'DecentSampler',
-      path: 'C:\\Program Files\\Common Files\\VST3\\DecentSampler.vst3',
-    },
-    decentsampler: {
-      name: 'DecentSampler',
-      path: 'C:\\Program Files\\Common Files\\VST3\\DecentSampler.vst3',
-    },
-    decentsample: {
-      name: 'DecentSampler',
-      path: 'C:\\Program Files\\Common Files\\VST3\\DecentSampler.vst3',
-    },
-    font: {
-      name: 'Kontakt',
-      path: 'C:\\Program Files\\Common Files\\VST3\\Kontakt.vst3',
-    },
-    fontpiano: {
-      name: 'Kontakt',
-      path: 'C:\\Program Files\\Common Files\\VST3\\Kontakt.vst3',
-    },
-    kontakt: {
-      name: 'Kontakt',
-      path: 'C:\\Program Files\\Common Files\\VST3\\Kontakt.vst3',
-    },
-    bfd: {
-      name: 'BFD Player',
-      path: 'C:\\Program Files\\Common Files\\VST3\\BFDPlayer.vst3',
-    },
-    bfdplayer: {
-      name: 'BFD Player',
-      path: 'C:\\Program Files\\Common Files\\VST3\\BFDPlayer.vst3',
-    },
-  }
-  const ensureKnown = (key: string) => {
-    const k = key.replace(/\s+/g, '').toLowerCase()
-    const hit = KNOWN[k]
-    if (!hit) return undefined
-    const existing =
-      pluginRegistry.list().find((d) => d.path === hit.path) ?? pluginRegistry.findByName(hit.name)[0]
-    if (existing) return existing
-    const d = {
-      pluginId: `path:${hit.path}`,
-      name: hit.name,
-      path: hit.path,
-      format: 'vst3' as const,
-      category: 'instrument',
-      isInstrument: true,
-      isEffect: false,
-      vendor: '',
-      version: '',
-      hostReady: true,
-      scanStatus: 'ok' as const,
-      supportsMidiInput: true,
-      supportsMidiOutput: false,
-      supportsAudioInput: false,
-      supportsAudioOutput: true,
-      supportsSidechain: false,
-      supportsEditor: true,
-      parameterCount: 0,
-      isolation: 'out-of-process' as const,
-    }
-    pluginRegistry.register(d)
-    return d
   }
   if (t.pluginId) {
     const byId = pluginRegistry.findById(t.pluginId)
     if (byId) return byId
-    const known = ensureKnown(t.pluginId)
+    const known = ensureKnownVstInRegistry(t.pluginId)
     if (known) return known
     const byIdAsName = fuzzy(t.pluginId)
     if (byIdAsName) return byIdAsName
   }
   if (t.pluginNombre) {
-    const known = ensureKnown(t.pluginNombre)
-    if (known) return known
     const byName = fuzzy(t.pluginNombre)
     if (byName) return byName
   }
@@ -603,25 +538,42 @@ export async function executeMusicBuild(
     }
   }
   const instOkFinal = rolesPads + instrumentsLoaded
-  if (instOkFinal === 0 && midiTrackCount > 0) {
-    // No marcar failed aún: ensure final abajo puede rescatar; stage fail temporal
-    setStage(stages, 'instruments', 'fail', `Ningún instrumento en host · ${instrumentNotes.slice(0, 6).join(', ')}`)
-  } else if (instrumentsFailed > 0 && instOkFinal < midiTrackCount) {
-    setStage(
-      stages,
-      'instruments',
-      'ok',
-      `${rolesPads} Roles · ${instrumentsLoaded} VST · ${instrumentsFailed} fallos · ${instrumentNotes.slice(0, 4).join(', ')}`,
-    )
-  } else {
-    setStage(
-      stages,
-      'instruments',
-      instOkFinal ? 'ok' : 'skip',
-      instOkFinal
-        ? `${rolesPads} Roles · ${instrumentsLoaded} VST${instrumentNotes.length ? ` · ${instrumentNotes.slice(0, 4).join(', ')}` : ''}`
-        : 'Sin instrumentos',
-    )
+  // Tras rescue: exigir slot host en cada pista MIDI (no marcar OK con silencio).
+  {
+    const { getLoadedInstrumentForTrack } = await import('../plugin/track-vst-runtime')
+    let missingHost = 0
+    for (const row of created) {
+      if (spec.tracks[row.specIndex]?.tipo === 'audio') continue
+      if (!getLoadedInstrumentForTrack(row.trackId)) missingHost += 1
+    }
+    if (missingHost > 0 && midiTrackCount > 0) {
+      failed = true
+      setStage(
+        stages,
+        'instruments',
+        'fail',
+        `host-slot-unconfirmed · ${missingHost}/${midiTrackCount} pistas MIDI sin slot · ${instrumentNotes.slice(0, 5).join(', ')}`,
+      )
+    } else if (instOkFinal === 0 && midiTrackCount > 0) {
+      failed = true
+      setStage(stages, 'instruments', 'fail', `Ningún instrumento en host · ${instrumentNotes.slice(0, 6).join(', ')}`)
+    } else if (instrumentsFailed > 0 && instOkFinal < midiTrackCount) {
+      setStage(
+        stages,
+        'instruments',
+        'ok',
+        `${rolesPads} Roles · ${instrumentsLoaded} VST · ${instrumentsFailed} fallos · ${instrumentNotes.slice(0, 4).join(', ')}`,
+      )
+    } else {
+      setStage(
+        stages,
+        'instruments',
+        instOkFinal ? 'ok' : 'skip',
+        instOkFinal
+          ? `${rolesPads} Roles · ${instrumentsLoaded} VST${instrumentNotes.length ? ` · ${instrumentNotes.slice(0, 4).join(', ')}` : ''}`
+          : 'Sin instrumentos',
+      )
+    }
   }
 
   // Respetar minutos pedidos: no alargar la canción por secciones heurísticas largas.
@@ -751,11 +703,16 @@ export async function executeMusicBuild(
       if (getLoadedInstrumentForTrack(row.trackId)) loadedN += 1
     }
     const midiN = created.filter((r) => spec.tracks[r.specIndex]?.tipo !== 'audio').length
-    if (loadedN > 0) {
+    if (loadedN >= midiN && midiN > 0) {
       setStage(stages, 'instruments', 'ok', `host ${loadedN}/${midiN}`)
-    } else if (midiN > 0 && stages.find((s) => s.id === 'instruments')?.status === 'fail') {
+    } else if (midiN > 0) {
       failed = true
-      setStage(stages, 'instruments', 'fail', `host 0/${midiN} · ${getLastVstLoadError() || 'sin slot'}`)
+      setStage(
+        stages,
+        'instruments',
+        'fail',
+        `host-slot-unconfirmed · ${loadedN}/${midiN} · ${getLastVstLoadError() || 'sin slot'}`,
+      )
     }
   } catch (e) {
     console.warn('[music-build] ensureProject rescue', e)

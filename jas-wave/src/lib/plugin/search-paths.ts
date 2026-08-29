@@ -56,6 +56,13 @@ export function defaultVst3SearchPaths(platform: NodeJS.Platform | string = 'win
       kind: 'standard',
     },
     {
+      id: 'win-program-vst3',
+      path: '%ProgramFiles%/VST3',
+      format: 'vst3',
+      enabled: true,
+      kind: 'standard',
+    },
+    {
       id: 'win-local-vst3',
       path: '%LOCALAPPDATA%/Programs/Common/VST3',
       format: 'vst3',

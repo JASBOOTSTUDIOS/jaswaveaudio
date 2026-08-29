@@ -6,10 +6,12 @@
 type MixMetersSnapshot = {
   masterPeak: number
   byStem: Float32Array
+  sidechainByStem: Float32Array
   updatedAt: number
 }
 
 const byStem = new Float32Array(64)
+const sidechainByStem = new Float32Array(64)
 let masterPeak = 0
 let updatedAt = 0
 let pollPromise: Promise<void> | null = null
@@ -41,6 +43,21 @@ export function getMixMeterTrackOrder(): string[] {
 
 export function getNativeMasterPeak(): number {
   return masterPeak
+}
+
+export function getNativeTrackSidechainPeak(trackId: string): number | null {
+  const idx = stemIdOrder.indexOf(trackId)
+  if (idx < 0 || idx >= 64) return null
+  return sidechainByStem[idx] ?? 0
+}
+
+export function snapshotNativeSidechainPeaks(trackIds: string[]): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const id of trackIds) {
+    const p = getNativeTrackSidechainPeak(id)
+    if (p != null && p > 0) out[id] = p
+  }
+  return out
 }
 
 export function getNativeTrackPeak(trackId: string): number | null {
@@ -75,7 +92,7 @@ export async function refreshNativeMixMeters(): Promise<void> {
       ])) as {
         ok?: boolean
         masterPeak?: number
-        tracks?: Array<{ index?: number; peak?: number }>
+        tracks?: Array<{ index?: number; peak?: number; sidechainPeak?: number }>
       } | null
       if (!raw || raw.ok === false) return
       const now = performance.now()
@@ -85,13 +102,19 @@ export async function refreshNativeMixMeters(): Promise<void> {
         masterPeak = hold ? Math.max(masterPeak * 0.88, next) : next
       }
       const nextStem = new Float32Array(64)
+      const nextSidechain = new Float32Array(64)
       for (const t of raw.tracks ?? []) {
         const i = typeof t.index === 'number' ? t.index : -1
         const p = typeof t.peak === 'number' ? t.peak : 0
+        const sc = typeof t.sidechainPeak === 'number' ? t.sidechainPeak : 0
         if (i >= 0 && i < 64 && Number.isFinite(p)) nextStem[i] = Math.max(0, Math.min(1, p))
+        if (i >= 0 && i < 64 && Number.isFinite(sc)) nextSidechain[i] = Math.max(0, Math.min(1, sc))
       }
       for (let i = 0; i < 64; i++) {
         byStem[i] = hold ? Math.max(byStem[i]! * 0.88, nextStem[i]!) : nextStem[i]!
+        sidechainByStem[i] = hold
+          ? Math.max(sidechainByStem[i]! * 0.88, nextSidechain[i]!)
+          : nextSidechain[i]!
       }
       updatedAt = now
     } catch {
@@ -104,5 +127,5 @@ export async function refreshNativeMixMeters(): Promise<void> {
 }
 
 export function snapshotNativeMixMeters(): MixMetersSnapshot {
-  return { masterPeak, byStem: byStem.slice(), updatedAt }
+  return { masterPeak, byStem: byStem.slice(), sidechainByStem: sidechainByStem.slice(), updatedAt }
 }

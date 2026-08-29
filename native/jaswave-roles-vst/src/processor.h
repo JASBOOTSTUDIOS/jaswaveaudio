@@ -91,6 +91,7 @@ private:
   int32_t allocVoice(Role role);
   void render(float* L, float* R, int32_t numSamples);
   void applyFx(float* L, float* R, int32_t numSamples);
+  void clearFxTail();
   float nextOsc(Partial& p, float sr);
   float processFilter(Voice& v, float x);
   float renderDrumSample(Voice& v, float sr);

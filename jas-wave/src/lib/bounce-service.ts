@@ -95,8 +95,22 @@ export function resolveBounceSlots(
   const list = (plugins as PluginInfo[] | undefined) ?? []
   const hit = findTrackPlaybackInstrument(list)
   if (!hit || hit.kind !== 'vst') return {}
-  // Dominio tiene instrumento pero host no confirmó load → bounce silencioso si no se asegura antes.
+  // Dominio tiene instrumento pero host no confirmó load → el caller debe ensure o fallar.
   return {}
+}
+
+/** Pistas MIDI/instrumento con VST en dominio pero sin slot host confirmado. */
+export function listUnresolvedBounceVstTracks(
+  state: DAWState,
+): Array<{ trackId: string; nombre: string }> {
+  const out: Array<{ trackId: string; nombre: string }> = []
+  for (const t of state.project?.tracks ?? []) {
+    const hit = findTrackPlaybackInstrument(t.plugins ?? [])
+    if (!hit || hit.kind !== 'vst') continue
+    if (getLoadedInstrumentForTrack(t.id)?.slotId) continue
+    out.push({ trackId: t.id, nombre: t.nombre })
+  }
+  return out
 }
 
 /** Construye el contenido de bounce con resolución runtime de slots. */
@@ -156,6 +170,15 @@ export async function runNativeBounce(
   if (dawState?.project?.tracks?.length) {
     const { ensureProjectVstInstruments } = await import('@/src/lib/plugin/track-vst-runtime')
     await ensureProjectVstInstruments(dawState.project.tracks, dawState.project.master?.plugins)
+    const unresolved = listUnresolvedBounceVstTracks(dawState)
+    if (unresolved.length) {
+      const names = unresolved.map((u) => u.nombre).slice(0, 6).join(', ')
+      const msg = `Bounce abortado: VST sin slot host confirmado (${unresolved.length}): ${names}. Nada que renderizar en silencio.`
+      renderJobUpdate(job.id, { status: 'failed', progress: 0, error: msg })
+      emit?.('render.error', { jobId: job.id, message: msg })
+      const cur = renderJobGet(job.id)
+      return cur ?? { ...job, status: 'failed' as const, error: msg }
+    }
     bounceContent = buildRuntimeBounceContent(dawState, {
       startSec,
       endSec,
@@ -202,7 +225,8 @@ export async function runNativeBounce(
         webStems.set(bt.stemIndex, bakeVolumeAutomationIntoStem(pcm, sr, startSec, lane, baseVol))
       }
     }
-    webStems = applySendsToStemBuffers(dawState, webStems, trackIndexById, sr, totalFrames)
+    // Sends en el host nativo (stems DRY); evita doble suma TS+host.
+    // webStems permanecen dry; renderMix aplica sends live.
   }
 
   await hostSend({

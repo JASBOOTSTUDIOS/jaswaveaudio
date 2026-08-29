@@ -478,6 +478,9 @@ export async function ensureTrackVstInstrument(
 export async function ensureProjectVstInstruments(
   tracks: Array<{ id: string; plugins?: PluginInfo[] }>,
   masterPlugins?: PluginInfo[],
+  opts?: {
+    onProgress?: (done: number, total: number, currentName: string) => void
+  },
 ): Promise<Map<string, string>> {
   if (ensureProjectInFlight) return ensureProjectInFlight
 
@@ -503,6 +506,24 @@ export async function ensureProjectVstInstruments(
     const map = new Map<string, string>()
     let hostDead = false
 
+    type Job = { trackId: string; plugin: PluginInfo; name: string }
+    const jobs: Job[] = []
+    for (const t of tracks) {
+      for (const p of t.plugins ?? []) {
+        if (p.bypass || isBuiltinInstrument(p)) continue
+        if (!extractHostPluginPath(p.descripcion, p.id)) continue
+        jobs.push({ trackId: t.id, plugin: p, name: p.nombre || p.id })
+      }
+    }
+    for (const p of masterPlugins ?? []) {
+      if (p.bypass || isBuiltinInstrument(p)) continue
+      if (!extractHostPluginPath(p.descripcion, p.id)) continue
+      jobs.push({ trackId: 'master', plugin: p, name: p.nombre || p.id })
+    }
+
+    const total = jobs.length
+    opts?.onProgress?.(0, total, total ? jobs[0]!.name : '')
+
     const tryOne = async (trackId: string, p: PluginInfo): Promise<boolean> => {
       if (hostDead) return false
       if (p.bypass || isBuiltinInstrument(p)) return false
@@ -516,21 +537,16 @@ export async function ensureProjectVstInstruments(
       return ok
     }
 
-    for (const t of tracks) {
+    let done = 0
+    for (const job of jobs) {
       if (hostDead) break
-      for (const p of t.plugins ?? []) {
-        if (hostDead) break
-        const path = extractHostPluginPath(p.descripcion, p.id)
-        const ok = await tryOne(t.id, p)
-        if (ok && path && isVstInstrumentPlugin(p, path)) {
-          map.set(t.id, slotIdForTrackPlugin(t.id, p.id))
-        }
-      }
-    }
-    if (!hostDead) {
-      for (const p of masterPlugins ?? []) {
-        if (hostDead) break
-        await tryOne('master', p)
+      opts?.onProgress?.(done, total, job.name)
+      const path = extractHostPluginPath(job.plugin.descripcion, job.plugin.id)
+      const ok = await tryOne(job.trackId, job.plugin)
+      done += 1
+      opts?.onProgress?.(done, total, job.name)
+      if (ok && path && job.trackId !== 'master' && isVstInstrumentPlugin(job.plugin, path)) {
+        map.set(job.trackId, slotIdForTrackPlugin(job.trackId, job.plugin.id))
       }
     }
     return map
@@ -558,6 +574,13 @@ export function syncReaperTrackGraph(
       origenTrackId: string
       destinoBusId: string
       cantidad?: number
+      preFader?: boolean
+    }>
+    sidechains?: Array<{
+      activo?: boolean
+      origenTrackId: string
+      destinoTrackId: string
+      cantidad?: number
     }>
     buses?: Array<{ id: string }>
   } | null,
@@ -572,7 +595,7 @@ export function syncReaperTrackGraph(
     }
   }
 
-  const sendsBySrc = new Map<string, Array<{ destStem: number; amount: number }>>()
+  const sendsBySrc = new Map<string, Array<{ destStem: number; amount: number; preFader?: boolean }>>()
   for (const send of routing?.sends ?? []) {
     if (send.activo === false) continue
     const amount = Math.max(0, Math.min(1, Number(send.cantidad ?? 0)))
@@ -584,8 +607,20 @@ export function syncReaperTrackGraph(
     }
     if (destStem == null) continue
     const list = sendsBySrc.get(send.origenTrackId) ?? []
-    list.push({ destStem, amount })
+    list.push({ destStem, amount, preFader: Boolean(send.preFader) })
     sendsBySrc.set(send.origenTrackId, list)
+  }
+
+  const sidechainsByDest = new Map<string, Array<{ srcStem: number; amount: number }>>()
+  for (const sc of routing?.sidechains ?? []) {
+    if (sc.activo === false) continue
+    const amount = Math.max(0, Math.min(1, Number(sc.cantidad ?? 1)))
+    if (amount <= 0) continue
+    const srcStem = stemByTrackId.get(sc.origenTrackId)
+    if (srcStem == null) continue
+    const list = sidechainsByDest.get(sc.destinoTrackId) ?? []
+    list.push({ srcStem, amount })
+    sidechainsByDest.set(sc.destinoTrackId, list)
   }
 
   const graphTracks = tracks.map((t, stemIndex) => {
@@ -623,6 +658,7 @@ export function syncReaperTrackGraph(
       muted,
       slots,
       sends: sendsBySrc.get(t.id) ?? [],
+      sidechains: sidechainsByDest.get(t.id) ?? [],
     }
   })
 
@@ -654,13 +690,23 @@ export function sendVstNote(
   pitch: number,
   velocity = 100,
   delaySamples = 0,
+  lengthSamples?: number,
 ): void {
   try {
     const api = window.electron
     if (!api) return
     const delay = Math.max(0, Math.round(delaySamples))
     const cmd = on
-      ? { type: 'noteOn' as const, slotId, pitch, velocity, delaySamples: delay }
+      ? {
+          type: 'noteOn' as const,
+          slotId,
+          pitch,
+          velocity,
+          delaySamples: delay,
+          ...(lengthSamples != null && lengthSamples > 0
+            ? { lengthSamples: Math.max(1, Math.round(lengthSamples)) }
+            : {}),
+        }
       : { type: 'noteOff' as const, slotId, pitch, delaySamples: delay }
     if (typeof api.pluginHostMidi === 'function') {
       api.pluginHostMidi(cmd)
