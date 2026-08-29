@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict'
-import { describe, it } from 'node:test'
+import { describe, it, expect } from 'vitest'
 import {
   actionFingerprint,
   filterRedundantRepairActions,
@@ -10,9 +9,9 @@ import {
   inspectDawHealth,
   runHarnessFollowups,
   seedAttemptedFingerprints,
-} from '@jaswave/ai-harness'
-import type { HarnessActionResult } from '@jaswave/ai-harness'
-import type { DAWState } from '../../../shared/src/types/state'
+  type HarnessActionResult,
+} from '../loop/harness'
+import type { DAWState } from '@jaswave/shared'
 
 function midiState(opts: { nombre: string; notes: number; tipo?: 'midi' | 'audio' }): DAWState {
   const notas = Array.from({ length: opts.notes }, (_, i) => ({ pitch: 60, inicio: i, duracion: 0.5 }))
@@ -33,12 +32,12 @@ function midiState(opts: { nombre: string; notes: number; tipo?: 'midi' | 'audio
   } as unknown as DAWState
 }
 
-describe('agent-harness producción', () => {
+describe('harness producción', () => {
   it('no repara si el DAW está sano', () => {
     const results: HarnessActionResult[] = [{ type: 'track.create', success: true, message: 'ok' }]
     const report = inspectDawHealth(midiState({ nombre: 'Bajo', notes: 8 }), results, null)
-    assert.equal(report.ok, true)
-    assert.equal(harnessShouldRepair(report), false)
+    expect(report.ok).toBe(true)
+    expect(harnessShouldRepair(report)).toBe(false)
   })
 
   it('marca acciones fallidas y MIDI vacío tras generar', () => {
@@ -47,21 +46,19 @@ describe('agent-harness producción', () => {
       { type: 'plugin.insert', success: false, message: 'VST no carga' },
     ]
     const report = inspectDawHealth(midiState({ nombre: 'Lead', notes: 0 }), results, null)
-    assert.equal(harnessShouldRepair(report), true)
-    assert.ok(report.errors.some((e) => e.code === 'action-failed'))
-    assert.ok(report.errors.some((e) => e.code === 'empty-midi'))
+    expect(harnessShouldRepair(report)).toBe(true)
+    expect(report.errors.some((e) => e.code === 'action-failed')).toBe(true)
+    expect(report.errors.some((e) => e.code === 'empty-midi')).toBe(true)
   })
 
   it('marca instrumento faltante tras un musicBuild y plugins en error', () => {
     const built: HarnessActionResult[] = [{ type: 'daw.musicBuild', success: true, message: 'ok' }]
     const bare = inspectDawHealth(midiState({ nombre: 'Bajo', notes: 8 }), built, null)
-    assert.ok(bare.errors.some((e) => e.code === 'missing-instrument'))
+    expect(bare.errors.some((e) => e.code === 'missing-instrument')).toBe(true)
     const crashed = midiState({ nombre: 'Lead', notes: 4 })
-    crashed.project!.tracks[0]!.plugins = [
-      { nombre: 'Analog Lab', estado: 'error' } as never,
-    ]
+    crashed.project!.tracks[0]!.plugins = [{ nombre: 'Analog Lab', estado: 'error' } as never]
     const err = inspectDawHealth(crashed, built, null)
-    assert.ok(err.errors.some((e) => e.code === 'plugin-error'))
+    expect(err.errors.some((e) => e.code === 'plugin-error')).toBe(true)
   })
 
   it('omite recrear un musicBuild que ya aplicó', () => {
@@ -73,8 +70,8 @@ describe('agent-harness producción', () => {
       ],
       prev,
     )
-    assert.equal(filtered.some((a) => a.type === 'daw.musicBuild'), false)
-    assert.equal(filtered[0]?.type, 'midi.clip.create')
+    expect(filtered.some((a) => a.type === 'daw.musicBuild')).toBe(false)
+    expect(filtered[0]?.type).toBe('midi.clip.create')
   })
 
   it('no reintenta el mismo plugin.insert que ya se intentó', () => {
@@ -89,13 +86,12 @@ describe('agent-harness producción', () => {
       [],
       attempted,
     )
-    assert.equal(filtered.some((a) => String(a.payload?.nombre).includes('Analog')), false)
-    assert.equal(filtered[0]?.payload?.nombre, 'JasWave Roles')
+    expect(filtered.some((a) => String(a.payload?.nombre).includes('Analog'))).toBe(false)
+    expect(filtered[0]?.payload?.nombre).toBe('JasWave Roles')
   })
 
   it('fingerprint distingue pistas', () => {
-    assert.notEqual(
-      actionFingerprint('track.create', { nombre: 'Bajo' }),
+    expect(actionFingerprint('track.create', { nombre: 'Bajo' })).not.toBe(
       actionFingerprint('track.create', { nombre: 'Pad' }),
     )
   })
@@ -122,8 +118,8 @@ describe('agent-harness producción', () => {
       getState: () => midiState({ nombre: 'X', notes: 4 }),
       formatResults: (r) => r.map((x) => x.message).join('\n'),
     })
-    assert.equal(out.stoppedReason, 'no-progress')
-    assert.ok(chats >= 2)
+    expect(out.stoppedReason).toBe('no-progress')
+    expect(chats).toBeGreaterThanOrEqual(2)
   })
 
   it('plan incompleto tras mutar es error reparable', () => {
@@ -137,9 +133,9 @@ describe('agent-harness producción', () => {
       markdown: '',
       checks: [],
     })
-    assert.ok(report.errors.some((e) => e.code === 'plan-incomplete'))
-    assert.ok(report.debugDump.includes('Bajo'))
-    assert.equal(harnessShouldRepair(report), true)
+    expect(report.errors.some((e) => e.code === 'plan-incomplete')).toBe(true)
+    expect(report.debugDump.includes('Bajo')).toBe(true)
+    expect(harnessShouldRepair(report)).toBe(true)
   })
 
   it('host-slot-unconfirmed cuando hay notas pero sin slot audit', () => {
@@ -158,21 +154,21 @@ describe('agent-harness producción', () => {
         },
       ],
     })
-    assert.ok(report.errors.some((e) => e.code === 'host-slot-unconfirmed'))
+    expect(report.errors.some((e) => e.code === 'host-slot-unconfirmed')).toBe(true)
   })
 
   it('sidechain aplicado emite aviso unverified', () => {
     const report = inspectDawHealth(midiState({ nombre: 'A', notes: 4 }), [], null, {
       sidechainApplied: true,
     })
-    assert.ok(report.warnings.some((w) => w.code === 'sidechain-unverified'))
+    expect(report.warnings.some((w) => w.code === 'sidechain-unverified')).toBe(true)
   })
 
   it('acción no soportada usa code action-unsupported', () => {
     const report = inspectDawHealth(midiState({ nombre: 'A', notes: 4 }), [
       { type: 'foo.bar', success: false, message: 'Acción no soportada: foo.bar' },
     ], null)
-    assert.ok(report.errors.some((e) => e.code === 'action-unsupported'))
+    expect(report.errors.some((e) => e.code === 'action-unsupported')).toBe(true)
   })
 
   it('para si el modelo no emite acciones nuevas', async () => {
@@ -189,8 +185,8 @@ describe('agent-harness producción', () => {
       getState: () => midiState({ nombre: 'X', notes: 4 }),
       formatResults: () => '',
     })
-    assert.equal(out.stoppedReason, 'no-progress')
-    assert.equal(out.turns.length, 1)
+    expect(out.stoppedReason).toBe('no-progress')
+    expect(out.turns.length).toBe(1)
   })
 
   it('honra AbortSignal', async () => {
@@ -209,8 +205,8 @@ describe('agent-harness producción', () => {
       getState: () => midiState({ nombre: 'X', notes: 4 }),
       formatResults: () => '',
     })
-    assert.equal(out.stoppedReason, 'aborted')
-    assert.match(formatHarnessStopLine(out.stoppedReason, 0), /detenido/)
+    expect(out.stoppedReason).toBe('aborted')
+    expect(formatHarnessStopLine(out.stoppedReason, 0)).toMatch(/detenido/)
   })
 
   it('sale sano cuando la reparación funciona', async () => {
@@ -234,12 +230,12 @@ describe('agent-harness producción', () => {
       getState: () => midiState({ nombre: 'Bajo', notes: n > 0 ? 12 : 0 }),
       formatResults: () => '✓ notas',
     })
-    assert.equal(out.stoppedReason, 'healthy')
-    assert.ok(out.turns.length >= 1)
+    expect(out.stoppedReason).toBe('healthy')
+    expect(out.turns.length).toBeGreaterThanOrEqual(1)
   })
 
   it('sigue pidiendo revisión solo tras mutar', () => {
-    assert.equal(harnessReviewNeeded([{ type: 'plugin.lookup', success: true, message: 'ok' }]), false)
+    expect(harnessReviewNeeded([{ type: 'plugin.lookup', success: true, message: 'ok' }])).toBe(false)
   })
 
   it('la firma de salud es estable', () => {
@@ -249,6 +245,6 @@ describe('agent-harness producción', () => {
     const b = inspectDawHealth(midiState({ nombre: 'A', notes: 0 }), [
       { type: 'midi.clip.create', success: true, message: 'c' },
     ], null)
-    assert.equal(healthSignature(a), healthSignature(b))
+    expect(healthSignature(a)).toBe(healthSignature(b))
   })
 })

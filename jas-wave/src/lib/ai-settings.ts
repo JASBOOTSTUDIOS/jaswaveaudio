@@ -84,6 +84,7 @@ export type AiErrorCode =
   | 'unauthorized'
   | 'forbidden'
   | 'rate_limit'
+  | 'service_unavailable'
   | 'model_not_found'
   | 'bad_request'
   | 'provider_error'
@@ -392,12 +393,26 @@ export function formatAiUserError(result: {
   hint?: string
   provider?: string
 }): string {
+  let errorLine = result.error || 'Error al contactar el proveedor de IA.'
+  if (errorLine.includes('{"error"') || errorLine.includes('"service_unavailable_error"')) {
+    const match = errorLine.match(/"message"\s*:\s*"([^"]+)"/)
+    if (match?.[1]) errorLine = match[1]
+    else if (result.errorCode === 'service_unavailable') errorLine = 'Servicio temporalmente no disponible.'
+    else if (result.errorCode === 'rate_limit') errorLine = 'Límite de peticiones del proveedor.'
+  }
   const parts = [
-    `⚠️ ${result.error || 'Error al contactar el proveedor de IA.'}`,
+    `⚠️ ${errorLine}`,
     result.provider ? `Proveedor: ${result.provider}` : '',
     result.hint ? `Qué hacer: ${result.hint}` : '',
   ].filter(Boolean)
   return parts.join('\n')
+}
+
+/** Pausa entre fases de razonamiento profundo (evita 503 en gateways con rate limit). */
+export function providerReasoningPaceMs(kind: AiProviderKind): number {
+  if (kind === 'ollama') return 0
+  if (kind === 'kilocode') return 1500
+  return 800
 }
 
 /** Mensajes amigables por código (también usados en Electron). */
@@ -420,7 +435,11 @@ export function hintForErrorCode(code: AiErrorCode, kind?: AiProviderKind): stri
     case 'forbidden':
       return 'Tu cuenta no tiene permiso para este modelo o región.'
     case 'rate_limit':
-      return 'Límite de peticiones alcanzado. Espera unos segundos e inténtalo de nuevo.'
+      return 'Límite de peticiones alcanzado. JasWave reintenta automáticamente; si persiste, espera 30 s.'
+    case 'service_unavailable':
+      return kind === 'kilocode'
+        ? 'El gateway Kilo Code limita peticiones seguidas (JasWave hace varias por mensaje). Espera unos segundos entre mensajes.'
+        : 'El proveedor está temporalmente saturado. Espera unos segundos e inténtalo de nuevo.'
     case 'model_not_found':
       return 'El modelo no existe o no está disponible en tu cuenta. Verifica el nombre exacto.'
     case 'bad_request':

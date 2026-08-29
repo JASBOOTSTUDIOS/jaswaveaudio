@@ -14,7 +14,26 @@ export type StoredChatMessage = {
     status: 'pending' | 'applied' | 'discarded'
     actions: Array<{ type: string; payload?: Record<string, unknown> }>
     agentMode: string
+    /** Diff semántico del dry-run (plan/think/ask). */
+    previewDiff?: import('../../../shared/src/state/diff-estado').SemanticStateDiff
+    previewSummary?: string
+    /** Índice de acción → estado de revisión (checkbox). */
+    actionStatuses?: Record<string, 'pending' | 'accepted' | 'rejected'>
   }
+  /** Resultado del pipeline post-turno (badges en chat). */
+  certify?: {
+    healthOk: boolean
+    shouldRepair: boolean
+    issues: string[]
+    planDone?: number
+    planPlanned?: number
+  }
+  /** Profundidad de undo antes de aplicar mutaciones de este turno. */
+  undoDepthAtStart?: number
+  /** Resumen del diff aplicado (modo create) o aceptado. */
+  appliedDiffSummary?: string
+  /** El usuario revirtió este turno con «Revertir esta respuesta». */
+  reverted?: boolean
   confirmActions?: {
     status: 'pending' | 'confirmed' | 'rejected'
     actions: Array<{ type: string; payload?: Record<string, unknown> }>
@@ -37,6 +56,25 @@ export type StoredChatMessage = {
   projectPlan?: import('./project-plan').ProjectPlanData
   musicBuild?: import('./music-build/types').MusicBuildResult
   citedMessageIds?: string[]
+  /** Pasos del bucle de razonamiento profundo (colapsables en UI). */
+  reasoningSteps?: Array<{
+    phase: string
+    title: string
+    content: string
+    toolsUsed?: string[]
+    collapsed?: boolean
+    startedAt?: number
+    endedAt?: number
+  }>
+  /** Documentos Markdown editados por la IA en este turno (diff en chat). */
+  docEdits?: Array<{
+    slug: string
+    title: string
+    action: 'create' | 'write' | 'append'
+    previousContent: string
+    newContent: string
+    updatedAt: number
+  }>
 }
 
 export type ChatConversation = {
@@ -216,6 +254,8 @@ export function updateMessageContent(
   musicBuild?: StoredChatMessage['musicBuild'],
   pendingActions?: StoredChatMessage['pendingActions'],
   confirmActions?: StoredChatMessage['confirmActions'],
+  reasoningSteps?: StoredChatMessage['reasoningSteps'],
+  docEdits?: StoredChatMessage['docEdits'],
 ): ChatConversation | null {
   return patchMessage(conversationId, messageId, {
     content,
@@ -225,6 +265,8 @@ export function updateMessageContent(
     ...(musicBuild !== undefined ? { musicBuild } : {}),
     ...(pendingActions !== undefined ? { pendingActions } : {}),
     ...(confirmActions !== undefined ? { confirmActions } : {}),
+    ...(reasoningSteps !== undefined ? { reasoningSteps } : {}),
+    ...(docEdits !== undefined ? { docEdits } : {}),
   })
 }
 
