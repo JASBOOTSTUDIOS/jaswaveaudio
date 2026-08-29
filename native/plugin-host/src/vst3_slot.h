@@ -25,6 +25,7 @@ struct Vst3MidiEvent {
   int16_t cc{0};
   int16_t ccValue{0};
   int32_t delaySamples{0};
+  int32_t lengthSamples{0};
 };
 
 struct Vst3ParamDesc {
@@ -58,7 +59,7 @@ public:
   void suspendForAudioRestart();
   void unload();
 
-  void noteOn(int pitch, float velocity, int delaySamples = 0);
+  void noteOn(int pitch, float velocity, int delaySamples = 0, int32_t lengthSamples = 0);
   void noteOff(int pitch, int delaySamples = 0);
   void midiCc(int cc, int value, int delaySamples = 0);
   /** Sustain off + all notes/sound off + noteOff 0-127. */
@@ -66,6 +67,7 @@ public:
   void setParameterNormalized(uint32_t paramId, double normalized);
   std::vector<Vst3ParamDesc> listParameters(int maxCount = 400);
   void setPlaying(bool playing);
+  void setTransport(bool playing, double tempoBpm, double ppqPos = -1.0);
 
   /** Procesa un bloque. Si inL/inR son null, entrada silenciosa (instrumento). */
   void process(const float* inL, const float* inR, float* outL, float* outR, int frames);

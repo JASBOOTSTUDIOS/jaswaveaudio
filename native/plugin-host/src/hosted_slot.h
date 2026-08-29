@@ -54,9 +54,9 @@ public:
     else vst3_->unload();
   }
 
-  void noteOn(int pitch, float velocity, int delaySamples = 0) {
+  void noteOn(int pitch, float velocity, int delaySamples = 0, int32_t lengthSamples = 0) {
     if (vst2_) vst2_->noteOn(pitch, velocity, delaySamples);
-    else vst3_->noteOn(pitch, velocity, delaySamples);
+    else vst3_->noteOn(pitch, velocity, delaySamples, lengthSamples);
   }
   void noteOff(int pitch, int delaySamples = 0) {
     if (vst2_) vst2_->noteOff(pitch, delaySamples);
@@ -85,9 +85,7 @@ public:
     if (vst2_) {
       vst2_->setTransport(playing, tempoBpm, ppqPos);
     } else if (vst3_) {
-      vst3_->setPlaying(playing);
-      // Tempo/PPQ: ProcessContext se avanza en process(); fijar posición al seek.
-      // (VST3 completo de tempo queda en setPlaying + host clock sync vía processContext en futuro.)
+      vst3_->setTransport(playing, tempoBpm, ppqPos);
     }
   }
 

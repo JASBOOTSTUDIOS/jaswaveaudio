@@ -465,6 +465,12 @@ static constexpr int kMaxSends = 8;
 struct RtSend {
   uint16_t destStem{0};
   float amount{0.f};
+  bool preFader{false};
+};
+static constexpr int kMaxSidechains = 4;
+struct RtSidechain {
+  uint16_t srcStem{0};
+  float amount{0.f};
 };
 struct RtTrackChain {
   uint16_t stemIndex{0};
@@ -476,11 +482,15 @@ struct RtTrackChain {
   RtChainSlot slots[kMaxChainSlots]{};
   uint8_t sendCount{0};
   RtSend sends[kMaxSends]{};
+  uint8_t sidechainCount{0};
+  RtSidechain sidechains[kMaxSidechains]{};
 };
 
 /** Post-fader por pista (pass 1) + acumulado por stem (sends). */
 static float gPostL[kMaxGraphTracks][8192]{};
 static float gPostR[kMaxGraphTracks][8192]{};
+static float gPreL[kMaxGraphTracks][8192]{};
+static float gPreR[kMaxGraphTracks][8192]{};
 static float gStemAccL[kMaxGraphTracks][8192]{};
 static float gStemAccR[kMaxGraphTracks][8192]{};
 
@@ -503,6 +513,7 @@ static uint32_t gPdcDawW{0};
 
 /** Peaks post-fader (stemIndex 0..63) + master; audio thread escribe, control lee snapshot. */
 static std::atomic<float> gMeterStemPeak[kMaxGraphTracks]{};
+static std::atomic<float> gMeterSidechainPeak[kMaxGraphTracks]{};
 static std::atomic<float> gMeterMasterPeak{0.f};
 static constexpr float kMeterDecay = 0.92f;
 static char gMeterTrackOrder[kMaxGraphTracks][kSlotIdLen]{};
@@ -588,8 +599,8 @@ static float softLimitSample(float x) {
 /** Sin atenuación post-instrumento (antes 0.42 / 0.85 dejaban canales flojos). */
 static constexpr float kInstrumentTrim = 1.f;
 
-/** Makeup por canal (~+12 dB) para acercar el nivel a un navegador/YouTube. */
-static constexpr float kChannelMakeup = 4.f;
+/** Makeup por canal (~+6 dB). 4× amplificaba ruido idle de VSTs → master pegado / «feedback». */
+static constexpr float kChannelMakeup = 2.f;
 
 static void applyInstrumentTrim(float* l, float* r, int frames) {
   if (kInstrumentTrim == 1.f) return;
@@ -624,6 +635,11 @@ struct TrackChainSlot {
 struct TrackSend {
   uint16_t destStem{0};
   float amount{0.f};
+  bool preFader{false};
+};
+struct TrackSidechain {
+  uint16_t srcStem{0};
+  float amount{0.f};
 };
 struct TrackChain {
   uint16_t stemIndex{0};
@@ -632,6 +648,7 @@ struct TrackChain {
   bool muted{false};
   std::vector<TrackChainSlot> slots;
   std::vector<TrackSend> sends;
+  std::vector<TrackSidechain> sidechains;
 };
 
 static void copySlotId(char* dst, const std::string& src) {
@@ -668,6 +685,15 @@ static void publishGraphUnlocked(const std::vector<TrackChain>& tracks,
       RtSend& rs = out.sends[out.sendCount++];
       rs.destStem = sn.destStem;
       rs.amount = sn.amount;
+      rs.preFader = sn.preFader;
+    }
+    out.sidechainCount = 0;
+    for (const auto& sc : tr.sidechains) {
+      if (out.sidechainCount >= kMaxSidechains) break;
+      if (sc.amount <= 0.f || sc.srcStem >= kMaxGraphTracks) continue;
+      RtSidechain& rs = out.sidechains[out.sidechainCount++];
+      rs.srcStem = sc.srcStem;
+      rs.amount = sc.amount;
     }
     ++tn;
   }
@@ -704,6 +730,8 @@ static void publishGraphUnlocked(const std::vector<TrackChain>& tracks,
   gRtMasterCount[write] = mn;
   gRtBuf.store(write, std::memory_order_release);
   gGraphActive.store(true, std::memory_order_release);
+  // Vaciar rings Chromium/legacy: pull_stem ya no alimenta el graph (stems = clip nativo + VST).
+  jaswave_mix_bus_reset();
 }
 
 static void clearSlotPointersInGraph(HostedSlot* doomed) {
@@ -779,7 +807,7 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
 
   if (useGraph) {
     const uint8_t trackN = gRtTrackCount[idx];
-    for (uint8_t t = 0; t < trackN && t < kMaxGraphTracks; ++t) {
+    for (uint8_t t = 0; t < kMaxGraphTracks; ++t) {
       std::fill(gPostL[t], gPostL[t] + frames, 0.f);
       std::fill(gPostR[t], gPostR[t] + frames, 0.f);
       std::fill(gStemAccL[t], gStemAccL[t] + frames, 0.f);
@@ -787,8 +815,19 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
     }
     for (uint8_t t = 0; t < trackN && t < kMaxGraphTracks; ++t) {
       const RtTrackChain& tr = gRtTracks[idx][t];
-      jaswave_mix_bus_pull_stem(tr.stemIndex, gStemInterleaved, static_cast<uint32_t>(frames));
+      // Live: solo clip_player (no pull_stem del pipe Chromium → evita mezcla fantasma).
+      // Offline bounce: sumar stems dry empujados vía push_stem (JWST) + clips nativos.
+      std::memset(gStemInterleaved, 0, static_cast<size_t>(frames) * 2 * sizeof(float));
       jaswave::clip_render_stem(tr.stemIndex, gStemInterleaved, static_cast<uint32_t>(frames));
+      if (gOfflineRunning) {
+        float pulled[8192 * 2];
+        const uint32_t n = static_cast<uint32_t>(frames);
+        jaswave_mix_bus_pull_stem(tr.stemIndex, pulled, n);
+        for (uint32_t i = 0; i < n; ++i) {
+          gStemInterleaved[i * 2] += pulled[i * 2];
+          gStemInterleaved[i * 2 + 1] += pulled[i * 2 + 1];
+        }
+      }
       for (int i = 0; i < frames; ++i) {
         gChainL[i] = gStemInterleaved[i * 2];
         gChainR[i] = gStemInterleaved[i * 2 + 1];
@@ -811,6 +850,8 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
           std::memcpy(gChainR, gFxR, static_cast<size_t>(frames) * sizeof(float));
         }
       }
+      std::memcpy(gPreL[t], gChainL, static_cast<size_t>(frames) * sizeof(float));
+      std::memcpy(gPreR[t], gChainR, static_cast<size_t>(frames) * sizeof(float));
       applyTrackGainPan(gChainL, gChainR, frames, tr.gain, tr.pan, tr.muted);
       applyPdc(gChainL, gChainR, frames, gPdcL[t], gPdcR[t], gPdcW[t],
                static_cast<int>(tr.delaySamples));
@@ -829,19 +870,49 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
         }
       }
     }
-    // Pass 2: sends post-fader sample-accurate (origen → stem destino)
+    // Sidechain metering (I/O host confirmado para harness)
+    {
+      uint16_t stemToChain[kMaxGraphTracks];
+      for (uint8_t i = 0; i < kMaxGraphTracks; ++i) stemToChain[i] = 0xFFFF;
+      for (uint8_t ti = 0; ti < trackN && ti < kMaxGraphTracks; ++ti) {
+        stemToChain[gRtTracks[idx][ti].stemIndex] = ti;
+      }
+      for (uint8_t t = 0; t < trackN && t < kMaxGraphTracks; ++t) {
+        const RtTrackChain& tr = gRtTracks[idx][t];
+        if (tr.sidechainCount == 0) continue;
+        float scPeak = 0.f;
+        for (uint8_t sc = 0; sc < tr.sidechainCount; ++sc) {
+          const RtSidechain& side = tr.sidechains[sc];
+          const uint16_t srcT =
+              side.srcStem < kMaxGraphTracks ? stemToChain[side.srcStem] : 0xFFFF;
+          if (srcT == 0xFFFF || srcT >= trackN) continue;
+          for (int i = 0; i < frames; ++i) {
+            const float l = gPostL[srcT][i] * side.amount;
+            const float r = gPostR[srcT][i] * side.amount;
+            const float p = std::max(std::fabs(l), std::fabs(r));
+            if (p > scPeak) scPeak = p;
+          }
+        }
+        if (tr.stemIndex < kMaxGraphTracks && scPeak > 0.f) {
+          meterUpdatePeak(gMeterSidechainPeak[tr.stemIndex], scPeak);
+        }
+      }
+    }
+    // Pass 2: sends sample-accurate (origen → stem destino)
     for (uint8_t t = 0; t < trackN && t < kMaxGraphTracks; ++t) {
       const RtTrackChain& tr = gRtTracks[idx][t];
       for (uint8_t s = 0; s < tr.sendCount; ++s) {
         const RtSend& sn = tr.sends[s];
         if (sn.amount <= 0.f || sn.destStem >= kMaxGraphTracks) continue;
         for (int i = 0; i < frames; ++i) {
-          gStemAccL[sn.destStem][i] += gPostL[t][i] * sn.amount;
-          gStemAccR[sn.destStem][i] += gPostR[t][i] * sn.amount;
+          const float sl = sn.preFader ? gPreL[t][i] : gPostL[t][i];
+          const float sr = sn.preFader ? gPreR[t][i] : gPostR[t][i];
+          gStemAccL[sn.destStem][i] += sl * sn.amount;
+          gStemAccR[sn.destStem][i] += sr * sn.amount;
         }
       }
     }
-    for (uint8_t stem = 0; stem < kMaxGraphTracks; ++stem) {
+    for (uint8_t stem = 0; stem < trackN && stem < kMaxGraphTracks; ++stem) {
       for (int i = 0; i < frames; ++i) {
         gMixL[i] += gStemAccL[stem][i];
         gMixR[i] += gStemAccR[stem][i];
@@ -892,20 +963,22 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
                             ? 0.f
                             : gMasterGain.load(std::memory_order_relaxed)) * 1.35f;
   for (int i = 0; i < frames; ++i) {
-    interleaved[i * 2 + 0] = gMixL[i] * masterG;
-    interleaved[i * 2 + 1] = gMixR[i] * masterG;
+    interleaved[i * 2 + 0] = softLimitSample(gMixL[i] * masterG);
+    interleaved[i * 2 + 1] = softLimitSample(gMixR[i] * masterG);
   }
-  std::memset(gStemInterleaved, 0, static_cast<size_t>(frames) * 2 * sizeof(float));
-  jaswave_mix_bus_add(gStemInterleaved, static_cast<uint32_t>(frames));
-  for (int i = 0; i < frames; ++i) {
-    gTmpL[i] = gStemInterleaved[i * 2];
-    gTmpR[i] = gStemInterleaved[i * 2 + 1];
-  }
-  const int dawDelay = useGraph ? static_cast<int>(gRtMaxDelay[idx]) : 0;
-  applyPdc(gTmpL, gTmpR, frames, gPdcDawL, gPdcDawR, gPdcDawW, dawDelay);
-  for (int i = 0; i < frames; ++i) {
-    interleaved[i * 2 + 0] = softLimitSample(interleaved[i * 2 + 0] + gTmpL[i]);
-    interleaved[i * 2 + 1] = softLimitSample(interleaved[i * 2 + 1] + gTmpR[i]);
+  // Legacy Chromium/Soft Pad bus: skip when Reaper graph owns all track audio.
+  if (!useGraph) {
+    std::memset(gStemInterleaved, 0, static_cast<size_t>(frames) * 2 * sizeof(float));
+    jaswave_mix_bus_add(gStemInterleaved, static_cast<uint32_t>(frames));
+    for (int i = 0; i < frames; ++i) {
+      gTmpL[i] = gStemInterleaved[i * 2];
+      gTmpR[i] = gStemInterleaved[i * 2 + 1];
+    }
+    applyPdc(gTmpL, gTmpR, frames, gPdcDawL, gPdcDawR, gPdcDawW, 0);
+    for (int i = 0; i < frames; ++i) {
+      interleaved[i * 2 + 0] = softLimitSample(interleaved[i * 2 + 0] + gTmpL[i]);
+      interleaved[i * 2 + 1] = softLimitSample(interleaved[i * 2 + 1] + gTmpR[i]);
+    }
   }
   jaswave::metronome_render(interleaved, static_cast<uint32_t>(frames));
   {
@@ -1410,6 +1483,7 @@ static void handleNote(const std::string& json, bool on) {
   const int pitch = static_cast<int>(getNumberField(json, "pitch", 60));
   float vel = static_cast<float>(getNumberField(json, "velocity", 0.8));
   const int delay = std::max(0, static_cast<int>(getNumberField(json, "delaySamples", 0)));
+  const int length = std::max(0, static_cast<int>(getNumberField(json, "lengthSamples", 0)));
   std::lock_guard<std::mutex> lock(gSlotsMutex);
   auto* slot = findSlotUnlocked(slotId);
   if (!slot) {
@@ -1424,7 +1498,7 @@ static void handleNote(const std::string& json, bool on) {
     // Preview / teclado: muchos VST3 ignoran MIDI si !kPlaying. No arrancar el
     // transport clock del DAW — solo la bandera del slot.
     slot->setPlaying(true);
-    slot->noteOn(pitch, vel > 1.f ? vel / 127.f : vel, delay);
+    slot->noteOn(pitch, vel > 1.f ? vel / 127.f : vel, delay, length);
   } else {
     slot->noteOff(pitch, delay);
   }
@@ -1589,8 +1663,19 @@ static void handleLine(const std::string& line) {
         }
         std::string afterBar = seg.substr(firstBar + 1);
         size_t hash = afterBar.find('#');
-        std::string slotsPart = hash == std::string::npos ? afterBar : afterBar.substr(0, hash);
-        std::string sendsPart = hash == std::string::npos ? "" : afterBar.substr(hash + 1);
+        size_t dollar = afterBar.find('$');
+        size_t slotsEnd = hash;
+        if (dollar != std::string::npos && (slotsEnd == std::string::npos || dollar < slotsEnd)) {
+          slotsEnd = dollar;
+        }
+        std::string slotsPart =
+            slotsEnd == std::string::npos ? afterBar : afterBar.substr(0, slotsEnd);
+        std::string sendsPart = "";
+        if (hash != std::string::npos) {
+          size_t sendsEnd = dollar == std::string::npos ? afterBar.size() : dollar;
+          sendsPart = afterBar.substr(hash + 1, sendsEnd - hash - 1);
+        }
+        std::string sidePart = dollar == std::string::npos ? "" : afterBar.substr(dollar + 1);
         parseSlotList(slotsPart, tc.slots);
         size_t sp = 0;
         while (sp < sendsPart.size()) {
@@ -1602,13 +1687,37 @@ static void handleLine(const std::string& line) {
             TrackSend sn;
             try {
               sn.destStem = static_cast<uint16_t>(std::stoi(tok.substr(0, colonS)));
-              sn.amount = std::stof(tok.substr(colonS + 1));
+              size_t colon2 = tok.find(':', colonS + 1);
+              if (colon2 != std::string::npos) {
+                sn.amount = std::stof(tok.substr(colonS + 1, colon2 - colonS - 1));
+                sn.preFader = tok.substr(colon2 + 1) == "p";
+              } else {
+                sn.amount = std::stof(tok.substr(colonS + 1));
+              }
               if (sn.amount > 0.f && sn.destStem < kMaxGraphTracks) tc.sends.push_back(sn);
             } catch (...) {
             }
           }
           if (plus == std::string::npos) break;
           sp = plus + 1;
+        }
+        size_t scp = 0;
+        while (scp < sidePart.size()) {
+          size_t plus = sidePart.find('+', scp);
+          std::string tok =
+              sidePart.substr(scp, plus == std::string::npos ? std::string::npos : plus - scp);
+          size_t colonS = tok.find(':');
+          if (colonS != std::string::npos) {
+            TrackSidechain sc;
+            try {
+              sc.srcStem = static_cast<uint16_t>(std::stoi(tok.substr(0, colonS)));
+              sc.amount = std::stof(tok.substr(colonS + 1));
+              if (sc.amount > 0.f && sc.srcStem < kMaxGraphTracks) tc.sidechains.push_back(sc);
+            } catch (...) {
+            }
+          }
+          if (plus == std::string::npos) break;
+          scp = plus + 1;
         }
         if (tc.stemIndex < JASWAVE_MIX_MAX_TRACKS) tracks.push_back(std::move(tc));
       }
@@ -1719,10 +1828,7 @@ static void handleLine(const std::string& line) {
     std::lock_guard<std::mutex> lock(gSlotsMutex);
     for (auto& [id, slot] : gSlots) {
       if (!slot) continue;
-      if (slot->format() == HostedSlot::Format::Vst2)
-        slot->setTransport(playing, hostTempo, hostPpq);
-      else
-        slot->setPlaying(playing);
+      slot->setTransport(playing, hostTempo, hostPpq);
       // Panic inmediato al pausar/parar: corta colas MIDI + voces (evita notas pegadas).
       if (!playing) slot->allNotesOff();
     }
@@ -2065,6 +2171,8 @@ static void handleLine(const std::string& line) {
         first = false;
         js << "{\"index\":" << si << ",\"peak\":";
         appendJsonFloat(js, gMeterStemPeak[si].load(std::memory_order_relaxed));
+        js << ",\"sidechainPeak\":";
+        appendJsonFloat(js, gMeterSidechainPeak[si].load(std::memory_order_relaxed));
         js << '}';
       }
     } else {
@@ -2074,6 +2182,8 @@ static void handleLine(const std::string& line) {
         first = false;
         js << "{\"index\":" << si << ",\"peak\":";
         appendJsonFloat(js, gMeterStemPeak[si].load(std::memory_order_relaxed));
+        js << ",\"sidechainPeak\":";
+        appendJsonFloat(js, gMeterSidechainPeak[si].load(std::memory_order_relaxed));
         js << '}';
       }
     }

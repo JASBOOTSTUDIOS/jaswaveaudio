@@ -12,12 +12,14 @@ import {
   ensureProjectVstInstruments,
   forgetHostPlugins,
   isBuiltinInstrument,
+  getLoadedInstrumentForTrack,
 } from '@/src/lib/plugin/track-vst-runtime'
 import { extractHostPluginPath } from '@/src/lib/plugin/plugin-info-adapter'
 import {
   getProjectReadyGeneration,
   invalidateProjectPlugins,
   markProjectPluginsNotNeeded,
+  reportProjectPluginProgress,
   reportProjectPluginsSettled,
 } from '@/src/lib/project-ready'
 import type { PluginInfo } from '../../shared/src/types/entidades'
@@ -48,6 +50,7 @@ export function PluginHostLifecycle() {
   const masterPlugins = useDAWState((s: DAWState) => s.project?.master?.plugins ?? [])
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const restartTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const runId = useRef(0)
 
   useEffect(() => {
     if (satellite) return
@@ -55,8 +58,6 @@ export function PluginHostLifecycle() {
     timer.current = setTimeout(() => {
       void (async () => {
         const { audioEngine } = await import('@/lib/audio-engine')
-        // Evitar ensure/load mientras suena (stdin bloqueado → silencio MIDI).
-        if (audioEngine.getIsPlaying()) return
         const gen = getProjectReadyGeneration()
         const needs = tracks.some((t) => chainNeedsVst(t.plugins)) || chainNeedsVst(masterPlugins)
         if (!needs) {
@@ -64,15 +65,43 @@ export function PluginHostLifecycle() {
           await syncLoadedSlotsWithProject(tracks, masterPlugins)
           return
         }
+
+        // Durante play: no relanzar loads (bloquean stdin); si ya hay slots, cerrar banner.
+        if (audioEngine.getIsPlaying()) {
+          const missing = tracks.some((t) => {
+            const wants = (t.plugins ?? []).some((p) => {
+              if (p.bypass || isBuiltinInstrument(p)) return false
+              return Boolean(extractHostPluginPath(p.descripcion, p.id))
+            })
+            return wants && !getLoadedInstrumentForTrack(t.id)
+          })
+          if (!missing) {
+            reportProjectPluginsSettled(true, 'VSTs listos (en reproducción)', gen)
+          }
+          return
+        }
+
+        const myRun = ++runId.current
         invalidateProjectPlugins('plugin-signature')
         try {
           await syncLoadedSlotsWithProject(tracks, masterPlugins)
           await ensureProjectVstInstruments(
             tracks.map((t) => ({ id: t.id, plugins: t.plugins })),
             masterPlugins,
+            {
+              onProgress: (done, total, name) => {
+                if (runId.current !== myRun) return
+                if (getProjectReadyGeneration() !== gen) return
+                reportProjectPluginProgress(done, total, name, gen)
+              },
+            },
           )
+          if (runId.current !== myRun) return
+          if (getProjectReadyGeneration() !== gen) return
           reportProjectPluginsSettled(true, 'VSTs sincronizados', gen)
         } catch (err) {
+          if (runId.current !== myRun) return
+          if (getProjectReadyGeneration() !== gen) return
           reportProjectPluginsSettled(
             false,
             err instanceof Error ? err.message : 'Error cargando VSTs',
@@ -80,7 +109,7 @@ export function PluginHostLifecycle() {
           )
         }
       })()
-    }, 400)
+    }, 80)
     return () => {
       if (timer.current) clearTimeout(timer.current)
     }
@@ -104,23 +133,70 @@ export function PluginHostLifecycle() {
         const m = masterRef.current
         void (async () => {
           const gen = getProjectReadyGeneration()
+          const myRun = ++runId.current
           invalidateProjectPlugins('host-restart')
           try {
             await syncLoadedSlotsWithProject(t, m)
             await ensureProjectVstInstruments(
               t.map((tr) => ({ id: tr.id, plugins: tr.plugins })),
               m,
+              {
+                onProgress: (done, total, name) => {
+                  if (runId.current !== myRun) return
+                  if (getProjectReadyGeneration() !== gen) return
+                  reportProjectPluginProgress(done, total, name, gen)
+                },
+              },
             )
             // Mismos slotIds, proceso nuevo: reenviar MIDI o quedamos en silencio permanente.
             const { audioEngine } = await import('@/lib/audio-engine')
-            const { getLoadedInstrumentForTrack } = await import('@/src/lib/plugin/track-vst-runtime')
             for (const tr of t) {
               const slot = getLoadedInstrumentForTrack(tr.id)?.slotId
               if (slot) audioEngine.patchTrackVstInstrument(tr.id, slot)
             }
             audioEngine.rescheduleMidiAfterHostRestart()
-            reportProjectPluginsSettled(true, 'VSTs tras restart', gen)
+            // Segunda pasada: slots que fallaron en el primer ensure (host aún tibio).
+            const stillMissing = t.filter((tr) => {
+              const needs = (tr.plugins ?? []).some((p) => {
+                if (p.bypass) return false
+                const d = String(p.descripcion ?? '')
+                return /\.vst3|\.dll/i.test(d)
+              })
+              return needs && !getLoadedInstrumentForTrack(tr.id)
+            })
+            if (stillMissing.length) {
+              await new Promise((r) => setTimeout(r, 800))
+              await ensureProjectVstInstruments(
+                stillMissing.map((tr) => ({ id: tr.id, plugins: tr.plugins })),
+                m,
+              )
+              for (const tr of stillMissing) {
+                const slot = getLoadedInstrumentForTrack(tr.id)?.slotId
+                if (slot) audioEngine.patchTrackVstInstrument(tr.id, slot)
+              }
+              audioEngine.rescheduleMidiAfterHostRestart()
+            }
+            if (runId.current !== myRun) return
+            if (getProjectReadyGeneration() !== gen) return
+            const unresolved = t.filter((tr) => {
+              const needs = (tr.plugins ?? []).some((p) => {
+                if (p.bypass) return false
+                return /\.vst3|\.dll/i.test(String(p.descripcion ?? ''))
+              })
+              return needs && !getLoadedInstrumentForTrack(tr.id)
+            })
+            if (unresolved.length) {
+              reportProjectPluginsSettled(
+                false,
+                `VSTs tras restart: ${unresolved.length} sin slot (MIDI puede quedar en silencio)`,
+                gen,
+              )
+            } else {
+              reportProjectPluginsSettled(true, 'VSTs tras restart', gen)
+            }
           } catch (err) {
+            if (runId.current !== myRun) return
+            if (getProjectReadyGeneration() !== gen) return
             reportProjectPluginsSettled(
               false,
               err instanceof Error ? err.message : 'Error VST post-restart',

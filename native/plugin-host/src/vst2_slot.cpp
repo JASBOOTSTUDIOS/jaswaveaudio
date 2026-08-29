@@ -185,15 +185,27 @@ struct Vst2Slot::Impl {
   }
 
   void flushMidi(int frames) {
-    std::vector<VstMidiEvent> local;
+    if (frames <= 0) return;
+    std::vector<VstMidiEvent> ready;
+    std::vector<VstMidiEvent> keep;
     {
       std::lock_guard<std::mutex> lock(midiMu);
-      local.swap(midiQueue);
+      keep.reserve(midiQueue.size());
+      ready.reserve(midiQueue.size());
+      for (auto& e : midiQueue) {
+        if (e.deltaFrames >= frames) {
+          e.deltaFrames -= frames;
+          keep.push_back(e);
+        } else {
+          ready.push_back(e);
+        }
+      }
+      midiQueue.swap(keep);
     }
-    if (local.empty() || !effect) return;
+    if (ready.empty() || !effect) return;
     std::vector<VstEvent*> ptrs;
-    ptrs.reserve(local.size());
-    for (auto& e : local) {
+    ptrs.reserve(ready.size());
+    for (auto& e : ready) {
       e.deltaFrames = std::max(0, std::min(e.deltaFrames, frames - 1));
       ptrs.push_back(reinterpret_cast<VstEvent*>(&e));
     }
@@ -218,7 +230,7 @@ struct Vst2Slot::Impl {
     e.midiData[1] = static_cast<char>(d1);
     e.midiData[2] = static_cast<char>(d2);
     std::lock_guard<std::mutex> lock(midiMu);
-    if (midiQueue.size() < 512) midiQueue.push_back(e);
+    if (midiQueue.size() < 8192) midiQueue.push_back(e);
   }
 };
 namespace {

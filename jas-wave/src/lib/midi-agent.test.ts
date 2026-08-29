@@ -142,6 +142,12 @@ describe('modos y @', () => {
     assert.equal(wantsFullProject('crea un proyecto completo desde cero'), true)
     assert.equal(detectAgentMode('crea un proyecto completo desde cero'), 'create')
     assert.equal(wantsFullProject('créame una canción de reggaetón, 95 BPM'), true)
+    assert.equal(
+      wantsFullProject(
+        'quiero que me crees una cancion de adoracion moderna en D mayor con BFD, Descent y 4Front Bass',
+      ),
+      true,
+    )
   })
   it('al escribir @ lista modos, acciones y pistas', () => {
     const st = miniState('t-midi')

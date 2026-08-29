@@ -4,6 +4,7 @@
  */
 
 import type { PluginDescriptor, PluginFormat } from './types'
+import { expandPluginNameQueries } from './known-vst-aliases'
 
 export class PluginRegistry {
   private byId = new Map<string, PluginDescriptor>()
@@ -21,8 +22,12 @@ export class PluginRegistry {
   }
 
   findByName(name: string): PluginDescriptor[] {
-    const q = name.toLowerCase()
-    return this.list().filter((d) => d.name.toLowerCase().includes(q))
+    const queries = expandPluginNameQueries(name).map((q) => q.toLowerCase())
+    return this.list().filter((d) => {
+      const n = d.name.toLowerCase()
+      const compact = n.replace(/\s+/g, '')
+      return queries.some((q) => n.includes(q) || compact.includes(q.replace(/\s+/g, '')))
+    })
   }
 
   findByVendor(vendor: string): PluginDescriptor[] {

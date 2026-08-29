@@ -1,7 +1,13 @@
 /**
  * Biblioteca de presets VST del proyecto (estado real + metadatos).
  * Persistencia: localStorage por projectId; opcional sync a disco junto al .jaswave.
+ * Presets globales viven en userData vía global-preset-catalog.ts.
  */
+
+import type { PluginInfo } from '../../../../shared/src/types/entidades'
+
+export type LibraryPresetScope = 'global' | 'project'
+export type LibraryPresetType = 'plugin' | 'fxChain'
 
 export type LibraryPreset = {
   id: string
@@ -14,6 +20,10 @@ export type LibraryPreset = {
   notas?: string
   estadoPluginBase64?: string
   parametros?: Array<{ id: string; nombre: string; valor: number }>
+  /** Cadena FX serializada (type === 'fxChain'). */
+  fxChainPlugins?: PluginInfo[]
+  scope?: LibraryPresetScope
+  type?: LibraryPresetType
   probedAt?: number
   probeOk?: boolean
   createdAt: number
@@ -108,6 +118,9 @@ export async function saveLibraryPreset(
     notas: preset.notas,
     estadoPluginBase64: preset.estadoPluginBase64,
     parametros: preset.parametros,
+    fxChainPlugins: preset.fxChainPlugins,
+    scope: preset.scope ?? 'project',
+    type: preset.type ?? 'plugin',
     probedAt: preset.probedAt,
     probeOk: preset.probeOk,
     createdAt: existing >= 0 ? list[existing]!.createdAt : now,
@@ -147,4 +160,56 @@ export async function deleteLibraryPreset(
   writeLocal(projectId, list)
   if (changed) await syncToDisk(projectRuta, list)
   return changed
+}
+
+function projectLibraryPath(projectRuta: string): string {
+  const dir = projectRuta.replace(/[/\\][^/\\]+$/, '')
+  return `${dir}/library/instruments.json`
+}
+
+/** Carga presets del disco al abrir un .jaswave (merge por id, disco gana si más reciente). */
+export async function loadLibraryFromDisk(
+  projectId: string,
+  projectRuta: string | undefined,
+): Promise<{ loaded: number; merged: number }> {
+  if (!projectRuta || typeof window === 'undefined' || !window.electron?.fileRead) {
+    return { loaded: 0, merged: 0 }
+  }
+  try {
+    const path = projectLibraryPath(projectRuta)
+    const raw = await window.electron.fileRead(path)
+    if (!raw) return { loaded: 0, merged: 0 }
+    const parsed = JSON.parse(raw) as CatalogFile | LibraryPreset[]
+    const fromDisk: LibraryPreset[] = Array.isArray(parsed)
+      ? parsed
+      : parsed?.presets && Array.isArray(parsed.presets)
+        ? parsed.presets
+        : []
+    if (!fromDisk.length) return { loaded: 0, merged: 0 }
+
+    const local = readLocal(projectId)
+    const byId = new Map(local.map((p) => [p.id, p]))
+    let merged = 0
+    for (const p of fromDisk) {
+      const prev = byId.get(p.id)
+      const next: LibraryPreset = { ...p, scope: p.scope ?? 'project', type: p.type ?? 'plugin' }
+      if (!prev || (prev.updatedAt ?? 0) < (next.updatedAt ?? 0)) {
+        byId.set(p.id, next)
+        merged += 1
+      }
+    }
+    const list = [...byId.values()]
+    writeLocal(projectId, list)
+    return { loaded: fromDisk.length, merged }
+  } catch {
+    return { loaded: 0, merged: 0 }
+  }
+}
+
+/** Reemplaza la biblioteca del proyecto desde disco (sin merge). */
+export function importProjectLibraryPresets(projectId: string, presets: LibraryPreset[]): void {
+  writeLocal(
+    projectId,
+    presets.map((p) => ({ ...p, scope: p.scope ?? 'project', type: p.type ?? 'plugin' })),
+  )
 }

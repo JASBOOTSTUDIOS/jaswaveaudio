@@ -15,6 +15,7 @@ import {
 } from './midi-map'
 import { midiMapStore } from './midi-map-store'
 import { getActionSystemFromWindow } from '@/hooks/use-shortcut-dispatcher'
+import { shouldIgnoreGlobalShortcuts } from '../../../shared/src'
 import {
   sendVstCc,
   getLoadedInstrumentForTrack,
@@ -122,6 +123,7 @@ export function dispatchMidiMapMessage(msg: MidiParsed): boolean {
 }
 
 export function dispatchMidiMapKey(e: KeyboardEvent): boolean {
+  if (shouldIgnoreGlobalShortcuts(e.target)) return false
   if (e.repeat) return false
   const chord = chordFromKeyboardEvent(e)
   if (!chord) return false
@@ -147,9 +149,7 @@ export function dispatchMidiMapKey(e: KeyboardEvent): boolean {
 
 export function installMidiMapKeyListener(): () => void {
   const onKey = (e: KeyboardEvent) => {
-    const el = e.target as HTMLElement | null
-    const typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
-    if (typing && !midiMapStore.getLearnTargetId()) return
+    if (shouldIgnoreGlobalShortcuts(e.target) && !midiMapStore.getLearnTargetId()) return
     dispatchMidiMapKey(e)
   }
   window.addEventListener('keydown', onKey, true)

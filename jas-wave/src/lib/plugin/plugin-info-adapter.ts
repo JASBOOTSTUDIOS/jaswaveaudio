@@ -6,9 +6,10 @@
 import type { PluginInfo } from '../../../../shared/src/types/entidades'
 import type { PluginDescriptor } from './types'
 import { pluginRegistry } from './registry'
+import { expandPluginNameQueries, preferredKnownVstPath } from './known-vst-aliases'
 
 const INSTRUMENT_RE =
-  /sampler|synth|piano|keys|organ|drum|drums|kit\b|bfd|bfdplayer|player|bass|guitar|violin|pad|lead|kontakt|sforzando|decent|instrument|vsti|analog|arturia|lab\s*v|omnisphere|serum|vital|keyscape|play\b|workstation|engine|addictive|ezdrummer|superior\s*drum|battery|groove\s*agent|studi\s*drummer|4front|jaswave/i
+  /sampler|synth|piano|keys|organ|drum|drums|kit\b|bfd|bfdplayer|player|bass|guitar|violin|pad|lead|kontakt|sforzando|decent|descent|instrument|vsti|analog|arturia|lab\s*v|omnisphere|serum|vital|keyscape|play\b|workstation|engine|addictive|ezdrummer|superior\s*drum|battery|groove\s*agent|studi\s*drummer|4front|jaswave/i
 
 const FX_RE =
   /reverb|delay|compress|eq\b|pro-?q|equaliz|limiter|saturat|gate\b|chorus|flanger|phaser|utility|maximizer|imager|exciter|de-?ess|transient|clipper|valhalla|room\b|plate\b|verb\b/i
@@ -62,14 +63,31 @@ export function resolveHostPluginPath(
   if (direct) return direct
   const list = catalog ?? pluginRegistry.list()
   const name = (plugin.nombre || '').trim().toLowerCase()
+  const queries = plugin.nombre
+    ? expandPluginNameQueries(plugin.nombre).map((q) => q.toLowerCase())
+    : name
+      ? [name]
+      : []
+  const knownPath = plugin.nombre ? preferredKnownVstPath(plugin.nombre) : ''
+  if (knownPath) {
+    const byPath = list.find(
+      (d) =>
+        (d.path || '').replace(/\\/g, '/').toLowerCase() === knownPath.replace(/\\/g, '/').toLowerCase(),
+    )
+    if (byPath?.path) return byPath.path
+  }
   const hit = list.find(
     (d) =>
       !!d.path &&
       (d.pluginId === plugin.id ||
-        (!!name && d.name.trim().toLowerCase() === name) ||
-        (!!name && name.length > 3 && d.name.toLowerCase().includes(name))),
+        queries.some(
+          (q) =>
+            (!!q && d.name.trim().toLowerCase() === q) ||
+            (!!q && q.length > 3 && d.name.toLowerCase().includes(q)),
+        )),
   )
   if (hit?.path) return hit.path
+  if (knownPath) return knownPath
   // Fallback nativo (lazy import evita ciclo con jaswave-piano/roles).
   if (/jaswave\s*piano|jaswavepiano/i.test(name)) {
     try {
@@ -122,7 +140,13 @@ export function pluginRuntimeCaption(
     return 'in-process · builtin'
   }
   if (plugin.estado === 'error') return 'error · host no confirmó esta instancia'
-  if (!resolveHostPluginPath(plugin)) return 'MISSING · sin ruta de plugin (.vst3/.dll)'
+  const path = resolveHostPluginPath(plugin)
+  if (!path) return 'MISSING · sin ruta de plugin (.vst3/.dll)'
+  if (/\.dll$/i.test(path)) {
+    return opts?.audioReady
+      ? 'VST2 x64 · host listo (preferir .vst3 si hay MIDI/audio raro)'
+      : 'VST2 · requiere DLL x64; preferir .vst3'
+  }
   if (opts?.audioReady) return 'host listo · UI+audio misma instancia'
   return 'en proyecto · host no confirmado'
 }

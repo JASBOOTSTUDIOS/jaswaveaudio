@@ -52,8 +52,20 @@ void toStereo(const float* src, uint32_t frames, uint32_t channels, std::vector<
   }
 }
 
-void resampleLinear(const std::vector<float>& in, uint32_t inFrames, uint32_t inSr, uint32_t outSr,
-                    std::vector<float>& out, uint32_t& outFrames) {
+static float hermiteInterp(float ym1, float y0, float y1, float y2, float t) {
+  // Catmull-Rom cúbico: mejora el detalle de transitorios frente a la
+  // interpolación lineal (menos emborronado en SRC 44.1k -> 48k).
+  const float t2 = t * t;
+  const float t3 = t2 * t;
+  const float a = 2.f * t3 - 3.f * t2 + 1.f;
+  const float b = t3 - 2.f * t2 + t;
+  const float c = t3 - t2;
+  const float d = -2.f * t3 + 3.f * t2;
+  return a * y0 + b * (y1 - ym1) * 0.5f + c * (y1 - y0) * 0.5f + d * y1;
+}
+
+void resampleCubic(const std::vector<float>& in, uint32_t inFrames, uint32_t inSr, uint32_t outSr,
+                   std::vector<float>& out, uint32_t& outFrames) {
   if (inSr == 0 || outSr == 0 || inFrames == 0) {
     out.clear();
     outFrames = 0;
@@ -67,17 +79,26 @@ void resampleLinear(const std::vector<float>& in, uint32_t inFrames, uint32_t in
   const double ratio = static_cast<double>(outSr) / static_cast<double>(inSr);
   outFrames = static_cast<uint32_t>(std::max<int64_t>(1, std::llround(inFrames * ratio)));
   out.assign(static_cast<size_t>(outFrames) * 2u, 0.f);
+  const uint32_t last = inFrames - 1u;
   for (uint32_t i = 0; i < outFrames; ++i) {
     const double srcPos = static_cast<double>(i) / ratio;
-    const uint32_t i0 = static_cast<uint32_t>(srcPos);
-    const uint32_t i1 = std::min(i0 + 1u, inFrames - 1u);
+    uint32_t i0 = static_cast<uint32_t>(srcPos);
+    if (i0 >= last) {
+      out[i * 2] = in[last * 2];
+      out[i * 2 + 1] = in[last * 2 + 1];
+      continue;
+    }
     const float frac = static_cast<float>(srcPos - static_cast<double>(i0));
-    const float l0 = in[i0 * 2];
-    const float r0 = in[i0 * 2 + 1];
-    const float l1 = in[i1 * 2];
-    const float r1 = in[i1 * 2 + 1];
-    out[i * 2] = l0 + (l1 - l0) * frac;
-    out[i * 2 + 1] = r0 + (r1 - r0) * frac;
+    const uint32_t im = i0 > 0 ? i0 - 1u : 0u;
+    const uint32_t i1 = i0 + 1u;
+    const uint32_t i2 = std::min(i1 + 1u, last);
+    for (uint32_t ch = 0; ch < 2; ++ch) {
+      const float ym1 = in[im * 2 + ch];
+      const float y0 = in[i0 * 2 + ch];
+      const float y1 = in[i1 * 2 + ch];
+      const float y2 = in[i2 * 2 + ch];
+      out[i * 2 + ch] = hermiteInterp(ym1, y0, y1, y2, frac);
+    }
   }
 }
 
@@ -156,7 +177,7 @@ bool clip_load_path(const std::string& clipId, const std::string& path, std::str
   toStereo(packed.data(), static_cast<uint32_t>(frameCount), channels, stereo);
   const uint32_t hostSr = static_cast<uint32_t>(std::lround(transport_clock_sample_rate()));
   ClipBuffer buf;
-  resampleLinear(stereo, static_cast<uint32_t>(frameCount), inSr, hostSr ? hostSr : inSr, buf.interleaved,
+  resampleCubic(stereo, static_cast<uint32_t>(frameCount), inSr, hostSr ? hostSr : inSr, buf.interleaved,
                  buf.frames);
   buf.sampleRate = hostSr ? hostSr : inSr;
 
@@ -177,7 +198,7 @@ bool clip_load_pcm(const std::string& clipId, const float* interleaved, uint32_t
   const uint32_t inSr = sampleRate ? sampleRate : 48000;
   const uint32_t hostSr = static_cast<uint32_t>(std::lround(transport_clock_sample_rate()));
   ClipBuffer buf;
-  resampleLinear(stereo, frames, inSr, hostSr ? hostSr : inSr, buf.interleaved, buf.frames);
+  resampleCubic(stereo, frames, inSr, hostSr ? hostSr : inSr, buf.interleaved, buf.frames);
   buf.sampleRate = hostSr ? hostSr : inSr;
 
   std::lock_guard<std::mutex> lock(gMu);

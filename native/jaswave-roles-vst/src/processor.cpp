@@ -362,8 +362,15 @@ void Processor::noteOff(int16_t pitch, int32_t /*sampleOffset*/) {
   for (auto& v : voices_) {
     if (!v.active || v.pitch != pitch) continue;
     if (v.oneShot) {
-      // Drums: dejar que el one-shot decaiga (más orgánico). Piano: corte.
-      if (v.drumKind >= 0) continue;
+      if (v.drumKind >= 0) {
+        // Audition / note corta: acelerar decay (no dejar el one-shot “pegado”).
+        const float sr = static_cast<float>(sampleRate_);
+        v.bodyDec *= 6.f;
+        v.noiseDec *= 6.f;
+        v.clickDec *= 6.f;
+        v.samplesLeft = std::min(v.samplesLeft, static_cast<int>(0.06f * sr));
+        continue;
+      }
       v = Voice{};
       continue;
     }
@@ -377,6 +384,24 @@ void Processor::noteOff(int16_t pitch, int32_t /*sampleOffset*/) {
 
 void Processor::panicAll() {
   for (auto& v : voices_) v = Voice{};
+  clearFxTail();
+}
+
+void Processor::clearFxTail() {
+  gateEnv_ = 0.f;
+  eqLowZ_ = 0.f;
+  eqHighZ_ = 0.f;
+  chorusPhase_ = 0.f;
+  delayWrite_ = 0;
+  chorusWrite_ = 0;
+  for (auto& w : revCombW_) w = 0;
+  std::fill(delayBufL_.begin(), delayBufL_.end(), 0.f);
+  std::fill(delayBufR_.begin(), delayBufR_.end(), 0.f);
+  std::fill(chorusBuf_.begin(), chorusBuf_.end(), 0.f);
+  std::fill(revCombBuf0_.begin(), revCombBuf0_.end(), 0.f);
+  std::fill(revCombBuf1_.begin(), revCombBuf1_.end(), 0.f);
+  std::fill(revCombBuf2_.begin(), revCombBuf2_.end(), 0.f);
+  std::fill(revCombBuf3_.begin(), revCombBuf3_.end(), 0.f);
 }
 
 float Processor::nextOsc(Partial& p, float sr) {

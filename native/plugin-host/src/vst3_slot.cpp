@@ -415,11 +415,12 @@ void Vst3Slot::unload() {
   path_.clear();
 }
 
-void Vst3Slot::noteOn(int pitch, float velocity, int delaySamples) {
+void Vst3Slot::noteOn(int pitch, float velocity, int delaySamples, int32_t lengthSamples) {
   std::lock_guard<std::mutex> lock(impl_->midiMutex);
   if (impl_->midiQueue.size() > 8192) return;
   impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOn, static_cast<int16_t>(pitch),
-                              std::clamp(velocity, 0.f, 1.f), 0, 0, std::max(0, delaySamples)});
+                              std::clamp(velocity, 0.f, 1.f), 0, 0, std::max(0, delaySamples),
+                              std::max(0, lengthSamples)});
 }
 
 void Vst3Slot::noteOff(int pitch, int delaySamples) {
@@ -486,6 +487,23 @@ void Vst3Slot::setPlaying(bool playing) {
   } else {
     impl_->processContext.state &= ~static_cast<uint32>(ProcessContext::kPlaying);
   }
+}
+
+void Vst3Slot::setTransport(bool playing, double tempoBpm, double ppqPos) {
+  if (tempoBpm >= 20.0 && tempoBpm <= 400.0) {
+    impl_->processContext.tempo = tempoBpm;
+  }
+  if (ppqPos >= 0.0) {
+    impl_->processContext.projectTimeMusic = ppqPos;
+    const double sr =
+        impl_->processContext.sampleRate > 0.0 ? impl_->processContext.sampleRate : impl_->sampleRate;
+    const double t = impl_->processContext.tempo;
+    if (sr > 0.0 && t > 0.0) {
+      impl_->processContext.continousTimeSamples =
+          static_cast<int64_t>(std::llround(ppqPos * 60.0 / t * sr));
+    }
+  }
+  setPlaying(playing);
 }
 
 std::vector<Vst3ParamDesc> Vst3Slot::listParameters(int maxCount) {
@@ -611,7 +629,7 @@ void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* o
         e.noteOn.channel = 0;
         e.noteOn.pitch = ev.pitch;
         e.noteOn.velocity = ev.velocity;
-        e.noteOn.length = 0;
+        e.noteOn.length = ev.lengthSamples > 0 ? ev.lengthSamples : 0;
         e.noteOn.tuning = 0;
         e.noteOn.noteId = ev.pitch;
       } else if (ev.kind == Vst3MidiEvent::Kind::ControlChange) {

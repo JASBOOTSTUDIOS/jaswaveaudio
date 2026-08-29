@@ -2,12 +2,13 @@
  * Panel FX Chain por pista / Master (ADR-0012) — workspace tool `fx-chain`.
  */
 
-import { useSyncExternalStore, useEffect, useState } from 'react'
+import { useSyncExternalStore, useEffect, useMemo, useState } from 'react'
 import {
   ChevronDown,
   ChevronUp,
   ClipboardPaste,
   Copy,
+  FolderOpen,
   Plus,
   Replace,
   Sparkles,
@@ -42,6 +43,10 @@ import {
 } from '@/src/lib/plugin/track-vst-runtime'
 import { isJasWaveRolesDescriptor, jasWaveRolesPluginInfo } from '@/src/lib/plugin/jaswave-roles'
 import { MASTER_FX_TRACK_ID, getFxChainClipboard } from '../../shared/src/commands/plugin-commands'
+import { libraryApplyPreset, libraryList, librarySaveFxChainGlobal } from '@/src/lib/library/ops'
+import type { LibraryPreset } from '@/src/lib/library/preset-catalog'
+
+const EMPTY_PLUGINS: PluginInfo[] = []
 
 function useFxFocus() {
   return useSyncExternalStore(subscribeFxChainFocus, getFxChainFocus, () => null)
@@ -66,21 +71,31 @@ export function FxChainPanel() {
   const focus = useFxFocus()
   useVstRuntimeTick()
   const tienda = useDAW()
-  const track = useDAWState((s: DAWState) => {
+  const focusTrackId = focus?.trackId ?? ''
+  const isMasterFocus =
+    focusTrackId === MASTER_FX_TRACK_ID || focusTrackId === '__master__'
+  const masterPlugins = useDAWState((s: DAWState) => s.project?.master?.plugins ?? EMPTY_PLUGINS)
+  const focusedTrack = useDAWState((s: DAWState) => {
+    if (!focusTrackId || isMasterFocus) return null
+    return s.project?.tracks?.find((t) => t.id === focusTrackId) ?? null
+  })
+  const track = useMemo(() => {
     if (!focus) return null
-    if (focus.trackId === MASTER_FX_TRACK_ID || focus.trackId === '__master__') {
+    if (isMasterFocus) {
       return {
         id: MASTER_FX_TRACK_ID,
         nombre: 'Master',
-        plugins: s.project?.master?.plugins ?? [],
+        plugins: masterPlugins,
       }
     }
-    return s.project?.tracks?.find((t) => t.id === focus.trackId) ?? null
-  })
+    return focusedTrack
+  }, [focus, focusedTrack, isMasterFocus, masterPlugins])
   const [catalog, setCatalog] = useState<PluginDescriptor[]>([])
   const [pickId, setPickId] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
+  const [fxPresets, setFxPresets] = useState<LibraryPreset[]>([])
+  const [loadPresetId, setLoadPresetId] = useState('')
 
   useEffect(() => {
     hydratePluginCatalog()
@@ -93,7 +108,13 @@ export function FxChainPanel() {
       const vst = list.find((x) => x.format === 'vst3')
       return roles?.pluginId ?? vst?.pluginId ?? list[0]?.pluginId ?? ''
     })
-  }, [focus?.trackId])
+    void (async () => {
+      const presets = await libraryList(tienda, 'global')
+      const chains = presets.filter((p) => (p.type ?? 'plugin') === 'fxChain')
+      setFxPresets(chains)
+      setLoadPresetId((prev) => (prev && chains.some((p) => p.id === prev) ? prev : chains[0]?.id ?? ''))
+    })()
+  }, [focus?.trackId, tienda])
 
   if (!focus || !track) {
     return (
@@ -175,24 +196,35 @@ export function FxChainPanel() {
   }
 
   const savePreset = async () => {
-    const nombre = `FX ${track.nombre}`
-    const presetId = `fxpreset-${Date.now().toString(36)}`
-    const r = await tienda.executor.execute('fxChain.savePreset', {
-      trackId,
-      presetId,
-      nombre,
-    })
-    if (r.success && r.result && typeof r.result === 'object') {
-      const pluginsSaved = (r.result as { plugins?: PluginInfo[] }).plugins ?? []
-      try {
-        const key = 'jaswave.fxChainPresets'
-        const prev = JSON.parse(localStorage.getItem(key) || '[]') as unknown[]
-        prev.push({ presetId, nombre, trackHint: track.nombre, plugins: pluginsSaved, at: Date.now() })
-        localStorage.setItem(key, JSON.stringify(prev.slice(-40)))
-        setMsg(`Preset guardado: ${nombre}`)
-      } catch {
-        setMsg('Preset serializado (sin localStorage)')
+    const nombre = window.prompt('Nombre del preset de cadena FX (global):', `FX ${track.nombre}`)
+    if (!nombre?.trim()) return
+    setBusy(true)
+    try {
+      const r = await librarySaveFxChainGlobal(tienda, {
+        trackId,
+        nombre: nombre.trim(),
+      })
+      setMsg(r.message)
+      if (r.ok && r.preset) {
+        setFxPresets((prev) => [r.preset!, ...prev.filter((p) => p.id !== r.preset!.id)])
+        setLoadPresetId(r.preset.id)
       }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const loadPreset = async () => {
+    if (!loadPresetId) {
+      setMsg('Sin presets FX globales — guarda una cadena primero')
+      return
+    }
+    setBusy(true)
+    try {
+      const r = await libraryApplyPreset(tienda, { presetId: loadPresetId, trackId })
+      setMsg(r.message)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -363,19 +395,46 @@ export function FxChainPanel() {
           JasWave Roles (Roles.vst3) u otros VST se insertan desde el catálogo. Un VST en la
           pista envía MIDI al plugin-host cuando el load confirma.
         </p>
-        <div className="mb-1 flex items-center justify-between">
+        <div className="mb-1 flex items-center justify-between gap-2">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             + Add FX
           </div>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void savePreset()}
-            className="text-[10px] text-accent-amber hover:underline"
-          >
-            Guardar preset cadena
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void savePreset()}
+              className="text-[10px] text-accent-amber hover:underline"
+            >
+              Guardar global
+            </button>
+          </div>
         </div>
+        {fxPresets.length ? (
+          <div className="mb-2 flex gap-1">
+            <select
+              value={loadPresetId}
+              onChange={(e) => setLoadPresetId(e.target.value)}
+              className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-[10px]"
+            >
+              {fxPresets.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.nombre}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={busy || !loadPresetId}
+              title="Cargar preset FX global"
+              onClick={() => void loadPreset()}
+              className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[10px] hover:bg-muted"
+            >
+              <FolderOpen className="size-3" />
+              Cargar
+            </button>
+          </div>
+        ) : null}
         <div className="flex gap-1">
           <select
             value={pickId}

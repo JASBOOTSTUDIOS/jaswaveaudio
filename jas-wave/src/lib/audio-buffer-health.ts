@@ -91,6 +91,138 @@ async function readHostPipeStatus(): Promise<{
   }
 }
 
+async function readRingStats(reset?: boolean, timeoutMs = 1200): Promise<MixRingStats | null> {
+  const send = window.electron?.pluginHostSend
+  if (!send) return null
+  try {
+    const raw = (await Promise.race([
+      send({ type: 'getMixBufferStats', reset: Boolean(reset) }),
+      new Promise<null>((r) => setTimeout(() => r(null), timeoutMs)),
+    ])) as { ok?: boolean; mix?: MixRingStats } | null
+    if (!raw?.ok || !raw.mix) return null
+    return raw.mix
+  } catch {
+    return null
+  }
+}
+
+/** Fill representativo del ring (mismo criterio que analyzeBufferHealth). */
+export function mixRingFillLevel(ring: MixRingStats): {
+  fill: number
+  levelVsHigh: number
+  levelVsTarget: number
+} {
+  const dawFill = Number(ring.dawFill ?? 0)
+  const maxLive = Number(ring.maxLiveFill ?? 0)
+  const fill = Math.max(dawFill, maxLive)
+  const high = Math.max(1, ring.highFill)
+  const target = Math.max(1, ring.targetFill)
+  return {
+    fill,
+    levelVsHigh: Math.max(0, Math.min(1.2, fill / high)),
+    levelVsTarget: Math.max(0, Math.min(1.5, fill / target)),
+  }
+}
+
+export type MixBufferLiveSnapshot = {
+  fill: number
+  dawFill: number
+  minLiveFill: number
+  maxLiveFill: number
+  capacity: number
+  targetFill: number
+  highFill: number
+  liveTracks: number
+  /** 0..1 respecto a highFill (barra principal). */
+  level: number
+  levelVsTarget: number
+  connected: boolean
+  running: boolean
+  mixQueueDepth: number
+  mixBackpressure: boolean
+  nativeOutput: boolean
+  underrunBlocks: number
+  overflowPushes: number
+  highFillDropFrames: number
+  inRate: number
+  outRate: number
+  pullBudget: number
+  /** Clasificación rápida sin muestreo largo. */
+  status: BufferHealthReport['status']
+  hint: string
+}
+
+function liveStatusFromSnapshot(s: Omit<MixBufferLiveSnapshot, 'status' | 'hint'>): Pick<MixBufferLiveSnapshot, 'status' | 'hint'> {
+  if (!s.connected || !s.nativeOutput) {
+    return {
+      status: 'disconnected',
+      hint: 'Mix pipe desconectado — posible doble salida Chromium+ASIO',
+    }
+  }
+  if (!s.running) {
+    return {
+      status: 'unknown',
+      hint: s.mixQueueDepth > 0 ? `Ring parado · cola IPC ${s.mixQueueDepth}` : 'Ring nativo no arrancado',
+    }
+  }
+  if (s.mixQueueDepth > 16 || (s.mixBackpressure && s.mixQueueDepth > 8) || s.level > 0.95 || s.overflowPushes > 0) {
+    return { status: 'saturated', hint: `Saturado · fill ${Math.round(s.level * 100)}% · queue ${s.mixQueueDepth}` }
+  }
+  if (s.levelVsTarget < 0.25 && s.liveTracks > 0) {
+    return { status: 'starving', hint: `Fill bajo ${Math.round(s.levelVsTarget * 100)}% target · underrun ${s.underrunBlocks}` }
+  }
+  return {
+    status: 'healthy',
+    hint: `OK · fill ${s.fill}/${s.highFill} · live ${s.liveTracks} · queue ${s.mixQueueDepth}`,
+  }
+}
+
+/** Snapshot en vivo (~1 IPC) para medidores UI — sin sleep de muestreo. */
+export async function readMixBufferLive(): Promise<MixBufferLiveSnapshot | null> {
+  const timing = audioEngine.getTimingDiagnostics()
+  const [pipe, ring] = await Promise.all([readHostPipeStatus(), readRingStats(false, 1200)])
+
+  const base = {
+    fill: 0,
+    dawFill: ring?.dawFill ?? 0,
+    minLiveFill: ring?.minLiveFill ?? 0,
+    maxLiveFill: ring?.maxLiveFill ?? 0,
+    capacity: ring?.capacity ?? 8192,
+    targetFill: ring?.targetFill ?? 1024,
+    highFill: ring?.highFill ?? 3072,
+    liveTracks: ring?.liveTracks ?? 0,
+    level: 0,
+    levelVsTarget: 0,
+    connected: pipe.mixPipeConnected,
+    running: Boolean(ring?.running),
+    mixQueueDepth: pipe.mixQueueDepth,
+    mixBackpressure: pipe.mixBackpressure,
+    nativeOutput: timing.nativeOutput,
+    underrunBlocks: ring?.underrunBlocks ?? 0,
+    overflowPushes: ring?.overflowPushes ?? 0,
+    highFillDropFrames: ring?.highFillDropFrames ?? 0,
+    inRate: ring?.inRate ?? 0,
+    outRate: ring?.outRate ?? 0,
+    pullBudget: ring?.pullBudget ?? 0,
+    status: 'unknown' as BufferHealthReport['status'],
+    hint: '',
+  }
+
+  if (ring?.running) {
+    const levels = mixRingFillLevel(ring)
+    base.fill = levels.fill
+    base.level = levels.levelVsHigh
+    base.levelVsTarget = levels.levelVsTarget
+  } else if (pipe.mixQueueDepth > 0) {
+    // Fallback visual cuando el ring no reporta pero la cola IPC crece.
+    base.level = Math.min(1, pipe.mixQueueDepth / 64)
+    base.fill = Math.round(base.level * base.highFill)
+  }
+
+  const judged = liveStatusFromSnapshot(base)
+  return { ...base, ...judged }
+}
+
 /** Snapshot rápido del ring (para medidor del transporte; sin muestreo largo). */
 export async function readMixRingFill(): Promise<{
   fill: number
@@ -101,45 +233,25 @@ export async function readMixRingFill(): Promise<{
   /** 0 = vacío, ~0.5 = medio, 1 = lleno (respecto a highFill). */
   level: number
   connected: boolean
+  status: BufferHealthReport['status']
+  mixQueueDepth: number
+  underrunBlocks: number
+  overflowPushes: number
 } | null> {
-  const [pipe, ring] = await Promise.all([readHostPipeStatus(), readRingStats(false)])
-  if (!ring?.running) {
-    return {
-      fill: 0,
-      capacity: ring?.capacity ?? 8192,
-      targetFill: ring?.targetFill ?? 1024,
-      highFill: ring?.highFill ?? 3072,
-      liveTracks: 0,
-      level: 0,
-      connected: pipe.mixPipeConnected,
-    }
-  }
-  const fill = ring.liveTracks > 0 ? ring.minLiveFill : ring.dawFill
-  const high = Math.max(1, ring.highFill)
-  const level = Math.max(0, Math.min(1, fill / high))
+  const live = await readMixBufferLive()
+  if (!live) return null
   return {
-    fill,
-    capacity: ring.capacity,
-    targetFill: ring.targetFill,
-    highFill: ring.highFill,
-    liveTracks: ring.liveTracks,
-    level,
-    connected: pipe.mixPipeConnected,
-  }
-}
-
-async function readRingStats(reset?: boolean): Promise<MixRingStats | null> {
-  const send = window.electron?.pluginHostSend
-  if (!send) return null
-  try {
-    const raw = (await Promise.race([
-      send({ type: 'getMixBufferStats', reset: Boolean(reset) }),
-      new Promise<null>((r) => setTimeout(() => r(null), 400)),
-    ])) as { ok?: boolean; mix?: MixRingStats } | null
-    if (!raw?.ok || !raw.mix) return null
-    return raw.mix
-  } catch {
-    return null
+    fill: live.fill,
+    capacity: live.capacity,
+    targetFill: live.targetFill,
+    highFill: live.highFill,
+    liveTracks: live.liveTracks,
+    level: live.level,
+    connected: live.connected,
+    status: live.status,
+    mixQueueDepth: live.mixQueueDepth,
+    underrunBlocks: live.underrunBlocks,
+    overflowPushes: live.overflowPushes,
   }
 }
 
