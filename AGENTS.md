@@ -15,6 +15,12 @@ jaswave-ia/
 │   ├── src/commands/    # Definiciones de comandos
 │   ├── src/ai/          # Sistema de IA
 │   └── src/test/        # Tests con Vitest
+├── ai-harness/          # Biblioteca @jaswave/ai-harness (bucle IA + plan.md)
+│   └── src/
+│       ├── plan/        # evaluación plan.md ↔ DAW
+│       ├── loop/        # harness de reparación + cola de jobs
+│       ├── agent/       # modos y política de acciones
+│       └── ask/         # contexto solo lectura (consultas)
 ├── jas-wave/            # Aplicación cliente (Electron + React + TS + Tailwind)
 │   ├── src/             # UI React: App, context, hooks, lib
 │   ├── lib/             # Audio engine, transport clock
@@ -28,6 +34,13 @@ jaswave-ia/
 ```bash
 cd shared
 npm test              # Vitest
+npx tsc --noEmit      # Typecheck
+```
+
+### AI Harness library
+```bash
+cd ai-harness
+npm test              # Vitest (harness + plan eval)
 npx tsc --noEmit      # Typecheck
 ```
 

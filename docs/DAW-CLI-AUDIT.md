@@ -43,12 +43,11 @@ Payload: JSON inline, `@archivo.json`, o `-` (stdin).
 | GET | `/audit` / `/audit/stream` | Meters + playhead |
 | POST | `/transport` | play/pause/stop/toggle/seek |
 
-## Soft Pad / audibilidad (producción)
+## Audibilidad (producción)
 
-- Music Build inserta **Soft Pad en toda pista MIDI** + VST si hay catálogo.
-- Playback: `softPadDual` suena Soft Pad (timbre por rol) **y** VST a la vez si el kit/preset del VST está vacío.
-- Timbres por rol: `jas-wave/lib/role-voice.ts` (drums/bass/guitar/piano/pad/…).
-- Mezcla: bus `Reverb FX` + sends por rol.
+- Music Build inserta **JasWave Roles / Piano VST3** (u otro del catálogo) en pistas MIDI; el host debe confirmar el slot.
+- El **harness** consulta el snapshot CLI (`/audit`: peaks, `vstSlot`, hang) tras mutar y marca errores `host-slot-unconfirmed` / `silent-midi-track` si no hay señal.
+- Sidechain: estado en proyecto; I/O host aún no audible — el harness emite `sidechain-unverified`.
 
 ## Sync / underruns / metrónomo
 

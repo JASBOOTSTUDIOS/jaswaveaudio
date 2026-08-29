@@ -6,6 +6,8 @@
 
 **Aprobada opción B (2026-08-22)** — handoff PCM: Web Audio genera clips / Soft Pad / metrónomo, Chromium se silencia, el host mezcla ese bus + VST y sale por **un** device nativo.
 
+**Estado 1.0 (2026-08-28):** clips nativos + VST en host; bounce offline hace `pull_stem` de stems dry; sends live OK; sidechain solo meter (post-1.0 I/O); path dual Web Audio→host aceptado como deuda.
+
 Complementa [ADR-0011](./ADR-0011-plugin-host-vst3.md), [ADR-0012](./ADR-0012-track-fx-chain.md), [ADR-0005](./ADR-0005-interfaz-motor-audio.md), [ADR-0009](./ADR-0009-native-audio-bridge-napi.md).
 
 Auditoría: 2026-08-22. Artefacto: canvas `fx-chain-pipeline-audit`. Contexto: [CONTEXTO-VST-AUDIO-APP-VS-DOCS](../CONTEXTO-VST-AUDIO-APP-VS-DOCS.md).

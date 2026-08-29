@@ -2,7 +2,9 @@
 
 ## Estado
 
-**Aprobado** (aislamiento híbrido C). Host nativo **sí carga y procesa** VST3; el **handoff al motor del DAW no existe**. UI nativa = proceso `jaswave-vst3-editor` (**otra instancia**). Ver [ADR-0013](./ADR-0013-fx-runtime-pipeline.md) **[REQUIERE APROBACIÓN]** antes de unificar UI+audio o FX DSP.
+**Aprobado** (aislamiento híbrido C). Host nativo **sí carga y procesa** VST3 (+ VST2 x64). UI nativa = proceso `jaswave-vst3-editor` (**otra instancia**). Ver [ADR-0013](./ADR-0013-fx-runtime-pipeline.md).
+
+**Estado 1.0 (2026-08-28):** chunk/state persistidos; preferir `.vst3` sobre VST2; scan SDK completo sigue pendiente.
 
 Complementa `PluginInfo` en dominio y [036-sistema-plugins-completo](../hoja-ruta/036-sistema-plugins-completo.md).
 
