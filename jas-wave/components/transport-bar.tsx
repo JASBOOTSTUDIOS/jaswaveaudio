@@ -4,7 +4,7 @@ import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { DAWState } from '../../shared/src'
 import { TransportPositionReadout } from './transport-position-readout'
 import { midiController } from '@/src/lib/midi-controller'
-import { readMixRingFill } from '@/src/lib/audio-buffer-health'
+import { useLiveBufferMeter } from '@/hooks/use-live-buffer-meter'
 import { useProjectReady } from '@/src/context/project-ready-context'
 import { waitUntilProjectReady } from '@/src/lib/project-ready'
 
@@ -25,66 +25,70 @@ function bufferFillColor(level: number): string {
   return `rgb(${r},${g},${b})`
 }
 
-function BufferFillMeter() {
-  const [level, setLevel] = useState(0)
-  const [fill, setFill] = useState(0)
-  const [highFill, setHighFill] = useState(3072)
-  const [connected, setConnected] = useState(false)
-  const [live, setLive] = useState(0)
-
-  useEffect(() => {
-    let cancelled = false
-    let timer: ReturnType<typeof setTimeout> | null = null
-
-    const tick = async () => {
-      try {
-        const snap = await readMixRingFill()
-        if (cancelled || !snap) return
-        setLevel(snap.level)
-        setFill(snap.fill)
-        setHighFill(snap.highFill)
-        setConnected(snap.connected)
-        setLive(snap.liveTracks)
-      } catch {
-        /* host caído */
-      } finally {
-        if (!cancelled) timer = setTimeout(() => void tick(), 500)
-      }
-    }
-    void tick()
-    return () => {
-      cancelled = true
-      if (timer) clearTimeout(timer)
-    }
-  }, [])
-
+function BufferFillMeter({ playing }: { playing: boolean }) {
+  const live = useLiveBufferMeter(playing)
+  const level = live?.level ?? 0
   const pct = Math.round(level * 100)
   const color = bufferFillColor(level)
-  const title = connected
-    ? `Buffer mix→ASIO: ${fill}/${highFill} (${pct}%) · live ${live}\nBlanco=vacío · amarillo=medio · rojo=lleno`
-    : 'Mix pipe desconectado — buffer nativo no disponible'
+  const connected = live?.connected ?? false
+  const status = live?.status ?? 'unknown'
+  const flash =
+    (live?.underrunDelta ?? 0) > 0 || (live?.overflowDelta ?? 0) > 0 || (live?.dropDelta ?? 0) > 0
+
+  const title = live
+    ? [
+        `Buffer ${status.toUpperCase()}: ${live.fill}/${live.highFill} (${pct}%)`,
+        `daw ${live.dawFill} · maxLive ${live.maxLiveFill} · minLive ${live.minLiveFill}`,
+        `live ${live.liveTracks} · queue ${live.mixQueueDepth}${live.mixBackpressure ? ' BP' : ''}`,
+        `underrun ${live.underrunBlocks} · overflow ${live.overflowPushes} · drop ${live.highFillDropFrames}`,
+        live.hint,
+        'Blanco=vacío · amarillo=medio · rojo=lleno',
+      ].join('\n')
+    : 'Leyendo buffer mix→ASIO…'
+
+  const borderTint =
+    status === 'saturated'
+      ? 'border-red-500/80'
+      : status === 'starving'
+        ? 'border-amber-500/80'
+        : status === 'disconnected'
+          ? 'border-zinc-600'
+          : 'border-border/70'
 
   return (
     <div
       className="flex flex-col items-center gap-0.5"
       title={title}
-      aria-label={`Buffer ${pct}%`}
+      aria-label={`Buffer ${pct}% ${status}`}
       role="meter"
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={pct}
     >
-      <div className="relative h-7 w-2.5 overflow-hidden rounded-sm border border-border/70 bg-black/40">
+      <div className={`relative h-7 w-2.5 overflow-hidden rounded-sm border bg-black/40 ${borderTint}`}>
         <div
-          className="absolute bottom-0 left-0 right-0 transition-[height,background-color] duration-150"
+          className="absolute bottom-0 left-0 right-0 transition-[height,background-color] duration-75"
           style={{
-            height: `${Math.max(connected ? 2 : 0, pct)}%`,
-            backgroundColor: connected ? color : 'rgb(80,80,80)',
-            boxShadow: level > 0.85 ? `0 0 6px ${color}` : undefined,
+            height: `${Math.max(connected || live ? 2 : 0, pct)}%`,
+            backgroundColor: connected || live ? color : 'rgb(80,80,80)',
+            boxShadow: level > 0.85 || flash ? `0 0 6px ${color}` : undefined,
           }}
         />
+        {flash ? (
+          <div className="pointer-events-none absolute inset-0 animate-pulse bg-red-500/30" />
+        ) : null}
       </div>
-      <span className="text-[8px] uppercase tracking-wider text-muted-foreground">BUF</span>
+      <span
+        className={`text-[8px] uppercase tracking-wider ${
+          status === 'saturated'
+            ? 'text-red-400'
+            : status === 'starving'
+              ? 'text-amber-400'
+              : 'text-muted-foreground'
+        }`}
+      >
+        BUF
+      </span>
     </div>
   )
 }
@@ -382,7 +386,15 @@ export function TransportBar() {
   const isMetronome = Boolean(transport.metronomo?.activo)
   const isPunch = Boolean(transport.punch?.activo)
   const isCountIn = Boolean(transport.countIn?.activo)
-  const blocked = projectReady.blocking && !isPlaying
+  // Solo bloquear Play si falta host/audio. La carga de VSTs muestra progreso pero no congela la UI.
+  const blocked =
+    !isPlaying &&
+    projectReady.blocking &&
+    (projectReady.phase === 'host' ||
+      projectReady.phase === 'device' ||
+      projectReady.phase === 'booting' ||
+      !projectReady.hostOk ||
+      !projectReady.deviceArmed)
 
   const bpm = project.bpm?.valor ?? 120
   const numerador = project.timeSignature?.numerador ?? 4
@@ -531,7 +543,7 @@ export function TransportBar() {
 
       <TransportPositionReadout bpm={bpm} beatsPerBar={numerador} />
 
-      <BufferFillMeter />
+      <BufferFillMeter playing={isPlaying} />
 
       <Triangle className="ml-1 size-4 rotate-90 text-muted-foreground" />
 

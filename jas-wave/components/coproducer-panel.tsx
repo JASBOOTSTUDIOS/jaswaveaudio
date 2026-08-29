@@ -22,6 +22,7 @@ import {
   formatAiUserError,
   toAiChatPayload,
   toAiHealthPayload,
+  providerReasoningPaceMs,
 } from '@/src/lib/ai-settings'
 import {
   buildAgentSystemPrompt,
@@ -36,12 +37,39 @@ import {
 } from '@/src/lib/ai-daw-agent'
 import {
   forcePreviewAplicar,
+  ensureMusicBuildForFullProject,
   isMutatingAction,
   modeBlocksMutation,
+  autonomyBlocksMutation,
+  logPermissionForAction,
   partitionActions,
 } from '@/src/lib/ai-action-policy'
+import { buildHarnessHealthContext } from '@/src/lib/agent-audit-bridge'
+import {
+  buildAssembledAgentContext,
+  endCoproducerSession,
+  startCoproducerSession,
+} from '@/src/lib/agent-context-bridge'
+import {
+  dryRunDawActions,
+  ensureToolRegistryContext,
+  getToolRegistryPromptFragment,
+  planDawActions,
+} from '@/src/lib/agent-tool-bridge'
+import { runPostTurnCertifyPipeline } from '@/src/lib/agent-certify-pipeline'
+import {
+  enqueueAgentJob,
+  planHasPendingTasks,
+  registerAgentJobRunner,
+} from '@/src/lib/agent-job-queue'
+import {
+  runHarnessUntilPlanComplete,
+  stashHarnessJobContext,
+  type HarnessJobContext,
+} from '@/src/lib/agent-harness-job-runner'
 import { appendAiDawAudit } from '@/src/lib/ai-daw-audit-store'
 import { PendingActionsCard } from '@/components/pending-actions-card'
+import { RevertTurnButton, TurnCertifyBadges } from '@/components/turn-verify-ui'
 import { DestructiveConfirmCard } from '@/components/destructive-confirm-card'
 import { AiAuditPanel } from '@/components/ai-audit-panel'
 import { MidiGenerationPreview, type MidiPreviewData } from '@/components/midi-generation-preview'
@@ -71,6 +99,7 @@ import {
 } from '@/src/lib/ai-modes'
 import { specToProjectPlan } from '@/src/lib/music-build'
 import type { MusicBuildResult } from '@/src/lib/music-build/types'
+import { copyTextToClipboard } from '@/src/lib/copy-text'
 import {
   ensureActiveConversation,
   listConversations,
@@ -80,15 +109,24 @@ import {
   setChatProjectScope,
   appendMessage,
   updateMessageContent,
+  patchMessage,
   getConversation,
   type ChatConversation,
   type StoredChatMessage,
 } from '@/src/lib/ai-chat-store'
+import { AgentModePicker } from '@/components/agent-mode-picker'
+import { ReasoningStepsPanel } from '@/components/reasoning-steps-panel'
 import { JasWaveLogo } from '@/components/brand'
 import { ChatMarkdown } from '@/components/chat-markdown'
 import type { TiendaDAW } from '../../shared/src/state/tienda'
 import type { DAWState } from '../../shared/src/types/state'
 import { applyMarkdownDocsFromModel, bindAgentDocsDisk, parseDocBlocksFromText } from '@/src/lib/agent-docs'
+import {
+  extractDocEditsFromResults,
+  mergeDocEdits,
+  type ChatDocEdit,
+} from '@/src/lib/chat-doc-edits'
+import { DocEditCards } from '@/components/doc-edit-card'
 import { ensurePlanFromCompose, syncPlanAfterDawChange, type PlanEvaluation } from '@/src/lib/agent-plan-eval'
 import {
   buildHarnessReviewMessage,
@@ -103,13 +141,52 @@ function newMsgId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
+function appendDocEdits(acc: ChatDocEdit[], results: ActionResult[]): ChatDocEdit[] {
+  return mergeDocEdits(acc, extractDocEditsFromResults(results))
+}
+
+function absorbTurnMeta(
+  out: ProcessActionsOutcome,
+  dest: { undo?: number; diff?: string },
+): void {
+  if (out.undoDepthAtStart != null) dest.undo = out.undoDepthAtStart
+  if (out.appliedDiffSummary) dest.diff = out.appliedDiffSummary
+}
+
+/** Texto plano completo de un mensaje (razonamiento + respuesta + acciones). */
+function formatMessageForCopy(msg: StoredChatMessage): string {
+  const parts: string[] = []
+  if (msg.reasoningSteps?.length) {
+    parts.push('--- Razonamiento ---')
+    for (const step of msg.reasoningSteps) {
+      parts.push(`${step.title}\n${step.content}`.trim())
+    }
+  }
+  if (msg.content?.trim()) parts.push(msg.content.trim())
+  if (msg.docEdits?.length) {
+    parts.push(
+      '--- Documentos ---',
+      ...msg.docEdits.map((d) => `${d.slug} (${d.action})`),
+    )
+  }
+  if (msg.actionsSummary?.trim()) {
+    parts.push('--- Acciones ---', msg.actionsSummary.trim())
+  }
+  return parts.join('\n\n')
+}
+
 function finishAgentTurn(
   projectId: string,
   state: DAWState,
   results: ActionResult[],
   modelText?: string,
-  opts?: { preferModelEval?: boolean; forcePlanMd?: boolean; planFromModel?: ProjectPlanData | null },
-): { extra: string; evaluation: PlanEvaluation | null; mutated: boolean; docsWritten: string[] } {
+  opts?: {
+    preferModelEval?: boolean
+    forcePlanMd?: boolean
+    planFromModel?: ProjectPlanData | null
+    planEval?: PlanEvaluation | null
+  },
+): { extra: string; evaluation: PlanEvaluation | null; mutated: boolean; docsWritten: string[]; docEdits: ChatDocEdit[] } {
   bindAgentDocsDisk(projectId, state.project?.ruta)
 
   const planHit = results.find(
@@ -138,22 +215,24 @@ function finishAgentTurn(
   let extra = ''
   let evaluation: PlanEvaluation | null = null
   let docsWritten: string[] = []
+  let docEdits: ChatDocEdit[] = []
   const applyDocs = () => {
-    const written = modelText ? applyMarkdownDocsFromModel(projectId, modelText) : []
-    docsWritten = written
-    if (written.length) extra = [extra, `Docs actualizados: ${written.join(', ')}`].filter(Boolean).join('\n')
-    return written
+    const applied = modelText ? applyMarkdownDocsFromModel(projectId, modelText) : { slugs: [], edits: [] }
+    docsWritten = applied.slugs
+    docEdits = applied.edits
+    if (docsWritten.length) extra = [extra, `Docs actualizados: ${docsWritten.join(', ')}`].filter(Boolean).join('\n')
+    return docsWritten
   }
   if (opts?.preferModelEval) {
     if (mutated) {
-      evaluation = syncPlanAfterDawChange(projectId, state)
+      evaluation = opts?.planEval ?? syncPlanAfterDawChange(projectId, state)
       if (evaluation?.summary) extra = [extra, evaluation.summary].filter(Boolean).join('\n')
     }
     applyDocs()
   } else {
     applyDocs()
     if (mutated) {
-      evaluation = syncPlanAfterDawChange(projectId, state)
+      evaluation = opts?.planEval ?? syncPlanAfterDawChange(projectId, state)
       if (evaluation?.summary) extra = [extra, evaluation.summary].filter(Boolean).join('\n')
     }
   }
@@ -173,7 +252,7 @@ function finishAgentTurn(
   if (extra || planHit || evaluation || docsWritten.length || opts?.planFromModel) {
     requestOpenTool('docs', { zone: 'left' })
   }
-  return { extra, evaluation, mutated, docsWritten }
+  return { extra, evaluation, mutated, docsWritten, docEdits }
 }
 
 function pickMusicBuild(results: ActionResult[]): MusicBuildResult | undefined {
@@ -188,6 +267,8 @@ type ProcessActionsOutcome = {
   pendingActions?: StoredChatMessage['pendingActions']
   confirmActions?: StoredChatMessage['confirmActions']
   ranMutations: boolean
+  undoDepthAtStart?: number
+  appliedDiffSummary?: string
 }
 
 function resultsOrPending(out: ProcessActionsOutcome): ActionResult[] {
@@ -223,6 +304,7 @@ async function processActionsForMode(opts: {
   const ctx = { conversationId, messageId, agentMode: resolvedMode, source }
 
   for (const a of actions) {
+    logPermissionForAction(a, 'ai')
     appendAiDawAudit({
       ...ctx,
       tool: a.type,
@@ -231,7 +313,7 @@ async function processActionsForMode(opts: {
     })
   }
 
-  if (modeBlocksMutation(resolvedMode)) {
+  if (modeBlocksMutation(resolvedMode) || autonomyBlocksMutation()) {
     const readonly = actions.filter((a) => !isMutatingAction(a))
     const pending = actions.filter(isMutatingAction)
     let results: ActionResult[] = []
@@ -244,6 +326,21 @@ async function processActionsForMode(opts: {
         messageId,
       })
     }
+    let previewDiff: import('../../shared/src/state/diff-estado').SemanticStateDiff | undefined
+    let previewSummary = ''
+    if (pending.length) {
+      ensureToolRegistryContext(tienda)
+      const preview = await dryRunDawActions(tienda, pending)
+      previewDiff = preview.diff
+      previewSummary = preview.summary
+      appendAiDawAudit({
+        ...ctx,
+        tool: 'planner.preview',
+        params: { summary: previewSummary, pending: pending.length },
+        status: preview.ok ? 'executed' : 'failed',
+        result: { success: preview.ok, message: previewSummary || 'preview' },
+      })
+    }
     for (const a of pending) {
       appendAiDawAudit({
         ...ctx,
@@ -253,20 +350,48 @@ async function processActionsForMode(opts: {
         result: { success: false, message: 'Pendiente de Construir' },
       })
     }
+    const actionStatuses: Record<string, 'pending' | 'accepted' | 'rejected'> = {}
+    pending.forEach((_, i) => {
+      actionStatuses[String(i)] = 'accepted'
+    })
     return {
       results,
       pendingActions:
         pending.length > 0
-          ? { status: 'pending', actions: pending, agentMode: resolvedMode }
+          ? {
+              status: 'pending',
+              actions: pending,
+              agentMode: resolvedMode,
+              previewDiff,
+              previewSummary: previewSummary || undefined,
+              actionStatuses,
+            }
           : undefined,
       ranMutations: false,
     }
   }
 
   const { readonly, mutating, destructive } = partitionActions(actions, userText)
+  let appliedDiffSummary: string | undefined
+  let undoDepthAtStart: number | undefined
+  if (mutating.length) {
+    ensureToolRegistryContext(tienda)
+    const preview = await dryRunDawActions(tienda, mutating)
+    appliedDiffSummary = preview.summary || undefined
+    const plan = planDawActions(mutating, preview.diff)
+    appendAiDawAudit({
+      ...ctx,
+      tool: 'planner.preview',
+      params: { summary: plan.summary, risk: plan.estimatedRisk },
+      status: preview.ok ? 'executed' : 'failed',
+      result: { success: preview.ok, message: preview.summary },
+    })
+  }
   const toRun = [...readonly, ...mutating]
   let results: ActionResult[] = []
   if (toRun.length) {
+    const { snapshotUndoDepth } = await import('@/src/lib/agent-turn-undo')
+    undoDepthAtStart = snapshotUndoDepth(tienda)
     results = await executeDawActions(tienda, toRun, {
       agentMode: resolvedMode,
       forceApply: false,
@@ -297,6 +422,8 @@ async function processActionsForMode(opts: {
           }
         : undefined,
     ranMutations: results.some((r) => r.success && isMutatingAction({ type: r.type })),
+    undoDepthAtStart,
+    appliedDiffSummary,
   }
 }
 
@@ -320,10 +447,17 @@ export function CoProducerPanel() {
   const [harnessPhase, setHarnessPhase] = useState('')
   const [copiedMsgId, setCopiedMsgId] = useState('')
   const [citedIds, setCitedIds] = useState<string[]>([])
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+  }, [inputMessage])
 
   const dawStore = useDAW()
   const projectId = useDAWState((state) => state.project?.id || 'default')
@@ -417,6 +551,70 @@ export function CoProducerPanel() {
   }, [messages, isGenerating])
 
   useEffect(() => {
+    startCoproducerSession(dawStore)
+    ensureToolRegistryContext(dawStore)
+    registerAgentJobRunner(async (job, signal) => {
+      if (signal.aborted) return
+      if (job.kind === 'certify') {
+        await runPostTurnCertifyPipeline(dawStore, [], {})
+        return
+      }
+      if (job.kind === 'harness-until-plan') {
+        const cfg = loadAiSettings()
+        const provider = getActiveProvider(cfg)
+        if (!window.electron?.aiChat) {
+          await runPostTurnCertifyPipeline(dawStore, [], {})
+          return
+        }
+        await runHarnessUntilPlanComplete(
+          {
+            dawStore,
+            chat: async (userContent) => {
+              const r = await window.electron!.aiChat!(
+                toAiChatPayload(
+                  provider,
+                  [
+                    {
+                      role: 'system',
+                      content: buildAgentSystemPrompt(dawStore.obtenerEstado(), userContent, 'create', []),
+                    },
+                    { role: 'user', content: userContent },
+                  ],
+                  { temperature: Math.max(cfg.temperature, 0.35), maxTokens: Math.min(cfg.maxTokens, 8192) },
+                ),
+              )
+              return { success: !!r.success, content: r.content }
+            },
+            parseActions: parseActionsFromText,
+            execute: (actions) =>
+              executeDawActions(dawStore, actions, {
+                agentMode: 'create',
+                forceApply: true,
+                source: 'harness',
+                respectModeGate: false,
+              }),
+            formatResults: formatActionResultsForUser,
+            buildSystemPrompt: (state, userText) => buildAgentSystemPrompt(state, userText, 'create', []),
+            onProgress: (phase) => setHarnessPhase(phase),
+            afterHarnessTurn: (turnResults, raw) => {
+              const step = finishAgentTurn(
+                dawStore.obtenerEstado().project.id,
+                dawStore.obtenerEstado(),
+                turnResults,
+                raw,
+                { preferModelEval: true },
+              )
+              return step.evaluation
+            },
+          },
+          signal,
+        )
+      }
+    })
+    return () => endCoproducerSession(dawStore)
+  }, [dawStore])
+
+  useEffect(() => {
     return () => {
       if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
     }
@@ -493,13 +691,10 @@ export function CoProducerPanel() {
   }
 
   const copyChatMessage = async (msg: StoredChatMessage) => {
-    const text = [msg.content, msg.actionsSummary].filter((p) => p?.trim()).join('\n\n')
+    const text = formatMessageForCopy(msg)
     if (!text.trim()) return
-    try {
-      await navigator.clipboard.writeText(text)
-    } catch {
-      return
-    }
+    const ok = await copyTextToClipboard(text)
+    if (!ok) return
     setCopiedMsgId(msg.id)
     if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
     copiedTimerRef.current = setTimeout(() => {
@@ -548,6 +743,12 @@ export function CoProducerPanel() {
       let confirmActions: StoredChatMessage['confirmActions']
       let ranMutations = false
       let parsedPlanForDocs: ProjectPlanData | null = null
+      let finalReasoningSteps: StoredChatMessage['reasoningSteps']
+      let docEdits: ChatDocEdit[] = []
+      let turnUndoDepthAtStart: number | undefined
+      let turnAppliedDiffSummary: string | undefined
+      let turnCertify: StoredChatMessage['certify']
+      const turnMeta: { undo?: number; diff?: string } = {}
       const resolvedMode = detectAgentMode(userText, agentMode)
 
       if (!local) {
@@ -565,9 +766,11 @@ export function CoProducerPanel() {
               source: 'fallback',
             })
             lastResults = out.results
+            docEdits = appendDocEdits(docEdits, out.results)
             pendingActions = out.pendingActions
             confirmActions = out.confirmActions
             ranMutations = out.ranMutations
+            absorbTurnMeta(out, turnMeta)
             actionsSummary = formatActionResultsForUser(resultsOrPending(out))
             accumulated = [
               modeBlocksMutation(resolvedMode)
@@ -586,11 +789,54 @@ export function CoProducerPanel() {
               })
           }
         } else {
+          const { formatLibraryPresetsForContext } = await import('@/src/lib/library/ops')
+          const presetsBlock = await formatLibraryPresetsForContext(dawStore, 12)
+          const chatTurns = messages
+            .filter((m) => m.role === 'user' || m.role === 'assistant')
+            .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+
+          setHarnessPhase('Razonamiento 1/6…')
+          const { runAgentReasoningForTurn } = await import('@/src/lib/agent-reasoning-bridge')
           const cfg = loadAiSettings()
           const provider = getActiveProvider(cfg)
-          const systemContext = buildAgentSystemPrompt(state, userText, agentMode, messages)
-          const think = resolvedMode === 'think'
-          const modelUser = formatUserTurnWithCitations(userText, cited)
+
+          const reasoning = await runAgentReasoningForTurn({
+            tienda: dawStore,
+            state,
+            userText,
+            resolvedMode,
+            chatTurns,
+            libraryPresetsBlock: presetsBlock,
+            abort: ac.signal,
+            paceBetweenPhasesMs: providerReasoningPaceMs(provider.kind),
+            onPhaseLabel: (label) => setHarnessPhase(label),
+            onStep: (steps) => {
+              patchMessage(conversation.id, assistantMsgId, {
+                reasoningSteps: steps.map((s) => ({ ...s, collapsed: false })),
+              })
+              const after = getConversation(conversation.id)
+              if (after) setConversation(after)
+            },
+            chatFn: async (reasonMessages) => {
+              if (ac.signal.aborted) return { success: false }
+              const r = await window.electron!.aiChat!(
+                toAiChatPayload(provider, reasonMessages, {
+                  temperature: Math.max(cfg.temperature, 0.4),
+                  maxTokens: 2048,
+                }),
+              )
+              return { success: Boolean(r.success), content: r.content }
+            },
+          })
+          finalReasoningSteps = reasoning.steps.map((s) => ({ ...s, collapsed: true }))
+
+          const systemContext = [
+            buildAssembledAgentContext(dawStore, state, userText, chatTurns, presetsBlock),
+            getToolRegistryPromptFragment(dawStore),
+            buildAgentSystemPrompt(state, userText, agentMode, messages),
+          ].join('\n\n')
+          const think = resolvedMode === 'think' || resolvedMode === 'ask'
+          const modelUser = formatUserTurnWithCitations(reasoning.finalUserMessage, cited)
           const prior = historyWithCitedPins(refreshed?.messages ?? messages, cited, [
             assistantMsgId,
             userMsgId,
@@ -651,6 +897,9 @@ export function CoProducerPanel() {
               if (actions.length === 0) {
                 actions = fallbackActionsFromUserIntent(userText, state, agentMode)
               }
+              actions = ensureMusicBuildForFullProject(actions, userText, {
+                aplicar: resolvedMode === 'create',
+              })
 
               let text = stripActionsBlock(raw)
               if (actions.length > 0) {
@@ -664,9 +913,11 @@ export function CoProducerPanel() {
                   source: parseActionsFromText(raw).length ? 'model_actions' : 'fallback',
                 })
                 lastResults = out.results
+                docEdits = appendDocEdits(docEdits, out.results)
                 pendingActions = out.pendingActions
                 confirmActions = out.confirmActions
                 ranMutations = out.ranMutations
+                absorbTurnMeta(out, turnMeta)
                 actionsSummary = formatActionResultsForUser(resultsOrPending(out))
                 if (!text.trim() || /ableton|logic pro|no puedo generar|<<<ACTIONS/i.test(text)) {
                   text = modeBlocksMutation(resolvedMode)
@@ -692,9 +943,11 @@ export function CoProducerPanel() {
                   source: 'fallback',
                 })
                 lastResults = out.results
+                docEdits = appendDocEdits(docEdits, out.results)
                 pendingActions = out.pendingActions
                 confirmActions = out.confirmActions
                 ranMutations = out.ranMutations
+                absorbTurnMeta(out, turnMeta)
                 actionsSummary = formatActionResultsForUser(resultsOrPending(out))
                 accumulated = modeBlocksMutation(resolvedMode)
                   ? `El modelo no devolvió texto usable; dejé una propuesta lista para Construir.\n\n${actionsSummary}`
@@ -724,9 +977,11 @@ export function CoProducerPanel() {
                 source: 'fallback',
               })
               lastResults = out.results
+              docEdits = appendDocEdits(docEdits, out.results)
               pendingActions = out.pendingActions
               confirmActions = out.confirmActions
               ranMutations = out.ranMutations
+              absorbTurnMeta(out, turnMeta)
               actionsSummary = formatActionResultsForUser(resultsOrPending(out))
               accumulated = modeBlocksMutation(resolvedMode)
                 ? 'Hubo un error de red; dejé una propuesta para Construir.'
@@ -745,6 +1000,25 @@ export function CoProducerPanel() {
         }
       }
 
+      const sidechainAppliedPre = lastResults.some((r) => r.type === 'sidechain.connect' && r.success)
+      const certifyPre = ranMutations
+        ? await runPostTurnCertifyPipeline(dawStore, lastResults, { sidechainApplied: sidechainAppliedPre })
+        : null
+      if (certifyPre) {
+        const { toStoredCertify } = await import('@/src/lib/agent-turn-undo')
+        turnCertify = toStoredCertify(certifyPre)
+      }
+      if (certifyPre && certifyPre.issues.length) {
+        actionsSummary = [actionsSummary, `Certify: ${certifyPre.issues.slice(0, 3).join('; ')}`]
+          .filter(Boolean)
+          .join('\n')
+      }
+      turnUndoDepthAtStart = turnMeta.undo
+      turnAppliedDiffSummary = turnMeta.diff
+      if (turnAppliedDiffSummary) {
+        actionsSummary = [turnAppliedDiffSummary, actionsSummary].filter(Boolean).join('\n')
+      }
+
       const firstReview = finishAgentTurn(
         dawStore.obtenerEstado().project.id,
         dawStore.obtenerEstado(),
@@ -753,11 +1027,26 @@ export function CoProducerPanel() {
         {
           forcePlanMd: modeBlocksMutation(resolvedMode) || Boolean(parsedPlanForDocs),
           planFromModel: parsedPlanForDocs,
+          planEval: certifyPre?.planEval ?? null,
+          preferModelEval: true,
         },
       )
+      if (ranMutations && planHasPendingTasks(dawStore.obtenerEstado().project.id)) {
+        const harnessCtx: HarnessJobContext = {
+          userText,
+          initialResults: lastResults,
+          evaluation: certifyPre?.planEval ?? firstReview.evaluation,
+          actionsSummary,
+          conversationId: conversation.id,
+          messageId: assistantMsgId,
+        }
+        stashHarnessJobContext(harnessCtx)
+        enqueueAgentJob('harness-until-plan', dawStore.obtenerEstado().project.id)
+      }
       if (firstReview.extra) {
         actionsSummary = [actionsSummary, firstReview.extra].filter(Boolean).join('\n')
       }
+      docEdits = mergeDocEdits(docEdits, firstReview.docEdits)
 
       const canReview =
         Boolean(window.electron?.aiChat) &&
@@ -787,6 +1076,9 @@ export function CoProducerPanel() {
           }
 
           setHarnessPhase('Inspeccionando el DAW…')
+          const sidechainApplied = lastResults.some(
+            (r) => r.type === 'sidechain.connect' && r.success,
+          )
           const follow = await runHarnessFollowups({
             userText,
             initialResults: lastResults,
@@ -806,6 +1098,8 @@ export function CoProducerPanel() {
                 respectModeGate: false,
               }),
             getState: () => dawStore.obtenerEstado(),
+            getHealthContext: () =>
+              buildHarnessHealthContext(dawStore, { sidechainApplied }),
             afterTurn: (turnResults, raw) => {
               const step = finishAgentTurn(
                 dawStore.obtenerEstado().project.id,
@@ -820,8 +1114,35 @@ export function CoProducerPanel() {
             onProgress: ({ turn, maxTurns, report }) => {
               setHarnessPhase(formatHarnessProgress(turn, maxTurns, report))
             },
+            preChat: async (repairPrompt) => {
+              try {
+                const { runAbbreviatedReasoning } = await import('@jaswave/ai-harness')
+                const { formatLibraryPresetsForContext } = await import('@/src/lib/library/ops')
+                const presetsBlock = await formatLibraryPresetsForContext(dawStore, 8)
+                const ctx = buildAssembledAgentContext(
+                  dawStore,
+                  dawStore.obtenerEstado(),
+                  userText,
+                  [],
+                  presetsBlock,
+                )
+                const brief = await runAbbreviatedReasoning({
+                  userText,
+                  mode: 'create',
+                  projectContext: ctx,
+                  repairContext: repairPrompt,
+                  chat: async (msgs) => chatOnce(msgs.find((m) => m.role === 'user')?.content ?? repairPrompt),
+                  runReadTools: async () => '(omitido en reparación)',
+                  abort: ac.signal,
+                })
+                return brief || repairPrompt
+              } catch {
+                return repairPrompt
+              }
+            },
           })
           lastResults = follow.results
+          docEdits = appendDocEdits(docEdits, follow.results)
           actionsSummary = follow.actionsSummary
           if (follow.text.trim()) {
             accumulated = [accumulated, follow.text].filter(Boolean).join('\n\n')
@@ -870,6 +1191,7 @@ export function CoProducerPanel() {
                 respectModeGate: false,
               })
               lastResults = [...lastResults, ...reviewResults]
+              docEdits = appendDocEdits(docEdits, reviewResults)
             }
             const second = finishAgentTurn(
               dawStore.obtenerEstado().project.id,
@@ -889,10 +1211,22 @@ export function CoProducerPanel() {
             } else if (second.extra) {
               actionsSummary = [actionsSummary, second.extra].filter(Boolean).join('\n')
             }
+            docEdits = mergeDocEdits(docEdits, second.docEdits)
           }
           }
-        } catch {
-          /* la revisión es best-effort; el primer turno ya aplicó cambios */
+        } catch (err) {
+          const reviewErr = err instanceof Error ? err.message : 'Error en revisión del harness'
+          appendAiDawAudit({
+            conversationId: conversation.id,
+            messageId: assistantMsgId,
+            agentMode: resolvedMode,
+            tool: 'harness.review',
+            params: {},
+            status: 'failed',
+            source: 'harness',
+            result: { success: false, message: reviewErr },
+          })
+          accumulated = [accumulated, `⚠ Revisión del plan: ${reviewErr}`].filter(Boolean).join('\n\n')
         }
       }
 
@@ -928,7 +1262,14 @@ export function CoProducerPanel() {
         musicBuild,
         pendingActions,
         confirmActions,
+        finalReasoningSteps,
+        docEdits.length ? docEdits : undefined,
       )
+      patchMessage(conversation.id, assistantMsgId, {
+        ...(turnCertify ? { certify: turnCertify } : {}),
+        ...(turnUndoDepthAtStart != null ? { undoDepthAtStart: turnUndoDepthAtStart } : {}),
+        ...(turnAppliedDiffSummary ? { appliedDiffSummary: turnAppliedDiffSummary } : {}),
+      })
       const after = getConversation(conversation.id)
       if (after) setConversation(after)
       refreshHistoryList()
@@ -992,6 +1333,7 @@ export function CoProducerPanel() {
               dawStore.obtenerEstado(),
               results,
             )
+            const quickDocEdits = mergeDocEdits(appendDocEdits([], results), firstReview.docEdits)
             const summary = [formatActionResultsForUser(resultsOrPending(out)), firstReview.extra]
               .filter(Boolean)
               .join('\n')
@@ -1038,6 +1380,8 @@ export function CoProducerPanel() {
               musicBuild,
               out.pendingActions,
               out.confirmActions,
+              undefined,
+              quickDocEdits.length ? quickDocEdits : undefined,
             )
           } else {
             const reply =
@@ -1077,7 +1421,10 @@ export function CoProducerPanel() {
     )
 
   return (
-    <aside className="relative flex h-full w-full min-w-0 flex-col bg-panel">
+    <aside
+      data-shortcut-scope="ignore"
+      className="relative flex h-full w-full min-w-0 flex-col bg-panel"
+    >
       <header className="flex flex-col gap-1.5 border-b border-border px-3 py-2">
         <div className="flex items-center gap-2.5">
           <JasWaveLogo className="h-10 w-auto max-w-[120px] shrink-0" alt="Asistente Jas" />
@@ -1111,30 +1458,6 @@ export function CoProducerPanel() {
           </div>
         </div>
         <AiModelPicker compact />
-        <div className="flex flex-wrap gap-1">
-          {(['auto', 'plan', 'create', 'think'] as AgentMode[]).map((m) => {
-            const label = m === 'auto' ? 'Auto' : AGENT_MODE_META[m].label
-            const title = m === 'auto' ? 'Elige plan, crear o pensar según el mensaje' : AGENT_MODE_META[m].hint
-            return (
-              <button
-                key={m}
-                type="button"
-                title={title}
-                onClick={() => {
-                  setAgentMode(m)
-                  saveAgentMode(m)
-                }}
-                className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                  agentMode === m
-                    ? 'bg-accent-amber/20 text-accent-amber'
-                    : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
-                }`}
-              >
-                {label}
-              </button>
-            )
-          })}
-        </div>
       </header>
 
       {historyOpen && (
@@ -1192,7 +1515,11 @@ export function CoProducerPanel() {
         </div>
       ) : null}
 
-      <div className="flex-1 space-y-4 overflow-y-auto p-4">
+      <div
+        data-coproducer-chat
+        data-chat-selectable
+        className="flex-1 space-y-4 overflow-y-auto p-4 select-text"
+      >
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center p-4 text-center text-muted-foreground">
             <JasWaveLogo className="mb-3 h-28 w-auto max-w-[220px]" alt="JasWave" />
@@ -1219,7 +1546,7 @@ export function CoProducerPanel() {
           </div>
         ) : (
           messages.map((msg: StoredChatMessage) => {
-            const canCopy = Boolean(msg.content?.trim() || msg.actionsSummary?.trim())
+            const canCopy = Boolean(formatMessageForCopy(msg).trim())
             const copied = copiedMsgId === msg.id
             return (
             <div
@@ -1239,12 +1566,19 @@ export function CoProducerPanel() {
                 }`}
               >
               <div
-                className={`rounded-lg px-3 py-2 leading-relaxed ${
+                data-chat-selectable
+                className={`select-text rounded-lg px-3 py-2 leading-relaxed ${
                   msg.role === 'user'
-                    ? 'rounded-br-none bg-accent text-accent-foreground'
-                    : 'rounded-bl-none border border-border bg-panel-raised text-foreground'
+                    ? 'cursor-text rounded-br-none bg-accent text-accent-foreground'
+                    : 'cursor-text rounded-bl-none border border-border bg-panel-raised text-foreground'
                 }`}
               >
+                {msg.reasoningSteps?.length ? (
+                  <ReasoningStepsPanel
+                    steps={msg.reasoningSteps}
+                    defaultOpen={isGenerating && msg.id === messages.at(-1)?.id}
+                  />
+                ) : null}
                 {msg.content ? (
                   <ChatMarkdown text={msg.content} />
                 ) : isGenerating && msg.role === 'assistant' ? (
@@ -1252,6 +1586,7 @@ export function CoProducerPanel() {
                     <Loader2 className="size-3.5 animate-spin" /> {harnessPhase || 'Trabajando en el DAW…'}
                   </span>
                 ) : null}
+                {msg.docEdits?.length ? <DocEditCards edits={msg.docEdits} /> : null}
                 {msg.citedMessageIds?.length ? (
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     {msg.citedMessageIds.map((id) => {
@@ -1283,6 +1618,27 @@ export function CoProducerPanel() {
                     actions={msg.pendingActions.actions}
                     agentMode={msg.pendingActions.agentMode}
                     status={msg.pendingActions.status}
+                    previewDiff={msg.pendingActions.previewDiff}
+                    previewSummary={msg.pendingActions.previewSummary}
+                    actionStatuses={msg.pendingActions.actionStatuses}
+                    onDone={() => {
+                      const after = getConversation(conversation.id)
+                      if (after) setConversation(after)
+                    }}
+                  />
+                ) : null}
+                {msg.appliedDiffSummary && !msg.pendingActions ? (
+                  <div className="mt-2 rounded-md border border-emerald-900/40 bg-emerald-950/20 px-2.5 py-1.5 text-[11px] text-emerald-300/90">
+                    {msg.appliedDiffSummary}
+                  </div>
+                ) : null}
+                {msg.certify ? <TurnCertifyBadges certify={msg.certify} /> : null}
+                {msg.role === 'assistant' && (msg.undoDepthAtStart != null || msg.reverted) ? (
+                  <RevertTurnButton
+                    conversationId={conversation.id}
+                    messageId={msg.id}
+                    undoDepthAtStart={msg.undoDepthAtStart}
+                    reverted={msg.reverted}
                     onDone={() => {
                       const after = getConversation(conversation.id)
                       if (after) setConversation(after)
@@ -1326,8 +1682,9 @@ export function CoProducerPanel() {
                 <div className="flex items-center gap-0.5">
                 <button
                   type="button"
-                  title={copied ? 'Copiado' : 'Copiar mensaje'}
-                  aria-label={copied ? 'Mensaje copiado' : 'Copiar mensaje'}
+                  title={copied ? 'Copiado' : 'Copiar mensaje completo (incluye razonamiento)'}
+                  aria-label={copied ? 'Mensaje copiado' : 'Copiar mensaje completo'}
+                  onMouseDown={(e) => e.stopPropagation()}
                   onClick={() => void copyChatMessage(msg)}
                   className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-panel-raised hover:text-foreground"
                 >
@@ -1433,10 +1790,12 @@ export function CoProducerPanel() {
             setMentionQuery(null)
             void handleSendMessage()
           }}
-          className="flex items-center gap-2 rounded-lg bg-panel-raised px-3 py-2 ring-1 ring-border focus-within:ring-2 focus-within:ring-ring"
+          className="flex items-end gap-2 rounded-lg bg-panel-raised px-2 py-2 ring-1 ring-border focus-within:ring-2 focus-within:ring-ring"
         >
-          <input
+          <AgentModePicker value={agentMode} onChange={setAgentMode} />
+          <textarea
             ref={inputRef}
+            rows={1}
             value={inputMessage}
             onChange={(e) => onInputChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
             onKeyUp={(e) => onInputChange(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
@@ -1444,6 +1803,12 @@ export function CoProducerPanel() {
               if (e.key === 'Escape') {
                 setMentionQuery(null)
                 if (isGenerating) stopGeneration()
+              }
+              if (e.key === 'Enter' && !e.shiftKey && mentionQuery == null) {
+                e.preventDefault()
+                setMentionQuery(null)
+                void handleSendMessage()
+                return
               }
               if (mentionQuery != null && mentionHits.length > 0) {
                 if (e.key === 'ArrowDown') {
@@ -1462,8 +1827,8 @@ export function CoProducerPanel() {
               }
             }}
             disabled={isGenerating}
-            placeholder="Pide un clip, o @ para pista / plugin / mensaje…"
-            className="flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
+            placeholder="Pide un clip, o @ para pista / plugin / mensaje… (Shift+Enter nueva línea)"
+            className="max-h-40 min-h-[2rem] flex-1 resize-none bg-transparent py-1 text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
           />
           {isGenerating ? (
             <button

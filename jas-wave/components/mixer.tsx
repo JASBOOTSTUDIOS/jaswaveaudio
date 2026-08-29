@@ -1,5 +1,5 @@
 import { useMemo, useCallback, useEffect, useRef, useState } from 'react'
-import { Minus, SlidersHorizontal, Wand2, Shuffle, Headphones } from 'lucide-react'
+import { Minus, SlidersHorizontal, Wand2, Shuffle, Headphones, GripVertical } from 'lucide-react'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { Track as SharedTrack, AudioTrack } from '../../shared/src/types/tracks'
 import type { DAWState } from '../../shared/src/types/state'
@@ -113,7 +113,16 @@ export function Mixer() {
   const selectedTrackId = useDAWState((s: DAWState) => getSelectedTrackId(s))
   const stripRefs = useRef(new Map<string, HTMLDivElement | null>())
   const [meters, setMeters] = useState<Record<string, number>>({})
+  const [dragTrackId, setDragTrackId] = useState<string | null>(null)
+  const [dragOverTrackId, setDragOverTrackId] = useState<string | null>(null)
   const trackIdsKey = tracks.map((t) => t.id).join('|')
+
+  const moveTrackToIndex = useCallback(
+    (trackId: string, toIndex: number) => {
+      void tienda.executor.execute('track.move', { trackId, toIndex })
+    },
+    [tienda],
+  )
 
   useEffect(() => {
     let raf = 0
@@ -267,23 +276,62 @@ export function Mixer() {
 
       {/* Tiras de canal */}
       <div className="flex min-h-0 flex-1 overflow-auto">
-        {trackList.map((track) => (
+        {trackList.map((track, trackIndex) => (
           <div
             key={track.id}
             ref={(el) => {
               stripRefs.current.set(track.id, el)
             }}
+            onDragOver={(e) => {
+              if (!dragTrackId || dragTrackId === track.id) return
+              e.preventDefault()
+              e.dataTransfer.dropEffect = 'move'
+              setDragOverTrackId(track.id)
+            }}
+            onDragLeave={() => {
+              if (dragOverTrackId === track.id) setDragOverTrackId(null)
+            }}
+            onDrop={(e) => {
+              e.preventDefault()
+              const id = e.dataTransfer.getData('text/jaswave-track-id') || dragTrackId
+              setDragOverTrackId(null)
+              setDragTrackId(null)
+              if (!id || id === track.id) return
+              moveTrackToIndex(id, trackIndex)
+            }}
             className={`flex shrink-0 flex-col border-r border-border px-2 py-2 ${collapsed ? 'w-[52px]' : 'w-[124px]'} ${
               selectedTrackId === track.id ? 'bg-accent-amber/10' : ''
+            } ${dragOverTrackId === track.id && dragTrackId !== track.id ? 'ring-1 ring-inset ring-accent-amber' : ''} ${
+              dragTrackId === track.id ? 'opacity-60' : ''
             }`}
           >
             {/* Nombre */}
-            <p
-              className="mb-1.5 truncate text-center text-[11px] font-medium text-foreground"
-              title={track.name}
-            >
-              {track.name}
-            </p>
+            <div className="mb-1.5 flex items-center justify-center gap-0.5">
+              <button
+                type="button"
+                draggable
+                aria-label={`Reordenar ${track.name}`}
+                title="Arrastrar para reordenar"
+                className="shrink-0 cursor-grab text-muted-foreground active:cursor-grabbing hover:text-foreground"
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('text/jaswave-track-id', track.id)
+                  e.dataTransfer.effectAllowed = 'move'
+                  setDragTrackId(track.id)
+                }}
+                onDragEnd={() => {
+                  setDragTrackId(null)
+                  setDragOverTrackId(null)
+                }}
+              >
+                <GripVertical className="size-3" />
+              </button>
+              <p
+                className="min-w-0 truncate text-center text-[11px] font-medium text-foreground"
+                title={track.name}
+              >
+                {track.name}
+              </p>
+            </div>
             {(track.tipo === 'midi' || track.tipo === 'instrumento') && (
               <p className="mb-1 text-center text-[8px] font-semibold uppercase tracking-wider text-accent-amber">
                 MIDI

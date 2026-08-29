@@ -644,7 +644,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     if (noteN > 0 && slotN === 0) {
       console.warn('[playback] MIDI con notas pero sin slots VST', { noteN, tracks: freshTracks.length })
     }
-    audioEngine.playClips(startMs / 1000, playbackClips, cfg0, midiClips)
+    audioEngine.playClips(startMs / 1000, playbackClips, cfg0, midiClips, BPM)
     void loadP.then(() => {
       const cfg = trackAudioConfig()
       audioEngine.applyTracksConfig(cfg)
@@ -964,9 +964,12 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           else someFailed = true
         }
         if (!anyOk) {
+          const nativeOut = audioEngine.usesNativeOutput?.() ?? false
           tienda.busEventos.emit('comando.fallido', {
             type: 'transport.toggleRecord',
-            error: 'No se pudo acceder al micrófono o al dispositivo de entrada',
+            error: nativeOut
+              ? 'Entrada de audio Chromium deshabilitada mientras ASIO/host nativo posee el dispositivo. Usa WASAPI Shared para monitor/grabación soft, o monitoriza por hardware del interface.'
+              : 'No se pudo acceder al micrófono o al dispositivo de entrada',
           })
           if (armedMidi.length === 0) {
             wasRecordingRef.current = false

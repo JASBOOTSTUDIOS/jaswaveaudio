@@ -20,7 +20,9 @@ import {
   routeMidiToActiveVst,
   setPreferredVstPreviewTrack,
 } from '@/src/lib/plugin/vst-voice-router'
+import { allNotesOffSlot, getLoadedInstrumentForTrack } from '@/src/lib/plugin/track-vst-runtime'
 import { setEditorPreviewTrackId } from '@/src/lib/plugin/editor-preview-focus'
+import { shouldIgnoreGlobalShortcuts } from '../../shared/src'
 
 type PianoRollProps = {
   trackId: string
@@ -159,29 +161,111 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
 
   useEffect(() => () => audioEngine.allNotesOff(), [])
 
-  const previewNote = (pitch: number, velocity = 100) => {
-    // ignoreMute: en el editor hay que oír la pista aunque otra esté en solo.
-    if (
-      routeMidiToTrack(trackId, true, pitch, velocity, {
-        ignoreMute: true,
-        plugins: trackPlugins,
-      })
-    ) {
-      return
+  const heldAuditionRef = useRef<Set<number>>(new Set())
+  const tapTimersRef = useRef<Map<number, number>>(new Map())
+  const maxHoldTimerRef = useRef<number | null>(null)
+
+  const releaseNote = useCallback(
+    (pitch: number) => {
+      const t = tapTimersRef.current.get(pitch)
+      if (t != null) {
+        window.clearTimeout(t)
+        tapTimersRef.current.delete(pitch)
+      }
+      if (!routeMidiToTrack(trackId, false, pitch, 0, { ignoreMute: true, plugins: trackPlugins })) {
+        routeMidiToActiveVst(false, pitch, 0, { ignoreMute: true })
+      }
+      heldAuditionRef.current.delete(pitch)
+    },
+    [trackId, trackPlugins],
+  )
+
+  const releaseAllAudition = useCallback(() => {
+    const pitches = [...heldAuditionRef.current]
+    heldAuditionRef.current.clear()
+    for (const p of pitches) {
+      const t = tapTimersRef.current.get(p)
+      if (t != null) {
+        window.clearTimeout(t)
+        tapTimersRef.current.delete(p)
+      }
+      if (!routeMidiToTrack(trackId, false, p, 0, { ignoreMute: true, plugins: trackPlugins })) {
+        routeMidiToActiveVst(false, p, 0, { ignoreMute: true })
+      }
     }
-    routeMidiToActiveVst(true, pitch, velocity, { ignoreMute: true })
-  }
-  const releaseNote = (pitch: number) => {
-    if (routeMidiToTrack(trackId, false, pitch, 0, { ignoreMute: true, plugins: trackPlugins })) {
-      return
+    for (const t of tapTimersRef.current.values()) window.clearTimeout(t)
+    tapTimersRef.current.clear()
+    if (maxHoldTimerRef.current != null) {
+      window.clearTimeout(maxHoldTimerRef.current)
+      maxHoldTimerRef.current = null
     }
-    routeMidiToActiveVst(false, pitch, 0, { ignoreMute: true })
-  }
+    const loaded = getLoadedInstrumentForTrack(trackId)
+    if (loaded?.slotId) allNotesOffSlot(loaded.slotId)
+  }, [trackId, trackPlugins])
+
+  const previewNote = useCallback(
+    (pitch: number, velocity = 100) => {
+      // Re-trigger limpio: evita voices apiladas del mismo pitch.
+      if (heldAuditionRef.current.has(pitch)) releaseNote(pitch)
+      heldAuditionRef.current.add(pitch)
+      if (
+        !routeMidiToTrack(trackId, true, pitch, velocity, {
+          ignoreMute: true,
+          plugins: trackPlugins,
+        })
+      ) {
+        routeMidiToActiveVst(true, pitch, velocity, { ignoreMute: true })
+      }
+      // Failsafe si se pierde pointerup (undock, captura, blur).
+      if (maxHoldTimerRef.current != null) window.clearTimeout(maxHoldTimerRef.current)
+      maxHoldTimerRef.current = window.setTimeout(() => {
+        maxHoldTimerRef.current = null
+        releaseAllAudition()
+      }, 8000)
+    },
+    [trackId, trackPlugins, releaseNote, releaseAllAudition],
+  )
+
+  /** Click corto: noteOn + noteOff programado (no depende solo de pointerup). */
+  const tapAudition = useCallback(
+    (pitch: number, velocity = 100, ms = 200) => {
+      previewNote(pitch, velocity)
+      const prev = tapTimersRef.current.get(pitch)
+      if (prev != null) window.clearTimeout(prev)
+      tapTimersRef.current.set(
+        pitch,
+        window.setTimeout(() => {
+          tapTimersRef.current.delete(pitch)
+          releaseNote(pitch)
+        }, ms),
+      )
+    },
+    [previewNote, releaseNote],
+  )
+
   const previewNoteRef = useRef(previewNote)
   const releaseNoteRef = useRef(releaseNote)
+  const releaseAllAuditionRef = useRef(releaseAllAudition)
+  const tapAuditionRef = useRef(tapAudition)
   previewNoteRef.current = previewNote
   releaseNoteRef.current = releaseNote
+  releaseAllAuditionRef.current = releaseAllAudition
+  tapAuditionRef.current = tapAudition
   const heldKeyRef = useRef<number | null>(null)
+
+  useEffect(() => () => releaseAllAuditionRef.current(), [])
+  useEffect(() => {
+    const onBlur = () => releaseAllAuditionRef.current()
+    const onVis = () => {
+      if (document.hidden) releaseAllAuditionRef.current()
+    }
+    window.addEventListener('blur', onBlur)
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      window.removeEventListener('blur', onBlur)
+      document.removeEventListener('visibilitychange', onVis)
+    }
+  }, [])
 
   /** Glissando estilo REAPER en el teclado virtual (mantener clic y arrastrar). */
   const onKeyboardPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -198,7 +282,13 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   }
   const onKeyboardPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (heldKeyRef.current == null) return
-    if (!(e.buttons & 1)) return
+    if (!(e.buttons & 1)) {
+      const p = heldKeyRef.current
+      heldKeyRef.current = null
+      setHeldKey(null)
+      if (p != null) releaseNoteRef.current(p)
+      return
+    }
     const root = e.currentTarget
     const rect = root.getBoundingClientRect()
     const y = e.clientY - rect.top
@@ -390,6 +480,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
       draggingRef.current = true
       setDirty(true)
       let lastAuditionPitch = previewPitch
+      let ended = false
       previewNoteRef.current(previewPitch, Math.max(previewVel, 100))
 
       const startX = ev.clientX
@@ -464,15 +555,19 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         }
       }
       const up = () => {
+        if (ended) return
+        ended = true
         window.removeEventListener('pointermove', move)
         window.removeEventListener('pointerup', up)
         window.removeEventListener('pointercancel', up)
-        releaseNoteRef.current(lastAuditionPitch)
+        target?.removeEventListener?.('lostpointercapture', up)
         try {
           target?.releasePointerCapture?.(pointerId)
         } catch {
           /* ignore */
         }
+        releaseNoteRef.current(lastAuditionPitch)
+        releaseAllAuditionRef.current()
         setNotes((prev) => {
           void persist(prev)
           return prev
@@ -481,6 +576,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
       window.addEventListener('pointermove', move)
       window.addEventListener('pointerup', up)
       window.addEventListener('pointercancel', up)
+      target?.addEventListener?.('lostpointercapture', up)
     },
     [herramienta, selectedIds, snapDiv, snapBeat, pxPerBeat, keyH, persist],
   )
@@ -499,8 +595,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
       duracion: snapDiv,
       velocidad: 90,
     }
-    previewNote(pitch, 90)
-    window.setTimeout(() => releaseNote(pitch), 220)
+    tapAudition(pitch, 90, 220)
     if (dragDur) {
       const move = (ev: PointerEvent) => {
         const dx = ev.clientX - clientX
@@ -681,9 +776,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable))
-        return
+      if (shouldIgnoreGlobalShortcuts(e.target)) return
 
       const key = e.key.toLowerCase()
       const mod = e.ctrlKey || e.metaKey
@@ -944,8 +1037,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                         const next = notes.map((x) => (x.id === n.id ? { ...x, pitch } : x))
                         setNotes(next)
                         setDirty(true)
-                        previewNote(pitch, n.velocidad)
-                        window.setTimeout(() => releaseNote(pitch), 200)
+                        tapAudition(pitch, n.velocidad, 200)
                         void persist(next)
                       }}
                     />
@@ -997,8 +1089,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                         const next = notes.map((x) => (x.id === n.id ? { ...x, velocidad } : x))
                         setNotes(next)
                         setDirty(true)
-                        previewNote(n.pitch, velocidad)
-                        window.setTimeout(() => releaseNote(n.pitch), 180)
+                        tapAudition(n.pitch, velocidad, 180)
                         void persist(next)
                       }}
                     />
@@ -1293,8 +1384,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                       else next.add(hit.id)
                       return next
                     })
-                    previewNote(n.pitch, n.velocidad)
-                    window.setTimeout(() => releaseNote(n.pitch), 180)
+                    tapAudition(n.pitch, n.velocidad, 180)
                     return
                   }
                   beginNoteDrag(ev, hit.id, hit.edge, n.pitch, n.velocidad)
@@ -1338,8 +1428,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                         else next.add(n.id)
                         return next
                       })
-                      previewNote(n.pitch, n.velocidad)
-                      window.setTimeout(() => releaseNote(n.pitch), 180)
+                      tapAudition(n.pitch, n.velocidad, 180)
                       return
                     }
                     const rect = e.currentTarget.getBoundingClientRect()
@@ -1411,8 +1500,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                           setNotes((prev) => {
                             const cur = prev.find((x) => x.id === n.id)
                             if (cur) {
-                              previewNote(cur.pitch, cur.velocidad)
-                              window.setTimeout(() => releaseNote(cur.pitch), 180)
+                              tapAudition(cur.pitch, cur.velocidad, 180)
                             }
                             void persist(prev)
                             return prev

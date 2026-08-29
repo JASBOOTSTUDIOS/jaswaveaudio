@@ -13,6 +13,7 @@ declare global {
     electron: {
       windowMinimize: () => Promise<void>
       localAppData?: () => Promise<string>
+      userDataPath?: () => Promise<string>
       localAppDataSync?: string
       windowMaximize: () => Promise<void>
       windowClose: () => Promise<void>
@@ -58,6 +59,7 @@ declare global {
         baseUrl?: string
       }>
       pluginLookup: (pluginName: string) => Promise<Array<{ title: string; snippet: string; url: string }>>
+      webSearch: (query: string) => Promise<Array<{ title: string; snippet: string; url: string }>>
       dialogMessage: (type: string, title: string, message: string) => Promise<number>
       shellOpenExternal: (url: string) => Promise<void>
       nativeAudioAvailable: () => Promise<boolean>
@@ -171,6 +173,13 @@ export function useFileService() {
           ...(data.atajos ? { atajos: data.atajos as typeof actual.atajos } : {}),
           ...(typeof data.version === 'string' ? { version: data.version } : {}),
         })
+        try {
+          const { loadLibraryFromDisk } = await import('@/src/lib/library/preset-catalog')
+          const project = tienda.obtenerEstado().project
+          await loadLibraryFromDisk(project.id || 'default', project.ruta)
+        } catch {
+          /* best-effort */
+        }
       } else if (!result.success) {
         await notificarFallo(tienda, 'project.load', result.error)
       }

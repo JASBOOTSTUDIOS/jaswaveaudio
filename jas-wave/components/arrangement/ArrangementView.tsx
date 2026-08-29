@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, LayoutGrid, Mic2, MoreVertical, Circle, Music, Upload, FileAudio, Headphones } from 'lucide-react'
+import { Plus, LayoutGrid, Mic2, MoreVertical, Circle, Music, Upload, FileAudio, Headphones, GripVertical } from 'lucide-react'
 import { usePlaybackActions } from '@/components/playback-provider'
 import { createProjection } from '@/lib/timeline-projection'
 import { TRACKS, type Track as UiTrack } from '@/lib/daw-data'
@@ -128,6 +128,8 @@ export function ArrangementView() {
   const addTrackFileRef = useRef<HTMLInputElement>(null)
   const [importTargetTrack, setImportTargetTrack] = useState<string | null>(null)
   const [deleteConfirmTrack, setDeleteConfirmTrack] = useState<string | null>(null)
+  const [dragTrackId, setDragTrackId] = useState<string | null>(null)
+  const [dragOverTrackId, setDragOverTrackId] = useState<string | null>(null)
 
   const tracks: UiLikeTrack[] = useMemo(() => {
     return sharedTracks.map((raw: unknown) => toUiLikeTrack(raw))
@@ -217,6 +219,13 @@ export function ArrangementView() {
       setDeleteConfirmTrack(null)
     }
   }
+
+  const moveTrackToIndex = useCallback(
+    (trackId: string, toIndex: number) => {
+      void tienda.executor.execute('track.move', { trackId, toIndex })
+    },
+    [tienda],
+  )
 
   const toggle = (id: string, key: keyof TrackToggle) => {
     const current = toggles[id]?.[key] ?? false
@@ -746,7 +755,7 @@ export function ArrangementView() {
               </div>
             </div>
           )}
-          {tracks.map((track) => {
+          {tracks.map((track, trackIndex) => {
             const t = toggles[track.id] ?? {
               muted: false,
               solo: false,
@@ -755,6 +764,7 @@ export function ArrangementView() {
             }
             const isSelected = selectedTrackId === track.id
             const isMidi = track.tipo === 'midi' || track.tipo === 'instrumento'
+            const isDragOver = dragOverTrackId === track.id && dragTrackId !== track.id
             return (
               <div
                 key={track.id}
@@ -767,8 +777,27 @@ export function ArrangementView() {
                     selectTrack(track.id)
                   }
                 }}
+                onDragOver={(e) => {
+                  if (!dragTrackId || dragTrackId === track.id) return
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  setDragOverTrackId(track.id)
+                }}
+                onDragLeave={() => {
+                  if (dragOverTrackId === track.id) setDragOverTrackId(null)
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const id = e.dataTransfer.getData('text/jaswave-track-id') || dragTrackId
+                  setDragOverTrackId(null)
+                  setDragTrackId(null)
+                  if (!id || id === track.id) return
+                  moveTrackToIndex(id, trackIndex)
+                }}
                 className={`flex cursor-pointer items-stretch gap-1 border-b border-border pr-1 ${
                   isSelected ? 'bg-accent-amber/15' : 'hover:bg-panel-raised/40'
+                } ${isDragOver ? 'ring-1 ring-inset ring-accent-amber' : ''} ${
+                  dragTrackId === track.id ? 'opacity-60' : ''
                 }`}
                 style={{ height: ROW_H }}
               >
@@ -776,6 +805,26 @@ export function ArrangementView() {
                   className="h-full w-1 shrink-0"
                   style={{ backgroundColor: track.color }}
                 />
+                <button
+                  type="button"
+                  draggable
+                  aria-label={`Reordenar ${track.name}`}
+                  title="Arrastrar para reordenar"
+                  className="flex shrink-0 cursor-grab items-center self-stretch px-0.5 text-muted-foreground active:cursor-grabbing hover:text-foreground"
+                  onClick={(e) => e.stopPropagation()}
+                  onDragStart={(e) => {
+                    e.stopPropagation()
+                    e.dataTransfer.setData('text/jaswave-track-id', track.id)
+                    e.dataTransfer.effectAllowed = 'move'
+                    setDragTrackId(track.id)
+                  }}
+                  onDragEnd={() => {
+                    setDragTrackId(null)
+                    setDragOverTrackId(null)
+                  }}
+                >
+                  <GripVertical className="size-3.5" />
+                </button>
                 <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-0.5">
                   <div className="flex min-w-0 items-center gap-1">
                     <Mic2 className="size-3 shrink-0 text-muted-foreground" />
