@@ -53,6 +53,11 @@ export class CommandExecutor {
     return this.pila.canRedo();
   }
 
+  /** Profundidad actual de la pila de undo (para revertir un turno del agente). */
+  getUndoDepth(): number {
+    return this.pila.getUndoStack().length;
+  }
+
   getHistory(): CommandHistoryEntry[] {
     return [...this.historial];
   }
@@ -295,5 +300,22 @@ export class CommandExecutor {
 
   marcarBoundary(): void {
     this.pila.limpiarRedo();
+  }
+
+  /** Simula un batch sin persistir estado ni undo (dry-run). */
+  async simulateBatch(
+    commands: CommandPayload[],
+    source: CommandHistoryEntry['source'] = 'ai',
+    userId?: string,
+  ): Promise<{ success: boolean; results: CommandResult[]; stateDiff: import('./diff-estado').SemanticStateDiff }> {
+    const before = structuredClone(this.estado) as DAWState;
+    const pilaSnap = this.pila.snapshot();
+    const batch = await this.batch(commands, source, userId);
+    const after = structuredClone(this.estado) as DAWState;
+    const { computeSemanticDiff } = await import('./diff-estado');
+    const stateDiff = computeSemanticDiff(before, after);
+    this.estado = before;
+    this.pila.restore(pilaSnap);
+    return { success: batch.success, results: batch.results, stateDiff };
   }
 }

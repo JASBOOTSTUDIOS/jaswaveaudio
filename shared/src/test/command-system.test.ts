@@ -648,3 +648,32 @@ describe('project.save persiste ruta y nombre', () => {
     expect(project.modificado).toBe(false);
   });
 });
+
+describe('track.move', () => {
+  it('reordena pistas y soporta undo', async () => {
+    const registro = crearRegistroComandos();
+    registrarComandosBuiltin(registro);
+    const executor = new CommandExecutor({
+      busEventos: new BusEventosMemoria({ capacidadBufferReplay: 100, tamanoBatch: 10 }),
+      pila: crearPilaDeshacerRehacer(100),
+      registro,
+      auditoria: crearRegistroAuditoria(),
+      estadoInicial: crearEstadoInicial(),
+    });
+
+    await executor.execute('track.create', { nombre: 'A', tipo: 'audio' });
+    await executor.execute('track.create', { nombre: 'B', tipo: 'audio' });
+    await executor.execute('track.create', { nombre: 'C', tipo: 'audio' });
+    const ids = executor.obtenerEstado().project.tracks.map((t) => t.nombre);
+    expect(ids).toEqual(['A', 'B', 'C']);
+
+    const firstId = executor.obtenerEstado().project.tracks[0]!.id;
+    const moved = await executor.execute('track.move', { trackId: firstId, toIndex: 2 });
+    expect(moved.success).toBe(true);
+    expect(executor.obtenerEstado().project.tracks.map((t) => t.nombre)).toEqual(['B', 'C', 'A']);
+    expect(executor.obtenerEstado().project.tracks.map((t) => t.orden)).toEqual([0, 1, 2]);
+
+    await executor.undo();
+    expect(executor.obtenerEstado().project.tracks.map((t) => t.nombre)).toEqual(['A', 'B', 'C']);
+  });
+});

@@ -76,6 +76,11 @@ export type TrackUpdatePayload = {
   datos: Partial<Track>;
 };
 
+export type TrackMovePayload = {
+  trackId: string;
+  toIndex: number;
+};
+
 export type TrackToggleMutePayload = {
   trackId: string;
 };
@@ -93,6 +98,8 @@ export type ClipCreatePayload = {
   sourceId?: string;
   /** Picos estéreo empaquetados [minL,maxL,minR,maxR,...] */
   waveform?: number[];
+  /** Id del clip creado (solo en result del handler). */
+  clipId?: string;
 };
 
 export type MidiNotePayload = {
@@ -535,6 +542,65 @@ export function crearComandoTrackCreate(): CommandDefinition<TrackCreatePayload>
   };
 }
 
+export function crearComandoTrackMove(): CommandDefinition<TrackMovePayload> {
+  return {
+    type: 'track.move',
+    inverseType: 'track.move',
+    description: 'Reordena una pista en el arrange y el mixer',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        trackId: { type: 'string' },
+        toIndex: { type: 'number' },
+      },
+      required: ['trackId', 'toIndex'],
+      additionalProperties: false,
+    },
+    handler: (estado: DAWState, payload: TrackMovePayload): StateTransition<TrackMovePayload> => {
+      const tracks = [...estado.project.tracks];
+      const fromIndex = tracks.findIndex((t) => t.id === payload.trackId);
+      if (fromIndex < 0) throw new Error(`Pista no encontrada: ${payload.trackId}`);
+      const toIndex = Math.max(0, Math.min(Math.floor(payload.toIndex), tracks.length - 1));
+      if (fromIndex === toIndex) {
+        return {
+          state: estado,
+          events: [],
+          result: payload,
+          inversePayload: payload,
+        };
+      }
+      const [item] = tracks.splice(fromIndex, 1);
+      tracks.splice(toIndex, 0, item!);
+      const withOrden = tracks.map((t, i) => ({ ...t, orden: i }));
+      const routing = estado.project.routing
+        ? { ...estado.project.routing, ordenTracks: withOrden.map((t) => t.id) }
+        : estado.project.routing;
+      const proyecto: ProjectState = {
+        ...estado.project,
+        tracks: withOrden,
+        routing,
+        modificado: true,
+        fechaModificacion: Date.now(),
+      };
+      return {
+        state: { ...estado, project: proyecto },
+        events: [
+          {
+            nombre: EventosTrack.ordenCambiado,
+            version: 1,
+            marcaTiempo: Date.now(),
+            fuente: 'domain-commands',
+            payload: { trackId: payload.trackId, fromIndex, toIndex },
+          },
+        ],
+        result: payload,
+        inversePayload: { trackId: payload.trackId, toIndex: fromIndex },
+      };
+    },
+  };
+}
+
 export function crearComandoTrackDelete(): CommandDefinition<TrackDeletePayload> {
   return {
     type: 'track.delete',
@@ -905,7 +971,7 @@ export function crearComandoClipCreate(): CommandDefinition<ClipCreatePayload> {
             payload: { clipId: clip.id, pistaId: payload.pistaId },
           },
         ],
-        result: payload,
+        result: { ...payload, clipId: clip.id },
         inversePayload: { pistaId: payload.pistaId, clipId: clip.id },
       };
     },

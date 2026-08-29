@@ -14,7 +14,13 @@ import {
   type KeymapStorage,
 } from './keymap-storage';
 import { normalizeShortcutString } from './keyboard-normalizer';
-import { actionAllowsEvent, createContextState } from './scope';
+import {
+  actionAllowsEvent,
+  createContextState,
+  hasNonEmptyTextSelection,
+  isNativeClipboardShortcut,
+  shouldIgnoreGlobalShortcuts,
+} from './scope';
 import type {
   ActionContext,
   ActionHandler,
@@ -172,6 +178,8 @@ export function createActionSystem(opts?: {
     },
 
     handleKeyboardEvent(e: KeyboardEvent) {
+      if (shouldIgnoreGlobalShortcuts(e.target)) return false;
+      if (hasNonEmptyTextSelection() && isNativeClipboardShortcut(e)) return false;
       const resolved: ResolvedAction | null = resolver.resolveFromEvent(e);
       if (!resolved) return false;
       const def = actions.get(resolved.actionId);

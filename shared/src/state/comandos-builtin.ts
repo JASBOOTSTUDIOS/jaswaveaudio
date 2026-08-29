@@ -17,6 +17,7 @@ import {
 import {
   crearComandoTrackCreate,
   crearComandoTrackDelete,
+  crearComandoTrackMove,
   crearComandoTrackRestore,
   crearComandoTrackUpdate,
   crearComandoTrackToggleMute,
@@ -157,6 +158,7 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoProjectSetBpm(), registry);
   registrar(crearComandoTrackCreate(), registry);
   registrar(crearComandoTrackDelete(), registry);
+  registrar(crearComandoTrackMove(), registry);
   registrar(crearComandoTrackRestore(), registry);
   registrar(crearComandoTrackUpdate(), registry);
   registrar(crearComandoTrackToggleMute(), registry);
