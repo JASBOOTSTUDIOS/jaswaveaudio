@@ -34,6 +34,7 @@ export type AiErrorCode =
   | 'unauthorized'
   | 'forbidden'
   | 'rate_limit'
+  | 'service_unavailable'
   | 'model_not_found'
   | 'bad_request'
   | 'provider_error'
@@ -82,6 +83,48 @@ export type AiHealthResult = {
 }
 
 const DEFAULT_TIMEOUT_MS = 90_000
+/** Reintentos ante 429/503 u otros fallos transitorios del gateway. */
+const MAX_CHAT_RETRIES = 4
+const RETRY_BASE_MS = 1500
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Cola global: evita ráfagas concurrentes que saturan gateways (p.ej. Kilo Code). */
+let chatQueue: Promise<void> = Promise.resolve()
+let lastChatFinishedAt = 0
+
+function minGapBetweenChatsMs(kind: AiProviderKind): number {
+  if (kind === 'ollama') return 0
+  if (kind === 'kilocode') return 2000
+  return 1000
+}
+
+function isRetriableErrorCode(code: AiErrorCode | undefined): boolean {
+  return (
+    code === 'rate_limit' ||
+    code === 'service_unavailable' ||
+    code === 'timeout' ||
+    code === 'connection'
+  )
+}
+
+function extractProviderMessage(body: string): string {
+  const trimmed = body.trim()
+  if (!trimmed.startsWith('{')) return body.replace(/\s+/g, ' ').slice(0, 280)
+  try {
+    const data = JSON.parse(trimmed) as {
+      error?: { message?: string; type?: string }
+      message?: string
+    }
+    const msg = data.error?.message ?? data.message
+    if (typeof msg === 'string' && msg.trim()) return msg.trim()
+  } catch {
+    /* ignore */
+  }
+  return body.replace(/\s+/g, ' ').slice(0, 280)
+}
 
 function hintFor(code: AiErrorCode, kind?: AiProviderKind): string {
   switch (code) {
@@ -102,7 +145,11 @@ function hintFor(code: AiErrorCode, kind?: AiProviderKind): string {
     case 'forbidden':
       return 'Tu cuenta no tiene permiso para este modelo o región.'
     case 'rate_limit':
-      return 'Límite de peticiones alcanzado. Espera unos segundos e inténtalo de nuevo.'
+      return 'Límite de peticiones alcanzado. JasWave reintenta automáticamente; si persiste, espera 30 s.'
+    case 'service_unavailable':
+      return kind === 'kilocode'
+        ? 'El gateway Kilo Code limita peticiones seguidas (JasWave hace varias por mensaje). Reintenta en unos segundos o espera entre mensajes.'
+        : 'El proveedor está temporalmente saturado. Espera unos segundos e inténtalo de nuevo.'
     case 'model_not_found':
       return 'El modelo no existe o no está disponible. Verifica el nombre exacto.'
     case 'bad_request':
@@ -183,11 +230,14 @@ function applyAuthHeaders(
 }
 
 function mapHttpStatus(status: number, body: string, kind: AiProviderKind): AiChatResult {
-  const snippet = body.replace(/\s+/g, ' ').slice(0, 280)
+  const snippet = extractProviderMessage(body)
   if (status === 401) return fail(`No autorizado (${status}). ${snippet}`, 'unauthorized', kind)
   if (status === 403) return fail(`Acceso denegado (${status}). ${snippet}`, 'forbidden', kind)
   if (status === 404) return fail(`Recurso no encontrado (${status}). ${snippet}`, 'model_not_found', kind)
   if (status === 429) return fail(`Límite de tasa (${status}). ${snippet}`, 'rate_limit', kind)
+  if (status === 502 || status === 503 || status === 504) {
+    return fail(`Servicio no disponible (${status}). ${snippet}`, 'service_unavailable', kind)
+  }
   if (status >= 400 && status < 500) return fail(`Petición inválida (${status}). ${snippet}`, 'bad_request', kind)
   return fail(`Error del proveedor (${status}). ${snippet}`, 'provider_error', kind)
 }
@@ -276,7 +326,7 @@ async function chatOpenAiCompatible(req: AiChatRequest): Promise<AiChatResult> {
 
   let data: {
     choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>
-    error?: { message?: string }
+    error?: { message?: string; type?: string; statusCode?: number }
   }
   try {
     data = JSON.parse(text)
@@ -285,7 +335,14 @@ async function chatOpenAiCompatible(req: AiChatRequest): Promise<AiChatResult> {
   }
 
   if (data.error?.message) {
-    return fail(data.error.message, 'provider_error', req.kind)
+    const errType = String(data.error.type ?? '')
+    const code: AiErrorCode =
+      errType.includes('service_unavailable') || data.error.statusCode === 503
+        ? 'service_unavailable'
+        : errType.includes('rate_limit') || data.error.statusCode === 429
+          ? 'rate_limit'
+          : 'provider_error'
+    return fail(data.error.message, code, req.kind)
   }
 
   const raw = data.choices?.[0]?.message?.content
@@ -440,6 +497,34 @@ export async function aiChat(req: AiChatRequest): Promise<AiChatResult> {
   const invalid = validateRequest(req)
   if (invalid) return invalid
 
+  let result!: AiChatResult
+  const run = async () => {
+    const gap = minGapBetweenChatsMs(req.kind)
+    if (gap > 0) {
+      const wait = Math.max(0, lastChatFinishedAt + gap - Date.now())
+      if (wait > 0) await sleep(wait)
+    }
+    result = await aiChatWithRetry(req)
+    lastChatFinishedAt = Date.now()
+  }
+  chatQueue = chatQueue.then(run, run)
+  await chatQueue
+  return result
+}
+
+async function aiChatWithRetry(req: AiChatRequest): Promise<AiChatResult> {
+  let last: AiChatResult = fail('Sin respuesta del proveedor.', 'unknown', req.kind)
+  for (let attempt = 0; attempt <= MAX_CHAT_RETRIES; attempt++) {
+    last = await aiChatOnce(req)
+    if (last.success) return last
+    if (!isRetriableErrorCode(last.errorCode) || attempt === MAX_CHAT_RETRIES) return last
+    const delay = RETRY_BASE_MS * 2 ** attempt + Math.floor(Math.random() * 500)
+    await sleep(delay)
+  }
+  return last
+}
+
+async function aiChatOnce(req: AiChatRequest): Promise<AiChatResult> {
   const style = req.custom?.apiStyle
   try {
     if (style === 'ollama' || (!style && req.kind === 'ollama')) return await chatOllama(req)
