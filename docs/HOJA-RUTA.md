@@ -6,6 +6,8 @@ Construir un DAW AI-First donde la inteligencia artificial no sea un complemento
 
 Checklist de huecos para producción real: [`docs/CHECKLIST-PRODUCTO.md`](CHECKLIST-PRODUCTO.md).
 
+> **Reconciliación 2026-08-28:** el criterio de producto 1.0 es el checklist (canción + bounce), no esta hoja entera. Muchos ítems de Fase 2–4 ya están en el app híbrido (plugin-host) aunque los checkboxes históricos abajo sigan `[ ]`. No reabrir trabajo solo para marcarlos; ver checklist y `_audit-matrix-cierre.md`.
+
 ## Fases del Proyecto
 
 ### Fase 0: Cimientos (Semana 1-3)

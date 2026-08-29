@@ -2,7 +2,7 @@
 
 ## Estado
 
-**Aprobado** · Dominio/UI/AI de cadena **hechos**. DSP de inserts serial estilo Reaper **hecho** ([ADR-0013](./ADR-0013-fx-runtime-pipeline.md) R2/R3). Sends/sidechain runtime **no**. Compensación de latencia fina pendiente.
+**Aprobado** · Dominio/UI/AI de cadena **hechos**. DSP de inserts serial estilo Reaper **hecho** ([ADR-0013](./ADR-0013-fx-runtime-pipeline.md) R2/R3). **Sends live en host `renderMix` OK (1.0).** Sidechain I/O a plugins **diferido post-1.0** (solo meter/estado). Compensación de latencia fina pendiente.
 
 Complementa [ADR-0011](./ADR-0011-plugin-host-vst3.md) y [021-fx-chains](../hoja-ruta/021-fx-chains.md).
 

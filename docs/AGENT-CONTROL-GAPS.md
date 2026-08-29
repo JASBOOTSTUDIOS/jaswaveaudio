@@ -4,8 +4,22 @@
 
 ## Respuesta corta
 
-**La IA puede orquestar composición → mezcla (vol/pan/FX/sends/automatización) → masterPass/bounce → AudioListenReport**, con harness que repara y exige plan + listen/target OK.  
-**Pendiente fino:** taps de send sample-accurate en el host en vivo y sidechain de plugin.
+**La IA puede orquestar composición → mezcla (vol/pan/FX/sends/automatización) → masterPass/bounce → AudioListenReport**, con harness que repara, evalúa plan.md con criterios por tarea, y exige listen/target OK cuando aplica.
+
+---
+
+## Harness (2026-08)
+
+| Gate | Código | Notas |
+|------|--------|-------|
+| Slot VST host | `host-slot-unconfirmed` | Tras Music Build; usa `/audit` vstSlot |
+| MIDI sin señal | `silent-midi-track` | Peak en meters bajo umbral |
+| Sidechain | `sidechain-unverified` / `sidechain-silent` | Estado + graph `$` en host; peaks en audit |
+| Plan por tarea | `plan-incomplete` | `agent-plan-eval` (track/vst/mix/bounce) |
+| Permisos UI | Ajustes → IA | `permissionManager` cableado al coproducer |
+
+Verificación: `npx tsx --test src/lib/agent-harness.test.ts` · `src/lib/agent-plan-eval.test.ts` · `cd jas-wave && npm run cli -- audit`  
+**Pendiente fino:** sidechain I/O a plugins (post-1.0). Sends live en host OK.
 
 ---
 
@@ -24,8 +38,8 @@
 
 ## Brechas menores
 
-1. Sends live en `renderMix` (hoy suma en bounce + UI).
-2. Sidechain real en I/O de slots.
+1. ~~Sends live en `renderMix`~~ — host suma sends sample-accurate (verificar smoke).
+2. Sidechain real en I/O de slots — **diferido 1.0**; agente rechaza `sidechain.connect`; plan eval → `sidechain-unverified`.
 3. Reference track / A-B.
 4. No enviar PCM al LLM (por diseño).
 
