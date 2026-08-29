@@ -23,6 +23,10 @@ export type ProjectReadySnapshot = {
   deviceArmed: boolean
   pluginsSettled: boolean
   buffersSettled: boolean
+  /** 0–1 progreso real (host/device/plugins/buffers). */
+  progress: number
+  pluginDone: number
+  pluginTotal: number
   label: string
   detail?: string
   errors: string[]
@@ -39,6 +43,8 @@ let hostOk = false
 let deviceArmed = false
 let pluginsSettled = false
 let buffersSettled = false
+let pluginDone = 0
+let pluginTotal = 0
 let errors: string[] = []
 let label = 'Preparando proyecto…'
 let detail: string | undefined
@@ -66,7 +72,9 @@ function labelOf(phase: ProjectReadyPhase): string {
     case 'device':
       return 'Armando salida de audio…'
     case 'plugins':
-      return 'Cargando instrumentos / FX…'
+      return pluginTotal > 0
+        ? `Cargando plugins ${pluginDone}/${pluginTotal}…`
+        : 'Cargando instrumentos / FX…'
     case 'buffers':
       return 'Cargando buffers de audio…'
     case 'ready':
@@ -76,6 +84,20 @@ function labelOf(phase: ProjectReadyPhase): string {
     default:
       return 'Preparando proyecto…'
   }
+}
+
+function progressOf(phase: ProjectReadyPhase): number {
+  if (phase === 'ready' || phase === 'degraded') return 1
+  let p = 0
+  if (hostOk) p += 0.15
+  if (deviceArmed) p += 0.15
+  if (pluginsSettled) {
+    p += 0.5
+  } else if (pluginTotal > 0) {
+    p += 0.5 * Math.min(1, pluginDone / pluginTotal)
+  }
+  if (buffersSettled) p += 0.2
+  return Math.min(0.99, Math.max(0, p))
 }
 
 function snapshot(): ProjectReadySnapshot {
@@ -91,6 +113,9 @@ function snapshot(): ProjectReadySnapshot {
     deviceArmed,
     pluginsSettled,
     buffersSettled,
+    progress: progressOf(phase),
+    pluginDone,
+    pluginTotal,
     label: label || labelOf(phase),
     detail,
     errors: [...errors],
@@ -124,6 +149,7 @@ function armFailsafe() {
       forcedDegraded = true
       if (!pluginsSettled) pluginsSettled = true
       if (!buffersSettled) buffersSettled = true
+      pluginDone = Math.max(pluginDone, pluginTotal)
       if (!errors.includes('timeout')) {
         errors.push('Timeout cargando recursos — se permite uso en modo degradado')
       }
@@ -159,6 +185,8 @@ export function beginProjectResourceLoad(reason = 'project'): number {
   }
   pluginsSettled = false
   buffersSettled = false
+  pluginDone = 0
+  pluginTotal = 0
   errors = []
   forcedDegraded = false
   settledAt = undefined
@@ -191,9 +219,31 @@ export function reportProjectDevice(armed: boolean, message?: string, gen?: numb
   recompute()
 }
 
+/** Progreso real de carga VST (done/total) — se llama por cada plugin. */
+export function reportProjectPluginProgress(
+  done: number,
+  total: number,
+  currentName?: string,
+  gen?: number,
+) {
+  if (gen != null && gen !== generation) return
+  pluginTotal = Math.max(0, total)
+  pluginDone = Math.max(0, Math.min(done, pluginTotal || done))
+  pluginsSettled = false
+  settledAt = undefined
+  label = labelOf('plugins')
+  detail = currentName
+    ? `${currentName} (${pluginDone}/${Math.max(pluginTotal, 1)})`
+    : pluginTotal > 0
+      ? `${pluginDone}/${pluginTotal}`
+      : undefined
+  emit()
+}
+
 export function reportProjectPluginsSettled(ok: boolean, message?: string, gen?: number) {
   if (gen != null && gen !== generation) return
   pluginsSettled = true
+  if (pluginTotal > 0) pluginDone = pluginTotal
   if (!ok && message) errors.push(message)
   if (ok) detail = message || 'Plugins listos'
   recompute()
@@ -214,12 +264,16 @@ export function markProjectBuffersNotNeeded(gen?: number) {
 
 /** Sin VSTs que cargar. */
 export function markProjectPluginsNotNeeded(gen?: number) {
+  pluginDone = 0
+  pluginTotal = 0
   reportProjectPluginsSettled(true, 'Sin VST que cargar', gen)
 }
 
 /** Reabrir fase plugins (insert VST / musicBuild). */
 export function invalidateProjectPlugins(reason = 'plugins-changed') {
   pluginsSettled = false
+  pluginDone = 0
+  pluginTotal = 0
   settledAt = undefined
   if (forcedDegraded) forcedDegraded = false
   label = 'Cargando instrumentos / FX…'

@@ -90,6 +90,13 @@ export async function abrirProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
     return { success: false, error: loaded.error ?? 'Error al cargar proyecto' }
   }
   try {
+    const { loadLibraryFromDisk } = await import('./library/preset-catalog')
+    const project = tienda.obtenerEstado().project
+    await loadLibraryFromDisk(project.id || 'default', project.ruta)
+  } catch {
+    /* biblioteca best-effort */
+  }
+  try {
     const { migrateSoftPadPluginsInProject } = await import('./plugin/migrate-softpad-to-roles')
     const project = tienda.obtenerEstado().project
     const { migrated, removed } = migrateSoftPadPluginsInProject(project)

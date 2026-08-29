@@ -51,8 +51,12 @@ function projectNeedsAudioBuffers(
 }
 
 function ProjectReadyBanner({ snap }: { snap: ProjectReadySnapshot }) {
+  const [dismissedGen, setDismissedGen] = useState<number | null>(null)
+  // Listo → desaparece al instante (sin overlay que bloquee clics).
   if (!snap.blocking && snap.phase !== 'degraded') return null
+  if (snap.phase === 'degraded' && dismissedGen === snap.generation) return null
   const warn = snap.phase === 'degraded'
+  const pct = Math.round((warn ? 1 : snap.progress) * 100)
   return (
     <div
       role="status"
@@ -62,16 +66,32 @@ function ProjectReadyBanner({ snap }: { snap: ProjectReadySnapshot }) {
       <div
         className={
           warn
-            ? 'pointer-events-auto max-w-xl rounded-md border border-amber-500/40 bg-amber-950/90 px-3 py-2 text-xs text-amber-100 shadow-lg backdrop-blur'
-            : 'pointer-events-auto max-w-xl rounded-md border border-sky-500/40 bg-slate-950/95 px-3 py-2 text-xs text-sky-50 shadow-lg backdrop-blur'
+            ? 'max-w-xl rounded-md border border-amber-500/40 bg-amber-950/90 px-3 py-2 text-xs text-amber-100 shadow-lg backdrop-blur'
+            : 'max-w-xl rounded-md border border-sky-500/40 bg-slate-950/95 px-3 py-2 text-xs text-sky-50 shadow-lg backdrop-blur'
         }
       >
-        <div className="font-medium">{snap.label}</div>
-        {snap.detail ? <div className="mt-0.5 opacity-80">{snap.detail}</div> : null}
+        <div className="flex items-center justify-between gap-3">
+          <div className="font-medium">{snap.label}</div>
+          <div className="tabular-nums opacity-80">{pct}%</div>
+        </div>
+        {snap.detail ? <div className="mt-0.5 truncate opacity-80">{snap.detail}</div> : null}
+        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
+          <div
+            className={warn ? 'h-full bg-amber-400/80' : 'h-full bg-sky-400/90'}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
         <div className="mt-1 flex flex-wrap gap-2 opacity-70">
           <span>{snap.hostOk ? '✓' : '…'} Host</span>
           <span>{snap.deviceArmed ? '✓' : '…'} Audio</span>
-          <span>{snap.pluginsSettled ? '✓' : '…'} Plugins</span>
+          <span>
+            {snap.pluginsSettled
+              ? '✓'
+              : snap.pluginTotal > 0
+                ? `${snap.pluginDone}/${snap.pluginTotal}`
+                : '…'}{' '}
+            Plugins
+          </span>
           <span>{snap.buffersSettled ? '✓' : '…'} Buffers</span>
         </div>
         {snap.errors.length > 0 ? (
@@ -80,6 +100,15 @@ function ProjectReadyBanner({ snap }: { snap: ProjectReadySnapshot }) {
               <div key={i}>{e}</div>
             ))}
           </div>
+        ) : null}
+        {warn ? (
+          <button
+            type="button"
+            className="pointer-events-auto mt-1.5 text-[10px] underline opacity-80 hover:opacity-100"
+            onClick={() => setDismissedGen(snap.generation)}
+          >
+            Ocultar
+          </button>
         ) : null}
       </div>
     </div>

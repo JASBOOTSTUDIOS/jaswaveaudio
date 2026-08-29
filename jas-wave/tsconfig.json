@@ -14,7 +14,9 @@
     "jsx": "react-jsx",
     "incremental": true,
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@jaswave/ai-harness": ["../ai-harness/src/index.ts"],
+      "@jaswave/shared": ["../shared/src/index.ts"]
     }
   },
   "include": [
