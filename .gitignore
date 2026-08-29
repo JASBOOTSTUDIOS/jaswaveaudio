@@ -57,7 +57,14 @@ native/piano-synth/build/
 
 # CLI probes / scratch (mantener scripts .mjs útiles)
 jas-wave/cli/_*-out.json
+jas-wave/cli/_*-out.txt
+jas-wave/cli/_*-out[0-9]*.txt
 jas-wave/cli/_*-live.txt
+jas-wave/cli/_*-verify*.txt
+jas-wave/cli/_e2e-*.txt
+jas-wave/cli/_electron-start-log.txt
+jas-wave/cli/_pack-win-out*.txt
+jas-wave/cli/_ot-after-mb.txt
 jas-wave/cli/_bb*
 jas-wave/cli/_bfd*
 jas-wave/cli/_boobass*
@@ -87,3 +94,10 @@ jas-wave/cli/_test-three*
 jas-wave/cli/_tmp*
 jas-wave/cli/_vst*
 jas-wave/cli/_verify-realtime*
+
+# Binarios / resources generados
+jas-wave/resources/plugin-host/jaswave-plugin-host.exe
+jas-wave/resources/plugin-host/jaswave-plugin-host.pdb
+
+# Builds nativos MSVC
+native/plugin-host/build-msvc-*/
