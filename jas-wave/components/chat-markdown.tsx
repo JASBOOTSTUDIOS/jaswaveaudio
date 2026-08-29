@@ -8,7 +8,7 @@ export function ChatMarkdown({ text }: { text: string }) {
   if (!text) return null
   const blocks = splitFences(text)
   return (
-    <div className="space-y-2 text-[13px] leading-relaxed">
+    <div className="select-text space-y-2 text-[13px] leading-relaxed">
       {blocks.map((block, i) =>
         block.type === 'code' ? (
           <pre

@@ -3,7 +3,7 @@
  * Sin explorador embebido (usar panel «Explorador»). Zoom tipográfico Ctrl± con foco.
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Eye, FileText, Hammer, Loader2, PlayCircle, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { ChatMarkdown } from '@/components/chat-markdown'
@@ -26,6 +26,7 @@ import {
   getDocsEditorState,
   openDocsTab,
   setActiveDocsTab,
+  setDocsPanelMounted,
   setDocsTextZoom,
   startDocsEditorChannel,
   subscribeDocsEditor,
@@ -164,13 +165,49 @@ export function AgentDocsPanel() {
   const zoom = editor.textZoom
   const fontPx = Math.round(11 * zoom)
 
-  const onKeyDown = (e: KeyboardEvent) => {
+  useEffect(() => {
+    setDocsPanelMounted(true)
+    return () => setDocsPanelMounted(false)
+  }, [])
+
+  /** Ctrl/Cmd + / - / 0: captura global solo con foco en este panel (o undock Docs). */
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      const root = rootRef.current
+      if (!root) return
+      const undockDocs =
+        new URLSearchParams(window.location.search).get('undock') === 'docs' ||
+        window.location.hash.replace(/^#/, '').startsWith('undock/docs')
+      const inPanel =
+        undockDocs ||
+        root.contains(document.activeElement) ||
+        root === document.activeElement
+      if (!inPanel) return
+      const key = e.key
+      const code = e.code
+      const zoomIn =
+        key === '=' || key === '+' || code === 'NumpadAdd' || code === 'Equal'
+      const zoomOut = key === '-' || key === '_' || code === 'NumpadSubtract' || code === 'Minus'
+      const zoomReset = key === '0' || code === 'Digit0' || code === 'Numpad0'
+      if (!zoomIn && !zoomOut && !zoomReset) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (zoomIn) bumpDocsTextZoom(0.1)
+      else if (zoomOut) bumpDocsTextZoom(-0.1)
+      else setDocsTextZoom(1)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
+
+  const onKeyDown = (e: ReactKeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey)) return
-    if (e.key === '=' || e.key === '+') {
+    if (e.key === '=' || e.key === '+' || e.code === 'NumpadAdd') {
       e.preventDefault()
       e.stopPropagation()
       bumpDocsTextZoom(0.1)
-    } else if (e.key === '-' || e.key === '_') {
+    } else if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') {
       e.preventDefault()
       e.stopPropagation()
       bumpDocsTextZoom(-0.1)
@@ -184,8 +221,13 @@ export function AgentDocsPanel() {
   return (
     <div
       ref={rootRef}
+      data-docs-panel
       className="flex h-full min-h-0 flex-col bg-panel"
       onKeyDown={onKeyDown}
+      onPointerDown={() => {
+        // Asegura foco para Ctrl± tras clic en vista previa.
+        rootRef.current?.focus({ preventScroll: true })
+      }}
       tabIndex={-1}
     >
       <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-2 py-1">
