@@ -26,6 +26,7 @@ export {
 export {
   isTextInputTarget,
   hasNonEmptyTextSelection,
+  textSelectionIsInEditableOrChat,
   isNativeClipboardShortcut,
   shouldIgnoreGlobalShortcuts,
   shouldHandleShortcut,

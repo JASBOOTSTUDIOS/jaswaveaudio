@@ -461,6 +461,17 @@ export const ACTION_CATALOG: readonly ActionDefinition[] = [
     defaultShortcuts: ['5'],
   },
 
+  {
+    id: 'ai.askSelection',
+    name: 'Preguntar a Jas sobre selección',
+    description: 'Ancla las notas MIDI seleccionadas al chat (Ctrl+L)',
+    category: 'AI',
+    context: 'global',
+    risk: 'read',
+    aliases: ['ia.preguntarSeleccion', 'ventana.preguntarSeleccion'],
+    defaultShortcuts: ['Ctrl+L'],
+  },
+
   // Window
   {
     id: 'window.commandPalette',

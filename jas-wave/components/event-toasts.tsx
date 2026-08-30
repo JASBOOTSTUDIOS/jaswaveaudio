@@ -23,6 +23,8 @@ const EVENT_TOAST_MAP: Record<string, { message: string; type: Toast['type'] }> 
   'comando.fallido': { message: 'Acción fallida', type: 'warning' },
   'validacion.advertencia': { message: 'Advertencia de validación', type: 'warning' },
   'sistema.error': { message: 'Error del sistema', type: 'warning' },
+  'portapapeles.copiado': { message: 'Clip copiado', type: 'success' },
+  'portapapeles.pegado': { message: 'Clip pegado', type: 'success' },
 }
 
 export function EventToasts() {
@@ -46,6 +48,13 @@ export function EventToasts() {
         if (nombre === 'comando.fallido') {
           const p = payload as { error?: string; type?: string }
           addToast(p.error ? `${config.message}: ${p.error}` : config.message, config.type)
+          return
+        }
+        if (nombre === 'portapapeles.copiado' || nombre === 'portapapeles.pegado') {
+          const p = payload as { cantidad?: number }
+          const n = p.cantidad ?? 1
+          const verb = nombre === 'portapapeles.copiado' ? 'copiado' : 'pegado'
+          addToast(n === 1 ? `Clip ${verb}` : `${n} clips ${verb}s`, config.type)
           return
         }
         if (nombre === 'validacion.advertencia') {

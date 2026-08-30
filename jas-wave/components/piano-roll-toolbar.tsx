@@ -16,6 +16,7 @@ import {
   Activity,
   Waves,
   Keyboard,
+  Layers2,
 } from 'lucide-react'
 export type PianoRollTool = 'seleccionar' | 'dibujar' | 'borrar'
 
@@ -44,6 +45,7 @@ export const PIANO_ROLL_ATAJOS: { teclas: string; accion: string }[] = [
   { teclas: '← / →', accion: 'Mover ±1 división de imán' },
   { teclas: 'Shift+← / →', accion: 'Mover ±1 negra' },
   { teclas: 'Q', accion: 'Cuantizar selección (o todo)' },
+  { teclas: '—', accion: 'Quitar notas duplicadas (mismo pitch+inicio)' },
   { teclas: 'G', accion: 'Mostrar / ocultar velocidad' },
   { teclas: 'F', accion: 'Mostrar / ocultar expresión (CC)' },
   { teclas: '+ / −', accion: 'Zoom horizontal' },
@@ -112,6 +114,7 @@ export function PianoRollToolbar({
   onQuantizeStrength,
   onDuplicate,
   onDelete,
+  onDedupe,
   onTranspose,
   onNudge,
   onVelocitySet,
@@ -122,6 +125,7 @@ export function PianoRollToolbar({
   onGroove,
   notasCount,
   seleccionCount,
+  duplicadosCount,
   dirty,
   nombreClip,
 }: {
@@ -145,6 +149,7 @@ export function PianoRollToolbar({
   onQuantizeStrength?: (s: number) => void
   onDuplicate: () => void
   onDelete: () => void
+  onDedupe?: () => void
   onTranspose: (semi: number) => void
   onNudge: (beats: number) => void
   onVelocitySet?: (v: number) => void
@@ -155,6 +160,7 @@ export function PianoRollToolbar({
   onGroove: (id: string) => void
   notasCount: number
   seleccionCount: number
+  duplicadosCount?: number
   dirty: boolean
   nombreClip: string
 }) {
@@ -165,6 +171,7 @@ export function PianoRollToolbar({
         <span className="text-[10px] text-muted-foreground">
           {notasCount} notas
           {seleccionCount > 0 ? ` · ${seleccionCount} seleccionadas` : ''}
+          {duplicadosCount && duplicadosCount > 0 ? ` · ${duplicadosCount} duplicadas` : ''}
           {dirty ? ' · guardando…' : ''}
         </span>
       </div>
@@ -248,6 +255,17 @@ export function PianoRollToolbar({
           </select>
         )}
         <ToolBtn titulo="Duplicar" atajo="Ctrl+D" icon={Copy} onClick={onDuplicate} />
+        {onDedupe && (
+          <ToolBtn
+            titulo={
+              duplicadosCount && duplicadosCount > 0
+                ? `Quitar duplicados (${duplicadosCount})`
+                : 'Quitar duplicados'
+            }
+            icon={Layers2}
+            onClick={onDedupe}
+          />
+        )}
         <ToolBtn titulo="Eliminar" atajo="Supr" icon={Trash2} onClick={onDelete} peligro />
 
         {onVelocitySet && (

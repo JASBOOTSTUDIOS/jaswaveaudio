@@ -102,12 +102,17 @@ export {
   modeBlocksMutation,
   modePromptBlock,
   wantsFullProject,
+  isSongRefineIntent,
+  isTempoOnlyRefine,
+  inferBpmFromTempoIntent,
+  isProjectAuditIntent,
   type AgentMode,
 } from './agent/modes'
 
 export {
   REASONING_PHASE_META,
   buildFinalTurnUserMessage,
+  reasoningSeedUserMessage,
   type ReasoningPhase,
 } from './agent/reasoning-prompts'
 
@@ -116,6 +121,7 @@ export {
   runAbbreviatedReasoning,
   runReasoningLoop,
   stripReadBlock,
+  sanitizeInnerThought,
   REASONING_REPAIR_PHASES,
   type ReasoningChatTurn,
   type ReasoningStep,
@@ -144,6 +150,12 @@ export {
 export {
   answerLocalReadQuery,
   buildReadOnlyProjectContext,
+  formatMidiTimelineForPrompt,
+  buildMidiAuditReport,
+  collectMidiAuditIssues,
+  buildMidiAuditFixActions,
+  buildMidiAuditClarifications,
+  isGarbageAssistantReply,
 } from './ask/read-context'
 
 export {

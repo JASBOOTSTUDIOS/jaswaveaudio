@@ -19,6 +19,8 @@ export type StoredChatMessage = {
     previewSummary?: string
     /** Índice de acción → estado de revisión (checkbox). */
     actionStatuses?: Record<string, 'pending' | 'accepted' | 'rejected'>
+    /** Si la propuesta viene de un paso del checklist, id del item. */
+    checklistStepId?: string
   }
   /** Resultado del pipeline post-turno (badges en chat). */
   certify?: {
@@ -75,6 +77,19 @@ export type StoredChatMessage = {
     newContent: string
     updatedAt: number
   }>
+  /** Preguntas estructuradas (opciones + custom) pendientes de respuesta. */
+  clarifications?: {
+    status: 'pending' | 'answered' | 'skipped'
+    questions: Array<{
+      id: string
+      question: string
+      options: string[]
+      allowCustom?: boolean
+      multi?: boolean
+    }>
+  }
+  /** Plan de ejecución paso a paso (Continuar confirma cada tarea). */
+  agentChecklist?: import('./ai-agent-checklist').AgentChecklist
 }
 
 export type ChatConversation = {
@@ -227,6 +242,7 @@ export function appendMessage(
     confirmActions: message.confirmActions,
     projectPlan: message.projectPlan,
     musicBuild: message.musicBuild,
+    clarifications: message.clarifications,
   }
 
   const messages = [...prev.messages, msg].slice(-MAX_MESSAGES)

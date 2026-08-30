@@ -228,6 +228,12 @@ export async function clearPluginQuarantineAndRestore(tienda: TiendaDAW): Promis
     count?: number
   }
   const cleared = Number(raw.count ?? 0)
+  try {
+    const { clearVstQuarantineWarnCache } = await import('./plugin/track-vst-runtime')
+    clearVstQuarantineWarnCache()
+  } catch {
+    /* ignore */
+  }
   const ensure = await ensureBestAudioDevice(tienda, 'UMC')
   const arm = await armNativeAudioOutput()
   return {

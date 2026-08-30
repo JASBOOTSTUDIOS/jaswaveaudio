@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   getActiveProvider,
+  listCatalogModels,
   loadAiSettings,
   saveAiSettings,
-  PROVIDER_PRESETS,
+  selectCatalogModel,
   type AiSettings,
 } from '@/src/lib/ai-settings'
 import { requestOpenTool } from '@/src/workspace/types'
 
 /**
- * Selector rápido de proveedor/modelo en el chat (sin abrir Configuración).
+ * Selector del catálogo unificado (proveedor · modelo).
+ * Incluye reintento automático con otros modelos si el activo falla.
  */
 export function AiModelPicker({ compact = false }: { compact?: boolean }) {
   const [settings, setSettings] = useState<AiSettings>(() => loadAiSettings())
@@ -25,15 +27,8 @@ export function AiModelPicker({ compact = false }: { compact?: boolean }) {
   }, [reload])
 
   const active = useMemo(() => getActiveProvider(settings), [settings])
-
-  const modelOptions = useMemo(() => {
-    const set = new Set<string>([
-      ...active.models,
-      ...PROVIDER_PRESETS[active.kind].suggestedModels,
-      active.selectedModel,
-    ])
-    return Array.from(set).filter(Boolean).sort((a, b) => a.localeCompare(b))
-  }, [active])
+  const catalog = useMemo(() => listCatalogModels(settings), [settings])
+  const activeKey = `${active.id}::${active.selectedModel}`
 
   const persist = (next: AiSettings) => {
     setSettings(next)
@@ -46,46 +41,46 @@ export function AiModelPicker({ compact = false }: { compact?: boolean }) {
 
   return (
     <div
-      className={`flex min-w-0 items-center gap-1 ${compact ? '' : 'rounded-md border border-border/60 bg-panel-raised/30 px-1.5 py-1'}`}
-      title="Modelos del catálogo conectado a JasWave"
+      className={`flex min-w-0 flex-wrap items-center gap-1 ${compact ? '' : 'rounded-md border border-border/60 bg-panel-raised/30 px-1.5 py-1'}`}
+      title="Elige cualquier modelo del catálogo. Si falla, se reintenta con otros (mismo contexto)."
     >
       <select
-        aria-label="Proveedor de IA"
-        value={settings.activeProviderId}
+        aria-label="Modelo del catálogo"
+        value={catalog.some((c) => c.key === activeKey) ? activeKey : catalog[0]?.key ?? ''}
         onChange={(e) => {
-          const id = e.target.value
-          const next = { ...settings, activeProviderId: id }
-          persist(next)
+          const hit = catalog.find((c) => c.key === e.target.value)
+          if (!hit) return
+          persist(selectCatalogModel(settings, hit.providerId, hit.model))
         }}
         className={`${selectClass} min-w-0 flex-1`}
       >
-        {settings.providers.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name} ({PROVIDER_PRESETS[p.kind].label})
-          </option>
-        ))}
+        {catalog.length === 0 ? (
+          <option value="">Sin modelos — abre Configuración</option>
+        ) : (
+          catalog.map((c) => (
+            <option key={c.key} value={c.key} disabled={!c.ready}>
+              {c.healthy ? '● ' : c.ready ? '○ ' : '✕ '}
+              {c.label}
+              {!c.ready ? ' (falta key/URL)' : ''}
+            </option>
+          ))
+        )}
       </select>
-      <select
-        aria-label="Modelo"
-        value={active.selectedModel}
-        onChange={(e) => {
-          const model = e.target.value
-          const providers = settings.providers.map((p) =>
-            p.id === active.id ? { ...p, selectedModel: model } : p,
-          )
-          persist({ ...settings, providers })
-        }}
-        className={`${selectClass} min-w-0 flex-[1.4]`}
+      <label
+        className="flex shrink-0 cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+        title="Si el modelo elegido no responde, probar el siguiente del catálogo con el mismo contexto"
       >
-        {modelOptions.map((m) => (
-          <option key={m} value={m}>
-            {m}
-          </option>
-        ))}
-      </select>
+        <input
+          type="checkbox"
+          className="size-3 accent-accent-amber"
+          checked={settings.fallbackEnabled !== false}
+          onChange={(e) => persist({ ...settings, fallbackEnabled: e.target.checked })}
+        />
+        Auto
+      </label>
       <button
         type="button"
-        title="Abrir configuración de IA"
+        title="Abrir configuración de IA / catálogo"
         onClick={() => requestOpenTool('settings', { zone: 'right' })}
         className="shrink-0 rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-background hover:text-foreground"
       >

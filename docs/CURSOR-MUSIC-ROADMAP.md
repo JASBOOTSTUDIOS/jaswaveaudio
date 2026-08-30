@@ -12,8 +12,13 @@
 
 ## Fase 1 — Autocompletado musical y selección
 
-1. **Selección anclada (Cmd+L musical):** serializar notas/clips/pista seleccionados en el contexto del chat; atajo «preguntar sobre selección».
+1. **Selección anclada (Ctrl+L musical):** ✅ serializar notas/clips/pista en el chat; botón flotante «Preguntar a Jas» en el piano roll; atajo `ai.askSelection` (Ctrl+L).
 2. **Tab / continuación de patrón:** motor heurístico local (escala/acorde/ritmo del clip) invocable desde piano-roll y `daw.continuePattern`. LLM solo como variantes opcionales (no en cada tecla).
+
+### Relacionado (creación nota a nota)
+
+- Music Build default `midiSource: "ai"`: estructura + VST; MIDI por turnos con `midi.clip.create` + `notas[]`.
+- Audición corta tras crear clip; prompts de modo Crear fuerzan 1 pista/turno.
 
 ## Fase 2 — Dominio de mezcla y escucha
 

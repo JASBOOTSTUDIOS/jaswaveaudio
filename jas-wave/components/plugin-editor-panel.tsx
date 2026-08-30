@@ -21,6 +21,7 @@ import {
 import {
   ensureTrackVstInstrument,
   getLastVstLoadError,
+  isVstQuarantineError,
   resolveHostPluginPath,
   slotIdForTrackPlugin,
 } from '@/src/lib/plugin/track-vst-runtime'
@@ -50,6 +51,24 @@ function VstNativeEditor({
   const pitches = [60, 62, 64, 65, 67, 69, 71, 72]
   const isRoles = plugin.nombre.includes(JASWAVE_ROLES_NAME) || /jaswave\s*roles/i.test(plugin.nombre)
   const openedOnce = useRef(false)
+  const [clearingQuarantine, setClearingQuarantine] = useState(false)
+  const quarantineBlocked = status === 'error' && isVstQuarantineError(message)
+
+  async function clearQuarantineAndRetry() {
+    setClearingQuarantine(true)
+    try {
+      const { clearPluginQuarantineAndRestore } = await import('@/src/lib/audio-device-cli')
+      const r = await clearPluginQuarantineAndRestore(tienda)
+      setMessage(r.message)
+      openedOnce.current = false
+      await openEditor()
+    } catch (e) {
+      setStatus('error')
+      setMessage(e instanceof Error ? e.message : String(e))
+    } finally {
+      setClearingQuarantine(false)
+    }
+  }
 
   /** Persiste ruta en el proyecto si faltaba (inserts viejos / agent). */
   function persistPathIfNeeded(path: string) {
@@ -222,8 +241,24 @@ function VstNativeEditor({
         data-vst-embed-host={slotId}
       >
         {status !== 'open' ? (
-          <div className="flex h-full items-center justify-center px-4 text-center text-[11px] text-muted-foreground">
-            {message || 'Cargando host de audio…'}
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center text-[11px] text-muted-foreground">
+            <p className="max-w-lg whitespace-pre-wrap">{message || 'Cargando host de audio…'}</p>
+            {quarantineBlocked ? (
+              <div className="flex max-w-md flex-col items-center gap-2">
+                <p className="text-[10px] text-muted-foreground/90">
+                  Reaper puede cargar DecentSampler sin problema; JasWave lo aisló tras un crash previo del Plugin Host. Limpia la cuarentena y reintenta.
+                </p>
+                <button
+                  type="button"
+                  disabled={clearingQuarantine}
+                  onClick={() => void clearQuarantineAndRetry()}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-accent-amber px-3 py-1.5 text-[11px] font-semibold text-background disabled:opacity-50"
+                >
+                  <RefreshCw className={`size-3 ${clearingQuarantine ? 'animate-spin' : ''}`} />
+                  {clearingQuarantine ? 'Limpiando…' : 'Limpiar cuarentena y reintentar'}
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className="flex h-full items-center justify-center px-4 text-center text-[11px] text-muted-foreground/80">

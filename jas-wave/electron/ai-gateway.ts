@@ -37,6 +37,7 @@ export type AiErrorCode =
   | 'service_unavailable'
   | 'model_not_found'
   | 'bad_request'
+  | 'payment_required'
   | 'provider_error'
   | 'empty_response'
   | 'not_available'
@@ -154,6 +155,8 @@ function hintFor(code: AiErrorCode, kind?: AiProviderKind): string {
       return 'El modelo no existe o no está disponible. Verifica el nombre exacto.'
     case 'bad_request':
       return 'Revisa el nombre del modelo, la URL y los parámetros.'
+    case 'payment_required':
+      return 'Sin crédito en este modelo. Activa Auto (fallback) o elige un modelo gratuito en el selector.'
     case 'empty_response':
       return 'El proveedor respondió vacío. Prueba otro modelo.'
     default:
@@ -231,6 +234,13 @@ function applyAuthHeaders(
 
 function mapHttpStatus(status: number, body: string, kind: AiProviderKind): AiChatResult {
   const snippet = extractProviderMessage(body)
+  if (status === 402) {
+    return fail(
+      `Sin crédito / pago requerido (${status}). ${snippet || 'Add credits or switch to a free model.'}`,
+      'payment_required',
+      kind,
+    )
+  }
   if (status === 401) return fail(`No autorizado (${status}). ${snippet}`, 'unauthorized', kind)
   if (status === 403) return fail(`Acceso denegado (${status}). ${snippet}`, 'forbidden', kind)
   if (status === 404) return fail(`Recurso no encontrado (${status}). ${snippet}`, 'model_not_found', kind)

@@ -28,7 +28,7 @@ export function hasNonEmptyTextSelection(): boolean {
 function isNativeClipboardShortcut(e: KeyboardEvent): boolean {
   if (!e.ctrlKey && !e.metaKey) return false;
   const k = e.key.toLowerCase();
-  return k === 'c' || k === 'x' || k === 'a';
+  return k === 'c' || k === 'x' || k === 'a' || k === 'v';
 }
 
 function isInsideShortcutIgnoreZone(el: HTMLElement | null): boolean {
@@ -40,13 +40,24 @@ function isInsideShortcutIgnoreZone(el: HTMLElement | null): boolean {
   );
 }
 
-/** No ejecutar atajos globales del DAW mientras el usuario escribe o selecciona texto. */
+/** Selección de texto dentro de chat/docs/inputs (no cualquier texto residual en la UI). */
+export function textSelectionIsInEditableOrChat(): boolean {
+  if (typeof window === 'undefined') return false;
+  const sel = window.getSelection?.();
+  if (!sel || sel.isCollapsed || !sel.toString().length) return false;
+  const node = sel.anchorNode;
+  const el =
+    node instanceof HTMLElement ? node : node?.parentElement instanceof HTMLElement ? node.parentElement : null;
+  if (!el) return false;
+  return isTextInputTarget(el) || isInsideShortcutIgnoreZone(el);
+}
+
+/** No ejecutar atajos globales del DAW mientras el usuario escribe en inputs/chat. */
 export function shouldIgnoreGlobalShortcuts(target?: EventTarget | null): boolean {
   if (isTextInputTarget(target ?? null)) return true;
   if (typeof document !== 'undefined' && isTextInputTarget(document.activeElement)) {
     return true;
   }
-  if (hasNonEmptyTextSelection()) return true;
   if (target && typeof target === 'object') {
     if (isInsideShortcutIgnoreZone(target as HTMLElement)) return true;
   }

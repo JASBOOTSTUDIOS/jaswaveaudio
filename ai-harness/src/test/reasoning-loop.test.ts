@@ -5,6 +5,7 @@ import {
   runAbbreviatedReasoning,
   runReasoningLoop,
   stripReadBlock,
+  sanitizeInnerThought,
   REASONING_REPAIR_PHASES,
 } from '../agent/reasoning-loop'
 import { detectAgentMode, modeBlocksMutation } from '../agent/modes'
@@ -41,12 +42,20 @@ Fin.`
   })
 })
 
+describe('sanitizeInnerThought', () => {
+  it('quita aperturas de asistente', () => {
+    expect(sanitizeInnerThought('¡Perfecto! Veo que el tempo está alto.')).toBe(
+      'Veo que el tempo está alto.',
+    )
+  })
+})
+
 describe('runReasoningLoop', () => {
-  it('emite 6 pasos internos (think→decision)', async () => {
+  it('emite 7 capas (sense→commit) en monólogo', async () => {
     const phases: string[] = []
     const chat = vi.fn(async () => ({
       success: true,
-      content: 'Respuesta de fase.',
+      content: 'veo el pedido; anoto el impulso.',
     }))
 
     const result = await runReasoningLoop({
@@ -59,30 +68,36 @@ describe('runReasoningLoop', () => {
     })
 
     expect(phases).toEqual([
-      'think1',
+      'sense',
+      'frame',
       'research1',
-      'think2',
+      'critique',
       'research2',
-      'analysis',
-      'decision',
+      'synthesize',
+      'commit',
     ])
-    expect(result.steps).toHaveLength(6)
-    expect(result.decisionBrief).toContain('Respuesta')
+    expect(result.steps).toHaveLength(7)
+    expect(result.steps[0]!.title).toMatch(/1\/7/)
+    expect(result.decisionBrief).toContain('veo')
     expect(result.finalUserMessage).toContain('¿Cómo suena el bajo?')
-    expect(chat).toHaveBeenCalledTimes(6)
+    expect(chat).toHaveBeenCalledTimes(7)
+    // Continuum: cada llamada crece el hilo (system + seed + cues/thoughts)
+    const calls = chat.mock.calls as unknown as Array<[{ role: string }[]]>
+    expect(calls[6]![0]!.length).toBeGreaterThan(calls[0]![0]!.length)
   })
 
-  it('ejecuta runReadTools en fases de investigación', async () => {
+  it('ejecuta runReadTools en capas de investigación', async () => {
     let call = 0
     const chat = vi.fn(async () => {
       call += 1
-      if (call === 2) {
+      // 3ª llamada = research1
+      if (call === 3) {
         return {
           success: true,
-          content: `Busco docs\n<<<READ [{"type":"analysis.buffer","payload":{}}] READ>>>`,
+          content: `Miro el buffer\n<<<READ [{"type":"analysis.buffer","payload":{}}] READ>>>`,
         }
       }
-      return { success: true, content: 'ok' }
+      return { success: true, content: 'ok, sigo pensando.' }
     })
     const runReadTools = vi.fn(async () => 'buffer: healthy')
 
@@ -99,7 +114,7 @@ describe('runReasoningLoop', () => {
     expect(passedActions).toEqual([{ type: 'analysis.buffer', payload: {} }])
   })
 
-  it('runAbbreviatedReasoning usa 3 fases de reparación', async () => {
+  it('runAbbreviatedReasoning usa 3 capas de reparación', async () => {
     const phases: string[] = []
     await runAbbreviatedReasoning({
       userText: 'arregla el mix',

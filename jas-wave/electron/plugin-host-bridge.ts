@@ -584,7 +584,9 @@ export function clearPluginQuarantine(): { cleared: number } {
 function quarantineMessage(pluginPath: string): string {
   return (
     `«${pluginPath}» tumbó el Plugin Host (protección tipo Ableton/Bitwig: el plugin se aísla y no se recarga). ` +
-    `El audio del device se restaura; el mix nativo sigue disponible. Para reintentarlo: audio.clearQuarantine o borra plugin-crash-quarantine.json.`
+    `El audio del device se restaura; el mix nativo sigue disponible. ` +
+    `Reintenta con el botón «Limpiar cuarentena y reintentar» en la UI del plugin, ` +
+    `Configuración → Limpiar cuarentena VST, o borra plugin-crash-quarantine.json.`
   )
 }
 

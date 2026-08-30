@@ -1278,7 +1278,21 @@ function AiTab() {
           const latest = loadAiSettings()
           const providers = latest.providers.map((p) =>
             p.id === provider.id
-              ? { ...p, models: Array.from(new Set([...p.models, ...models])) }
+              ? {
+                  ...p,
+                  models: Array.from(new Set([...p.models, ...models])),
+                  discoveredModels: models,
+                  lastHealth: 'healthy' as const,
+                  lastHealthAt: Date.now(),
+                }
+              : p,
+          )
+          persist({ ...latest, providers })
+        } else {
+          const latest = loadAiSettings()
+          const providers = latest.providers.map((p) =>
+            p.id === provider.id
+              ? { ...p, lastHealth: 'healthy' as const, lastHealthAt: Date.now() }
               : p,
           )
           persist({ ...latest, providers })
@@ -1287,6 +1301,19 @@ function AiTab() {
         setStatus('error')
         setStatusMsg(result.error || `No se pudo conectar con ${PROVIDER_PRESETS[provider.kind].label}.`)
         setStatusHint(result.hint || 'Revisa URL, API key y modelo en el catálogo.')
+        const latest = loadAiSettings()
+        const providers = latest.providers.map((p) =>
+          p.id === provider.id
+            ? {
+                ...p,
+                lastHealth: (result.status === 'misconfigured'
+                  ? 'misconfigured'
+                  : 'disconnected') as const,
+                lastHealthAt: Date.now(),
+              }
+            : p,
+        )
+        persist({ ...latest, providers })
       }
     } catch (err) {
       setStatus('error')

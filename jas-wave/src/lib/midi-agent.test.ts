@@ -149,6 +149,56 @@ describe('modos y @', () => {
       true,
     )
   })
+
+  it('refinar canción (más lenta / sublime) → create + musicBuild/BPM', () => {
+    const prompt =
+      'ahora necesito que me hagas esta cancion mas sublime, mas lenta, esta muy rapida'
+    assert.equal(detectAgentMode(prompt), 'create')
+    assert.equal(detectAgentMode(prompt, 'plan'), 'create')
+    assert.equal(wantsFullProject(prompt), true)
+    const actions = fallbackActionsFromUserIntent(prompt, undefined, 'auto')
+    assert.ok(actions.some((a) => a.type === 'project.setBpm'))
+    assert.ok(actions.some((a) => a.type === 'daw.musicBuild'))
+    const bpm = actions.find((a) => a.type === 'project.setBpm')!.payload!.bpm as number
+    assert.ok(bpm < 100, `BPM debería ser lento, got ${bpm}`)
+  })
+
+  it('solo más lenta → setBpm sin rebuild completo', () => {
+    const actions = fallbackActionsFromUserIntent('está muy rápida, hazla más lenta', undefined, 'auto')
+    assert.ok(actions.some((a) => a.type === 'project.setBpm'))
+    assert.equal(actions.some((a) => a.type === 'daw.musicBuild'), false)
+  })
+
+  it('notas duplicadas + selección anclada → midi.notes.dedupe', async () => {
+    const { setMusicalSelectionAnchor, clearMusicalSelectionAnchor } = await import('./ai-selection-context')
+    setMusicalSelectionAnchor({
+      kind: 'midi-notes',
+      trackId: 't-bass',
+      trackName: 'Bajo',
+      clipId: 'c-bass',
+      clipName: 'Piano · C mayor',
+      noteIds: ['n1', 'n2'],
+      notes: [
+        { id: 'n1', pitch: 53, inicio: 0, duracion: 1, velocidad: 80 },
+        { id: 'n2', pitch: 53, inicio: 0, duracion: 1, velocidad: 80 },
+      ],
+      label: '2 notas · «Bajo» · pitches 53–53',
+      createdAt: Date.now(),
+    })
+    try {
+      const actions = fallbackActionsFromUserIntent(
+        '[selección: 64 notas · «Bajo» · pitches 53–76] estan multi duplicadas las notas en este clip',
+        undefined,
+        'auto',
+      )
+      assert.ok(actions.some((a) => a.type === 'midi.notes.dedupe'))
+      const d = actions.find((a) => a.type === 'midi.notes.dedupe')!
+      assert.equal(d.payload?.pistaId, 't-bass')
+      assert.equal(d.payload?.clipId, 'c-bass')
+    } finally {
+      clearMusicalSelectionAnchor()
+    }
+  })
   it('al escribir @ lista modos, acciones y pistas', () => {
     const st = miniState('t-midi')
     const all = filterMentionables(listMentionables(st), '')
