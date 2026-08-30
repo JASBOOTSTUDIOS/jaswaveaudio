@@ -15,7 +15,7 @@
     "electron:build": "npm run build && npm run stage:host && electron-builder --win nsis",
     "pack:win": "npm run electron:build",
     "lint": "eslint .",
-    "test:plugins": "tsx --test src/lib/plugin/hybrid-host.test.ts src/lib/plugin/audio-engine-robust.test.ts src/lib/demo-synth.test.ts src/lib/midi-agent.test.ts src/lib/midi-controller.test.ts src/lib/midi-map.test.ts src/lib/midi-track-io.test.ts src/lib/audio-track-io.test.ts src/lib/bounce-content.test.ts src/lib/encode-wav.test.ts src/lib/plugin-knowledge.test.ts src/lib/plugin/plugin-parameter-intel.test.ts src/lib/plugin/plugin-info-adapter.test.ts src/lib/plugin/discovery.test.ts src/lib/agent-docs.test.ts src/lib/agent-harness.test.ts src/lib/music-build/music-build.test.ts src/lib/plugin/known-vst-aliases.test.ts src/lib/track-freeze-bypass.test.ts",
+    "test:plugins": "tsx --test src/lib/plugin/hybrid-host.test.ts src/lib/plugin/audio-engine-robust.test.ts src/lib/demo-synth.test.ts src/lib/midi-agent.test.ts src/lib/midi-controller.test.ts src/lib/midi-map.test.ts src/lib/midi-track-io.test.ts src/lib/audio-track-io.test.ts src/lib/bounce-content.test.ts src/lib/encode-wav.test.ts src/lib/plugin-knowledge.test.ts src/lib/plugin/plugin-parameter-intel.test.ts src/lib/plugin/plugin-info-adapter.test.ts src/lib/plugin/discovery.test.ts src/lib/agent-docs.test.ts src/lib/agent-harness.test.ts src/lib/music-build/music-build.test.ts src/lib/plugin/known-vst-aliases.test.ts src/lib/track-freeze-bypass.test.ts src/lib/midi-clip-markdown.test.ts",
     "plugin-host:ping": "node ../native/plugin-host/scripts/ping.cjs",
     "cli": "node cli/daw-cli.mjs",
     "cli:watch": "node cli/daw-cli.mjs watch --play",

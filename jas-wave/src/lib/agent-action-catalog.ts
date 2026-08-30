@@ -93,6 +93,30 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     examplePayload: { pistaId: '…', clipId: '…' },
   },
   {
+    type: 'midi.clip.md.read',
+    kind: 'agent',
+    description: 'Lee el .md nota-a-nota de un clip (Docs o serializa desde el DAW)',
+    examplePayload: { clipId: '…', pistaId: '…' },
+  },
+  {
+    type: 'midi.clip.md.upsert',
+    kind: 'agent',
+    description: 'Escribe clip-*.md con tabla de notas (preview; no timeline hasta apply)',
+    examplePayload: { clipId: '…', pistaId: '…', markdown: '---…', aplicar: false },
+  },
+  {
+    type: 'midi.clip.md.apply',
+    kind: 'agent',
+    description: 'Aplica el .md del clip al DAW (midi.notes.set / clip.create)',
+    examplePayload: { clipId: '…', pistaId: '…' },
+  },
+  {
+    type: 'midi.notes.compare',
+    kind: 'agent',
+    description: 'Compara dos conjuntos de notas por id (clip vs md, o clipA vs clipB)',
+    examplePayload: { clipId: '…', pistaId: '…', otherClipId: '…' },
+  },
+  {
     type: 'plugin.lookup',
     kind: 'agent',
     description: 'Busca VST en catálogo/web',
@@ -315,6 +339,7 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'midi.deleteNotes',
   'midi.createNotes',
   'midi.notes.dedupe',
+  'midi.clip.md.apply',
   'midi.makeStaccato',
   'midi.makeLegato',
   'midi.repeatPattern',

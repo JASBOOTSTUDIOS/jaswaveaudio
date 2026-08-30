@@ -48,6 +48,13 @@ import {
 } from './ai-selection-context'
 import { dedupeMidiNotes } from './midi-note-dedupe'
 import { buildMidiAuditFixActions } from './ai-read-context'
+import {
+  diffMidiNotes,
+  formatMidiNotesDiffForPrompt,
+  midiClipDocSlug,
+  parseMidiClipMd,
+  serializeMidiClipMd,
+} from './midi-clip-markdown'
 import { findMidiClip, getClipSummary, getNotes, musicalSummaryText } from '../../../shared/src/midi/query'
 import { isAffirmativeBuildIntent } from './ai-clarify'
 import {
@@ -158,9 +165,10 @@ export function buildAgentSystemPrompt(
     'Controlas el proyecto REAL. TÚ decides el arreglo Y cada nota MIDI (pitch/inicio/duracion/velocidad). NO asumas plantilla worship/pop.',
     '- Criterio de productor: BPM, grid, inicio/fin de clips en beats, notas dentro del clip, duplicados, densidad, arrastre. Usa la sección Timeline MIDI del contexto.',
     '- Si el usuario pide analizar/auditar/qué arreglar: diagnostica con datos reales; NO inventes canción nueva ni musicBuild.',
-    '- Canciones: 1) daw.musicBuild (estructura+VST; midiSource:"ai" por defecto — SIN generador procedural). 2) Luego 1 pista por turno: analiza rol/secciones → midi.clip.create|midi.notes.set con notas[] explícitas.',
-    '- Un turno = preferible UNA pista MIDI completa (o un clip/sección). Mantén plan.md («Por implementar») y el contexto de turnos previos.',
-    '- Tras escribir MIDI: transport.seek al inicio del clip + transport.toggle para escuchar; corrige si falla.',
+    '- Canciones: 1) daw.musicBuild (estructura+VST; midiSource:"ai"). 2) Melodía nota a nota vía clip-*.md: midi.clip.md.upsert (preview) → usuario Escucha/Aplica, o midi.clip.md.apply.',
+    '- Herramienta más precisa: el .md del clip (tabla id/pitch/inicio/duracion/velocidad/…). Preferir eso a notas[] opacas en ACTIONS cuando el detalle importa.',
+    '- Un turno = preferible UNA pista/clip: lee midi.clip.md.read, edita filas, upsert. Compara con midi.notes.compare si hace falta.',
+    '- Tras aplicar MIDI: transport.seek + transport.toggle para escuchar en timeline; en preview usa la tarjeta del .md.',
     '- Selección del usuario (Ctrl+L / «Preguntar a Jas»): si el prompt trae noteIds anclados, opera SOLO sobre esas notas (transpose/quantize/notes.set/etc.).',
     '- Si faltan datos críticos: <<<CLARIFY[{"id","question","options":["…","…","…"],"allowCustom":true,"multi":false}]CLARIFY>>> — TÚ inventas question y options para este pedido (≥3). NUNCA listas en prosa ni opciones fijas del sistema.',
     '- Tras [Respuestas a clarificación] o créalo/hazlo: SOLO <<<ACTIONS>>> (daw.musicBuild…); PROHIBIDO otro CLARIFY.',
@@ -211,6 +219,10 @@ export function buildAgentSystemPrompt(
     '- midi.notes.get { clipId, pistaId?/trackId?, limit? }  ← LEE notas del clip (también en <<<READ>>>)',
     '- midi.getClipSummary { clipId, trackId? }  ← resumen densidades/rango',
     '- midi.notes.dedupe { pistaId, clipId }  ← elimina duplicados (mismo pitch+inicio); preferir si el usuario dice «duplicadas/triplicadas»',
+    '- midi.clip.md.read { clipId, pistaId? }  ← lee clip-<id>.md (Docs) o serializa el clip del DAW',
+    '- midi.clip.md.upsert { clipId, pistaId, markdown? | notas:[...], aplicar?:false }  ← escribe .md + preview (NO timeline)',
+    '- midi.clip.md.apply { clipId, pistaId?, markdown? }  ← parsea .md → midi.notes.set / clip.create',
+    '- midi.notes.compare { clipId, pistaId?, otherClipId? | markdown? }  ← diff por id',
     '- midi.notes.set { pistaId, clipId, notas:[...], noteIds? }',
     '- midi.transpose { pistaId, clipId, semitonos, noteIds? }',
     '- midi.quantize { pistaId, clipId, gridBeats, strength?, noteIds? }',
@@ -1064,6 +1076,326 @@ export async function executeDawActions(
               ? `Deduplicado: ${before.length} → ${kept.length} (quitadas ${removedCount})`
               : r.error?.message ?? 'Error al deduplicar',
             data: { before: before.length, after: kept.length, removed: removedCount },
+          })
+          break
+        }
+        case 'midi.clip.md.read': {
+          const clipId = String(p.clipId ?? '')
+          const pistaId = String(p.pistaId ?? p.trackId ?? '')
+          if (!clipId) {
+            results.push({ type: action.type, success: false, message: 'Falta clipId' })
+            break
+          }
+          const projectId = tienda.obtenerEstado().project.id
+          const slug = String(p.slug ?? midiClipDocSlug(clipId))
+          const fromDocs = getAgentDoc(projectId, slug)?.content
+          if (fromDocs?.trim()) {
+            results.push({
+              type: action.type,
+              success: true,
+              message: `Doc ${slug} (${fromDocs.length} chars)`,
+              data: { kind: 'midiClipMd', slug, markdown: fromDocs, source: 'docs' },
+            })
+            break
+          }
+          const ref = findMidiClip(tienda.obtenerEstado(), clipId, pistaId || undefined)
+          if (!ref) {
+            results.push({ type: action.type, success: false, message: `Clip no encontrado: ${clipId}` })
+            break
+          }
+          const st = tienda.obtenerEstado()
+          const track = st.project.tracks.find((t) => t.id === ref.trackId)
+          const md = serializeMidiClipMd(ref.clip, {
+            bpm: st.project.bpm?.valor,
+            compas: `${st.project.timeSignature?.numerador ?? 4}/${st.project.timeSignature?.denominador ?? 4}`,
+            trackName: track?.nombre,
+          })
+          results.push({
+            type: action.type,
+            success: true,
+            message: `Serializado desde DAW · ${ref.clip.notas?.length ?? 0} notas → ${slug}`,
+            data: { kind: 'midiClipMd', slug, markdown: md, source: 'daw' },
+          })
+          break
+        }
+        case 'midi.clip.md.upsert': {
+          const st0 = tienda.obtenerEstado()
+          const projectId = st0.project.id
+          let markdown = typeof p.markdown === 'string' ? p.markdown : typeof p.content === 'string' ? p.content : ''
+          let clipId = String(p.clipId ?? '')
+          let pistaId = String(p.pistaId ?? p.trackId ?? '')
+          if (!markdown.trim() && Array.isArray(p.notas) && clipId && pistaId) {
+            const ref = findMidiClip(st0, clipId, pistaId || undefined)
+            markdown = serializeMidiClipMd(
+              {
+                id: clipId,
+                nombre: String(p.nombre ?? ref?.clip.nombre ?? 'Clip'),
+                trackId: pistaId,
+                inicio: Number(p.inicio ?? ref?.clip.inicio ?? 0),
+                duracion: Number(p.duracion ?? ref?.clip.duracion ?? 16),
+                tipo: 'midi',
+                notas: p.notas as import('@jaswave/shared').MidiNote[],
+                velocidadGlobal: 100,
+                cuantizacion: 0.25,
+                color: '#888',
+                seleccionado: false,
+                loop: { activo: false, inicio: 0, fin: Number(p.duracion ?? 16) },
+              },
+              {
+                bpm: st0.project.bpm?.valor,
+                compas: `${st0.project.timeSignature?.numerador ?? 4}/4`,
+                instrumentoHint: p.instrumentoHint != null ? String(p.instrumentoHint) : undefined,
+                trackName: st0.project.tracks.find((t) => t.id === pistaId)?.nombre,
+              },
+            )
+          }
+          if (!markdown.trim()) {
+            results.push({ type: action.type, success: false, message: 'Falta markdown o notas[]' })
+            break
+          }
+          const parsed = parseMidiClipMd(markdown)
+          if (!clipId) clipId = parsed.meta.clipId
+          if (!pistaId) pistaId = parsed.meta.trackId
+          if (!clipId || !pistaId) {
+            results.push({
+              type: action.type,
+              success: false,
+              message: parsed.errors.join('; ') || 'Falta clipId/trackId en el .md',
+            })
+            break
+          }
+          const slug = String(p.slug ?? midiClipDocSlug(clipId))
+          const doc = writeAgentDoc(projectId, slug, markdown, {
+            origin: 'ai',
+            title: `Clip · ${parsed.meta.nombre}`,
+            preserveUserNotes: false,
+          })
+          const applyNow = p.aplicar === true || p.apply === true
+          if (applyNow) {
+            const existing = findMidiClip(tienda.obtenerEstado(), clipId, pistaId)
+            if (existing) {
+              const r = await tienda.executor.execute('midi.notes.set', {
+                pistaId,
+                clipId,
+                notas: parsed.notas,
+                duracion: parsed.meta.duracion > 0 ? parsed.meta.duracion : undefined,
+              })
+              results.push({
+                type: action.type,
+                success: r.success,
+                message: r.success
+                  ? `Doc ${slug} + aplicadas ${parsed.notas.length} notas`
+                  : r.error?.message ?? 'Error al aplicar',
+                data: {
+                  kind: 'midiClipMdPreview',
+                  slug: doc.slug,
+                  markdown,
+                  clipId,
+                  trackId: pistaId,
+                  nombre: parsed.meta.nombre,
+                  notes: parsed.notas,
+                  bpm: parsed.meta.bpm ?? st0.project.bpm?.valor ?? 120,
+                  durationBeats: parsed.meta.duracion || Math.max(4, ...parsed.notas.map((n) => n.inicio + n.duracion), 0),
+                  instrumentoHint: parsed.meta.instrumentoHint,
+                  applied: r.success,
+                  errors: parsed.errors,
+                },
+              })
+            } else {
+              const r = await tienda.executor.execute('midi.clip.create', {
+                pistaId,
+                nombre: parsed.meta.nombre,
+                inicio: parsed.meta.inicio,
+                duracion: parsed.meta.duracion || undefined,
+                notas: parsed.notas,
+              })
+              results.push({
+                type: action.type,
+                success: r.success,
+                message: r.success
+                  ? `Doc ${slug} + clip creado (${parsed.notas.length} notas)`
+                  : r.error?.message ?? 'Error clip.create',
+                data: {
+                  kind: 'midiClipMdPreview',
+                  slug: doc.slug,
+                  markdown,
+                  clipId,
+                  trackId: pistaId,
+                  nombre: parsed.meta.nombre,
+                  notes: parsed.notas,
+                  bpm: parsed.meta.bpm ?? st0.project.bpm?.valor ?? 120,
+                  durationBeats: parsed.meta.duracion || 16,
+                  instrumentoHint: parsed.meta.instrumentoHint,
+                  applied: r.success,
+                  errors: parsed.errors,
+                },
+              })
+            }
+            break
+          }
+          results.push({
+            type: action.type,
+            success: true,
+            message: `Preview .md «${parsed.meta.nombre}» · ${parsed.notas.length} notas · ${slug} (Aplicar para timeline)`,
+            data: {
+              kind: 'midiClipMdPreview',
+              slug: doc.slug,
+              markdown,
+              clipId,
+              trackId: pistaId,
+              nombre: parsed.meta.nombre,
+              notes: parsed.notas,
+              bpm: parsed.meta.bpm ?? st0.project.bpm?.valor ?? 120,
+              durationBeats:
+                parsed.meta.duracion ||
+                Math.max(4, ...parsed.notas.map((n) => n.inicio + n.duracion), 0),
+              instrumentoHint: parsed.meta.instrumentoHint,
+              applied: false,
+              errors: parsed.errors,
+            },
+          })
+          break
+        }
+        case 'midi.clip.md.apply': {
+          const st0 = tienda.obtenerEstado()
+          const projectId = st0.project.id
+          let clipId = String(p.clipId ?? '')
+          let pistaId = String(p.pistaId ?? p.trackId ?? '')
+          const slug = String(p.slug ?? (clipId ? midiClipDocSlug(clipId) : ''))
+          let markdown =
+            typeof p.markdown === 'string'
+              ? p.markdown
+              : slug
+                ? getAgentDoc(projectId, slug)?.content ?? ''
+                : ''
+          if (!markdown.trim() && clipId) {
+            markdown = getAgentDoc(projectId, midiClipDocSlug(clipId))?.content ?? ''
+          }
+          if (!markdown.trim()) {
+            results.push({ type: action.type, success: false, message: 'No hay markdown / doc del clip' })
+            break
+          }
+          const parsed = parseMidiClipMd(markdown)
+          if (!clipId) clipId = parsed.meta.clipId
+          if (!pistaId) pistaId = parsed.meta.trackId
+          if (!clipId || !pistaId) {
+            results.push({
+              type: action.type,
+              success: false,
+              message: parsed.errors.join('; ') || 'Falta clipId/trackId',
+            })
+            break
+          }
+          writeAgentDoc(projectId, midiClipDocSlug(clipId), markdown, {
+            origin: 'ai',
+            title: `Clip · ${parsed.meta.nombre}`,
+            preserveUserNotes: false,
+          })
+          const existing = findMidiClip(tienda.obtenerEstado(), clipId, pistaId)
+          if (existing) {
+            const r = await tienda.executor.execute('midi.notes.set', {
+              pistaId,
+              clipId,
+              notas: parsed.notas,
+              duracion: parsed.meta.duracion > 0 ? parsed.meta.duracion : undefined,
+            })
+            results.push({
+              type: action.type,
+              success: r.success,
+              message: r.success
+                ? `Aplicadas ${parsed.notas.length} notas a «${parsed.meta.nombre}»`
+                : r.error?.message ?? 'Error notes.set',
+              data: {
+                kind: 'midiClipMdPreview',
+                slug: midiClipDocSlug(clipId),
+                markdown,
+                clipId,
+                trackId: pistaId,
+                nombre: parsed.meta.nombre,
+                notes: parsed.notas,
+                bpm: parsed.meta.bpm ?? st0.project.bpm?.valor ?? 120,
+                durationBeats: parsed.meta.duracion || 16,
+                applied: r.success,
+              },
+            })
+          } else {
+            const r = await tienda.executor.execute('midi.clip.create', {
+              pistaId,
+              nombre: parsed.meta.nombre,
+              inicio: parsed.meta.inicio,
+              duracion: parsed.meta.duracion || undefined,
+              notas: parsed.notas,
+            })
+            results.push({
+              type: action.type,
+              success: r.success,
+              message: r.success
+                ? `Clip creado con ${parsed.notas.length} notas desde .md`
+                : r.error?.message ?? 'Error clip.create',
+              data: {
+                kind: 'midiClipMdPreview',
+                slug: midiClipDocSlug(clipId),
+                markdown,
+                clipId,
+                trackId: pistaId,
+                nombre: parsed.meta.nombre,
+                notes: parsed.notas,
+                bpm: parsed.meta.bpm ?? st0.project.bpm?.valor ?? 120,
+                durationBeats: parsed.meta.duracion || 16,
+                applied: r.success,
+              },
+            })
+          }
+          break
+        }
+        case 'midi.notes.compare': {
+          const clipId = String(p.clipId ?? '')
+          const pistaId = String(p.pistaId ?? p.trackId ?? '')
+          if (!clipId) {
+            results.push({ type: action.type, success: false, message: 'Falta clipId' })
+            break
+          }
+          const ref = findMidiClip(tienda.obtenerEstado(), clipId, pistaId || undefined)
+          if (!ref) {
+            results.push({ type: action.type, success: false, message: `Clip no encontrado: ${clipId}` })
+            break
+          }
+          const before = ref.clip.notas ?? []
+          let after = before
+          const otherId = p.otherClipId != null ? String(p.otherClipId) : ''
+          if (otherId) {
+            const other = findMidiClip(
+              tienda.obtenerEstado(),
+              otherId,
+              p.otherTrackId != null ? String(p.otherTrackId) : undefined,
+            )
+            if (!other) {
+              results.push({ type: action.type, success: false, message: `otherClipId no encontrado: ${otherId}` })
+              break
+            }
+            after = other.clip.notas ?? []
+          } else if (typeof p.markdown === 'string') {
+            after = parseMidiClipMd(p.markdown).notas
+          } else {
+            const slug = String(p.slug ?? midiClipDocSlug(clipId))
+            const doc = getAgentDoc(tienda.obtenerEstado().project.id, slug)?.content
+            if (!doc) {
+              results.push({
+                type: action.type,
+                success: false,
+                message: `Sin markdown para comparar (${slug})`,
+              })
+              break
+            }
+            after = parseMidiClipMd(doc).notas
+          }
+          const diff = diffMidiNotes(before, after)
+          const text = formatMidiNotesDiffForPrompt(diff)
+          results.push({
+            type: action.type,
+            success: true,
+            message: text,
+            data: { kind: 'midiNotesDiff', ...diff },
           })
           break
         }
@@ -2453,5 +2785,16 @@ export async function executeDawActions(
 
 export function formatActionResultsForUser(results: ActionResult[]): string {
   if (results.length === 0) return ''
-  return results.map((r) => `${r.success ? '✓' : '✗'} ${r.message}`).join('\n')
+  return results
+    .map((r) => {
+      if (r.type === 'daw.musicBuild' && (r.data as { kind?: string } | undefined)?.kind === 'musicBuild') {
+        const build = r.data as import('./music-build/types').MusicBuildResult
+        if (build.applied) {
+          return `Listo: «${build.spec.nombre}» ya está en el proyecto (${build.spec.tracks.length} pistas).`
+        }
+        return `Plan listo: «${build.spec.nombre}» · ${build.spec.tracks.length} pistas · ${build.spec.bpm} BPM. Usa la tarjeta para crear.`
+      }
+      return `${r.success ? '✓' : '✗'} ${r.message}`
+    })
+    .join('\n')
 }

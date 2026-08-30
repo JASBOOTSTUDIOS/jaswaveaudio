@@ -1,10 +1,9 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Check, Loader2, Play, Square, Trash2 } from 'lucide-react'
 import { useDAW } from '@/src/context/daw-context'
-import { audioEngine } from '@/lib/audio-engine'
 import type { GeneratedNote } from '@/src/lib/midi-song-generator'
-import { beatsASegundos } from '@/lib/audio-conversions'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
+import { playMidiPreviewAudition, stopMidiPreviewAudition } from '@/src/lib/midi-preview-audition'
 
 export type MidiPreviewData = {
   kind: 'midiPreview'
@@ -34,7 +33,6 @@ export function MidiGenerationPreview({ preview, status = 'pending', onStatusCha
   const [localStatus, setLocalStatus] = useState<'pending' | 'applied' | 'discarded'>(
     preview.applied ? 'applied' : status,
   )
-  const stopTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const mins = useMemo(
     () => (preview.durationBeats / Math.max(1, preview.bpm)).toFixed(1),
@@ -42,45 +40,32 @@ export function MidiGenerationPreview({ preview, status = 'pending', onStatusCha
   )
 
   const noteDots = useMemo(() => {
-    // Mini piano-roll: muestreo de notas para preview visual
     const max = 120
     const step = Math.max(1, Math.floor(preview.notes.length / max))
     return preview.notes.filter((_, i) => i % step === 0).slice(0, max)
   }, [preview.notes])
 
   const stopPreview = useCallback(() => {
-    if (stopTimer.current) clearTimeout(stopTimer.current)
-    stopTimer.current = null
-    audioEngine.stopAllSources()
+    stopMidiPreviewAudition()
     setPlaying(false)
   }, [])
 
-  const playPreview = useCallback(() => {
+  const playPreview = useCallback(async () => {
     stopPreview()
-    audioEngine.ensureContext()
-    const bpm = preview.bpm
-    const midiClips = [
-      {
-        id: 'preview-clip',
-        trackId: '__preview__',
-        notes: preview.notes.map((n) => ({
-          pitch: n.pitch,
-          velocity: n.velocidad,
-          startSec: beatsASegundos(n.inicio, bpm),
-          durationSec: Math.max(0.05, beatsASegundos(n.duracion, bpm)),
-        })),
-      },
-    ]
-    audioEngine.playClips(
-      0,
-      [],
-      [{ id: '__preview__', volumen: 0.85, paneo: 0, silenciada: false, soloActiva: false }],
-      midiClips,
-    )
     setPlaying(true)
-    const durMs = beatsASegundos(preview.durationBeats, bpm) * 1000
-    stopTimer.current = setTimeout(() => stopPreview(), Math.min(durMs + 200, 90_000))
-  }, [preview, stopPreview])
+    try {
+      await playMidiPreviewAudition({
+        notes: preview.notes,
+        bpm: preview.bpm,
+        trackId: preview.pistaId,
+        candidateTrackIds: tienda.obtenerEstado().project.tracks.map((t) => t.id),
+        preferHost: true,
+        onEnded: () => setPlaying(false),
+      })
+    } catch {
+      setPlaying(false)
+    }
+  }, [preview, stopPreview, tienda])
 
   const applyToProject = useCallback(async () => {
     setBusy(true)
@@ -188,7 +173,7 @@ export function MidiGenerationPreview({ preview, status = 'pending', onStatusCha
         <div className="flex items-center gap-1.5 px-2 py-1.5">
           <button
             type="button"
-            onClick={() => (playing ? stopPreview() : playPreview())}
+            onClick={() => void (playing ? stopPreview() : playPreview())}
             className="inline-flex items-center gap-1 rounded-md bg-panel-raised px-2 py-1 text-[11px] font-medium text-foreground ring-1 ring-border hover:bg-accent"
           >
             {playing ? <Square className="size-3" fill="currentColor" /> : <Play className="size-3" fill="currentColor" />}

@@ -127,6 +127,7 @@ import { RevertTurnButton, TurnCertifyBadges } from '@/components/turn-verify-ui
 import { DestructiveConfirmCard } from '@/components/destructive-confirm-card'
 import { AiAuditPanel } from '@/components/ai-audit-panel'
 import { MidiGenerationPreview, type MidiPreviewData } from '@/components/midi-generation-preview'
+import { MidiClipMdPreview, type MidiClipMdPreviewData } from '@/components/midi-clip-md-preview'
 import { ProjectPlanPreview } from '@/components/project-plan-preview'
 import { MusicBuildPreview } from '@/components/music-build-preview'
 import { AiModelPicker } from '@/components/ai-model-picker'
@@ -257,6 +258,11 @@ function finishAgentTurn(
   }
 
   const skipSync = new Set(['doc.list', 'doc.read', 'doc.evaluate', 'doc.write', 'doc.create', 'doc.append'])
+  const musicBuildPlanned = results.some((r) => {
+    if (r.type !== 'daw.musicBuild') return false
+    const d = r.data as MusicBuildResult | undefined
+    return d?.kind === 'musicBuild' && !d.applied
+  })
   const mutated = results.some((r) => r.success && !skipSync.has(r.type))
   let extra = ''
   let evaluation: PlanEvaluation | null = null
@@ -266,20 +272,26 @@ function finishAgentTurn(
     const applied = modelText ? applyMarkdownDocsFromModel(projectId, modelText) : { slugs: [], edits: [] }
     docsWritten = applied.slugs
     docEdits = applied.edits
-    if (docsWritten.length) extra = [extra, `Docs actualizados: ${docsWritten.join(', ')}`].filter(Boolean).join('\n')
+    if (docsWritten.length && !musicBuildPlanned) {
+      extra = [extra, `Docs actualizados: ${docsWritten.join(', ')}`].filter(Boolean).join('\n')
+    }
     return docsWritten
   }
   if (opts?.preferModelEval) {
     if (mutated) {
       evaluation = opts?.planEval ?? syncPlanAfterDawChange(projectId, state)
-      if (evaluation?.summary) extra = [extra, evaluation.summary].filter(Boolean).join('\n')
+      if (evaluation?.summary && !musicBuildPlanned) {
+        extra = [extra, evaluation.summary].filter(Boolean).join('\n')
+      }
     }
     applyDocs()
   } else {
     applyDocs()
     if (mutated) {
       evaluation = opts?.planEval ?? syncPlanAfterDawChange(projectId, state)
-      if (evaluation?.summary) extra = [extra, evaluation.summary].filter(Boolean).join('\n')
+      if (evaluation?.summary && !musicBuildPlanned) {
+        extra = [extra, evaluation.summary].filter(Boolean).join('\n')
+      }
     }
   }
 
@@ -1697,6 +1709,31 @@ export function CoProducerPanel() {
           ? { ...data, status: (data.applied ? 'applied' : 'pending') as 'applied' | 'pending' }
           : undefined
       })()
+      const midiClipMdPreview = (() => {
+        const hit = lastResults.find(
+          (r) =>
+            r.success &&
+            (r.type === 'midi.clip.md.upsert' || r.type === 'midi.clip.md.apply') &&
+            (r.data as { kind?: string } | undefined)?.kind === 'midiClipMdPreview',
+        )
+        const data = hit?.data as MidiClipMdPreviewData | undefined
+        if (!data) return undefined
+        if (!data.applied && data.notes?.length) {
+          void import('@/src/lib/ai-midi-proposal-store').then(({ publishMidiProposalFromMdPreview }) => {
+            publishMidiProposalFromMdPreview({
+              trackId: data.trackId,
+              clipId: data.clipId,
+              notes: data.notes,
+              label: data.nombre,
+              messageId: assistantMsgId,
+            })
+          })
+        }
+        return {
+          ...data,
+          status: (data.applied ? 'applied' : 'pending') as 'applied' | 'pending',
+        }
+      })()
       const projectPlan = (() => {
         const hit = lastResults.find(
           (r) => r.type === 'daw.composeProject' && (r.data as { kind?: string } | undefined)?.kind === 'projectPlan',
@@ -1707,11 +1744,17 @@ export function CoProducerPanel() {
           : undefined
       })()
       const musicBuild = pickMusicBuild(lastResults)
+      const chatBody =
+        musicBuild && !musicBuild.applied
+          ? `Te preparé el plan de **${musicBuild.spec.nombre}** (${musicBuild.spec.tracks.length} pistas). Revisa la tarjeta y pulsa **Crear en el proyecto**.`
+          : musicBuild?.applied
+            ? `Listo: **${musicBuild.spec.nombre}** ya está en el arrange.`
+            : accumulated || '⚠️ Sin respuesta.'
       updateMessageContent(
         conversation.id,
         assistantMsgId,
-        accumulated || '⚠️ Sin respuesta.',
-        actionsSummary || undefined,
+        chatBody,
+        musicBuild ? undefined : actionsSummary || undefined,
         midiPreview,
         projectPlan,
         musicBuild,
@@ -1719,6 +1762,7 @@ export function CoProducerPanel() {
         confirmActions,
         finalReasoningSteps,
         docEdits.length ? docEdits : undefined,
+        midiClipMdPreview,
       )
       patchMessage(conversation.id, assistantMsgId, {
         ...(turnCertify ? { certify: turnCertify } : {}),
@@ -1831,8 +1875,8 @@ export function CoProducerPanel() {
               assistantMsgId,
               musicBuild
                 ? musicBuild.applied
-                  ? `Music Build completado: ${musicBuild.spec.nombre}.`
-                  : `Music Build listo: ${musicBuild.spec.tracks.length} pistas. Revisa las fases y ejecuta cuando quieras.`
+                  ? `Listo: **${musicBuild.spec.nombre}** ya está en el arrange.`
+                  : `Te preparé el plan de **${musicBuild.spec.nombre}** (${musicBuild.spec.tracks.length} pistas). Revisa la tarjeta y pulsa **Crear en el proyecto**.`
                 : projectPlan
                 ? projectPlan.applied
                   ? `Proyecto aplicado: ${projectPlan.nombre}.`
@@ -1844,7 +1888,7 @@ export function CoProducerPanel() {
                     ? `Clip aplicado: ${midiPreview.keyLabel}.`
                     : 'Vista previa lista en el chat. Escucha y aplica cuando quieras.'
                   : ['He creado el material en el arrange de JasWave.', summary].join('\n\n'),
-              summary,
+              musicBuild ? undefined : summary,
               midiPreview,
               projectPlan,
               musicBuild,
@@ -2076,8 +2120,8 @@ export function CoProducerPanel() {
                     })}
                   </div>
                 ) : null}
-                {msg.actionsSummary ? (
-                  <div className="mt-2 border-t border-border/60 pt-2 text-[11px] text-emerald-400/90">
+                {msg.actionsSummary && !msg.musicBuild ? (
+                  <div className="mt-2 border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
                     <ChatMarkdown text={msg.actionsSummary} />
                   </div>
                 ) : null}
@@ -2179,6 +2223,19 @@ export function CoProducerPanel() {
                   <MidiGenerationPreview
                     preview={msg.midiPreview}
                     status={msg.midiPreview.status ?? 'pending'}
+                  />
+                ) : null}
+                {msg.midiClipMdPreview ? (
+                  <MidiClipMdPreview
+                    preview={msg.midiClipMdPreview}
+                    status={msg.midiClipMdPreview.status ?? 'pending'}
+                    onStatusChange={(s) => {
+                      patchMessage(conversation.id, msg.id, {
+                        midiClipMdPreview: { ...msg.midiClipMdPreview!, status: s, applied: s === 'applied' },
+                      })
+                      const after = getConversation(conversation.id)
+                      if (after) setConversation(after)
+                    }}
                   />
                 ) : null}
                 {msg.projectPlan ? (

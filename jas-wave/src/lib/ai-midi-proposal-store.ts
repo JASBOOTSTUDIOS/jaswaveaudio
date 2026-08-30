@@ -2,6 +2,8 @@
  * Propuestas MIDI de la IA para overlay verde/rojo en piano roll (diff tipo Cursor).
  */
 
+import { parseMidiClipMd } from './midi-clip-markdown'
+
 export type ProposedMidiNote = {
   pitch: number
   inicio: number
@@ -76,7 +78,7 @@ export function notesFromActionPayload(payload?: Record<string, unknown>): Propo
     .slice(0, 400)
 }
 
-/** Publica overlay desde acciones pendientes (midi.clip.create / notes.set / transpose…). */
+/** Publica overlay desde acciones pendientes (midi.clip.create / notes.set / md.upsert…). */
 export function publishMidiProposalFromActions(
   actions: Array<{ type: string; payload?: Record<string, unknown> }>,
   opts?: { messageId?: string },
@@ -85,7 +87,9 @@ export function publishMidiProposalFromActions(
     (a) =>
       a.type === 'midi.clip.create' ||
       a.type === 'midi.notes.set' ||
-      a.type === 'daw.generateMidiSong',
+      a.type === 'daw.generateMidiSong' ||
+      a.type === 'midi.clip.md.upsert' ||
+      a.type === 'midi.clip.md.apply',
   )
   if (!midiActs.length) {
     clearMidiProposalOverlay()
@@ -93,10 +97,27 @@ export function publishMidiProposalFromActions(
   }
   const first = midiActs[0]!
   const p = first.payload ?? {}
-  const notes = notesFromActionPayload(p)
+  let notes = notesFromActionPayload(p)
+  if (
+    !notes.length &&
+    (first.type === 'midi.clip.md.upsert' || first.type === 'midi.clip.md.apply') &&
+    typeof p.markdown === 'string'
+  ) {
+    try {
+      notes = parseMidiClipMd(p.markdown).notas.map((n) => ({
+        pitch: n.pitch,
+        inicio: n.inicio,
+        duracion: n.duracion,
+        velocidad: n.velocidad,
+        kind: 'add' as const,
+        noteId: n.id,
+      }))
+    } catch {
+      /* ignore */
+    }
+  }
   const trackId = String(p.pistaId ?? p.trackId ?? '')
   if (!notes.length || !trackId) {
-    // musicBuild sin notas aún: no overlay
     if (first.type !== 'daw.generateMidiSong') clearMidiProposalOverlay()
     return
   }
@@ -106,6 +127,31 @@ export function publishMidiProposalFromActions(
     notes,
     sourceMessageId: opts?.messageId,
     label: String(p.nombre ?? first.type),
+    updatedAt: Date.now(),
+  })
+}
+
+export function publishMidiProposalFromMdPreview(data: {
+  trackId: string
+  clipId?: string
+  notes: Array<{ id?: string; pitch: number; inicio: number; duracion: number; velocidad: number }>
+  label?: string
+  messageId?: string
+}): void {
+  if (!data.trackId || !data.notes.length) return
+  setMidiProposalOverlay({
+    trackId: data.trackId,
+    clipId: data.clipId,
+    notes: data.notes.map((n) => ({
+      pitch: n.pitch,
+      inicio: n.inicio,
+      duracion: n.duracion,
+      velocidad: n.velocidad,
+      kind: 'add',
+      noteId: n.id,
+    })),
+    sourceMessageId: data.messageId,
+    label: data.label,
     updatedAt: Date.now(),
   })
 }
