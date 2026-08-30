@@ -17,9 +17,9 @@ import { normalizeShortcutString } from './keyboard-normalizer';
 import {
   actionAllowsEvent,
   createContextState,
-  hasNonEmptyTextSelection,
   isNativeClipboardShortcut,
   shouldIgnoreGlobalShortcuts,
+  textSelectionIsInEditableOrChat,
 } from './scope';
 import type {
   ActionContext,
@@ -179,7 +179,8 @@ export function createActionSystem(opts?: {
 
     handleKeyboardEvent(e: KeyboardEvent) {
       if (shouldIgnoreGlobalShortcuts(e.target)) return false;
-      if (hasNonEmptyTextSelection() && isNativeClipboardShortcut(e)) return false;
+      // Solo ceder Ctrl+C/V al navegador si la selección de texto está en chat/input
+      if (textSelectionIsInEditableOrChat() && isNativeClipboardShortcut(e)) return false;
       const resolved: ResolvedAction | null = resolver.resolveFromEvent(e);
       if (!resolved) return false;
       const def = actions.get(resolved.actionId);

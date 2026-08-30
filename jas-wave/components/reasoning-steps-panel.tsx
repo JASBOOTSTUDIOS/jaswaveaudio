@@ -40,7 +40,7 @@ export function ReasoningStepsPanel({ steps, defaultOpen = false }: Props) {
         className="flex w-full cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-left text-[10px] font-medium uppercase tracking-wide text-violet-300/90 hover:text-violet-200"
       >
         <Brain className="size-3 shrink-0 select-none" />
-        Razonamiento ({steps.length} pasos)
+        Razonamiento · {steps.length === 7 ? '7 capas' : `${steps.length} pasos`}
         <span className="ml-auto select-none text-[9px]">{open ? '▾' : '▸'}</span>
       </div>
       {open ? (
@@ -66,7 +66,7 @@ export function ReasoningStepsPanel({ steps, defaultOpen = false }: Props) {
                 <span className="truncate">{step.title}</span>
                 {step.toolsUsed?.length ? (
                   <span className="shrink-0 select-none rounded bg-violet-900/50 px-1 text-[8px] text-violet-300">
-                    {step.toolsUsed.join(', ')}
+                    {step.toolsUsed.map((t) => (typeof t === 'string' ? t : t.type)).join(', ')}
                   </span>
                 ) : null}
                 <span className="ml-auto select-none text-[8px] text-muted-foreground">

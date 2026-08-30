@@ -46,6 +46,11 @@ export type AiProviderProfile = {
   selectedModel: string
   /** Config libre para proveedores fuera del catálogo preset. */
   custom?: AiProviderCustom
+  /** Último health check (para el catálogo «funcionando»). */
+  lastHealth?: 'healthy' | 'disconnected' | 'misconfigured' | 'unknown'
+  lastHealthAt?: number
+  /** Modelos reportados por el endpoint en el último health OK. */
+  discoveredModels?: string[]
 }
 
 export type AiSettings = {
@@ -54,6 +59,22 @@ export type AiSettings = {
   providers: AiProviderProfile[]
   temperature: number
   maxTokens: number
+  /** Si el modelo activo falla, reintentar con otros del catálogo (mismo contexto). */
+  fallbackEnabled?: boolean
+}
+
+/** Entrada del catálogo unificado (proveedor + modelo). */
+export type CatalogModelEntry = {
+  key: string
+  providerId: string
+  model: string
+  label: string
+  kind: AiProviderKind
+  providerName: string
+  /** Tiene credenciales/URL mínimas para intentar. */
+  ready: boolean
+  /** Health reciente OK (o desconocido si nunca se probó). */
+  healthy: boolean
 }
 
 /** Payload unificado hacia Electron. */
@@ -87,6 +108,7 @@ export type AiErrorCode =
   | 'service_unavailable'
   | 'model_not_found'
   | 'bad_request'
+  | 'payment_required'
   | 'provider_error'
   | 'empty_response'
   | 'not_available'
@@ -243,6 +265,9 @@ export function createProviderProfile(
     models: overrides?.models ?? [...preset.suggestedModels],
     selectedModel: overrides?.selectedModel ?? preset.defaultModel,
     custom,
+    lastHealth: overrides?.lastHealth,
+    lastHealthAt: overrides?.lastHealthAt,
+    discoveredModels: overrides?.discoveredModels,
   }
 }
 
@@ -258,16 +283,16 @@ export function providerLabel(provider: AiProviderProfile): string {
   return PROVIDER_PRESETS[provider.kind].label
 }
 
-/** Arma el request de chat desde el perfil activo. */
+/** Arma el request de chat desde el perfil (modelo opcional override). */
 export function toAiChatPayload(
   provider: AiProviderProfile,
   messages: AiChatRequest['messages'],
-  opts: { temperature: number; maxTokens: number },
+  opts: { temperature: number; maxTokens: number; model?: string },
 ): AiChatRequest {
   return {
     messages,
     kind: provider.kind,
-    model: provider.selectedModel,
+    model: opts.model?.trim() || provider.selectedModel,
     baseUrl: provider.baseUrl,
     apiKey: provider.apiKey,
     temperature: opts.temperature,
@@ -285,6 +310,238 @@ export function toAiHealthPayload(provider: AiProviderProfile): AiHealthRequest 
   }
 }
 
+export function providerIsReady(provider: AiProviderProfile): boolean {
+  if (!String(provider.baseUrl || '').trim()) return false
+  if (!String(provider.selectedModel || provider.models[0] || '').trim()) return false
+  if (providerNeedsApiKey(provider) && !String(provider.apiKey || '').trim()) return false
+  return true
+}
+
+export function providerLooksHealthy(provider: AiProviderProfile): boolean {
+  if (provider.lastHealth === 'healthy') return true
+  if (provider.lastHealth === 'disconnected' || provider.lastHealth === 'misconfigured') return false
+  return providerIsReady(provider)
+}
+
+/** Catálogo plano: todos los modelos de todos los proveedores configurados. */
+export function listCatalogModels(settings: AiSettings = loadAiSettings()): CatalogModelEntry[] {
+  const out: CatalogModelEntry[] = []
+  const seen = new Set<string>()
+  for (const p of settings.providers) {
+    const models = Array.from(
+      new Set(
+        [
+          p.selectedModel,
+          ...(p.discoveredModels ?? []),
+          ...p.models,
+          ...PROVIDER_PRESETS[p.kind].suggestedModels,
+        ].filter(Boolean),
+      ),
+    )
+    const ready = providerIsReady(p)
+    const healthy = providerLooksHealthy(p)
+    for (const model of models) {
+      const key = `${p.id}::${model}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({
+        key,
+        providerId: p.id,
+        model,
+        label: `${p.name} · ${model}`,
+        kind: p.kind,
+        providerName: p.name,
+        ready,
+        healthy,
+      })
+    }
+  }
+  // Saludables primero, luego ready, luego el resto
+  return out.sort((a, b) => {
+    const score = (e: CatalogModelEntry) => (e.healthy ? 2 : 0) + (e.ready ? 1 : 0)
+    const d = score(b) - score(a)
+    if (d !== 0) return d
+    return a.label.localeCompare(b.label)
+  })
+}
+
+export function selectCatalogModel(
+  settings: AiSettings,
+  providerId: string,
+  model: string,
+): AiSettings {
+  const providers = settings.providers.map((p) =>
+    p.id === providerId ? upsertProviderModel(p, model) : p,
+  )
+  return { ...settings, activeProviderId: providerId, providers }
+}
+
+export type FallbackAttempt = {
+  provider: AiProviderProfile
+  model: string
+  label: string
+}
+
+/** Cadena de reintento: activo primero, luego otros modelos/proveedores listos. */
+export function buildFallbackAttempts(
+  settings: AiSettings = loadAiSettings(),
+): FallbackAttempt[] {
+  const active = getActiveProvider(settings)
+  const attempts: FallbackAttempt[] = []
+  const seen = new Set<string>()
+
+  const push = (provider: AiProviderProfile, model: string) => {
+    const m = model.trim()
+    if (!m || !providerIsReady({ ...provider, selectedModel: m })) return
+    const key = `${provider.id}::${m}`
+    if (seen.has(key)) return
+    seen.add(key)
+    attempts.push({
+      provider,
+      model: m,
+      label: `${provider.name} · ${m}`,
+    })
+  }
+
+  push(active, active.selectedModel)
+  for (const m of [...(active.discoveredModels ?? []), ...active.models]) {
+    push(active, m)
+  }
+
+  const others = [...settings.providers].sort((a, b) => {
+    const ha = providerLooksHealthy(a) ? 0 : 1
+    const hb = providerLooksHealthy(b) ? 0 : 1
+    return ha - hb
+  })
+  for (const p of others) {
+    if (p.id === active.id) continue
+    push(p, p.selectedModel)
+    for (const m of [...(p.discoveredModels ?? []), ...p.models]) push(p, m)
+  }
+
+  return attempts.slice(0, 8)
+}
+
+const RETRYABLE_CODES = new Set<AiErrorCode>([
+  'connection',
+  'timeout',
+  'rate_limit',
+  'service_unavailable',
+  'model_not_found',
+  'empty_response',
+  'provider_error',
+  'unknown',
+  'not_available',
+  'payment_required',
+])
+
+export function isRetryableAiFailure(result: AiChatResult): boolean {
+  if (result.success && result.content?.trim()) return false
+  if (result.success && !result.content?.trim()) return true
+  const code = result.errorCode
+  if (!code) return true
+  if (code === 'missing_api_key' || code === 'unauthorized' || code === 'forbidden') return true
+  if (RETRYABLE_CODES.has(code)) return true
+  // Legado: 402 a veces venía como bad_request
+  const msg = `${result.error ?? ''} ${result.hint ?? ''}`.toLowerCase()
+  return /402|payment.?required|add credits|sin cr[eé]dito/.test(msg)
+}
+
+export type AiChatWithFallbackResult = AiChatResult & {
+  usedProviderId?: string
+  usedModel?: string
+  attempts?: number
+  fallbackUsed?: boolean
+}
+
+/**
+ * Llama al proveedor activo; si falla y fallbackEnabled, prueba otros del catálogo
+ * con el mismo array de messages (mismo contexto).
+ */
+export async function aiChatWithFallback(
+  chat: (req: AiChatRequest) => Promise<AiChatResult>,
+  messages: AiChatRequest['messages'],
+  opts: {
+    temperature: number
+    maxTokens: number
+    settings?: AiSettings
+    abort?: AbortSignal
+    onAttempt?: (info: { label: string; index: number; total: number }) => void
+  },
+): Promise<AiChatWithFallbackResult> {
+  const settings = opts.settings ?? loadAiSettings()
+  const chain =
+    settings.fallbackEnabled === false
+      ? (() => {
+          const a = getActiveProvider(settings)
+          return [{ provider: a, model: a.selectedModel, label: `${a.name} · ${a.selectedModel}` }]
+        })()
+      : buildFallbackAttempts(settings)
+
+  if (!chain.length) {
+    return {
+      success: false,
+      error: 'No hay modelos configurados listos en el catálogo.',
+      errorCode: 'missing_model',
+      hint: 'Añade un proveedor en Configuración → IA y elige un modelo.',
+    }
+  }
+
+  let last: AiChatResult = {
+    success: false,
+    error: 'Sin intentos',
+    errorCode: 'unknown',
+  }
+
+  for (let i = 0; i < chain.length; i++) {
+    if (opts.abort?.aborted) {
+      return { success: false, error: 'Abortado', errorCode: 'unknown', attempts: i }
+    }
+    const attempt = chain[i]!
+    opts.onAttempt?.({ label: attempt.label, index: i, total: chain.length })
+    const req = toAiChatPayload(attempt.provider, messages, {
+      temperature: opts.temperature,
+      maxTokens: opts.maxTokens,
+      model: attempt.model,
+    })
+    try {
+      last = await chat(req)
+    } catch (e) {
+      last = {
+        success: false,
+        error: e instanceof Error ? e.message : String(e),
+        errorCode: 'connection',
+        provider: attempt.provider.kind,
+      }
+    }
+    if (last.success && last.content?.trim()) {
+      return {
+        ...last,
+        usedProviderId: attempt.provider.id,
+        usedModel: attempt.model,
+        attempts: i + 1,
+        fallbackUsed: i > 0,
+        model: attempt.model,
+        provider: attempt.provider.kind,
+      }
+    }
+    if (!isRetryableAiFailure(last)) {
+      return { ...last, usedProviderId: attempt.provider.id, usedModel: attempt.model, attempts: i + 1 }
+    }
+    // Siguiente del catálogo
+  }
+
+  return {
+    ...last,
+    attempts: chain.length,
+    fallbackUsed: chain.length > 1,
+    error: last.error || 'Ningún modelo del catálogo respondió.',
+    hint:
+      last.hint ||
+      'Prueba otro modelo en el selector del chat o revisa API keys en Configuración → IA.',
+  }
+}
+
 function createDefaultSettings(): AiSettings {
   const ollama = createProviderProfile('ollama')
   return {
@@ -293,6 +550,7 @@ function createDefaultSettings(): AiSettings {
     providers: [ollama],
     temperature: 0.4,
     maxTokens: 2048,
+    fallbackEnabled: true,
   }
 }
 
@@ -355,6 +613,7 @@ export function loadAiSettings(): AiSettings {
             typeof parsed.maxTokens === 'number' && Number.isFinite(parsed.maxTokens)
               ? Math.max(256, Math.min(128000, parsed.maxTokens))
               : 2048,
+          fallbackEnabled: parsed.fallbackEnabled !== false,
         }
       }
     }
@@ -444,6 +703,8 @@ export function hintForErrorCode(code: AiErrorCode, kind?: AiProviderKind): stri
       return 'El modelo no existe o no está disponible en tu cuenta. Verifica el nombre exacto.'
     case 'bad_request':
       return 'Revisa el nombre del modelo, la URL y los parámetros.'
+    case 'payment_required':
+      return 'Sin crédito en este modelo. Activa Auto (fallback) o elige un modelo gratuito en el selector.'
     case 'empty_response':
       return 'El proveedor respondió vacío. Prueba otro modelo o sube la temperatura.'
     case 'not_available':

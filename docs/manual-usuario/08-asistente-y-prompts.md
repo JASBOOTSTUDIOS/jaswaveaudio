@@ -133,6 +133,16 @@ Exporta stems por pista además del bounce estéreo.
 
 ### Edición MIDI puntual
 
+Selecciona notas en el piano roll → **Preguntar a Jas** (botón flotante) o **Ctrl+L**. Eso ancla las notas al chat (como Cmd+L en Cursor). Luego:
+
+```text
+Reordena esta secuencia (las notas seleccionadas) al revés en el tiempo.
+```
+
+```text
+Pon estas notas a tiempo (cuantiza a semicorcheas) y sube un poco la velocidad.
+```
+
 ```text
 En el clip del bajo del verso: cuantiza a semicorcheas, humaniza un poco la velocidad, y baja las notas que estén fuera de E menor.
 ```
@@ -140,6 +150,14 @@ En el clip del bajo del verso: cuantiza a semicorcheas, humaniza un poco la velo
 ```text
 Transpone el lead +5 semitonos solo en el estribillo (clip correspondiente).
 ```
+
+### Canción nota a nota (multi-turno)
+
+```text
+Haz Music Build del tema (estructura + VSTs). Luego escribe el MIDI de cada pista en turnos distintos, nota a nota, y escucha cada clip antes de pasar a la siguiente.
+```
+
+Music Build por defecto **no** inventa melodías con el generador procedural: deja las pistas listas y la IA completa `notas[]` pista a pista según `plan.md`.
 
 ### Freeze / rendimiento
 
@@ -156,12 +174,14 @@ Haz freeze de la pista Kontakt cuando el bounce de esa pista suene bien.
 | Género, BPM, tonalidad, minutos, roles | “Haz algo bonito” sin datos |
 | Nombres de preset / DecentSampler + preset | Asumir que el VST suena sin preset |
 | “Confirma host slot” | Creer que insertar = audio garantizado |
-| Music Build para multi-pista | Un solo `generateMidiSong` para toda la canción |
+| Music Build + turnos MIDI nota a nota | Un solo `generateMidiSong` / procedural para toda la canción |
 | Sends / EQ VST | Sidechain “de DAW” en 1.0 |
 
 ## Diff, certify y revertir
 
-- Las propuestas pueden mostrar **diff** y aceptar/rechazar por acción.
+- Las propuestas muestran **diff** (+ verde / − rojo) y **Aplicar** (no se escriben en el DAW hasta que aceptes).
+- Si la IA necesita datos: tarjeta de **preguntas** con opciones + campo «escribe tu respuesta».
+- Preview MIDI en la propuesta + **Escuchar VST**; en el piano roll las notas propuestas aparecen en verde (y bajas en rojo).
 - Tras un turno, badges de **certify** / verificación.
 - **Revertir esta respuesta** deshace el bloque de undo de ese turno.
 

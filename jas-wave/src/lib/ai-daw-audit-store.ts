@@ -8,6 +8,7 @@ export type AiDawAuditSource =
   | 'harness'
   | 'user_build'
   | 'user_confirm'
+  | 'checklist_step'
   | 'cli'
 
 export type AiDawAuditStatus =

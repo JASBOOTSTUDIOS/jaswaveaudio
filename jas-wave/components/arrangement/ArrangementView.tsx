@@ -517,11 +517,21 @@ export function ArrangementView() {
     trackId: string,
   ) => {
     e.stopPropagation()
+    // Liberar foco del piano roll / chat para que Ctrl+C/V lleguen a los atajos de clips
+    try {
+      window.getSelection()?.removeAllRanges()
+    } catch {
+      /* ignore */
+    }
+    const ae = document.activeElement
+    if (ae instanceof HTMLElement && ae !== document.body) {
+      ae.blur()
+    }
     tienda.executor.execute('selection.set', {
       idsClips: [clip.id],
-      idsPistas: [],
+      idsPistas: [trackId],
       tipo: 'clip',
-      idPrincipal: clip.id,
+      idPrincipal: trackId,
     })
 
     if (activeTool === 'eraser') {

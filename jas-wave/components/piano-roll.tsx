@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Plus, Piano } from 'lucide-react'
+import { Plus, Piano, MessageSquareQuote } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { usePlaybackActions } from '@/components/playback-provider'
 import type { DAWState } from '../../shared/src/types/state'
@@ -13,6 +13,7 @@ import { PianoRollToolbar, type PianoRollTool } from '@/components/piano-roll-to
 import { PianoRollTransport, PianoRollTimelineRuler } from '@/components/piano-roll-transport'
 import type { MidiClipExpression } from '../../shared/src/types/clips'
 import { GROOVE_LIBRARY } from '../../shared/src/midi/groove'
+import { shouldIgnoreGlobalShortcuts } from '../../shared/src'
 import { getUndockUrlFocus } from '@/lib/undock-window'
 import { listMidiClips, resolvePianoRollClip } from '@/src/lib/selection-helpers'
 import {
@@ -22,7 +23,16 @@ import {
 } from '@/src/lib/plugin/vst-voice-router'
 import { allNotesOffSlot, getLoadedInstrumentForTrack } from '@/src/lib/plugin/track-vst-runtime'
 import { setEditorPreviewTrackId } from '@/src/lib/plugin/editor-preview-focus'
-import { shouldIgnoreGlobalShortcuts } from '../../shared/src'
+import {
+  buildMidiNotesAnchor,
+  dispatchAskAiAboutSelection,
+  setMusicalSelectionAnchor,
+} from '@/src/lib/ai-selection-context'
+import { countDuplicateMidiNotes, dedupeMidiNotes } from '@/src/lib/midi-note-dedupe'
+import {
+  getMidiProposalOverlay,
+  subscribeMidiProposal,
+} from '@/src/lib/ai-midi-proposal-store'
 
 type PianoRollProps = {
   trackId: string
@@ -79,6 +89,8 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
 
   const [notes, setNotes] = useState<LocalNote[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [midiProposal, setMidiProposal] = useState(() => getMidiProposalOverlay())
+  useEffect(() => subscribeMidiProposal(() => setMidiProposal(getMidiProposalOverlay())), [])
   const [dirty, setDirty] = useState(false)
   const [heldKey, setHeldKey] = useState<number | null>(null)
   const [pxPerBeat, setPxPerBeat] = useState(48)
@@ -90,6 +102,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [herramienta, setHerramienta] = useState<PianoRollTool>('seleccionar')
   const [clipboard, setClipboard] = useState<LocalNote[]>([])
+  const clipboardRef = useRef<LocalNote[]>([])
   const [soloClip, setSoloClip] = useState(false)
   /** Si true, playhead/seek del piano roll siguen el transporte del DAW. */
   const [alignTimeline, setAlignTimeline] = useState(true)
@@ -113,6 +126,10 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   pxPerBeatRef.current = pxPerBeat
   keyHRef.current = keyH
 
+  const trackName = useDAWState((s: DAWState) => {
+    const tr = s.project.tracks.find((t) => t.id === trackId)
+    return tr?.nombre ?? trackId
+  })
   const clipStartBeat = clip?.inicio ?? 0
   const trackPlugins = useDAWState((s: DAWState) => {
     const tr = s.project.tracks.find((t) => t.id === trackId)
@@ -121,20 +138,67 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   const draggingRef = useRef(false)
   const keysOffsetRef = useRef<HTMLDivElement>(null)
 
+  const syncSelectionAnchor = useCallback(() => {
+    if (selectedIds.size === 0) {
+      setMusicalSelectionAnchor(null)
+      return
+    }
+    const selected = notes.filter((n) => selectedIds.has(n.id))
+    if (!selected.length) {
+      setMusicalSelectionAnchor(null)
+      return
+    }
+    setMusicalSelectionAnchor(
+      buildMidiNotesAnchor({
+        trackId,
+        trackName,
+        clipId,
+        clipName: String(clip?.nombre ?? 'Clip'),
+        notes: selected.map((n) => ({
+          id: n.id,
+          pitch: n.pitch,
+          inicio: n.inicio,
+          duracion: n.duracion,
+          velocidad: n.velocidad,
+          canal: n.canal,
+        })),
+      }),
+    )
+  }, [selectedIds, notes, trackId, trackName, clipId, clip?.nombre])
+
+  useEffect(() => {
+    syncSelectionAnchor()
+  }, [syncSelectionAnchor])
+
+  const askAiAboutSelection = useCallback(() => {
+    syncSelectionAnchor()
+    if (selectedRef.current.size === 0) return
+    dispatchAskAiAboutSelection()
+  }, [syncSelectionAnchor])
+
   useEffect(() => {
     if (!clip || clip.tipo !== 'midi') return
     // No pisar edición local (drag / inspector) con el store.
     if (dirty || draggingRef.current) return
     setNotes(
-      (clip.notas ?? []).map((n) => ({
-        id: n.id,
-        pitch: n.pitch,
-        inicio: n.inicio,
-        duracion: n.duracion,
-        velocidad: n.velocidad,
-        canal: n.canal,
-        mute: n.mute,
-      })),
+      (() => {
+        const seen = new Set<string>()
+        const out: LocalNote[] = []
+        for (const n of clip.notas ?? []) {
+          if (!n?.id || seen.has(n.id)) continue
+          seen.add(n.id)
+          out.push({
+            id: n.id,
+            pitch: n.pitch,
+            inicio: n.inicio,
+            duracion: n.duracion,
+            velocidad: n.velocidad,
+            canal: n.canal,
+            mute: n.mute,
+          })
+        }
+        return out
+      })(),
     )
   }, [clip, clipId, trackId, dirty])
 
@@ -701,6 +765,30 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
       })
   }, [tienda, trackId, clipId, snapDiv, quantizeStrength, quantizeMode, persist, snapBeat])
 
+  const dedupeNotes = useCallback(() => {
+    const ids = selectedRef.current
+    if (ids.size > 0) {
+      const selected = notesRef.current.filter((n) => ids.has(n.id))
+      const { kept, removedCount } = dedupeMidiNotes(selected)
+      if (removedCount === 0) return
+      const others = notesRef.current.filter((n) => !ids.has(n.id))
+      const finalNotes = [...others, ...kept]
+      setNotes(finalNotes)
+      setSelectedIds(new Set(kept.map((n) => n.id)))
+      setDirty(true)
+      void persist(finalNotes)
+      return
+    }
+    const { kept, removedCount } = dedupeMidiNotes(notesRef.current)
+    if (removedCount === 0) return
+    setNotes(kept)
+    setSelectedIds(new Set())
+    setDirty(true)
+    void persist(kept)
+  }, [persist])
+
+  const duplicadosCount = useMemo(() => countDuplicateMidiNotes(notes), [notes])
+
   const scaleVelocitySelected = useCallback(
     (factor: number) => {
       const ids = selectedRef.current
@@ -762,9 +850,9 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   const pasteClipboard = useCallback(() => {
     if (clipboard.length === 0) return
     const origin = Math.min(...clipboard.map((n) => n.inicio))
-    const copies = clipboard.map((n) => ({
+    const copies = clipboard.map((n, i) => ({
       ...n,
-      id: `n-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: `n-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
       inicio: snapBeat(n.inicio - origin + origin + snapDiv),
     }))
     const next = [...notesRef.current, ...copies]
@@ -775,11 +863,56 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   }, [clipboard, persist, snapBeat, snapDiv])
 
   useEffect(() => {
+    clipboardRef.current = clipboard
+  }, [clipboard])
+
+  useEffect(() => {
+    const isPianoContext = (): boolean => {
+      try {
+        if (getUndockUrlFocus().toolId === 'piano-roll') return true
+      } catch {
+        /* ignore */
+      }
+      const root = rootRef.current
+      if (!root) return false
+      const ae = document.activeElement
+      return ae instanceof Node && root.contains(ae)
+    }
+
     const onKey = (e: KeyboardEvent) => {
       if (shouldIgnoreGlobalShortcuts(e.target)) return
 
       const key = e.key.toLowerCase()
       const mod = e.ctrlKey || e.metaKey
+      const pianoCtx = isPianoContext()
+
+      // Ctrl+C/V/X: no secuestrar si no hay notas seleccionadas / clipboard de notas.
+      // Así el arrange puede copiar/pegar clips aunque el piano roll esté montado.
+      if (mod && key === 'c') {
+        if (!pianoCtx || selectedRef.current.size === 0) return
+        e.preventDefault()
+        e.stopPropagation()
+        copySelected()
+        return
+      }
+      if (mod && key === 'v') {
+        if (!pianoCtx || clipboardRef.current.length === 0) return
+        e.preventDefault()
+        e.stopPropagation()
+        pasteClipboard()
+        return
+      }
+      if (mod && key === 'x') {
+        if (!pianoCtx || selectedRef.current.size === 0) return
+        e.preventDefault()
+        e.stopPropagation()
+        copySelected()
+        deleteSelected()
+        return
+      }
+
+      // Resto de atajos del piano: solo con foco en el panel (o ventana undock)
+      if (!pianoCtx) return
 
       if (key === '?' || (e.shiftKey && key === '/')) {
         e.preventDefault()
@@ -887,16 +1020,6 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         duplicateSelected()
         return
       }
-      if (mod && key === 'c') {
-        e.preventDefault()
-        copySelected()
-        return
-      }
-      if (mod && key === 'v') {
-        e.preventDefault()
-        pasteClipboard()
-        return
-      }
       if (e.key === 'ArrowUp') {
         e.preventDefault()
         transposeSelected(e.shiftKey ? 12 : 1)
@@ -954,6 +1077,9 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
       ref={rootRef}
       className={`flex flex-col bg-panel ${embedded ? 'h-[320px] border-t border-border' : 'h-full'}`}
       tabIndex={0}
+      onPointerDownCapture={() => {
+        rootRef.current?.focus({ preventScroll: true })
+      }}
     >
       <PianoRollToolbar
         herramienta={herramienta}
@@ -976,6 +1102,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         onQuantizeStrength={setQuantizeStrength}
         onDuplicate={duplicateSelected}
         onDelete={deleteSelected}
+        onDedupe={dedupeNotes}
         onTranspose={transposeSelected}
         onNudge={nudgeSelected}
         onVelocitySet={setVelocitySelected}
@@ -995,6 +1122,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         }}
         notasCount={notes.length}
         seleccionCount={selectedIds.size}
+        duplicadosCount={duplicadosCount}
         dirty={dirty}
         nombreClip={clip.nombre || 'Clip MIDI'}
       />
@@ -1014,10 +1142,22 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
       />
 
       {selectedIds.size > 0 && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-2 py-1 text-[10px] text-muted-foreground">
+        <div className="relative flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-2 py-1 text-[10px] text-muted-foreground">
           <span className="font-semibold text-foreground">
             {selectedIds.size === 1 ? 'Nota' : `${selectedIds.size} notas`}
           </span>
+          <button
+            type="button"
+            onClick={askAiAboutSelection}
+            title="Preguntar a Jas sobre esta selección (Ctrl+L)"
+            className="inline-flex items-center gap-1 rounded-md bg-accent-amber/20 px-2 py-0.5 text-[10px] font-semibold text-foreground ring-1 ring-accent-amber/50 hover:bg-accent-amber/30"
+          >
+            <MessageSquareQuote className="size-3" />
+            Preguntar a Jas
+            <kbd className="ml-0.5 rounded bg-background/80 px-1 font-mono text-[9px] text-muted-foreground">
+              Ctrl+L
+            </kbd>
+          </button>
           {selectedIds.size === 1 &&
             (() => {
               const n = notes.find((x) => selectedIds.has(x.id))
@@ -1355,6 +1495,51 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                 }}
               />
             )}
+
+      {selectedIds.size > 0 && (() => {
+        const selected = notes.filter((n) => selectedIds.has(n.id))
+        if (!selected.length) return null
+        const left = Math.min(...selected.map((n) => n.inicio)) * pxPerBeat
+        const top = Math.min(...selected.map((n) => (HIGHEST - n.pitch) * keyH))
+        const right = Math.max(...selected.map((n) => (n.inicio + n.duracion) * pxPerBeat))
+        const btnLeft = Math.max(8, Math.min(left + (right - left) / 2 - 70, gridWidth - 160))
+        const btnTop = Math.max(8, top - 36)
+        return (
+          <button
+            type="button"
+            onClick={askAiAboutSelection}
+            title="Preguntar a Jas sobre esta selección (Ctrl+L)"
+            className="pointer-events-auto absolute z-40 inline-flex items-center gap-1 rounded-md bg-accent-amber px-2 py-1 text-[10px] font-semibold text-background shadow-lg ring-1 ring-black/20 hover:brightness-110"
+            style={{ left: btnLeft, top: btnTop }}
+          >
+            <MessageSquareQuote className="size-3" />
+            Preguntar a Jas
+            <kbd className="ml-0.5 rounded bg-background/20 px-1 font-mono text-[9px]">Ctrl+L</kbd>
+          </button>
+        )
+      })()}
+
+            {midiProposal &&
+              midiProposal.trackId === trackId &&
+              (!midiProposal.clipId || midiProposal.clipId === clipId) &&
+              midiProposal.notes.map((n, i) => {
+                const top = (HIGHEST - n.pitch) * keyH
+                const left = n.inicio * pxPerBeat
+                const width = Math.max(4, n.duracion * pxPerBeat)
+                const add = n.kind !== 'remove'
+                return (
+                  <div
+                    key={`prop-${i}-${n.pitch}-${n.inicio}`}
+                    className={`pointer-events-none absolute z-[25] rounded-sm ring-1 ${
+                      add
+                        ? 'bg-emerald-500/45 ring-emerald-400/80'
+                        : 'bg-red-500/40 ring-red-400/80 line-through opacity-80'
+                    }`}
+                    style={{ top, left, width, height: Math.max(4, keyH - 1) }}
+                    title={add ? 'Propuesta IA (+)' : 'Propuesta IA (−)'}
+                  />
+                )
+              })}
 
             {useCanvas && (
               <PianoRollCanvasNotes

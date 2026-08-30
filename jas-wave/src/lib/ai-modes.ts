@@ -8,6 +8,10 @@ export {
   modeBlocksMutation,
   modePromptBlock,
   wantsFullProject,
+  isSongRefineIntent,
+  isTempoOnlyRefine,
+  inferBpmFromTempoIntent,
+  isProjectAuditIntent,
   type AgentMode,
 } from '@jaswave/ai-harness'
 

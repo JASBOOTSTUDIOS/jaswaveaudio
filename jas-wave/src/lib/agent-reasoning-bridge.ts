@@ -31,6 +31,8 @@ export async function runAgentReasoningForTurn(opts: {
   resolvedMode: AgentMode
   chatTurns: Array<{ role: 'user' | 'assistant'; content: string }>
   libraryPresetsBlock?: string
+  /** Bloque extra (p. ej. auditoría MIDI local) anclado al contexto de razonamiento. */
+  projectContextExtra?: string
   onStep?: (steps: StoredReasoningStep[]) => void
   onPhaseLabel?: (label: string) => void
   abort?: AbortSignal
@@ -41,13 +43,16 @@ export async function runAgentReasoningForTurn(opts: {
   const { formatLibraryPresetsForContext } = await import('./library/ops')
   const presetsBlock =
     opts.libraryPresetsBlock ?? (await formatLibraryPresetsForContext(opts.tienda, 12))
-  const projectContext = buildAssembledAgentContext(
+  const baseContext = buildAssembledAgentContext(
     opts.tienda,
     opts.state,
     opts.userText,
     opts.chatTurns,
     presetsBlock,
   )
+  const projectContext = opts.projectContextExtra?.trim()
+    ? `${baseContext}\n\n${opts.projectContextExtra.trim()}`
+    : baseContext
 
   const storedSteps: StoredReasoningStep[] = []
 

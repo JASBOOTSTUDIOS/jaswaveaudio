@@ -26,6 +26,9 @@ export const AGENT_READ_ONLY_ACTIONS = new Set([
   'web.search',
   'library.preset.listGlobal',
   'library.preset.searchGlobal',
+  'midi.notes.get',
+  'midi.getNotes',
+  'midi.getClipSummary',
 ])
 
 export const AGENT_DOCS_WRITE_ACTIONS = new Set(['doc.create', 'doc.write', 'doc.append'])

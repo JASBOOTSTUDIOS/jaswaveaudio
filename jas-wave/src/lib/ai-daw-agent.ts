@@ -38,6 +38,19 @@ import {
 } from './plugin/plugin-parameter-intel'
 import { detectAgentMode, modePromptBlock, wantsFullProject, type AgentMode } from './ai-modes'
 import {
+  inferBpmFromTempoIntent,
+  isSongRefineIntent,
+  isTempoOnlyRefine,
+} from '@jaswave/ai-harness'
+import {
+  formatMusicalSelectionForPrompt,
+  getMusicalSelectionAnchor,
+} from './ai-selection-context'
+import { dedupeMidiNotes } from './midi-note-dedupe'
+import { buildMidiAuditFixActions } from './ai-read-context'
+import { findMidiClip, getClipSummary, getNotes, musicalSummaryText } from '../../../shared/src/midi/query'
+import { isAffirmativeBuildIntent } from './ai-clarify'
+import {
   forcePreviewAplicar,
   isMutatingAction,
   modeBlocksMutation,
@@ -142,13 +155,22 @@ export function buildAgentSystemPrompt(
     modePromptBlock(resolvedMode),
     '',
     '## Rol: ingeniero de sonido / arreglista de JasWave',
-    'Controlas el proyecto REAL. TÚ decides el arreglo (género, forma, progresiones por sección, roles). El motor solo renderiza MIDI; NO asumas plantilla worship/pop.',
-    '- Obliga: en canciones declara genero + secciones[{nombre,bars,degrees,density}] + pistas[{nombre,rol,articulacion,pluginId?}].',
-    '- Armonía: cada sección puede tener su progresión (Nashville 1–7). Contraste verso≠coro≠puente.',
-    '- Anti-repetición y dinámica humanas. Tras generar, midi.humanize / applyGroove si suena mecánico.',
-    '- Instrumentos: catálogo VST + biblioteca global y del proyecto (library.preset.*). Antes de un VST dudoso: plugin.probe.',
-    '  Preferir presetId en daw.musicBuild y library.preset.apply/search ANTES de plugin.setParameter.',
+    'Controlas el proyecto REAL. TÚ decides el arreglo Y cada nota MIDI (pitch/inicio/duracion/velocidad). NO asumas plantilla worship/pop.',
+    '- Criterio de productor: BPM, grid, inicio/fin de clips en beats, notas dentro del clip, duplicados, densidad, arrastre. Usa la sección Timeline MIDI del contexto.',
+    '- Si el usuario pide analizar/auditar/qué arreglar: diagnostica con datos reales; NO inventes canción nueva ni musicBuild.',
+    '- Canciones: 1) daw.musicBuild (estructura+VST; midiSource:"ai" por defecto — SIN generador procedural). 2) Luego 1 pista por turno: analiza rol/secciones → midi.clip.create|midi.notes.set con notas[] explícitas.',
+    '- Un turno = preferible UNA pista MIDI completa (o un clip/sección). Mantén plan.md («Por implementar») y el contexto de turnos previos.',
+    '- Tras escribir MIDI: transport.seek al inicio del clip + transport.toggle para escuchar; corrige si falla.',
+    '- Selección del usuario (Ctrl+L / «Preguntar a Jas»): si el prompt trae noteIds anclados, opera SOLO sobre esas notas (transpose/quantize/notes.set/etc.).',
+    '- Si faltan datos críticos: <<<CLARIFY[{"id","question","options":["…","…","…"],"allowCustom":true,"multi":false}]CLARIFY>>> — TÚ inventas question y options para este pedido (≥3). NUNCA listas en prosa ni opciones fijas del sistema.',
+    '- Tras [Respuestas a clarificación] o créalo/hazlo: SOLO <<<ACTIONS>>> (daw.musicBuild…); PROHIBIDO otro CLARIFY.',
+    '- Las ACTIONS son propuestas: el usuario pulsa Aplicar. No digas que ya aplicaste hasta que confirme.',
+    '- Obliga en canciones: genero + secciones[{nombre,bars,degrees,density}] + pistas[{nombre,rol,articulacion,pluginId?}].',
+    '- Armonía: progresión por sección (Nashville 1–7). Contraste verso≠coro≠puente.',
+    '- Anti-repetición: varía ritmo/voicing/velocidad nota a nota. midi.humanize / applyGroove si suena mecánico.',
+    '- Instrumentos: catálogo VST + library.preset.*. Antes de un VST dudoso: plugin.probe. Preferir presetId.',
     'NUNCA digas que uses Ableton/Logic. NUNCA digas que no puedes generar MIDI.',
+    'NUNCA uses midi.generatePattern / daw.generateMidiSong / midiSource:"procedural" para una canción multi-pista salvo que el usuario pida preview rápida.',
     'NUNCA uses una plantilla fija ni asumas C menor si el usuario pidió otra tonalidad.',
     'Si pide solo un clip en la pista seleccionada: una acción de clip. Sin track.create.',
     'Responde al usuario SOLO en español natural (1-3 frases). NO pegues JSON ni bloques ACTIONS en el texto visible.',
@@ -170,10 +192,10 @@ export function buildAgentSystemPrompt(
     '- transport.toggle | transport.stop | transport.toggleLoop | transport.toggleMetronome | transport.toggleRecord | transport.togglePunch | transport.toggleCountIn',
     '- transport.seek { segundos }',
     '- automation.setCurve | automation.writePoint { trackId, parametro, tiempo?, valor?, puntos? } | automation.clear',
-    '- daw.musicBuild { aplicar, prompt, nombre?, bpm?, minutos?, genero?, progresion?, secciones:[{nombre|name,bars|compases,degrees|progresion,density?}], pistas:[{nombre,rol,articulacion?,pluginId?,presetId?}] }',
-    '  ← TÚ defines el spec. El cliente mergea tu JSON sobre heurísticas. Preferible spec completo.',
+    '- daw.musicBuild { aplicar, prompt, nombre?, bpm?, minutos?, genero?, progresion?, secciones:[...], pistas:[...], midiSource?: "ai"|"procedural" }',
+    '  ← Default midiSource=ai: crea pistas+VST; TÚ escribes notas luego. procedural = generador legado (solo si lo piden).',
     '- daw.composeProject { aplicar, nombre?, bpm?, tonalidad?, minutos?, genero?, progresion?, secciones?, pistas:[...] }',
-    '- daw.generateMidiSong { aplicar, prompt?, progresion?, secciones?, genero?, articulacion?, minutos?, bpm?, seed?, pistaId? }',
+    '- daw.generateMidiSong { aplicar, prompt?, ... }  ← SOLO un clip / preview; no canciones multi-pista',
     '- plugin.lookup { nombre }  ← manual + mapa MIDI',
     '- plugin.probe { pluginId? | path? | nombre? }  ← ¿carga en el host?',
     '- library.preset.list | library.preset.search { query?, rol?, genero?, scope?: "project"|"global"|"all" }',
@@ -184,16 +206,20 @@ export function buildAgentSystemPrompt(
     '- library.preset.apply { presetId, trackId }  ← resuelve global o proyecto',
     '- library.preset.audition { presetId, bars?, articulacion? }',
     '- library.preset.saveFxChainGlobal { trackId, nombre, rol?, generoTags? }',
-    '- midi.clip.create { pistaId, nombre?, inicio?, duracion?, notas:[{pitch,inicio,duracion,velocidad}] }',
-    '- midi.notes.set { pistaId, clipId, notas:[...] }',
+    '- midi.clip.create { pistaId, nombre?, inicio?, duracion?, notas:[{pitch,inicio,duracion,velocidad}], audition?: true }',
+    '  ← OBLIGATORIO notas[] con cada nota que TÚ decides. audition (default true) busca y reproduce un momento.',
+    '- midi.notes.get { clipId, pistaId?/trackId?, limit? }  ← LEE notas del clip (también en <<<READ>>>)',
+    '- midi.getClipSummary { clipId, trackId? }  ← resumen densidades/rango',
+    '- midi.notes.dedupe { pistaId, clipId }  ← elimina duplicados (mismo pitch+inicio); preferir si el usuario dice «duplicadas/triplicadas»',
+    '- midi.notes.set { pistaId, clipId, notas:[...], noteIds? }',
     '- midi.transpose { pistaId, clipId, semitonos, noteIds? }',
-    '- midi.quantize { pistaId, clipId, gridBeats, strength? }',
-    '- midi.humanize { pistaId, clipId, seed, timingAmount?, velocityAmount? }',
+    '- midi.quantize { pistaId, clipId, gridBeats, strength?, noteIds? }',
+    '- midi.humanize { pistaId, clipId, seed, timingAmount?, velocityAmount?, noteIds? }',
     '- midi.setVelocity { pistaId, clipId, velocity? | relativeFactor?, noteIds? }',
     '- midi.makeStaccato | midi.makeLegato { pistaId, clipId, noteIds?, ratio? }',
     '- midi.constrainScale { pistaId, clipId, root, scale }',
-    '- midi.generatePattern { pistaId, kind: "bass_funk"|"arp"|"drums"|"pad_chords", bars?, root?, scale?, seed?, clipId?, replace? }',
-    '- midi.applyGroove { pistaId, clipId, grooveId, strength?, seed? }',
+    '- midi.generatePattern { ... }  ← evitar en canciones; preferir notas[] explícitas',
+    '- midi.applyGroove { pistaId, clipId, grooveId, strength?, seed?, noteIds? }',
     '- midi.setCC { pistaId, clipId, cc, puntos:[{tiempo,valor}] }',
     '- midi.setPitchBend { pistaId, clipId, puntos:[{tiempo,valor:-1..1}] }',
     '- clip.create { pistaId, nombre?, inicio?, duracion?, sourceId?, waveform? }',
@@ -232,11 +258,40 @@ export function buildAgentSystemPrompt(
     '- audio.listDevices | audio.getDevice | audio.setDevice { backend, deviceId?, sampleRate?, bufferSize? } | audio.ensureBest { preferName? }',
     docsPromptActions(),
     '',
-    'MIDI: velocidades propias por nota; densidad por sección. Sustain piano/pad = midi.setCC cc:64.',
-    'Arreglo: NO dejes que el motor invente la canción — manda genero/secciones/progresion en el payload.',
-    'VST: plugin.probe antes de confiar; library.preset.search/apply (global o proyecto) antes de plugin.setParameter. En Music Build usa presetId por pista.',
+    'MIDI: TÚ escribes cada nota en notas[]. Velocidades propias; densidad por sección. Sustain = midi.setCC cc:64.',
+    'Music Build (midiSource ai): solo estructura; el MIDI lo completas pista a pista en turnos siguientes.',
+    'VST: plugin.probe antes de confiar; library.preset.search/apply antes de setParameter. En Music Build usa presetId por pista.',
     'Entrega: tras bounce/masterPass lee AudioListenReport (analysis.fullReport). NO digas "master listo" si listen.ok=false o compareTarget fuera de rango.',
-  ].join('\n')
+    formatMusicalSelectionForPrompt(getMusicalSelectionAnchor()),
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+/** Seek + play corto tras crear/editar MIDI (el modelo también puede emitir transport.*). */
+async function auditionMidiClip(
+  tienda: TiendaDAW,
+  opts: { inicioBeats?: number; bars?: number },
+): Promise<string> {
+  try {
+    const st = tienda.obtenerEstado()
+    const bpm = Math.max(1, Number(st.project.bpm?.valor ?? st.transport?.bpm ?? 120))
+    const inicioBeats = Math.max(0, Number(opts.inicioBeats ?? 0))
+    const sec = (inicioBeats * 60) / bpm
+    await tienda.executor.execute('transport.seek', { segundos: sec })
+    const playing = Boolean(st.transport?.reproduciendo)
+    if (!playing) {
+      await tienda.executor.execute('transport.toggle', {})
+    }
+    const bars = Math.max(1, Math.min(8, Number(opts.bars ?? 4)))
+    const ms = Math.min(16_000, Math.round(((bars * 4 * 60) / bpm) * 1000))
+    window.setTimeout(() => {
+      void tienda.executor.execute('transport.stop', {})
+    }, ms)
+    return `audition ~${bars} compases desde ${inicioBeats.toFixed(2)}b`
+  } catch (e) {
+    return e instanceof Error ? e.message : 'audition falló'
+  }
 }
 
 /** Quita bloques ACTIONS y basura de tool-calls del texto visible. */
@@ -301,6 +356,46 @@ export function fallbackActionsFromUserIntent(
     lower.match(/\btempo\s*(?:a|de|=|:)?\s*(\d{2,3})\b/)
   if (bpmMatch) {
     actions.push({ type: 'project.setBpm', payload: { bpm: Number(bpmMatch[1]) } })
+  } else {
+    const inferred = inferBpmFromTempoIntent(
+      userText,
+      state?.project?.bpm?.valor ?? 120,
+    )
+    if (inferred != null) {
+      actions.push({ type: 'project.setBpm', payload: { bpm: inferred } })
+    }
+  }
+
+  // Solo tempo: basta con setBpm (no reescribir toda la canción)
+  if (isTempoOnlyRefine(userText) && actions.some((a) => a.type === 'project.setBpm')) {
+    return forcePreviewAplicar(actions, 'create')
+  }
+
+  // Notas multi-duplicadas en selección anclada / clip mencionado / arréglalo tras auditoría
+  if (
+    /duplicad|triplicad|multi[\s-]?duplic|notas?\s+repetid|limpiar?\s+(las\s+)?notas|dedupe|deduplic|arr[eé]glalo|quitar todos los duplicados/i.test(
+      lower,
+    )
+  ) {
+    const sel = getMusicalSelectionAnchor()
+    const pistaId =
+      (mentionedClip?.trackId as string | undefined) ||
+      sel?.trackId ||
+      mentionedTrack?.trackId ||
+      selectedId ||
+      undefined
+    const clipId =
+      (mentionedClip?.clipId as string | undefined) || sel?.clipId || undefined
+    if (pistaId && clipId) {
+      actions.push({ type: 'midi.notes.dedupe', payload: { pistaId, clipId } })
+      return forcePreviewAplicar(actions, 'create')
+    }
+    if (state && /arr[eé]glalo|quitar todos los duplicados|arr[eé]glalo todo/i.test(lower)) {
+      const fixes = buildMidiAuditFixActions(state)
+      if (fixes.length) {
+        return forcePreviewAplicar(fixes, 'create')
+      }
+    }
   }
 
   const zoomMatch = lower.match(/zoom\s*(?:a|de|=|:|horizontal)?\s*(\d+(?:[.,]\d+)?)/)
@@ -349,16 +444,29 @@ export function fallbackActionsFromUserIntent(
     actions.push({ type: 'doc.evaluate', payload: {} })
   }
 
-  if (wantsFullProject(userText)) {
+  if (wantsFullProject(userText) || isAffirmativeBuildIntent(userText) || isSongRefineIntent(userText)) {
+    const bpm =
+      (actions.find((a) => a.type === 'project.setBpm')?.payload as { bpm?: number } | undefined)?.bpm ??
+      inferBpmFromTempoIntent(userText, state?.project?.bpm?.valor ?? 120) ??
+      undefined
     actions.push({
       type: 'daw.musicBuild',
       payload: {
-        prompt: userText,
-        aplicar: resolved === 'create',
+        prompt: isAffirmativeBuildIntent(userText)
+          ? 'Continuar plan.md / canción acordada (G mayor o tonalidad del plan). Estilo suave/ambiente si aplica.'
+          : isSongRefineIntent(userText)
+            ? `Refinar canción existente: ${userText}`
+            : userText,
+        aplicar: resolved === 'create' || isAffirmativeBuildIntent(userText) || isSongRefineIntent(userText),
         nombre: inferClipNameFromText(userText, inferKeyFromText(userText).label),
+        midiSource: 'ai',
+        ...(bpm != null ? { bpm } : {}),
       },
     })
-    return forcePreviewAplicar(actions, resolved)
+    return forcePreviewAplicar(
+      actions,
+      isAffirmativeBuildIntent(userText) || isSongRefineIntent(userText) ? 'create' : resolved,
+    )
   }
 
   if (wantsDawCreation(userText) || mentionedClip) {
@@ -869,6 +977,96 @@ export async function executeDawActions(
           })
           break
         }
+        case 'midi.notes.get':
+        case 'midi.getNotes': {
+          const clipId = String(p.clipId ?? '')
+          const trackId = (p.pistaId ?? p.trackId) != null ? String(p.pistaId ?? p.trackId) : undefined
+          if (!clipId) {
+            results.push({ type: action.type, success: false, message: 'Falta clipId' })
+            break
+          }
+          const notes = getNotes(tienda.obtenerEstado(), {
+            clipId,
+            trackId,
+            start: p.start != null ? Number(p.start) : undefined,
+            end: p.end != null ? Number(p.end) : undefined,
+            pitchMin: p.pitchMin != null ? Number(p.pitchMin) : undefined,
+            pitchMax: p.pitchMax != null ? Number(p.pitchMax) : undefined,
+            noteIds: Array.isArray(p.noteIds) ? (p.noteIds as string[]) : undefined,
+            limit: p.limit != null ? Number(p.limit) : 128,
+          })
+          const preview = notes
+            .slice(0, 64)
+            .map(
+              (n) =>
+                `${n.id} p=${n.pitch} t=${Number(n.inicio.toFixed(3))} d=${Number(n.duracion.toFixed(3))} v=${n.velocidad}`,
+            )
+            .join('\n')
+          results.push({
+            type: action.type,
+            success: true,
+            message: notes.length
+              ? `${notes.length} notas${notes.length > 64 ? ' (mostrando 64)' : ''}:\n${preview}`
+              : 'Clip sin notas o no encontrado',
+            data: { count: notes.length, notes: notes.slice(0, 128) },
+          })
+          break
+        }
+        case 'midi.getClipSummary': {
+          const clipId = String(p.clipId ?? '')
+          const trackId = (p.pistaId ?? p.trackId) != null ? String(p.pistaId ?? p.trackId) : undefined
+          if (!clipId) {
+            results.push({ type: action.type, success: false, message: 'Falta clipId' })
+            break
+          }
+          const text = musicalSummaryText(tienda.obtenerEstado(), clipId, trackId)
+          results.push({
+            type: action.type,
+            success: !text.includes('no encontrado'),
+            message: text,
+            data: getClipSummary(tienda.obtenerEstado(), clipId, trackId),
+          })
+          break
+        }
+        case 'midi.notes.dedupe': {
+          const pistaId = String(p.pistaId ?? p.trackId ?? '')
+          const clipId = String(p.clipId ?? '')
+          if (!clipId) {
+            results.push({ type: action.type, success: false, message: 'Falta clipId' })
+            break
+          }
+          const st = tienda.obtenerEstado()
+          const ref = findMidiClip(st, clipId, pistaId || undefined)
+          if (!ref) {
+            results.push({ type: action.type, success: false, message: `Clip MIDI no encontrado: ${clipId}` })
+            break
+          }
+          const before = ref.clip.notas ?? []
+          const { kept, removedCount } = dedupeMidiNotes(before)
+          if (removedCount === 0) {
+            results.push({
+              type: action.type,
+              success: true,
+              message: `Sin duplicados (${before.length} notas)`,
+              data: { before: before.length, after: kept.length, removed: 0 },
+            })
+            break
+          }
+          const r = await tienda.executor.execute('midi.notes.set', {
+            pistaId: ref.trackId,
+            clipId: ref.clipId,
+            notas: kept,
+          })
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success
+              ? `Deduplicado: ${before.length} → ${kept.length} (quitadas ${removedCount})`
+              : r.error?.message ?? 'Error al deduplicar',
+            data: { before: before.length, after: kept.length, removed: removedCount },
+          })
+          break
+        }
         case 'plugin.lookup': {
           const nombre = String(p.nombre ?? p.name ?? '')
           if (!nombre) {
@@ -958,6 +1156,10 @@ export async function executeDawActions(
               p.rolesOnly === true ||
               p.nativeOnly === true,
             rolesOnly: p.rolesOnly === true || p.nativeOnly === true || p.softPadOnly === true,
+            midiSource:
+              p.midiSource === 'procedural' || p.midi === 'procedural'
+                ? 'procedural'
+                : 'ai',
             ai,
           })
           const plan = specToProjectPlan(build.spec, build.applied)
@@ -1235,18 +1437,23 @@ export async function executeDawActions(
             pistaId = track.trackId
           }
           const notas = (p.notas as GeneratedNote[]) ?? []
+          const inicio = Number(p.inicio ?? 0)
           const r = await tienda.executor.execute('midi.clip.create', {
             pistaId,
             nombre: String(p.nombre ?? 'Clip MIDI'),
-            inicio: Number(p.inicio ?? 0),
+            inicio,
             duracion: p.duracion != null ? Number(p.duracion) : undefined,
             notas,
           })
+          let auditionMsg = ''
+          if (r.success && p.audition !== false && notas.length > 0) {
+            auditionMsg = await auditionMidiClip(tienda, { inicioBeats: inicio, bars: 4 })
+          }
           results.push({
             type: action.type,
             success: r.success,
             message: r.success
-              ? `Clip MIDI con ${notas.length} notas`
+              ? `Clip MIDI con ${notas.length} notas${auditionMsg ? ` · ${auditionMsg}` : ''}`
               : r.error?.message ?? 'Error clip MIDI',
           })
           break

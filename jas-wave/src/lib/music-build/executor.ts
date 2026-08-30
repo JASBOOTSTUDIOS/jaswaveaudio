@@ -282,6 +282,12 @@ export async function executeMusicBuild(
     softPadOnly?: boolean
     rolesOnly?: boolean
     nativeOnly?: boolean
+    /**
+     * Origen del MIDI:
+     * - `ai` (default): estructura + VST; las notas las escribe la IA en turnos siguientes (midi.clip.create).
+     * - `procedural`: composeMidiFromBrief (legado / preview rápida).
+     */
+    midiSource?: 'ai' | 'procedural'
     /** Spec / campos parciales de la IA (gana sobre heurística). */
     ai?: MusicBuildAiPartial | null
     spec?: MusicBuildAiPartial | null
@@ -576,7 +582,8 @@ export async function executeMusicBuild(
     }
   }
 
-  // Respetar minutos pedidos: no alargar la canción por secciones heurísticas largas.
+  setStage(stages, 'midi', 'running')
+  const midiSource = opts.midiSource === 'procedural' ? 'procedural' : 'ai'
   const midiMinutes = Math.max(0.25, Number(spec.minutes) || 1)
   let barPlan = expandSectionsToBarPlan(spec.sections, spec.degrees)
   const maxBars = Math.max(4, Math.ceil((midiMinutes * Math.max(1, spec.bpm)) / 4))
@@ -586,55 +593,88 @@ export async function executeMusicBuild(
   const clipNotes: Array<{ trackName: string; rol: string; notes: ReturnType<typeof composeMidiFromBrief>['notes'] }> =
     []
 
-  setStage(stages, 'midi', 'running')
-  for (const row of created) {
-    const t = spec.tracks[row.specIndex]!
-    if (t.tipo === 'audio') continue
-    let art = articulationOf(String(t.rol), t.articulacion ? String(t.articulacion) : undefined)
-    const g = String(spec.genero ?? '').toLowerCase()
-    if ((g === 'worship' || g === 'gospel' || /worship|alabanza/.test(opts.prompt)) && String(t.rol) === 'guitar') {
-      art = 'arp' // fingerpicking suave
+  if (midiSource === 'ai') {
+    // Estructura lista: la IA debe emitir midi.clip.create nota-a-nota (1 pista por turno).
+    try {
+      const { getAgentDoc, PLAN_SLUG, writeAgentDoc, setMarkdownSection } = await import('../agent-docs')
+      const projectId = tienda.obtenerEstado().project.id
+      const prev = getAgentDoc(projectId, PLAN_SLUG)?.content ?? '# Plan\n'
+      const tasks = created
+        .filter((r) => spec.tracks[r.specIndex]?.tipo !== 'audio')
+        .map((r) => {
+          const t = spec.tracks[r.specIndex]!
+          return `- [ ] MIDI nota-a-nota pista «${t.nombre}» (${r.trackId}) · rol ${t.rol} · ${spec.keyLabel} · ${spec.bpm} BPM · secciones según Intención`
+        })
+      let next = setMarkdownSection(
+        prev,
+        'Intención',
+        `${spec.nombre} · ${spec.keyLabel} · ${spec.bpm} BPM · ${spec.minutes} min · MIDI por IA (clip→notas).\n`,
+      )
+      next = setMarkdownSection(
+        next,
+        'Por implementar',
+        `${tasks.join('\n')}\n- [ ] Escuchar cada clip (transport) antes de dar por buena la pista\n- [ ] Mezcla / sends / bounce\n`,
+      )
+      writeAgentDoc(projectId, PLAN_SLUG, next, { origin: 'ai' })
+    } catch {
+      /* docs opcionales */
     }
-    if ((g === 'worship' || g === 'gospel') && String(t.rol) === 'drums') {
-      // kits más abiertos / less busy vía density del plan
+    setStage(
+      stages,
+      'midi',
+      'ok',
+      `Pendiente IA: ${created.filter((r) => spec.tracks[r.specIndex]?.tipo !== 'audio').length} pistas · 1 pista/turno · midi.clip.create con notas[]`,
+    )
+  } else {
+    for (const row of created) {
+      const t = spec.tracks[row.specIndex]!
+      if (t.tipo === 'audio') continue
+      let art = articulationOf(String(t.rol), t.articulacion ? String(t.articulacion) : undefined)
+      const g = String(spec.genero ?? '').toLowerCase()
+      if ((g === 'worship' || g === 'gospel' || /worship|alabanza/.test(opts.prompt)) && String(t.rol) === 'guitar') {
+        art = 'arp' // fingerpicking suave
+      }
+      if ((g === 'worship' || g === 'gospel') && String(t.rol) === 'drums') {
+        // kits más abiertos / less busy vía density del plan
+      }
+      const brief = parseMidiBriefFromText(`${opts.prompt} ${spec.genero ?? ''} ${t.rol} ${t.nombre}`, spec.bpm)
+      brief.articulation = art
+      brief.minutes = midiMinutes
+      brief.keyRoot = spec.keyRoot
+      brief.scale = spec.scale
+      brief.keyLabel = spec.keyLabel
+      brief.degrees = spec.degrees.length ? spec.degrees : brief.degrees
+      if (g === 'worship' || g === 'gospel') {
+        brief.velocityBase = Math.min(brief.velocityBase, 96)
+        brief.velocityAccent = Math.min(brief.velocityAccent ?? 112, 112)
+      }
+      const song = composeMidiFromBrief(brief, {
+        bpm: spec.bpm,
+        seed: hashSeed(`${spec.nombre}|${t.nombre}|${art}|${spec.genero ?? ''}|ai-form`),
+        barPlan,
+        aiDirected: !spec.usedHeuristicFallback || !!aiPartial,
+      })
+      clipNotes.push({ trackName: t.nombre, rol: String(t.rol), notes: song.notes })
+      await tienda.executor.execute('midi.clip.create', {
+        pistaId: row.trackId,
+        nombre: t.nombre,
+        inicio: 0,
+        duracion: song.durationBeats,
+        notas: song.notes,
+      })
     }
-    const brief = parseMidiBriefFromText(`${opts.prompt} ${spec.genero ?? ''} ${t.rol} ${t.nombre}`, spec.bpm)
-    brief.articulation = art
-    brief.minutes = midiMinutes
-    brief.keyRoot = spec.keyRoot
-    brief.scale = spec.scale
-    brief.keyLabel = spec.keyLabel
-    brief.degrees = spec.degrees.length ? spec.degrees : brief.degrees
-    if (g === 'worship' || g === 'gospel') {
-      brief.velocityBase = Math.min(brief.velocityBase, 96)
-      brief.velocityAccent = Math.min(brief.velocityAccent ?? 112, 112)
-    }
-    const song = composeMidiFromBrief(brief, {
-      bpm: spec.bpm,
-      seed: hashSeed(`${spec.nombre}|${t.nombre}|${art}|${spec.genero ?? ''}|ai-form`),
-      barPlan,
-      aiDirected: !spec.usedHeuristicFallback || !!aiPartial,
-    })
-    clipNotes.push({ trackName: t.nombre, rol: String(t.rol), notes: song.notes })
-    await tienda.executor.execute('midi.clip.create', {
-      pistaId: row.trackId,
-      nombre: t.nombre,
-      inicio: 0,
-      duracion: song.durationBeats,
-      notas: song.notes,
-    })
+    const midiIssues = validateBuildNotes(clipNotes, spec.keyRoot, spec.scale)
+    issues.push(...midiIssues)
+    const midiErrors = midiIssues.filter((i) => i.severity === 'error')
+    setStage(
+      stages,
+      'midi',
+      midiErrors.length ? 'fail' : 'ok',
+      midiErrors.length
+        ? midiErrors.map((i) => i.message).join('; ')
+        : `${clipNotes.reduce((n, c) => n + c.notes.length, 0)} notas · ${midiIssues.filter((i) => i.severity === 'warn').length} avisos`,
+    )
   }
-  const midiIssues = validateBuildNotes(clipNotes, spec.keyRoot, spec.scale)
-  issues.push(...midiIssues)
-  const midiErrors = midiIssues.filter((i) => i.severity === 'error')
-  setStage(
-    stages,
-    'midi',
-    midiErrors.length ? 'fail' : 'ok',
-    midiErrors.length
-      ? midiErrors.map((i) => i.message).join('; ')
-      : `${clipNotes.reduce((n, c) => n + c.notes.length, 0)} notas · ${midiIssues.filter((i) => i.severity === 'warn').length} avisos`,
-  )
 
   setStage(stages, 'mix', 'running')
   let reverbBusId: string | undefined

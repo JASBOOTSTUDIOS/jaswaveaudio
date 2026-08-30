@@ -75,6 +75,24 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     examplePayload: { mode: 'toggle' },
   },
   {
+    type: 'midi.notes.get',
+    kind: 'agent',
+    description: 'Lee notas de un clip MIDI (solo lectura)',
+    examplePayload: { clipId: '…', pistaId: '…', limit: 64 },
+  },
+  {
+    type: 'midi.getClipSummary',
+    kind: 'agent',
+    description: 'Resumen compacto de un clip MIDI',
+    examplePayload: { clipId: '…' },
+  },
+  {
+    type: 'midi.notes.dedupe',
+    kind: 'agent',
+    description: 'Elimina notas duplicadas (mismo pitch+inicio) en un clip',
+    examplePayload: { pistaId: '…', clipId: '…' },
+  },
+  {
     type: 'plugin.lookup',
     kind: 'agent',
     description: 'Busca VST en catálogo/web',
@@ -296,6 +314,7 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'midi.setVelocity',
   'midi.deleteNotes',
   'midi.createNotes',
+  'midi.notes.dedupe',
   'midi.makeStaccato',
   'midi.makeLegato',
   'midi.repeatPattern',

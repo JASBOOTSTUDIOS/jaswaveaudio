@@ -323,7 +323,18 @@ function isHostDeadLoadError(msg: string): boolean {
 }
 
 function isQuarantineLoadError(msg: string): boolean {
-  return /tumbó el Plugin Host|plugin-crash-quarantine|PluginCrashedHost|se aísla/i.test(msg)
+  return /tumbó el Plugin Host|plugin-crash-quarantine|PluginCrashedHost|se aísla|skip \(cuarentena\)/i.test(
+    msg,
+  )
+}
+
+export function isVstQuarantineError(msg: string): boolean {
+  return isQuarantineLoadError(msg)
+}
+
+/** Tras audio.clearQuarantine: permite reintentar load sin spam de consola. */
+export function clearVstQuarantineWarnCache(): void {
+  quarantineWarned.clear()
 }
 
 export async function ensureTrackVstPlugin(

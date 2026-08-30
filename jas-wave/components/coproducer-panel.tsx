@@ -2,6 +2,8 @@ import {
   ArrowUp,
   Check,
   Copy,
+  GitCompare,
+  Hammer,
   Loader2,
   Quote,
   Square,
@@ -13,9 +15,15 @@ import {
   Trash2,
   MessageSquarePlus,
 } from 'lucide-react'
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useDAWState, useDAW } from '@/src/context/daw-context'
-import { answerLocalReadQuery } from '@/src/lib/ai-read-context'
+import {
+  answerLocalReadQuery,
+  buildMidiAuditReport,
+  buildMidiAuditFixActions,
+  buildMidiAuditClarifications,
+  isGarbageAssistantReply,
+} from '@/src/lib/ai-read-context'
 import {
   loadAiSettings,
   getActiveProvider,
@@ -23,6 +31,9 @@ import {
   toAiChatPayload,
   toAiHealthPayload,
   providerReasoningPaceMs,
+  aiChatWithFallback,
+  selectCatalogModel,
+  saveAiSettings,
 } from '@/src/lib/ai-settings'
 import {
   buildAgentSystemPrompt,
@@ -46,6 +57,40 @@ import {
 } from '@/src/lib/ai-action-policy'
 import { buildHarnessHealthContext } from '@/src/lib/agent-audit-bridge'
 import {
+  ASK_AI_SELECTION_EVENT,
+  clearMusicalSelectionAnchor,
+  formatMusicalSelectionForPrompt,
+  getMusicalSelectionAnchor,
+  selectionChipInsertText,
+  subscribeMusicalSelection,
+} from '@/src/lib/ai-selection-context'
+import {
+  assistantAskedUserToWriteOptions,
+  extractGenreFromClarifyText,
+  extractMinutesFromClarifyText,
+  formatClarificationAnswersForPrompt,
+  isAffirmativeBuildIntent,
+  isClarificationReply,
+  isMidiAuditFixReply,
+  isMidiAuditSkipFixReply,
+  mustForceMusicBuild,
+  resolveClarificationsFromAssistant,
+  stripProseClarifyLists,
+  type ClarificationQuestion,
+} from '@/src/lib/ai-clarify'
+import {
+  AGENT_MODE_META,
+  detectAgentMode,
+  inferBpmFromTempoIntent,
+  isProjectAuditIntent,
+  isSongRefineIntent,
+  isTempoOnlyRefine,
+  loadAgentMode,
+  saveAgentMode,
+  wantsFullProject,
+  type AgentMode,
+} from '@/src/lib/ai-modes'
+import {
   buildAssembledAgentContext,
   endCoproducerSession,
   startCoproducerSession,
@@ -61,7 +106,14 @@ import {
   enqueueAgentJob,
   planHasPendingTasks,
   registerAgentJobRunner,
+  cancelAgentJobs,
 } from '@/src/lib/agent-job-queue'
+import {
+  buildChecklistFromActions,
+  parseChecklistFromText,
+  stripChecklistBlock,
+  type AgentChecklist,
+} from '@/src/lib/ai-agent-checklist'
 import {
   runHarnessUntilPlanComplete,
   stashHarnessJobContext,
@@ -69,6 +121,8 @@ import {
 } from '@/src/lib/agent-harness-job-runner'
 import { appendAiDawAudit } from '@/src/lib/ai-daw-audit-store'
 import { PendingActionsCard } from '@/components/pending-actions-card'
+import { AgentChecklistCard } from '@/components/agent-checklist-card'
+import { ClarificationCard } from '@/components/clarification-card'
 import { RevertTurnButton, TurnCertifyBadges } from '@/components/turn-verify-ui'
 import { DestructiveConfirmCard } from '@/components/destructive-confirm-card'
 import { AiAuditPanel } from '@/components/ai-audit-panel'
@@ -89,14 +143,6 @@ import {
   type Mentionable,
 } from '@/src/lib/ai-mentions'
 import type { ProjectPlanData } from '@/src/lib/project-plan'
-import {
-  AGENT_MODE_META,
-  detectAgentMode,
-  loadAgentMode,
-  saveAgentMode,
-  wantsFullProject,
-  type AgentMode,
-} from '@/src/lib/ai-modes'
 import { specToProjectPlan } from '@/src/lib/music-build'
 import type { MusicBuildResult } from '@/src/lib/music-build/types'
 import { copyTextToClipboard } from '@/src/lib/copy-text'
@@ -289,7 +335,7 @@ function resultsOrPending(out: ProcessActionsOutcome): ActionResult[] {
   }))
 }
 
-/** Gate por modo: plan/think → pending; create → confirm destructivas; resto ejecuta. */
+/** Gate: mutaciones siempre van a propuesta (Aplicar) salvo READ_ONLY vacío. */
 async function processActionsForMode(opts: {
   tienda: TiendaDAW
   actions: DawAction[]
@@ -313,7 +359,14 @@ async function processActionsForMode(opts: {
     })
   }
 
-  if (modeBlocksMutation(resolvedMode) || autonomyBlocksMutation()) {
+  // Confirm-before-apply: plan/think/ask O create — mutaciones → pending + diff (como Cursor).
+  const proposeFirst =
+    modeBlocksMutation(resolvedMode) ||
+    autonomyBlocksMutation() ||
+    resolvedMode === 'create' ||
+    resolvedMode === 'auto'
+
+  if (proposeFirst) {
     const readonly = actions.filter((a) => !isMutatingAction(a))
     const pending = actions.filter(isMutatingAction)
     let results: ActionResult[] = []
@@ -340,6 +393,8 @@ async function processActionsForMode(opts: {
         status: preview.ok ? 'executed' : 'failed',
         result: { success: preview.ok, message: previewSummary || 'preview' },
       })
+      const { publishMidiProposalFromActions } = await import('@/src/lib/ai-midi-proposal-store')
+      publishMidiProposalFromActions(pending, { messageId })
     }
     for (const a of pending) {
       appendAiDawAudit({
@@ -347,7 +402,7 @@ async function processActionsForMode(opts: {
         tool: a.type,
         params: { ...(a.payload ?? {}) },
         status: 'skipped_by_mode',
-        result: { success: false, message: 'Pendiente de Construir' },
+        result: { success: false, message: 'Pendiente de Aplicar' },
       })
     }
     const actionStatuses: Record<string, 'pending' | 'accepted' | 'rejected'> = {}
@@ -447,9 +502,13 @@ export function CoProducerPanel() {
   const [harnessPhase, setHarnessPhase] = useState('')
   const [copiedMsgId, setCopiedMsgId] = useState('')
   const [citedIds, setCitedIds] = useState<string[]>([])
+  const [selectionLabel, setSelectionLabel] = useState(() => getMusicalSelectionAnchor()?.label ?? '')
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  /** Incrementa al detener para invalidar turnos en vuelo. */
+  const genEpochRef = useRef(0)
+  const liveAssistantMsgIdRef = useRef<string | null>(null)
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -459,6 +518,36 @@ export function CoProducerPanel() {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }, [inputMessage])
 
+  useEffect(() => subscribeMusicalSelection(() => {
+    setSelectionLabel(getMusicalSelectionAnchor()?.label ?? '')
+  }), [])
+
+  useEffect(() => {
+    const onAsk = () => {
+      requestOpenTool('coproducer', { zone: 'left' })
+      const a = getMusicalSelectionAnchor()
+      if (!a || a.notes.length === 0) {
+        inputRef.current?.focus()
+        return
+      }
+      setSelectionLabel(a.label)
+      setInputMessage((prev) => {
+        const chip = selectionChipInsertText(a)
+        if (prev.includes('[selección:')) return prev
+        return `${chip}${prev}`
+      })
+      window.setTimeout(() => {
+        const el = inputRef.current
+        if (!el) return
+        el.focus()
+        const pos = el.value.length
+        el.setSelectionRange(pos, pos)
+      }, 50)
+    }
+    window.addEventListener(ASK_AI_SELECTION_EVENT, onAsk)
+    return () => window.removeEventListener(ASK_AI_SELECTION_EVENT, onAsk)
+  }, [])
+
   const dawStore = useDAW()
   const projectId = useDAWState((state) => state.project?.id || 'default')
   const projectName = useDAWState((state) => state.project?.nombre || 'Nuevo Proyecto')
@@ -467,6 +556,19 @@ export function CoProducerPanel() {
     conversation.projectId === projectId
       ? conversation.messages.filter((m) => m.role === 'user' || m.role === 'assistant')
       : []
+  const pendingProposal = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]!
+      if (m.pendingActions?.status === 'pending' && m.pendingActions.actions.length) {
+        return {
+          messageId: m.id,
+          count: m.pendingActions.actions.length,
+          cardId: `pending-actions-${m.id}`,
+        }
+      }
+    }
+    return null
+  }, [messages])
   const citedMessages = citedIds
     .map((id) => messages.find((m) => m.id === id))
     .filter((m): m is StoredChatMessage => Boolean(m))
@@ -687,7 +789,29 @@ export function CoProducerPanel() {
   }
 
   const stopGeneration = () => {
+    const msgId = liveAssistantMsgIdRef.current
+    const convId = conversation.id
     abortRef.current?.abort()
+    cancelAgentJobs()
+    genEpochRef.current += 1
+    abortRef.current = null
+    setIsGenerating(false)
+    setHarnessPhase('')
+    if (msgId) {
+      const before = getConversation(convId)
+      const msg = before?.messages.find((m) => m.id === msgId)
+      const checklist =
+        msg?.agentChecklist?.status === 'active'
+          ? { ...msg.agentChecklist, status: 'stopped' as const }
+          : msg?.agentChecklist
+      patchMessage(convId, msgId, {
+        content: '⏹ Ejecución detenida.',
+        ...(checklist ? { agentChecklist: checklist } : {}),
+      })
+      const refreshed = getConversation(convId)
+      if (refreshed) setConversation(refreshed)
+    }
+    liveAssistantMsgIdRef.current = null
   }
 
   const copyChatMessage = async (msg: StoredChatMessage) => {
@@ -703,20 +827,25 @@ export function CoProducerPanel() {
     }, 1600)
   }
 
-  const handleSendMessage = async () => {
-    if (!inputMessage.trim() || isGenerating) return
+  const handleSendMessage = async (overrideText?: string) => {
+    const rawInput = (overrideText ?? inputMessage).trim()
+    if (!rawInput || isGenerating) return
 
-    const userText = inputMessage.trim()
+    const userText = rawInput
     const stateForCite = dawStore.obtenerEstado()
     const cited = collectCitedMessages(userText, citedIds, stateForCite, messages)
-    setInputMessage('')
+    if (!overrideText) setInputMessage('')
+    else setInputMessage('')
     setCitedIds([])
     const ac = new AbortController()
     abortRef.current = ac
+    const myEpoch = genEpochRef.current
+    const stillMine = () => myEpoch === genEpochRef.current && !ac.signal.aborted
     setHarnessPhase('Trabajando en el DAW…')
 
     const userMsgId = newMsgId('user')
     const assistantMsgId = newMsgId('asst')
+    liveAssistantMsgIdRef.current = assistantMsgId
 
     appendMessage(conversation.id, {
       id: userMsgId,
@@ -741,6 +870,8 @@ export function CoProducerPanel() {
       let modelRaw = ''
       let pendingActions: StoredChatMessage['pendingActions']
       let confirmActions: StoredChatMessage['confirmActions']
+      let clarifications: StoredChatMessage['clarifications']
+      let agentChecklist: AgentChecklist | undefined
       let ranMutations = false
       let parsedPlanForDocs: ProjectPlanData | null = null
       let finalReasoningSteps: StoredChatMessage['reasoningSteps']
@@ -750,8 +881,41 @@ export function CoProducerPanel() {
       let turnCertify: StoredChatMessage['certify']
       const turnMeta: { undo?: number; diff?: string } = {}
       const resolvedMode = detectAgentMode(userText, agentMode)
+      const auditIntent = isProjectAuditIntent(userText)
+      const midiAuditReport = auditIntent ? buildMidiAuditReport(state) : ''
+      const wantsAuditFix =
+        isMidiAuditFixReply(userText) ||
+        (/^arr[eé]glalo\b/i.test(userText.trim()) && !auditIntent)
 
-      if (!local) {
+      // Respuesta al formulario de auditoría / «arréglalo» → propuesta Aplicar (sin musicBuild)
+      if (wantsAuditFix && !isMidiAuditSkipFixReply(userText)) {
+        const fixes = buildMidiAuditFixActions(state)
+        if (fixes.length) {
+          setHarnessPhase('Preparando arreglo de duplicados…')
+          const out = await processActionsForMode({
+            tienda: dawStore,
+            actions: fixes,
+            resolvedMode: 'create',
+            userText,
+            conversationId: conversation.id,
+            messageId: assistantMsgId,
+            source: 'fallback',
+          })
+          pendingActions = out.pendingActions
+          confirmActions = out.confirmActions
+          lastResults = out.results
+          absorbTurnMeta(out, turnMeta)
+          actionsSummary = formatActionResultsForUser(resultsOrPending(out))
+          accumulated = [
+            `Listo: **${fixes.length}** acción(es) para quitar duplicados.`,
+            'Revisa la tarjeta abajo y pulsa **Aplicar seleccionadas**.',
+          ].join('\n')
+        } else {
+          accumulated = 'No hay clips con duplicados detectados para arreglar ahora.'
+        }
+      } else if (isMidiAuditSkipFixReply(userText)) {
+        accumulated = 'De acuerdo — dejo el proyecto como está. El informe anterior sigue válido.'
+      } else if (!local) {
         if (!window.electron?.aiChat) {
           // Sin Electron: si pide crear, ejecutamos igual en el DAW local
           const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
@@ -780,7 +944,8 @@ export function CoProducerPanel() {
             ].join('\n\n')
           } else {
             accumulated =
-              answerLocalReadQuery(state, userText) ??
+              midiAuditReport ||
+              answerLocalReadQuery(state, userText) ||
               formatAiUserError({
                 error: 'No hay modelo remoto disponible.',
                 errorCode: 'not_available',
@@ -795,10 +960,19 @@ export function CoProducerPanel() {
             .filter((m) => m.role === 'user' || m.role === 'assistant')
             .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 
-          setHarnessPhase('Razonamiento 1/6…')
+          setHarnessPhase('Razonamiento 1/7…')
           const { runAgentReasoningForTurn } = await import('@/src/lib/agent-reasoning-bridge')
-          const cfg = loadAiSettings()
-          const provider = getActiveProvider(cfg)
+          let cfg = loadAiSettings()
+          let provider = getActiveProvider(cfg)
+
+          const rememberWorkingModel = (usedProviderId?: string, usedModel?: string, fallbackUsed?: boolean) => {
+            if (!fallbackUsed || !usedProviderId || !usedModel) return
+            const next = selectCatalogModel(loadAiSettings(), usedProviderId, usedModel)
+            saveAiSettings(next)
+            window.dispatchEvent(new CustomEvent('jaswave-ai-settings-changed'))
+            cfg = next
+            provider = getActiveProvider(cfg)
+          }
 
           const reasoning = await runAgentReasoningForTurn({
             tienda: dawStore,
@@ -807,6 +981,14 @@ export function CoProducerPanel() {
             resolvedMode,
             chatTurns,
             libraryPresetsBlock: presetsBlock,
+            projectContextExtra: midiAuditReport
+              ? [
+                  '## Informe técnico local (datos reales del DAW — ancla obligatoria)',
+                  midiAuditReport,
+                  'Razona como productor sobre ESTOS hallazgos. No inventes clips ni ignores duplicados/largos.',
+                  'En el turno final: explica en prosa + prioriza; no respondas solo con ¡¡¡.',
+                ].join('\n')
+              : undefined,
             abort: ac.signal,
             paceBetweenPhasesMs: providerReasoningPaceMs(provider.kind),
             onPhaseLabel: (label) => setHarnessPhase(label),
@@ -818,23 +1000,59 @@ export function CoProducerPanel() {
               if (after) setConversation(after)
             },
             chatFn: async (reasonMessages) => {
-              if (ac.signal.aborted) return { success: false }
-              const r = await window.electron!.aiChat!(
-                toAiChatPayload(provider, reasonMessages, {
-                  temperature: Math.max(cfg.temperature, 0.4),
-                  maxTokens: 2048,
-                }),
+              if (!stillMine()) return { success: false }
+              cfg = loadAiSettings()
+              const fallbackPromise = aiChatWithFallback(
+                (req) => window.electron!.aiChat!(req),
+                reasonMessages,
+                {
+                  temperature: Math.min(0.85, Math.max(cfg.temperature, 0.55)),
+                  maxTokens: 1024,
+                  settings: cfg,
+                  abort: ac.signal,
+                  onAttempt: ({ label, index, total }) => {
+                    if (total > 1 && index > 0) {
+                      setHarnessPhase(`Reintentando ${index + 1}/${total}: ${label}`)
+                    }
+                  },
+                },
               )
-              return { success: Boolean(r.success), content: r.content }
+              const abortPromise = new Promise<{ success: false }>((resolve) => {
+                if (ac.signal.aborted) {
+                  resolve({ success: false })
+                  return
+                }
+                ac.signal.addEventListener('abort', () => resolve({ success: false }), { once: true })
+              })
+              const r = await Promise.race([fallbackPromise, abortPromise])
+              if (!stillMine()) return { success: false }
+              if ('fallbackUsed' in r) {
+                rememberWorkingModel(r.usedProviderId, r.usedModel, r.fallbackUsed)
+              }
+              return {
+                success: Boolean(r.success),
+                content: 'content' in r ? r.content : undefined,
+              }
             },
           })
+          if (!stillMine()) throw new DOMException('Aborted', 'AbortError')
           finalReasoningSteps = reasoning.steps.map((s) => ({ ...s, collapsed: true }))
 
           const systemContext = [
             buildAssembledAgentContext(dawStore, state, userText, chatTurns, presetsBlock),
+            formatMusicalSelectionForPrompt(getMusicalSelectionAnchor()),
             getToolRegistryPromptFragment(dawStore),
             buildAgentSystemPrompt(state, userText, agentMode, messages),
-          ].join('\n\n')
+            midiAuditReport
+              ? [
+                  '## Informe técnico local (datos reales)',
+                  midiAuditReport,
+                  'Responde al usuario como productor usando estos datos. Si propones ACTIONS, que sean propuestas para Aplicar.',
+                ].join('\n')
+              : '',
+          ]
+            .filter(Boolean)
+            .join('\n\n')
           const think = resolvedMode === 'think' || resolvedMode === 'ask'
           const modelUser = formatUserTurnWithCitations(reasoning.finalUserMessage, cited)
           const prior = historyWithCitedPins(refreshed?.messages ?? messages, cited, [
@@ -843,35 +1061,83 @@ export function CoProducerPanel() {
           ])
 
           try {
-            const result = await window.electron.aiChat(
-              toAiChatPayload(
-                provider,
-                [
-                  { role: 'system', content: systemContext },
-                  ...prior,
-                  { role: 'user', content: modelUser },
-                ],
-                { temperature: think ? Math.max(cfg.temperature, 0.55) : cfg.temperature, maxTokens: Math.max(cfg.maxTokens, think ? 16384 : 8192) },
-              ),
+            if (!stillMine()) throw new DOMException('Aborted', 'AbortError')
+            cfg = loadAiSettings()
+            provider = getActiveProvider(cfg)
+            const finalAbort = new Promise<{ success: false; content?: string }>((resolve) => {
+              if (ac.signal.aborted) {
+                resolve({ success: false })
+                return
+              }
+              ac.signal.addEventListener('abort', () => resolve({ success: false }), { once: true })
+            })
+            const finalChatPromise = aiChatWithFallback(
+              (req) => window.electron!.aiChat!(req),
+              [
+                { role: 'system', content: systemContext },
+                ...prior,
+                { role: 'user', content: modelUser },
+              ],
+              {
+                temperature: think ? Math.max(cfg.temperature, 0.55) : cfg.temperature,
+                maxTokens: Math.max(cfg.maxTokens, think ? 16384 : 8192),
+                settings: cfg,
+                abort: ac.signal,
+                onAttempt: ({ label, index, total }) => {
+                  if (index === 0) setHarnessPhase(`Consultando ${label}…`)
+                  else setHarnessPhase(`Modelo sin respuesta → ${label} (${index + 1}/${total})`)
+                },
+              },
             )
+            const result = await Promise.race([finalChatPromise, finalAbort])
+            if (!stillMine()) throw new DOMException('Aborted', 'AbortError')
+            if ('fallbackUsed' in result) {
+              rememberWorkingModel(result.usedProviderId, result.usedModel, result.fallbackUsed)
+              if (result.fallbackUsed && result.usedModel) {
+                setHarnessPhase(`Respondió con ${result.usedModel}`)
+              }
+            }
 
             if (result.success && result.content?.trim()) {
               const raw = result.content
               modelRaw = raw
-              let actions = parseActionsFromText(raw)
+              let actions = parseActionsFromText(raw).filter(
+                (a) => typeof a.type === 'string' && /^[a-z0-9]+(\.[a-z0-9]+)+$/i.test(a.type),
+              )
+              let clarifyQs = resolveClarificationsFromAssistant(raw)
+              // Modelo pidió opciones en prosa (sin bloque CLARIFY válido) → fallo de protocolo
+              if (assistantAskedUserToWriteOptions(raw) && clarifyQs.length === 0) {
+                clarifyQs = []
+              }
+              const forceBuild =
+                mustForceMusicBuild(userText) ||
+                (isSongRefineIntent(userText) && !isTempoOnlyRefine(userText)) ||
+                assistantAskedUserToWriteOptions(raw) ||
+                messages.some(
+                  (m) =>
+                    m.clarifications?.status === 'answered' ||
+                    m.clarifications?.status === 'skipped',
+                )
+              // Tras respuestas / créalo / refinar / ya aclarado: NUNCA otra ronda de preguntas
+              if (forceBuild) clarifyQs = []
+
               const parsedPlan = parsePlanFromText(raw)
               if (parsedPlan) parsedPlanForDocs = parsedPlan
               if (parsedPlan && !actions.some((a) => a.type === 'daw.composeProject' || a.type === 'daw.musicBuild')) {
-                if (wantsFullProject(userText)) {
+                if (wantsFullProject(userText) || forceBuild) {
+                  const bpmHint =
+                    inferBpmFromTempoIntent(userText, state.project?.bpm?.valor ?? 120) ??
+                    parsedPlan.bpm
                   actions = [
                     {
                       type: 'daw.musicBuild',
                       payload: {
-                        aplicar: resolvedMode === 'create',
+                        aplicar: true,
                         prompt: userText,
                         nombre: parsedPlan.nombre,
-                        bpm: parsedPlan.bpm,
+                        bpm: bpmHint,
                         minutos: parsedPlan.minutes,
+                        midiSource: 'ai',
                       },
                     },
                     ...actions,
@@ -894,39 +1160,188 @@ export function CoProducerPanel() {
                   ]
                 }
               }
-              if (actions.length === 0) {
-                actions = fallbackActionsFromUserIntent(userText, state, agentMode)
+              if (actions.length === 0 && clarifyQs.length === 0) {
+                actions = fallbackActionsFromUserIntent(userText, state, forceBuild ? 'create' : agentMode)
+              }
+              if (actions.length === 0 && forceBuild) {
+                const mins = extractMinutesFromClarifyText(userText)
+                const genero = extractGenreFromClarifyText(userText)
+                const bpm =
+                  inferBpmFromTempoIntent(userText, state.project?.bpm?.valor ?? 120) ?? 72
+                actions = [
+                  {
+                    type: 'project.setBpm',
+                    payload: { bpm },
+                  },
+                  {
+                    type: 'daw.musicBuild',
+                    payload: {
+                      aplicar: true,
+                      prompt: isClarificationReply(userText)
+                        ? `Canción según plan.md y respuestas: ${userText.slice(0, 1200)}`
+                        : userText,
+                      minutos: mins ?? 3,
+                      ...(genero ? { genero } : {}),
+                      midiSource: 'ai',
+                      bpm,
+                    },
+                  },
+                ]
+              }
+              if (
+                actions.length === 0 &&
+                clarifyQs.length > 0 &&
+                (wantsFullProject(userText) || resolvedMode === 'create') &&
+                !forceBuild
+              ) {
+                // Una sola ronda de tarjeta; esperar Enviar respuestas
+              } else if (actions.length === 0 && clarifyQs.length === 0 && wantsFullProject(userText)) {
+                actions = fallbackActionsFromUserIntent(userText, state, 'create')
+              }
+              // Si el modelo inventó ACTIONS inválidas pero hay forceBuild, garantizar musicBuild
+              if (forceBuild && !actions.some((a) => a.type === 'daw.musicBuild' || a.type === 'project.setBpm')) {
+                const mins = extractMinutesFromClarifyText(userText)
+                const genero = extractGenreFromClarifyText(userText)
+                const bpm =
+                  inferBpmFromTempoIntent(userText, state.project?.bpm?.valor ?? 120) ?? 72
+                actions = [
+                  { type: 'project.setBpm', payload: { bpm } },
+                  {
+                    type: 'daw.musicBuild',
+                    payload: {
+                      aplicar: true,
+                      prompt: userText.slice(0, 1500),
+                      minutos: mins ?? 3,
+                      ...(genero ? { genero } : {}),
+                      midiSource: 'ai',
+                      bpm,
+                    },
+                  },
+                  ...actions,
+                ]
+              }
+              // Solo tempo: si el modelo no emitió nada útil, bajar/subir BPM
+              if (
+                isTempoOnlyRefine(userText) &&
+                !actions.some((a) => a.type === 'project.setBpm')
+              ) {
+                const bpm =
+                  inferBpmFromTempoIntent(userText, state.project?.bpm?.valor ?? 120) ?? 72
+                actions = [{ type: 'project.setBpm', payload: { bpm } }, ...actions]
+                clarifyQs = []
+              }
+              // Refinar tempo+estilo: asegurar setBpm; corregir musicBuild a 120 si pidió más lenta
+              if (isSongRefineIntent(userText) && !isTempoOnlyRefine(userText)) {
+                const bpm =
+                  inferBpmFromTempoIntent(userText, state.project?.bpm?.valor ?? 120) ?? 72
+                if (!actions.some((a) => a.type === 'project.setBpm')) {
+                  actions = [{ type: 'project.setBpm', payload: { bpm } }, ...actions]
+                }
+                actions = actions.map((a) => {
+                  if (a.type !== 'daw.musicBuild') return a
+                  const p = (a.payload ?? {}) as Record<string, unknown>
+                  const modelBpm = typeof p.bpm === 'number' ? p.bpm : null
+                  if (modelBpm != null && modelBpm <= 100) return a
+                  return { ...a, payload: { ...p, bpm, aplicar: true } }
+                })
               }
               actions = ensureMusicBuildForFullProject(actions, userText, {
-                aplicar: resolvedMode === 'create',
+                aplicar: resolvedMode === 'create' || forceBuild,
               })
 
-              let text = stripActionsBlock(raw)
-              if (actions.length > 0) {
-                const out = await processActionsForMode({
-                  tienda: dawStore,
-                  actions,
-                  resolvedMode,
-                  userText,
-                  conversationId: conversation.id,
-                  messageId: assistantMsgId,
-                  source: parseActionsFromText(raw).length ? 'model_actions' : 'fallback',
-                })
-                lastResults = out.results
-                docEdits = appendDocEdits(docEdits, out.results)
-                pendingActions = out.pendingActions
-                confirmActions = out.confirmActions
-                ranMutations = out.ranMutations
-                absorbTurnMeta(out, turnMeta)
-                actionsSummary = formatActionResultsForUser(resultsOrPending(out))
-                if (!text.trim() || /ableton|logic pro|no puedo generar|<<<ACTIONS/i.test(text)) {
-                  text = modeBlocksMutation(resolvedMode)
-                    ? 'Plan listo — revisa la propuesta y pulsa Construir si quieres aplicarla.'
-                    : 'Listo — cambios aplicados en JasWave.'
+              let text = stripProseClarifyLists(
+                stripChecklistBlock(
+                  raw
+                    .replace(/<<<ACTIONS[\s\S]*?ACTIONS>>>/gi, '')
+                    .replace(/<<<PLAN[\s\S]*?PLAN>>>/gi, '')
+                    .replace(/<<<DOC[\s\S]*?DOC>>>/gi, ''),
+                ),
+              )
+              if (
+                isGarbageAssistantReply(text) &&
+                (auditIntent || resolvedMode === 'ask' || isProjectAuditIntent(userText))
+              ) {
+                text = midiAuditReport || buildMidiAuditReport(state)
+              }
+              // Preguntas solo si aún no se respondió / no hay créalo
+              if (clarifyQs.length > 0 && !forceBuild) {
+                clarifications = { status: 'pending', questions: clarifyQs }
+                accumulated =
+                  text.trim() ||
+                  'Elige las opciones con los botones y pulsa Enviar respuestas. Si ninguna encaja, usa el campo del final.'
+              } else if (actions.length > 0) {
+                if (!stillMine()) throw new DOMException('Aborted', 'AbortError')
+                const modeForApply = forceBuild ? 'create' : resolvedMode
+                const wantStepChecklist =
+                  !modeBlocksMutation(modeForApply) &&
+                  (modeForApply === 'create' || modeForApply === 'auto' || forceBuild)
+
+                if (wantStepChecklist) {
+                  const checklist =
+                    parseChecklistFromText(raw) ?? buildChecklistFromActions(actions)
+                  const readonly = actions.filter((a) => !isMutatingAction(a))
+                  if (readonly.length) {
+                    lastResults = await executeDawActions(dawStore, readonly, {
+                      agentMode: modeForApply,
+                      forceApply: false,
+                      source: 'model_actions',
+                      conversationId: conversation.id,
+                      messageId: assistantMsgId,
+                    })
+                    docEdits = appendDocEdits(docEdits, lastResults)
+                  }
+                  if (checklist) {
+                    agentChecklist = checklist
+                    pendingActions = undefined
+                    actionsSummary = `Checklist: ${checklist.items.length} paso(s). Pulsa Continuar en cada uno.`
+                    accumulated =
+                      text.trim() ||
+                      'Tengo claro el plan. Revisa el checklist y pulsa **Continuar** para ejecutar cada paso en el DAW (sin perder el flujo).'
+                  } else {
+                    const out = await processActionsForMode({
+                      tienda: dawStore,
+                      actions,
+                      resolvedMode: modeForApply,
+                      userText,
+                      conversationId: conversation.id,
+                      messageId: assistantMsgId,
+                      source: 'model_actions',
+                    })
+                    lastResults = out.results
+                    docEdits = appendDocEdits(docEdits, out.results)
+                    pendingActions = out.pendingActions
+                    confirmActions = out.confirmActions
+                    ranMutations = out.ranMutations
+                    absorbTurnMeta(out, turnMeta)
+                    actionsSummary = formatActionResultsForUser(resultsOrPending(out))
+                    accumulated = text.trim() || 'Listo.'
+                  }
+                } else {
+                  const out = await processActionsForMode({
+                    tienda: dawStore,
+                    actions,
+                    resolvedMode: modeForApply,
+                    userText,
+                    conversationId: conversation.id,
+                    messageId: assistantMsgId,
+                    source: parseActionsFromText(raw).length ? 'model_actions' : 'fallback',
+                  })
+                  lastResults = out.results
+                  docEdits = appendDocEdits(docEdits, out.results)
+                  pendingActions = out.pendingActions
+                  confirmActions = out.confirmActions
+                  ranMutations = out.ranMutations
+                  absorbTurnMeta(out, turnMeta)
+                  actionsSummary = formatActionResultsForUser(resultsOrPending(out))
+                  if (!text.trim() || /ableton|logic pro|no puedo generar|<<<ACTIONS|<<<CLARIFY/i.test(text)) {
+                    text = out.pendingActions
+                      ? 'Listo: propuesta de Music Build. Revisa el diff y pulsa Aplicar.'
+                      : 'Listo.'
+                  }
+                  accumulated = text
                 }
-                accumulated = text
               } else {
-                accumulated = text || 'Hecho.'
+                accumulated = text.trim() || midiAuditReport || 'Hecho.'
               }
               setAiStatus('online')
               setStatusDetail('')
@@ -953,7 +1368,9 @@ export function CoProducerPanel() {
                   ? `El modelo no devolvió texto usable; dejé una propuesta lista para Construir.\n\n${actionsSummary}`
                   : `El modelo no devolvió texto usable; apliqué tu brief en el DAW.\n\n${actionsSummary}`
               } else {
-                accumulated = formatAiUserError({
+                accumulated =
+                  (auditIntent && midiAuditReport) ||
+                  formatAiUserError({
                   error: result.error || 'No se pudo obtener respuesta del modelo.',
                   errorCode: result.errorCode as import('@/src/lib/ai-settings').AiErrorCode | undefined,
                   hint: result.hint,
@@ -1000,7 +1417,45 @@ export function CoProducerPanel() {
         }
       }
 
+      // Tras auditoría: formulario + tarjeta Aplicar (dedupe) aunque el modelo solo haya razonado
+      const auditRemediationEligible =
+        (auditIntent || /Auditoría MIDI/i.test(accumulated) || Boolean(midiAuditReport)) &&
+        !wantsAuditFix &&
+        !isMidiAuditSkipFixReply(userText) &&
+        !pendingActions &&
+        !clarifications
+      if (auditRemediationEligible) {
+        const snap = dawStore.obtenerEstado()
+        const qs = buildMidiAuditClarifications(snap)
+        const fixes = buildMidiAuditFixActions(snap)
+        if (qs.length) {
+          clarifications = { status: 'pending', questions: qs as ClarificationQuestion[] }
+        }
+        if (fixes.length) {
+          setHarnessPhase('Preparando propuesta de arreglo…')
+          const out = await processActionsForMode({
+            tienda: dawStore,
+            actions: fixes as DawAction[],
+            resolvedMode: 'create',
+            userText,
+            conversationId: conversation.id,
+            messageId: assistantMsgId,
+            source: 'fallback',
+          })
+          pendingActions = out.pendingActions
+          confirmActions = out.confirmActions
+          absorbTurnMeta(out, turnMeta)
+          if (!actionsSummary) {
+            actionsSummary = formatActionResultsForUser(resultsOrPending(out))
+          }
+        }
+        if (auditIntent && midiAuditReport && !/Auditoría MIDI/i.test(accumulated)) {
+          accumulated = [accumulated, midiAuditReport].filter(Boolean).join('\n\n')
+        }
+      }
+
       const sidechainAppliedPre = lastResults.some((r) => r.type === 'sidechain.connect' && r.success)
+      if (!stillMine()) throw new DOMException('Aborted', 'AbortError')
       const certifyPre = ranMutations
         ? await runPostTurnCertifyPipeline(dawStore, lastResults, { sidechainApplied: sidechainAppliedPre })
         : null
@@ -1031,7 +1486,7 @@ export function CoProducerPanel() {
           preferModelEval: true,
         },
       )
-      if (ranMutations && planHasPendingTasks(dawStore.obtenerEstado().project.id)) {
+      if (ranMutations && !agentChecklist && planHasPendingTasks(dawStore.obtenerEstado().project.id)) {
         const harnessCtx: HarnessJobContext = {
           userText,
           initialResults: lastResults,
@@ -1269,28 +1724,43 @@ export function CoProducerPanel() {
         ...(turnCertify ? { certify: turnCertify } : {}),
         ...(turnUndoDepthAtStart != null ? { undoDepthAtStart: turnUndoDepthAtStart } : {}),
         ...(turnAppliedDiffSummary ? { appliedDiffSummary: turnAppliedDiffSummary } : {}),
+        ...(clarifications ? { clarifications } : {}),
+        ...(agentChecklist ? { agentChecklist } : {}),
       })
       const after = getConversation(conversation.id)
       if (after) setConversation(after)
       refreshHistoryList()
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
-      updateMessageContent(
-        conversation.id,
-        assistantMsgId,
-        formatAiUserError({
-          error: `Error al procesar: ${message}`,
-          errorCode: 'unknown',
-          hint: 'Inténtalo de nuevo.',
-        }),
-      )
-      const after = getConversation(conversation.id)
-      if (after) setConversation(after)
-      setStatusDetail(message)
+      const aborted =
+        (err instanceof DOMException && err.name === 'AbortError') ||
+        ac.signal.aborted ||
+        myEpoch !== genEpochRef.current
+      if (aborted) {
+        updateMessageContent(conversation.id, assistantMsgId, '⏹ Ejecución detenida.')
+        const after = getConversation(conversation.id)
+        if (after) setConversation(after)
+      } else {
+        const message = err instanceof Error ? err.message : 'Error desconocido'
+        updateMessageContent(
+          conversation.id,
+          assistantMsgId,
+          formatAiUserError({
+            error: `Error al procesar: ${message}`,
+            errorCode: 'unknown',
+            hint: 'Inténtalo de nuevo.',
+          }),
+        )
+        const after = getConversation(conversation.id)
+        if (after) setConversation(after)
+        setStatusDetail(message)
+      }
     } finally {
-      abortRef.current = null
-      setHarnessPhase('')
-      setIsGenerating(false)
+      if (myEpoch === genEpochRef.current) {
+        abortRef.current = null
+        setHarnessPhase('')
+        setIsGenerating(false)
+        liveAssistantMsgIdRef.current = null
+      }
     }
   }
 
@@ -1611,16 +2081,62 @@ export function CoProducerPanel() {
                     <ChatMarkdown text={msg.actionsSummary} />
                   </div>
                 ) : null}
+                {msg.clarifications?.questions?.length ? (
+                  <ClarificationCard
+                    questions={msg.clarifications.questions as ClarificationQuestion[]}
+                    status={msg.clarifications.status}
+                    onSubmit={(answers, formCustom) => {
+                      patchMessage(conversation.id, msg.id, {
+                        clarifications: {
+                          ...msg.clarifications!,
+                          status: 'answered',
+                        },
+                      })
+                      void handleSendMessage(
+                        formatClarificationAnswersForPrompt(
+                          msg.clarifications!.questions as ClarificationQuestion[],
+                          answers,
+                          formCustom,
+                        ),
+                      )
+                    }}
+                    onSkip={() => {
+                      patchMessage(conversation.id, msg.id, {
+                        clarifications: {
+                          ...msg.clarifications!,
+                          status: 'skipped',
+                        },
+                      })
+                      void handleSendMessage(
+                        'Usa defaults razonables según el plan y mi pedido. Emite <<<ACTIONS>>> ahora (propuesta para Aplicar). No preguntes más.',
+                      )
+                    }}
+                  />
+                ) : null}
+                {msg.agentChecklist?.items?.length ? (
+                  <AgentChecklistCard
+                    conversationId={conversation.id}
+                    messageId={msg.id}
+                    checklist={msg.agentChecklist}
+                    agentMode={agentMode}
+                    onChange={() => {
+                      const after = getConversation(conversation.id)
+                      if (after) setConversation(after)
+                    }}
+                  />
+                ) : null}
                 {msg.pendingActions ? (
                   <PendingActionsCard
                     conversationId={conversation.id}
                     messageId={msg.id}
+                    cardId={`pending-actions-${msg.id}`}
                     actions={msg.pendingActions.actions}
                     agentMode={msg.pendingActions.agentMode}
                     status={msg.pendingActions.status}
                     previewDiff={msg.pendingActions.previewDiff}
                     previewSummary={msg.pendingActions.previewSummary}
                     actionStatuses={msg.pendingActions.actionStatuses}
+                    checklistStepId={msg.pendingActions.checklistStepId}
                     onDone={() => {
                       const after = getConversation(conversation.id)
                       if (after) setConversation(after)
@@ -1718,6 +2234,42 @@ export function CoProducerPanel() {
         <div ref={messagesEndRef} />
       </div>
 
+      {pendingProposal ? (
+        <div className="flex items-center gap-2 border-t border-accent-amber/40 bg-accent-amber/10 px-3 py-2">
+          <GitCompare className="size-3.5 shrink-0 text-accent-amber" />
+          <span className="min-w-0 flex-1 truncate text-[11px] text-foreground">
+            Hay {pendingProposal.count} cambio{pendingProposal.count === 1 ? '' : 's'} por aprobar
+          </span>
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-accent-amber/50 px-2 py-1 text-[10px] font-medium text-accent-amber hover:bg-accent-amber/15"
+            onClick={() => {
+              const el = document.getElementById(pendingProposal.cardId)
+              el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            }}
+          >
+            Ver propuesta
+          </button>
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-amber px-2 py-1 text-[10px] font-semibold text-background"
+            onClick={() => {
+              const el = document.getElementById(pendingProposal.cardId)
+              el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              requestAnimationFrame(() => {
+                const applyBtn = Array.from(el?.querySelectorAll('button') ?? []).find((b) =>
+                  /Aplicar seleccionadas/i.test(b.textContent ?? ''),
+                )
+                applyBtn?.click()
+              })
+            }}
+          >
+            <Hammer className="size-3" />
+            Aplicar
+          </button>
+        </div>
+      ) : null}
+
       <div className="relative border-t border-border p-3">
         {citedMessages.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-1">
@@ -1790,8 +2342,29 @@ export function CoProducerPanel() {
             setMentionQuery(null)
             void handleSendMessage()
           }}
-          className="flex items-end gap-2 rounded-lg bg-panel-raised px-2 py-2 ring-1 ring-border focus-within:ring-2 focus-within:ring-ring"
+          className="flex flex-col gap-1.5"
         >
+          {selectionLabel ? (
+            <div className="flex items-center gap-2 rounded-md bg-accent-amber/10 px-2 py-1 text-[11px] text-foreground ring-1 ring-accent-amber/40">
+              <Quote className="size-3 shrink-0 text-accent-amber" />
+              <span className="min-w-0 flex-1 truncate" title={selectionLabel}>
+                Contexto: {selectionLabel}
+              </span>
+              <button
+                type="button"
+                className="shrink-0 text-muted-foreground hover:text-foreground"
+                title="Quitar selección del contexto"
+                onClick={() => {
+                  clearMusicalSelectionAnchor()
+                  setSelectionLabel('')
+                  setInputMessage((prev) => prev.replace(/\[selección:[^\]]*\]\s*/g, ''))
+                }}
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          ) : null}
+          <div className="flex items-end gap-2 rounded-lg bg-panel-raised px-2 py-2 ring-1 ring-border focus-within:ring-2 focus-within:ring-ring">
           <AgentModePicker value={agentMode} onChange={setAgentMode} />
           <textarea
             ref={inputRef}
@@ -1827,7 +2400,7 @@ export function CoProducerPanel() {
               }
             }}
             disabled={isGenerating}
-            placeholder="Pide un clip, o @ para pista / plugin / mensaje… (Shift+Enter nueva línea)"
+            placeholder="Pide un clip, o @ / Ctrl+L selección… (Shift+Enter nueva línea)"
             className="max-h-40 min-h-[2rem] flex-1 resize-none bg-transparent py-1 text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
           />
           {isGenerating ? (
@@ -1850,6 +2423,7 @@ export function CoProducerPanel() {
               <ArrowUp className="size-4" />
             </button>
           )}
+          </div>
         </form>
       </div>
     </aside>
