@@ -70,6 +70,7 @@ const READ_TOOLS_HELP = [
   '- plugin.lookup { nombre } | plugin.probe { pluginId? | path? | nombre? }',
   '- analysis.buffer { sampleMs? } | analysis.timing | track.getFxChain { trackId }',
   '- midi.notes.get { clipId, pistaId? } | midi.getClipSummary { clipId }  ← leer notas/resumen de un clip',
+  '- midi.clip.md.read | midi.clip.md.upsert | midi.clip.md.apply | midi.notes.compare  ← .md nota-a-nota (preferir para melodía)',
   '- web.search { query }',
   'Si el usuario ancló una selección, las notas YA vienen en el contexto: no digas que no puedes leerlas.',
   'Duplicados (mismo pitch+inicio): en el turno final usa midi.notes.dedupe { pistaId, clipId }.',

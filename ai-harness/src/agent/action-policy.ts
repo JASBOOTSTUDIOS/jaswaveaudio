@@ -29,6 +29,8 @@ export const AGENT_READ_ONLY_ACTIONS = new Set([
   'midi.notes.get',
   'midi.getNotes',
   'midi.getClipSummary',
+  'midi.clip.md.read',
+  'midi.notes.compare',
 ])
 
 export const AGENT_DOCS_WRITE_ACTIONS = new Set(['doc.create', 'doc.write', 'doc.append'])
@@ -48,6 +50,10 @@ export function isDocsWriteAction(action: AgentAction): boolean {
 }
 
 export function isPreviewOnlyAction(action: AgentAction): boolean {
+  if (action.type === 'midi.clip.md.upsert') {
+    const p = payloadOfAction(action)
+    return p.aplicar !== true && p.apply !== true
+  }
   if (
     action.type !== 'daw.musicBuild' &&
     action.type !== 'daw.composeProject' &&

@@ -594,26 +594,86 @@ export async function executeMusicBuild(
     []
 
   if (midiSource === 'ai') {
-    // Estructura lista: la IA debe emitir midi.clip.create nota-a-nota (1 pista por turno).
+    // Estructura + stubs clip-*.md: la IA escribe nota a nota en el .md (preview → apply).
+    const durationBeats = Math.max(4, maxBars * 4)
+    const seeded: Array<{ trackId: string; trackName: string; clipId: string; slug: string; rol: string }> =
+      []
     try {
-      const { getAgentDoc, PLAN_SLUG, writeAgentDoc, setMarkdownSection } = await import('../agent-docs')
+      const { writeAgentDoc, getAgentDoc, PLAN_SLUG, setMarkdownSection } = await import('../agent-docs')
+      const { emptyMidiClipMdStub, midiClipDocSlug } = await import('../midi-clip-markdown')
       const projectId = tienda.obtenerEstado().project.id
-      const prev = getAgentDoc(projectId, PLAN_SLUG)?.content ?? '# Plan\n'
-      const tasks = created
-        .filter((r) => spec.tracks[r.specIndex]?.tipo !== 'audio')
-        .map((r) => {
-          const t = spec.tracks[r.specIndex]!
-          return `- [ ] MIDI nota-a-nota pista «${t.nombre}» (${r.trackId}) · rol ${t.rol} · ${spec.keyLabel} · ${spec.bpm} BPM · secciones según Intención`
+      for (const row of created) {
+        const t = spec.tracks[row.specIndex]!
+        if (t.tipo === 'audio') continue
+        const clipRes = await tienda.executor.execute('midi.clip.create', {
+          pistaId: row.trackId,
+          nombre: `${t.nombre} · MIDI`,
+          inicio: 0,
+          duracion: durationBeats,
+          notas: [],
         })
+        const clipId =
+          clipRes.success && clipRes.result && typeof clipRes.result === 'object'
+            ? String(
+                (clipRes.result as { clipId?: string }).clipId ??
+                  (
+                    tienda
+                      .obtenerEstado()
+                      .project.tracks.find((tr) => tr.id === row.trackId)
+                      ?.clips?.slice(-1)[0] as { id?: string } | undefined
+                  )?.id ??
+                  '',
+              )
+            : String(
+                (
+                  tienda
+                    .obtenerEstado()
+                    .project.tracks.find((tr) => tr.id === row.trackId)
+                    ?.clips?.slice(-1)[0] as { id?: string } | undefined
+                )?.id ?? '',
+              )
+        if (!clipId) continue
+        const slug = midiClipDocSlug(clipId)
+        const md = emptyMidiClipMdStub({
+          clipId,
+          trackId: row.trackId,
+          nombre: `${t.nombre} · MIDI`,
+          inicio: 0,
+          duracion: durationBeats,
+          bpm: spec.bpm,
+          compas: '4/4',
+          trackName: t.nombre,
+          genero: spec.genero,
+          rol: String(t.rol),
+        })
+        writeAgentDoc(projectId, slug, md, {
+          origin: 'ai',
+          title: `Clip · ${t.nombre}`,
+          preserveUserNotes: false,
+        })
+        seeded.push({
+          trackId: row.trackId,
+          trackName: t.nombre,
+          clipId,
+          slug,
+          rol: String(t.rol),
+        })
+      }
+
+      const prev = getAgentDoc(projectId, PLAN_SLUG)?.content ?? '# Plan\n'
+      const tasks = seeded.map(
+        (s) =>
+          `- [ ] MIDI nota-a-nota en \`${s.slug}\` · pista «${s.trackName}» (${s.trackId}) clip=${s.clipId} · rol ${s.rol} · ${spec.keyLabel} · ${spec.bpm} BPM`,
+      )
       let next = setMarkdownSection(
         prev,
         'Intención',
-        `${spec.nombre} · ${spec.keyLabel} · ${spec.bpm} BPM · ${spec.minutes} min · MIDI por IA (clip→notas).\n`,
+        `${spec.nombre} · ${spec.keyLabel} · ${spec.bpm} BPM · ${spec.minutes} min · MIDI por IA vía clip-*.md (preview → Aplicar).\n`,
       )
       next = setMarkdownSection(
         next,
         'Por implementar',
-        `${tasks.join('\n')}\n- [ ] Escuchar cada clip (transport) antes de dar por buena la pista\n- [ ] Mezcla / sends / bounce\n`,
+        `${tasks.join('\n')}\n- [ ] Escuchar cada preview .md antes de Aplicar\n- [ ] Mezcla / sends / bounce\n`,
       )
       writeAgentDoc(projectId, PLAN_SLUG, next, { origin: 'ai' })
     } catch {
@@ -623,7 +683,7 @@ export async function executeMusicBuild(
       stages,
       'midi',
       'ok',
-      `Pendiente IA: ${created.filter((r) => spec.tracks[r.specIndex]?.tipo !== 'audio').length} pistas · 1 pista/turno · midi.clip.create con notas[]`,
+      `Pendiente IA: ${seeded.length || created.filter((r) => spec.tracks[r.specIndex]?.tipo !== 'audio').length} clip.md · midi.clip.md.upsert → preview → apply`,
     )
   } else {
     for (const row of created) {

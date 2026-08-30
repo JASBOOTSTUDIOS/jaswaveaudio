@@ -408,6 +408,7 @@ export function buildReadOnlyProjectContext(state: DAWState): string {
     '## Criterio de productor (obligatorio al opinar / auditar)',
     '- Mira tiempos de clip (inicio/duración/fin en beats y compás) y si las notas caben dentro.',
     '- Señala duplicados (mismo pitch+inicio), vacíos, densidades absurdas, solapes rítmicos raros.',
+    '- Autoría precisa: Docs `clip-<clipId>.md` (tabla nota a nota). Preferir midi.clip.md.upsert → preview → apply.',
     '- No inventes melodías ni «empezar en G mayor» si el usuario pidió analizar lo que YA hay.',
     '',
     'Responde en español, de forma concisa. Eres el Asistente Jas de JasWave.',

@@ -2,6 +2,18 @@
 
 Todos pasan por el **Command System** (`shared/src/commands/domain-commands.ts`) cuando el agent hace `tienda.executor.execute(...)`.
 
+## Autoría nota a nota (herramienta más precisa)
+
+| type | Payload esencial | Efecto |
+|------|------------------|--------|
+| `midi.clip.md.read` | `clipId`, `pistaId?` | Lee `clip-<id>.md` en Docs o serializa el clip del DAW |
+| `midi.clip.md.upsert` | `clipId`, `pistaId`, `markdown` o `notas[]`, `aplicar?:false` | Escribe el `.md` + **preview en chat** (no timeline) |
+| `midi.clip.md.apply` | `clipId`, `pistaId?`, `markdown?` | Parsea el `.md` → `midi.notes.set` o `midi.clip.create` |
+| `midi.notes.compare` | `clipId` + `otherClipId` o `markdown` | Diff por `id` (añadidas / quitadas / campos) |
+
+Formato del doc: frontmatter YAML + tabla `| id | pitch | name | inicio | duracion | velocidad | … |`  
+Implementación: `jas-wave/src/lib/midi-clip-markdown.ts`. Preview UI: `midi-clip-md-preview.tsx`.
+
 ## Comandos de creación / edición de notas
 
 | type | Payload esencial | Efecto |

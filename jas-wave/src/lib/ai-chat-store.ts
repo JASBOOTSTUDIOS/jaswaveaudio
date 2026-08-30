@@ -55,6 +55,29 @@ export type StoredChatMessage = {
     pistaId?: string
     applied?: boolean
   }
+  /** Preview nota-a-nota desde clip-*.md (antes de timeline). */
+  midiClipMdPreview?: {
+    kind: 'midiClipMdPreview'
+    slug: string
+    markdown: string
+    clipId: string
+    trackId: string
+    nombre: string
+    notes: Array<{
+      id?: string
+      pitch: number
+      inicio: number
+      duracion: number
+      velocidad: number
+      mute?: boolean
+    }>
+    bpm: number
+    durationBeats: number
+    instrumentoHint?: string
+    status?: 'pending' | 'applied' | 'discarded'
+    applied?: boolean
+    errors?: string[]
+  }
   projectPlan?: import('./project-plan').ProjectPlanData
   musicBuild?: import('./music-build/types').MusicBuildResult
   citedMessageIds?: string[]
@@ -237,6 +260,7 @@ export function appendMessage(
     createdAt: message.createdAt ?? Date.now(),
     actionsSummary: message.actionsSummary,
     midiPreview: message.midiPreview,
+    midiClipMdPreview: message.midiClipMdPreview,
     citedMessageIds: message.citedMessageIds,
     pendingActions: message.pendingActions,
     confirmActions: message.confirmActions,
@@ -272,6 +296,7 @@ export function updateMessageContent(
   confirmActions?: StoredChatMessage['confirmActions'],
   reasoningSteps?: StoredChatMessage['reasoningSteps'],
   docEdits?: StoredChatMessage['docEdits'],
+  midiClipMdPreview?: StoredChatMessage['midiClipMdPreview'],
 ): ChatConversation | null {
   return patchMessage(conversationId, messageId, {
     content,
@@ -283,6 +308,7 @@ export function updateMessageContent(
     ...(confirmActions !== undefined ? { confirmActions } : {}),
     ...(reasoningSteps !== undefined ? { reasoningSteps } : {}),
     ...(docEdits !== undefined ? { docEdits } : {}),
+    ...(midiClipMdPreview !== undefined ? { midiClipMdPreview } : {}),
   })
 }
 

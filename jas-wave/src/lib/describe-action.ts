@@ -103,6 +103,26 @@ export function describeActionForUser(a: DawAction): ActionDescription {
         label: joinParts(['Quitar notas duplicadas', clip || undefined, track || undefined]),
         detail: tech,
       }
+    case 'midi.clip.md.read':
+      return {
+        label: joinParts(['Leer .md del clip', clip || undefined]),
+        detail: tech,
+      }
+    case 'midi.clip.md.upsert':
+      return {
+        label: joinParts(['Proponer notas vía .md (preview)', clip || undefined, track || undefined]),
+        detail: tech,
+      }
+    case 'midi.clip.md.apply':
+      return {
+        label: joinParts(['Aplicar .md del clip a la timeline', clip || undefined]),
+        detail: tech,
+      }
+    case 'midi.notes.compare':
+      return {
+        label: joinParts(['Comparar notas (diff por id)', clip || undefined]),
+        detail: tech,
+      }
     case 'midi.notes.get':
     case 'midi.getNotes':
       return {

@@ -342,10 +342,14 @@ export function evaluatePlanAgainstDaw(md: string, state: DAWState, ctx?: PlanEv
   const ratio = planned.length ? `${doneItems.length}/${planned.length}` : '0/0'
   const summary =
     planned.length === 0
-      ? 'El plan no tiene tareas con checkbox. Añade líneas `- [ ] …` en «Por implementar».'
+      ? 'Aún no hay tareas en el plan. Añade pasos en «Por implementar».'
       : missing.length === 0
-        ? `Evaluación ${ratio}: lo planeado está cubierto en el DAW.`
-        : `Evaluación ${ratio}. Falta: ${missing.slice(0, 6).join('; ')}${missing.length > 6 ? '…' : ''}`
+        ? `Todo listo (${ratio}): lo planeado ya está en el proyecto.`
+        : `Avance ${ratio}. Pendiente: ${missing
+            .slice(0, 4)
+            .map((t) => t.replace(/\s*[·(].*$/, '').replace(/^Pista\s*[«"]?/, '').replace(/[»"].*$/, '').trim())
+            .filter(Boolean)
+            .join(', ')}${missing.length > 4 ? '…' : ''}`
 
   const evalBody = [
     `Última revisión: ${now}`,
