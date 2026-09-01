@@ -1,0 +1,270 @@
+{
+  "actions": [
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787579946853-o20jl",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787589717903-15ir8",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787589717915-1rdld",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787589717927-wmpc8",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787589717935-ib6cu",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787589717945-y6aum",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787596877285-57az9",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787596877532-3ab3f",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787596877793-avgpw",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787596877861-2zqu1",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787596877913-fb6n3",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787596982090-kcm16",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787596987458-e4kke",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787596992113-od8mj",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787596997467-m0nnv",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787597001859-y0v02",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787597013063-zk7sv",
+        "datos": {
+          "silenciada": true,
+          "volumen": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787598066918-kmzmk",
+        "datos": {
+          "nombre": "Drums BFD",
+          "volumen": 0.72,
+          "paneo": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787598067390-mu33f",
+        "datos": {
+          "nombre": "Bass",
+          "volumen": 0.68,
+          "paneo": 0
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787598067597-pddoc",
+        "datos": {
+          "nombre": "Guitarra Descent soft",
+          "volumen": 0.55,
+          "paneo": -0.25
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787598068076-ewy5m",
+        "datos": {
+          "nombre": "Guitarra ritmo soft",
+          "volumen": 0.5,
+          "paneo": 0.3
+        }
+      }
+    },
+    {
+      "type": "track.update",
+      "payload": {
+        "trackId": "1787598068550-2x94m",
+        "datos": {
+          "nombre": "Piano",
+          "volumen": 0.62,
+          "paneo": 0
+        }
+      }
+    },
+    {
+      "type": "master.update",
+      "payload": {
+        "datos": {
+          "volumen": 0.85
+        }
+      }
+    },
+    {
+      "type": "plugin.replace",
+      "payload": {
+        "trackId": "1787598066918-kmzmk",
+        "pluginInstanceId": "plugin-inst-vst3.f711ff0e-mt7lqho1",
+        "plugin": {
+          "nombre": "BFDPlayer",
+          "tipo": "instrumento"
+        }
+      }
+    },
+    {
+      "type": "plugin.replace",
+      "payload": {
+        "trackId": "1787598067597-pddoc",
+        "pluginInstanceId": "plugin-inst-vst3.7de955b0-mt7lqid1",
+        "plugin": {
+          "nombre": "DecentSampler",
+          "tipo": "instrumento"
+        }
+      }
+    },
+    {
+      "type": "plugin.replace",
+      "payload": {
+        "trackId": "1787598068076-ewy5m",
+        "pluginInstanceId": "plugin-inst-vst3.7de955b0-mt7lqito",
+        "plugin": {
+          "nombre": "DecentSampler",
+          "tipo": "instrumento"
+        }
+      }
+    }
+  ]
+}

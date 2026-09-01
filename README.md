@@ -75,6 +75,7 @@ cd jas-wave && npm run build
 ## Documentación
 
 - [`docs/HOJA-RUTA.md`](docs/HOJA-RUTA.md) — roadmap
+- [`docs/CHECKLIST-PRODUCTO.md`](docs/CHECKLIST-PRODUCTO.md) — qué falta para terminar una canción aquí
 - [`docs/00-RESUMEN-ARQUITECTURA.md`](docs/00-RESUMEN-ARQUITECTURA.md) — visión general
 - [`docs/midi-piano-roll-ai.md`](docs/midi-piano-roll-ai.md) — MIDI / piano roll AI-first
 - [`AGENTS.md`](AGENTS.md) — convenciones para agentes

@@ -16,6 +16,8 @@ import {
   type ToolId,
   type WorkspaceLayout,
 } from './types'
+import { useDAW } from '@/src/context/daw-context'
+import { resolvePianoRollClip } from '@/src/lib/selection-helpers'
 
 type WorkspaceContextValue = {
   layout: WorkspaceLayout
@@ -51,6 +53,7 @@ function stripTool(layout: WorkspaceLayout, toolId: ToolId): WorkspaceLayout {
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
+  const daw = useDAW()
   const [layout, setLayout] = useState<WorkspaceLayout>(() => loadWorkspace())
 
   useEffect(() => {
@@ -91,7 +94,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       return
     }
     ch.onmessage = (ev) => {
-      const data = ev.data as { type?: string; toolId?: string }
+      const data = ev.data as { type?: string; toolId?: string; floatHost?: string }
       if (data.type === 'dock-tool' && data.toolId && data.toolId in TOOL_CATALOG) {
         const toolId = data.toolId as ToolId
         setLayout((prev) => {
@@ -112,6 +115,34 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           closeToolWindow?: (id: string) => Promise<void>
         }
         void api?.closeToolWindow?.(toolId)
+        return
+      }
+      // Mover herramienta a una ventana flotante existente (sin abrir otra).
+      if (
+        data.type === 'steal-tool-to-float' &&
+        data.toolId &&
+        data.toolId in TOOL_CATALOG &&
+        data.floatHost
+      ) {
+        const toolId = data.toolId as ToolId
+        setLayout((prev) => {
+          const cleaned = stripTool(prev, toolId)
+          return {
+            ...cleaned,
+            undocked: cleaned.undocked.includes(toolId)
+              ? cleaned.undocked
+              : [...cleaned.undocked, toolId],
+          }
+        })
+        try {
+          ch.postMessage({
+            type: 'float-accept-tab',
+            toolId,
+            floatHost: data.floatHost,
+          })
+        } catch {
+          /* ignore */
+        }
       }
     }
     return () => ch.close()
@@ -151,26 +182,66 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const undockTool = useCallback(async (toolId: ToolId) => {
+    // Publicar estado YA (antes de abrir satélite) para que el panel flotante no arranque vacío.
+    try {
+      window.dispatchEvent(new CustomEvent('jaswave-force-daw-sync'))
+    } catch {
+      /* ignore */
+    }
     const api = window.electron as typeof window.electron & {
-      openToolWindow?: (toolId: string, title: string) => Promise<{ success: boolean }>
+      openToolWindow?: (
+        toolId: string,
+        title: string,
+        extra?: Record<string, string>,
+      ) => Promise<{ success: boolean }>
+    }
+    let title = TOOL_CATALOG[toolId].title
+    if (toolId === 'plugin-editor') {
+      try {
+        const { getPluginEditorFocus } = await import('@/src/lib/plugin/plugin-editor-store')
+        const focus = getPluginEditorFocus()
+        if (focus?.pluginName) title = focus.pluginName
+      } catch {
+        /* ignore */
+      }
+    }
+    const extra: Record<string, string> = {}
+    if (toolId === 'piano-roll' || toolId === 'score-editor') {
+      const hit = resolvePianoRollClip(daw.obtenerEstado())
+      if (hit) {
+        extra.trackId = hit.trackId
+        extra.clipId = hit.clipId
+      }
+    }
+    // Docs flotante: llevar explorador + editor juntos como tabs
+    if (toolId === 'docs' || toolId === 'docs-explorer') {
+      extra.tabs = 'docs-explorer,docs'
     }
     if (!api?.openToolWindow) {
-      // Fallback web: marca undocked y abre popup
-      const url = `${window.location.origin}${window.location.pathname}?undock=${toolId}`
+      const params = new URLSearchParams({ undock: toolId, ...extra })
+      const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`
       window.open(url, `jaswave-${toolId}`, 'width=900,height=700')
     } else {
-      await api.openToolWindow(toolId, TOOL_CATALOG[toolId].title)
+      await api.openToolWindow(toolId, title, extra)
     }
     setLayout((prev) => {
-      const cleaned = stripTool(prev, toolId)
+      let next = stripTool(prev, toolId)
+      const companions =
+        toolId === 'docs' || toolId === 'docs-explorer'
+          ? (['docs', 'docs-explorer'] as ToolId[]).filter((id) => id !== toolId)
+          : []
+      for (const c of companions) {
+        next = stripTool(next, c)
+        if (!next.undocked.includes(c)) next = { ...next, undocked: [...next.undocked, c] }
+      }
       return {
-        ...cleaned,
-        undocked: cleaned.undocked.includes(toolId)
-          ? cleaned.undocked
-          : [...cleaned.undocked, toolId],
+        ...next,
+        undocked: next.undocked.includes(toolId)
+          ? next.undocked
+          : [...next.undocked, toolId],
       }
     })
-  }, [])
+  }, [daw])
 
   const dockTool = useCallback((toolId: ToolId, zone?: DockZone) => {
     const target = zone ?? TOOL_CATALOG[toolId].defaultZone

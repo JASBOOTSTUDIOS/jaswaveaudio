@@ -41,7 +41,7 @@ export function generateMidiPattern(opts: GeneratePatternOpts): Omit<MidiNote, '
     case 'drums':
       return genDrums(beats, start, channel, rand);
     case 'pad_chords':
-      return genPadChords(root, scale, beats, start, channel);
+      return genPadChords(root, scale, beats, start, channel, rand);
     default:
       return [];
   }
@@ -91,26 +91,34 @@ function genArp(
   rand: () => number,
 ): Omit<MidiNote, 'seleccionada' | 'presion'>[] {
   const pool = scalePitches(root, scale, 48, 84);
-  const chord = [0, 2, 4, 6].map((d) => pool[d % pool.length]!).filter(Boolean);
+  // Progresión de grados (cambia cada compás) — evita el mismo arpegio eterno
+  const degreeStarts = [0, 3, 4, 5];
+  const patterns = [
+    [0, 1, 2, 3, 2, 1],
+    [0, 2, 1, 3, 1, 2],
+    [2, 0, 1, 2, 3, 1],
+    [0, 1, 0, 2, 1, 3],
+  ];
   const step = 0.25;
   const notes: Omit<MidiNote, 'seleccionada' | 'presion'>[] = [];
   let i = 0;
-  let dir = 1;
-  let idx = 0;
   for (let t = 0; t < beats; t += step) {
-    const pitch = chord[idx]!;
+    const bar = Math.floor(t / 4);
+    const deg0 = degreeStarts[bar % degreeStarts.length]!;
+    const chord = [0, 2, 4, 6].map((d) => pool[(deg0 + d) % pool.length]!).filter(Boolean);
+    const pattern = patterns[bar % patterns.length]!;
+    const idx = pattern[Math.floor((t % 4) / step) % pattern.length]! % Math.max(1, chord.length);
+    const pitch = chord[idx] ?? pool[0]!;
     notes.push({
       id: id('arp', i++),
       pitch,
-      inicio: start + t,
-      duracion: step * 0.9,
-      velocidad: 70 + Math.floor(rand() * 40),
+      inicio: start + t + (rand() - 0.5) * 0.015,
+      duracion: step * 0.88,
+      velocidad: 62 + Math.floor(rand() * 48) + (Math.floor(t) % 4 === 0 ? 8 : 0),
       canal: channel,
       source: 'generated',
       metadata: { pattern: 'arp' },
     });
-    idx += dir;
-    if (idx >= chord.length - 1 || idx <= 0) dir *= -1;
   }
   return notes;
 }
@@ -159,28 +167,44 @@ function genDrums(
   return notes;
 }
 
+function clampVel(v: number): number {
+  return Math.max(1, Math.min(127, Math.round(v)));
+}
+
 function genPadChords(
   root: number,
   scale: ScaleType,
   beats: number,
   start: number,
   channel: number,
+  rand?: () => number,
 ): Omit<MidiNote, 'seleccionada' | 'presion'>[] {
   const pool = scalePitches(root, scale, 48, 72);
+  const prog = [0, 5, 3, 4]; // I–vi–IV–V-ish en grados de escala
   const notes: Omit<MidiNote, 'seleccionada' | 'presion'>[] = [];
   let i = 0;
+  const rng = rand ?? (() => 0.5);
   for (let bar = 0; bar < beats / 4; bar++) {
-    const base = pool[(bar * 2) % Math.max(1, pool.length - 4)] ?? 60;
-    const chord = [0, 2, 4, 6].map((d) => Math.min(127, base + (pool[d] ? pool[d]! - pool[0]! : d * 2)));
-    // use scale degrees from pool
-    const deg = [0, 2, 4, 6].map((d) => pool[(bar + d) % pool.length]!).filter(Boolean);
-    for (const pitch of deg.length ? deg : chord) {
+    const deg0 = prog[bar % prog.length]!;
+    const inv = bar % 3;
+    const deg = [0, 2, 4, 6].map((d) => {
+      let p = pool[(deg0 + d) % pool.length]!;
+      if (inv > 0 && d === 0) p = Math.min(84, p + 12);
+      if (inv > 1 && d === 2) p = Math.min(84, p + 12);
+      while (p < 48) p += 12;
+      while (p > 76) p -= 12;
+      return p;
+    });
+    // Omitir un tono en barras impares (menos plano)
+    const use = bar % 2 === 1 ? deg.filter((_, ix) => ix !== 1) : deg;
+    const velBase = 58 + (bar % 4 === 0 ? 12 : 0) + Math.floor(rng() * 20);
+    for (let ti = 0; ti < use.length; ti++) {
       notes.push({
         id: id('pad', i++),
-        pitch,
-        inicio: start + bar * 4,
-        duracion: 3.8,
-        velocidad: 70,
+        pitch: use[ti]!,
+        inicio: start + bar * 4 + ti * 0.02,
+        duracion: 3.5 + rng() * 0.4,
+        velocidad: clampVel(velBase - ti * 4 + Math.floor(rng() * 10)),
         canal: channel,
         articulation: 'sustain',
         source: 'generated',

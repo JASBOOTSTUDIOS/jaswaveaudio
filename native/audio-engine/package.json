@@ -1,0 +1,16 @@
+{
+  "name": "@jaswave/native-audio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "JasWave C++ audio engine (N-API)",
+  "main": "index.js",
+  "scripts": {
+    "install": "node-gyp rebuild || echo [jaswave-native] build skipped — WebAudio fallback",
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.3.0",
+    "node-gyp": "^11.0.0"
+  }
+}

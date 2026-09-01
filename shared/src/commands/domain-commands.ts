@@ -76,6 +76,11 @@ export type TrackUpdatePayload = {
   datos: Partial<Track>;
 };
 
+export type TrackMovePayload = {
+  trackId: string;
+  toIndex: number;
+};
+
 export type TrackToggleMutePayload = {
   trackId: string;
 };
@@ -93,6 +98,8 @@ export type ClipCreatePayload = {
   sourceId?: string;
   /** Picos estéreo empaquetados [minL,maxL,minR,maxR,...] */
   waveform?: number[];
+  /** Id del clip creado (solo en result del handler). */
+  clipId?: string;
 };
 
 export type MidiNotePayload = {
@@ -308,6 +315,11 @@ export type ClipDeletePayload = {
   clipId: string;
 };
 
+export type ClipMergePayload = {
+  pistaId: string;
+  clipIds: string[];
+};
+
 export type ClipMovePayload = {
   pistaId: string;
   clipId: string;
@@ -327,7 +339,21 @@ export type ClipResizePayload = {
 export type ClipSplitPayload = {
   pistaId: string;
   clipId: string;
+  /** Tiempo absoluto en beats del arrange (no relativo al clip). */
   tiempo: number;
+};
+
+/** Parte un clip MIDI largo en varios clips por cortes (beats relativos al clip). */
+export type MidiClipSplitIntoSectionsPayload = {
+  pistaId: string;
+  clipId: string;
+  /**
+   * Cortes relativos al inicio del clip (beats). Ej. [32, 64, 96] → Intro | Verso | Coro | Outro.
+   * No incluir 0 ni la duración final.
+   */
+  cuts: number[];
+  /** Nombres opcionales por pieza (mismo orden que las piezas resultantes). */
+  names?: string[];
 };
 
 export type TransportTogglePayload = {};
@@ -351,8 +377,8 @@ function crearPista(nombre: string, tipo: Track['tipo'] = 'audio', color?: strin
     tipo,
     rol: 'normal' as const,
     estado: 'activo' as const,
-    volumen: 0.8,
-    volumenOriginal: -12,
+    volumen: 1,
+    volumenOriginal: 0,
     paneo: 0,
     paneoOriginal: 0,
     silenciada: false,
@@ -531,6 +557,65 @@ export function crearComandoTrackCreate(): CommandDefinition<TrackCreatePayload>
         errors.push({ code: 'MAX_TRACKS', message: 'Se ha alcanzado el límite máximo de 256 pistas' });
       }
       return { valid: errors.length === 0, errors, warnings: [] };
+    },
+  };
+}
+
+export function crearComandoTrackMove(): CommandDefinition<TrackMovePayload> {
+  return {
+    type: 'track.move',
+    inverseType: 'track.move',
+    description: 'Reordena una pista en el arrange y el mixer',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        trackId: { type: 'string' },
+        toIndex: { type: 'number' },
+      },
+      required: ['trackId', 'toIndex'],
+      additionalProperties: false,
+    },
+    handler: (estado: DAWState, payload: TrackMovePayload): StateTransition<TrackMovePayload> => {
+      const tracks = [...estado.project.tracks];
+      const fromIndex = tracks.findIndex((t) => t.id === payload.trackId);
+      if (fromIndex < 0) throw new Error(`Pista no encontrada: ${payload.trackId}`);
+      const toIndex = Math.max(0, Math.min(Math.floor(payload.toIndex), tracks.length - 1));
+      if (fromIndex === toIndex) {
+        return {
+          state: estado,
+          events: [],
+          result: payload,
+          inversePayload: payload,
+        };
+      }
+      const [item] = tracks.splice(fromIndex, 1);
+      tracks.splice(toIndex, 0, item!);
+      const withOrden = tracks.map((t, i) => ({ ...t, orden: i }));
+      const routing = estado.project.routing
+        ? { ...estado.project.routing, ordenTracks: withOrden.map((t) => t.id) }
+        : estado.project.routing;
+      const proyecto: ProjectState = {
+        ...estado.project,
+        tracks: withOrden,
+        routing,
+        modificado: true,
+        fechaModificacion: Date.now(),
+      };
+      return {
+        state: { ...estado, project: proyecto },
+        events: [
+          {
+            nombre: EventosTrack.ordenCambiado,
+            version: 1,
+            marcaTiempo: Date.now(),
+            fuente: 'domain-commands',
+            payload: { trackId: payload.trackId, fromIndex, toIndex },
+          },
+        ],
+        result: payload,
+        inversePayload: { trackId: payload.trackId, toIndex: fromIndex },
+      };
     },
   };
 }
@@ -905,7 +990,7 @@ export function crearComandoClipCreate(): CommandDefinition<ClipCreatePayload> {
             payload: { clipId: clip.id, pistaId: payload.pistaId },
           },
         ],
-        result: payload,
+        result: { ...payload, clipId: clip.id },
         inversePayload: { pistaId: payload.pistaId, clipId: clip.id },
       };
     },
@@ -949,8 +1034,8 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
       if (!pista) {
         throw new Error(`Pista no encontrada: ${payload.pistaId}`);
       }
-      if (pista.tipo !== 'midi' && pista.tipo !== 'instrumento') {
-        throw new Error(`La pista «${pista.nombre}» no es MIDI (tipo=${pista.tipo}). Crea una pista MIDI primero.`);
+      if (pista.tipo !== 'midi' && pista.tipo !== 'instrumento' && pista.tipo !== 'audio') {
+        throw new Error(`La pista «${pista.nombre}» no admite clips MIDI (tipo=${pista.tipo}).`);
       }
 
       const notas: MidiNote[] = (payload.notas ?? []).map((n) => ({
@@ -1486,8 +1571,8 @@ export function crearComandoMidiGenerate(): CommandDefinition<MidiGeneratePayloa
 
       const pista = estado.project.tracks.find((t) => t.id === payload.pistaId);
       if (!pista) throw new Error(`Pista no encontrada: ${payload.pistaId}`);
-      if (pista.tipo !== 'midi' && pista.tipo !== 'instrumento') {
-        throw new Error('La pista debe ser MIDI');
+      if (pista.tipo !== 'midi' && pista.tipo !== 'instrumento' && pista.tipo !== 'audio') {
+        throw new Error('La pista debe admitir MIDI (audio, midi o instrumento)');
       }
       const endBeat = generated.reduce((m, n) => Math.max(m, n.inicio + n.duracion), (payload.bars ?? 8) * 4);
       const duracion = Math.max(4, endBeat);
@@ -1714,6 +1799,122 @@ export function crearComandoClipDelete(): CommandDefinition<ClipDeletePayload> {
   };
 }
 
+export function crearComandoClipMerge(): CommandDefinition<ClipMergePayload> {
+  return {
+    type: 'clip.merge',
+    inverseType: 'clip.restore',
+    description: 'Une varios clips de la misma pista en uno (MIDI o audio)',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        pistaId: { type: 'string' },
+        clipIds: { type: 'array', items: { type: 'string' }, minItems: 2 },
+      },
+      required: ['pistaId', 'clipIds'],
+      additionalProperties: false,
+    },
+    handler: (estado: DAWState, payload: ClipMergePayload): StateTransition<ClipMergePayload> => {
+      const pista = estado.project.tracks.find((t) => t.id === payload.pistaId);
+      if (!pista) throw new Error(`Pista no encontrada: ${payload.pistaId}`);
+      const ids = [...new Set(payload.clipIds)];
+      if (ids.length < 2) throw new Error('clip.merge requiere al menos 2 clips');
+
+      const clips = (pista.clips as { id: string; inicio?: number; duracion?: number; tipo?: string; notas?: MidiNote[]; nombre?: string; color?: string; source?: { ruta?: string }; sourceId?: string; waveform?: number[] }[])
+        .filter((c) => ids.includes(c.id))
+        .sort((a, b) => (a.inicio ?? 0) - (b.inicio ?? 0));
+      if (clips.length < 2) throw new Error('Clips no encontrados en la pista');
+
+      const allMidi = clips.every((c) => c.tipo === 'midi');
+      const allAudio = clips.every((c) => c.tipo === 'audio' || (!c.tipo && !c.notas?.length));
+      if (!allMidi && !allAudio) throw new Error('Solo se pueden unir clips del mismo tipo (MIDI o audio)');
+
+      const minInicio = Math.min(...clips.map((c) => c.inicio ?? 0));
+      const maxEnd = Math.max(...clips.map((c) => (c.inicio ?? 0) + (c.duracion ?? 0)));
+      const removed = clips.map((c) => ({ clip: c, index: pista.clips.findIndex((x: { id: string }) => x.id === c.id) }));
+
+      if (allMidi) {
+        const mergedNotes: MidiNote[] = [];
+        for (const c of clips) {
+          const offset = (c.inicio ?? 0) - minInicio;
+          for (const n of c.notas ?? []) {
+            mergedNotes.push({
+              ...n,
+              id: generarId(),
+              inicio: (n.inicio ?? 0) + offset,
+            });
+          }
+        }
+        const primary = clips[0]!;
+        const merged = {
+          ...primary,
+          inicio: minInicio,
+          duracion: maxEnd - minInicio,
+          nombre: primary.nombre || 'Clip unido',
+          notas: mergedNotes,
+        };
+        const remaining = (pista.clips as { id: string }[]).filter((c) => !ids.includes(c.id));
+        remaining.push(merged as never);
+        remaining.sort((a, b) => (a as { inicio?: number }).inicio! - (b as { inicio?: number }).inicio!);
+        const pistaActualizada = { ...pista, clips: remaining, fechaModificacion: Date.now() } as Track;
+        const proyecto: ProjectState = {
+          ...estado.project,
+          tracks: estado.project.tracks.map((t) => (t.id === payload.pistaId ? pistaActualizada : t)),
+          modificado: true,
+          fechaModificacion: Date.now(),
+        };
+        return {
+          state: { ...estado, project: proyecto },
+          events: [
+            {
+              nombre: EventosClip.unido,
+              version: 1,
+              marcaTiempo: Date.now(),
+              fuente: 'domain-commands',
+              payload: { clipId: merged.id, pistaId: payload.pistaId, merged: ids },
+            },
+          ],
+          result: { pistaId: payload.pistaId, clipIds: ids },
+          inversePayload: { pistaId: payload.pistaId, clips: removed.map((r) => r.clip), indices: removed.map((r) => r.index) } as never,
+        };
+      }
+
+      // Audio: extender el primer clip para cubrir el rango (misma fuente recomendada)
+      const primary = clips[0]!;
+      const merged = {
+        ...primary,
+        inicio: minInicio,
+        duracion: maxEnd - minInicio,
+        nombre: primary.nombre || 'Clip unido',
+      };
+      const remaining = (pista.clips as { id: string }[]).filter((c) => !ids.includes(c.id));
+      remaining.push(merged as never);
+      remaining.sort((a, b) => (a as { inicio?: number }).inicio! - (b as { inicio?: number }).inicio!);
+      const pistaActualizada = { ...pista, clips: remaining, fechaModificacion: Date.now() } as Track;
+      const proyecto: ProjectState = {
+        ...estado.project,
+        tracks: estado.project.tracks.map((t) => (t.id === payload.pistaId ? pistaActualizada : t)),
+        modificado: true,
+        fechaModificacion: Date.now(),
+      };
+      return {
+        state: { ...estado, project: proyecto },
+        events: [
+          {
+            nombre: EventosClip.unido,
+            version: 1,
+            marcaTiempo: Date.now(),
+            fuente: 'domain-commands',
+            payload: { clipId: merged.id, pistaId: payload.pistaId, merged: ids },
+          },
+        ],
+        result: { pistaId: payload.pistaId, clipIds: ids },
+        inversePayload: { pistaId: payload.pistaId, clips: removed.map((r) => r.clip), indices: removed.map((r) => r.index) } as never,
+      };
+    },
+  };
+}
+
 export function crearComandoClipMove(): CommandDefinition<ClipMovePayload> {
   return {
     type: 'clip.move',
@@ -1893,7 +2094,7 @@ export function crearComandoClipResize(): CommandDefinition<ClipResizePayload> {
 export function crearComandoClipSplit(): CommandDefinition<ClipSplitPayload> {
   return {
     type: 'clip.split',
-    description: 'Divide un clip en dos en la posición indicada',
+    description: 'Divide un clip en dos en la posición indicada (MIDI reparte notas)',
     risk: 'write',
     schema: {
       type: 'object',
@@ -1917,6 +2118,53 @@ export function crearComandoClipSplit(): CommandDefinition<ClipSplitPayload> {
 
         const duracionA = payload.tiempo - c.inicio;
         const duracionB = c.duracion - duracionA;
+        const cutRel = duracionA;
+
+        if (c.tipo === 'midi') {
+          const notas = (c.notas ?? []) as MidiNote[];
+          const leftNotes: MidiNote[] = [];
+          const rightNotes: MidiNote[] = [];
+          for (const n of notas) {
+            const noteEnd = n.inicio + n.duracion;
+            if (noteEnd <= cutRel + 1e-9) {
+              leftNotes.push({ ...n });
+            } else if (n.inicio >= cutRel - 1e-9) {
+              rightNotes.push({
+                ...n,
+                id: generarId(),
+                inicio: Math.max(0, n.inicio - cutRel),
+              });
+            } else {
+              // Nota cruza el corte → trozo a cada lado
+              leftNotes.push({
+                ...n,
+                duracion: Math.max(0.0625, cutRel - n.inicio),
+              });
+              rightNotes.push({
+                ...n,
+                id: generarId(),
+                inicio: 0,
+                duracion: Math.max(0.0625, noteEnd - cutRel),
+              });
+            }
+          }
+          const left: MidiClip = {
+            ...(c as MidiClip),
+            duracion: duracionA,
+            notas: leftNotes,
+            loop: { activo: false, inicio: 0, fin: duracionA },
+          };
+          const right: MidiClip = {
+            ...(c as MidiClip),
+            id: generarId(),
+            inicio: payload.tiempo,
+            duracion: duracionB,
+            notas: rightNotes,
+            seleccionado: false,
+            loop: { activo: false, inicio: 0, fin: duracionB },
+          };
+          return [left, right];
+        }
 
         return [
           { ...c, duracion: duracionA },
@@ -1942,6 +2190,124 @@ export function crearComandoClipSplit(): CommandDefinition<ClipSplitPayload> {
         state: { ...estado, project: proyecto },
         events: [],
         result: payload,
+      };
+    },
+  };
+}
+
+export function crearComandoMidiClipSplitIntoSections(): CommandDefinition<MidiClipSplitIntoSectionsPayload> {
+  return {
+    type: 'midi.clip.splitIntoSections',
+    description:
+      'Parte un clip MIDI largo en varios clips por secciones (intro/verso/coro…) sin dejar un solo bloque de toda la canción',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        pistaId: { type: 'string' },
+        clipId: { type: 'string' },
+        cuts: { type: 'array', items: { type: 'number' } },
+        names: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['pistaId', 'clipId', 'cuts'],
+      additionalProperties: false,
+    },
+    handler: (
+      estado: DAWState,
+      payload: MidiClipSplitIntoSectionsPayload,
+    ): StateTransition<MidiClipSplitIntoSectionsPayload> => {
+      const pista = estado.project.tracks.find(t => t.id === payload.pistaId);
+      if (!pista) throw new Error(`Pista no encontrada: ${payload.pistaId}`);
+      const clips = [...(pista.clips as MidiClip[])];
+      const idx = clips.findIndex(c => c.id === payload.clipId);
+      if (idx < 0) throw new Error(`Clip no encontrado: ${payload.clipId}`);
+      const clip = clips[idx]!;
+      if (clip.tipo !== 'midi') {
+        throw new Error('midi.clip.splitIntoSections solo aplica a clips MIDI');
+      }
+
+      const dur = Math.max(0, Number(clip.duracion ?? 0));
+      const rawCuts = (payload.cuts ?? [])
+        .map(Number)
+        .filter(c => Number.isFinite(c) && c > 0.25 && c < dur - 0.25);
+      const cuts = [...new Set(rawCuts.map(c => Math.round(c * 1000) / 1000))].sort((a, b) => a - b);
+      if (!cuts.length) {
+        throw new Error('cuts debe tener al menos un corte dentro del clip');
+      }
+
+      const bounds = [0, ...cuts, dur];
+      const names = payload.names ?? [];
+      const notas = clip.notas ?? [];
+      const pieces: MidiClip[] = [];
+
+      for (let i = 0; i < bounds.length - 1; i++) {
+        const start = bounds[i]!;
+        const end = bounds[i + 1]!;
+        const pieceDur = end - start;
+        if (pieceDur < 0.25) continue;
+        const pieceNotes: MidiNote[] = [];
+        for (const n of notas) {
+          const noteEnd = n.inicio + n.duracion;
+          if (noteEnd <= start + 1e-9 || n.inicio >= end - 1e-9) continue;
+          const newInicio = Math.max(0, n.inicio - start);
+          const newEnd = Math.min(pieceDur, noteEnd - start);
+          const newDur = newEnd - newInicio;
+          if (newDur < 0.05) continue;
+          pieceNotes.push({
+            ...n,
+            id: i === 0 ? n.id : generarId(),
+            inicio: newInicio,
+            duracion: newDur,
+          });
+        }
+        const nombre =
+          (names[i] && String(names[i]).trim()) ||
+          `${clip.nombre || 'Clip'} · ${i + 1}/${bounds.length - 1}`;
+        pieces.push({
+          ...clip,
+          id: i === 0 ? clip.id : generarId(),
+          nombre,
+          inicio: clip.inicio + start,
+          duracion: pieceDur,
+          notas: pieceNotes,
+          seleccionado: false,
+          loop: { activo: false, inicio: 0, fin: pieceDur },
+        });
+      }
+
+      if (pieces.length < 2) {
+        throw new Error('No se generaron suficientes secciones');
+      }
+
+      clips.splice(idx, 1, ...pieces);
+      const pistaActualizada = {
+        ...pista,
+        clips,
+        fechaModificacion: Date.now(),
+      } as Track;
+      const proyecto: ProjectState = {
+        ...estado.project,
+        tracks: estado.project.tracks.map(t => (t.id === payload.pistaId ? pistaActualizada : t)),
+        modificado: true,
+        fechaModificacion: Date.now(),
+      };
+
+      return {
+        state: { ...estado, project: proyecto },
+        events: [
+          {
+            nombre: EventosClip.dividido,
+            version: 1,
+            marcaTiempo: Date.now(),
+            fuente: 'domain-commands',
+            payload: {
+              pistaId: payload.pistaId,
+              clipId: payload.clipId,
+              sections: pieces.length,
+            },
+          },
+        ],
+        result: { ...payload, sections: pieces.length } as never,
       };
     },
   };
@@ -2104,6 +2470,77 @@ export function crearComandoTransportToggleRecord(): CommandDefinition<Transport
         events: [],
         result: {},
       };
+    },
+  };
+}
+
+export type TransportTogglePunchPayload = Record<string, never>;
+
+export function crearComandoTransportTogglePunch(): CommandDefinition<TransportTogglePunchPayload> {
+  return {
+    type: 'transport.togglePunch',
+    inverseType: 'transport.togglePunch',
+    description: 'Activa/desactiva punch in/out (ventana de grabación)',
+    risk: 'write',
+    schema: { type: 'object', additionalProperties: false },
+    handler: (estado: DAWState): StateTransition<TransportTogglePunchPayload> => {
+      const punch = estado.transport.punch;
+      const activo = !punch.activo;
+      // Si se activa sin rango, usar loop o 0→8 compases
+      let inicio = punch.inicio;
+      let fin = punch.fin;
+      if (activo && fin.beats <= inicio.beats) {
+        const loop = estado.transport.loop;
+        if (loop.activo && loop.fin.beats > loop.inicio.beats) {
+          inicio = { ...loop.inicio };
+          fin = { ...loop.fin };
+        } else {
+          const bpm = estado.project.bpm?.valor ?? 120;
+          const beats = 8;
+          inicio = { ...inicio, beats: 0, segundos: 0 };
+          fin = {
+            ...fin,
+            beats,
+            segundos: (beats * 60) / bpm,
+          };
+        }
+      }
+      const transport: TransportState = {
+        ...estado.transport,
+        punch: {
+          ...punch,
+          activo,
+          inicio,
+          fin,
+          modo: activo ? 'both' : 'none',
+        },
+        modoGrabacion: activo ? 'punch' : estado.transport.modoGrabacion === 'punch' ? 'normal' : estado.transport.modoGrabacion,
+      };
+      return { state: { ...estado, transport }, events: [], result: {} };
+    },
+  };
+}
+
+export type TransportToggleCountInPayload = Record<string, never>;
+
+export function crearComandoTransportToggleCountIn(): CommandDefinition<TransportToggleCountInPayload> {
+  return {
+    type: 'transport.toggleCountIn',
+    inverseType: 'transport.toggleCountIn',
+    description: 'Activa/desactiva count-in (pre-roll) antes de grabar',
+    risk: 'write',
+    schema: { type: 'object', additionalProperties: false },
+    handler: (estado: DAWState): StateTransition<TransportToggleCountInPayload> => {
+      const countIn = estado.transport.countIn;
+      const transport: TransportState = {
+        ...estado.transport,
+        countIn: {
+          ...countIn,
+          activo: !countIn.activo,
+          compases: Math.max(1, countIn.compases || 1),
+        },
+      };
+      return { state: { ...estado, transport }, events: [], result: {} };
     },
   };
 }

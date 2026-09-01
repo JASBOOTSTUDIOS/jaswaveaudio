@@ -16,6 +16,9 @@ import {
   Activity,
   Waves,
   Keyboard,
+  Layers2,
+  Sparkles,
+  FileDown,
 } from 'lucide-react'
 export type PianoRollTool = 'seleccionar' | 'dibujar' | 'borrar'
 
@@ -44,13 +47,21 @@ export const PIANO_ROLL_ATAJOS: { teclas: string; accion: string }[] = [
   { teclas: '← / →', accion: 'Mover ±1 división de imán' },
   { teclas: 'Shift+← / →', accion: 'Mover ±1 negra' },
   { teclas: 'Q', accion: 'Cuantizar selección (o todo)' },
+  { teclas: '—', accion: 'Quitar notas duplicadas (mismo pitch+inicio)' },
   { teclas: 'G', accion: 'Mostrar / ocultar velocidad' },
   { teclas: 'F', accion: 'Mostrar / ocultar expresión (CC)' },
   { teclas: '+ / −', accion: 'Zoom horizontal' },
+  { teclas: 'Ctrl + rueda', accion: 'Zoom horizontal (hacia el cursor)' },
+  { teclas: 'Ctrl+Shift + rueda', accion: 'Zoom vertical (altura de teclas)' },
   { teclas: 'H', accion: 'Zoom vertical (altura de teclas)' },
   { teclas: '?', accion: 'Mostrar / ocultar atajos' },
+  { teclas: 'Alt+arrastrar nota', accion: 'Mover / redimensionar sin imán (preciso)' },
+  { teclas: 'Shift+arrastrar', accion: 'Movimiento fino (¼ del imán)' },
+  { teclas: 'Bordes de la nota', accion: 'Cambiar duración (inicio / final)' },
+  { teclas: 'Carril Velocidad', accion: 'Arrastrar barras = velocity 1–127' },
+  { teclas: 'Clic / teclado', accion: 'Audicionar nota en el VST de la pista' },
   { teclas: 'Doble clic', accion: 'Crear nota (modo dibujar o seleccionar)' },
-  { teclas: 'Alt+arrastrar', accion: 'Crear nota con duración' },
+  { teclas: 'Alt+arrastrar vacío', accion: 'Crear nota con duración' },
 ]
 
 type ToolBtnProps = {
@@ -99,18 +110,28 @@ export function PianoRollToolbar({
   showExpression,
   onToggleExpression,
   onQuantize,
+  quantizeMode,
+  onQuantizeMode,
+  quantizeStrength,
+  onQuantizeStrength,
   onDuplicate,
   onDelete,
+  onDedupe,
   onTranspose,
   onNudge,
+  onVelocitySet,
+  onVelocityScale,
   showShortcuts,
   onToggleShortcuts,
   grooves,
   onGroove,
   notasCount,
   seleccionCount,
+  duplicadosCount,
   dirty,
   nombreClip,
+  onSaveStyle,
+  onExportScorePdf,
 }: {
   herramienta: PianoRollTool
   onHerramienta: (t: PianoRollTool) => void
@@ -126,18 +147,28 @@ export function PianoRollToolbar({
   showExpression: boolean
   onToggleExpression: () => void
   onQuantize: () => void
+  quantizeMode?: 'start' | 'end' | 'both'
+  onQuantizeMode?: (m: 'start' | 'end' | 'both') => void
+  quantizeStrength?: number
+  onQuantizeStrength?: (s: number) => void
   onDuplicate: () => void
   onDelete: () => void
+  onDedupe?: () => void
   onTranspose: (semi: number) => void
   onNudge: (beats: number) => void
+  onVelocitySet?: (v: number) => void
+  onVelocityScale?: (factor: number) => void
   showShortcuts: boolean
   onToggleShortcuts: () => void
   grooves: { id: string; nombre: string }[]
   onGroove: (id: string) => void
   notasCount: number
   seleccionCount: number
+  duplicadosCount?: number
   dirty: boolean
   nombreClip: string
+  onSaveStyle?: () => void
+  onExportScorePdf?: () => void
 }) {
   return (
     <div className="flex shrink-0 flex-col border-b border-border">
@@ -146,6 +177,7 @@ export function PianoRollToolbar({
         <span className="text-[10px] text-muted-foreground">
           {notasCount} notas
           {seleccionCount > 0 ? ` · ${seleccionCount} seleccionadas` : ''}
+          {duplicadosCount && duplicadosCount > 0 ? ` · ${duplicadosCount} duplicadas` : ''}
           {dirty ? ' · guardando…' : ''}
         </span>
       </div>
@@ -201,8 +233,76 @@ export function PianoRollToolbar({
         <div className="mx-0.5 h-5 w-px bg-border" />
 
         <ToolBtn titulo="Cuantizar" atajo="Q" icon={Grid3x3} onClick={onQuantize} />
+        {onQuantizeMode && (
+          <select
+            value={quantizeMode ?? 'start'}
+            onChange={(e) => onQuantizeMode(e.target.value as 'start' | 'end' | 'both')}
+            className="h-6 rounded border border-border bg-background px-1 text-[10px]"
+            title="Modo cuantización"
+            aria-label="Modo cuantización"
+          >
+            <option value="start">Inicio</option>
+            <option value="end">Fin</option>
+            <option value="both">Ambos</option>
+          </select>
+        )}
+        {onQuantizeStrength && (
+          <select
+            value={quantizeStrength ?? 1}
+            onChange={(e) => onQuantizeStrength(Number(e.target.value))}
+            className="h-6 rounded border border-border bg-background px-1 text-[10px]"
+            title="Fuerza cuantización"
+            aria-label="Fuerza cuantización"
+          >
+            <option value={1}>100%</option>
+            <option value={0.75}>75%</option>
+            <option value={0.5}>50%</option>
+            <option value={0.25}>25%</option>
+          </select>
+        )}
         <ToolBtn titulo="Duplicar" atajo="Ctrl+D" icon={Copy} onClick={onDuplicate} />
+        {onDedupe && (
+          <ToolBtn
+            titulo={
+              duplicadosCount && duplicadosCount > 0
+                ? `Quitar duplicados (${duplicadosCount})`
+                : 'Quitar duplicados'
+            }
+            icon={Layers2}
+            onClick={onDedupe}
+          />
+        )}
         <ToolBtn titulo="Eliminar" atajo="Supr" icon={Trash2} onClick={onDelete} peligro />
+
+        {onVelocitySet && (
+          <>
+            <div className="mx-0.5 h-5 w-px bg-border" />
+            <button
+              type="button"
+              className="rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-panel-raised"
+              title="Velocidad fija 100"
+              onClick={() => onVelocitySet(100)}
+            >
+              Vel 100
+            </button>
+            <button
+              type="button"
+              className="rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-panel-raised"
+              title="Escalar velocity ×0.85"
+              onClick={() => onVelocityScale?.(0.85)}
+            >
+              Vel −
+            </button>
+            <button
+              type="button"
+              className="rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-panel-raised"
+              title="Escalar velocity ×1.15"
+              onClick={() => onVelocityScale?.(1.15)}
+            >
+              Vel +
+            </button>
+          </>
+        )}
 
         <div className="mx-0.5 h-5 w-px bg-border" />
 
@@ -240,6 +340,16 @@ export function PianoRollToolbar({
           icon={Waves}
           onClick={onToggleExpression}
         />
+
+        {onSaveStyle ? (
+          <>
+            <div className="mx-0.5 h-5 w-px bg-border" />
+            <ToolBtn titulo="Guardar como estilo" icon={Sparkles} onClick={onSaveStyle} />
+          </>
+        ) : null}
+        {onExportScorePdf ? (
+          <ToolBtn titulo="Vista previa / exportar partitura PDF" icon={FileDown} onClick={onExportScorePdf} />
+        ) : null}
 
         <select
           className="h-6 max-w-[140px] rounded border border-border bg-background px-1 text-[10px]"

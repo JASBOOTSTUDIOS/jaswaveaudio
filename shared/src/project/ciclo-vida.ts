@@ -20,6 +20,31 @@ export interface ProyectoArchivo {
 
 const FORMATO_ACTUAL = 1;
 
+const NOMBRES_SIN_TITULO = new Set([
+  'untitled',
+  'untitled project',
+  'proyecto sin nombre',
+  'sin título',
+  'sin titulo',
+]);
+
+export function esNombreSinTitulo(nombre: string | undefined | null): boolean {
+  const n = (nombre ?? '').trim().toLowerCase();
+  return !n || NOMBRES_SIN_TITULO.has(n);
+}
+
+export function nombreDesdeRuta(ruta: string): string {
+  const recortada = ruta.replace(/\\/g, '/');
+  const archivo = recortada.split('/').pop() || ruta;
+  const sinExt = archivo.replace(/\.jaswave$/i, '').trim();
+  return sinExt || 'Proyecto';
+}
+
+export function nombreAlGuardar(nombreActual: string | undefined | null, ruta: string): string {
+  if (esNombreSinTitulo(nombreActual)) return nombreDesdeRuta(ruta);
+  return (nombreActual ?? '').trim() || nombreDesdeRuta(ruta);
+}
+
 const idUnico = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 
 const bpmDefecto = (): BPM => ({ valor: 120, min: 30, max: 300, texto: '120', modo: 'fijo', cambios: [] });
@@ -33,7 +58,7 @@ const proyectoNuevo = (nombre: string): ProjectState => {
     id: idUnico(),
     nombre: nombreFinal,
     ruta: undefined,
-    sampleRate: 44100,
+    sampleRate: 48000,
     bitDepth: 24,
     bpm: bpmDefecto(),
     timeSignature: compasDefecto(),
@@ -77,7 +102,7 @@ const proyectoNuevo = (nombre: string): ProjectState => {
       etiquetas: [],
     } as RoutingMatrix,
     master: {
-      volumen: 0,
+      volumen: 1,
       paneo: 0,
       muted: false,
       solo: false,
@@ -128,9 +153,9 @@ const proyectoNuevo = (nombre: string): ProjectState => {
     historialAcciones: [],
     version: 1,
     configuracion: {
-      sampleRate: 44100,
+      sampleRate: 48000,
       bitDepth: 24,
-      bufferSize: 256,
+      bufferSize: 1024,
       bufferSizeMax: 2048,
       bufferSizeMin: 32,
       dispositivoEntrada: '',

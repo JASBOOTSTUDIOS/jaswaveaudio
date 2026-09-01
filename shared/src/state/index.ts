@@ -40,6 +40,14 @@ export { registrarComandosBuiltin } from './comandos-builtin';
 export { crearPilaDeshacerRehacer } from './pila-deshacer-rehacer';
 export { CommandExecutor } from './ejecutor-comandos';
 export type { CommandExecutorOptions } from './ejecutor-comandos';
+export {
+  computeSemanticDiff,
+  formatSemanticDiffSummary,
+  mergeSemanticDiffs,
+  emptySemanticDiff,
+  type SemanticStateDiff,
+} from './diff-estado';
+export { TransactionManager, crearTransactionManager, type Transaction, type TransactionCommitResult, type TransactionCommitOptions } from './gestor-transacciones';
 export { crearRegistroMacros, registroMacros } from './macros';
 export type { MacroRegistry } from './macros';
 export { crearRegistroAuditoria, registroAuditoria } from './registro-auditoria';

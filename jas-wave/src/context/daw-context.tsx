@@ -15,6 +15,8 @@ import {
   type DAWState,
   toolRegistry,
   registrarMidiAiTools,
+  registrarPluginTools,
+  registrarAnalysisTools,
 } from '../../../shared/src'
 import { configurarFileService } from '../../../shared/src/commands/project-commands'
 import { FileServiceElectron } from '@/src/lib/file-service'
@@ -24,22 +26,13 @@ import {
   type HydrateProgress,
 } from '@/src/lib/session-persist'
 import { JasWaveLogo } from '@/components/brand'
+import { isUndockWindow } from '@/lib/undock-window'
 
 const DAWContext = createContext<TiendaDAW | null>(null)
 
 let sharedStore: TiendaDAW | null = null
 
-function isUndockWindow(): boolean {
-  if (typeof window === 'undefined') return false
-  try {
-    const params = new URLSearchParams(window.location.search)
-    if (params.get('undock')) return true
-    const hash = window.location.hash.replace(/^#/, '')
-    return hash.startsWith('undock/')
-  } catch {
-    return false
-  }
-}
+export { isUndockWindow }
 
 function getSharedStore() {
   if (!sharedStore) {
@@ -52,6 +45,8 @@ function getSharedStore() {
 
     try {
       registrarMidiAiTools(toolRegistry, () => sharedStore!.obtenerEstado())
+      registrarPluginTools(toolRegistry, () => sharedStore!.obtenerEstado())
+      registrarAnalysisTools(toolRegistry)
     } catch {
       /* HMR */
     }
@@ -108,9 +103,22 @@ export function DAWProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     let detachAutosave: (() => void) | undefined
 
+    // Si IndexedDB se atasca, no dejar la splash para siempre
+    const failsafe = window.setTimeout(() => {
+      if (cancelled) return
+      console.warn('[DAWProvider] timeout de hidratación — entrando a la UI')
+      setProgress({
+        phase: 'done',
+        label: 'Arranque forzado',
+        progress: 1,
+        detail: 'La sesión tardó demasiado; se omite la restauración',
+      })
+      setReady(true)
+    }, 8_000)
+
     void (async () => {
-      // Ventana flotante: no hidratar IndexedDB (lento); MultiWindowSync trae el estado.
       if (undock) {
+        window.clearTimeout(failsafe)
         setReady(true)
         return
       }
@@ -126,12 +134,14 @@ export function DAWProvider({ children }: { children: ReactNode }) {
         console.warn('[DAWProvider] session hydrate failed', err)
       }
       if (cancelled) return
+      window.clearTimeout(failsafe)
       detachAutosave = attachSessionAutosave(store)
       setReady(true)
     })()
 
     return () => {
       cancelled = true
+      window.clearTimeout(failsafe)
       detachAutosave?.()
     }
   }, [store, undock])
@@ -151,6 +161,11 @@ export function useDAW() {
   return store
 }
 
+/** HMR-safe: null si el Provider aún no montó o el context se invalidó en Fast Refresh. */
+export function useDAWOptional(): TiendaDAW | null {
+  return useContext(DAWContext)
+}
+
 export function useDAWState<T>(selector: (state: DAWState) => T): T {
   const store = useDAW()
   const selectorRef = useRef(selector)
@@ -162,12 +177,70 @@ export function useDAWState<T>(selector: (state: DAWState) => T): T {
     () => {
       const next = selectorRef.current(store.obtenerEstado())
       const prev = cachedRef.current
-      if (prev && Object.is(prev.snapshot, next)) return prev.snapshot
+      if (prev && snapshotsEqual(prev.snapshot, next)) return prev.snapshot
       cachedRef.current = { snapshot: next }
       return next
     },
     () => selectorRef.current(store.obtenerEstado()),
   )
+}
+
+/** Igual que useDAWState pero no lanza si falta Provider (HMR / splash). */
+export function useDAWStateOptional<T>(
+  selector: (state: DAWState) => T,
+  fallback: T,
+): T {
+  const store = useDAWOptional()
+  const selectorRef = useRef(selector)
+  selectorRef.current = selector
+  const fallbackRef = useRef(fallback)
+  fallbackRef.current = fallback
+  const cachedRef = useRef<{ snapshot: T } | null>(null)
+
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      if (!store) return () => {}
+      return store.suscribir(onStoreChange)
+    },
+    () => {
+      if (!store) return fallbackRef.current
+      const next = selectorRef.current(store.obtenerEstado())
+      const prev = cachedRef.current
+      if (prev && snapshotsEqual(prev.snapshot, next)) return prev.snapshot
+      cachedRef.current = { snapshot: next }
+      return next
+    },
+    () => (store ? selectorRef.current(store.obtenerEstado()) : fallbackRef.current),
+  )
+}
+
+/** Evita bucles en useSyncExternalStore cuando el selector crea objetos/arrays nuevos. */
+function snapshotsEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true
+  if (typeof a !== typeof b) return false
+  if (a == null || b == null) return a === b
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) {
+      if (!Object.is(a[i], b[i]) && !shallowPlainEqual(a[i], b[i])) return false
+    }
+    return true
+  }
+  return shallowPlainEqual(a, b)
+}
+
+function shallowPlainEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || !a || !b) return false
+  if (Array.isArray(a) || Array.isArray(b)) return false
+  const ao = a as Record<string, unknown>
+  const bo = b as Record<string, unknown>
+  const keys = Object.keys(ao)
+  if (keys.length !== Object.keys(bo).length) return false
+  for (const k of keys) {
+    if (!Object.is(ao[k], bo[k])) return false
+  }
+  return true
 }
 
 type EventBinding = {

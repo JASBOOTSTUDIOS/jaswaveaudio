@@ -25,6 +25,10 @@ export {
 } from './keymap-storage';
 export {
   isTextInputTarget,
+  hasNonEmptyTextSelection,
+  textSelectionIsInEditableOrChat,
+  isNativeClipboardShortcut,
+  shouldIgnoreGlobalShortcuts,
   shouldHandleShortcut,
   actionAllowsEvent,
   createContextState,

@@ -4,6 +4,7 @@ import { ACCIONES_ATAJO, ATAJOS_POR_DEFECTO } from '../../shared/src'
 import type { DespachadorTeclado } from '../../shared/src'
 import { useDAW } from '../src/context/daw-context'
 import type { AccionAtajo } from '../../shared/src'
+import { requestOpenTool } from '../src/workspace/types'
 
 interface ShortcutsDialogProps {
   open: boolean
@@ -287,7 +288,17 @@ export function ShortcutsDialog({ open, onClose, dispatcher }: ShortcutsDialogPr
         {/* Footer */}
         <div className="border-t border-border px-4 py-2 text-[10px] text-muted-foreground">
           <kbd className="rounded border border-border px-1 py-0.5 font-mono">Ctrl+Shift+,</kbd>
-          {' '}para abrir · Los atajos personalizados se guardan con el proyecto
+          {' '}para abrir · Los atajos de teclado se guardan con el proyecto ·{' '}
+          <button
+            type="button"
+            className="text-accent-amber hover:underline"
+            onClick={() => {
+              onClose()
+              requestOpenTool('midi-map')
+            }}
+          >
+            Control MIDI / MIDI Learn
+          </button>
         </div>
       </div>
     </div>

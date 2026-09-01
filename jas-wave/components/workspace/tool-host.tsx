@@ -1,14 +1,24 @@
 import { Construction, Library, Gauge, GitBranch, Piano, SlidersHorizontal } from 'lucide-react'
 import { ArrangeView } from '@/components/arrange-view'
 import { Mixer } from '@/components/mixer'
+import { MixAnalyzerPanel } from '@/components/mix-analyzer-panel'
 import { CoProducerPanel } from '@/components/coproducer-panel'
+import { AgentDocsPanel } from '@/components/agent-docs-panel'
+import { DocsExplorerPanel } from '@/components/docs-explorer-panel'
 import { TrackDetailPanel } from '@/components/track-detail-panel'
 import { PianoRollToolPanel } from '@/components/piano-roll'
+import { ScoreEditorToolPanel } from '@/components/score-editor-panel'
 import { InstrumentsPanel } from '@/components/instruments-panel'
+import { LibraryPanel } from '@/components/library-panel'
+import { FxChainPanel } from '@/components/fx-chain-panel'
+import { PluginEditorPanel } from '@/components/plugin-editor-panel'
+import { MidiMapPanel } from '@/components/midi-map-panel'
+import { SettingsPanel } from '@/components/project-settings-dialog'
 import { useDAWState } from '@/src/context/daw-context'
 import type { ToolId } from '@/src/workspace/types'
+import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 
-function PlaceholderTool({ title }: { title: string }) {
+function _PlaceholderTool({ title }: { title: string }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 bg-panel px-4 text-center">
       <Construction className="size-8 text-muted-foreground/40" />
@@ -21,20 +31,15 @@ function PlaceholderTool({ title }: { title: string }) {
 }
 
 export function ToolHost({ toolId }: { toolId: ToolId }) {
-  const selectedTrackId = useDAWState((s) => {
-    const fromSel = s.selection?.idPrincipal ?? s.selection?.idsPistas?.[0] ?? null
-    if (fromSel) return fromSel
-    const clipId = s.selection?.idsClips?.[0]
-    if (!clipId) return null
-    for (const t of s.project?.tracks ?? []) {
-      if ((t.clips ?? []).some((c) => c.id === clipId)) return t.id
-    }
-    return null
-  })
+  const selectedTrackId = useDAWState((s) => getSelectedTrackId(s))
 
   switch (toolId) {
     case 'coproducer':
       return <CoProducerPanel />
+    case 'docs':
+      return <AgentDocsPanel />
+    case 'docs-explorer':
+      return <DocsExplorerPanel />
     case 'arrange':
       return <ArrangeView />
     case 'mixer':
@@ -43,17 +48,22 @@ export function ToolHost({ toolId }: { toolId: ToolId }) {
       return <TrackDetailPanel trackId={selectedTrackId} />
     case 'piano-roll':
       return <PianoRollToolPanel />
+    case 'score-editor':
+      return <ScoreEditorToolPanel />
     case 'instruments':
       return <InstrumentsPanel />
+    case 'fx-chain':
+      return <FxChainPanel />
+    case 'plugin-editor':
+      return <PluginEditorPanel />
+    case 'midi-map':
+      return <MidiMapPanel />
+    case 'settings':
+      return <SettingsPanel />
     case 'library':
-      return <PlaceholderTool title="Biblioteca de Audio" />
+      return <LibraryPanel />
     case 'meters':
-      return (
-        <div className="flex h-full flex-col items-center justify-center gap-2 bg-panel text-muted-foreground">
-          <Gauge className="size-8 opacity-40" />
-          <span className="text-[12px]">Medidores — próximamente</span>
-        </div>
-      )
+      return <MixAnalyzerPanel />
     case 'routing':
       return (
         <div className="flex h-full flex-col items-center justify-center gap-2 bg-panel text-muted-foreground">

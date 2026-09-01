@@ -157,6 +157,15 @@ export const EventosExportacion = {
   cancelada: 'exportacion.cancelada',
   formatoCambiado: 'exportacion.formatoCambiado',
   bitrateCambiado: 'exportacion.bitrateCambiado',
+} as const
+
+/** Eventos de bounce (hoja-ruta 035 / inglés). */
+export const EventosRender = {
+  started: 'render.started',
+  progress: 'render.progress',
+  completed: 'render.completed',
+  failed: 'render.failed',
+  cancelled: 'render.cancelled',
 } as const;
 
 export const EventosMedia = {
@@ -434,6 +443,7 @@ export const NombresEventos = {
   ...EventosGrabacion,
   ...EventosMetronomo,
   ...EventosExportacion,
+  ...EventosRender,
   ...EventosMedia,
   ...EventosHardware,
   ...EventosMezcla,

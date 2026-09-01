@@ -5,9 +5,16 @@
   "description": "JasWave — AI-First Digital Audio Workstation",
   "scripts": {
     "dev": "cd jas-wave && npm run dev",
+    "cli": "cd jas-wave && npm run cli --",
+    "cli:watch": "cd jas-wave && npm run cli:watch",
     "build": "cd jas-wave && npm run build",
     "lint": "cd jas-wave && npm run lint",
-    "test": "cd shared && npm test",
-    "typecheck": "cd shared && npm run typecheck"
+    "test": "cd shared && npm test && cd ../ai-harness && npm test",
+    "test:harness": "cd ai-harness && npm test",
+    "certify": "cd jas-wave && npm run cli:certify:quick",
+    "typecheck": "cd shared && npm run typecheck",
+    "native:build": "cd native/audio-engine && npm install && npm run build",
+    "native:roles-vst": "cd jas-wave && npm run native:roles-vst",
+    "pack:win": "cd jas-wave && npm run pack:win"
   }
 }

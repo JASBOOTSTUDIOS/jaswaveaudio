@@ -1,0 +1,13 @@
+[
+  { "type": "project.new", "payload": { "nombre": "Proyecto en blanco" } },
+  {
+    "type": "audio.setDevice",
+    "payload": {
+      "backend": "asio",
+      "deviceId": "asio:UMC ASIO Driver",
+      "sampleRate": 48000,
+      "bufferSize": 1024
+    }
+  },
+  { "type": "analysis.timing", "payload": {} }
+]

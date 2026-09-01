@@ -37,3 +37,5 @@ export type { ManejadorAccion, DefinicionAccion } from './config/action-registry
 export { DespachadorTeclado, crearDespachador, normalizarEventoTeclado } from './config/keyboard-dispatcher';
 export * from './actions';
 export * from './midi';
+export * from './audio/mix-analysis';
+export * from './audio/loudness-bs1770';

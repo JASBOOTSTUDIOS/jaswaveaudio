@@ -1,5 +1,5 @@
 /**
- * Historial persistente de conversaciones del Asistente Jas.
+ * Historial persistente de conversaciones del Asistente Jas — aislado por proyecto.
  */
 
 export type ChatRole = 'user' | 'assistant' | 'system'
@@ -9,27 +9,164 @@ export type StoredChatMessage = {
   role: ChatRole
   content: string
   createdAt: number
-  /** Acciones DAW ejecutadas en este turno (si aplica). */
   actionsSummary?: string
+  pendingActions?: {
+    status: 'pending' | 'applied' | 'discarded'
+    actions: Array<{ type: string; payload?: Record<string, unknown> }>
+    agentMode: string
+    /** Diff semántico del dry-run (plan/think/ask). */
+    previewDiff?: import('../../../shared/src/state/diff-estado').SemanticStateDiff
+    previewSummary?: string
+    /** Índice de acción → estado de revisión (checkbox). */
+    actionStatuses?: Record<string, 'pending' | 'accepted' | 'rejected'>
+    /** Si la propuesta viene de un paso del checklist, id del item. */
+    checklistStepId?: string
+  }
+  /** Resultado del pipeline post-turno (badges en chat). */
+  certify?: {
+    healthOk: boolean
+    shouldRepair: boolean
+    issues: string[]
+    planDone?: number
+    planPlanned?: number
+  }
+  /** Profundidad de undo antes de aplicar mutaciones de este turno. */
+  undoDepthAtStart?: number
+  /** Resumen del diff aplicado (modo create) o aceptado. */
+  appliedDiffSummary?: string
+  /** El usuario revirtió este turno con «Revertir esta respuesta». */
+  reverted?: boolean
+  confirmActions?: {
+    status: 'pending' | 'confirmed' | 'rejected'
+    actions: Array<{ type: string; payload?: Record<string, unknown> }>
+    reason: string
+  }
+  midiPreview?: {
+    kind: 'midiPreview'
+    nombre: string
+    keyLabel: string
+    bpm: number
+    durationBeats: number
+    notes: Array<{ pitch: number; inicio: number; duracion: number; velocidad: number }>
+    structureLabel: string
+    status?: 'pending' | 'applied' | 'discarded'
+    mood?: string
+    style?: string
+    pistaId?: string
+    applied?: boolean
+  }
+  /** Preview nota-a-nota desde clip-*.md (antes de timeline). */
+  midiClipMdPreview?: {
+    kind: 'midiClipMdPreview'
+    slug: string
+    markdown: string
+    clipId: string
+    trackId: string
+    nombre: string
+    notes: Array<{
+      id?: string
+      pitch: number
+      inicio: number
+      duracion: number
+      velocidad: number
+      mute?: boolean
+    }>
+    bpm: number
+    durationBeats: number
+    instrumentoHint?: string
+    status?: 'pending' | 'applied' | 'discarded'
+    applied?: boolean
+    errors?: string[]
+  }
+  projectPlan?: import('./project-plan').ProjectPlanData
+  musicBuild?: import('./music-build/types').MusicBuildResult
+  citedMessageIds?: string[]
+  /** Pasos del bucle de razonamiento profundo (colapsables en UI). */
+  reasoningSteps?: Array<{
+    phase: string
+    title: string
+    content: string
+    toolsUsed?: string[]
+    collapsed?: boolean
+    startedAt?: number
+    endedAt?: number
+  }>
+  /** Documentos Markdown editados por la IA en este turno (diff en chat). */
+  docEdits?: Array<{
+    slug: string
+    title: string
+    action: 'create' | 'write' | 'append'
+    previousContent: string
+    newContent: string
+    updatedAt: number
+  }>
+  /** Preguntas estructuradas (opciones + custom) pendientes de respuesta. */
+  clarifications?: {
+    status: 'pending' | 'answered' | 'skipped'
+    questions: Array<{
+      id: string
+      question: string
+      options: string[]
+      allowCustom?: boolean
+      multi?: boolean
+    }>
+  }
+  /** Plan de ejecución paso a paso (Continuar confirma cada tarea). */
+  agentChecklist?: import('./ai-agent-checklist').AgentChecklist
 }
 
 export type ChatConversation = {
   id: string
+  projectId: string
   title: string
   createdAt: number
   updatedAt: number
   messages: StoredChatMessage[]
 }
 
-const STORAGE_KEY = 'jaswave-ai-chat-history-v1'
+const STORAGE_KEY = 'jaswave-ai-chat-history-v2'
+const LEGACY_KEY = 'jaswave-ai-chat-history-v1'
 const MAX_CONVERSATIONS = 40
 const MAX_MESSAGES = 200
+
+let scopedProjectId = 'default'
 
 function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-function loadAll(): ChatConversation[] {
+function activeKey(projectId: string): string {
+  return `jaswave-ai-active-chat-id:${projectId || 'default'}`
+}
+
+/** Fija el proyecto activo para el historial de chat (llamar al abrir/cambiar proyecto). */
+export function setChatProjectScope(projectId: string | null | undefined): void {
+  scopedProjectId = projectId?.trim() || 'default'
+}
+
+export function getChatProjectScope(): string {
+  return scopedProjectId
+}
+
+function migrateLegacyIfNeeded(): void {
+  try {
+    if (localStorage.getItem(STORAGE_KEY)) return
+    const legacy = localStorage.getItem(LEGACY_KEY)
+    if (!legacy) return
+    const parsed = JSON.parse(legacy) as ChatConversation[]
+    if (!Array.isArray(parsed)) return
+    const migrated = parsed.map((c) => ({
+      ...c,
+      projectId: c.projectId || 'default',
+    }))
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated))
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadAllRaw(): ChatConversation[] {
+  migrateLegacyIfNeeded()
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
@@ -37,65 +174,84 @@ function loadAll(): ChatConversation[] {
     if (!Array.isArray(parsed)) return []
     return parsed
       .filter((c) => c && typeof c.id === 'string' && Array.isArray(c.messages))
+      .map((c) => ({ ...c, projectId: c.projectId || 'default' }))
       .sort((a, b) => b.updatedAt - a.updatedAt)
   } catch {
     return []
   }
 }
 
-function saveAll(list: ChatConversation[]): void {
+function saveAllRaw(list: ChatConversation[]): void {
   const trimmed = list
     .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, MAX_CONVERSATIONS)
+    .slice(0, MAX_CONVERSATIONS * 8)
     .map((c) => ({
       ...c,
+      projectId: c.projectId || 'default',
       messages: c.messages.slice(-MAX_MESSAGES),
     }))
   localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed))
 }
 
-export function listConversations(): ChatConversation[] {
-  return loadAll()
+function loadForProject(projectId = scopedProjectId): ChatConversation[] {
+  const pid = projectId || 'default'
+  return loadAllRaw()
+    .filter((c) => c.projectId === pid)
+    .slice(0, MAX_CONVERSATIONS)
+}
+
+function upsertConversation(conv: ChatConversation): void {
+  const all = loadAllRaw()
+  const idx = all.findIndex((c) => c.id === conv.id)
+  if (idx >= 0) all[idx] = conv
+  else all.unshift(conv)
+  saveAllRaw(all)
+}
+
+export function listConversations(projectId = scopedProjectId): ChatConversation[] {
+  return loadForProject(projectId)
 }
 
 export function getConversation(id: string): ChatConversation | null {
-  return loadAll().find((c) => c.id === id) ?? null
+  return loadAllRaw().find((c) => c.id === id) ?? null
 }
 
-export function createConversation(title = 'Nueva conversación'): ChatConversation {
+export function createConversation(
+  title = 'Nueva conversación',
+  projectId = scopedProjectId,
+): ChatConversation {
   const now = Date.now()
   const conv: ChatConversation = {
     id: newId('chat'),
+    projectId: projectId || 'default',
     title,
     createdAt: now,
     updatedAt: now,
     messages: [],
   }
-  const all = loadAll()
-  all.unshift(conv)
-  saveAll(all)
+  upsertConversation(conv)
   return conv
 }
 
 export function deleteConversation(id: string): void {
-  saveAll(loadAll().filter((c) => c.id !== id))
+  saveAllRaw(loadAllRaw().filter((c) => c.id !== id))
 }
 
 export function renameConversation(id: string, title: string): void {
-  const all = loadAll()
-  const idx = all.findIndex((c) => c.id === id)
-  if (idx < 0) return
-  all[idx] = { ...all[idx], title: title.trim() || all[idx].title, updatedAt: Date.now() }
-  saveAll(all)
+  const c = getConversation(id)
+  if (!c) return
+  upsertConversation({ ...c, title: title.trim() || c.title, updatedAt: Date.now() })
 }
 
 export function appendMessage(
   conversationId: string,
   message: Omit<StoredChatMessage, 'id' | 'createdAt'> & { id?: string; createdAt?: number },
+  projectId?: string,
 ): ChatConversation | null {
-  const all = loadAll()
-  const idx = all.findIndex((c) => c.id === conversationId)
-  if (idx < 0) return null
+  const prev = getConversation(conversationId)
+  if (!prev) return null
+  const pid = projectId || scopedProjectId
+  if (prev.projectId !== pid) return null
 
   const msg: StoredChatMessage = {
     id: message.id ?? newId('msg'),
@@ -103,10 +259,18 @@ export function appendMessage(
     content: message.content,
     createdAt: message.createdAt ?? Date.now(),
     actionsSummary: message.actionsSummary,
+    midiPreview: message.midiPreview,
+    midiClipMdPreview: message.midiClipMdPreview,
+    citedMessageIds: message.citedMessageIds,
+    pendingActions: message.pendingActions,
+    confirmActions: message.confirmActions,
+    projectPlan: message.projectPlan,
+    musicBuild: message.musicBuild,
+    clarifications: message.clarifications,
   }
 
-  const messages = [...all[idx].messages, msg].slice(-MAX_MESSAGES)
-  let title = all[idx].title
+  const messages = [...prev.messages, msg].slice(-MAX_MESSAGES)
+  let title = prev.title
   if (
     (title === 'Nueva conversación' || title === 'Chat') &&
     message.role === 'user' &&
@@ -115,14 +279,9 @@ export function appendMessage(
     title = message.content.trim().slice(0, 48) + (message.content.trim().length > 48 ? '…' : '')
   }
 
-  all[idx] = {
-    ...all[idx],
-    title,
-    messages,
-    updatedAt: Date.now(),
-  }
-  saveAll(all)
-  return all[idx]
+  const next = { ...prev, title, messages, updatedAt: Date.now() }
+  upsertConversation(next)
+  return next
 }
 
 export function updateMessageContent(
@@ -130,44 +289,72 @@ export function updateMessageContent(
   messageId: string,
   content: string,
   actionsSummary?: string,
+  midiPreview?: StoredChatMessage['midiPreview'],
+  projectPlan?: StoredChatMessage['projectPlan'],
+  musicBuild?: StoredChatMessage['musicBuild'],
+  pendingActions?: StoredChatMessage['pendingActions'],
+  confirmActions?: StoredChatMessage['confirmActions'],
+  reasoningSteps?: StoredChatMessage['reasoningSteps'],
+  docEdits?: StoredChatMessage['docEdits'],
+  midiClipMdPreview?: StoredChatMessage['midiClipMdPreview'],
 ): ChatConversation | null {
-  const all = loadAll()
-  const idx = all.findIndex((c) => c.id === conversationId)
-  if (idx < 0) return null
-  all[idx] = {
-    ...all[idx],
-    updatedAt: Date.now(),
-    messages: all[idx].messages.map((m) =>
-      m.id === messageId
-        ? { ...m, content, ...(actionsSummary !== undefined ? { actionsSummary } : {}) }
-        : m,
-    ),
-  }
-  saveAll(all)
-  return all[idx]
+  return patchMessage(conversationId, messageId, {
+    content,
+    ...(actionsSummary !== undefined ? { actionsSummary } : {}),
+    ...(midiPreview !== undefined ? { midiPreview } : {}),
+    ...(projectPlan !== undefined ? { projectPlan } : {}),
+    ...(musicBuild !== undefined ? { musicBuild } : {}),
+    ...(pendingActions !== undefined ? { pendingActions } : {}),
+    ...(confirmActions !== undefined ? { confirmActions } : {}),
+    ...(reasoningSteps !== undefined ? { reasoningSteps } : {}),
+    ...(docEdits !== undefined ? { docEdits } : {}),
+    ...(midiClipMdPreview !== undefined ? { midiClipMdPreview } : {}),
+  })
 }
 
-export function getActiveConversationId(): string | null {
+export function patchMessage(
+  conversationId: string,
+  messageId: string,
+  patch: Partial<StoredChatMessage>,
+  projectId?: string,
+): ChatConversation | null {
+  const prev = getConversation(conversationId)
+  if (!prev) return null
+  const pid = projectId || scopedProjectId
+  if (prev.projectId !== pid) return null
+  const next = {
+    ...prev,
+    updatedAt: Date.now(),
+    messages: prev.messages.map((m) => (m.id === messageId ? { ...m, ...patch } : m)),
+  }
+  upsertConversation(next)
+  return next
+}
+
+export function getActiveConversationId(projectId = scopedProjectId): string | null {
   try {
-    return localStorage.getItem('jaswave-ai-active-chat-id')
+    return localStorage.getItem(activeKey(projectId))
   } catch {
     return null
   }
 }
 
-export function setActiveConversationId(id: string | null): void {
-  if (!id) localStorage.removeItem('jaswave-ai-active-chat-id')
-  else localStorage.setItem('jaswave-ai-active-chat-id', id)
+export function setActiveConversationId(id: string | null, projectId = scopedProjectId): void {
+  const key = activeKey(projectId)
+  if (!id) localStorage.removeItem(key)
+  else localStorage.setItem(key, id)
 }
 
-/** Obtiene o crea la conversación activa. */
-export function ensureActiveConversation(): ChatConversation {
-  const id = getActiveConversationId()
+/** Obtiene o crea la conversación activa del proyecto en scope. */
+export function ensureActiveConversation(projectId = scopedProjectId): ChatConversation {
+  const pid = projectId || 'default'
+  setChatProjectScope(pid)
+  const id = getActiveConversationId(pid)
   if (id) {
     const existing = getConversation(id)
-    if (existing) return existing
+    if (existing && existing.projectId === pid) return existing
   }
-  const created = createConversation()
-  setActiveConversationId(created.id)
+  const created = createConversation('Nueva conversación', pid)
+  setActiveConversationId(created.id, pid)
   return created
 }

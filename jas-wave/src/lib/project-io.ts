@@ -4,6 +4,7 @@
 
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { crearEstadoInicial } from '../../../shared/src'
+import { esNombreSinTitulo, nombreAlGuardar } from '../../../shared/src/project/ciclo-vida'
 import { clearSessionSnapshot, saveSessionNow } from './session-persist'
 
 export type ResultadoIO = {
@@ -20,17 +21,37 @@ function mensajeError(error: ResultadoIO['error']): string | undefined {
   return error.message ?? error.code
 }
 
+function rutaNormalizada(filePath: string): string {
+  return filePath.endsWith('.jaswave') ? filePath : `${filePath}.jaswave`
+}
+
+function nombreSugeridoDialogo(nombre: string | undefined): string | undefined {
+  if (!nombre || esNombreSinTitulo(nombre)) return undefined
+  return `${nombre}.jaswave`
+}
+
+async function persistirRutaYGuardar(tienda: TiendaDAW, ruta: string): Promise<ResultadoIO> {
+  const nombre = nombreAlGuardar(tienda.obtenerEstado().project.nombre, ruta)
+  const upd = await tienda.executor.execute('project.update', { datos: { ruta, nombre } })
+  if (!upd.success) return { success: false, error: upd.error }
+  const result = await tienda.executor.execute('project.save', { ruta })
+  return { success: result.success, error: result.error, path: ruta }
+}
+
 export async function guardarProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
+  try {
+    const { snapshotLoadedPluginsIntoProject } = await import('./plugin/track-vst-runtime')
+    await snapshotLoadedPluginsIntoProject(tienda)
+  } catch {
+    /* best-effort: guardar aunque falle el snapshot VST */
+  }
+
   const state = tienda.obtenerEstado()
 
   if (!state.project.ruta && window.electron?.dialogSave) {
-    const dialog = await window.electron.dialogSave()
+    const dialog = await window.electron.dialogSave(nombreSugeridoDialogo(state.project.nombre))
     if (dialog.canceled || !dialog.filePath) return { success: false, error: 'Canceled', canceled: true }
-    const ruta = dialog.filePath.endsWith('.jaswave') ? dialog.filePath : `${dialog.filePath}.jaswave`
-    const upd = await tienda.executor.execute('project.update', { datos: { ruta } })
-    if (!upd.success) return { success: false, error: upd.error }
-    const result = await tienda.executor.execute('project.save', { ruta })
-    return { success: result.success, error: result.error, path: ruta }
+    return persistirRutaYGuardar(tienda, rutaNormalizada(dialog.filePath))
   }
 
   if (!state.project.ruta) {
@@ -43,13 +64,16 @@ export async function guardarProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO>
 
 export async function guardarProyectoComoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
   if (!window.electron?.dialogSave) return { success: false, error: 'No dialog available' }
-  const dialog = await window.electron.dialogSave()
+  try {
+    const { snapshotLoadedPluginsIntoProject } = await import('./plugin/track-vst-runtime')
+    await snapshotLoadedPluginsIntoProject(tienda)
+  } catch {
+    /* ignore */
+  }
+  const state = tienda.obtenerEstado()
+  const dialog = await window.electron.dialogSave(nombreSugeridoDialogo(state.project.nombre))
   if (dialog.canceled || !dialog.filePath) return { success: false, error: 'Canceled', canceled: true }
-  const ruta = dialog.filePath.endsWith('.jaswave') ? dialog.filePath : `${dialog.filePath}.jaswave`
-  const upd = await tienda.executor.execute('project.update', { datos: { ruta } })
-  if (!upd.success) return { success: false, error: upd.error }
-  const result = await tienda.executor.execute('project.save', { ruta })
-  return { success: result.success, error: result.error, path: ruta }
+  return persistirRutaYGuardar(tienda, rutaNormalizada(dialog.filePath))
 }
 
 export async function abrirProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
@@ -64,6 +88,26 @@ export async function abrirProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
   const loaded = await tienda.executor.execute('project.load', { ruta: result.path })
   if (!loaded.success) {
     return { success: false, error: loaded.error ?? 'Error al cargar proyecto' }
+  }
+  try {
+    const { loadLibraryFromDisk } = await import('./library/preset-catalog')
+    const project = tienda.obtenerEstado().project
+    await loadLibraryFromDisk(project.id || 'default', project.ruta)
+  } catch {
+    /* biblioteca best-effort */
+  }
+  try {
+    const { migrateSoftPadPluginsInProject } = await import('./plugin/migrate-softpad-to-roles')
+    const project = tienda.obtenerEstado().project
+    const { migrated, removed } = migrateSoftPadPluginsInProject(project)
+    if (migrated + removed > 0) {
+      tienda.establecerEstado((s) => ({
+        ...s,
+        project: { ...project, modificado: true },
+      }))
+    }
+  } catch {
+    /* migración best-effort */
   }
   return { success: true, path: result.path }
 }

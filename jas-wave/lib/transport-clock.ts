@@ -15,10 +15,6 @@ function createZeroPosition(): TimePosition {
   }
 }
 
-function beatsToSeconds(beats: number, bpm: number): number {
-  return (beats * 60) / bpm
-}
-
 function secondsToBeats(seconds: number, bpm: number): number {
   return (seconds * bpm) / 60
 }
@@ -57,6 +53,9 @@ export class TransportClock {
   private startPosition: TimePosition
   private rafId: number | null = null
   private listeners = new Set<(position: TimePosition) => void>()
+  private sampleRate = 48000
+  /** Si está definido, el playhead sale de esta fuente (AudioContext) en vez de performance.now. */
+  private timelineSeconds: (() => number) | null = null
 
   constructor(options: TransportClockOptions) {
     this.bpm = options.bpm
@@ -80,6 +79,15 @@ export class TransportClock {
 
   setTimeSignature(numerator: number): void {
     this.timeSignatureNumerator = numerator
+  }
+
+  setSampleRate(sr: number): void {
+    if (sr >= 8000 && sr <= 192000) this.sampleRate = sr
+  }
+
+  /** Reloj de audio: getTimelineSeconds() del engine mientras hay playback. */
+  setTimelineSource(source: (() => number) | null): void {
+    this.timelineSeconds = source
   }
 
   play(): void {
@@ -139,17 +147,32 @@ export class TransportClock {
   }
 
   private computeAbsolutePosition(): TimePosition {
-    const elapsedMs = performance.now() - this.startWallTime
-    const elapsedSeconds = elapsedMs / 1000
+    if (this.timelineSeconds) {
+      const segundos = Math.max(0, this.timelineSeconds())
+      const beats = secondsToBeats(segundos, this.bpm)
+      return decoratePosition(
+        {
+          beats,
+          segundos,
+          samples: Math.round(segundos * this.sampleRate),
+          ticks: beats * PPQ,
+          compases: 0,
+          frames: 0,
+          tiempoMusical: '',
+          porcentaje: 0,
+        },
+        this.timeSignatureNumerator,
+      )
+    }
+    const elapsedSeconds = (performance.now() - this.startWallTime) / 1000
     const elapsedBeats = secondsToBeats(elapsedSeconds, this.bpm)
-    const elapsedTicks = elapsedBeats * PPQ
-
+    const segundos = this.startPosition.segundos + elapsedSeconds
     return decoratePosition(
       {
         beats: this.startPosition.beats + elapsedBeats,
-        segundos: this.startPosition.segundos + elapsedSeconds,
-        samples: Math.round((this.startPosition.segundos + elapsedSeconds) * 44100),
-        ticks: this.startPosition.ticks + elapsedTicks,
+        segundos,
+        samples: Math.round(segundos * this.sampleRate),
+        ticks: this.startPosition.ticks + elapsedBeats * PPQ,
         compases: 0,
         frames: 0,
         tiempoMusical: '',
