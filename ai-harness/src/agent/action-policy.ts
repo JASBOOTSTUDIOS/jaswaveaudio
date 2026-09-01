@@ -10,6 +10,8 @@ export const AGENT_READ_ONLY_ACTIONS = new Set([
   'plugin.probe',
   'library.preset.list',
   'library.preset.search',
+  'style.profile.list',
+  'style.profile.search',
   'doc.evaluate',
   'doc.read',
   'doc.list',

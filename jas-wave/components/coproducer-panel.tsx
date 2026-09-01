@@ -14,8 +14,10 @@ import {
   History,
   Trash2,
   MessageSquarePlus,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react'
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useDAWState, useDAW } from '@/src/context/daw-context'
 import {
   answerLocalReadQuery,
@@ -23,6 +25,12 @@ import {
   buildMidiAuditFixActions,
   buildMidiAuditClarifications,
   isGarbageAssistantReply,
+  isOffTopicCreatePlanReply,
+  buildStyleGapReport,
+  buildWorshipDrumEnhanceActions,
+  buildMidiClipEditActions,
+  buildSplitLongClipsActions,
+  actionsLackMidiNoteEdits,
 } from '@/src/lib/ai-read-context'
 import {
   loadAiSettings,
@@ -34,6 +42,7 @@ import {
   aiChatWithFallback,
   selectCatalogModel,
   saveAiSettings,
+  type AiChatWithFallbackResult,
 } from '@/src/lib/ai-settings'
 import {
   buildAgentSystemPrompt,
@@ -73,17 +82,29 @@ import {
   isClarificationReply,
   isMidiAuditFixReply,
   isMidiAuditSkipFixReply,
+  isTrackPickClarificationReply,
   mustForceMusicBuild,
   resolveClarificationsFromAssistant,
   stripProseClarifyLists,
   type ClarificationQuestion,
 } from '@/src/lib/ai-clarify'
 import {
+  buildTrackPickClarifications,
+  extractTrackHintFromUserText,
+  extractTrackIdFromClarifyAnswer,
+  formatResolvedTrackContext,
+  resolveTrackHint,
+} from '@/src/lib/track-resolve'
+import {
   AGENT_MODE_META,
   detectAgentMode,
   inferBpmFromTempoIntent,
   isProjectAuditIntent,
   isSongRefineIntent,
+  isStyleGapIntent,
+  isStyleApplyIntent,
+  isMidiClipEditIntent,
+  isClipSectionSplitIntent,
   isTempoOnlyRefine,
   loadAgentMode,
   saveAgentMode,
@@ -164,7 +185,14 @@ import {
 import { AgentModePicker } from '@/components/agent-mode-picker'
 import { ReasoningStepsPanel } from '@/components/reasoning-steps-panel'
 import { JasWaveLogo } from '@/components/brand'
-import { ChatMarkdown } from '@/components/chat-markdown'
+import { ChatMarkdown, sanitizeAssistantMarkdown } from '@/components/chat-markdown'
+import {
+  bumpChatTextZoom,
+  getChatTextZoom,
+  setChatPanelMounted,
+  setChatTextZoom,
+  subscribeChatTextZoom,
+} from '@/src/lib/chat-ui-store'
 import type { TiendaDAW } from '../../shared/src/state/tienda'
 import type { DAWState } from '../../shared/src/types/state'
 import { applyMarkdownDocsFromModel, bindAgentDocsDisk, parseDocBlocksFromText } from '@/src/lib/agent-docs'
@@ -206,10 +234,12 @@ function formatMessageForCopy(msg: StoredChatMessage): string {
   if (msg.reasoningSteps?.length) {
     parts.push('--- Razonamiento ---')
     for (const step of msg.reasoningSteps) {
-      parts.push(`${step.title}\n${step.content}`.trim())
+      const body = sanitizeAssistantMarkdown(step.content ?? '').trim()
+      if (!body) continue
+      parts.push(`${step.title}\n${body}`.trim())
     }
   }
-  if (msg.content?.trim()) parts.push(msg.content.trim())
+  if (msg.content?.trim()) parts.push(sanitizeAssistantMarkdown(msg.content).trim())
   if (msg.docEdits?.length) {
     parts.push(
       '--- Documentos ---',
@@ -513,15 +543,74 @@ export function CoProducerPanel() {
   const [agentMode, setAgentMode] = useState<AgentMode>(() => loadAgentMode())
   const [harnessPhase, setHarnessPhase] = useState('')
   const [copiedMsgId, setCopiedMsgId] = useState('')
+  const [copiedAll, setCopiedAll] = useState(false)
   const [citedIds, setCitedIds] = useState<string[]>([])
   const [selectionLabel, setSelectionLabel] = useState(() => getMusicalSelectionAnchor()?.label ?? '')
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const panelRootRef = useRef<HTMLElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   /** Incrementa al detener para invalidar turnos en vuelo. */
   const genEpochRef = useRef(0)
   const liveAssistantMsgIdRef = useRef<string | null>(null)
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const chatTextZoom = useSyncExternalStore(subscribeChatTextZoom, getChatTextZoom, getChatTextZoom)
+  const chatFontPx = Math.round(13 * chatTextZoom)
+
+  useEffect(() => {
+    setChatPanelMounted(true)
+    return () => setChatPanelMounted(false)
+  }, [])
+
+  /** Ctrl/Cmd + / - / 0: zoom tipográfico solo del chat (como Docs). */
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      const root = panelRootRef.current
+      if (!root) return
+      const undockChat =
+        new URLSearchParams(window.location.search).get('undock') === 'coproducer' ||
+        new URLSearchParams(window.location.search).get('undock') === 'chat' ||
+        window.location.hash.replace(/^#/, '').startsWith('undock/coproducer') ||
+        window.location.hash.replace(/^#/, '').startsWith('undock/chat')
+      const inPanel =
+        undockChat ||
+        root.contains(document.activeElement) ||
+        root === document.activeElement
+      if (!inPanel) return
+      const key = e.key
+      const code = e.code
+      const zoomIn =
+        key === '=' || key === '+' || code === 'NumpadAdd' || code === 'Equal'
+      const zoomOut = key === '-' || key === '_' || code === 'NumpadSubtract' || code === 'Minus'
+      const zoomReset = key === '0' || code === 'Digit0' || code === 'Numpad0'
+      if (!zoomIn && !zoomOut && !zoomReset) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (zoomIn) bumpChatTextZoom(0.1)
+      else if (zoomOut) bumpChatTextZoom(-0.1)
+      else setChatTextZoom(1)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
+
+  const onChatZoomKeyDown = (e: ReactKeyboardEvent) => {
+    if (!(e.ctrlKey || e.metaKey)) return
+    if (e.key === '=' || e.key === '+' || e.code === 'NumpadAdd') {
+      e.preventDefault()
+      e.stopPropagation()
+      bumpChatTextZoom(0.1)
+    } else if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') {
+      e.preventDefault()
+      e.stopPropagation()
+      bumpChatTextZoom(-0.1)
+    } else if (e.key === '0') {
+      e.preventDefault()
+      e.stopPropagation()
+      setChatTextZoom(1)
+    }
+  }
 
   useEffect(() => {
     const el = inputRef.current
@@ -839,6 +928,27 @@ export function CoProducerPanel() {
     }, 1600)
   }
 
+  const copyEntireChat = async () => {
+    if (!messages.length) return
+    const blocks = messages
+      .map((m) => {
+        const body = formatMessageForCopy(m).trim()
+        if (!body) return ''
+        const who = m.role === 'user' ? 'Tú' : 'Asistente Jas'
+        return `### ${who}\n${body}`
+      })
+      .filter(Boolean)
+    if (!blocks.length) return
+    const ok = await copyTextToClipboard(blocks.join('\n\n---\n\n'))
+    if (!ok) return
+    setCopiedAll(true)
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    copiedTimerRef.current = setTimeout(() => {
+      setCopiedAll(false)
+      copiedTimerRef.current = null
+    }, 1600)
+  }
+
   const handleSendMessage = async (overrideText?: string) => {
     const rawInput = (overrideText ?? inputMessage).trim()
     if (!rawInput || isGenerating) return
@@ -892,12 +1002,59 @@ export function CoProducerPanel() {
       let turnAppliedDiffSummary: string | undefined
       let turnCertify: StoredChatMessage['certify']
       const turnMeta: { undo?: number; diff?: string } = {}
+      let skipAiTurn = false
+      let trackContextExtra = ''
       const resolvedMode = detectAgentMode(userText, agentMode)
-      const auditIntent = isProjectAuditIntent(userText)
-      const midiAuditReport = auditIntent ? buildMidiAuditReport(state) : ''
+      const styleGapIntent = isStyleGapIntent(userText)
+      const styleApplyIntent = isStyleApplyIntent(userText)
+      const midiClipEditIntent = isMidiClipEditIntent(userText)
+      const clipSectionSplitIntent = isClipSectionSplitIntent(userText)
+      const auditIntent = isProjectAuditIntent(userText) || styleGapIntent
+      const midiAuditReport =
+        isProjectAuditIntent(userText) && !styleGapIntent && !styleApplyIntent
+          ? buildMidiAuditReport(state)
+          : ''
+      const styleGapSeed = styleGapIntent
+        ? buildStyleGapReport(state, { userText })
+        : ''
+      const worshipEnhanceFallback = styleApplyIntent
+        ? (buildWorshipDrumEnhanceActions(state) as DawAction[])
+        : []
+      const midiClipEditFallback =
+        midiClipEditIntent || styleApplyIntent
+          ? (buildMidiClipEditActions(state, userText) as DawAction[])
+          : []
+      const sectionSplitFallback = clipSectionSplitIntent
+        ? (buildSplitLongClipsActions(state) as DawAction[])
+        : []
       const wantsAuditFix =
         isMidiAuditFixReply(userText) ||
         (/^arr[eé]glalo\b/i.test(userText.trim()) && !auditIntent)
+
+      if (isTrackPickClarificationReply(userText)) {
+        const trackId = extractTrackIdFromClarifyAnswer(userText)
+        if (trackId) trackContextExtra = formatResolvedTrackContext(state, trackId)
+      } else if (
+        !isClarificationReply(userText) &&
+        !auditIntent &&
+        !wantsAuditFix &&
+        !isMidiAuditSkipFixReply(userText)
+      ) {
+        const hint = extractTrackHintFromUserText(userText)
+        if (hint) {
+          const resolved = resolveTrackHint(state, hint)
+          if (resolved.ambiguous && resolved.candidates.length >= 2) {
+            clarifications = {
+              status: 'pending',
+              questions: buildTrackPickClarifications(resolved.candidates, hint.label),
+            }
+            accumulated = `Hay varias pistas que podrían ser «${hint.label}». Elige cuál quieres que use para esta edición:`
+            skipAiTurn = true
+          } else if (resolved.trackId) {
+            trackContextExtra = formatResolvedTrackContext(state, resolved.trackId)
+          }
+        }
+      }
 
       // Respuesta al formulario de auditoría / «arréglalo» → propuesta Aplicar (sin musicBuild)
       if (wantsAuditFix && !isMidiAuditSkipFixReply(userText)) {
@@ -927,7 +1084,7 @@ export function CoProducerPanel() {
         }
       } else if (isMidiAuditSkipFixReply(userText)) {
         accumulated = 'De acuerdo — dejo el proyecto como está. El informe anterior sigue válido.'
-      } else if (!local) {
+      } else if (!local && !skipAiTurn) {
         if (!window.electron?.aiChat) {
           // Sin Electron: si pide crear, ejecutamos igual en el DAW local
           const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
@@ -972,7 +1129,7 @@ export function CoProducerPanel() {
             .filter((m) => m.role === 'user' || m.role === 'assistant')
             .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 
-          setHarnessPhase('Razonamiento 1/7…')
+          setHarnessPhase('Razonando…')
           const { runAgentReasoningForTurn } = await import('@/src/lib/agent-reasoning-bridge')
           let cfg = loadAiSettings()
           let provider = getActiveProvider(cfg)
@@ -993,14 +1150,30 @@ export function CoProducerPanel() {
             resolvedMode,
             chatTurns,
             libraryPresetsBlock: presetsBlock,
-            projectContextExtra: midiAuditReport
-              ? [
-                  '## Informe técnico local (datos reales del DAW — ancla obligatoria)',
-                  midiAuditReport,
-                  'Razona como productor sobre ESTOS hallazgos. No inventes clips ni ignores duplicados/largos.',
-                  'En el turno final: explica en prosa + prioriza; no respondas solo con ¡¡¡.',
-                ].join('\n')
-              : undefined,
+            projectContextExtra: (() => {
+              const parts: string[] = []
+              if (styleGapSeed) {
+                parts.push(
+                  [
+                    '## Borrador local de gap de estilo (datos del DAW — ancla)',
+                    styleGapSeed,
+                    'Úsalo como base. Mejora con web.search si hace falta. Responde al usuario en este tono de productor (NO Auditoría MIDI P1/P2, NO «244.0b»).',
+                    'PROHIBIDO musicBuild y plan de días.',
+                  ].join('\n'),
+                )
+              } else if (midiAuditReport) {
+                parts.push(
+                  [
+                    '## Informe técnico local (datos reales del DAW — ancla obligatoria)',
+                    midiAuditReport,
+                    'Razona como productor sobre ESTOS hallazgos. No inventes clips ni ignores duplicados/largos.',
+                    'En el turno final: explica en prosa + prioriza; no respondas solo con ¡¡¡.',
+                  ].join('\n'),
+                )
+              }
+              if (trackContextExtra) parts.push(trackContextExtra)
+              return parts.length ? parts.join('\n\n') : undefined
+            })(),
             abort: ac.signal,
             paceBetweenPhasesMs: providerReasoningPaceMs(provider.kind),
             onPhaseLabel: (label) => setHarnessPhase(label),
@@ -1029,12 +1202,16 @@ export function CoProducerPanel() {
                   },
                 },
               )
-              const abortPromise = new Promise<{ success: false }>((resolve) => {
+              const abortPromise = new Promise<AiChatWithFallbackResult>((resolve) => {
                 if (ac.signal.aborted) {
-                  resolve({ success: false })
+                  resolve({ success: false, error: 'Abortado', errorCode: 'unknown' })
                   return
                 }
-                ac.signal.addEventListener('abort', () => resolve({ success: false }), { once: true })
+                ac.signal.addEventListener(
+                  'abort',
+                  () => resolve({ success: false, error: 'Abortado', errorCode: 'unknown' }),
+                  { once: true },
+                )
               })
               const r = await Promise.race([fallbackPromise, abortPromise])
               if (!stillMine()) return { success: false }
@@ -1043,7 +1220,7 @@ export function CoProducerPanel() {
               }
               return {
                 success: Boolean(r.success),
-                content: 'content' in r ? r.content : undefined,
+                content: r.content,
               }
             },
           })
@@ -1055,13 +1232,20 @@ export function CoProducerPanel() {
             formatMusicalSelectionForPrompt(getMusicalSelectionAnchor()),
             getToolRegistryPromptFragment(dawStore),
             buildAgentSystemPrompt(state, userText, agentMode, messages),
-            midiAuditReport
+            styleGapSeed
               ? [
-                  '## Informe técnico local (datos reales)',
-                  midiAuditReport,
-                  'Responde al usuario como productor usando estos datos. Si propones ACTIONS, que sean propuestas para Aplicar.',
+                  '## Gap de estilo (borrador local con datos reales)',
+                  styleGapSeed,
+                  'Responde al usuario en español claro de productor DAW. Mejora este borrador; no lo sustituyas por «Auditoría MIDI» ni códigos P1/P2.',
                 ].join('\n')
-              : '',
+              : midiAuditReport
+                ? [
+                    '## Informe técnico local (datos reales)',
+                    midiAuditReport,
+                    'Responde al usuario como productor usando estos datos. Si propones ACTIONS, que sean propuestas para Aplicar.',
+                  ].join('\n')
+                : '',
+            trackContextExtra,
           ]
             .filter(Boolean)
             .join('\n\n')
@@ -1076,12 +1260,16 @@ export function CoProducerPanel() {
             if (!stillMine()) throw new DOMException('Aborted', 'AbortError')
             cfg = loadAiSettings()
             provider = getActiveProvider(cfg)
-            const finalAbort = new Promise<{ success: false; content?: string }>((resolve) => {
+            const finalAbort = new Promise<AiChatWithFallbackResult>((resolve) => {
               if (ac.signal.aborted) {
-                resolve({ success: false })
+                resolve({ success: false, error: 'Abortado', errorCode: 'unknown' })
                 return
               }
-              ac.signal.addEventListener('abort', () => resolve({ success: false }), { once: true })
+              ac.signal.addEventListener(
+                'abort',
+                () => resolve({ success: false, error: 'Abortado', errorCode: 'unknown' }),
+                { once: true },
+              )
             })
             const finalChatPromise = aiChatWithFallback(
               (req) => window.electron!.aiChat!(req),
@@ -1101,7 +1289,7 @@ export function CoProducerPanel() {
                 },
               },
             )
-            const result = await Promise.race([finalChatPromise, finalAbort])
+            const result: AiChatWithFallbackResult = await Promise.race([finalChatPromise, finalAbort])
             if (!stillMine()) throw new DOMException('Aborted', 'AbortError')
             if ('fallbackUsed' in result) {
               rememberWorkingModel(result.usedProviderId, result.usedModel, result.fallbackUsed)
@@ -1210,6 +1398,41 @@ export function CoProducerPanel() {
               } else if (actions.length === 0 && clarifyQs.length === 0 && wantsFullProject(userText)) {
                 actions = fallbackActionsFromUserIntent(userText, state, 'create')
               }
+              // Aplicar estilo worship → parche de batería si el modelo no emitió ACTIONS útiles
+              if (
+                styleApplyIntent &&
+                worshipEnhanceFallback.length > 0 &&
+                !actions.some((a) =>
+                  /^(midi\.notes\.(set|patch)|midi\.humanize|midi\.clip\.md\.apply)$/i.test(a.type),
+                )
+              ) {
+                actions = [...worshipEnhanceFallback, ...actions]
+                clarifyQs = []
+              }
+              // Suavizar / intro / toms / pads: forzar edición MIDI si el modelo solo puso setBpm
+              if (
+                (midiClipEditIntent || styleApplyIntent) &&
+                midiClipEditFallback.length > 0 &&
+                actionsLackMidiNoteEdits(actions)
+              ) {
+                actions = [
+                  ...actions.filter((a) => a.type !== 'daw.musicBuild' && a.type !== 'daw.composeProject'),
+                  ...midiClipEditFallback,
+                ]
+                clarifyQs = []
+              }
+              // Partir mega-clips en pedazos / secciones
+              if (
+                clipSectionSplitIntent &&
+                sectionSplitFallback.length > 0 &&
+                !actions.some((a) => a.type === 'midi.clip.splitIntoSections' || a.type === 'clip.split')
+              ) {
+                actions = [
+                  ...actions.filter((a) => a.type !== 'daw.musicBuild' && a.type !== 'daw.composeProject'),
+                  ...sectionSplitFallback,
+                ]
+                clarifyQs = []
+              }
               // Si el modelo inventó ACTIONS inválidas pero hay forceBuild, garantizar musicBuild
               if (forceBuild && !actions.some((a) => a.type === 'daw.musicBuild' || a.type === 'project.setBpm')) {
                 const mins = extractMinutesFromClarifyText(userText)
@@ -1260,20 +1483,90 @@ export function CoProducerPanel() {
               actions = ensureMusicBuildForFullProject(actions, userText, {
                 aplicar: resolvedMode === 'create' || forceBuild,
               })
+              if (auditIntent || isStyleGapIntent(userText) || (resolvedMode === 'ask' && !styleApplyIntent)) {
+                actions = actions.filter((a) => a.type !== 'daw.musicBuild' && a.type !== 'daw.composeProject')
+              }
+              if (styleApplyIntent || midiClipEditIntent) {
+                // Evitar reconstruir canción entera: solo edición de groove / humanize
+                actions = actions.filter((a) => a.type !== 'daw.musicBuild' && a.type !== 'daw.composeProject')
+              }
+
+              // Si pidió editar MIDI y aún no hay notes.set/patch, inyectar fallback otra vez
+              if (
+                (midiClipEditIntent || styleApplyIntent) &&
+                midiClipEditFallback.length > 0 &&
+                actionsLackMidiNoteEdits(actions)
+              ) {
+                actions = [...actions, ...midiClipEditFallback]
+              }
 
               let text = stripProseClarifyLists(
                 stripChecklistBlock(
-                  raw
-                    .replace(/<<<ACTIONS[\s\S]*?ACTIONS>>>/gi, '')
-                    .replace(/<<<PLAN[\s\S]*?PLAN>>>/gi, '')
-                    .replace(/<<<DOC[\s\S]*?DOC>>>/gi, ''),
+                  sanitizeAssistantMarkdown(
+                    raw
+                      .replace(/<<<ACTIONS[\s\S]*?ACTIONS>>>/gi, '')
+                      .replace(/<<<PLAN[\s\S]*?PLAN>>>/gi, '')
+                      .replace(/<<<DOC[\s\S]*?DOC>>>/gi, ''),
+                  ),
                 ),
               )
               if (
-                isGarbageAssistantReply(text) &&
-                (auditIntent || resolvedMode === 'ask' || isProjectAuditIntent(userText))
+                (isGarbageAssistantReply(text) ||
+                  isOffTopicCreatePlanReply(userText, text) ||
+                  (isStyleGapIntent(userText) && /Auditor[ií]a MIDI|P[123]\s*[·:]/i.test(text))) &&
+                (auditIntent ||
+                  resolvedMode === 'ask' ||
+                  isProjectAuditIntent(userText) ||
+                  isStyleGapIntent(userText))
               ) {
-                text = midiAuditReport || buildMidiAuditReport(state)
+                if (isStyleGapIntent(userText)) {
+                  text = buildStyleGapReport(state, { userText })
+                } else {
+                  text =
+                    midiAuditReport ||
+                    buildMidiAuditReport(state) ||
+                    [
+                      'No pude cerrar un informe útil en este intento.',
+                      'Reintenta el mismo pedido.',
+                    ].join('\n')
+                }
+              }
+              // Si el modelo contestó poco o con jerga técnica en un style_gap, preferir el informe productor
+              if (
+                styleGapIntent &&
+                (isGarbageAssistantReply(text) ||
+                  /Auditor[ií]a MIDI|\*{0,2}P[123]\*{0,2}|🔴\s*P1|🟡\s*P2|🟢\s*P3|244\.0b|formulario/i.test(
+                    text,
+                  ) ||
+                  text.trim().length < 120)
+              ) {
+                text = styleGapSeed || buildStyleGapReport(state, { userText })
+              }
+              if (
+                (styleApplyIntent || midiClipEditIntent) &&
+                actions.some((a) => /midi\./i.test(a.type)) &&
+                (isGarbageAssistantReply(text) ||
+                  /Auditor[ií]a MIDI|gap analysis|Qué le falta|🔴\s*P1|P[123]\s*[·:(]/i.test(text) ||
+                  text.trim().length < 40)
+              ) {
+                text = midiClipEditIntent
+                  ? [
+                      'Voy a editar los **clips MIDI** (no solo el tempo):',
+                      '- Intro / groove de batería más suave (toms, platillos, build al redoblante si aplica)',
+                      '- Dinámicas más bajas donde pediste suavidad',
+                      '- Pads / capas ambientales si lo pediste',
+                      '',
+                      'Revisa la tarjeta **Aplicar** abajo.',
+                    ].join('\n')
+                  : [
+                      'Voy a acercar la **batería** al feel worship moderno (Averly Morillo):',
+                      '- Ghost notes suaves en la caja',
+                      '- Hats abiertos en tramos de “coro”',
+                      '- Fills + crashes cada 8 compases',
+                      '- Humanize leve del timing/velocidad',
+                      '',
+                      'Revisa la tarjeta **Aplicar** abajo. El resto de pistas (bajo, keys, pad, lead) las puedo adecuar en un segundo paso si quieres.',
+                    ].join('\n')
               }
               // Preguntas solo si aún no se respondió / no hay créalo
               if (clarifyQs.length > 0 && !forceBuild) {
@@ -1358,12 +1651,18 @@ export function CoProducerPanel() {
               setAiStatus('online')
               setStatusDetail('')
             } else {
-              const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
+              const forced =
+                (styleApplyIntent || midiClipEditIntent) &&
+                (midiClipEditFallback.length || worshipEnhanceFallback.length)
+                  ? [
+                      ...(midiClipEditFallback.length ? midiClipEditFallback : worshipEnhanceFallback),
+                    ]
+                  : fallbackActionsFromUserIntent(userText, state, agentMode)
               if (forced.length) {
                 const out = await processActionsForMode({
                   tienda: dawStore,
                   actions: forced,
-                  resolvedMode,
+                  resolvedMode: styleApplyIntent || midiClipEditIntent ? 'create' : resolvedMode,
                   userText,
                   conversationId: conversation.id,
                   messageId: assistantMsgId,
@@ -1376,15 +1675,21 @@ export function CoProducerPanel() {
                 ranMutations = out.ranMutations
                 absorbTurnMeta(out, turnMeta)
                 actionsSummary = formatActionResultsForUser(resultsOrPending(out))
-                accumulated = modeBlocksMutation(resolvedMode)
-                  ? `El modelo no devolvió texto usable; dejé una propuesta lista para Construir.\n\n${actionsSummary}`
-                  : `El modelo no devolvió texto usable; apliqué tu brief en el DAW.\n\n${actionsSummary}`
+                accumulated = styleApplyIntent || midiClipEditIntent
+                  ? [
+                      'El modelo no respondió bien; dejé lista la edición MIDI de los clips (groove / dinámica / pads según el pedido).',
+                      'Revisa **Aplicar** abajo.',
+                      actionsSummary,
+                    ].join('\n\n')
+                  : modeBlocksMutation(resolvedMode)
+                    ? `El modelo no devolvió texto usable; dejé una propuesta lista para Construir.\n\n${actionsSummary}`
+                    : `El modelo no devolvió texto usable; apliqué tu brief en el DAW.\n\n${actionsSummary}`
               } else {
                 accumulated =
                   (auditIntent && midiAuditReport) ||
                   formatAiUserError({
                   error: result.error || 'No se pudo obtener respuesta del modelo.',
-                  errorCode: result.errorCode as import('@/src/lib/ai-settings').AiErrorCode | undefined,
+                  errorCode: result.errorCode,
                   hint: result.hint,
                   provider: result.provider || provider.kind,
                 })
@@ -1429,9 +1734,12 @@ export function CoProducerPanel() {
         }
       }
 
-      // Tras auditoría: formulario + tarjeta Aplicar (dedupe) aunque el modelo solo haya razonado
+      // Tras auditoría MIDI “técnica” (duplicados): formulario. NO en gap de estilo / Averill.
       const auditRemediationEligible =
-        (auditIntent || /Auditoría MIDI/i.test(accumulated) || Boolean(midiAuditReport)) &&
+        !isStyleGapIntent(userText) &&
+        (isProjectAuditIntent(userText) ||
+          /Revisión rápida del proyecto|Auditoría MIDI/i.test(accumulated) ||
+          Boolean(midiAuditReport)) &&
         !wantsAuditFix &&
         !isMidiAuditSkipFixReply(userText) &&
         !pendingActions &&
@@ -1461,8 +1769,17 @@ export function CoProducerPanel() {
             actionsSummary = formatActionResultsForUser(resultsOrPending(out))
           }
         }
-        if (auditIntent && midiAuditReport && !/Auditoría MIDI/i.test(accumulated)) {
+        if (auditIntent && midiAuditReport && !/Revisión rápida|Auditoría MIDI/i.test(accumulated)) {
           accumulated = [accumulated, midiAuditReport].filter(Boolean).join('\n\n')
+        }
+        if (styleGapIntent && styleGapSeed && !/Qué le falta|gap de estilo|ghost notes/i.test(accumulated)) {
+          // Si el modelo no dejó respuesta usable, el seed productor es la respuesta
+          if (
+            !accumulated.trim() ||
+            /Auditor[ií]a MIDI|\*{0,2}P[123]\*{0,2}|🔴\s*P1|244\.0b|formulario/i.test(accumulated)
+          ) {
+            accumulated = styleGapSeed
+          }
         }
       }
 
@@ -1936,8 +2253,16 @@ export function CoProducerPanel() {
 
   return (
     <aside
+      ref={panelRootRef}
       data-shortcut-scope="ignore"
-      className="relative flex h-full w-full min-w-0 flex-col bg-panel"
+      data-chat-panel
+      data-coproducer-chat
+      tabIndex={-1}
+      onKeyDown={onChatZoomKeyDown}
+      onPointerDown={() => {
+        panelRootRef.current?.focus({ preventScroll: true })
+      }}
+      className="relative flex h-full w-full min-w-0 flex-col bg-panel outline-none"
     >
       <header className="flex flex-col gap-1.5 border-b border-border px-3 py-2">
         <div className="flex items-center gap-2.5">
@@ -1949,6 +2274,34 @@ export function CoProducerPanel() {
             </p>
           </div>
           <div className="flex items-center gap-1">
+            <button
+              type="button"
+              title="Alejar texto del chat (Ctrl+-)"
+              onClick={() => bumpChatTextZoom(-0.1)}
+              className="rounded p-1 text-muted-foreground hover:bg-panel-raised hover:text-foreground"
+            >
+              <ZoomOut className="size-3.5" />
+            </button>
+            <span className="min-w-[2.4rem] text-center text-[10px] tabular-nums text-muted-foreground">
+              {Math.round(chatTextZoom * 100)}%
+            </span>
+            <button
+              type="button"
+              title="Acercar texto del chat (Ctrl+=)"
+              onClick={() => bumpChatTextZoom(0.1)}
+              className="rounded p-1 text-muted-foreground hover:bg-panel-raised hover:text-foreground"
+            >
+              <ZoomIn className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              title="Copiar todo el chat"
+              disabled={!messages.length}
+              onClick={() => void copyEntireChat()}
+              className="rounded p-1.5 text-muted-foreground hover:bg-panel-raised hover:text-foreground disabled:opacity-40"
+            >
+              {copiedAll ? <Check className="size-4 text-accent-amber" /> : <Copy className="size-4" />}
+            </button>
             {statusBadge}
             <button
               type="button"
@@ -2033,6 +2386,7 @@ export function CoProducerPanel() {
         data-coproducer-chat
         data-chat-selectable
         className="flex-1 space-y-4 overflow-y-auto p-4 select-text"
+        style={{ fontSize: `${chatFontPx}px` }}
       >
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center p-4 text-center text-muted-foreground">
@@ -2065,7 +2419,7 @@ export function CoProducerPanel() {
             return (
             <div
               key={msg.id}
-              className={`group flex gap-2 text-[13px] ${msg.role === 'user' ? 'justify-end' : 'justify-start'} ${
+              className={`group flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'} ${
                 citedIds.includes(msg.id) ? 'rounded-md ring-1 ring-accent-amber/60' : ''
               }`}
             >
@@ -2248,6 +2602,12 @@ export function CoProducerPanel() {
                   <MusicBuildPreview
                     build={msg.musicBuild}
                     status={msg.musicBuild.applied ? 'applied' : 'pending'}
+                    conversationId={conversation.id}
+                    messageId={msg.id}
+                    onApplied={() => {
+                      const after = getConversation(conversation.id)
+                      if (after) setConversation(after)
+                    }}
                   />
                 ) : null}
               </div>

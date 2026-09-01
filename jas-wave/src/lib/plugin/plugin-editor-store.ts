@@ -3,11 +3,15 @@
  * Persiste + BroadcastChannel para ventanas flotantes (undock).
  */
 
+import type { PluginInfo } from '../../../../shared/src/types/entidades'
+
 export type PluginEditorFocus = {
   trackId: string
   pluginId: string
   pluginName: string
   openedAt: number
+  /** Si la pista no está en el proyecto (preview chat), usar este snapshot. */
+  pluginSnapshot?: PluginInfo
 }
 
 type Listener = () => void
@@ -86,12 +90,14 @@ export function openPluginEditor(args: {
   trackId: string
   pluginId: string
   pluginName: string
+  pluginSnapshot?: PluginInfo
   zone?: 'left' | 'right' | 'bottom' | 'center'
 }): void {
   setPluginEditorFocus({
     trackId: args.trackId,
     pluginId: args.pluginId,
     pluginName: args.pluginName,
+    pluginSnapshot: args.pluginSnapshot,
     openedAt: Date.now(),
   })
   window.dispatchEvent(

@@ -68,6 +68,12 @@ export function resolvePianoRollClip(
   return firstMidiInProject()
 }
 
+/** Clip MIDI seleccionado, o el primero de la pista seleccionada. */
+export function getSelectedClipId(state: DAWState): string | null {
+  const resolved = resolvePianoRollClip(state)
+  return resolved?.clipId ?? null
+}
+
 export function listMidiClips(state: DAWState): Array<{ trackId: string; clipId: string; label: string }> {
   const out: Array<{ trackId: string; clipId: string; label: string }> = []
   for (const t of state.project?.tracks ?? []) {

@@ -32,6 +32,9 @@ export type MidiClipMdMeta = {
   trackName?: string
   genero?: string
   rol?: string
+  /** Beats: solo reemplazar notas en [editRangeStart, editRangeEnd) al aplicar. */
+  editRangeStart?: number
+  editRangeEnd?: number
 }
 
 export type MidiClipMdParseResult = {
@@ -214,6 +217,8 @@ export function serializeMidiClipMd(
   if (meta.instrumentoHint) lines.push(`instrumentoHint: ${yamlScalar(meta.instrumentoHint)}`)
   if (meta.genero) lines.push(`genero: ${yamlScalar(meta.genero)}`)
   if (meta.rol) lines.push(`rol: ${yamlScalar(meta.rol)}`)
+  if (meta.editRangeStart != null) lines.push(`editRangeStart: ${meta.editRangeStart}`)
+  if (meta.editRangeEnd != null) lines.push(`editRangeEnd: ${meta.editRangeEnd}`)
   lines.push('---', '', `# Clip MIDI · ${meta.nombre}`, '', '## Notas', '')
   lines.push(`| ${MIDI_CLIP_MD_NOTE_COLUMNS.join(' | ')} |`)
   lines.push(`| ${MIDI_CLIP_MD_NOTE_COLUMNS.map(() => '---').join(' | ')} |`)
@@ -266,9 +271,32 @@ export function serializeMidiClipMd(
     '- Cada fila es una nota independiente identificada por `id`.',
     '- Edita celdas (velocidad, duración, inicio, pitch…) o añade/borra filas.',
     '- Tras editar: `midi.clip.md.upsert` (preview) → `midi.clip.md.apply` (timeline).',
+    '- Para cambiar SOLO un tramo: pon `editRangeStart`/`editRangeEnd` (beats) y deja en la tabla solo las notas del tramo; al aplicar se fusionan sin tocar el resto.',
     '',
   )
   return lines.join('\n')
+}
+
+/** Fusiona notas nuevas en un rango de beats, preservando lo demás del clip. */
+export function mergeNotesInRange(
+  existing: MidiNote[],
+  patch: MidiNote[],
+  rangeStart: number,
+  rangeEnd: number,
+): MidiNote[] {
+  const start = Math.max(0, rangeStart)
+  const end = rangeEnd > start ? rangeEnd : Number.POSITIVE_INFINITY
+  const kept = existing.filter((n) => {
+    const noteEnd = n.inicio + n.duracion
+    return noteEnd <= start || n.inicio >= end
+  })
+  const adjusted = patch.map((n) => ({
+    ...n,
+    id: n.id?.trim() || genNoteId(),
+  }))
+  return [...kept, ...adjusted].sort(
+    (a, b) => a.inicio - b.inicio || a.pitch - b.pitch || a.id.localeCompare(b.id),
+  )
 }
 
 export function parseMidiClipMd(text: string): MidiClipMdParseResult {
@@ -286,6 +314,8 @@ export function parseMidiClipMd(text: string): MidiClipMdParseResult {
     trackName: fm.trackName || undefined,
     genero: fm.genero || undefined,
     rol: fm.rol || undefined,
+    editRangeStart: parseNum(fm.editRangeStart ?? ''),
+    editRangeEnd: parseNum(fm.editRangeEnd ?? ''),
   }
   if (!meta.clipId) errors.push('Falta clipId en frontmatter')
   if (!meta.trackId) errors.push('Falta trackId en frontmatter')

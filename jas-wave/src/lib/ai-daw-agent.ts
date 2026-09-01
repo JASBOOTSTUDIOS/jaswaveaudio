@@ -41,6 +41,8 @@ import {
   inferBpmFromTempoIntent,
   isSongRefineIntent,
   isTempoOnlyRefine,
+  isMidiClipEditIntent,
+  buildMidiClipEditActions,
 } from '@jaswave/ai-harness'
 import {
   formatMusicalSelectionForPrompt,
@@ -51,12 +53,14 @@ import { buildMidiAuditFixActions } from './ai-read-context'
 import {
   diffMidiNotes,
   formatMidiNotesDiffForPrompt,
+  mergeNotesInRange,
   midiClipDocSlug,
   parseMidiClipMd,
   serializeMidiClipMd,
 } from './midi-clip-markdown'
 import { findMidiClip, getClipSummary, getNotes, musicalSummaryText } from '../../../shared/src/midi/query'
 import { isAffirmativeBuildIntent } from './ai-clarify'
+import { resolveTrackHint } from './track-resolve'
 import {
   forcePreviewAplicar,
   isMutatingAction,
@@ -168,6 +172,11 @@ export function buildAgentSystemPrompt(
     '- Canciones: 1) daw.musicBuild (estructura+VST; midiSource:"ai"). 2) Melodía nota a nota vía clip-*.md: midi.clip.md.upsert (preview) → usuario Escucha/Aplica, o midi.clip.md.apply.',
     '- Herramienta más precisa: el .md del clip (tabla id/pitch/inicio/duracion/velocidad/…). Preferir eso a notas[] opacas en ACTIONS cuando el detalle importa.',
     '- Un turno = preferible UNA pista/clip: lee midi.clip.md.read, edita filas, upsert. Compara con midi.notes.compare si hace falta.',
+    '- Edición parcial: si el usuario pide cambiar solo un compás/sección/tramo, usa midi.notes.patch { pistaId, clipId, rangeStart, rangeEnd, notas } o midi.clip.md.apply con rangeStart/rangeEnd. NO reemplaces notas fuera del rango.',
+    '- Canciones largas: NUNCA un solo clip de 3–4 min. Usa clips por sección (Intro/Verso/Coro…) con midi.clip.create { inicio, duracion } o parte un mega-clip con midi.clip.splitIntoSections / clip.split.',
+    '- Intro u otra sección concreta: preferible clip aparte (splitIntoSections o create en ese rango) y editar SOLO ese clip; no reescribir todo el timeline.',
+    '- Suavizar / intro / toms / pads / groove: OBLIGATORIO midi.notes.set o midi.notes.patch (+ midi.humanize). PROHIBIDO responder solo con project.setBpm.',
+    '- Si menciona pista/instrumento («batería», «bajo»…): usa el trackId del contexto o pistaId explícito; NO crees pista duplicada.',
     '- Tras aplicar MIDI: transport.seek + transport.toggle para escuchar en timeline; en preview usa la tarjeta del .md.',
     '- Selección del usuario (Ctrl+L / «Preguntar a Jas»): si el prompt trae noteIds anclados, opera SOLO sobre esas notas (transpose/quantize/notes.set/etc.).',
     '- Si faltan datos críticos: <<<CLARIFY[{"id","question","options":["…","…","…"],"allowCustom":true,"multi":false}]CLARIFY>>> — TÚ inventas question y options para este pedido (≥3). NUNCA listas en prosa ni opciones fijas del sistema.',
@@ -191,6 +200,8 @@ export function buildAgentSystemPrompt(
     '',
     'Acciones (type):',
     '- project.setBpm { bpm: number }',
+    '- project.update { datos: { nombre?, bpm?, timeSignature?, tonalidad?: { enabled:true, label, root, mode } | null, tonalidadRegiones?:[{ id, inicioBeats, finBeats, label, root, mode }] } }',
+    '- score.exportClip { pistaId, clipId } | score.exportProject { folderPath? }',
     '- project.setTimeSignature { numerador, denominador }',
     '- ui.setZoom { horizontal?: 0.15-256, vertical?: 0.5-3, scrollX? }',
     '- track.create { nombre?, tipo: "midi"|"audio"|"instrumento"|"bus" }  ← solo si pide pista nueva',
@@ -215,14 +226,19 @@ export function buildAgentSystemPrompt(
     '- library.preset.audition { presetId, bars?, articulacion? }',
     '- library.preset.saveFxChainGlobal { trackId, nombre, rol?, generoTags? }',
     '- midi.clip.create { pistaId, nombre?, inicio?, duracion?, notas:[{pitch,inicio,duracion,velocidad}], audition?: true }',
-    '  ← OBLIGATORIO notas[] con cada nota que TÚ decides. audition (default true) busca y reproduce un momento.',
+    '  ← OBLIGATORIO notas[] (o [] vacío stub). inicio/duracion en beats del arrange = pedazo de sección (ej. intro 0–32).',
+    '  ← Para canciones largas: varios midi.clip.create (Intro, Verso, Coro…) en la MISMA pista, no un clip de toda la duración.',
+    '- midi.clip.splitIntoSections { pistaId, clipId, cuts:[32,64,96], names?:["Intro","Verso","Coro","Outro"] }',
+    '  ← Parte un mega-clip MIDI en pedazos. cuts = beats relativos al inicio del clip.',
+    '- clip.split { pistaId, clipId, tiempo }  ← un corte (tiempo absoluto en beats del arrange)',
     '- midi.notes.get { clipId, pistaId?/trackId?, limit? }  ← LEE notas del clip (también en <<<READ>>>)',
     '- midi.getClipSummary { clipId, trackId? }  ← resumen densidades/rango',
     '- midi.notes.dedupe { pistaId, clipId }  ← elimina duplicados (mismo pitch+inicio); preferir si el usuario dice «duplicadas/triplicadas»',
     '- midi.clip.md.read { clipId, pistaId? }  ← lee clip-<id>.md (Docs) o serializa el clip del DAW',
     '- midi.clip.md.upsert { clipId, pistaId, markdown? | notas:[...], aplicar?:false }  ← escribe .md + preview (NO timeline)',
-    '- midi.clip.md.apply { clipId, pistaId?, markdown? }  ← parsea .md → midi.notes.set / clip.create',
+    '- midi.clip.md.apply { clipId, pistaId?, markdown?, rangeStart?, rangeEnd? }  ← parsea .md → merge por rango o notes.set',
     '- midi.notes.compare { clipId, pistaId?, otherClipId? | markdown? }  ← diff por id',
+    '- midi.notes.patch { pistaId, clipId, rangeStart, rangeEnd, notas:[...] }  ← fusiona solo el tramo (beats)',
     '- midi.notes.set { pistaId, clipId, notas:[...], noteIds? }',
     '- midi.transpose { pistaId, clipId, semitonos, noteIds? }',
     '- midi.quantize { pistaId, clipId, gridBeats, strength?, noteIds? }',
@@ -236,6 +252,7 @@ export function buildAgentSystemPrompt(
     '- midi.setPitchBend { pistaId, clipId, puntos:[{tiempo,valor:-1..1}] }',
     '- clip.create { pistaId, nombre?, inicio?, duracion?, sourceId?, waveform? }',
     '- clip.split { pistaId, clipId, tiempo }',
+    '- clip.merge { pistaId, clipIds:[...] }  ← une clips adyacentes o solapados en la misma pista (MIDI o audio)',
     '- clip.resize { pistaId, clipId, inicio?, duracion?, clipInicio? }',
     '- clip.delete { pistaId, clipId }',
     '- clip.move { pistaId, clipId, inicio, pistaDestinoId? }',
@@ -381,6 +398,14 @@ export function fallbackActionsFromUserIntent(
   // Solo tempo: basta con setBpm (no reescribir toda la canción)
   if (isTempoOnlyRefine(userText) && actions.some((a) => a.type === 'project.setBpm')) {
     return forcePreviewAplicar(actions, 'create')
+  }
+
+  // Edición de clips MIDI (suave / intro / toms / pads): notas reales, no solo BPM ni musicBuild
+  if (state && isMidiClipEditIntent(userText)) {
+    const midiEdits = buildMidiClipEditActions(state, userText) as DawAction[]
+    if (midiEdits.length) {
+      return forcePreviewAplicar([...actions, ...midiEdits], 'create')
+    }
   }
 
   // Notas multi-duplicadas en selección anclada / clip mencionado / arréglalo tras auditoría
@@ -561,6 +586,27 @@ async function resolveMidiTrackForClip(
         created: false,
         error: `La pista «${t.nombre}» es ${t.tipo}, no MIDI. Selecciona o crea una pista MIDI para el clip.`,
         trackName: t.nombre,
+      }
+    }
+  }
+
+  if (opts.nombre?.trim()) {
+    const resolved = resolveTrackHint(state, { label: opts.nombre.trim(), raw: opts.nombre.trim() })
+    if (resolved.trackId) {
+      return { trackId: resolved.trackId, created: false, trackName: resolved.trackName }
+    }
+    if (resolved.ambiguous) {
+      return {
+        trackId: '',
+        created: false,
+        error: `Hay varias pistas que podrían ser «${opts.nombre}». El usuario debe elegir cuál.`,
+      }
+    }
+    if (!resolved.candidates.length) {
+      return {
+        trackId: '',
+        created: false,
+        error: `No encontré pista «${opts.nombre}». Crea la pista o usa el nombre exacto.`,
       }
     }
   }
@@ -946,6 +992,62 @@ export async function executeDawActions(
           })
           break
         }
+        case 'clip.merge': {
+          const clipIds = Array.isArray(p.clipIds)
+            ? (p.clipIds as unknown[]).map(String)
+            : Array.isArray(p.ids)
+              ? (p.ids as unknown[]).map(String)
+              : []
+          const r = await tienda.executor.execute('clip.merge', {
+            pistaId: String(p.pistaId ?? p.trackId ?? ''),
+            clipIds,
+          })
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success
+              ? `Unidos ${clipIds.length} clips`
+              : r.error?.message ?? 'Error clip.merge',
+          })
+          break
+        }
+        case 'project.update': {
+          const datos = (p.datos ?? p) as Record<string, unknown>
+          const r = await tienda.executor.execute('project.update', { datos })
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success ? 'Proyecto actualizado' : r.error?.message ?? 'Error project.update',
+          })
+          break
+        }
+        case 'midi.clip.splitIntoSections': {
+          const cutsRaw = Array.isArray(p.cuts) ? p.cuts : Array.isArray(p.cortes) ? p.cortes : []
+          const cuts = cutsRaw.map(Number).filter((n) => Number.isFinite(n))
+          const names = Array.isArray(p.names)
+            ? (p.names as unknown[]).map(String)
+            : Array.isArray(p.nombres)
+              ? (p.nombres as unknown[]).map(String)
+              : undefined
+          const r = await tienda.executor.execute('midi.clip.splitIntoSections', {
+            pistaId: String(p.pistaId ?? p.trackId ?? ''),
+            clipId: String(p.clipId ?? ''),
+            cuts,
+            ...(names?.length ? { names } : {}),
+          })
+          const sections =
+            r.success && r.result && typeof r.result === 'object'
+              ? Number((r.result as { sections?: number }).sections ?? cuts.length + 1)
+              : cuts.length + 1
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success
+              ? `Clip partido en ${sections} secciones`
+              : r.error?.message ?? 'Error splitIntoSections',
+          })
+          break
+        }
         case 'clip.resize': {
           const r = await tienda.executor.execute('clip.resize', {
             pistaId: String(p.pistaId),
@@ -986,6 +1088,41 @@ export async function executeDawActions(
             type: action.type,
             success: r.success,
             message: r.success ? 'Notas MIDI actualizadas' : r.error?.message ?? 'Error notas',
+          })
+          break
+        }
+        case 'midi.notes.patch': {
+          const pistaId = String(p.pistaId ?? p.trackId ?? '')
+          const clipId = String(p.clipId ?? '')
+          const rangeStart = Number(p.rangeStart ?? p.inicioRango ?? p.start ?? NaN)
+          const rangeEnd = Number(p.rangeEnd ?? p.finRango ?? p.end ?? NaN)
+          if (!pistaId || !clipId || !Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd)) {
+            results.push({
+              type: action.type,
+              success: false,
+              message: 'Faltan pistaId, clipId, rangeStart o rangeEnd',
+            })
+            break
+          }
+          const ref = findMidiClip(tienda.obtenerEstado(), clipId, pistaId)
+          if (!ref) {
+            results.push({ type: action.type, success: false, message: 'Clip no encontrado' })
+            break
+          }
+          const patchNotes = Array.isArray(p.notas) ? (p.notas as import('@jaswave/shared').MidiNote[]) : []
+          const merged = mergeNotesInRange(ref.clip.notas ?? [], patchNotes, rangeStart, rangeEnd)
+          const r = await tienda.executor.execute('midi.notes.set', {
+            pistaId,
+            clipId,
+            notas: merged,
+            duracion: p.duracion != null ? Number(p.duracion) : undefined,
+          })
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success
+              ? `Parche aplicado en beats ${rangeStart}–${rangeEnd} (${patchNotes.length} notas nuevas, ${merged.length} total)`
+              : r.error?.message ?? 'Error notes.patch',
           })
           break
         }
@@ -1292,18 +1429,34 @@ export async function executeDawActions(
             preserveUserNotes: false,
           })
           const existing = findMidiClip(tienda.obtenerEstado(), clipId, pistaId)
+          const rangeStartRaw =
+            p.rangeStart ?? p.inicioRango ?? parsed.meta.editRangeStart
+          const rangeEndRaw = p.rangeEnd ?? p.finRango ?? parsed.meta.editRangeEnd
+          const rangeStart =
+            rangeStartRaw != null && rangeStartRaw !== '' ? Number(rangeStartRaw) : NaN
+          const rangeEnd = rangeEndRaw != null && rangeEndRaw !== '' ? Number(rangeEndRaw) : NaN
+          const useRange =
+            existing &&
+            Number.isFinite(rangeStart) &&
+            Number.isFinite(rangeEnd) &&
+            rangeEnd > rangeStart
+          const notasToApply = useRange
+            ? mergeNotesInRange(existing!.clip.notas ?? [], parsed.notas, rangeStart, rangeEnd)
+            : parsed.notas
           if (existing) {
             const r = await tienda.executor.execute('midi.notes.set', {
               pistaId,
               clipId,
-              notas: parsed.notas,
+              notas: notasToApply,
               duracion: parsed.meta.duracion > 0 ? parsed.meta.duracion : undefined,
             })
             results.push({
               type: action.type,
               success: r.success,
               message: r.success
-                ? `Aplicadas ${parsed.notas.length} notas a «${parsed.meta.nombre}»`
+                ? useRange
+                  ? `Parcial: ${parsed.notas.length} notas en beats ${rangeStart}–${rangeEnd} (${notasToApply.length} total)`
+                  : `Aplicadas ${parsed.notas.length} notas a «${parsed.meta.nombre}»`
                 : r.error?.message ?? 'Error notes.set',
               data: {
                 kind: 'midiClipMdPreview',
@@ -2146,6 +2299,117 @@ export async function executeDawActions(
           })
           break
         }
+        case 'style.profile.list': {
+          const { styleList, styleFormatContext } = await import('./styles/ops')
+          const scope = (String(p.scope ?? 'all') as 'project' | 'global' | 'all') || 'all'
+          const list = await styleList(tienda, scope)
+          results.push({
+            type: action.type,
+            success: true,
+            message: styleFormatContext(list),
+            data: list.map((x) => ({
+              id: x.id,
+              nombre: x.nombre,
+              rol: x.rol,
+              feel: x.feel,
+              bpm: x.bpm,
+              tags: x.tags,
+              scope: x.scope,
+            })),
+          })
+          break
+        }
+        case 'style.profile.search': {
+          const { styleSearch, styleFormatContext } = await import('./styles/ops')
+          const list = await styleSearch(tienda, {
+            query: p.query ? String(p.query) : undefined,
+            rol: p.rol ? String(p.rol) : undefined,
+            tag: p.tag ? String(p.tag) : undefined,
+            scope: (String(p.scope ?? 'all') as 'project' | 'global' | 'all') || 'all',
+          })
+          results.push({
+            type: action.type,
+            success: true,
+            message: styleFormatContext(list),
+            data: list,
+          })
+          break
+        }
+        case 'style.profile.saveFromClip': {
+          const { styleSaveFromClip } = await import('./styles/ops')
+          const pistaId = String(p.pistaId ?? p.trackId ?? getSelectedTrackId(tienda.obtenerEstado()) ?? '')
+          const clipId = String(p.clipId ?? '')
+          if (!pistaId || !clipId) {
+            results.push({ type: action.type, success: false, message: 'Falta pistaId o clipId' })
+            break
+          }
+          const tagsRaw = p.tags
+          const tags = Array.isArray(tagsRaw)
+            ? tagsRaw.map(String)
+            : typeof tagsRaw === 'string'
+              ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean)
+              : undefined
+          const saved = await styleSaveFromClip(tienda, {
+            pistaId,
+            clipId,
+            nombre: p.nombre ? String(p.nombre) : undefined,
+            tags,
+            global: p.global === true,
+            rol: p.rol ? (String(p.rol) as import('./styles/types').StyleRole) : undefined,
+          })
+          results.push({
+            type: action.type,
+            success: saved.ok,
+            message: saved.message,
+            data: saved.profile,
+          })
+          break
+        }
+        case 'style.profile.apply': {
+          const { styleApplyToClip } = await import('./styles/ops')
+          const pistaId = String(p.pistaId ?? p.trackId ?? getSelectedTrackId(tienda.obtenerEstado()) ?? '')
+          const clipId = String(p.clipId ?? '')
+          const profileId = String(p.profileId ?? p.id ?? '')
+          if (!pistaId || !clipId || !profileId) {
+            results.push({ type: action.type, success: false, message: 'Falta profileId, pistaId o clipId' })
+            break
+          }
+          const applied = await styleApplyToClip(tienda, {
+            profileId,
+            pistaId,
+            clipId,
+            replace: p.replace !== false,
+          })
+          results.push({ type: action.type, success: applied.ok, message: applied.message })
+          break
+        }
+        case 'score.exportClip': {
+          const { exportClipScorePdfDialog } = await import('./midi-score-export')
+          const pistaId = String(p.pistaId ?? p.trackId ?? getSelectedTrackId(tienda.obtenerEstado()) ?? '')
+          const clipId = String(p.clipId ?? '')
+          if (!pistaId || !clipId) {
+            results.push({ type: action.type, success: false, message: 'Falta pistaId o clipId' })
+            break
+          }
+          const exp = await exportClipScorePdfDialog(tienda, pistaId, clipId)
+          results.push({ type: action.type, success: exp.ok, message: exp.message })
+          break
+        }
+        case 'score.exportProject': {
+          const { exportProjectScoresToFolder } = await import('./midi-score-export')
+          let folder = p.folderPath ? String(p.folderPath) : ''
+          if (!folder && typeof window !== 'undefined' && window.electron?.dialogOpenDirectory) {
+            const dir = await window.electron.dialogOpenDirectory()
+            folder = dir && !dir.canceled && dir.filePaths?.[0] ? dir.filePaths[0] : ''
+          }
+          if (!folder) {
+            results.push({ type: action.type, success: false, message: 'Falta folderPath / carpeta' })
+            break
+          }
+          const exp = await exportProjectScoresToFolder(tienda, folder, p.includeProject === true)
+          results.push({ type: action.type, success: exp.ok, message: exp.message, data: { count: exp.count } })
+          break
+        }
         case 'plugin.listParameters': {
           const trackId = String(p.trackId ?? p.pistaId ?? '')
           if (!trackId) {
@@ -2728,6 +2992,67 @@ export async function executeDawActions(
             message: r.success ? `Proyecto nuevo «${nombre}»` : r.error?.message ?? 'Error project.new',
             data: r.result,
           })
+          break
+        }
+        case 'project.save': {
+          const { guardarProyectoIO } = await import('./project-io')
+          const r = await guardarProyectoIO(tienda)
+          results.push({
+            type: action.type,
+            success: r.success && !r.canceled,
+            message: r.canceled
+              ? 'Guardado cancelado'
+              : r.success
+                ? `Proyecto guardado${r.path ? `: ${r.path}` : ''} (VST snapshot incluido)`
+                : typeof r.error === 'string'
+                  ? r.error
+                  : r.error?.message ?? 'Error project.save',
+            data: r,
+          })
+          break
+        }
+        case 'project.saveAs': {
+          const { guardarProyectoComoIO } = await import('./project-io')
+          const r = await guardarProyectoComoIO(tienda)
+          results.push({
+            type: action.type,
+            success: r.success && !r.canceled,
+            message: r.canceled
+              ? 'Guardar como cancelado'
+              : r.success
+                ? `Proyecto guardado como ${r.path ?? ''}`
+                : typeof r.error === 'string'
+                  ? r.error
+                  : r.error?.message ?? 'Error project.saveAs',
+            data: r,
+          })
+          break
+        }
+        case 'plugin.snapshotState': {
+          const { snapshotLoadedPluginsIntoProject, snapshotTrackPluginIntoProject } = await import(
+            './plugin/track-vst-runtime'
+          )
+          const trackId = p.trackId != null ? String(p.trackId) : ''
+          const pluginId = p.pluginId != null ? String(p.pluginId) : p.pluginInstanceId != null ? String(p.pluginInstanceId) : ''
+          if (trackId && pluginId) {
+            const one = await snapshotTrackPluginIntoProject(tienda, trackId, pluginId)
+            results.push({
+              type: action.type,
+              success: one.ok,
+              message: one.ok
+                ? `Snapshot VST${one.hasChunk ? ' + chunk' : ' (solo params)'}`
+                : 'Slot no cargado o sin path',
+              data: one,
+            })
+          } else {
+            const all = await snapshotLoadedPluginsIntoProject(tienda)
+            results.push({
+              type: action.type,
+              success: all.slots > 0,
+              message: `Snapshot ${all.withChunk}/${all.slots} slots con chunk VST`,
+              data: all,
+            })
+          }
           break
         }
         default: {

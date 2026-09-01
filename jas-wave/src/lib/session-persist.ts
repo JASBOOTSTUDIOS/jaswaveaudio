@@ -180,15 +180,35 @@ function buildSnapshot(state: DAWState): SessionSnapshot {
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let saving = false
 let pending = false
+let pendingForcePluginSnapshot = false
+/** Evita martillar getPluginState en cada mute/fader; el flush de salida fuerza. */
+let lastVstSnapshotAt = 0
+const VST_SNAPSHOT_MIN_MS = 12_000
 
-export async function saveSessionNow(tienda: TiendaDAW): Promise<void> {
+export async function saveSessionNow(
+  tienda: TiendaDAW,
+  opts?: { forcePluginSnapshot?: boolean },
+): Promise<void> {
   if (typeof indexedDB === 'undefined') return
+  if (opts?.forcePluginSnapshot) pendingForcePluginSnapshot = true
   if (saving) {
     pending = true
     return
   }
   saving = true
   try {
+    const force = pendingForcePluginSnapshot
+    pendingForcePluginSnapshot = false
+    const now = Date.now()
+    if (force || now - lastVstSnapshotAt >= VST_SNAPSHOT_MIN_MS) {
+      try {
+        const { snapshotLoadedPluginsIntoProject } = await import('./plugin/track-vst-runtime')
+        await snapshotLoadedPluginsIntoProject(tienda)
+        lastVstSnapshotAt = Date.now()
+      } catch (err) {
+        console.warn('[session-persist] VST snapshot skipped', err)
+      }
+    }
     const snap = buildSnapshot(tienda.obtenerEstado())
     const meta = toMeta(snap)
     // Meta primero (arranque rápido); audio después
@@ -385,7 +405,7 @@ export function attachSessionAutosave(tienda: TiendaDAW): () => void {
   })
 
   const flush = () => {
-    void saveSessionNow(tienda)
+    void saveSessionNow(tienda, { forcePluginSnapshot: true })
   }
   window.addEventListener('beforeunload', flush)
   window.addEventListener('pagehide', flush)

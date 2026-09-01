@@ -154,7 +154,7 @@ describe('Text input scope', () => {
       metaKey: false,
       preventDefault: () => {},
       stopPropagation: () => {},
-    } as KeyboardEvent);
+    } as unknown as KeyboardEvent);
     expect(handled).toBe(false);
     expect(called).toBe(false);
   });

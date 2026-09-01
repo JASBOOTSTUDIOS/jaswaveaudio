@@ -1,5 +1,6 @@
 /**
  * Renderer: responde al agent-bridge (CLI) con snapshots, catálogo y TODAS las acciones IA.
+ * (reload bump: plugin.snapshotState)
  */
 
 import { useEffect, useState } from 'react'
@@ -245,7 +246,14 @@ export function buildStateSummary(tienda: TiendaDAW) {
     muted: t.silenciada,
     solo: t.soloActiva,
     frozen: t.frozen,
-    plugins: (t.plugins ?? []).map((p) => ({ id: p.id, nombre: p.nombre, bypass: p.bypass })),
+    plugins: (t.plugins ?? []).map((p) => ({
+      id: p.id,
+      nombre: p.nombre,
+      bypass: p.bypass,
+      hasChunk: Boolean(p.estadoPluginBase64),
+      chunkBytes: p.estadoPluginBase64 ? Math.floor((p.estadoPluginBase64.length * 3) / 4) : 0,
+      params: p.parametros?.length ?? 0,
+    })),
     clips: (t.clips ?? []).map((c) => ({
       id: c.id,
       nombre: (c as { nombre?: string }).nombre,
@@ -410,6 +418,42 @@ export async function runCliActions(tienda: TiendaDAW, actions: DawAction[]) {
         message: report.summary,
         data: report,
       })
+    } else if (a.type === 'plugin.snapshotState') {
+      // Fast-path: no depender del HMR del switch enorme en ai-daw-agent.
+      const { snapshotLoadedPluginsIntoProject, snapshotTrackPluginIntoProject } = await import(
+        './plugin/track-vst-runtime'
+      )
+      const p = (a.payload ?? {}) as {
+        trackId?: string
+        pluginId?: string
+        pluginInstanceId?: string
+      }
+      const trackId = p.trackId != null ? String(p.trackId) : ''
+      const pluginId =
+        p.pluginId != null
+          ? String(p.pluginId)
+          : p.pluginInstanceId != null
+            ? String(p.pluginInstanceId)
+            : ''
+      if (trackId && pluginId) {
+        const one = await snapshotTrackPluginIntoProject(tienda, trackId, pluginId)
+        early.push({
+          type: a.type,
+          success: one.ok,
+          message: one.ok
+            ? `Snapshot VST${one.hasChunk ? ' + chunk' : ' (solo params)'}`
+            : 'Slot no cargado o sin path',
+          data: one,
+        })
+      } else {
+        const all = await snapshotLoadedPluginsIntoProject(tienda)
+        early.push({
+          type: a.type,
+          success: all.slots > 0,
+          message: `Snapshot ${all.withChunk}/${all.slots} slots con chunk VST`,
+          data: all,
+        })
+      }
     } else {
       expanded.push(a)
     }
@@ -430,7 +474,7 @@ export async function runCliActions(tienda: TiendaDAW, actions: DawAction[]) {
 }
 
 /** Bump en cada cambio del bridge para forzar remount tras HMR. */
-export const AGENT_BRIDGE_REV = 12
+export const AGENT_BRIDGE_REV = 15
 
 /** Montar en App: escucha agent-bridge-request del main. */
 export function AgentAuditHost() {
@@ -485,18 +529,20 @@ export function AgentAuditHost() {
               api.agentBridgeReply?.(msg.id, null, 'Falta type o actions[]')
               return
             }
-            // Separar analysis.timing / analysis.buffer / audio.armNative (inline) del resto
+            // Separar analysis.* / audio.armNative / plugin.snapshotState (inline) del resto
             const special = actions.filter(
               (a) =>
                 a.type === 'analysis.timing' ||
                 a.type === 'analysis.buffer' ||
-                a.type === 'audio.armNative',
+                a.type === 'audio.armNative' ||
+                a.type === 'plugin.snapshotState',
             )
             const otherActions = actions.filter(
               (a) =>
                 a.type !== 'analysis.timing' &&
                 a.type !== 'analysis.buffer' &&
-                a.type !== 'audio.armNative',
+                a.type !== 'audio.armNative' &&
+                a.type !== 'plugin.snapshotState',
             )
             const specialResults: Array<{
               type: string
@@ -556,6 +602,40 @@ export function AgentAuditHost() {
                     : `Native mix NO armado: ${d.lastArmError || 'desconocido'}`,
                   data: d,
                 })
+              } else if (a.type === 'plugin.snapshotState') {
+                const { snapshotLoadedPluginsIntoProject, snapshotTrackPluginIntoProject } =
+                  await import('./plugin/track-vst-runtime')
+                const p = (a.payload ?? {}) as {
+                  trackId?: string
+                  pluginId?: string
+                  pluginInstanceId?: string
+                }
+                const trackId = p.trackId != null ? String(p.trackId) : ''
+                const pluginId =
+                  p.pluginId != null
+                    ? String(p.pluginId)
+                    : p.pluginInstanceId != null
+                      ? String(p.pluginInstanceId)
+                      : ''
+                if (trackId && pluginId) {
+                  const one = await snapshotTrackPluginIntoProject(tienda, trackId, pluginId)
+                  specialResults.push({
+                    type: a.type,
+                    success: one.ok,
+                    message: one.ok
+                      ? `Snapshot VST${one.hasChunk ? ' + chunk' : ' (solo params)'}`
+                      : 'Slot no cargado o sin path',
+                    data: one,
+                  })
+                } else {
+                  const all = await snapshotLoadedPluginsIntoProject(tienda)
+                  specialResults.push({
+                    type: a.type,
+                    success: all.slots > 0,
+                    message: `Snapshot ${all.withChunk}/${all.slots} slots con chunk VST`,
+                    data: all,
+                  })
+                }
               }
             }
             const other = otherActions.length

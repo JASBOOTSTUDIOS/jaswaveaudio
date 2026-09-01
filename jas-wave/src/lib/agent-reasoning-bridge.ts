@@ -39,7 +39,14 @@ export async function runAgentReasoningForTurn(opts: {
   chatFn?: (messages: ReasoningChatTurn[]) => Promise<{ success: boolean; content?: string }>
   /** Pausa entre fases LLM (ms) — gateways cloud (Kilo Code) necesitan más espacio. */
   paceBetweenPhasesMs?: number
-}): Promise<{ steps: StoredReasoningStep[]; finalUserMessage: string; decisionBrief: string }> {
+}): Promise<{
+  steps: StoredReasoningStep[]
+  finalUserMessage: string
+  decisionBrief: string
+  depth?: number
+  depthReason?: string
+  canonicalPrompt?: string
+}> {
   const { formatLibraryPresetsForContext } = await import('./library/ops')
   const presetsBlock =
     opts.libraryPresetsBlock ?? (await formatLibraryPresetsForContext(opts.tienda, 12))
@@ -82,9 +89,31 @@ export async function runAgentReasoningForTurn(opts: {
     runReadTools,
     abort: opts.abort,
     paceBetweenPhasesMs: opts.paceBetweenPhasesMs,
+    onDepthPlan: ({ depth, reason, source, canonicalPrompt }) => {
+      if (depth <= 0) {
+        opts.onPhaseLabel?.('Traduciendo pedido…')
+        return
+      }
+      const src = source === 'model' ? 'IA' : source === 'override' ? 'fijo' : 'auto'
+      opts.onPhaseLabel?.(
+        depth <= 3
+          ? `Razonamiento rápido (${depth} pasos, ${src})…`
+          : depth >= 8
+            ? `Razonamiento crítico (${depth} pasos, ${src})…`
+            : `Razonamiento (${depth} pasos, ${src})…`,
+      )
+      void reason
+      void canonicalPrompt
+    },
     onStep: (step) => {
       const stored = toStoredReasoningStep(step, false)
-      storedSteps.push(stored)
+      const existingIdx = storedSteps.findIndex((s) => s.phase === stored.phase && s.startedAt === stored.startedAt)
+      if (existingIdx >= 0) storedSteps[existingIdx] = stored
+      else if (stored.phase === 'normalize' && storedSteps[0]?.phase === 'normalize') {
+        storedSteps[0] = stored
+      } else {
+        storedSteps.push(stored)
+      }
       opts.onPhaseLabel?.(stored.title)
       opts.onStep?.([...storedSteps])
     },
@@ -99,5 +128,8 @@ export async function runAgentReasoningForTurn(opts: {
       : loop.steps.map((s, i) => toStoredReasoningStep(s, i < loop.steps.length - 1)),
     finalUserMessage: loop.finalUserMessage,
     decisionBrief: loop.decisionBrief,
+    depth: loop.depth,
+    depthReason: loop.depthReason,
+    canonicalPrompt: loop.canonicalPrompt,
   }
 }

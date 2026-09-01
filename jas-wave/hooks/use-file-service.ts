@@ -7,6 +7,7 @@ import {
   mensajeError,
   nuevoProyectoIO,
 } from '../src/lib/project-io'
+import type { AiChatRequest, AiChatResult, AiHealthResult } from '../src/lib/ai-settings'
 
 declare global {
   interface Window {
@@ -36,20 +37,12 @@ declare global {
       projectSaveAs: (projectId: string, data: unknown) => Promise<{ success: boolean; path?: string; size?: number; canceled?: boolean; error?: string }>
       projectList: () => Promise<{ success: boolean; projects?: Array<{ id: string; name: string; modified: number; size: number }>; error?: string }>
       aiChat: (
-        payload: unknown,
+        payload: AiChatRequest | unknown,
         model?: string,
         baseUrl?: string,
         temperature?: number,
-      ) => Promise<{
-        success: boolean
-        content?: string
-        model?: string
-        provider?: string
-        error?: string
-        errorCode?: string
-        hint?: string
-      }>
-      aiHealth: (payload?: unknown) => Promise<{
+      ) => Promise<AiChatResult>
+      aiHealth: (payload?: unknown) => Promise<AiHealthResult | {
         status: string
         models: unknown[]
         error?: string

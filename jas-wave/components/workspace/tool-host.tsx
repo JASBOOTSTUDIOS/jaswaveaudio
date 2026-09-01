@@ -7,6 +7,7 @@ import { AgentDocsPanel } from '@/components/agent-docs-panel'
 import { DocsExplorerPanel } from '@/components/docs-explorer-panel'
 import { TrackDetailPanel } from '@/components/track-detail-panel'
 import { PianoRollToolPanel } from '@/components/piano-roll'
+import { ScoreEditorToolPanel } from '@/components/score-editor-panel'
 import { InstrumentsPanel } from '@/components/instruments-panel'
 import { LibraryPanel } from '@/components/library-panel'
 import { FxChainPanel } from '@/components/fx-chain-panel'
@@ -47,6 +48,8 @@ export function ToolHost({ toolId }: { toolId: ToolId }) {
       return <TrackDetailPanel trackId={selectedTrackId} />
     case 'piano-roll':
       return <PianoRollToolPanel />
+    case 'score-editor':
+      return <ScoreEditorToolPanel />
     case 'instruments':
       return <InstrumentsPanel />
     case 'fx-chain':

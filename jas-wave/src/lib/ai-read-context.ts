@@ -10,5 +10,11 @@ export {
   buildMidiAuditClarifications,
   formatMidiTimelineForPrompt,
   isGarbageAssistantReply,
+  isOffTopicCreatePlanReply,
+  buildStyleGapReport,
+  buildWorshipDrumEnhanceActions,
+  buildMidiClipEditActions,
+  buildSplitLongClipsActions,
+  actionsLackMidiNoteEdits,
   collectMidiAuditIssues,
 } from '@jaswave/ai-harness'

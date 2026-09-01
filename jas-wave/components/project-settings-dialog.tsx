@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react'
-import { FolderOpen, Music2, AudioLines, Settings2, Keyboard, ListOrdered, Shield, Bot, Piano } from 'lucide-react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { FolderOpen, Music2, AudioLines, Settings2, Keyboard, ListOrdered, Shield, Bot, Piano, Plus, Trash2 } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import type { DAWState } from '../../shared/src/types/state'
 import { ACCIONES_ATAJO, ATAJOS_POR_DEFECTO } from '../../shared/src'
@@ -25,6 +25,15 @@ import {
 import { JasWaveLogo } from '@/components/brand'
 import { audioEngine } from '@/lib/audio-engine'
 import { midiController } from '@/src/lib/midi-controller'
+import {
+  formatKeyLabel,
+  getProjectKey,
+  getProjectKeyRegions,
+  PROJECT_KEY_ROOTS,
+  type ProjectKeyConfig,
+  type ProjectKeyMode,
+  type ProjectKeyRegion,
+} from '../../shared/src/music/project-key'
 
 interface ProjectSettingsDialogProps {
   open: boolean
@@ -253,6 +262,10 @@ function GeneralTab() {
   const [bpm, setBpm] = useState(120)
   const [numCompas, setNumCompas] = useState(4)
   const [denCompas, setDenCompas] = useState(4)
+  const [keyEnabled, setKeyEnabled] = useState(false)
+  const [keyRoot, setKeyRoot] = useState(60)
+  const [keyMode, setKeyMode] = useState<ProjectKeyMode>('major')
+  const [keyRegions, setKeyRegions] = useState<ProjectKeyRegion[]>([])
 
   useEffect(() => {
     if (project) {
@@ -260,8 +273,32 @@ function GeneralTab() {
       setBpm(project.bpm?.valor ?? transport?.bpm ?? 120)
       setNumCompas(project.timeSignature?.numerador ?? transport?.metronomo?.compas ?? 4)
       setDenCompas(project.timeSignature?.denominador ?? 4)
+      const pk = getProjectKey(project.metadata)
+      if (pk) {
+        setKeyEnabled(true)
+        setKeyRoot(pk.root)
+        setKeyMode(pk.mode)
+      } else {
+        setKeyEnabled(false)
+        setKeyRoot(60)
+        setKeyMode('major')
+      }
+      setKeyRegions(getProjectKeyRegions(project.metadata))
     }
   }, [project, transport])
+
+  const buildKeyPayload = useCallback(() => {
+    if (!keyEnabled) {
+      return { tonalidad: null as ProjectKeyConfig | null, tonalidadRegiones: [] as ProjectKeyRegion[] }
+    }
+    const tonalidad: ProjectKeyConfig = {
+      enabled: true,
+      label: formatKeyLabel(keyRoot, keyMode),
+      root: keyRoot,
+      mode: keyMode,
+    }
+    return { tonalidad, tonalidadRegiones: keyRegions }
+  }, [keyEnabled, keyRoot, keyMode, keyRegions])
 
   const guardar = () => {
     void tienda.executor.execute('project.update', {
@@ -269,8 +306,52 @@ function GeneralTab() {
         nombre,
         bpm: { valor: bpm, tipo: 'constante' },
         timeSignature: { numerador: numCompas, denominador: denCompas },
+        ...buildKeyPayload(),
       },
     })
+  }
+
+  const guardarTonalidad = () => {
+    void tienda.executor.execute('project.update', {
+      datos: buildKeyPayload(),
+    })
+  }
+
+  const addKeyRegion = () => {
+    const beatsPerBar = numCompas
+    const lastEnd =
+      keyRegions.length > 0
+        ? Math.max(...keyRegions.map((r) => r.finBeats))
+        : beatsPerBar * 4
+    const id = `key-${Date.now()}`
+    setKeyRegions((prev) => [
+      ...prev,
+      {
+        id,
+        inicioBeats: lastEnd,
+        finBeats: lastEnd + beatsPerBar * 8,
+        label: formatKeyLabel(keyRoot, keyMode === 'major' ? 'minor' : 'major'),
+        root: keyRoot,
+        mode: keyMode === 'major' ? 'minor' : 'major',
+      },
+    ])
+  }
+
+  const updateKeyRegion = (id: string, patch: Partial<ProjectKeyRegion>) => {
+    setKeyRegions((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r
+        const next = { ...r, ...patch }
+        if (patch.root != null || patch.mode != null) {
+          next.label = formatKeyLabel(next.root, next.mode)
+        }
+        return next
+      }),
+    )
+  }
+
+  const removeKeyRegion = (id: string) => {
+    setKeyRegions((prev) => prev.filter((r) => r.id !== id))
   }
 
   return (
@@ -320,6 +401,168 @@ function GeneralTab() {
             />
           </div>
         </Field>
+      </div>
+
+      <div className="rounded-md border border-border bg-panel-raised/40 p-3">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div>
+            <div className="text-[12px] font-semibold text-foreground">Tonalidad del proyecto</div>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Opcional. La IA y el editor de partitura la usan como referencia. Puedes definir cambios de
+              tono por tramos de tiempo.
+            </p>
+          </div>
+          <label className="flex shrink-0 items-center gap-2 text-[11px]">
+            <input
+              type="checkbox"
+              checked={keyEnabled}
+              onChange={(e) => {
+                setKeyEnabled(e.target.checked)
+                setTimeout(guardarTonalidad, 0)
+              }}
+            />
+            Activar
+          </label>
+        </div>
+
+        {keyEnabled ? (
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-3">
+              <Field label="Tónica">
+                <select
+                  value={keyRoot}
+                  onChange={(e) => {
+                    setKeyRoot(Number(e.target.value))
+                  }}
+                  onBlur={guardarTonalidad}
+                  className={INPUT}
+                >
+                  {PROJECT_KEY_ROOTS.map((k) => (
+                    <option key={k.root} value={k.root}>
+                      {k.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Modo">
+                <select
+                  value={keyMode}
+                  onChange={(e) => setKeyMode(e.target.value as ProjectKeyMode)}
+                  onBlur={guardarTonalidad}
+                  className={INPUT}
+                >
+                  <option value="major">Mayor</option>
+                  <option value="minor">Menor</option>
+                </select>
+              </Field>
+              <div className="flex items-end pb-1 text-[11px] text-muted-foreground">
+                {formatKeyLabel(keyRoot, keyMode)}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Regiones con otro tono (beats del arrange)
+                </span>
+                <button
+                  type="button"
+                  className="flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] hover:bg-panel"
+                  onClick={() => {
+                    addKeyRegion()
+                  }}
+                >
+                  <Plus className="size-3" />
+                  Añadir región
+                </button>
+              </div>
+              {keyRegions.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Sin regiones: todo el proyecto usa la tonalidad base.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {keyRegions.map((r) => (
+                    <div
+                      key={r.id}
+                      className="grid grid-cols-[1fr_1fr_1fr_1fr_auto] items-end gap-2 rounded border border-border/60 bg-background/40 p-2"
+                    >
+                      <Field label="Inicio (beats)">
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.25}
+                          value={r.inicioBeats}
+                          onChange={(e) =>
+                            updateKeyRegion(r.id, { inicioBeats: Number(e.target.value) })
+                          }
+                          onBlur={guardarTonalidad}
+                          className={MONO}
+                        />
+                      </Field>
+                      <Field label="Fin (beats)">
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.25}
+                          value={r.finBeats}
+                          onChange={(e) => updateKeyRegion(r.id, { finBeats: Number(e.target.value) })}
+                          onBlur={guardarTonalidad}
+                          className={MONO}
+                        />
+                      </Field>
+                      <Field label="Tónica">
+                        <select
+                          value={r.root}
+                          onChange={(e) => updateKeyRegion(r.id, { root: Number(e.target.value) })}
+                          onBlur={guardarTonalidad}
+                          className={INPUT}
+                        >
+                          {PROJECT_KEY_ROOTS.map((k) => (
+                            <option key={k.root} value={k.root}>
+                              {k.label}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field label="Modo">
+                        <select
+                          value={r.mode}
+                          onChange={(e) =>
+                            updateKeyRegion(r.id, { mode: e.target.value as ProjectKeyMode })
+                          }
+                          onBlur={guardarTonalidad}
+                          className={INPUT}
+                        >
+                          <option value="major">Mayor</option>
+                          <option value="minor">Menor</option>
+                        </select>
+                      </Field>
+                      <button
+                        type="button"
+                        title="Eliminar región"
+                        className="mb-1 rounded p-1.5 text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
+                        onClick={() => {
+                          removeKeyRegion(r.id)
+                          setTimeout(guardarTonalidad, 0)
+                        }}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                className="self-start rounded-md bg-accent-amber px-3 py-1.5 text-[11px] font-medium text-background"
+                onClick={guardarTonalidad}
+              >
+                Guardar tonalidad
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   )

@@ -44,9 +44,16 @@ async function readDisk(): Promise<LibraryPreset[]> {
 
 async function writeDisk(presets: LibraryPreset[]): Promise<void> {
   const path = await globalPresetsPath()
-  if (!path || !window.electron?.fileSave) return
+  if (!path || !window.electron?.fileSave) {
+    throw new Error('No se puede escribir biblioteca global (sin userData/fileSave)')
+  }
   const payload: GlobalCatalogFile = { version: 1, presets }
-  await window.electron.fileSave(path, JSON.stringify(payload, null, 2))
+  const result = (await window.electron.fileSave(path, JSON.stringify(payload, null, 2))) as
+    | { success?: boolean; error?: string }
+    | undefined
+  if (result && result.success === false) {
+    throw new Error(result.error || `Fallo al guardar ${path}`)
+  }
   memoryCache = presets
 }
 

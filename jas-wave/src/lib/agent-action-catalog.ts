@@ -135,6 +135,12 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     examplePayload: { nombre: 'JasWave Roles' },
   },
   {
+    type: 'plugin.snapshotState',
+    kind: 'agent',
+    description: 'Captura chunk/params VST del host al proyecto (todas las pistas o un slot)',
+    examplePayload: {},
+  },
+  {
     type: 'plugin.listParameters',
     kind: 'agent',
     description: 'Lista parámetros VST de un slot',
@@ -217,6 +223,42 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     kind: 'agent',
     description: 'Guarda cadena FX completa en biblioteca global',
     examplePayload: { trackId: '…', nombre: 'Vocal chain' },
+  },
+  {
+    type: 'style.profile.list',
+    kind: 'agent',
+    description: 'Lista perfiles de estilo (scope: project|global|all)',
+    examplePayload: { scope: 'all' },
+  },
+  {
+    type: 'style.profile.search',
+    kind: 'agent',
+    description: 'Busca perfiles de estilo por query/rol/tag',
+    examplePayload: { query: 'worship', rol: 'drums', scope: 'all' },
+  },
+  {
+    type: 'style.profile.saveFromClip',
+    kind: 'agent',
+    description: 'Extrae StyleProfile del clip MIDI (sin embeber notas) y lo guarda',
+    examplePayload: { pistaId: '…', clipId: '…', nombre: 'Mi groove', tags: ['worship'], global: false },
+  },
+  {
+    type: 'style.profile.apply',
+    kind: 'agent',
+    description: 'Aplica priors del perfil al clip (genera variación, no copia MIDI origen)',
+    examplePayload: { profileId: '…', pistaId: '…', clipId: '…', replace: true },
+  },
+  {
+    type: 'score.exportClip',
+    kind: 'agent',
+    description: 'Exporta partitura PDF del clip MIDI (diálogo o ruta)',
+    examplePayload: { pistaId: '…', clipId: '…' },
+  },
+  {
+    type: 'score.exportProject',
+    kind: 'agent',
+    description: 'Exporta un PDF por cada clip MIDI a una carpeta (scores/)',
+    examplePayload: { folderPath: '…', includeProject: false },
   },
   {
     type: 'doc.list',
@@ -327,6 +369,8 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'master.update',
   'clip.create',
   'clip.split',
+  'clip.merge',
+  'midi.clip.splitIntoSections',
   'clip.resize',
   'clip.delete',
   'clip.move',
@@ -388,6 +432,7 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'audio.armNative',
   'audio.clearQuarantine',
   'project.new',
+  'project.update',
   ...AGENT_ONLY_ACTIONS.map((a) => a.type),
 ]
 

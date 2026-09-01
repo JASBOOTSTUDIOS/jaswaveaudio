@@ -160,6 +160,13 @@ export function registerProjectGraphResync(fn: (() => void) | null): void {
   resyncProjectGraph = fn
 }
 
+/** Re-publica el graph del proyecto (+ stems de audición huérfanos). */
+export function flushProjectGraphResync(): boolean {
+  if (!resyncProjectGraph) return false
+  resyncProjectGraph()
+  return true
+}
+
 /** Audio corriendo. No pone transport.playing (eso mueve el playhead);
  *  el host activa kPlaying del slot en cada noteOn de preview. */
 let hostMidiAudioReady = false
@@ -597,7 +604,6 @@ export function syncReaperTrackGraph(
   } | null,
 ): void {
   const anySolo = tracks.some((t) => t.soloActiva)
-  audioEngine.setTrackStemLayout(tracks.map((t) => t.id))
 
   const stemByTrackId = new Map(tracks.map((t, i) => [t.id, i]))
   for (const b of routing?.buses ?? []) {
@@ -672,6 +678,30 @@ export function syncReaperTrackGraph(
       sidechains: sidechainsByDest.get(t.id) ?? [],
     }
   })
+
+  // Slots de audición (chat / `__…`) no están en el proyecto: sin stem en el graph
+  // el VST recibe MIDI pero no llega al mix ASIO → silencio.
+  const usedSlotIds = new Set(graphTracks.flatMap((t) => t.slots.map((s) => s.slotId)))
+  const stemIds = tracks.map((t) => t.id)
+  for (const loaded of byTrack.values()) {
+    if (!loaded.instrument || !bySlot.has(loaded.slotId)) continue
+    if (usedSlotIds.has(loaded.slotId)) continue
+    if (tracks.some((t) => t.id === loaded.trackId)) continue
+    if (graphTracks.length >= 64) break
+    const stemIndex = graphTracks.length
+    graphTracks.push({
+      stemIndex,
+      gain: 0.95,
+      pan: 0,
+      muted: false,
+      slots: [{ slotId: loaded.slotId, instrument: true, bypass: false }],
+      sends: [],
+      sidechains: [],
+    })
+    usedSlotIds.add(loaded.slotId)
+    stemIds.push(loaded.trackId)
+  }
+  audioEngine.setTrackStemLayout(stemIds)
 
   const master: Array<{ slotId: string; instrument: boolean; bypass: boolean }> = []
   for (const p of masterPlugins ?? []) {
@@ -867,10 +897,79 @@ export async function setSlotPluginStateBase64(slotId: string, stateBase64: stri
   }
 }
 
+type PluginSnapshotFields = {
+  parametros: NonNullable<PluginInfo['parametros']>
+  estadoPluginBase64?: string
+  estado: 'cargado'
+}
+
+async function readLivePluginSnapshot(
+  slotId: string,
+  previous?: PluginInfo,
+): Promise<PluginSnapshotFields | null> {
+  if (!bySlot.has(slotId)) return null
+  const rawParams = await listSlotParameters(slotId)
+  const parametros = rawParams.map((rp) => ({
+    id: String(rp.parameterId),
+    nombre: rp.name || String(rp.parameterId),
+    valor: Number(rp.normalizedValue) || 0,
+    minimo: 0,
+    maximo: 1,
+    paso: 0.001,
+    unidad: '',
+    etiqueta: rp.name || String(rp.parameterId),
+  }))
+  const chunk = await getSlotPluginStateBase64(slotId)
+  if (!chunk) {
+    console.warn('[track-vst] snapshot sin chunk para', slotId, '— se conserva estado previo si existe')
+  }
+  return {
+    parametros,
+    ...(chunk
+      ? { estadoPluginBase64: chunk }
+      : previous?.estadoPluginBase64
+        ? { estadoPluginBase64: previous.estadoPluginBase64 }
+        : {}),
+    estado: 'cargado',
+  }
+}
+
+/** Persiste params + chunk de un slot concreto (p.ej. al cerrar el editor VST). */
+export async function snapshotTrackPluginIntoProject(
+  tienda: import('../../../../shared/src/state/tienda').TiendaDAW,
+  trackId: string,
+  pluginId: string,
+): Promise<{ ok: boolean; hasChunk: boolean }> {
+  const slotId = slotIdForTrackPlugin(trackId, pluginId)
+  if (trackId === 'master') {
+    const mNow = tienda.obtenerEstado().project.master
+    const pl = (mNow?.plugins ?? []).find((p) => p.id === pluginId)
+    if (!pl || !extractHostPluginPath(pl.descripcion, pl.id)) return { ok: false, hasChunk: false }
+    const snap = await readLivePluginSnapshot(slotId, pl)
+    if (!snap) return { ok: false, hasChunk: false }
+    const nextPlugins = (mNow?.plugins ?? []).map((p) => (p.id === pluginId ? { ...p, ...snap } : p))
+    await tienda.executor.execute('project.update', {
+      datos: { master: { ...mNow, plugins: nextPlugins } },
+    })
+    return { ok: true, hasChunk: Boolean(snap.estadoPluginBase64) }
+  }
+  const live = tienda.obtenerEstado().project.tracks.find((x) => x.id === trackId)
+  const pl = (live?.plugins ?? []).find((p) => p.id === pluginId)
+  if (!pl || !extractHostPluginPath(pl.descripcion, pl.id)) return { ok: false, hasChunk: false }
+  const snap = await readLivePluginSnapshot(slotId, pl)
+  if (!snap) return { ok: false, hasChunk: false }
+  const nextPlugins = (live?.plugins ?? []).map((p) => (p.id === pluginId ? { ...p, ...snap } : p))
+  await tienda.executor.execute('track.update', {
+    trackId,
+    datos: { plugins: nextPlugins },
+  })
+  return { ok: true, hasChunk: Boolean(snap.estadoPluginBase64) }
+}
+
 /** Lee params (+ chunk VST2/VST3) del host y los escribe en DAWState.plugins. */
 export async function snapshotLoadedPluginsIntoProject(
   tienda: import('../../../../shared/src/state/tienda').TiendaDAW,
-): Promise<void> {
+): Promise<{ slots: number; withChunk: number }> {
   // Asegura slots cargados antes de snapshot (evita guardar sin chunk en pistas recién abiertas).
   try {
     const st = tienda.obtenerEstado()
@@ -881,90 +980,29 @@ export async function snapshotLoadedPluginsIntoProject(
   } catch {
     /* best-effort */
   }
+  let slots = 0
+  let withChunk = 0
   const tracks = tienda.obtenerEstado().project.tracks ?? []
   for (const t of tracks) {
-    const plugins = t.plugins ?? []
-    for (const p of plugins) {
-      const path = extractHostPluginPath(p.descripcion, p.id)
-      if (!path) continue
-      const slotId = slotIdForTrackPlugin(t.id, p.id)
-      if (!bySlot.has(slotId)) continue
-      const rawParams = await listSlotParameters(slotId)
-      const parametros = rawParams.map((rp) => ({
-        id: String(rp.parameterId),
-        nombre: rp.name || String(rp.parameterId),
-        valor: Number(rp.normalizedValue) || 0,
-        minimo: 0,
-        maximo: 1,
-        paso: 0.001,
-        unidad: '',
-        etiqueta: rp.name || String(rp.parameterId),
-      }))
-      const chunk = await getSlotPluginStateBase64(slotId)
-      if (!chunk) {
-        console.warn('[track-vst] snapshot sin chunk para', slotId, '— se conserva estado previo si existe')
+    for (const p of t.plugins ?? []) {
+      if (!extractHostPluginPath(p.descripcion, p.id)) continue
+      const r = await snapshotTrackPluginIntoProject(tienda, t.id, p.id)
+      if (r.ok) {
+        slots += 1
+        if (r.hasChunk) withChunk += 1
       }
-      const live = tienda.obtenerEstado().project.tracks.find((x) => x.id === t.id)
-      const chain = live?.plugins ?? plugins
-      const nextPlugins = chain.map((pl) =>
-        pl.id === p.id
-          ? {
-              ...pl,
-              parametros,
-              ...(chunk
-                ? { estadoPluginBase64: chunk }
-                : pl.estadoPluginBase64
-                  ? { estadoPluginBase64: pl.estadoPluginBase64 }
-                  : {}),
-              estado: 'cargado' as const,
-            }
-          : pl,
-      )
-      await tienda.executor.execute('track.update', {
-        trackId: t.id,
-        datos: { plugins: nextPlugins },
-      })
     }
   }
-  const masterLive = tienda.obtenerEstado().project.master
-  const master = masterLive?.plugins ?? []
+  const master = tienda.obtenerEstado().project.master?.plugins ?? []
   for (const p of master) {
-    const path = extractHostPluginPath(p.descripcion, p.id)
-    if (!path) continue
-    const slotId = slotIdForTrackPlugin('master', p.id)
-    if (!bySlot.has(slotId)) continue
-    const rawParams = await listSlotParameters(slotId)
-    const parametros = rawParams.map((rp) => ({
-      id: String(rp.parameterId),
-      nombre: rp.name || String(rp.parameterId),
-      valor: Number(rp.normalizedValue) || 0,
-      minimo: 0,
-      maximo: 1,
-      paso: 0.001,
-      unidad: '',
-      etiqueta: rp.name || String(rp.parameterId),
-    }))
-    const chunk = await getSlotPluginStateBase64(slotId)
-    const mNow = tienda.obtenerEstado().project.master
-    const chain = mNow?.plugins ?? master
-    const nextPlugins = chain.map((pl) =>
-      pl.id === p.id
-        ? {
-            ...pl,
-            parametros,
-            ...(chunk
-              ? { estadoPluginBase64: chunk }
-              : pl.estadoPluginBase64
-                ? { estadoPluginBase64: pl.estadoPluginBase64 }
-                : {}),
-            estado: 'cargado' as const,
-          }
-        : pl,
-    )
-    await tienda.executor.execute('project.update', {
-      datos: { master: { ...mNow, plugins: nextPlugins } },
-    })
+    if (!extractHostPluginPath(p.descripcion, p.id)) continue
+    const r = await snapshotTrackPluginIntoProject(tienda, 'master', p.id)
+    if (r.ok) {
+      slots += 1
+      if (r.hasChunk) withChunk += 1
+    }
   }
+  return { slots, withChunk }
 }
 
 async function restorePluginStateAfterLoad(trackId: string, plugin: PluginInfo): Promise<void> {

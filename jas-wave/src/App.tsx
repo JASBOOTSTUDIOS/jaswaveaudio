@@ -33,8 +33,11 @@ import { PluginHostBootstrap } from '@/components/plugin-host-bootstrap'
 import { PluginHostLifecycle } from '@/components/plugin-host-lifecycle'
 import { MidiControllerHost } from '@/components/midi-controller-host'
 import { AgentAuditHost, AGENT_BRIDGE_REV } from '@/src/lib/agent-audit-bridge'
+// bridge rev consumed as <AgentAuditHost key={AGENT_BRIDGE_REV} />
 import { PanelLeft, PanelRight, PanelBottom, Plus, X } from 'lucide-react'
 import { JasWaveAppIcon } from '@/components/brand'
+import { ScoreExportMenuListener } from '@/components/score-export-menu-listener'
+import { ScorePreviewDialog } from '@/components/score-preview-dialog'
 
 function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
   useShortcutDispatcher()
@@ -283,6 +286,8 @@ function AppShell() {
       <CommandPalette />
       <EventToasts />
       <ProjectCloseDialog />
+      <ScoreExportMenuListener />
+      <ScorePreviewDialog />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} dispatcher={dispatcher} />
       <ExportBounceDialog open={exportOpen} onClose={() => setExportOpen(false)} />
       <main className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground">

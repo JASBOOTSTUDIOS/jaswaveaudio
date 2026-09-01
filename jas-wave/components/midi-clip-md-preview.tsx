@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Check, ExternalLink, Loader2, Play, Square, Trash2 } from 'lucide-react'
+import { Check, ExternalLink, Loader2, Trash2 } from 'lucide-react'
 import { useDAW } from '@/src/context/daw-context'
 import { executeDawActions } from '@/src/lib/ai-daw-agent'
 import { pitchToName } from '@/src/lib/midi-clip-markdown'
@@ -8,7 +8,8 @@ import {
   clearMidiProposalOverlay,
   setMidiProposalOverlay,
 } from '@/src/lib/ai-midi-proposal-store'
-import { playMidiPreviewAudition, stopMidiPreviewAudition } from '@/src/lib/midi-preview-audition'
+import { stopMidiPreviewAudition } from '@/src/lib/midi-preview-audition'
+import { MidiPreviewTransport } from '@/components/midi-preview-transport'
 
 export type MidiClipMdPreviewData = {
   kind: 'midiClipMdPreview'
@@ -41,8 +42,6 @@ type Props = {
 /** Preview nota-a-nota desde clip-*.md (fuera de la timeline). */
 export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange }: Props) {
   const tienda = useDAW()
-  const [playing, setPlaying] = useState(false)
-  const [auditioningVst, setAuditioningVst] = useState(false)
   const [busy, setBusy] = useState(false)
   const [localStatus, setLocalStatus] = useState<'pending' | 'applied' | 'discarded'>(
     preview.applied ? 'applied' : status,
@@ -56,48 +55,21 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
     )
   }, [tienda])
 
+  const auditionTrack = useMemo(
+    () => tracks.find((t) => t.id === auditionTrackId),
+    [auditionTrackId, tracks],
+  )
+
+  const audibleNotes = useMemo(
+    () => preview.notes.filter((n) => !n.mute),
+    [preview.notes],
+  )
+
   const noteRows = useMemo(() => preview.notes.slice(0, 48), [preview.notes])
 
   const stopPreview = useCallback(() => {
     stopMidiPreviewAudition()
-    setPlaying(false)
-    setAuditioningVst(false)
   }, [])
-
-  const playSoftSynth = useCallback(async () => {
-    stopPreview()
-    setPlaying(true)
-    try {
-      await playMidiPreviewAudition({
-        notes: preview.notes.filter((n) => !n.mute),
-        bpm: preview.bpm,
-        candidateTrackIds: tracks.map((t) => t.id),
-        preferHost: true,
-        onEnded: () => setPlaying(false),
-      })
-    } catch {
-      setPlaying(false)
-    }
-  }, [preview, stopPreview, tracks])
-
-  const playVst = useCallback(async () => {
-    stopPreview()
-    const trackId = auditionTrackId || preview.trackId
-    if (!trackId || !preview.notes.length) return
-    setAuditioningVst(true)
-    try {
-      await playMidiPreviewAudition({
-        notes: preview.notes.filter((n) => !n.mute),
-        bpm: preview.bpm,
-        trackId,
-        candidateTrackIds: [trackId],
-        preferHost: true,
-        onEnded: () => setAuditioningVst(false),
-      })
-    } catch {
-      setAuditioningVst(false)
-    }
-  }, [auditionTrackId, preview, stopPreview])
 
   const publishOverlay = useCallback(() => {
     if (!preview.trackId || !preview.notes.length) return
@@ -156,7 +128,7 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
 
   const openDocs = useCallback(() => {
     requestOpenTool('docs', { zone: 'left' })
-  }, [preview.slug])
+  }, [])
 
   if (localStatus === 'discarded') {
     return (
@@ -166,6 +138,8 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
     )
   }
 
+  const instPlugin = auditionTrack?.plugins?.find((p) => p.tipo === 'instrumento' || !p.tipo)
+
   return (
     <div className="mt-2 overflow-hidden rounded-md border border-emerald-500/30 bg-emerald-500/5">
       <div className="flex flex-wrap items-center gap-2 border-b border-border/50 px-3 py-2">
@@ -174,7 +148,7 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
             Clip .md · {preview.nombre}
           </div>
           <div className="truncate text-[10px] text-muted-foreground">
-            {preview.slug} · {preview.notes.length} notas · {preview.bpm} BPM · preview (no timeline)
+            {preview.slug} · {preview.notes.length} notas · {preview.bpm} BPM · preview (no timeline del arrange)
           </div>
         </div>
         {localStatus === 'applied' ? (
@@ -185,12 +159,11 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
       </div>
 
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-        <label className="text-[10px] text-muted-foreground">Instrumento</label>
+        <label className="text-[10px] text-muted-foreground">Pista / VST</label>
         <select
           className="max-w-[180px] rounded border border-border bg-background px-1.5 py-0.5 text-[10px]"
           value={auditionTrackId}
           onChange={(e) => setAuditionTrackId(e.target.value)}
-          disabled={localStatus !== 'pending'}
         >
           {tracks.map((t) => (
             <option key={t.id} value={t.id}>
@@ -203,7 +176,19 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
         ) : null}
       </div>
 
-      <div className="max-h-40 overflow-auto px-3 pb-2">
+      <div className="border-t border-border/40 px-3 py-2">
+        <MidiPreviewTransport
+          notes={audibleNotes}
+          bpm={preview.bpm}
+          durationBeats={preview.durationBeats || Math.max(4, ...audibleNotes.map((n) => n.inicio + n.duracion))}
+          trackId={auditionTrackId || preview.trackId}
+          candidateTrackIds={tracks.map((t) => t.id)}
+          pluginId={instPlugin?.id}
+          pluginNombre={instPlugin?.nombre ?? preview.instrumentoHint}
+        />
+      </div>
+
+      <div className="max-h-32 overflow-auto px-3 pb-2">
         <table className="w-full text-left text-[10px]">
           <thead className="sticky top-0 bg-emerald-500/10 text-muted-foreground">
             <tr>
@@ -242,24 +227,6 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
         <button
           type="button"
           className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[10px] hover:bg-muted/40"
-          disabled={playing || localStatus !== 'pending' || !preview.notes.length}
-          onClick={() => void playSoftSynth()}
-        >
-          {playing ? <Square className="size-3" /> : <Play className="size-3" />}
-          Soft-synth
-        </button>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[10px] hover:bg-muted/40"
-          disabled={auditioningVst || localStatus !== 'pending' || !preview.notes.length}
-          onClick={() => void playVst()}
-        >
-          {auditioningVst ? <Square className="size-3" /> : <Play className="size-3" />}
-          Escuchar VST
-        </button>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[10px] hover:bg-muted/40"
           onClick={publishOverlay}
           disabled={localStatus !== 'pending'}
         >
@@ -272,15 +239,6 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
         >
           <ExternalLink className="size-3" /> Docs
         </button>
-        {(playing || auditioningVst) && (
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[10px]"
-            onClick={stopPreview}
-          >
-            <Square className="size-3" /> Stop
-          </button>
-        )}
         <div className="flex-1" />
         {localStatus === 'pending' ? (
           <>

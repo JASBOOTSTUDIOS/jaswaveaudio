@@ -1,9 +1,10 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Check, Loader2, Play, Square, Trash2 } from 'lucide-react'
+import { Check, Loader2, Trash2 } from 'lucide-react'
 import { useDAW } from '@/src/context/daw-context'
 import type { GeneratedNote } from '@/src/lib/midi-song-generator'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
-import { playMidiPreviewAudition, stopMidiPreviewAudition } from '@/src/lib/midi-preview-audition'
+import { stopMidiPreviewAudition } from '@/src/lib/midi-preview-audition'
+import { MidiPreviewTransport } from '@/components/midi-preview-transport'
 
 export type MidiPreviewData = {
   kind: 'midiPreview'
@@ -28,7 +29,6 @@ type Props = {
 /** Vista previa de generación MIDI en el chat (escuchar → aplicar). */
 export function MidiGenerationPreview({ preview, status = 'pending', onStatusChange }: Props) {
   const tienda = useDAW()
-  const [playing, setPlaying] = useState(false)
   const [busy, setBusy] = useState(false)
   const [localStatus, setLocalStatus] = useState<'pending' | 'applied' | 'discarded'>(
     preview.applied ? 'applied' : status,
@@ -39,33 +39,9 @@ export function MidiGenerationPreview({ preview, status = 'pending', onStatusCha
     [preview.durationBeats, preview.bpm],
   )
 
-  const noteDots = useMemo(() => {
-    const max = 120
-    const step = Math.max(1, Math.floor(preview.notes.length / max))
-    return preview.notes.filter((_, i) => i % step === 0).slice(0, max)
-  }, [preview.notes])
-
   const stopPreview = useCallback(() => {
     stopMidiPreviewAudition()
-    setPlaying(false)
   }, [])
-
-  const playPreview = useCallback(async () => {
-    stopPreview()
-    setPlaying(true)
-    try {
-      await playMidiPreviewAudition({
-        notes: preview.notes,
-        bpm: preview.bpm,
-        trackId: preview.pistaId,
-        candidateTrackIds: tienda.obtenerEstado().project.tracks.map((t) => t.id),
-        preferHost: true,
-        onEnded: () => setPlaying(false),
-      })
-    } catch {
-      setPlaying(false)
-    }
-  }, [preview, stopPreview, tienda])
 
   const applyToProject = useCallback(async () => {
     setBusy(true)
@@ -147,54 +123,36 @@ export function MidiGenerationPreview({ preview, status = 'pending', onStatusCha
         )}
       </div>
 
-      <div className="relative h-16 bg-panel-raised/40 px-1 py-1">
-        <div className="relative h-full w-full overflow-hidden">
-          {noteDots.map((n, i) => {
-            const x = (n.inicio / Math.max(1, preview.durationBeats)) * 100
-            const w = Math.max(0.4, (n.duracion / Math.max(1, preview.durationBeats)) * 100)
-            const y = ((127 - n.pitch) / 127) * 100
-            return (
-              <div
-                key={i}
-                className="absolute rounded-[1px] bg-accent-amber/70"
-                style={{
-                  left: `${x}%`,
-                  width: `${w}%`,
-                  top: `${Math.max(2, Math.min(92, y))}%`,
-                  height: 3,
-                }}
-              />
-            )
-          })}
-        </div>
+      <div className="px-2.5 py-2">
+        <MidiPreviewTransport
+          notes={preview.notes}
+          bpm={preview.bpm}
+          durationBeats={preview.durationBeats}
+          trackId={preview.pistaId}
+          candidateTrackIds={tienda.obtenerEstado().project.tracks.map((t) => t.id)}
+        />
       </div>
 
       {localStatus === 'pending' && (
-        <div className="flex items-center gap-1.5 px-2 py-1.5">
+        <div className="flex items-center gap-1.5 border-t border-border/50 px-2 py-1.5">
+          <div className="flex-1" />
           <button
             type="button"
-            onClick={() => void (playing ? stopPreview() : playPreview())}
-            className="inline-flex items-center gap-1 rounded-md bg-panel-raised px-2 py-1 text-[11px] font-medium text-foreground ring-1 ring-border hover:bg-accent"
+            disabled={busy}
+            onClick={discard}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted/40"
           >
-            {playing ? <Square className="size-3" fill="currentColor" /> : <Play className="size-3" fill="currentColor" />}
-            {playing ? 'Detener' : 'Escuchar'}
+            <Trash2 className="size-3" />
+            Descartar
           </button>
           <button
             type="button"
             disabled={busy}
             onClick={() => void applyToProject()}
-            className="inline-flex items-center gap-1 rounded-md bg-accent-amber/90 px-2 py-1 text-[11px] font-semibold text-background hover:opacity-90 disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-md bg-accent-amber px-2 py-1 text-[11px] font-semibold text-background hover:bg-accent-amber/90 disabled:opacity-50"
           >
             {busy ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
-            Aplicar al proyecto
-          </button>
-          <button
-            type="button"
-            onClick={discard}
-            className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-panel-raised hover:text-foreground"
-          >
-            <Trash2 className="size-3" />
-            Descartar
+            Aplicar
           </button>
         </div>
       )}

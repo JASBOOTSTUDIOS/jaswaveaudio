@@ -106,12 +106,33 @@ export {
   isTempoOnlyRefine,
   inferBpmFromTempoIntent,
   isProjectAuditIntent,
+  isStyleGapIntent,
+  isStyleApplyIntent,
+  isMidiClipEditIntent,
+  isClipSectionSplitIntent,
+  hasStyleReference,
+  wantsWebResearch,
   type AgentMode,
 } from './agent/modes'
 
 export {
+  estimateReasoningDepth,
+  parseModelIntentBrief,
+  planReasoningPhases,
+  phasesForDepth,
+  remainingPhasesAfterNormalize,
+  stripIntentBlock,
+  REASONING_MAX_STEPS,
+  REASONING_MIN_STEPS,
+  type ModelIntentBrief,
+  type ReasoningDepthPlan,
+} from './agent/reasoning-depth'
+
+export {
   REASONING_PHASE_META,
+  APP_VOCAB_GLOSSARY,
   buildFinalTurnUserMessage,
+  formatPhaseTitle,
   reasoningSeedUserMessage,
   type ReasoningPhase,
 } from './agent/reasoning-prompts'
@@ -156,10 +177,20 @@ export {
   buildMidiAuditFixActions,
   buildMidiAuditClarifications,
   isGarbageAssistantReply,
+  isOffTopicCreatePlanReply,
 } from './ask/read-context'
+
+export { buildStyleGapReport, buildWorshipDrumEnhanceActions, worshipModernDrumExpectations, expectationsFromStyleProfileSummaries } from './ask/style-gap-report'
+
+export {
+  buildMidiClipEditActions,
+  buildSplitLongClipsActions,
+  actionsLackMidiNoteEdits,
+} from './ask/midi-edit-actions'
 
 export {
   getSelectedTrackId,
+  getSelectedClipId,
   listMidiClips,
   resolvePianoRollClip,
   selectTrackPayload,

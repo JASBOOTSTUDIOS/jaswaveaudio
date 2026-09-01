@@ -206,7 +206,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }
     }
     const extra: Record<string, string> = {}
-    if (toolId === 'piano-roll') {
+    if (toolId === 'piano-roll' || toolId === 'score-editor') {
       const hit = resolvePianoRollClip(daw.obtenerEstado())
       if (hit) {
         extra.trackId = hit.trackId

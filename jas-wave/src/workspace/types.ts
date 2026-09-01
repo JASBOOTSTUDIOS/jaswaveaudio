@@ -15,6 +15,7 @@ export type ToolId =
   | 'plugin-editor'
   | 'midi-map'
   | 'piano-roll'
+  | 'score-editor'
   | 'settings'
 
 export interface ToolDefinitionUI {
@@ -125,6 +126,13 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     defaultZone: 'bottom',
     singleton: true,
   },
+  'score-editor': {
+    id: 'score-editor',
+    title: 'Partitura',
+    description: 'Editor de partitura sincronizado con el clip MIDI',
+    defaultZone: 'bottom',
+    singleton: true,
+  },
   settings: {
     id: 'settings',
     title: 'Configuración',
@@ -146,7 +154,7 @@ export const DEFAULT_WORKSPACE: WorkspaceLayout = {
     left: ['coproducer', 'docs-explorer', 'docs', 'library', 'instruments'],
     center: ['arrange'],
     right: ['track-detail', 'fx-chain', 'plugin-editor', 'midi-map', 'meters', 'routing', 'settings'],
-    bottom: ['mixer', 'piano-roll'],
+    bottom: ['mixer', 'piano-roll', 'score-editor'],
   },
   activeTab: {
     left: 'coproducer',

@@ -175,11 +175,18 @@ export async function librarySaveFromTrack(
   }
 
   if (opts.global) {
-    const preset = await saveGlobalPreset(payload)
-    return {
-      ok: true,
-      preset,
-      message: `Preset global «${preset.nombre}» guardado${probeOk === false ? ' (probe falló)' : ''}`,
+    try {
+      const preset = await saveGlobalPreset(payload)
+      return {
+        ok: true,
+        preset,
+        message: `Preset global «${preset.nombre}» guardado${probeOk === false ? ' (probe falló)' : ''}`,
+      }
+    } catch (e) {
+      return {
+        ok: false,
+        message: e instanceof Error ? e.message : 'No se pudo guardar preset global',
+      }
     }
   }
 

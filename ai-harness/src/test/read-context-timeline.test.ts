@@ -65,11 +65,13 @@ describe('midi timeline context', () => {
     expect(ctx).toMatch(/inicio=0\.000b/)
   })
 
-  it('buildMidiAuditReport lista duplicados y notas fuera', () => {
+  it('buildMidiAuditReport lista duplicados y notas fuera en lenguaje claro', () => {
     const report = buildMidiAuditReport(miniState())
-    expect(report).toMatch(/Auditoría MIDI/)
+    expect(report).toMatch(/Revisión rápida/)
     expect(report).toMatch(/duplicad/i)
-    expect(report).toMatch(/fuera/i)
+    expect(report).toMatch(/fuera|salen/i)
+    expect(report).not.toMatch(/\*\*P[123]\*\*/)
+    expect(report).not.toMatch(/244\.0b|formulario/i)
     expect(isGarbageAssistantReply('¡¡¡¡¡¡¡¡¡¡¡¡¡¡¡')).toBe(true)
     expect(isGarbageAssistantReply(report)).toBe(false)
   })
