@@ -27,9 +27,11 @@ import type {
   MusicBuildResult,
   MusicBuildSpec,
   MusicBuildStage,
+  MusicBuildTrackSpec,
   MidiValidationIssue,
   MusicSection,
 } from './types'
+import { resolveTrackHint } from '../track-resolve'
 import { buildMusicBuildSpec, mapSectionKind } from './spec'
 import { validateBuildNotes } from './validator'
 import { densityForSectionKind } from './form-density'
@@ -166,6 +168,14 @@ function colorForRole(rol: string): string {
   if (rol === 'guitar') return '#fb7185'
   if (rol === 'piano' || rol === 'keys') return '#a78bfa'
   return '#94a3b8'
+}
+
+function findExistingTrackForSpec(state: ReturnType<TiendaDAW['obtenerEstado']>, t: MusicBuildTrackSpec): string | undefined {
+  const byName = resolveTrackHint(state, { label: t.nombre, raw: t.nombre })
+  if (byName.trackId && !byName.ambiguous) return byName.trackId
+  const byRole = resolveTrackHint(state, { label: String(t.rol), raw: String(t.rol) })
+  if (byRole.trackId && !byRole.ambiguous) return byRole.trackId
+  return undefined
 }
 
 function articulationOf(rol: string, explicit?: string): Articulation {
@@ -353,18 +363,23 @@ export async function executeMusicBuild(
     setStage(stages, 'structure', 'fail', err instanceof Error ? err.message : 'Error marcadores')
   }
 
-  const created: Array<{ trackId: string; specIndex: number }> = []
+  const created: Array<{ trackId: string; specIndex: number; reused?: boolean }> = []
   try {
     setStage(stages, 'tracks', 'running')
     for (let i = 0; i < spec.tracks.length; i++) {
       const t = spec.tracks[i]!
-      const createdTrack = await tienda.executor.execute('track.create', {
-        nombre: t.nombre,
-        tipo: t.tipo === 'audio' ? 'audio' : 'midi',
-        color: colorForRole(String(t.rol)),
-      })
-      if (!createdTrack.success) continue
-      const trackId = tienda.obtenerEstado().project.tracks.at(-1)?.id
+      let trackId = findExistingTrackForSpec(tienda.obtenerEstado(), t)
+      let reused = Boolean(trackId)
+      if (!trackId) {
+        const createdTrack = await tienda.executor.execute('track.create', {
+          nombre: t.nombre,
+          tipo: t.tipo === 'audio' ? 'audio' : 'midi',
+          color: colorForRole(String(t.rol)),
+        })
+        if (!createdTrack.success) continue
+        trackId = tienda.obtenerEstado().project.tracks.at(-1)?.id
+        reused = false
+      }
       if (!trackId) continue
       try {
         await tienda.executor.execute('track.update', {
@@ -376,9 +391,14 @@ export async function executeMusicBuild(
       } catch {
         /* tags opcionales */
       }
-      created.push({ trackId, specIndex: i })
+      created.push({ trackId, specIndex: i, reused })
     }
-    setStage(stages, 'tracks', created.length ? 'ok' : 'fail', `${created.length} pistas`)
+    const reusedN = created.filter((c) => c.reused).length
+    const detail =
+      reusedN > 0
+        ? `${created.length} pistas (${reusedN} reutilizadas)`
+        : `${created.length} pistas`
+    setStage(stages, 'tracks', created.length ? 'ok' : 'fail', detail)
     if (!created.length) failed = true
   } catch (err) {
     failed = true
@@ -602,62 +622,85 @@ export async function executeMusicBuild(
       const { writeAgentDoc, getAgentDoc, PLAN_SLUG, setMarkdownSection } = await import('../agent-docs')
       const { emptyMidiClipMdStub, midiClipDocSlug } = await import('../midi-clip-markdown')
       const projectId = tienda.obtenerEstado().project.id
+      // Un clip por sección (intro/verso/coro…), no un mega-clip de toda la canción
+      const sectionSpans: Array<{ name: string; inicio: number; duracion: number }> = []
+      {
+        let cursor = 0
+        const secs =
+          spec.sections?.length > 0
+            ? spec.sections
+            : [{ name: 'Tema', bars: Math.max(4, maxBars) }]
+        for (const s of secs) {
+          const bars = Math.max(1, Math.min(64, s.bars || 4))
+          const dur = bars * 4
+          if (cursor / 4 >= maxBars) break
+          const clipped = Math.min(dur, maxBars * 4 - cursor)
+          if (clipped < 4) break
+          sectionSpans.push({ name: s.name || 'Sección', inicio: cursor, duracion: clipped })
+          cursor += clipped
+        }
+        if (!sectionSpans.length) {
+          sectionSpans.push({ name: 'Tema', inicio: 0, duracion: durationBeats })
+        }
+      }
       for (const row of created) {
         const t = spec.tracks[row.specIndex]!
         if (t.tipo === 'audio') continue
-        const clipRes = await tienda.executor.execute('midi.clip.create', {
-          pistaId: row.trackId,
-          nombre: `${t.nombre} · MIDI`,
-          inicio: 0,
-          duracion: durationBeats,
-          notas: [],
-        })
-        const clipId =
-          clipRes.success && clipRes.result && typeof clipRes.result === 'object'
-            ? String(
-                (clipRes.result as { clipId?: string }).clipId ??
+        for (const sec of sectionSpans) {
+          const clipRes = await tienda.executor.execute('midi.clip.create', {
+            pistaId: row.trackId,
+            nombre: `${t.nombre} · ${sec.name}`,
+            inicio: sec.inicio,
+            duracion: sec.duracion,
+            notas: [],
+          })
+          const clipId =
+            clipRes.success && clipRes.result && typeof clipRes.result === 'object'
+              ? String(
+                  (clipRes.result as { clipId?: string }).clipId ??
+                    (
+                      tienda
+                        .obtenerEstado()
+                        .project.tracks.find((tr) => tr.id === row.trackId)
+                        ?.clips?.slice(-1)[0] as { id?: string } | undefined
+                    )?.id ??
+                    '',
+                )
+              : String(
                   (
                     tienda
                       .obtenerEstado()
                       .project.tracks.find((tr) => tr.id === row.trackId)
                       ?.clips?.slice(-1)[0] as { id?: string } | undefined
-                  )?.id ??
-                  '',
-              )
-            : String(
-                (
-                  tienda
-                    .obtenerEstado()
-                    .project.tracks.find((tr) => tr.id === row.trackId)
-                    ?.clips?.slice(-1)[0] as { id?: string } | undefined
-                )?.id ?? '',
-              )
-        if (!clipId) continue
-        const slug = midiClipDocSlug(clipId)
-        const md = emptyMidiClipMdStub({
-          clipId,
-          trackId: row.trackId,
-          nombre: `${t.nombre} · MIDI`,
-          inicio: 0,
-          duracion: durationBeats,
-          bpm: spec.bpm,
-          compas: '4/4',
-          trackName: t.nombre,
-          genero: spec.genero,
-          rol: String(t.rol),
-        })
-        writeAgentDoc(projectId, slug, md, {
-          origin: 'ai',
-          title: `Clip · ${t.nombre}`,
-          preserveUserNotes: false,
-        })
-        seeded.push({
-          trackId: row.trackId,
-          trackName: t.nombre,
-          clipId,
-          slug,
-          rol: String(t.rol),
-        })
+                  )?.id ?? '',
+                )
+          if (!clipId) continue
+          const slug = midiClipDocSlug(clipId)
+          const md = emptyMidiClipMdStub({
+            clipId,
+            trackId: row.trackId,
+            nombre: `${t.nombre} · ${sec.name}`,
+            inicio: sec.inicio,
+            duracion: sec.duracion,
+            bpm: spec.bpm,
+            compas: '4/4',
+            trackName: t.nombre,
+            genero: spec.genero,
+            rol: String(t.rol),
+          })
+          writeAgentDoc(projectId, slug, md, {
+            origin: 'ai',
+            title: `Clip · ${t.nombre} · ${sec.name}`,
+            preserveUserNotes: false,
+          })
+          seeded.push({
+            trackId: row.trackId,
+            trackName: t.nombre,
+            clipId,
+            slug,
+            rol: String(t.rol),
+          })
+        }
       }
 
       const prev = getAgentDoc(projectId, PLAN_SLUG)?.content ?? '# Plan\n'
@@ -686,6 +729,37 @@ export async function executeMusicBuild(
       `Pendiente IA: ${seeded.length || created.filter((r) => spec.tracks[r.specIndex]?.tipo !== 'audio').length} clip.md · midi.clip.md.upsert → preview → apply`,
     )
   } else {
+    // Procedural: un clip con notas por sección (no un mega-clip de toda la canción)
+    const sectionSpans: Array<{ name: string; inicio: number; duracion: number; bars: number }> = []
+    {
+      let cursor = 0
+      const secs =
+        spec.sections?.length > 0
+          ? spec.sections
+          : [{ name: 'Tema', bars: Math.max(4, maxBars) }]
+      for (const s of secs) {
+        const bars = Math.max(1, Math.min(64, s.bars || 4))
+        const dur = bars * 4
+        if (cursor / 4 >= maxBars) break
+        const clipped = Math.min(dur, maxBars * 4 - cursor)
+        if (clipped < 4) break
+        sectionSpans.push({
+          name: s.name || 'Sección',
+          inicio: cursor,
+          duracion: clipped,
+          bars: Math.max(1, Math.round(clipped / 4)),
+        })
+        cursor += clipped
+      }
+      if (!sectionSpans.length) {
+        sectionSpans.push({
+          name: 'Tema',
+          inicio: 0,
+          duracion: Math.max(4, maxBars * 4),
+          bars: Math.max(4, maxBars),
+        })
+      }
+    }
     for (const row of created) {
       const t = spec.tracks[row.specIndex]!
       if (t.tipo === 'audio') continue
@@ -715,13 +789,25 @@ export async function executeMusicBuild(
         aiDirected: !spec.usedHeuristicFallback || !!aiPartial,
       })
       clipNotes.push({ trackName: t.nombre, rol: String(t.rol), notes: song.notes })
-      await tienda.executor.execute('midi.clip.create', {
-        pistaId: row.trackId,
-        nombre: t.nombre,
-        inicio: 0,
-        duracion: song.durationBeats,
-        notas: song.notes,
-      })
+      for (const sec of sectionSpans) {
+        const secEnd = sec.inicio + sec.duracion
+        const localNotes = (song.notes ?? [])
+          .filter((n) => {
+            const start = Number(n.inicio) || 0
+            return start >= sec.inicio - 1e-6 && start < secEnd - 1e-6
+          })
+          .map((n) => ({
+            ...n,
+            inicio: Math.max(0, (Number(n.inicio) || 0) - sec.inicio),
+          }))
+        await tienda.executor.execute('midi.clip.create', {
+          pistaId: row.trackId,
+          nombre: `${t.nombre} · ${sec.name}`,
+          inicio: sec.inicio,
+          duracion: sec.duracion,
+          notas: localNotes,
+        })
+      }
     }
     const midiIssues = validateBuildNotes(clipNotes, spec.keyRoot, spec.scale)
     issues.push(...midiIssues)
@@ -732,7 +818,7 @@ export async function executeMusicBuild(
       midiErrors.length ? 'fail' : 'ok',
       midiErrors.length
         ? midiErrors.map((i) => i.message).join('; ')
-        : `${clipNotes.reduce((n, c) => n + c.notes.length, 0)} notas · ${midiIssues.filter((i) => i.severity === 'warn').length} avisos`,
+        : `${clipNotes.reduce((n, c) => n + c.notes.length, 0)} notas · ${sectionSpans.length} secciones · ${midiIssues.filter((i) => i.severity === 'warn').length} avisos`,
     )
   }
 

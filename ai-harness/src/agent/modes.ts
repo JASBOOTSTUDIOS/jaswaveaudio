@@ -71,6 +71,35 @@ export function isTempoOnlyRefine(text: string): boolean {
   return tempo && !musical
 }
 
+/** Pedido de partir clips largos en secciones / pedazos. */
+export function isClipSectionSplitIntent(text: string): boolean {
+  const t = text.toLowerCase()
+  return (
+    /\b(parte|partir|divide|dividir|secciones|pedazos|trozos|por\s+secciones|clips?\s+por\s+(intro|verso|coro|secci)|intro\s+aparte|un\s+clip\s+por)\b/i.test(
+      t,
+    ) || /\b(no\s+(quiero|debe)\s+(un\s+)?(solo\s+)?clip\s+(largo|completo|de\s+toda))\b/i.test(t)
+  )
+}
+
+/**
+ * Pedido de editar clips MIDI (intro/groove/suave/pads) sin reconstruir toda la canción.
+ * Tiene prioridad sobre musicBuild / refine completo.
+ */
+export function isMidiClipEditIntent(text: string): boolean {
+  const t = text.toLowerCase()
+  const editVerb =
+    /\b(suav|soft|arregla|modifica|cambia|edita|ajusta|haz que|pon(le|me)?|agrega|a[nñ]ade|mete|quita|reduce|baja(r)?\s+la\s+(intens|dens|veloc)|menos\s+explos|menos\s+agres|m[aá]s\s+ambiental|grove|groove|toms?|platillos?|redoblant|pads?|ghost|humaniz|dinam)\b/i.test(
+      t,
+    )
+  const midiTarget =
+    /\b(bater[ií]a|drums?|clip|midi|intro|pads?|toms?|platillos?|redoblant|groove|grove|pista)\b/i.test(
+      t,
+    ) || /\b(suave|ambiental|explosiv)\b/i.test(t)
+  // No tratar “crea canción completa” como edit de clip
+  if (/\b(desde cero|canci[oó]n nueva|proyecto completo)\b/i.test(t)) return false
+  return editVerb && midiTarget
+}
+
 /** BPM sugerido a partir de lenguaje natural (más lenta / más rápida). */
 export function inferBpmFromTempoIntent(text: string, currentBpm = 120): number | null {
   const lower = text.toLowerCase()
@@ -96,7 +125,11 @@ export function inferBpmFromTempoIntent(text: string, currentBpm = 120): number 
 
 export function wantsFullProject(text: string): boolean {
   const t = text
-  if (isSongRefineIntent(t) && !isTempoOnlyRefine(t)) return true
+  // Edición de clip/intro/groove: NO reconstruir proyecto
+  if (isMidiClipEditIntent(t) && !/\b(desde cero|canci[oó]n nueva|proyecto completo)\b/i.test(t)) {
+    return false
+  }
+  if (isSongRefineIntent(t) && !isTempoOnlyRefine(t) && !isMidiClipEditIntent(t)) return true
   if (
     /proyecto completo|desde cero|todas las pistas|producci[oó]n completa|arreglo completo|canci[oó]n completa|full (song|mix|project)|armame (el |un )?tema|banda completa|music build/i.test(
       t,
@@ -105,7 +138,7 @@ export function wantsFullProject(text: string): boolean {
     return true
   }
   if (
-    /(crea(r|s|me)?|crees|cr[eé]a(s|me)?|haz(me|la)?|hagas|genera(me)?|produce(me)?|quiero que (me )?(creas|crees|hagas)|necesito que (me )?(creas|crees|hagas))\s+(una?\s+|esta\s+|la\s+)?(canci[oó]n|tema|song)\b/i.test(
+    /(crea(r|s|me)?|crees|cr[eé]a(s|me)?|haz(me|la)?|hagas|genera(me)?|produce(me)?|construy[ea]|construir|monta(me)?|arm[aá](me)?|quiero que (me )?(creas|crees|hagas|construyas)|necesito que (me )?(creas|crees|hagas|construyas))\s+(una?\s+|esta\s+|la\s+)?(canci[oó]n|tema|song)\b/i.test(
       t,
     )
   ) {
@@ -124,22 +157,26 @@ export function wantsFullProject(text: string): boolean {
     else if (/cuerda|string/.test(raw)) roles.add('strings')
     else if (/sint|lead/.test(raw)) roles.add('synth')
   }
-  const creating = /(crea|crees|cr[eé]a|haz|genera|produce|arm[aá]|quiero|necesito)/i.test(t)
+  const creating = /(crea|crees|cr[eé]a|haz|genera|produce|arm[aá]|construy|construir|monta|quiero|necesito)/i.test(t)
   if (roles.size >= 2 && creating) return true
   return false
 }
 
-/** Pedido de auditar/diagnosticar el proyecto (sin crear canción). */
+/** Pedido de auditar/diagnosticar el proyecto o una pista (sin crear canción). */
 export function isProjectAuditIntent(text: string): boolean {
   const t = text.toLowerCase()
+  // analiza / analizame / analizar / revisame / etc. (sin exigir \b tras la raíz)
+  const analyzeVerb =
+    /\b(analiz[aá](r|me|mos|ndo)?|revis[aá](r|me|mos|ndo)?|audit[aá](r|me|mos|ndo)?|diagn[oó]stic(a|ar|ame)?|inspeccion[aá](r|me)?|eval[uú](a|ar|ame)?)\b/.test(
+      t,
+    )
+  const target =
+    /\b(proyecto|clip|clips|midi|pista|pistas|bater[ií]a|drums?|bajo|bass|arreglo|notas|todo|loop|patr[oó]n)\b/.test(
+      t,
+    )
+  if (analyzeVerb && target) return true
   if (
-    /\b(analiza|analiz[aá]|revisa|audita|diagn[oó]stic|inspecciona|eval[uú]a)\b/.test(t) &&
-    /\b(proyecto|clip|clips|midi|pista|pistas|arreglo|notas|todo)\b/.test(t)
-  ) {
-    return true
-  }
-  if (
-    /\b(qu[eé]\s+hay\s+que\s+arreglar|qu[eé]\s+arreglar|qu[eé]\s+fall|qu[eé]\s+est[aá]\s+mal|problemas?\s+(del|en)\s+(el\s+)?(proyecto|midi|clip)|dime\s+lo\s+que\s+hay\s+que)\b/.test(
+    /\b(qu[eé]\s+(le\s+)?falta|qu[eé]\s+hay\s+que\s+arreglar|qu[eé]\s+arreglar|qu[eé]\s+fall|qu[eé]\s+est[aá]\s+mal|problemas?\s+(del|en|de)\s+(el\s+|la\s+)?(proyecto|midi|clip|pista|bater)|dime\s+(lo\s+que|qu[eé])\s+(hay\s+que|le\s+falta))\b/.test(
       t,
     )
   ) {
@@ -151,27 +188,84 @@ export function isProjectAuditIntent(text: string): boolean {
   return false
 }
 
+/** Referencia de estilo / artista (worship, Averly, Hillsong…). */
+export function hasStyleReference(text: string): boolean {
+  return (
+    /\b(estilo|como|tipo|worship|aver+y|averill|morillo|hillsong|elevation|maverick|bethel|planetshakers)\b/i.test(
+      text,
+    ) || /\b(artista|referenci[ao]|sound\s+like)\b/i.test(text)
+  )
+}
+
+/**
+ * Pedido de APLICAR / adecuar estilo (mutación), no solo gap analysis.
+ * Ej.: «haz que la batería tenga esa sensación», «adecua el proyecto al estilo…».
+ */
+export function isStyleApplyIntent(text: string): boolean {
+  const t = text.toLowerCase()
+  if (!hasStyleReference(t) && !/\besa sensaci[oó]n|ese estilo|ese feel|ese groove\b/i.test(t)) {
+    return false
+  }
+  const applyVerb =
+    /\b(haz que|hazla|hazlo|adecua|adecu[aá]|aplica|apl[ií]ca(lo|los|las)?|cambia|modifica|ajusta|arregla|pon(le|me|la)?|dale|adapta|transforma|convierte|mejora)\b/i.test(
+      t,
+    ) || /\b(quiero que|necesito que)\b.*\b(suene|tenga|quede|est[eé])\b/i.test(t)
+  // «dime qué le falta» / «analizame» = consulta, no apply
+  if (isProjectAuditIntent(text) && !applyVerb) return false
+  if (/\b(dime|expl[ií]ca|qu[eé]\s+(le\s+)?falta|analiz|revis|audit|investiga)\b/i.test(t) && !applyVerb) {
+    return false
+  }
+  return applyVerb
+}
+
+/** Comparar pista/proyecto con un estilo o artista de referencia (gap analysis, solo lectura). */
+export function isStyleGapIntent(text: string): boolean {
+  if (isStyleApplyIntent(text)) return false
+  const t = text.toLowerCase()
+  const wantsGap =
+    /\b(qu[eé]\s+(le\s+)?falta|c[oó]mo\s+(hacerlo|dejarlo|ponerlo)|para\s+que\s+(est[eé]|suene|quede)|estilo|como\s+[aá]ver|tipo\s+[aá]ver|suene\s+(a|como)|worship|referenci)/i.test(
+      t,
+    )
+  return (isProjectAuditIntent(text) || wantsGap) && hasStyleReference(text)
+}
+
+/** El usuario pide investigar en internet / web. */
+export function wantsWebResearch(text: string): boolean {
+  return /\b(investiga(r|me)?|busca(r|me)?\s+(en\s+)?(internet|la\s+web|google|online)|web\.?search|en\s+internet|research)\b/i.test(
+    text,
+  )
+}
+
 export function detectAgentMode(text: string, forced: AgentMode = 'auto'): AgentMode {
-  // Auditoría / análisis del DAW → consulta (no musicBuild), incluso si el picker está en Crear
-  if (isProjectAuditIntent(text)) return 'ask'
+  // Edición MIDI de clips existentes → mutación (create)
+  if (isMidiClipEditIntent(text) && forced !== 'ask') return 'create'
+  if (isClipSectionSplitIntent(text) && forced !== 'ask') return 'create'
+  // Aplicar estilo (batería / proyecto) → mutación
+  if (isStyleApplyIntent(text) && forced !== 'ask') return 'create'
+  // Auditoría / gap de estilo / análisis de pista → consulta (no musicBuild)
+  if (isProjectAuditIntent(text) || isStyleGapIntent(text)) return 'ask'
   // Refinar tempo/estilo siempre muta (salvo Consulta explícita)
   if (isSongRefineIntent(text) && forced !== 'ask') return 'create'
   if (forced !== 'auto') return forced
   const t = text.toLowerCase()
   if (
-    /^(s[ií]|ok|vale|dale|hazlo|cr[eé]alo|aplica|construir|adelante|go)[\s!.]*$/i.test(text.trim()) ||
-    /\b(hazlo|cr[eé]alo|aplica(lo)? ya|construir ahora|si hazlo|sí hazlo)\b/i.test(t)
+    /^(s[ií]|ok|vale|dale|hazlo|cr[eé]alo|aplica|construir|construye|adelante|go)[\s!.]*$/i.test(text.trim()) ||
+    /\b(hazlo|cr[eé]alo|aplica(lo)? ya|construir ahora|construye ahora|si hazlo|sí hazlo)\b/i.test(t)
   ) {
     return 'create'
   }
   const creating =
-    /crea|genera|aplica|hazme|hazla|hagas|cr[eé]ame|inserta|arm[aá]|pon(me)?|produce|necesito que|quiero que/.test(t) &&
-    !isProjectAuditIntent(text)
+    /crea|genera|aplica|hazme|hazla|hagas|cr[eé]ame|inserta|arm[aá]|pon(me)?|produce|construy|construir|monta|necesito que|quiero que/.test(
+      t,
+    ) &&
+    !isProjectAuditIntent(text) &&
+    !isStyleGapIntent(text)
   const asking =
-    (/\?|^(qu[eé]|c[oó]mo|por qu[eé]|cu[aá]ndo|d[oó]nde|explica|expl[ií]came|cu[eé]ntame|dime|analiza|revisa|audita|qu[eé] hay)/i.test(
+    (/\?|^(qu[eé]|c[oó]mo|por qu[eé]|cu[aá]ndo|d[oó]nde|explica|expl[ií]came|cu[eé]ntame|dime|analiz|revis|audit|qu[eé] hay)/i.test(
       text.trim(),
     ) ||
-      isProjectAuditIntent(text)) &&
+      isProjectAuditIntent(text) ||
+      isStyleGapIntent(text)) &&
     !creating
   if (asking && !wantsFullProject(t)) return 'ask'
   if (
@@ -199,8 +293,11 @@ export function modePromptBlock(mode: AgentMode): string {
       'NO mutes el DAW. NO emitas <<<ACTIONS>>> con mutaciones (salvo que el usuario pida explícitamente aplicar un arreglo después).',
       'Puedes usar herramientas read-only durante el razonamiento interno (midi.notes.get, midi.getClipSummary, doc.read).',
       'Criterio de productor: mira BPM, compás, inicio/duración de cada clip en beats, densidad de notas, solapes/duplicados, notas fuera del clip, vacíos, y si el timing rítmico cuadra con el grid.',
-      'Si pide «analiza / qué arreglar»: lista problemas concretos con pista/clip/beats (datos del contexto), prioridad, y qué harías — sin inventar una canción nueva ni melodiar desde cero.',
-      'Respuesta clara en español; cita datos reales (pistas, BPM, clips, tiempos).',
+      'Si pide «analiza / qué arreglar / qué le falta»: lista problemas o gaps concretos con pista/clip/beats (datos del contexto), prioridad, y qué harías — sin inventar una canción nueva ni melodiar desde cero.',
+      'Si pide comparar con un artista/estilo (worship, Averill/Averly Morillo, etc.): usa <<<READ web.search>>> en razonamiento; responde gap analysis (qué tiene YA la pista vs qué falta), NO un plan de producción de varios días ni musicBuild.',
+      'Si pide investigar en internet: OBLIGATORIO web.search antes de concluir.',
+      'Respuesta clara en español; cita datos reales (pistas, BPM, clips, tiempos) y hallazgos web si aplica.',
+      'PROHIBIDO spamear ¡¡¡, «¡Entendido!» vacío, o cronogramas «Fase 1 (1-2 días)».',
     ].join('\n')
   }
   if (mode === 'plan') {

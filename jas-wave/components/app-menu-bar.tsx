@@ -35,6 +35,8 @@ export type MenuActionId =
   | 'pista.nuevaMidi'
   | 'ventana.ajustes'
   | 'archivo.exportarBounce'
+  | 'archivo.exportarPartituras'
+  | 'archivo.exportarProyectoConPartituras'
 
 type MenuItem =
   | { type: 'action'; id: MenuActionId; label: string; shortcut?: string }
@@ -53,6 +55,12 @@ const MENUS: MenuGroup[] = [
       { type: 'action', id: 'proyecto.guardar', label: 'Guardar', shortcut: 'Ctrl+S' },
       { type: 'action', id: 'proyecto.guardarComo', label: 'Guardar como…', shortcut: 'Ctrl+Shift+S' },
       { type: 'action', id: 'archivo.exportarBounce', label: 'Exportar bounce WAV…' },
+      { type: 'action', id: 'archivo.exportarPartituras', label: 'Exportar partituras PDF…' },
+      {
+        type: 'action',
+        id: 'archivo.exportarProyectoConPartituras',
+        label: 'Exportar proyecto + partituras…',
+      },
       { type: 'separator' },
       { type: 'action', id: 'proyecto.cerrar', label: 'Cerrar proyecto' },
       { type: 'action', id: 'app.salir', label: 'Salir', shortcut: 'Alt+F4' },

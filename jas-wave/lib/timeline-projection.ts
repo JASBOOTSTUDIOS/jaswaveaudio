@@ -30,6 +30,8 @@ export interface TimelineProjection {
     direction: 'in' | 'out',
     minZoom: number,
     maxZoom: number,
+    /** Multiplicador por tick (Reaper ≈ 1.25–1.3 con Ctrl). */
+    factorPerTick?: number,
   ): { zoom: number; scrollAdjust: number }
   visibleTimeRange(): { start: number; end: number }
   visibleBeatRange(): { start: number; end: number }
@@ -74,8 +76,10 @@ export function createProjection(opts: TimelineProjectionOptions): TimelineProje
       direction: 'in' | 'out',
       minZoom: number,
       maxZoom: number,
+      factorPerTick = 1.15,
     ): { zoom: number; scrollAdjust: number } {
-      const factor = direction === 'in' ? 1.15 : 1 / 1.15
+      const step = Math.max(1.05, factorPerTick)
+      const factor = direction === 'in' ? step : 1 / step
       const newZoom = Math.min(maxZoom, Math.max(minZoom, currentZoom * factor))
       const ratio = newZoom / currentZoom
 

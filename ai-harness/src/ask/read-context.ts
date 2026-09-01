@@ -4,8 +4,11 @@
 
 import { ConsultaDAW } from '@jaswave/shared'
 import type { DAWState } from '@jaswave/shared'
+import { getProjectKey, getProjectKeyRegions, resolveKeyAtBeat } from '../../../shared/src/music/project-key'
 import type { MidiClip, MidiNote } from '@jaswave/shared'
 import { getSelectedTrackId } from './selection'
+import { isProjectAuditIntent, isStyleGapIntent } from '../agent/modes'
+import { buildStyleGapReport } from './style-gap-report'
 
 const START_EPS = 1e-3
 
@@ -113,6 +116,7 @@ export type MidiAuditIssue = {
 /** Diagnóstico determinista (productor) — no depende del LLM. */
 export function collectMidiAuditIssues(state: DAWState): MidiAuditIssue[] {
   const issues: MidiAuditIssue[] = []
+  const numerador = state.project?.timeSignature?.numerador ?? 4
   for (const t of state.project?.tracks ?? []) {
     for (const c of t.clips ?? []) {
       if ((c as MidiClip).tipo !== 'midi') continue
@@ -120,6 +124,7 @@ export function collectMidiAuditIssues(state: DAWState): MidiAuditIssue[] {
       const notes = clip.notas ?? []
       const inicio = Number(clip.inicio ?? 0)
       const dur = Number(clip.duracion ?? 0)
+      const bars = Math.max(1, Math.round(dur / Math.max(1, numerador)))
       const name = clip.nombre || 'Clip'
       const base = { trackId: t.id, trackName: t.nombre, clipName: name, clipId: clip.id }
 
@@ -128,7 +133,7 @@ export function collectMidiAuditIssues(state: DAWState): MidiAuditIssue[] {
           ...base,
           kind: 'empty',
           priority: 1,
-          message: `Clip vacío (0 notas) · inicio ${inicio.toFixed(2)}b · dur ${dur.toFixed(2)}b`,
+          message: `El clip está vacío (sin notas). Empieza en el compás ~${Math.floor(inicio / numerador) + 1}.`,
         })
         continue
       }
@@ -138,7 +143,7 @@ export function collectMidiAuditIssues(state: DAWState): MidiAuditIssue[] {
           ...base,
           kind: 'duplicate',
           priority: 1,
-          message: `~${dupes} notas duplicadas (mismo pitch+inicio) de ${notes.length} totales — usa «Quitar duplicados» o midi.notes.dedupe`,
+          message: `Hay unas ${dupes} notas repetidas encima de sí mismas (mismo golpe, mismo instante). Suele sonar raro o “doble”. Se pueden limpiar con un solo paso.`,
         })
       }
       const outside = notesOutsideClip(notes, dur)
@@ -147,7 +152,7 @@ export function collectMidiAuditIssues(state: DAWState): MidiAuditIssue[] {
           ...base,
           kind: 'outside',
           priority: 1,
-          message: `${outside} nota(s) empiezan o terminan fuera de la duración del clip (${dur.toFixed(2)}b)`,
+          message: `${outside} nota(s) se salen del borde del clip (empiezan o terminan fuera). Acorta esas notas o alarga el clip.`,
         })
       }
       if (dur <= 0) {
@@ -155,14 +160,14 @@ export function collectMidiAuditIssues(state: DAWState): MidiAuditIssue[] {
           ...base,
           kind: 'zero_dur',
           priority: 1,
-          message: 'Duración del clip ≤ 0',
+          message: 'El clip no tiene duración válida (longitud 0).',
         })
       } else if (dur > 64) {
         issues.push({
           ...base,
           kind: 'long',
           priority: 2,
-          message: `Clip muy largo (${dur.toFixed(1)}b ≈ ${(dur / 4).toFixed(0)} compases a 4/4) — revisa si debería partirse por secciones`,
+          message: `Es un bloque muy largo (~${bars} compases en un solo clip). En el arrange suele ir mejor partido por secciones (verso, coro, puente) para editar y mezclar con claridad.`,
         })
       }
       const dens = dur > 0.001 ? notes.length / dur : notes.length
@@ -171,7 +176,7 @@ export function collectMidiAuditIssues(state: DAWState): MidiAuditIssue[] {
           ...base,
           kind: 'dense',
           priority: 2,
-          message: `Densidad alta (${dens.toFixed(1)} notas/beat) — posible stack o generación repetida`,
+          message: `Hay muchas notas amontonadas (${notes.length} en ~${bars} compases). Puede ser stack/duplicado o un patrón demasiado denso.`,
         })
       }
       if (dens < 0.05 && notes.length > 0 && dur > 8) {
@@ -179,7 +184,7 @@ export function collectMidiAuditIssues(state: DAWState): MidiAuditIssue[] {
           ...base,
           kind: 'sparse',
           priority: 3,
-          message: `Muy pocas notas para ${dur.toFixed(1)}b (${notes.length} notas) — huecos largos`,
+          message: `Hay pocas notas para un clip tan largo (${notes.length} notas en ~${bars} compases): se oyen huecos largos.`,
         })
       }
     }
@@ -228,7 +233,7 @@ export function buildMidiAuditClarifications(state: DAWState): Array<{
   return [
     {
       id: 'midi_audit_fix',
-      question: `Hay ${n} clip(s) con notas duplicadas. ¿Qué hacemos?`,
+      question: `Hay ${n} clip(s) con notas duplicadas (golpes repetidos encima). ¿Qué hacemos?`,
       options: [
         'Aplicar: quitar todos los duplicados',
         'Solo el informe (no tocar el DAW)',
@@ -240,7 +245,13 @@ export function buildMidiAuditClarifications(state: DAWState): Array<{
   ]
 }
 
-/** Informe en español listo para el chat. */
+function urgencyLabel(priority: 1 | 2 | 3): string {
+  if (priority === 1) return 'Urgente'
+  if (priority === 2) return 'Revisar'
+  return 'Detalle'
+}
+
+/** Informe en español claro para un productor de DAW (sin jerga P1/beats crudos). */
 export function buildMidiAuditReport(state: DAWState): string {
   const bpm = state.project?.bpm?.valor ?? 120
   const numerador = state.project?.timeSignature?.numerador ?? 4
@@ -257,48 +268,69 @@ export function buildMidiAuditReport(state: DAWState): string {
   }
 
   const lines: string[] = [
-    `**Auditoría MIDI** — «${nombre}» · ${bpm} BPM · ${numerador}/4 · ${midiClips} clip(s) MIDI · ${noteTotal} notas.`,
+    `## Revisión rápida del proyecto`,
+    `«${nombre}» · **${bpm} BPM** · ${numerador}/4 · ${midiClips} clip(s) MIDI · ${noteTotal.toLocaleString('es')} notas en total.`,
     '',
   ]
 
   if (midiClips === 0) {
-    lines.push('No hay clips MIDI en el proyecto. Crea o importa MIDI a una pista para poder auditar.')
+    lines.push('No hay clips MIDI todavía. Crea o importa MIDI a una pista para poder revisarlo.')
     return lines.join('\n')
   }
 
   if (issues.length === 0) {
     lines.push(
-      'No encontré problemas graves (vacíos, duplicados ni notas fuera de clip). Revisa a oído el groove y el balance entre pistas.',
+      'No veo problemas graves (clips vacíos, notas duplicadas ni notas fuera del clip). El siguiente paso es escucharlo a oído: groove, dinámica y balance entre pistas.',
     )
     lines.push('')
     lines.push(formatMidiTimelineForPrompt(state, 16))
     return lines.join('\n')
   }
 
-  lines.push(`Encontré **${issues.length}** punto(s) a revisar (P1 = urgente):`)
+  const urgent = issues.filter((i) => i.priority === 1)
+  const review = issues.filter((i) => i.priority === 2)
+  const detail = issues.filter((i) => i.priority === 3)
+
+  lines.push(`Encontré **${issues.length}** cosa(s) a mirar:`)
+  if (urgent.length) lines.push(`- **${urgent.length}** urgente(s) (suelen notarse al instante)`)
+  if (review.length) lines.push(`- **${review.length}** para revisar (organización / densidad)`)
+  if (detail.length) lines.push(`- **${detail.length}** detalle(s) menores`)
   lines.push('')
+
   const maxShow = 12
-  for (let i = 0; i < Math.min(issues.length, maxShow); i++) {
-    const it = issues[i]!
-    lines.push(
-      `${i + 1}. **P${it.priority}** · «${it.trackName}» / «${it.clipName}» — ${it.message}`,
-    )
+  const shown = issues.slice(0, maxShow)
+  for (let i = 0; i < shown.length; i++) {
+    const it = shown[i]!
+    const clipBit =
+      it.clipName && it.clipName !== it.trackName ? ` · clip «${it.clipName}»` : ''
+    lines.push(`${i + 1}. **${urgencyLabel(it.priority)}** — pista **«${it.trackName}»**${clipBit}`)
+    lines.push(`   ${it.message}`)
   }
   if (issues.length > maxShow) {
-    lines.push(`… y ${issues.length - maxShow} más.`)
+    lines.push('')
+    lines.push(`…y ${issues.length - maxShow} más (mismo tipo de avisos).`)
   }
+
+  const hasDupes = issues.some((i) => i.kind === 'duplicate')
   lines.push('')
-  lines.push(
-    'Abajo tienes el **formulario** y/o la tarjeta **Aplicar** para quitar duplicados sin reescribir el pedido.',
-  )
+  if (hasDupes) {
+    lines.push(
+      'Si quieres, abajo puedes **aplicar la limpieza de notas duplicadas** con un clic (sin reescribir el pedido).',
+    )
+  } else {
+    lines.push(
+      'Nada de esto es un “error fatal”: son avisos de arrange. Puedes partir clips, limpiar notas o pedirme que lo haga por pista.',
+    )
+  }
   return lines.join('\n')
 }
 
-/** Respuesta del modelo vacía o basura (¡¡¡, solo puntuación). */
+/** Respuesta del modelo vacía o basura (¡¡¡, solo puntuación, plan inventado fuera de lugar). */
 export function isGarbageAssistantReply(text: string): boolean {
   const t = text.replace(/```[\s\S]*?```/g, '').trim()
   if (!t) return true
   if (/^[¡!]{3,}$/.test(t)) return true
+  if (/[¡!]{8,}/.test(t) && t.replace(/[¡!\s]/g, '').length < 40) return true
   if (/^[\s¡!?.…,;:\-–—*•]+$/.test(t)) return true
   // Solo meta-instrucciones sin datos de clips
   if (
@@ -308,6 +340,23 @@ export function isGarbageAssistantReply(text: string): boolean {
   ) {
     return true
   }
+  return false
+}
+
+/**
+ * Plan de producción multi-día / musicBuild cuando el usuario pidió análisis o gap de estilo.
+ * Usado para invalidar respuestas off-topic en el chat.
+ */
+export function isOffTopicCreatePlanReply(userText: string, assistantText: string): boolean {
+  const auditish =
+    isProjectAuditIntent(userText) ||
+    isStyleGapIntent(userText) ||
+    /\b(analiz|qu[eé]\s+le\s+falta|investiga)/i.test(userText)
+  if (!auditish) return false
+  const a = assistantText
+  if (/Plan de Producci[oó]n|Fase\s*1\s*:\s*.*\(\s*\d+\s*[-–]\s*\d+\s*d[ií]as?\)/i.test(a)) return true
+  if (/daw\.musicBuild|musicBuild/i.test(a) && !/aplicar\s*:\s*false/i.test(a)) return true
+  if (/¡Entendido!.*plan de producci/i.test(a)) return true
   return false
 }
 
@@ -382,6 +431,23 @@ export function buildReadOnlyProjectContext(state: DAWState): string {
     `Nombre: ${resumen.nombre}`,
     `BPM: ${resumen.bpm}`,
     `Compás: ${resumen.compas}/4`,
+    (() => {
+      const pk = getProjectKey(state.project?.metadata)
+      const regions = getProjectKeyRegions(state.project?.metadata)
+      if (!pk && regions.length === 0) return 'Tonalidad: (no configurada)'
+      const lines = [`Tonalidad base: ${pk?.label ?? '(sin base)'}`]
+      if (regions.length) {
+        lines.push(
+          ...regions.map(
+            (r) =>
+              `  - ${r.inicioBeats.toFixed(1)}–${r.finBeats.toFixed(1)} beats → ${r.label}`,
+          ),
+        )
+      }
+      const atPlayhead = resolveKeyAtBeat(state.project?.metadata, (transporte?.posicion?.segundos ?? 0) * (resumen.bpm / 60))
+      if (atPlayhead) lines.push(`Tono en playhead: ${atPlayhead.label}`)
+      return lines.join('\n')
+    })(),
     `Duración: ${resumen.duracion.toFixed(2)}s`,
     `Sample rate: ${resumen.sampleRate} / ${resumen.bitDepth}-bit`,
     `Pistas: ${resumen.pistas} · Clips: ${resumen.clips} · Modificado: ${resumen.modificado ? 'sí' : 'no'}`,
@@ -444,7 +510,10 @@ export function answerLocalReadQuery(state: DAWState, question: string): string 
     if (pistas.length === 0) return 'No hay pistas todavía.'
     return pistas.map((t, i) => `${i + 1}. ${t.nombre} (${t.tipo})`).join('\n')
   }
-  if (/\b(analiza|revisa|audita|arreglar|timeline|clips?\s+midi)\b/.test(lower)) {
+  if (isStyleGapIntent(question)) {
+    return buildStyleGapReport(state, { userText: question })
+  }
+  if (isProjectAuditIntent(question) || /\b(audita|arreglar|timeline|clips?\s+midi)\b/.test(lower)) {
     return buildMidiAuditReport(state)
   }
   return null

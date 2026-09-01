@@ -20,6 +20,9 @@ import { MidiClipPreview } from './MidiClipPreview'
 import { ChannelFxBank } from '@/components/channel-fx-bank'
 import { TrackMidiInput } from '@/components/track-midi-input'
 import { TrackAudioInput } from '@/components/track-audio-input'
+import { TrackContextMenu, type TrackMenuState } from './TrackContextMenu'
+import { ClipContextMenu, type ClipMenuState } from './ClipContextMenu'
+import { clipsInLassoRect, type ClipLassoRect } from '@/src/lib/arrange-clip-lasso'
 import type { PluginInfo } from '../../../shared/src/types/entidades'
 import {
   ROW_H,
@@ -100,8 +103,10 @@ export function ArrangementView() {
   const beatsPerBar = useDAWState((state: DAWState) => state.project?.timeSignature?.numerador ?? 4)
   const loopState = useDAWState((state: DAWState) => state.transport?.loop)
   const zoom = useDAWState((state: DAWState) => state.ui?.zoomHorizontal ?? 1)
+  const zoomVertical = useDAWState((state: DAWState) => state.ui?.zoomVertical ?? 1)
   const scrollLeft = useDAWState((state: DAWState) => state.ui?.scrollX ?? 0)
   const selectedClipId = useDAWState((state: DAWState) => state.selection?.idsClips?.[0] ?? null)
+  const selectedClipIds = useDAWState((state: DAWState) => state.selection?.idsClips ?? [])
   const selectedTrackId = useDAWState((state: DAWState) => getSelectedTrackId(state))
   const loopActivo = Boolean(loopState?.activo)
   const loopInicioBeats = loopState?.inicio?.beats ?? 0
@@ -128,6 +133,10 @@ export function ArrangementView() {
   const addTrackFileRef = useRef<HTMLInputElement>(null)
   const [importTargetTrack, setImportTargetTrack] = useState<string | null>(null)
   const [deleteConfirmTrack, setDeleteConfirmTrack] = useState<string | null>(null)
+  const [trackMenu, setTrackMenu] = useState<TrackMenuState | null>(null)
+  const [clipMenu, setClipMenu] = useState<ClipMenuState | null>(null)
+  const [clipLasso, setClipLasso] = useState<ClipLassoRect | null>(null)
+  const clipLassoActiveRef = useRef(false)
   const [dragTrackId, setDragTrackId] = useState<string | null>(null)
   const [dragOverTrackId, setDragOverTrackId] = useState<string | null>(null)
 
@@ -209,7 +218,28 @@ export function ArrangementView() {
     await addClipFromFile(trackId, file, 0)
   }
 
-  const handleDeleteTrack = async (trackId: string) => {
+  const openTrackMenu = useCallback((trackId: string, clientX: number, clientY: number) => {
+    setClipMenu(null)
+    void tienda.executor.execute('selection.set', selectTrackPayload(trackId))
+    setTrackMenu({ trackId, x: clientX, y: clientY })
+  }, [tienda])
+
+  const openClipMenu = useCallback(
+    (clipIds: string[], trackId: string, clientX: number, clientY: number, beatAtClick?: number) => {
+      if (!clipIds.length) return
+      setTrackMenu(null)
+      void tienda.executor.execute('selection.set', {
+        idsClips: clipIds,
+        idsPistas: [trackId],
+        tipo: 'clip',
+        idPrincipal: trackId,
+      })
+      setClipMenu({ clipIds, trackId, x: clientX, y: clientY, beatAtClick })
+    },
+    [tienda],
+  )
+
+  const handleDeleteTrack = (trackId: string) => {
     setDeleteConfirmTrack(trackId)
   }
 
@@ -257,6 +287,116 @@ export function ArrangementView() {
   // Note: keyboard shortcuts are now handled by useShortcutDispatcher (unified system)
 
   const TRACK_COL_W = 300
+  const rowH = Math.max(56, Math.round(ROW_H * zoomVertical))
+
+  const beginClipRightDrag = useCallback(
+    (e: React.PointerEvent) => {
+      if (e.button !== 2) return
+      const scroller = lanesScrollRef.current
+      if (!scroller) return
+      e.preventDefault()
+      e.stopPropagation()
+
+      const clipEl = (e.target as HTMLElement).closest('[data-clip-id]')
+      const clipId = clipEl?.getAttribute('data-clip-id') ?? undefined
+      const trackId =
+        clipEl?.getAttribute('data-track-id') ??
+        (e.target as HTMLElement).closest('[data-track-id]')?.getAttribute('data-track-id') ??
+        undefined
+
+      const scrollerRect = scroller.getBoundingClientRect()
+      const toLocal = (clientX: number, clientY: number) => ({
+        x: clientX - scrollerRect.left - TRACK_COL_W + scroller.scrollLeft,
+        y: clientY - scrollerRect.top + scroller.scrollTop,
+      })
+      const start = toLocal(e.clientX, e.clientY)
+      const startClient = { x: e.clientX, y: e.clientY }
+      clipLassoActiveRef.current = false
+      setClipLasso({ x0: start.x, y0: start.y, x1: start.x, y1: start.y })
+
+      const captureEl = e.currentTarget as HTMLElement
+      try {
+        captureEl.setPointerCapture(e.pointerId)
+      } catch {
+        /* ignore */
+      }
+
+      const move = (ev: PointerEvent) => {
+        if (Math.hypot(ev.clientX - startClient.x, ev.clientY - startClient.y) > 4) {
+          clipLassoActiveRef.current = true
+        }
+        const p = toLocal(ev.clientX, ev.clientY)
+        setClipLasso({ x0: start.x, y0: start.y, x1: p.x, y1: p.y })
+      }
+      const up = (ev: PointerEvent) => {
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+        window.removeEventListener('pointercancel', up)
+        try {
+          captureEl.releasePointerCapture(ev.pointerId)
+        } catch {
+          /* ignore */
+        }
+        setClipLasso(null)
+        const p = toLocal(ev.clientX, ev.clientY)
+        const lassoRect = { x0: start.x, y0: start.y, x1: p.x, y1: p.y }
+        if (clipLassoActiveRef.current) {
+          const hitIds = clipsInLassoRect(
+            clips.map((c) => ({
+              id: c.id,
+              trackId: c.trackId,
+              inicioBeats: c.inicioBeats,
+              duracionBeats: c.duracionBeats,
+            })),
+            tracks,
+            rowH,
+            (beat) => projection.beatToPixel(beat),
+            lassoRect,
+          )
+          if (hitIds.length) {
+            const trackIds = [
+              ...new Set(
+                hitIds
+                  .map((id) => clips.find((c) => c.id === id)?.trackId)
+                  .filter((id): id is string => Boolean(id)),
+              ),
+            ]
+            const primaryTrack = trackIds[0] ?? trackId ?? tracks[0]?.id
+            if (primaryTrack) {
+              void tienda.executor.execute('selection.set', {
+                idsClips: hitIds,
+                idsPistas: trackIds.length ? trackIds : [primaryTrack],
+                tipo: 'clip',
+                idPrincipal: primaryTrack,
+              })
+            }
+          }
+          return
+        }
+        let beatAtClick: number | undefined
+        if (timelineRef.current) {
+          const tRect = timelineRef.current.getBoundingClientRect()
+          beatAtClick = Math.max(0, projection.pixelToBeat(ev.clientX - tRect.left))
+        }
+        const currentIds = tienda.obtenerEstado().selection?.idsClips ?? []
+        if (clipId && trackId) {
+          const ids =
+            currentIds.includes(clipId) && currentIds.length > 1 ? currentIds : [clipId]
+          openClipMenu(ids, trackId, ev.clientX, ev.clientY, beatAtClick)
+          return
+        }
+        if (currentIds.length > 0) {
+          const menuTrackId =
+            clips.find((c) => c.id === currentIds[0])?.trackId ?? tracks[0]?.id ?? ''
+          if (menuTrackId) openClipMenu(currentIds, menuTrackId, ev.clientX, ev.clientY, beatAtClick)
+        }
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+      window.addEventListener('pointercancel', up)
+    },
+    [clips, tracks, rowH, projection, tienda, openClipMenu],
+  )
 
   const seekFromEvent = useCallback(
     (clientX: number) => {
@@ -307,7 +447,7 @@ export function ArrangementView() {
       if (lanesScrollRef.current) {
         const rect = lanesScrollRef.current.getBoundingClientRect()
         const yInContent = e.clientY - rect.top + lanesScrollRef.current.scrollTop
-        const idx = Math.floor(yInContent / ROW_H)
+        const idx = Math.floor(yInContent / rowH)
         if (idx >= 0 && idx < tracks.length) {
           previewTrackId = tracks[idx]!.id
         }
@@ -366,49 +506,111 @@ export function ArrangementView() {
 
   const handleZoom = useCallback(
     (e: WheelEvent) => {
-      // Zoom horizontal: Ctrl/Cmd+rueda (o Alt+rueda) anclado al cursor
-      if (!e.ctrlKey && !e.metaKey && !e.altKey) return
-      e.preventDefault()
-      e.stopPropagation()
-
       const lanes = lanesScrollRef.current
       if (!lanes) return
 
       const rect = lanes.getBoundingClientRect()
-      const cursorX = e.clientX - rect.left
-      lastPointerXRef.current = cursorX
-      const direction: 'in' | 'out' = e.deltaY < 0 ? 'in' : 'out'
+      const xInScroller = e.clientX - rect.left
+      const overHeaders = xInScroller < TRACK_COL_W
+      const ctrlZoom = e.ctrlKey || e.metaKey || e.altKey
+
+      // Controles de pista: scroll vertical nativo (sin modificadores).
+      if (overHeaders && !ctrlZoom) return
+
+      // Ctrl/Cmd/Alt + rueda → zoom VERTICAL de altura de pistas (estilo Reaper TCP).
+      if (ctrlZoom) {
+        e.preventDefault()
+        e.stopPropagation()
+        const absDy = Math.abs(e.deltaY) || Math.abs(e.deltaX) || 100
+        const ticks = Math.min(4, Math.max(1, Math.round(absDy / 80)))
+        const step = 0.08 * ticks
+        const directionUp = e.deltaY < 0 || (e.deltaY === 0 && e.deltaX < 0)
+        const next = Math.min(3, Math.max(0.5, zoomVertical + (directionUp ? step : -step)))
+        if (Math.abs(next - zoomVertical) < 1e-6) return
+        tienda.establecerEstado((s) => ({
+          ...s,
+          ui: { ...s.ui, zoomVertical: Math.round(next * 100) / 100 },
+        }))
+        return
+      }
+
+      // Sobre clips: Shift+rueda = pan horizontal.
+      if (!overHeaders && e.shiftKey) {
+        e.preventDefault()
+        e.stopPropagation()
+        const deltaPx = e.deltaY !== 0 ? e.deltaY : e.deltaX
+        if (!Number.isFinite(deltaPx) || deltaPx === 0) return
+        const maxScroll = Math.max(0, lanes.scrollWidth - lanes.clientWidth)
+        const next = Math.max(0, Math.min(maxScroll, lanes.scrollLeft + deltaPx))
+        if (Math.abs(next - lanes.scrollLeft) < 0.5) return
+        syncingScroll.current = true
+        lanes.scrollLeft = next
+        if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = next
+        tienda.establecerEstado((s) => ({ ...s, ui: { ...s.ui, scrollX: next } }))
+        requestAnimationFrame(() => {
+          syncingScroll.current = false
+        })
+        return
+      }
+
+      // Rueda simple sobre clips → zoom HORIZONTAL (ancho de timeline).
+      if (overHeaders) return
+
+      e.preventDefault()
+      e.stopPropagation()
+
+      const lanesCursorX = Math.max(0, xInScroller - TRACK_COL_W)
+      lastPointerXRef.current = xInScroller
+
+      const absDy = Math.abs(e.deltaY) || Math.abs(e.deltaX) || 100
+      const ticks = Math.min(6, Math.max(1, Math.round(absDy / 80)))
+      const factorPerTick = 1.15
+      const direction: 'in' | 'out' =
+        e.deltaY < 0 || (e.deltaY === 0 && e.deltaX < 0) ? 'in' : 'out'
 
       const liveScroll = lanes.scrollLeft
-      const liveProjection = createProjection({
-        pixelsPerBeat,
-        viewportWidth: rect.width,
-        scrollX: liveScroll,
-        bpm,
-      })
-      const result = liveProjection.zoomAt(
-        zoom,
-        cursorX,
-        direction,
-        ARRANGE_MIN_ZOOM,
-        ARRANGE_MAX_ZOOM,
-      )
+      const lanesViewportW = Math.max(1, rect.width - TRACK_COL_W)
+      let nextZoom = zoom
+      let nextScroll = liveScroll
+      let ppb = pixelsPerBeat
 
-      if (Math.abs(result.zoom - zoom) < 1e-6) return
+      for (let i = 0; i < ticks; i++) {
+        const liveProjection = createProjection({
+          pixelsPerBeat: ppb,
+          viewportWidth: lanesViewportW,
+          scrollX: nextScroll,
+          bpm,
+        })
+        const result = liveProjection.zoomAt(
+          nextZoom,
+          lanesCursorX,
+          direction,
+          ARRANGE_MIN_ZOOM,
+          ARRANGE_MAX_ZOOM,
+          factorPerTick,
+        )
+        if (Math.abs(result.zoom - nextZoom) < 1e-9) break
+        const ratio = result.zoom / nextZoom
+        ppb *= ratio
+        nextZoom = result.zoom
+        nextScroll = result.scrollAdjust
+      }
+
+      if (Math.abs(nextZoom - zoom) < 1e-9) return
 
       tienda.establecerEstado((s) => ({
         ...s,
-        ui: { ...s.ui, zoomHorizontal: result.zoom, scrollX: result.scrollAdjust },
+        ui: { ...s.ui, zoomHorizontal: nextZoom, scrollX: nextScroll },
       }))
 
       syncingScroll.current = true
-      lanes.scrollLeft = result.scrollAdjust
-      if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = result.scrollAdjust
+      lanes.scrollLeft = nextScroll
+      if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = nextScroll
       requestAnimationFrame(() => {
         syncingScroll.current = false
       })
     },
-    [pixelsPerBeat, zoom, tienda, bpm],
+    [pixelsPerBeat, zoom, zoomVertical, tienda, bpm],
   )
 
   const applyZoomAtAnchor = useCallback(
@@ -419,10 +621,11 @@ export function ArrangementView() {
       if (Math.abs(z - zoom) < 1e-9) return
 
       const rect = lanes.getBoundingClientRect()
-      const cursorX =
+      const rawX =
         anchorViewportX ??
         lastPointerXRef.current ??
         rect.width / 2
+      const cursorX = Math.max(0, rawX - TRACK_COL_W)
       const liveScroll = lanes.scrollLeft
       const oldPpb = pixelsPerBeat
       const beatAtCursor = (cursorX + liveScroll) / oldPpb
@@ -494,7 +697,7 @@ export function ArrangementView() {
     })
   }, [scrollLeft])
 
-  const tracksHeight = Math.max(tracks.length * ROW_H, ROW_H)
+  const tracksHeight = Math.max(tracks.length * rowH, rowH)
 
   const syncFromLanes = useCallback(() => {
     if (syncingScroll.current) return
@@ -516,6 +719,7 @@ export function ArrangementView() {
     clip: { id: string; trackId: string; inicioBeats: number; duracionBeats: number },
     trackId: string,
   ) => {
+    if (e.button !== 0) return
     e.stopPropagation()
     // Liberar foco del piano roll / chat para que Ctrl+C/V lleguen a los atajos de clips
     try {
@@ -620,6 +824,23 @@ export function ArrangementView() {
         confirmLabel="Eliminar"
         variant="danger"
       />
+      <TrackContextMenu
+        menu={trackMenu}
+        onClose={() => setTrackMenu(null)}
+        tienda={tienda}
+        onRequestDelete={handleDeleteTrack}
+        onImportAudio={(trackId) => {
+          setImportTargetTrack(trackId)
+          addTrackFileRef.current?.click()
+        }}
+        trackIndex={
+          trackMenu
+            ? tracks.findIndex((t) => t.id === trackMenu.trackId)
+            : -1
+        }
+        trackCount={tracks.length}
+      />
+      <ClipContextMenu menu={clipMenu} onClose={() => setClipMenu(null)} tienda={tienda} />
       <input
         type="file"
         ref={addTrackFileRef}
@@ -781,6 +1002,11 @@ export function ArrangementView() {
                 role="button"
                 tabIndex={0}
                 onClick={() => selectTrack(track.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  openTrackMenu(track.id, e.clientX, e.clientY)
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
@@ -804,12 +1030,12 @@ export function ArrangementView() {
                   if (!id || id === track.id) return
                   moveTrackToIndex(id, trackIndex)
                 }}
-                className={`flex cursor-pointer items-stretch gap-1 border-b border-border pr-1 ${
-                  isSelected ? 'bg-accent-amber/15' : 'hover:bg-panel-raised/40'
+                className={`flex cursor-pointer items-stretch gap-1 border-b border-border bg-panel pr-1 ${
+                  isSelected ? 'bg-accent-amber/20' : 'hover:bg-panel-raised'
                 } ${isDragOver ? 'ring-1 ring-inset ring-accent-amber' : ''} ${
                   dragTrackId === track.id ? 'opacity-60' : ''
                 }`}
-                style={{ height: ROW_H }}
+                style={{ height: rowH }}
               >
                 <span
                   className="h-full w-1 shrink-0"
@@ -908,8 +1134,12 @@ export function ArrangementView() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleDeleteTrack(track.id)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      openTrackMenu(track.id, e.clientX, e.clientY)
+                    }}
                     aria-label={`Opciones ${track.name}`}
+                    aria-haspopup="menu"
                     className="text-muted-foreground hover:text-foreground"
                   >
                     <MoreVertical className="size-4" />
@@ -923,7 +1153,15 @@ export function ArrangementView() {
         )}
         lanes={(
           <>
-            <div className="relative cursor-pointer" data-track-area style={{ height: tracksHeight }}>
+            <div
+              className="relative cursor-pointer"
+              data-track-area
+              style={{ height: tracksHeight }}
+              onPointerDown={(e) => {
+                if (e.button === 2) beginClipRightDrag(e)
+              }}
+              onContextMenu={(e) => e.preventDefault()}
+            >
               <GridLayer
                 projection={viewProjection}
                 zoom={zoom}
@@ -987,6 +1225,18 @@ export function ArrangementView() {
               onPointerDown={handlePlayheadPointerDown}
             />
 
+            {clipLasso ? (
+              <div
+                className="pointer-events-none absolute z-30 border border-accent-amber bg-accent-amber/15"
+                style={{
+                  left: Math.min(clipLasso.x0, clipLasso.x1),
+                  top: Math.min(clipLasso.y0, clipLasso.y1),
+                  width: Math.abs(clipLasso.x1 - clipLasso.x0),
+                  height: Math.abs(clipLasso.y1 - clipLasso.y0),
+                }}
+              />
+            ) : null}
+
             {tracks.map((track) => {
               const t = toggles[track.id] ?? {
                 muted: false,
@@ -1023,8 +1273,14 @@ export function ArrangementView() {
                   className={`relative border-b border-border transition-colors hover:bg-panel-raised/30 ${
                     isDropTarget ? 'bg-accent-amber/10' : ''
                   } ${selectedTrackId === track.id ? 'bg-accent-amber/10' : ''}`}
-                  style={{ height: ROW_H }}
+                  style={{ height: rowH }}
                   onClick={(e) => handleTrackLaneClick(e, track.id)}
+                  onContextMenu={(e) => {
+                    if ((e.target as HTMLElement).closest('[data-clip-id]')) return
+                    e.preventDefault()
+                    e.stopPropagation()
+                    openTrackMenu(track.id, e.clientX, e.clientY)
+                  }}
                   onDragOver={(e) => {
                     e.preventDefault()
                     e.dataTransfer.dropEffect = 'copy'
@@ -1043,7 +1299,7 @@ export function ArrangementView() {
                   {trackClips.length === 0 ? (
                     <div
                       className="pointer-events-none absolute inset-0 flex items-center pl-3 opacity-30"
-                      style={{ height: ROW_H }}
+                      style={{ height: rowH }}
                     >
                       <span className="text-[11px] italic text-muted-foreground">
                         {activeTool === 'pencil'
@@ -1064,7 +1320,7 @@ export function ArrangementView() {
                         isDraggingThis ? clipDrag.previewDuracion : clip.duracionBeats
                       const clipLeft = projection.beatToPixel(inicio)
                       const clipWidth = Math.max(36, duracion * pixelsPerBeat)
-                      const isSelected = selectedClipId === clip.id
+                      const isSelected = selectedClipIds.includes(clip.id)
                       const barStart = Math.floor(inicio / beatsPerBar) + 1
                       const barEnd = Math.ceil((inicio + duracion) / beatsPerBar)
                       const barCount = barEnd - barStart + 1
@@ -1072,7 +1328,13 @@ export function ArrangementView() {
                       return (
                         <div
                           key={clip.id}
-                          onPointerDown={(e) => handleClipPointerDown(e, clip, clip.trackId)}
+                          data-clip-id={clip.id}
+                          data-track-id={clip.trackId}
+                          onPointerDown={(e) => {
+                            if (e.button === 2) return
+                            handleClipPointerDown(e, clip, clip.trackId)
+                          }}
+                          onContextMenu={(e) => e.preventDefault()}
                           onDoubleClick={(e) => {
                             e.stopPropagation()
                             if (clip.kind === 'midi') {
@@ -1137,7 +1399,7 @@ export function ArrangementView() {
 
                           <div
                             className="relative mx-1 mb-0.5 overflow-hidden rounded-sm"
-                            style={{ height: ROW_H - 22 }}
+                            style={{ height: rowH - 22 }}
                           >
                             {clip.kind === 'midi' ? (
                               <MidiClipPreview
@@ -1151,7 +1413,7 @@ export function ArrangementView() {
                                 sourceId={clip.sourceId}
                                 color={track.color}
                                 width={Math.max(8, clipWidth - 8)}
-                                height={ROW_H - 24}
+                                height={rowH - 24}
                                 durationSeconds={Math.max(0.001, clip.duracionSeconds)}
                                 clipLeft={clipLeft + 4}
                                 scrollLeft={scrollLeft}

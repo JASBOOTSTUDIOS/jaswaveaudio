@@ -8,9 +8,7 @@ import {
   Loader2,
   Music2,
   Piano,
-  Play,
   Sparkles,
-  Square,
 } from 'lucide-react'
 import { useDAW } from '@/src/context/daw-context'
 import { executeDawActions } from '@/src/lib/ai-daw-agent'
@@ -23,10 +21,9 @@ import {
   type GeneratedNote,
 } from '@/src/lib/midi-song-generator'
 import { pluginRegistry } from '@/src/lib/plugin/registry'
-import {
-  playMidiPreviewAudition,
-  stopMidiPreviewAudition,
-} from '@/src/lib/midi-preview-audition'
+import { MidiPreviewTransport } from '@/components/midi-preview-transport'
+import { stopMidiPreviewAudition } from '@/src/lib/midi-preview-audition'
+import { patchMessage } from '@/src/lib/ai-chat-store'
 import type {
   MusicBuildResult,
   MusicBuildStage,
@@ -37,6 +34,9 @@ import type {
 type Props = {
   build: MusicBuildResult
   status?: 'pending' | 'applied' | 'discarded'
+  conversationId?: string
+  messageId?: string
+  onApplied?: () => void
 }
 
 type TrackDraft = MusicBuildTrackSpec & { previewNotes: GeneratedNote[] }
@@ -140,15 +140,17 @@ function buildTrackPreview(
 }
 
 /** Vista limpia del Music Build + preview MIDI + cambio de instrumento. */
-export function MusicBuildPreview({ build, status = 'pending' }: Props) {
+export function MusicBuildPreview({ build, status = 'pending', conversationId, messageId, onApplied }: Props) {
   const tienda = useDAW()
   const [busy, setBusy] = useState(false)
-  const [playing, setPlaying] = useState(false)
-  const [auditionHint, setAuditionHint] = useState('')
   const [local, setLocal] = useState(build.applied ? 'applied' : status)
   const [activeIdx, setActiveIdx] = useState(0)
   const spec = build.spec
   const planned = local !== 'applied'
+
+  useEffect(() => {
+    if (build.applied) setLocal('applied')
+  }, [build.applied])
 
   const instruments = useMemo(() => {
     try {
@@ -181,41 +183,7 @@ export function MusicBuildPreview({ build, status = 'pending' }: Props) {
 
   const stopPreview = useCallback(() => {
     stopMidiPreviewAudition()
-    setPlaying(false)
   }, [])
-
-  const playActive = useCallback(async () => {
-    if (!active?.previewNotes.length) {
-      setAuditionHint('Esta pista aún no tiene notas en el borrador.')
-      return
-    }
-    stopPreview()
-    setPlaying(true)
-    setAuditionHint('')
-    try {
-      const candidates = tienda.obtenerEstado().project.tracks.map((t) => t.id)
-      const { mode } = await playMidiPreviewAudition({
-        notes: active.previewNotes,
-        bpm: spec.bpm,
-        candidateTrackIds: candidates,
-        pluginId: active.pluginId,
-        pluginNombre: active.pluginNombre,
-        rol: String(active.rol),
-        preferHost: true,
-        onEnded: () => setPlaying(false),
-      })
-      setAuditionHint(
-        mode === 'host'
-          ? 'Motor de audio (Plugin Host)'
-          : mode === 'vst'
-            ? 'VST del proyecto'
-            : 'Sonido de prueba (sin host)',
-      )
-    } catch (err) {
-      setPlaying(false)
-      setAuditionHint(err instanceof Error ? err.message : 'No se pudo reproducir')
-    }
-  }, [active, spec.bpm, stopPreview, tienda])
 
   useEffect(() => () => stopMidiPreviewAudition(), [])
 
@@ -274,11 +242,19 @@ export function MusicBuildPreview({ build, status = 'pending' }: Props) {
         ],
         { agentMode: 'create', forceApply: true, source: 'user_confirm', respectModeGate: false },
       )
-      if (results.some((r) => r.success)) setLocal('applied')
+      if (results.some((r) => r.success)) {
+        setLocal('applied')
+        if (conversationId && messageId) {
+          patchMessage(conversationId, messageId, {
+            musicBuild: { ...build, applied: true, status: 'completed' },
+          })
+          onApplied?.()
+        }
+      }
     } finally {
       setBusy(false)
     }
-  }, [spec, stopPreview, tienda, tracks])
+  }, [build, conversationId, messageId, onApplied, spec, stopPreview, tienda, tracks])
 
   const stagesVisible = useMemo(() => {
     if (planned) {
@@ -289,13 +265,6 @@ export function MusicBuildPreview({ build, status = 'pending' }: Props) {
     return build.stages
   }, [build.stages, planned])
 
-  const noteDots = useMemo(() => {
-    const notes = active?.previewNotes ?? []
-    const max = 100
-    const step = Math.max(1, Math.floor(notes.length / max))
-    return notes.filter((_, i) => i % step === 0).slice(0, max)
-  }, [active])
-
   const previewDur = useMemo(() => {
     const notes = active?.previewNotes ?? []
     if (!notes.length) return 8
@@ -303,6 +272,38 @@ export function MusicBuildPreview({ build, status = 'pending' }: Props) {
   }, [active])
 
   const genre = spec.genero ? String(spec.genero) : null
+
+  const candidateTrackIds = useMemo(
+    () => tienda.obtenerEstado().project.tracks.map((t) => t.id),
+    [tienda],
+  )
+
+  const projectTrackId = useMemo(() => {
+    if (!active) return null
+    const projectTracks = tienda.obtenerEstado().project.tracks
+    const byName = projectTracks.find(
+      (t) => t.nombre.trim().toLowerCase() === String(active.nombre).trim().toLowerCase(),
+    )
+    if (byName) return byName.id
+    const rol = String(active.rol).toLowerCase()
+    const byRole = projectTracks.find((t) => {
+      const n = t.nombre.toLowerCase()
+      if (rol === 'drums' && /bater|drum/.test(n)) return true
+      if (rol === 'bass' && /bajo|bass/.test(n)) return true
+      if ((rol === 'keys' || rol === 'piano') && /key|piano|tecla/.test(n)) return true
+      if (rol === 'pad' && /pad/.test(n)) return true
+      if (rol === 'lead' && /lead|melod/.test(n)) return true
+      return false
+    })
+    return byRole?.id ?? null
+  }, [active, tienda])
+
+  const projectTrackPlugins = useMemo(() => {
+    if (!projectTrackId) return null
+    return (
+      tienda.obtenerEstado().project.tracks.find((t) => t.id === projectTrackId)?.plugins ?? null
+    )
+  }, [projectTrackId, tienda])
 
   return (
     <div className="mt-2 overflow-hidden rounded-xl border border-border/80 bg-card/40 shadow-sm">
@@ -421,57 +422,29 @@ export function MusicBuildPreview({ build, status = 'pending' }: Props) {
         </ul>
       </div>
 
-      {/* Mini piano-roll de la pista activa */}
+      {/* Timeline + transporto de la pista activa */}
       {active ? (
         <div className="border-t border-border/50 px-3.5 py-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
-                Vista previa MIDI
-              </div>
-              <div className="truncate text-[11px] text-muted-foreground">
-                {active.nombre} · primeros compases
-              </div>
+          <div className="mb-2 min-w-0">
+            <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
+              Vista previa MIDI
             </div>
-            {planned ? (
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] hover:bg-muted/40"
-                disabled={!active.previewNotes.length}
-                onClick={() => void (playing ? stopPreview() : playActive())}
-              >
-                {playing ? <Square className="size-3" /> : <Play className="size-3" />}
-                {playing ? 'Stop' : 'Escuchar'}
-              </button>
-            ) : null}
+            <div className="truncate text-[11px] text-muted-foreground">
+              {active.nombre} · clic en la línea de tiempo para oír desde ahí
+            </div>
           </div>
-          {auditionHint ? (
-            <p className="mb-1.5 text-[10px] text-muted-foreground">{auditionHint}</p>
-          ) : null}
-          <div className="relative h-20 overflow-hidden rounded-lg border border-border/50 bg-background/40">
-            {noteDots.map((n, i) => {
-              const x = (n.inicio / Math.max(1, previewDur)) * 100
-              const w = Math.max(0.5, (n.duracion / Math.max(1, previewDur)) * 100)
-              const y = ((127 - n.pitch) / 127) * 100
-              return (
-                <div
-                  key={i}
-                  className="absolute rounded-[1px] bg-accent-amber/75"
-                  style={{
-                    left: `${x}%`,
-                    width: `${w}%`,
-                    top: `${Math.max(4, Math.min(90, y))}%`,
-                    height: 3,
-                  }}
-                />
-              )
-            })}
-            {!noteDots.length ? (
-              <div className="flex h-full items-center justify-center text-[11px] text-muted-foreground">
-                Sin notas en el borrador
-              </div>
-            ) : null}
-          </div>
+          <MidiPreviewTransport
+            notes={active.previewNotes}
+            bpm={spec.bpm}
+            durationBeats={previewDur}
+            pluginId={active.pluginId}
+            pluginNombre={active.pluginNombre}
+            rol={String(active.rol)}
+            trackId={projectTrackId}
+            trackNombre={active.nombre}
+            trackPlugins={projectTrackPlugins}
+            candidateTrackIds={candidateTrackIds}
+          />
         </div>
       ) : null}
 
@@ -504,7 +477,11 @@ export function MusicBuildPreview({ build, status = 'pending' }: Props) {
             Crear en el proyecto
           </button>
         </div>
-      ) : null}
+      ) : (
+        <div className="border-t border-border/60 bg-emerald-950/20 px-3.5 py-3 text-center text-[11px] text-emerald-300/90">
+          <Check className="mb-1 inline size-3.5" /> Ya aplicado en el proyecto
+        </div>
+      )}
     </div>
   )
 }

@@ -128,6 +128,12 @@ function VstNativeEditor({
   }
 
   async function closeEditor() {
+    try {
+      const { snapshotTrackPluginIntoProject } = await import('@/src/lib/plugin/track-vst-runtime')
+      await snapshotTrackPluginIntoProject(tienda, trackId, plugin.id)
+    } catch {
+      /* best-effort: no bloquear cierre */
+    }
     const bridge = createElectronPluginHostBridge()
     await bridge.send({ type: 'closeEditor', slotId })
     setActiveVstVoiceTarget(null)
@@ -172,7 +178,15 @@ function VstNativeEditor({
     })()
     return () => {
       setActiveVstVoiceTarget(null)
-      void createElectronPluginHostBridge().send({ type: 'closeEditor', slotId })
+      void (async () => {
+        try {
+          const { snapshotTrackPluginIntoProject } = await import('@/src/lib/plugin/track-vst-runtime')
+          await snapshotTrackPluginIntoProject(tienda, trackId, plugin.id)
+        } catch {
+          /* ignore */
+        }
+        await createElectronPluginHostBridge().send({ type: 'closeEditor', slotId })
+      })()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slotId])
@@ -279,11 +293,12 @@ function VstNativeEditor({
 export function PluginEditorPanel() {
   const focus = useEditorFocus()
   const tienda = useDAW()
-  const plugin = useDAWState((s: DAWState) => {
+  const pluginFromProject = useDAWState((s: DAWState) => {
     if (!focus) return null
     const track = s.project?.tracks?.find((t) => t.id === focus.trackId)
     return (track?.plugins ?? []).find((p) => p.id === focus.pluginId) ?? null
   })
+  const plugin = pluginFromProject ?? focus?.pluginSnapshot ?? null
   const trackName = useDAWState((s: DAWState) => {
     if (!focus) return null
     return s.project?.tracks?.find((t) => t.id === focus.trackId)?.nombre ?? null
@@ -294,7 +309,7 @@ export function PluginEditorPanel() {
       <div className="flex h-full flex-col items-center justify-center gap-3 bg-panel px-4 text-center">
         <Piano className="size-8 text-muted-foreground/40" />
         <p className="text-[12px] text-muted-foreground">
-          Abre un instrumento desde la pista o el catálogo para ver su UI aquí.
+          Abre un instrumento desde la pista, el catálogo o «Configurar VST» en una vista previa.
         </p>
         <button
           type="button"
@@ -317,7 +332,11 @@ export function PluginEditorPanel() {
         <div className="min-w-0 flex-1">
           <div className="truncate text-[12px] font-semibold text-foreground">{plugin.nombre}</div>
           <div className="truncate text-[9px] text-muted-foreground">
-            {trackName ? `Pista · ${trackName}` : 'Editor de plugin'}
+            {trackName
+              ? `Pista · ${trackName}`
+              : focus.trackId.startsWith('__')
+                ? 'Audición de vista previa'
+                : 'Editor de plugin'}
             {isRoles ? ' · Roles VST3 (UI JasWave)' : ' · UI+audio misma instancia'}
           </div>
         </div>
@@ -325,6 +344,10 @@ export function PluginEditorPanel() {
           type="button"
           title="Abrir inspector de pista"
           onClick={() => {
+            if (focus.trackId.startsWith('__')) {
+              requestOpenTool('instruments', { zone: 'left' })
+              return
+            }
             void tienda.executor.execute('selection.set', {
               tipo: 'pista',
               ids: [focus.trackId],

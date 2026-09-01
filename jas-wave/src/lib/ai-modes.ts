@@ -12,6 +12,11 @@ export {
   isTempoOnlyRefine,
   inferBpmFromTempoIntent,
   isProjectAuditIntent,
+  isStyleGapIntent,
+  isStyleApplyIntent,
+  isMidiClipEditIntent,
+  isClipSectionSplitIntent,
+  wantsWebResearch,
   type AgentMode,
 } from '@jaswave/ai-harness'
 

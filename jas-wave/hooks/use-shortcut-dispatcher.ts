@@ -18,6 +18,7 @@ import { executeOrNotify, redoOrNotify, undoOrNotify } from '../src/lib/execute-
 import { dawClipboard, type ClipboardClip } from '../src/lib/daw-clipboard'
 import { requestOpenTool } from '../src/workspace/types'
 import { bumpUiZoom, bumpDocsTextZoom, isDocsZoomTarget, setDocsTextZoom } from '../src/lib/docs-editor-store'
+import { bumpChatTextZoom, isChatZoomTarget, setChatTextZoom } from '../src/lib/chat-ui-store'
 
 /**
  * Sistema unificado: ActionSystem → Command System.
@@ -438,6 +439,11 @@ export function useShortcutDispatcher(): DespachadorTeclado {
           bumpDocsTextZoom(0.1)
           return
         }
+        // Chat / Asistente Jas con foco: zoom solo del chat
+        if (isChatZoomTarget()) {
+          bumpChatTextZoom(0.1)
+          return
+        }
         const z = st().ui?.zoomHorizontal ?? 1
         window.dispatchEvent(
           new CustomEvent('jaswave-zoom-horizontal', { detail: { zoom: Math.min(256, z * 1.25) } }),
@@ -449,6 +455,10 @@ export function useShortcutDispatcher(): DespachadorTeclado {
           bumpDocsTextZoom(-0.1)
           return
         }
+        if (isChatZoomTarget()) {
+          bumpChatTextZoom(-0.1)
+          return
+        }
         const z = st().ui?.zoomHorizontal ?? 1
         window.dispatchEvent(
           new CustomEvent('jaswave-zoom-horizontal', { detail: { zoom: Math.max(0.15, z / 1.25) } }),
@@ -458,6 +468,10 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       'timeline.zoomToProject': () => {
         if (isDocsZoomTarget()) {
           setDocsTextZoom(1)
+          return
+        }
+        if (isChatZoomTarget()) {
+          setChatTextZoom(1)
           return
         }
         void executeOrNotify(tienda, 'ui.setZoom', { horizontal: 1, vertical: 1 })
@@ -521,6 +535,11 @@ export function useShortcutDispatcher(): DespachadorTeclado {
     // Exponer sistema para Command Palette / UI
     ;(window as unknown as { __jaswaveActions?: ActionSystem }).__jaswaveActions = system
 
+    const isZoomAction = (resolved: string) =>
+      resolved === 'timeline.zoomIn' ||
+      resolved === 'timeline.zoomOut' ||
+      resolved === 'timeline.zoomToProject'
+
     const onMenu = (ev: Event) => {
       const id = (ev as CustomEvent<{ id: string }>).detail?.id
       if (!id) return
@@ -531,6 +550,11 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         resolved === 'editing.cut' ||
         resolved === 'editing.paste' ||
         resolved === 'editing.duplicate'
+      // Zoom de chat/docs debe llegar aunque el panel ignore atajos globales
+      if (isZoomAction(resolved) && (isChatZoomTarget() || isDocsZoomTarget())) {
+        system.actions.execute(resolved)
+        return
+      }
       if (isClipEdit) {
         const ae = document.activeElement
         if (ae && shouldIgnoreGlobalShortcuts(ae) && !(st().selection.idsClips.length > 0)) return
@@ -551,6 +575,10 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         resolved === 'editing.cut' ||
         resolved === 'editing.paste' ||
         resolved === 'editing.duplicate'
+      if (isZoomAction(resolved) && (isChatZoomTarget() || isDocsZoomTarget())) {
+        system.actions.execute(resolved)
+        return
+      }
       if (isClipEdit) {
         const ae = document.activeElement
         if (ae && shouldIgnoreGlobalShortcuts(ae) && !(st().selection.idsClips.length > 0)) return

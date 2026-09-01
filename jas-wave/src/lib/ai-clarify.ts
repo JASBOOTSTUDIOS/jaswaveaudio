@@ -102,10 +102,11 @@ export function formatClarificationAnswersForPrompt(
 ): string {
   const lines = ['[Respuestas a clarificación]']
   const isMidiAudit = questions.some((q) => q.id === 'midi_audit_fix')
+  const isTrackPick = questions.some((q) => q.id === 'track_pick')
   for (const q of questions) {
     const a = answers.find((x) => x.id === q.id)
     if (!a?.value.trim()) continue
-    if (isMidiAudit) lines.push(`- [${q.id}] ${q.question}`)
+    if (isMidiAudit || isTrackPick) lines.push(`- [${q.id}] ${q.question}`)
     else lines.push(`- ${q.question}`)
     lines.push(`  → ${a.value.trim()}`)
   }
@@ -114,6 +115,16 @@ export function formatClarificationAnswersForPrompt(
     lines.push(`  → ${formCustom.trim()}`)
   }
   lines.push('')
+  if (isTrackPick) {
+    lines.push(
+      'OBLIGATORIO: usa el trackId/pistaId indicado en TODAS las acciones MIDI de este turno.',
+    )
+    lines.push(
+      'Para editar SOLO una sección del clip: midi.notes.patch { pistaId, clipId, rangeStart, rangeEnd, notas } o midi.clip.md.apply con rangeStart/rangeEnd (beats). NO reemplaces el clip entero si solo pidió una parte.',
+    )
+    lines.push('PROHIBIDO: track.create, daw.musicBuild u otro <<<CLARIFY>>>.')
+    return lines.join('\n')
+  }
   if (isMidiAudit) {
     lines.push(
       'OBLIGATORIO: ejecutar remediación MIDI (midi.notes.dedupe) según la opción elegida. PROHIBIDO daw.musicBuild ni más preguntas.',
@@ -144,8 +155,17 @@ export function isMidiAuditSkipFixReply(text: string): boolean {
   return /Solo el informe \(no tocar el DAW\)/i.test(text)
 }
 
+export function isTrackPickClarificationReply(text: string): boolean {
+  return (
+    /\[Respuestas a clarificaci[oó]n\]/i.test(text) &&
+    (/\[track_pick\]/i.test(text) || /\(id=[\w-]+\)/i.test(text))
+  )
+}
+
 export function mustForceMusicBuild(text: string): boolean {
-  if (isMidiAuditFixReply(text) || isMidiAuditSkipFixReply(text)) return false
+  if (isMidiAuditFixReply(text) || isMidiAuditSkipFixReply(text) || isTrackPickClarificationReply(text)) {
+    return false
+  }
   if (isClarificationReply(text) || isAffirmativeBuildIntent(text)) return true
   // Refinar canción (sublime/estilo): forzar ACTIONS, no otra ronda de preguntas
   if (isSongRefineIntent(text) && !isTempoOnlyRefine(text)) return true

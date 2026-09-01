@@ -72,12 +72,12 @@ export function ArrangeBoard({
           }}
         >
           <div
-            className="sticky left-0 z-30 shrink-0 border-r border-border bg-panel"
-            style={{ width: HEADER_W, height: tracksHeight }}
+            className="sticky left-0 z-30 shrink-0 border-r border-border bg-panel shadow-[6px_0_12px_rgba(0,0,0,0.45)]"
+            style={{ width: HEADER_W, height: tracksHeight, isolation: 'isolate' }}
           >
             {headers}
           </div>
-          <div className="relative" style={{ width: contentWidth, height: tracksHeight, minWidth: contentWidth }}>
+          <div className="relative z-0" style={{ width: contentWidth, height: tracksHeight, minWidth: contentWidth }}>
             {lanes}
           </div>
         </div>

@@ -140,8 +140,16 @@ function buildAppMenu() {
 
 function disablePageZoom(win: InstanceType<typeof BrowserWindow>) {
   try {
-    // Ctrl+rueda / pinch no deben hacer zoom de página (rompe paneles undock).
+    // Ctrl+rueda / pinch no deben hacer zoom de página (rompe paneles undock / arrangement).
     void win.webContents.setVisualZoomLevelLimits(1, 1)
+    win.webContents.setZoomFactor(1)
+    win.webContents.on('zoom-changed', () => {
+      try {
+        win.webContents.setZoomFactor(1)
+      } catch {
+        /* ignore */
+      }
+    })
   } catch {
     /* ignore */
   }
@@ -402,8 +410,11 @@ ipcMain.handle('file-size', async (_event: IpcMainInvokeEvent, ruta: string) => 
 
 ipcMain.handle('dialog-save', async (_event: IpcMainInvokeEvent, defaultPath?: string) => {
   if (!mainWindow) return { canceled: true }
+  const isPdf = typeof defaultPath === 'string' && /\.pdf$/i.test(defaultPath)
   const result = await dialog.showSaveDialog(mainWindow, {
-    filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }],
+    filters: isPdf
+      ? [{ name: 'PDF', extensions: ['pdf'] }]
+      : [{ name: 'JasWave Project', extensions: ['jaswave'] }],
     ...(typeof defaultPath === 'string' && defaultPath ? { defaultPath } : {}),
     properties: ['createDirectory', 'showOverwriteConfirmation'],
   })

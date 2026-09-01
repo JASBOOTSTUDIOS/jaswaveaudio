@@ -45,10 +45,12 @@ import {
   crearComandoMidiSetCc,
   crearComandoMidiSetPitchBend,
   crearComandoClipDelete,
+  crearComandoClipMerge,
   crearComandoClipRestore,
   crearComandoClipMove,
   crearComandoClipResize,
   crearComandoClipSplit,
+  crearComandoMidiClipSplitIntoSections,
   crearComandoTransportToggle,
   crearComandoTransportStop,
   crearComandoTransportSeek,
@@ -186,10 +188,12 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoMidiSetCc(), registry);
   registrar(crearComandoMidiSetPitchBend(), registry);
   registrar(crearComandoClipDelete(), registry);
+  registrar(crearComandoClipMerge(), registry);
   registrar(crearComandoClipRestore(), registry);
   registrar(crearComandoClipMove(), registry);
   registrar(crearComandoClipResize(), registry);
   registrar(crearComandoClipSplit(), registry);
+  registrar(crearComandoMidiClipSplitIntoSections(), registry);
   registrar(crearComandoTransportToggle(), registry);
   registrar(crearComandoTransportStop(), registry);
   registrar(crearComandoTransportSeek(), registry);

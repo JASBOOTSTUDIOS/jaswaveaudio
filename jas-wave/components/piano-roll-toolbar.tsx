@@ -17,6 +17,8 @@ import {
   Waves,
   Keyboard,
   Layers2,
+  Sparkles,
+  FileDown,
 } from 'lucide-react'
 export type PianoRollTool = 'seleccionar' | 'dibujar' | 'borrar'
 
@@ -128,6 +130,8 @@ export function PianoRollToolbar({
   duplicadosCount,
   dirty,
   nombreClip,
+  onSaveStyle,
+  onExportScorePdf,
 }: {
   herramienta: PianoRollTool
   onHerramienta: (t: PianoRollTool) => void
@@ -163,6 +167,8 @@ export function PianoRollToolbar({
   duplicadosCount?: number
   dirty: boolean
   nombreClip: string
+  onSaveStyle?: () => void
+  onExportScorePdf?: () => void
 }) {
   return (
     <div className="flex shrink-0 flex-col border-b border-border">
@@ -334,6 +340,16 @@ export function PianoRollToolbar({
           icon={Waves}
           onClick={onToggleExpression}
         />
+
+        {onSaveStyle ? (
+          <>
+            <div className="mx-0.5 h-5 w-px bg-border" />
+            <ToolBtn titulo="Guardar como estilo" icon={Sparkles} onClick={onSaveStyle} />
+          </>
+        ) : null}
+        {onExportScorePdf ? (
+          <ToolBtn titulo="Vista previa / exportar partitura PDF" icon={FileDown} onClick={onExportScorePdf} />
+        ) : null}
 
         <select
           className="h-6 max-w-[140px] rounded border border-border bg-background px-1 text-[10px]"

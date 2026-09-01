@@ -2,18 +2,38 @@ import { Fragment, type ReactNode } from 'react'
 
 /**
  * Markdown ligero para el chat del Asistente Jas.
- * Soporta: fences ```, `inline`, **negrita**, *cursiva*, listas -, saltos de línea.
+ * Soporta: fences ```, `inline`, **negrita**, *cursiva*, #–###### títulos,
+ * listas -/* / 1., hr ---, tablas |.
  */
+
+/** Quita bloques de protocolo que el modelo a veces filtra al texto visible. */
+export function sanitizeAssistantMarkdown(text: string): string {
+  let t = text
+  t = t.replace(/<<<INTENT\s*[\s\S]*?\s*INTENT>>>/gi, '')
+  t = t.replace(/<<<READ\s*[\s\S]*?\s*(?:READ|WEB)>>>\s*/gi, '')
+  t = t.replace(/<<<ACTIONS\s*[\s\S]*?\s*ACTIONS>>>/gi, '')
+  t = t.replace(/<<<CLARIFY\s*[\s\S]*?\s*CLARIFY>>>/gi, '')
+  t = t.replace(/<<<PLAN\s*[\s\S]*?\s*PLAN>>>/gi, '')
+  t = t.replace(/<<<DOC\s*[\s\S]*?\s*DOC>>>/gi, '')
+  // Marcadores sueltos / truncados
+  t = t.replace(/<<<(?:INTENT|READ|ACTIONS|CLARIFY|PLAN|DOC)\b[\s\S]*?(?:>>>|$)/gi, '')
+  t = t.replace(/^\s*Consult[eé]:\s*[^\n]*$/gim, '')
+  t = t.replace(/\n{3,}/g, '\n\n').trim()
+  return t
+}
+
 export function ChatMarkdown({ text }: { text: string }) {
   if (!text) return null
-  const blocks = splitFences(text)
+  const clean = sanitizeAssistantMarkdown(text)
+  if (!clean) return null
+  const blocks = splitFences(clean)
   return (
-    <div className="select-text space-y-2 text-[13px] leading-relaxed">
+    <div className="chat-md select-text space-y-2 text-[1em] leading-relaxed">
       {blocks.map((block, i) =>
         block.type === 'code' ? (
           <pre
             key={i}
-            className="overflow-x-auto rounded-md bg-background/80 px-2.5 py-2 font-mono text-[11px] leading-snug text-foreground ring-1 ring-border"
+            className="overflow-x-auto rounded-md bg-background/80 px-2.5 py-2 font-mono text-[0.85em] leading-snug text-foreground ring-1 ring-border"
           >
             <code>{block.content}</code>
           </pre>
@@ -21,7 +41,7 @@ export function ChatMarkdown({ text }: { text: string }) {
           <div key={i} className="space-y-1.5">
             {block.content.split(/\n{2,}/).map((para, j) => (
               <div key={j} className="whitespace-pre-wrap break-words">
-                {renderInline(para.trim())}
+                {renderBlock(para.trim())}
               </div>
             ))}
           </div>
@@ -48,7 +68,6 @@ function splitFences(src: string): Block[] {
   if (last < src.length) {
     out.push({ type: 'text', content: src.slice(last) })
   }
-  // Fences sin cerrar (streaming): tratar resto como código
   if (out.length === 0) {
     const open = src.match(/```([a-zA-Z0-9_-]*)\n?([\s\S]*)$/)
     if (open && open.index != null) {
@@ -79,25 +98,45 @@ function splitTableCells(line: string): string[] {
     .map((c) => c.trim())
 }
 
-function renderInline(text: string): ReactNode[] {
+function renderBlock(text: string): ReactNode[] {
   const lines = text.split('\n')
   const nodes: ReactNode[] = []
-  let listBuf: Array<{ text: string; checked?: boolean }> = []
+  let listBuf: Array<{ kind: 'ul' | 'ol'; text: string; checked?: boolean; n?: number }> = []
   let tableBuf: string[] = []
 
   const flushList = (keyBase: number) => {
     if (listBuf.length === 0) return
+    const kind = listBuf[0]!.kind
+    const Tag = kind === 'ol' ? 'ol' : 'ul'
     nodes.push(
-      <ul key={`ul-${keyBase}`} className="my-1 list-disc space-y-0.5 pl-4">
+      <Tag
+        key={`list-${keyBase}`}
+        className={
+          kind === 'ol'
+            ? 'my-1 list-decimal space-y-1 pl-5 marker:text-muted-foreground'
+            : 'my-1 list-disc space-y-0.5 pl-4'
+        }
+      >
         {listBuf.map((item, i) => (
-          <li key={i} className="flex items-start gap-1.5">
+          <li
+            key={i}
+            className={
+              item.checked != null
+                ? 'flex list-none items-start gap-1.5'
+                : 'marker:text-muted-foreground'
+            }
+          >
             {item.checked != null ? (
-              <span className={`mt-0.5 inline-block size-3 shrink-0 rounded-sm border ${item.checked ? 'border-accent-amber bg-accent-amber/80' : 'border-muted-foreground/50'}`} />
+              <span
+                className={`mt-0.5 inline-block size-3 shrink-0 rounded-sm border ${
+                  item.checked ? 'border-accent-amber bg-accent-amber/80' : 'border-muted-foreground/50'
+                }`}
+              />
             ) : null}
-            <span>{inlineMarks(item.text)}</span>
+            <span className="min-w-0 flex-1">{inlineMarks(item.text)}</span>
           </li>
         ))}
-      </ul>,
+      </Tag>,
     )
     listBuf = []
   }
@@ -110,11 +149,14 @@ function renderInline(text: string): ReactNode[] {
     const head = rows[0]!
     const body = rows.slice(1)
     nodes.push(
-      <table key={`tbl-${keyBase}`} className="my-1 w-full border-collapse text-[11px]">
+      <table key={`tbl-${keyBase}`} className="my-1 w-full border-collapse text-[0.85em]">
         <thead>
           <tr>
             {head.map((c, i) => (
-              <th key={i} className="border border-border bg-background/60 px-1.5 py-0.5 text-left font-medium">
+              <th
+                key={i}
+                className="border border-border bg-background/60 px-1.5 py-0.5 text-left font-medium"
+              >
                 {inlineMarks(c)}
               </th>
             ))}
@@ -145,16 +187,24 @@ function renderInline(text: string): ReactNode[] {
     }
     flushTable(idx)
 
-    const heading = line.match(/^(#{1,3})\s+(.+)$/)
+    if (/^\s*-{3,}\s*$/.test(line)) {
+      flushList(idx)
+      nodes.push(<hr key={`hr-${idx}`} className="my-2 border-border/60" />)
+      return
+    }
+
+    const heading = line.match(/^(#{1,6})\s+(.+)$/)
     if (heading) {
       flushList(idx)
       const level = heading[1]!.length
       const cls =
         level === 1
-          ? 'text-[13px] font-semibold text-foreground'
+          ? 'mb-0.5 mt-1 text-[1.15em] font-semibold text-foreground'
           : level === 2
-            ? 'text-[12px] font-semibold text-accent-amber'
-            : 'text-[11px] font-medium text-muted-foreground'
+            ? 'mb-0.5 mt-1 text-[1.08em] font-semibold text-accent-amber'
+            : level === 3
+              ? 'mb-0.5 mt-1 text-[1.02em] font-semibold text-foreground'
+              : 'mb-0.5 mt-1 text-[0.95em] font-medium text-muted-foreground'
       nodes.push(
         <div key={`h-${idx}`} className={cls}>
           {inlineMarks(heading[2]!)}
@@ -165,13 +215,22 @@ function renderInline(text: string): ReactNode[] {
 
     const task = line.match(/^\s*[-*]\s+\[( |x|X)\]\s+(.+)$/)
     if (task) {
-      listBuf.push({ text: task[2]!, checked: task[1] !== ' ' })
+      if (listBuf.length && listBuf[0]!.kind !== 'ul') flushList(idx)
+      listBuf.push({ kind: 'ul', text: task[2]!, checked: task[1] !== ' ' })
       return
     }
 
-    const bullet = line.match(/^\s*[-*]\s+(.+)$/)
+    const numbered = line.match(/^\s*(\d+)[.)]\s+(.+)$/)
+    if (numbered) {
+      if (listBuf.length && listBuf[0]!.kind !== 'ol') flushList(idx)
+      listBuf.push({ kind: 'ol', text: numbered[2]!, n: Number(numbered[1]) })
+      return
+    }
+
+    const bullet = line.match(/^\s*[-*•]\s+(.+)$/)
     if (bullet) {
-      listBuf.push({ text: bullet[1]! })
+      if (listBuf.length && listBuf[0]!.kind !== 'ul') flushList(idx)
+      listBuf.push({ kind: 'ul', text: bullet[1]! })
       return
     }
 
@@ -181,10 +240,9 @@ function renderInline(text: string): ReactNode[] {
       return
     }
     nodes.push(
-      <Fragment key={`ln-${idx}`}>
+      <p key={`p-${idx}`} className="m-0">
         {inlineMarks(line)}
-        {idx < lines.length - 1 ? '\n' : null}
-      </Fragment>,
+      </p>,
     )
   })
   flushTable(lines.length)
@@ -194,15 +252,15 @@ function renderInline(text: string): ReactNode[] {
 
 function inlineMarks(text: string): ReactNode[] {
   const parts: ReactNode[] = []
-  // **bold**, *italic*, `code`
-  const re = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g
+  // **bold**, *italic*, `code` — también __bold__
+  const re = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|`[^`]+`)/g
   let last = 0
   let m: RegExpExecArray | null
   let key = 0
   while ((m = re.exec(text))) {
     if (m.index > last) parts.push(text.slice(last, m.index))
     const token = m[0]!
-    if (token.startsWith('**')) {
+    if (token.startsWith('**') || token.startsWith('__')) {
       parts.push(
         <strong key={key++} className="font-semibold text-foreground">
           {token.slice(2, -2)}
@@ -227,5 +285,5 @@ function inlineMarks(text: string): ReactNode[] {
     last = m.index + token.length
   }
   if (last < text.length) parts.push(text.slice(last))
-  return parts
+  return parts.length ? parts : [<Fragment key="empty">{text}</Fragment>]
 }

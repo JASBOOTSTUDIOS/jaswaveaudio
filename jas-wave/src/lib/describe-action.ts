@@ -200,6 +200,33 @@ export function describeActionForUser(a: DawAction): ActionDescription {
         label: joinParts([`Dividir clip en beat ${p.tiempo ?? '?'}`, track || undefined]),
         detail: tech,
       }
+    case 'clip.merge': {
+      const n = Array.isArray(p.clipIds) ? p.clipIds.length : 0
+      return {
+        label: joinParts([`Unir ${n || '?'} clips`, track || undefined]),
+        detail: tech,
+      }
+    }
+    case 'project.update': {
+      const datos = (p.datos ?? p) as Record<string, unknown>
+      const parts: string[] = ['Actualizar proyecto']
+      if (datos.nombre) parts.push(String(datos.nombre).slice(0, 32))
+      if (datos.tonalidad) parts.push('tonalidad')
+      if (Array.isArray(datos.tonalidadRegiones) && datos.tonalidadRegiones.length) {
+        parts.push(`${datos.tonalidadRegiones.length} regiones de tono`)
+      }
+      return { label: parts.join(' · '), detail: tech }
+    }
+    case 'midi.clip.splitIntoSections': {
+      const nCuts = Array.isArray(p.cuts) ? p.cuts.length : 0
+      return {
+        label: joinParts([
+          `Partir clip en secciones (${nCuts + 1} piezas)`,
+          clip || track || undefined,
+        ]),
+        detail: tech,
+      }
+    }
     case 'track.create':
       return {
         label: `Crear pista «${String(p.nombre ?? p.name ?? 'pista').slice(0, 40)}»`,

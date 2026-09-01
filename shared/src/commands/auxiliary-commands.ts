@@ -349,7 +349,7 @@ export function crearComandoMarkerCreate(): CommandDefinition<MarkerCreatePayloa
   };
 }
 
-// ── project.update ─────────────────────────────────────────────
+import { mergeProjectKeyIntoMetadata } from '../music/project-key';
 
 export type ProjectUpdatePayload = {
   datos: Partial<{
@@ -360,6 +360,8 @@ export type ProjectUpdatePayload = {
     bpm: { valor: number; tipo: string };
     timeSignature: { numerador: number; denominador: number };
     configuracion: Partial<import('../types/proyecto').ConfiguracionProyecto>;
+    tonalidad: import('../music/project-key').ProjectKeyConfig | null;
+    tonalidadRegiones: import('../music/project-key').ProjectKeyRegion[];
   }>;
 };
 
@@ -378,7 +380,7 @@ export function crearComandoProjectUpdate(): CommandDefinition<ProjectUpdatePayl
     },
     handler: (estado: DAWState, payload: ProjectUpdatePayload): StateTransition<ProjectUpdatePayload> => {
       const { datos } = payload;
-      const proyecto: ProjectState = {
+      const proyectoBase: ProjectState = {
         ...estado.project,
         ...(datos.nombre !== undefined ? { nombre: datos.nombre } : {}),
         ...(datos.ruta !== undefined ? { ruta: datos.ruta } : {}),
@@ -398,6 +400,17 @@ export function crearComandoProjectUpdate(): CommandDefinition<ProjectUpdatePayl
         modificado: true,
         fechaModificacion: Date.now(),
       };
+      const proyecto: ProjectState =
+        datos.tonalidad !== undefined || datos.tonalidadRegiones !== undefined
+          ? {
+              ...proyectoBase,
+              metadata: mergeProjectKeyIntoMetadata(
+                estado.project.metadata,
+                datos.tonalidad,
+                datos.tonalidadRegiones,
+              ),
+            }
+          : proyectoBase;
 
       return {
         state: { ...estado, project: proyecto },

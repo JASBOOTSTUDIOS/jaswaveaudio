@@ -4,6 +4,7 @@
 
 export {
   getSelectedTrackId,
+  getSelectedClipId,
   listMidiClips,
   resolvePianoRollClip,
   selectTrackPayload,

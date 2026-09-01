@@ -4,8 +4,12 @@ import {
   inferBpmFromTempoIntent,
   isProjectAuditIntent,
   isSongRefineIntent,
+  isStyleGapIntent,
+  isStyleApplyIntent,
+  isMidiClipEditIntent,
   isTempoOnlyRefine,
   wantsFullProject,
+  wantsWebResearch,
 } from '../agent/modes'
 
 describe('song refine intents', () => {
@@ -43,6 +47,33 @@ describe('project audit intents', () => {
     expect(detectAgentMode(audit)).toBe('ask')
     expect(detectAgentMode(audit, 'create')).toBe('ask')
     expect(detectAgentMode(audit, 'plan')).toBe('ask')
+  })
+
+  it('detecta analizame + pista (sin word-boundary estricto)', () => {
+    const t =
+      'analizame la pista de la bateria y dime que le falta para que este como worship moderno estilo averly morillo, investiga en internet'
+    expect(isProjectAuditIntent(t)).toBe(true)
+    expect(isStyleGapIntent(t)).toBe(true)
+    expect(isStyleApplyIntent(t)).toBe(false)
+    expect(wantsWebResearch(t)).toBe(true)
+    expect(detectAgentMode(t)).toBe('ask')
+    expect(detectAgentMode(t, 'create')).toBe('ask')
+  })
+
+  it('aplicar estilo worship → create (no ask)', () => {
+    const t =
+      'haz que la bateria tenga esa sensacion y estilo, adecua el proyecto completo para tenga el estilo worship como averly morrillo'
+    expect(isStyleApplyIntent(t)).toBe(true)
+    expect(isStyleGapIntent(t)).toBe(false)
+    expect(detectAgentMode(t)).toBe('create')
+  })
+
+  it('editar intro suave / toms → create sin full musicBuild', () => {
+    const t =
+      'ok, siento que la intro de la cancion es demasiado explosiva, arreglala para que sea un poco mas suave, y que haga un grove de toms con juego con los platillos'
+    expect(isMidiClipEditIntent(t)).toBe(true)
+    expect(wantsFullProject(t)).toBe(false)
+    expect(detectAgentMode(t)).toBe('create')
   })
 
   it('no confunde refine con audit', () => {

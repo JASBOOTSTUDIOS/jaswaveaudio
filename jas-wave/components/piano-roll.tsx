@@ -1120,6 +1120,29 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
             noteIds: selectedIds.size ? [...selectedIds] : undefined,
           })
         }}
+        onSaveStyle={() => {
+          const nombre = window.prompt('Nombre del estilo:', clip?.nombre || 'Estilo')
+          if (!nombre?.trim()) return
+          const tagsRaw = window.prompt('Tags (coma), opcional:', 'worship') ?? ''
+          const tags = tagsRaw.split(',').map((t) => t.trim()).filter(Boolean)
+          const global = window.confirm('¿Guardar también en biblioteca global?')
+          void import('@/src/lib/styles/ops').then(({ styleSaveFromClip }) =>
+            styleSaveFromClip(tienda, {
+              pistaId: trackId,
+              clipId,
+              nombre: nombre.trim(),
+              tags,
+              global,
+            }).then((r) => {
+              if (!r.ok) window.alert(r.message)
+            }),
+          )
+        }}
+        onExportScorePdf={() => {
+          void import('@/src/lib/midi-score-export').then(({ exportClipScorePdfDialog }) =>
+            exportClipScorePdfDialog(tienda, trackId, clipId),
+          )
+        }}
         notasCount={notes.length}
         seleccionCount={selectedIds.size}
         duplicadosCount={duplicadosCount}

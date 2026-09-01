@@ -1,4 +1,4 @@
-﻿/**
+/**
  * JasWave Plugin Host â€” discover + VST3 load/MIDI/audio + editor embed (ADR-0011).
  */
 
