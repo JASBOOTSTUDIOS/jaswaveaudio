@@ -1,6 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
-import type { AudioTrack } from '../../shared/src/types/tracks'
 import type { Clip } from '../../shared/src/types/clips'
 import type { DAWState } from '../../shared/src/types/state'
 import type { PluginInfo } from '../../shared/src/types/entidades'
@@ -8,7 +7,6 @@ import {
   Volume2,
   VolumeX,
   Headphones,
-  Mic2,
   Circle,
   Trash2,
   Link2,
@@ -28,6 +26,18 @@ import { FaderControl, KnobControl } from './ui/controls'
 import { ConfirmDialog } from './ui/confirm-dialog'
 import { requestOpenTool } from '@/src/workspace/types'
 import { audioEngine } from '@/lib/audio-engine'
+import { hydratePluginCatalog } from '@/src/lib/plugin/catalog-store'
+import { pluginManager, catalogPluginInsertable } from '@/src/lib/plugin-host'
+import { descriptorToPluginInfo } from '@/src/lib/plugin/plugin-info-adapter'
+import { openPluginEditor } from '@/src/lib/plugin/plugin-editor-store'
+import { openFxChain } from '@/src/lib/plugin/fx-chain-store'
+import { TrackMidiInput } from '@/components/track-midi-input'
+import { TrackAudioInput } from '@/components/track-audio-input'
+import type { PluginDescriptor } from '@/src/lib/plugin/types'
+import {
+  isJasWaveRolesDescriptor,
+  jasWaveRolesPluginInfo,
+} from '@/src/lib/plugin/jaswave-roles'
 
 const TRACK_COLORS = [
   '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899',
@@ -37,26 +47,6 @@ const TRACK_COLORS = [
 ]
 
 type InspectorTab = 'general' | 'audio' | 'apariencia' | 'plugins' | 'clip'
-
-function makeSoftPadPlugin(): PluginInfo {
-  return {
-    id: `plugin-softpad-${Date.now().toString(36)}`,
-    nombre: 'JasWave Soft Pad',
-    fabricante: 'JasWave',
-    tipo: 'instrumento',
-    bypass: false,
-    parametros: [],
-    estado: 'cargado',
-    version: '1.0.0',
-    wet: 1,
-    latencia: 0,
-    categoria: 'synth',
-    autor: 'JasWave',
-    licencia: 'interno',
-    descripcion: 'Sintetizador suave de prueba para previsualizar MIDI (triangle + lowpass).',
-    ui: { ancho: 320, alto: 180, personalizable: false },
-  }
-}
 
 function TabButton({
   id,
@@ -98,6 +88,21 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
 
   const [tab, setTab] = useState<InspectorTab>('general')
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [catalog, setCatalog] = useState<PluginDescriptor[]>([])
+  const [pickId, setPickId] = useState('')
+
+  useEffect(() => {
+    hydratePluginCatalog()
+    pluginManager.ensureBuiltins()
+    const list = pluginManager.listAvailable()
+    setCatalog(list)
+    setPickId((prev) => {
+      if (prev && list.some((x) => x.pluginId === prev)) return prev
+      const roles = list.find((x) => isJasWaveRolesDescriptor(x))
+      const vst = list.find((x) => x.format === 'vst3')
+      return roles?.pluginId ?? vst?.pluginId ?? list[0]?.pluginId ?? ''
+    })
+  }, [tab])
 
   if (!trackId || !track) {
     return (
@@ -115,7 +120,6 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
   const pan = panADisplay(track.paneo ?? 0)
   const isAudio = track.tipo === 'audio'
   const isMidi = track.tipo === 'midi' || track.tipo === 'instrumento'
-  const audioTrack = track as AudioTrack
   const plugins = track.plugins ?? []
 
   const updateTrack = (datos: Record<string, unknown>) => {
@@ -139,7 +143,7 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
 
   const tabs: { id: InspectorTab; label: string; show?: boolean }[] = [
     { id: 'general', label: 'General' },
-    { id: 'audio', label: 'Audio' },
+    { id: 'audio', label: isMidi ? 'Canal' : 'Audio' },
     { id: 'apariencia', label: 'Apariencia' },
     { id: 'plugins', label: 'Plugins' },
     { id: 'clip', label: 'Clip', show: Boolean(selectedClip) },
@@ -269,6 +273,19 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 onClick={() => void tienda.executor.execute('track.toggleSolo', { trackId: track.id })}
                 activeClass="bg-track-vocals/20 text-track-vocals"
               />
+              <ToggleChip
+                active={Boolean(track.frozen)}
+                label={track.frozen ? 'Unfreeze' : 'Freeze'}
+                icon={Waves}
+                onClick={() => {
+                  void (async () => {
+                    const { freezeTrack, unfreezeTrack } = await import('@/src/lib/track-freeze')
+                    if (track.frozen) await unfreezeTrack(tienda, track.id)
+                    else await freezeTrack(tienda, track.id)
+                  })()
+                }}
+                activeClass="bg-accent-amber/20 text-accent-amber"
+              />
               {isMidi && (
                 <button
                   type="button"
@@ -314,32 +331,39 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
               <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Monitor / entrada
               </span>
-              {isAudio ? (
+              {isAudio || isMidi ? (
                 <button
                   type="button"
                   onClick={() => {
-                    const monitor = Boolean(audioTrack.configuracion?.monitorizarEntrada)
-                    updateTrack({
-                      configuracion: {
-                        ...(audioTrack.configuracion ?? {}),
-                        monitorizarEntrada: !monitor,
-                      },
-                    })
+                    void tienda.executor.execute('track.toggleMonitor', { trackId: track.id })
                   }}
                   className={`flex items-center gap-1.5 rounded px-2.5 py-1.5 text-[10px] font-semibold transition-colors ${
-                    audioTrack.configuracion?.monitorizarEntrada
+                    track.configuracion?.monitorizarEntrada
                       ? 'bg-accent-cyan/20 text-accent-cyan'
                       : 'bg-panel-raised text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  <Mic2 className="size-3" />
+                  <Headphones className="size-3" />
                   INPUT MONITOR
                 </button>
-              ) : (
-                <p className="max-w-[160px] text-[11px] text-muted-foreground">
-                  Pista MIDI: el audio llega desde el instrumento asignado en Plugins.
-                </p>
-              )}
+              ) : null}
+              {isMidi || isAudio ? (
+                <div className="mt-1">
+                  <TrackMidiInput trackId={track.id} assignedId={track.entrada} />
+                </div>
+              ) : null}
+              {isAudio ? (
+                <div className="mt-1">
+                  <TrackAudioInput
+                    trackId={track.id}
+                    assignedId={
+                      'dispositivoEntrada' in track && typeof track.dispositivoEntrada === 'string'
+                        ? track.dispositivoEntrada
+                        : track.entrada
+                    }
+                  />
+                </div>
+              ) : null}
               <div className="mt-2 flex items-center gap-1.5 rounded bg-panel-raised px-2.5 py-1.5 text-[10px] text-muted-foreground">
                 <Link2 className="size-3" />
                 Envíos: {(track.envios ?? []).length || 'ninguno'}
@@ -394,63 +418,127 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
 
         {activeTab === 'plugins' && (
           <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-foreground">Cadena de efectos / instrumento</span>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-foreground">Cadena de plugins</span>
               <button
                 type="button"
-                onClick={() => {
-                  const next = [...plugins, makeSoftPadPlugin()]
-                  updateTrack({ plugins: next })
-                  audioEngine.ensureContext()
-                }}
-                className="inline-flex items-center gap-1 rounded-md bg-accent-amber/15 px-2 py-1 text-[10px] font-semibold text-accent-amber hover:bg-accent-amber/25"
+                onClick={() => openFxChain(track.id, 'right')}
+                className="text-[10px] text-accent-amber hover:underline"
               >
-                <Plus className="size-3" />
-                Soft Pad
+                Abrir FX Chain
               </button>
             </div>
+
+            <div className="flex flex-col gap-1.5 rounded-md border border-border bg-panel-raised/40 p-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Añadir del catálogo
+              </span>
+              <div className="flex gap-1">
+                <select
+                  value={pickId}
+                  onChange={(e) => setPickId(e.target.value)}
+                  className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1.5 text-[11px] text-foreground"
+                >
+                  {catalog.map((d) => (
+                    <option key={d.pluginId} value={d.pluginId}>
+                      {d.name}
+                      {d.format === 'vst3' ? ' (VST3)' : d.format === 'vst2' ? ' (VST2)' : ''}
+                      {d.format === 'vst2'
+                        ? d.hostReady
+                          ? ''
+                          : ' · no hosteable'
+                        : !d.hostReady && d.format !== 'builtin'
+                          ? ' · pendiente'
+                          : ''}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void (async () => {
+                      const d = catalog.find((x) => x.pluginId === pickId)
+                      if (d && !catalogPluginInsertable(d)) return
+                      const rolesInfo =
+                        d && isJasWaveRolesDescriptor(d) ? jasWaveRolesPluginInfo() : null
+                      const info = rolesInfo ?? (d ? descriptorToPluginInfo(d) : null)
+                      if (!info) return
+                      await tienda.executor.execute('plugin.insert', {
+                        trackId: track.id,
+                        plugin: info,
+                      })
+                      openPluginEditor({
+                        trackId: track.id,
+                        pluginId: info.id,
+                        pluginName: info.nombre,
+                        zone: 'right',
+                      })
+                    })()
+                  }}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-amber/15 px-2 py-1 text-[10px] font-semibold text-accent-amber hover:bg-accent-amber/25"
+                >
+                  <Plus className="size-3" />
+                  Añadir
+                </button>
+              </div>
+              <p className="text-[9px] text-muted-foreground">
+                JasWave Roles u otros VST del catálogo. VST3/VST2 x64: MIDI al Plugin Host cuando
+                el load confirma.
+              </p>
+            </div>
+
             {plugins.length === 0 ? (
               <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border px-4 py-8 text-center">
                 <Waves className="size-7 text-muted-foreground/40" />
                 <p className="text-[11px] text-muted-foreground">
-                  Sin plugins. Añade <strong>JasWave Soft Pad</strong> para previsualizar MIDI.
+                  Sin plugins en esta pista. Elige uno del catálogo arriba.
                 </p>
               </div>
             ) : (
               <ul className="flex flex-col gap-2">
-                {plugins.map((p, index) => (
+                {plugins.map((p) => (
                   <li
                     key={p.id}
                     className="flex items-start gap-2 rounded-md border border-border bg-panel-raised/60 px-2.5 py-2"
                   >
                     <Sparkles className="mt-0.5 size-3.5 shrink-0 text-accent-amber" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[12px] font-semibold text-foreground">{p.nombre}</div>
-                      <div className="text-[10px] text-muted-foreground">
-                        {p.fabricante} · {p.tipo} · {p.bypass ? 'bypass' : 'activo'}
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() =>
+                        openPluginEditor({
+                          trackId: track.id,
+                          pluginId: p.id,
+                          pluginName: p.nombre,
+                          zone: 'right',
+                        })
+                      }
+                      title="Abrir UI del plugin"
+                    >
+                      <div className="truncate text-[12px] font-semibold text-foreground hover:text-accent-amber">
+                        {p.nombre}
                       </div>
-                      {p.nombre.includes('Soft Pad') && (
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          {[60, 64, 67, 72].map((pitch) => (
-                            <button
-                              key={pitch}
-                              type="button"
-                              onPointerDown={() => audioEngine.noteOn(pitch, 95)}
-                              onPointerUp={() => audioEngine.noteOff(pitch)}
-                              onPointerLeave={() => audioEngine.noteOff(pitch)}
-                              className="rounded bg-background px-2 py-1 font-mono text-[10px] text-foreground ring-1 ring-border hover:ring-accent-amber"
-                            >
-                              {pitch}
-                            </button>
-                          ))}
+                      <div className="text-[10px] text-muted-foreground">
+                        {p.fabricante} · {p.tipo} · {p.estado}
+                        {p.bypass ? ' · bypass' : ''}
+                      </div>
+                      {p.descripcion ? (
+                        <div
+                          className="mt-0.5 truncate text-[9px] text-muted-foreground/80"
+                          title={p.descripcion}
+                        >
+                          {p.descripcion}
                         </div>
-                      )}
-                    </div>
+                      ) : null}
+                    </button>
                     <button
                       type="button"
                       title="Quitar"
                       onClick={() => {
-                        updateTrack({ plugins: plugins.filter((_, i) => i !== index) })
+                        void tienda.executor.execute('plugin.remove', {
+                          trackId: track.id,
+                          pluginInstanceId: p.id,
+                        })
                         audioEngine.allNotesOff()
                       }}
                       className="rounded p-1 text-muted-foreground hover:text-destructive"
@@ -461,13 +549,6 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 ))}
               </ul>
             )}
-            <button
-              type="button"
-              onClick={() => requestOpenTool('instruments')}
-              className="text-left text-[11px] text-accent-amber hover:underline"
-            >
-              Abrir panel Instrumentos →
-            </button>
           </div>
         )}
 
@@ -541,6 +622,48 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 </>
               )}
             </div>
+            {selectedClip.tipo === 'midi' && (
+              <div className="flex flex-wrap gap-6 rounded-md border border-border px-3 py-3">
+                <p className="w-full text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Canal de la pista
+                </p>
+                <div className="flex flex-col items-center gap-2">
+                  <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Volumen
+                  </span>
+                  <FaderControl db={db} color={track.color} onChange={handleVolumeChange} />
+                </div>
+                <div className="flex flex-col items-center gap-2">
+                  <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Paneo
+                  </span>
+                  <KnobControl
+                    value={pan}
+                    label="L/R"
+                    color={track.color}
+                    onChange={handlePanChange}
+                    min={-100}
+                    max={100}
+                  />
+                </div>
+                <div className="flex flex-wrap gap-1.5 self-end">
+                  <ToggleChip
+                    active={track.silenciada}
+                    label="Mute"
+                    icon={track.silenciada ? VolumeX : Volume2}
+                    onClick={() => void tienda.executor.execute('track.toggleMute', { trackId: track.id })}
+                    activeClass="bg-accent-amber/20 text-accent-amber"
+                  />
+                  <ToggleChip
+                    active={track.soloActiva}
+                    label="Solo"
+                    icon={Headphones}
+                    onClick={() => void tienda.executor.execute('track.toggleSolo', { trackId: track.id })}
+                    activeClass="bg-track-vocals/20 text-track-vocals"
+                  />
+                </div>
+              </div>
+            )}
             {selectedClip.tipo === 'midi' && (
               <button
                 type="button"

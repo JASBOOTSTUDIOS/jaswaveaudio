@@ -3,6 +3,8 @@ import { useDAW, useDAWState } from '../src/context/daw-context'
 import {
   createActionSystem,
   DespachadorTeclado,
+  hasNonEmptyTextSelection,
+  shouldIgnoreGlobalShortcuts,
   type ActionSystem,
 } from '../../shared/src'
 import {
@@ -14,6 +16,9 @@ import {
 } from '../src/lib/project-io'
 import { executeOrNotify, redoOrNotify, undoOrNotify } from '../src/lib/execute-or-toast'
 import { dawClipboard, type ClipboardClip } from '../src/lib/daw-clipboard'
+import { requestOpenTool } from '../src/workspace/types'
+import { bumpUiZoom, bumpDocsTextZoom, isDocsZoomTarget, setDocsTextZoom } from '../src/lib/docs-editor-store'
+import { bumpChatTextZoom, isChatZoomTarget, setChatTextZoom } from '../src/lib/chat-ui-store'
 
 /**
  * Sistema unificado: ActionSystem → Command System.
@@ -45,19 +50,129 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       for (const clipId of selection.idsClips) {
         for (const track of project.tracks) {
           const clip = track.clips.find((c: { id: string }) => c.id === clipId)
-          if (clip) {
-            const c = clip as unknown as Record<string, unknown>
-            out.push({
-              pistaOrigenId: track.id,
-              nombre: String(c.nombre ?? 'Clip'),
-              inicio: Number(c.inicio ?? 0),
-              duracion: Number(c.duracion ?? 0),
-              tipo: typeof c.tipo === 'string' ? c.tipo : undefined,
-            })
-          }
+          if (!clip) continue
+          const c = clip as unknown as Record<string, unknown>
+          const tipo = typeof c.tipo === 'string' ? c.tipo : undefined
+          const notasRaw = Array.isArray(c.notas) ? (c.notas as Record<string, unknown>[]) : []
+          const notas =
+            tipo === 'midi' || notasRaw.length > 0
+              ? notasRaw.map((n) => ({
+                  pitch: Number(n.pitch ?? 60),
+                  inicio: Number(n.inicio ?? 0),
+                  duracion: Number(n.duracion ?? 0.25),
+                  velocidad: Number(n.velocidad ?? 80),
+                  canal: n.canal != null ? Number(n.canal) : undefined,
+                }))
+              : undefined
+          const source =
+            c.source && typeof c.source === 'object'
+              ? (c.source as Record<string, unknown>)
+              : null
+          out.push({
+            pistaOrigenId: track.id,
+            nombre: String(c.nombre ?? 'Clip'),
+            inicio: Number(c.inicio ?? 0),
+            duracion: Number(c.duracion ?? 0),
+            tipo: tipo ?? (notas?.length ? 'midi' : 'audio'),
+            color: typeof c.color === 'string' ? c.color : undefined,
+            notas,
+            sourceId:
+              (typeof c.sourceId === 'string' && c.sourceId) ||
+              (source && typeof source.ruta === 'string' ? source.ruta : undefined),
+            waveform: Array.isArray(c.waveform) ? (c.waveform as number[]) : undefined,
+            clipInicio: c.clipInicio != null ? Number(c.clipInicio) : undefined,
+          })
         }
       }
       return out
+    }
+
+    const resolvePasteTrackId = (): string | undefined => {
+      const state = st()
+      const sel = state.selection
+      if (sel.idsPistas[0] && state.project.tracks.some((t: { id: string }) => t.id === sel.idsPistas[0])) {
+        return sel.idsPistas[0]
+      }
+      if (sel.idPrincipal && state.project.tracks.some((t: { id: string }) => t.id === sel.idPrincipal)) {
+        return sel.idPrincipal
+      }
+      // Clip seleccionado → pista que lo contiene
+      for (const clipId of sel.idsClips) {
+        for (const track of state.project.tracks) {
+          if (track.clips.some((c: { id: string }) => c.id === clipId)) return track.id
+        }
+      }
+      return state.project.tracks[0]?.id
+    }
+
+    const pasteClipboardClips = () => {
+      const clips = dawClipboard.getClips()
+      if (clips.length === 0) {
+        tienda.busEventos.emit('comando.fallido', { type: 'editing.paste', error: 'Portapapeles vacío — copia un clip primero (Ctrl+C)' })
+        return
+      }
+      const state = st()
+      const targetTrackId = resolvePasteTrackId()
+      if (!targetTrackId) {
+        tienda.busEventos.emit('comando.fallido', { type: 'editing.paste', error: 'No hay pista destino' })
+        return
+      }
+      const playheadBeats =
+        state.transport.posicion?.beats ??
+        ((state.transport.posicion?.segundos ?? 0) * (state.project.bpm?.valor ?? 120)) / 60
+      const baseInicio = Math.min(...clips.map((c) => c.inicio))
+      void (async () => {
+        let ok = 0
+        let lastClipId: string | undefined
+        for (const clip of clips) {
+          const offset = clip.inicio - baseInicio
+          const inicio = playheadBeats + offset
+          const isMidi =
+            clip.tipo === 'midi' || (Array.isArray(clip.notas) && clip.notas.length > 0)
+          const result = isMidi
+            ? await executeOrNotify(tienda, 'midi.clip.create', {
+                pistaId: targetTrackId,
+                nombre: clip.nombre,
+                inicio,
+                duracion: clip.duracion,
+                color: clip.color,
+                notas: (clip.notas ?? []).map((n) => ({
+                  pitch: n.pitch,
+                  inicio: n.inicio,
+                  duracion: n.duracion,
+                  velocidad: n.velocidad,
+                  canal: n.canal,
+                })),
+              })
+            : await executeOrNotify(tienda, 'clip.create', {
+                pistaId: targetTrackId,
+                nombre: clip.nombre,
+                inicio,
+                duracion: clip.duracion,
+                color: clip.color,
+                sourceId: clip.sourceId,
+                waveform: clip.waveform,
+              })
+          if (result.success) {
+            ok += 1
+            const created = result.state?.project?.tracks
+              ?.find((t: { id: string }) => t.id === targetTrackId)
+              ?.clips?.slice(-1)[0] as { id?: string } | undefined
+            if (created?.id) lastClipId = created.id
+          }
+        }
+        if (ok > 0) {
+          if (lastClipId) {
+            void executeOrNotify(tienda, 'selection.set', {
+              idsClips: [lastClipId],
+              idsPistas: [targetTrackId],
+              tipo: 'clip',
+              idPrincipal: targetTrackId,
+            })
+          }
+          tienda.busEventos.emit('portapapeles.pegado', { cantidad: ok })
+        }
+      })()
     }
 
     const handlers: Record<string, () => void> = {
@@ -132,14 +247,30 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       'editing.redo': () => { void redoOrNotify(tienda) },
       'editing.copy': () => {
         const clips = collectSelectedClips()
-        if (clips.length === 0) return
+        if (clips.length === 0) {
+          if (hasNonEmptyTextSelection()) return
+          tienda.busEventos.emit('comando.fallido', {
+            type: 'editing.copy',
+            error: 'Selecciona un clip en el arrange (clic en el clip) y vuelve a Copiar',
+          })
+          return
+        }
+        try {
+          window.getSelection()?.removeAllRanges()
+        } catch {
+          /* ignore */
+        }
         dawClipboard.setClips(clips)
         tienda.busEventos.emit('portapapeles.copiado', { cantidad: clips.length })
       },
       'editing.cut': () => {
         const clips = collectSelectedClips()
-        if (clips.length === 0) return
+        if (clips.length === 0) {
+          if (hasNonEmptyTextSelection()) return
+          return
+        }
         dawClipboard.setClips(clips)
+        tienda.busEventos.emit('portapapeles.copiado', { cantidad: clips.length })
         const { selection, project } = st()
         for (const clipId of selection.idsClips) {
           for (const track of project.tracks) {
@@ -150,52 +281,41 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         }
       },
       'editing.paste': () => {
-        const clips = dawClipboard.getClips()
-        if (clips.length === 0) {
-          tienda.busEventos.emit('comando.fallido', { type: 'editing.paste', error: 'Portapapeles vacío' })
-          return
-        }
-        const state = st()
-        const targetTrackId =
-          state.selection.idPrincipal &&
-          state.project.tracks.some((t: { id: string }) => t.id === state.selection.idPrincipal)
-            ? state.selection.idPrincipal
-            : state.selection.idsPistas[0] ?? state.project.tracks[0]?.id
-        if (!targetTrackId) {
-          tienda.busEventos.emit('comando.fallido', { type: 'editing.paste', error: 'No hay pista destino' })
-          return
-        }
-        const playheadBeats =
-          state.transport.posicion?.beats ??
-          ((state.transport.posicion?.segundos ?? 0) * (state.project.bpm?.valor ?? 120)) / 60
-        const baseInicio = Math.min(...clips.map((c) => c.inicio))
-        for (const clip of clips) {
-          const offset = clip.inicio - baseInicio
-          void executeOrNotify(tienda, 'clip.create', {
-            pistaId:
-              clip.pistaOrigenId && state.project.tracks.some((t: { id: string }) => t.id === clip.pistaOrigenId)
-                ? clip.pistaOrigenId
-                : targetTrackId,
-            nombre: clip.nombre,
-            inicio: playheadBeats + offset,
-            duracion: clip.duracion,
-          })
-        }
+        pasteClipboardClips()
       },
       'editing.duplicate': () => {
-        const { selection, project } = st()
-        for (const clipId of selection.idsClips) {
-          for (const track of project.tracks) {
-            const clip = track.clips.find((c: { id: string }) => c.id === clipId)
-            if (clip) {
-              const clipAny = clip as unknown as Record<string, unknown>
-              void executeOrNotify(tienda, 'clip.create', {
-                pistaId: track.id,
-                nombre: `${String(clipAny.nombre ?? 'Clip')} (Copia)`,
-                inicio: Number(clipAny.inicio ?? 0) + Number(clipAny.duracion ?? 0),
-                duracion: Number(clipAny.duracion ?? 0),
-              })
-            }
+        const clips = collectSelectedClips()
+        if (clips.length === 0) return
+        // Duplicar: pegar justo después del original en la misma pista
+        for (const clip of clips) {
+          const inicio = clip.inicio + clip.duracion
+          const isMidi =
+            clip.tipo === 'midi' || (Array.isArray(clip.notas) && (clip.notas?.length ?? 0) > 0)
+          if (isMidi) {
+            void executeOrNotify(tienda, 'midi.clip.create', {
+              pistaId: clip.pistaOrigenId,
+              nombre: `${clip.nombre} (Copia)`,
+              inicio,
+              duracion: clip.duracion,
+              color: clip.color,
+              notas: (clip.notas ?? []).map((n) => ({
+                pitch: n.pitch,
+                inicio: n.inicio,
+                duracion: n.duracion,
+                velocidad: n.velocidad,
+                canal: n.canal,
+              })),
+            })
+          } else {
+            void executeOrNotify(tienda, 'clip.create', {
+              pistaId: clip.pistaOrigenId,
+              nombre: `${clip.nombre} (Copia)`,
+              inicio,
+              duracion: clip.duracion,
+              color: clip.color,
+              sourceId: clip.sourceId,
+              waveform: clip.waveform,
+            })
           }
         }
       },
@@ -314,18 +434,46 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       },
 
       'timeline.zoomIn': () => {
+        // Panel Docs con foco / undock Docs: Ctrl+= zoom tipográfico del .md.
+        if (isDocsZoomTarget()) {
+          bumpDocsTextZoom(0.1)
+          return
+        }
+        // Chat / Asistente Jas con foco: zoom solo del chat
+        if (isChatZoomTarget()) {
+          bumpChatTextZoom(0.1)
+          return
+        }
         const z = st().ui?.zoomHorizontal ?? 1
         window.dispatchEvent(
           new CustomEvent('jaswave-zoom-horizontal', { detail: { zoom: Math.min(256, z * 1.25) } }),
         )
+        bumpUiZoom(0.05)
       },
       'timeline.zoomOut': () => {
+        if (isDocsZoomTarget()) {
+          bumpDocsTextZoom(-0.1)
+          return
+        }
+        if (isChatZoomTarget()) {
+          bumpChatTextZoom(-0.1)
+          return
+        }
         const z = st().ui?.zoomHorizontal ?? 1
         window.dispatchEvent(
           new CustomEvent('jaswave-zoom-horizontal', { detail: { zoom: Math.max(0.15, z / 1.25) } }),
         )
+        bumpUiZoom(-0.05)
       },
       'timeline.zoomToProject': () => {
+        if (isDocsZoomTarget()) {
+          setDocsTextZoom(1)
+          return
+        }
+        if (isChatZoomTarget()) {
+          setChatTextZoom(1)
+          return
+        }
         void executeOrNotify(tienda, 'ui.setZoom', { horizontal: 1, vertical: 1 })
       },
       'timeline.zoomToSelection': () => {
@@ -362,6 +510,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       'window.keyboardShortcuts': () => {
         window.dispatchEvent(new CustomEvent('open-shortcuts-dialog'))
       },
+      'window.midiMap': () => {
+        requestOpenTool('midi-map')
+      },
       'window.toggleLeft': () => {
         window.dispatchEvent(new CustomEvent('jaswave-toggle-zone', { detail: { zone: 'left' } }))
       },
@@ -374,6 +525,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       'window.projectSettings': () => {
         window.dispatchEvent(new CustomEvent('open-project-settings'))
       },
+      'ai.askSelection': () => {
+        window.dispatchEvent(new CustomEvent('jaswave-ask-ai-selection'))
+      },
     }
 
     system.bindHandlers(handlers)
@@ -381,11 +535,32 @@ export function useShortcutDispatcher(): DespachadorTeclado {
     // Exponer sistema para Command Palette / UI
     ;(window as unknown as { __jaswaveActions?: ActionSystem }).__jaswaveActions = system
 
+    const isZoomAction = (resolved: string) =>
+      resolved === 'timeline.zoomIn' ||
+      resolved === 'timeline.zoomOut' ||
+      resolved === 'timeline.zoomToProject'
+
     const onMenu = (ev: Event) => {
       const id = (ev as CustomEvent<{ id: string }>).detail?.id
       if (!id) return
-      // Menú usa IDs legacy → resolve via aliases
       const resolved = system.actions.resolveId(id) ?? id
+      // Copiar/pegar clips: no bloquear por selección de texto residual
+      const isClipEdit =
+        resolved === 'editing.copy' ||
+        resolved === 'editing.cut' ||
+        resolved === 'editing.paste' ||
+        resolved === 'editing.duplicate'
+      // Zoom de chat/docs debe llegar aunque el panel ignore atajos globales
+      if (isZoomAction(resolved) && (isChatZoomTarget() || isDocsZoomTarget())) {
+        system.actions.execute(resolved)
+        return
+      }
+      if (isClipEdit) {
+        const ae = document.activeElement
+        if (ae && shouldIgnoreGlobalShortcuts(ae) && !(st().selection.idsClips.length > 0)) return
+      } else if (shouldIgnoreGlobalShortcuts()) {
+        return
+      }
       system.actions.execute(resolved)
     }
     window.addEventListener('jaswave-menu-action', onMenu)
@@ -395,6 +570,21 @@ export function useShortcutDispatcher(): DespachadorTeclado {
     }
     const unsubNative = api?.onMenuAction?.((id) => {
       const resolved = system.actions.resolveId(id) ?? id
+      const isClipEdit =
+        resolved === 'editing.copy' ||
+        resolved === 'editing.cut' ||
+        resolved === 'editing.paste' ||
+        resolved === 'editing.duplicate'
+      if (isZoomAction(resolved) && (isChatZoomTarget() || isDocsZoomTarget())) {
+        system.actions.execute(resolved)
+        return
+      }
+      if (isClipEdit) {
+        const ae = document.activeElement
+        if (ae && shouldIgnoreGlobalShortcuts(ae) && !(st().selection.idsClips.length > 0)) return
+      } else if (shouldIgnoreGlobalShortcuts()) {
+        return
+      }
       system.actions.execute(resolved)
     })
 
@@ -422,6 +612,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (paletaAbiertaRef.current && e.key !== 'Escape') return
+      if (shouldIgnoreGlobalShortcuts(e.target)) return
       system.handleKeyboardEvent(e)
     }
     window.addEventListener('keydown', handler)

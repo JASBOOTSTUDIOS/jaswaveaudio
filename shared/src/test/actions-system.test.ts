@@ -137,4 +137,35 @@ describe('Text input scope', () => {
   it('trata null como no-input', () => {
     expect(isTextInputTarget(null)).toBe(false);
   });
+
+  it('no despacha Space con foco en input', () => {
+    const system = createActionSystem();
+    let called = false;
+    system.bindHandler('transport.togglePlay', () => {
+      called = true;
+    });
+    const input = { tagName: 'INPUT', isContentEditable: false, closest: () => null } as unknown as HTMLElement;
+    const handled = system.handleKeyboardEvent({
+      target: input,
+      key: ' ',
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      metaKey: false,
+      preventDefault: () => {},
+      stopPropagation: () => {},
+    } as unknown as KeyboardEvent);
+    expect(handled).toBe(false);
+    expect(called).toBe(false);
+  });
+
+  it('respeta data-shortcut-scope=ignore en ancestros', () => {
+    const panel = { tagName: 'DIV', isContentEditable: false, closest: () => null };
+    const input = {
+      tagName: 'INPUT',
+      isContentEditable: false,
+      closest: (sel: string) => (sel === '[data-shortcut-scope="ignore"]' ? panel : null),
+    } as unknown as HTMLElement;
+    expect(isTextInputTarget(input)).toBe(true);
+  });
 });

@@ -1,12 +1,13 @@
 /**
  * Transporte + regla de tiempo del piano roll (sincronizado con el DAW).
- * Modo «Solo este clip»: reproduce el rango del clip (seek + loop local).
+ * - Alinear timeline: playhead/seek siguen (o no) la ventana principal.
+ * - Solo clip: al reproducir, cicla el rango del clip.
  */
 
 import { useEffect, useRef } from 'react'
 import { Play, Pause, Square, Repeat, Link2, Unlink } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
-import { usePlayback } from '@/components/playback-provider'
+import { usePlaybackActions } from '@/components/playback-provider'
 import type { DAWState } from '../../shared/src/types/state'
 
 function formatBarsBeats(beatsAbs: number, beatsPerBar: number): string {
@@ -29,6 +30,10 @@ type Props = {
   clipDuracionBeats: number
   soloClip: boolean
   onSoloClipChange: (v: boolean) => void
+  alignTimeline?: boolean
+  onAlignTimelineChange?: (v: boolean) => void
+  followPlayhead?: boolean
+  onFollowPlayheadChange?: (v: boolean) => void
 }
 
 export function PianoRollTransport({
@@ -36,42 +41,78 @@ export function PianoRollTransport({
   clipDuracionBeats,
   soloClip,
   onSoloClipChange,
+  alignTimeline = true,
+  onAlignTimelineChange,
+  followPlayhead = true,
+  onFollowPlayheadChange,
 }: Props) {
   const tienda = useDAW()
   const transport = useDAWState((s: DAWState) => s.transport)
   const bpm = useDAWState((s: DAWState) => s.project?.bpm?.valor ?? 120)
   const beatsPerBar = useDAWState((s: DAWState) => s.project?.timeSignature?.numerador ?? 4)
-  const { positionMs } = usePlayback()
+  const { getPositionMs } = usePlaybackActions()
 
   const isPlaying = Boolean(transport?.reproduciendo)
   const msPerBeat = 60_000 / Math.max(1, bpm)
-  const absBeats = positionMs / msPerBeat
-  const relativeBeats = absBeats - clipInicioBeats
 
   const clipStartMs = clipInicioBeats * msPerBeat
   const clipEndMs = (clipInicioBeats + clipDuracionBeats) * msPerBeat
 
-  // Loop local: un solo check por cruce de fin (no en cada frame)
+  const clockRef = useRef<HTMLSpanElement>(null)
+  const barsRef = useRef<HTMLSpanElement>(null)
+  const clipPosRef = useRef<HTMLSpanElement>(null)
+  const syncLabelRef = useRef<HTMLSpanElement>(null)
+
   const loopingRef = useRef(false)
-  const lastPosRef = useRef(positionMs)
+  const lastPosRef = useRef(0)
   useEffect(() => {
-    if (!soloClip || !isPlaying) {
-      loopingRef.current = false
-      lastPosRef.current = positionMs
-      return
+    let raf = 0
+    const tick = () => {
+      const positionMs = getPositionMs()
+      const absBeats = positionMs / msPerBeat
+      const relativeBeats = absBeats - clipInicioBeats
+      if (clockRef.current) clockRef.current.textContent = formatClock(positionMs)
+      if (barsRef.current) {
+        barsRef.current.textContent = formatBarsBeats(Math.max(0, absBeats), beatsPerBar)
+      }
+      if (clipPosRef.current) {
+        clipPosRef.current.textContent =
+          relativeBeats >= 0 ? formatBarsBeats(relativeBeats, beatsPerBar) : '—'
+      }
+
+      if (alignTimeline && soloClip && isPlaying) {
+        const prev = lastPosRef.current
+        lastPosRef.current = positionMs
+        const crossed = prev < clipEndMs - 8 && positionMs >= clipEndMs - 8
+        if (crossed && !loopingRef.current) {
+          loopingRef.current = true
+          void tienda.executor.execute('transport.seek', { segundos: clipStartMs / 1000 }).finally(() => {
+            loopingRef.current = false
+          })
+        }
+      } else {
+        lastPosRef.current = positionMs
+        loopingRef.current = false
+      }
+      raf = requestAnimationFrame(tick)
     }
-    const prev = lastPosRef.current
-    lastPosRef.current = positionMs
-    const crossed = prev < clipEndMs - 8 && positionMs >= clipEndMs - 8
-    if (!crossed || loopingRef.current) return
-    loopingRef.current = true
-    void tienda.executor.execute('transport.seek', { segundos: clipStartMs / 1000 }).finally(() => {
-      loopingRef.current = false
-    })
-  }, [soloClip, isPlaying, positionMs, clipEndMs, clipStartMs, tienda])
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [
+    getPositionMs,
+    msPerBeat,
+    clipInicioBeats,
+    beatsPerBar,
+    soloClip,
+    alignTimeline,
+    isPlaying,
+    clipEndMs,
+    clipStartMs,
+    tienda,
+  ])
 
   const play = async () => {
-    if (soloClip) {
+    if (alignTimeline && soloClip) {
       await tienda.executor.execute('transport.seek', { segundos: clipStartMs / 1000 })
     }
     if (!isPlaying) {
@@ -85,7 +126,7 @@ export function PianoRollTransport({
 
   const stop = async () => {
     await tienda.executor.execute('transport.stop', {})
-    if (soloClip) {
+    if (alignTimeline && soloClip) {
       await tienda.executor.execute('transport.seek', { segundos: clipStartMs / 1000 })
     }
   }
@@ -95,7 +136,7 @@ export function PianoRollTransport({
       <div className="flex items-center gap-0.5">
         <button
           type="button"
-          title={isPlaying ? 'Pausar (transporte global)' : 'Reproducir'}
+          title={isPlaying ? 'Pausar (Espacio)' : 'Reproducir (Espacio) — transporte global'}
           onClick={() => void (isPlaying ? pause() : play())}
           className={`flex size-7 items-center justify-center rounded ${
             isPlaying ? 'bg-track-fx/20 text-track-fx' : 'text-foreground hover:bg-panel-raised'
@@ -105,7 +146,7 @@ export function PianoRollTransport({
         </button>
         <button
           type="button"
-          title="Detener"
+          title="Detener (Enter)"
           onClick={() => void stop()}
           className="flex size-7 items-center justify-center rounded text-foreground hover:bg-panel-raised"
         >
@@ -114,35 +155,84 @@ export function PianoRollTransport({
       </div>
 
       <div className="flex items-center gap-2 rounded bg-background px-2 py-0.5 font-mono text-[11px] tabular-nums ring-1 ring-border">
-        <span className="text-foreground">{formatClock(positionMs)}</span>
+        <span ref={clockRef} className="text-foreground">
+          {formatClock(getPositionMs())}
+        </span>
         <span className="text-muted-foreground">|</span>
-        <span className="text-foreground">{formatBarsBeats(Math.max(0, absBeats), beatsPerBar)}</span>
+        <span ref={barsRef} className="text-foreground">
+          {formatBarsBeats(Math.max(0, getPositionMs() / msPerBeat), beatsPerBar)}
+        </span>
         <span className="text-[9px] text-muted-foreground">
-          clip {relativeBeats >= 0 ? formatBarsBeats(relativeBeats, beatsPerBar) : '—'}
+          clip{' '}
+          <span ref={clipPosRef}>—</span>
         </span>
       </div>
+
+      {onAlignTimelineChange && (
+        <label
+          className={`inline-flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-[10px] font-semibold ${
+            alignTimeline
+              ? 'bg-track-fx/15 text-track-fx'
+              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+          }`}
+          title={
+            alignTimeline
+              ? 'Timeline alineada con el DAW: seek y playhead siguen la ventana principal'
+              : 'Timeline libre: seek solo mueve el playhead local del piano roll'
+          }
+        >
+          <input
+            type="checkbox"
+            className="size-3 accent-current"
+            checked={alignTimeline}
+            onChange={(e) => onAlignTimelineChange(e.target.checked)}
+          />
+          Alinear con DAW
+        </label>
+      )}
 
       <button
         type="button"
         title={
           soloClip
-            ? 'Solo este clip: ON — reproduce y cicla el rango del clip'
-            : 'Solo este clip: OFF — sigue el transporte principal'
+            ? 'Loop del clip: ON — al reproducir cicla el rango del clip'
+            : 'Loop del clip: OFF'
         }
         onClick={() => onSoloClipChange(!soloClip)}
-        className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold ${
+        disabled={!alignTimeline}
+        className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold disabled:opacity-40 ${
           soloClip
             ? 'bg-accent-amber/20 text-accent-amber'
             : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
         }`}
       >
         {soloClip ? <Unlink className="size-3" /> : <Link2 className="size-3" />}
-        {soloClip ? 'Solo clip' : 'Sincronizado'}
+        {soloClip ? 'Loop clip' : 'Song'}
       </button>
 
-      <span className="ml-auto flex items-center gap-1 text-[9px] text-muted-foreground">
+      {onFollowPlayheadChange && (
+        <button
+          type="button"
+          title="Seguir playhead al reproducir"
+          onClick={() => onFollowPlayheadChange(!followPlayhead)}
+          disabled={!alignTimeline}
+          className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold disabled:opacity-40 ${
+            followPlayhead
+              ? 'bg-track-fx/20 text-track-fx'
+              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+          }`}
+        >
+          Follow
+        </button>
+      )}
+
+      <span ref={syncLabelRef} className="ml-auto flex items-center gap-1 text-[9px] text-muted-foreground">
         <Repeat className="size-3" />
-        {soloClip ? 'Loop del clip activo al reproducir' : 'Alineado con el transporte del DAW'}
+        {alignTimeline
+          ? soloClip
+            ? 'Transporte global · loop del clip'
+            : 'Transporte y timeline del DAW'
+          : 'Transporte global · timeline libre'}
       </span>
     </div>
   )

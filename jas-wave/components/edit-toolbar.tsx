@@ -106,6 +106,8 @@ function MiniSlider({
 /** Convierte zoom logarítmico 0.15–256 ↔ slider 0–100 */
 const ZOOM_MIN = 0.15
 const ZOOM_MAX = 256
+const ZOOM_V_MIN = 0.5
+const ZOOM_V_MAX = 3
 
 function zoomToSlider(z: number) {
   const t = Math.log(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)) / ZOOM_MIN) / Math.log(ZOOM_MAX / ZOOM_MIN)
@@ -114,6 +116,12 @@ function zoomToSlider(z: number) {
 function sliderToZoom(v: number) {
   const t = Math.max(0, Math.min(100, v)) / 100
   return ZOOM_MIN * Math.pow(ZOOM_MAX / ZOOM_MIN, t)
+}
+function verticalToSlider(z: number) {
+  return Math.round(((Math.max(ZOOM_V_MIN, Math.min(ZOOM_V_MAX, z)) - ZOOM_V_MIN) / (ZOOM_V_MAX - ZOOM_V_MIN)) * 100)
+}
+function sliderToVertical(v: number) {
+  return ZOOM_V_MIN + (Math.max(0, Math.min(100, v)) / 100) * (ZOOM_V_MAX - ZOOM_V_MIN)
 }
 
 export function EditToolbar() {
@@ -178,20 +186,20 @@ export function EditToolbar() {
         </select>
       </div>
 
-      <div className="flex items-center gap-2 border-l border-border pl-4" title="Zoom vertical">
+      <div className="flex items-center gap-2 border-l border-border pl-4" title="Zoom vertical (Ctrl+rueda sobre el arrange)">
         <Activity className="size-4 text-muted-foreground" />
         <MiniSlider
-          value={zoomToSlider(zoomV)}
+          value={verticalToSlider(zoomV)}
           min={0}
           max={100}
           step={1}
-          onChange={(v) => void tienda.executor.execute('ui.setZoom', { vertical: sliderToZoom(v) })}
+          onChange={(v) => void tienda.executor.execute('ui.setZoom', { vertical: sliderToVertical(v) })}
         />
       </div>
 
       <div
         className="flex items-center gap-2 border-l border-border pl-4"
-        title="Zoom horizontal (Ctrl+rueda sobre el arrange ancla al cursor)"
+        title="Zoom horizontal (rueda sobre los clips)"
       >
         <BookOpen className="size-4 text-muted-foreground" />
         <MiniSlider

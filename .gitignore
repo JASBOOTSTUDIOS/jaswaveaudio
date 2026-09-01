@@ -48,3 +48,56 @@ __v0_jsx-dev-runtime.ts
 
 jas-wave/build/
 **/build/electron/
+native/plugin-host/build/
+native/plugin-host/build-vs/
+native/plugin-host/build-vst3/
+native/plugin-host/third_party/
+native/jaswave-roles-vst/build/
+native/piano-synth/build/
+
+# CLI probes / scratch (mantener scripts .mjs útiles)
+jas-wave/cli/_*-out.json
+jas-wave/cli/_*-out.txt
+jas-wave/cli/_*-out[0-9]*.txt
+jas-wave/cli/_*-live.txt
+jas-wave/cli/_*-verify*.txt
+jas-wave/cli/_e2e-*.txt
+jas-wave/cli/_electron-start-log.txt
+jas-wave/cli/_pack-win-out*.txt
+jas-wave/cli/_ot-after-mb.txt
+jas-wave/cli/_bb*
+jas-wave/cli/_bfd*
+jas-wave/cli/_boobass*
+jas-wave/cli/_buf*
+jas-wave/cli/_buffer*
+jas-wave/cli/_build-vst*
+jas-wave/cli/_diag*
+jas-wave/cli/_final*
+jas-wave/cli/_fix*
+jas-wave/cli/_fx*
+jas-wave/cli/_ids*
+jas-wave/cli/_insert*
+jas-wave/cli/_kz*
+jas-wave/cli/_live*
+jas-wave/cli/_lookup*
+jas-wave/cli/_mute*
+jas-wave/cli/_one-track-piano-*.json
+jas-wave/cli/_one-track-piano-*.txt
+jas-wave/cli/_pro-perf-out*
+jas-wave/cli/_probe*
+jas-wave/cli/_reggaeton-*-out*
+jas-wave/cli/_reggaeton-*-live*
+jas-wave/cli/_replay*
+jas-wave/cli/_solo*
+jas-wave/cli/_sync*
+jas-wave/cli/_test-three*
+jas-wave/cli/_tmp*
+jas-wave/cli/_vst*
+jas-wave/cli/_verify-realtime*
+
+# Binarios / resources generados
+jas-wave/resources/plugin-host/jaswave-plugin-host.exe
+jas-wave/resources/plugin-host/jaswave-plugin-host.pdb
+
+# Builds nativos MSVC
+native/plugin-host/build-msvc-*/

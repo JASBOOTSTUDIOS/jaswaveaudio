@@ -1,0 +1,4 @@
+[
+  { "type": "master.update", "payload": { "datos": { "volumen": 0.88 } } },
+  { "type": "analysis.timing", "payload": {} }
+]

@@ -29,4 +29,7 @@ export type {
   ToolResult,
   ToolRegistry,
 } from './tool-registry';
+export { registrarPluginTools } from './plugin-tools'
+export { registrarAnalysisTools } from './analysis-tools';
+export { planFromActions, extractToolSteps, type ExecutionPlan, type PlanStep, type ToolCallStep } from './planner';
 

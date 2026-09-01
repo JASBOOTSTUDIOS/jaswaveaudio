@@ -4,7 +4,7 @@ import { PlaybackProvider } from '@/components/playback-provider'
 import { CommandPalette } from '@/components/command-palette'
 import { useShortcutDispatcher } from '@/hooks/use-shortcut-dispatcher'
 import { ShortcutsDialog } from '@/components/shortcuts-dialog'
-import { ProjectSettingsDialog } from '@/components/project-settings-dialog'
+import { ExportBounceDialog } from '@/components/export-bounce-dialog'
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -28,46 +28,169 @@ import { TOOL_CATALOG, type ToolId } from '@/src/workspace/types'
 import { MultiWindowSync } from '@/src/workspace/multi-window-sync'
 import { WorkspaceMenu } from '@/components/workspace/workspace-menu'
 import { ImportProgressProvider } from '@/src/context/import-progress-context'
-import { PanelLeft, PanelRight, PanelBottom } from 'lucide-react'
-import { JasWaveAppIcon, JasWaveLogo } from '@/components/brand'
+import { ProjectReadyProvider } from '@/src/context/project-ready-context'
+import { PluginHostBootstrap } from '@/components/plugin-host-bootstrap'
+import { PluginHostLifecycle } from '@/components/plugin-host-lifecycle'
+import { MidiControllerHost } from '@/components/midi-controller-host'
+import { AgentAuditHost, AGENT_BRIDGE_REV } from '@/src/lib/agent-audit-bridge'
+// bridge rev consumed as <AgentAuditHost key={AGENT_BRIDGE_REV} />
+import { PanelLeft, PanelRight, PanelBottom, Plus, X } from 'lucide-react'
+import { JasWaveAppIcon } from '@/components/brand'
+import { ScoreExportMenuListener } from '@/components/score-export-menu-listener'
+import { ScorePreviewDialog } from '@/components/score-preview-dialog'
 
-function UndockedToolApp({ toolId }: { toolId: ToolId }) {
-  const title = TOOL_CATALOG[toolId]?.title ?? toolId
+function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
+  useShortcutDispatcher()
+  const [tabs, setTabs] = useState<ToolId[]>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      const raw = params.get('tabs')
+      if (raw) {
+        const parsed = raw
+          .split(',')
+          .map((s) => s.trim())
+          .filter((id): id is ToolId => id in TOOL_CATALOG)
+        if (parsed.length) return [...new Set(parsed)]
+      }
+    } catch {
+      /* ignore */
+    }
+    return [initialToolId]
+  })
+  const [active, setActive] = useState<ToolId>(initialToolId)
+  const [addOpen, setAddOpen] = useState(false)
+
   useEffect(() => {
-    document.title = `JasWave — ${title}`
-  }, [title])
+    const t = TOOL_CATALOG[active]?.title ?? active
+    document.title = `JasWave — ${t}`
+  }, [active])
 
-  const handleDockBack = () => {
+  useEffect(() => {
     try {
       const ch = new BroadcastChannel('jaswave-workspace-v1')
-      ch.postMessage({ type: 'dock-tool', toolId })
+      ch.onmessage = (ev: MessageEvent) => {
+        const data = ev.data as { type?: string; toolId?: string; floatHost?: string }
+        if (data?.type === 'float-accept-tab' && data.toolId && data.floatHost === initialToolId) {
+          const id = data.toolId as ToolId
+          if (!(id in TOOL_CATALOG)) return
+          setTabs((prev) => (prev.includes(id) ? prev : [...prev, id]))
+          setActive(id)
+        }
+      }
+      return () => ch.close()
+    } catch {
+      return undefined
+    }
+  }, [initialToolId])
+
+  const handleDockBack = (toolId?: ToolId) => {
+    const ids = toolId ? [toolId] : [...tabs]
+    try {
+      const ch = new BroadcastChannel('jaswave-workspace-v1')
+      for (const id of ids) ch.postMessage({ type: 'dock-tool', toolId: id })
       ch.close()
     } catch {
       /* ignore */
     }
-    window.close()
+    if (!toolId || tabs.length <= 1) {
+      window.close()
+      return
+    }
+    setTabs((prev) => {
+      const next = prev.filter((t) => t !== toolId)
+      setActive(next[0] ?? initialToolId)
+      return next
+    })
   }
+
+  const stealTool = (toolId: ToolId) => {
+    if (tabs.includes(toolId)) {
+      setActive(toolId)
+      setAddOpen(false)
+      return
+    }
+    try {
+      const ch = new BroadcastChannel('jaswave-workspace-v1')
+      ch.postMessage({ type: 'steal-tool-to-float', toolId, floatHost: initialToolId })
+      ch.close()
+    } catch {
+      /* ignore */
+    }
+    setTabs((prev) => [...prev, toolId])
+    setActive(toolId)
+    setAddOpen(false)
+  }
+
+  const visible = tabs.includes(active) ? active : tabs[0]!
 
   return (
     <main className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground">
-      <div className="flex h-10 items-center gap-2 border-b border-border bg-panel px-3 text-[12px] font-semibold">
-        {toolId === 'coproducer' ? (
-          <JasWaveLogo className="h-8 w-auto max-w-[120px] shrink-0" alt="" />
-        ) : (
-          <JasWaveAppIcon className="size-8 shrink-0" />
-        )}
-        <span className="flex-1 truncate">{title}</span>
-        <span className="text-[10px] font-normal text-muted-foreground">ventana flotante</span>
+      <div className="flex h-10 items-center gap-2 border-b border-border bg-panel px-2 text-[12px] font-semibold">
+        <JasWaveAppIcon className="size-7 shrink-0" />
+        <span className="text-[10px] font-normal text-muted-foreground">flotante</span>
+        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+          {tabs.map((id) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setActive(id)}
+              className={`flex shrink-0 items-center gap-1 rounded px-2 py-1 text-[11px] ${
+                id === visible ? 'bg-background text-foreground' : 'text-muted-foreground hover:bg-panel-raised'
+              }`}
+            >
+              {TOOL_CATALOG[id].title}
+              <span
+                role="button"
+                tabIndex={0}
+                title="Acoplar de nuevo"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleDockBack(id)
+                }}
+                className="rounded p-0.5 hover:bg-panel-raised"
+              >
+                <X className="size-3" />
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="relative">
+          <button
+            type="button"
+            title="Añadir panel a esta ventana"
+            onClick={() => setAddOpen((v) => !v)}
+            className="rounded p-1 text-muted-foreground hover:bg-panel-raised hover:text-foreground"
+          >
+            <Plus className="size-3.5" />
+          </button>
+          {addOpen ? (
+            <div className="absolute right-0 top-full z-[80] mt-1 max-h-64 w-48 overflow-y-auto rounded-md border border-border bg-panel py-1 shadow-xl">
+              {(Object.keys(TOOL_CATALOG) as ToolId[]).map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  disabled={tabs.includes(id)}
+                  onClick={() => stealTool(id)}
+                  className="flex w-full px-3 py-1.5 text-left text-[11px] hover:bg-panel-raised disabled:opacity-40"
+                >
+                  {TOOL_CATALOG[id].title}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
         <button
           type="button"
-          onClick={handleDockBack}
-          className="rounded bg-panel-raised px-2 py-0.5 text-[10px] font-medium text-foreground hover:bg-background"
+          onClick={() => handleDockBack()}
+          className="rounded bg-panel-raised px-2 py-0.5 text-[10px] font-medium hover:bg-background"
         >
-          Volver al panel
+          Volver todo
         </button>
       </div>
-      <div className="min-h-0 flex-1">
-        <ToolHost toolId={toolId} />
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <div className="h-full min-h-0">
+          <ToolHost toolId={visible} />
+        </div>
       </div>
     </main>
   )
@@ -76,7 +199,7 @@ function UndockedToolApp({ toolId }: { toolId: ToolId }) {
 function AppShell() {
   const dispatcher = useShortcutDispatcher()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
   const { layout, setActiveTab, toggleZone, moveTool, toolsInZone, dockTool } = useWorkspace()
 
   useEffect(() => {
@@ -86,7 +209,18 @@ function AppShell() {
   }, [])
 
   useEffect(() => {
-    const handler = () => setSettingsOpen(true)
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent<{ id?: string }>).detail?.id
+      if (id === 'archivo.exportarBounce') setExportOpen(true)
+    }
+    window.addEventListener('jaswave-menu-action', handler)
+    return () => window.removeEventListener('jaswave-menu-action', handler)
+  }, [])
+
+  useEffect(() => {
+    const handler = () => {
+      window.dispatchEvent(new CustomEvent('jaswave-open-tool', { detail: { toolId: 'settings' } }))
+    }
     window.addEventListener('open-project-settings', handler)
     return () => window.removeEventListener('open-project-settings', handler)
   }, [])
@@ -107,7 +241,11 @@ function AppShell() {
       const toolId = detail?.toolId
       if (!toolId || !(toolId in TOOL_CATALOG)) return
       if (layout.undocked.includes(toolId)) {
-        dockTool(toolId)
+        // Ya está en otra ventana: enfocarla (no volver a acoplar)
+        const api = window.electron as typeof window.electron & {
+          openToolWindow?: (id: string, title: string) => Promise<unknown>
+        }
+        void api?.openToolWindow?.(toolId, TOOL_CATALOG[toolId].title)
         return
       }
       for (const zone of ['left', 'right', 'bottom', 'center'] as const) {
@@ -121,14 +259,9 @@ function AppShell() {
     }
     window.addEventListener('jaswave-open-tool', handler)
     return () => window.removeEventListener('jaswave-open-tool', handler)
-  }, [layout.undocked, layout.zoneVisible, toolsInZone, setActiveTab, toggleZone, moveTool, dockTool])
+  }, [layout.undocked, layout.zoneVisible, toolsInZone, setActiveTab, toggleZone, moveTool])
 
-  const handleRailSelect = (toolId: ToolId | 'settings') => {
-    if (toolId === 'settings') {
-      window.dispatchEvent(new CustomEvent('open-project-settings'))
-      return
-    }
-    // Si está en otra ventana → acoplar de nuevo
+  const handleRailSelect = (toolId: ToolId) => {
     if (layout.undocked.includes(toolId)) {
       dockTool(toolId)
       return
@@ -153,15 +286,22 @@ function AppShell() {
       <CommandPalette />
       <EventToasts />
       <ProjectCloseDialog />
+      <ScoreExportMenuListener />
+      <ScorePreviewDialog />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} dispatcher={dispatcher} />
-      <ProjectSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <ExportBounceDialog open={exportOpen} onClose={() => setExportOpen(false)} />
       <main className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground">
         <TitleBar />
         <AppMenuBar />
 
         <div className="flex flex-1 min-h-0">
           <IconRail
-            activeTool={layout.activeTab.left ?? layout.activeTab.right}
+            activeTool={
+              layout.activeTab.left ??
+              layout.activeTab.right ??
+              layout.activeTab.bottom ??
+              layout.activeTab.center
+            }
             undockedTools={layout.undocked}
             onToolSelect={handleRailSelect}
             onToggleZone={toggleZone}
@@ -175,22 +315,22 @@ function AppShell() {
             <ResizablePanelGroup direction="horizontal" autoSaveId="jaswave-ide-h" className="min-h-0 flex-1">
               {leftVisible && (
                 <>
-                  <ResizablePanel defaultSize={22} minSize={12} maxSize={40} className="min-w-0 border-r border-border">
+                  <ResizablePanel id="jas-left" order={1} defaultSize={22} minSize={12} maxSize={40} className="min-w-0 border-r border-border">
                     <DockZonePanel zone="left" />
                   </ResizablePanel>
                   <ResizableHandle withHandle />
                 </>
               )}
 
-              <ResizablePanel defaultSize={leftVisible && rightVisible ? 56 : 78} minSize={30} className="min-w-0">
+              <ResizablePanel id="jas-center" order={2} defaultSize={leftVisible && rightVisible ? 56 : 78} minSize={30} className="min-w-0">
                 <ResizablePanelGroup direction="vertical" autoSaveId="jaswave-ide-v" className="h-full">
-                  <ResizablePanel defaultSize={bottomVisible ? 62 : 100} minSize={20}>
+                  <ResizablePanel id="jas-arrange" order={1} defaultSize={bottomVisible ? 62 : 100} minSize={20}>
                     <DockZonePanel zone="center" />
                   </ResizablePanel>
                   {bottomVisible && (
                     <>
                       <ResizableHandle withHandle />
-                      <ResizablePanel defaultSize={38} minSize={12} maxSize={70} className="border-t border-border">
+                      <ResizablePanel id="jas-bottom" order={2} defaultSize={38} minSize={12} maxSize={70} className="border-t border-border">
                         <DockZonePanel zone="bottom" />
                       </ResizablePanel>
                     </>
@@ -201,7 +341,7 @@ function AppShell() {
               {rightVisible && (
                 <>
                   <ResizableHandle withHandle />
-                  <ResizablePanel defaultSize={22} minSize={12} maxSize={40} className="min-w-0 border-l border-border">
+                  <ResizablePanel id="jas-right" order={3} defaultSize={22} minSize={12} maxSize={40} className="min-w-0 border-l border-border">
                     <DockZonePanel zone="right" />
                   </ResizablePanel>
                 </>
@@ -244,19 +384,26 @@ export default function App() {
   return (
     <DAWProvider>
       <ImportProgressProvider>
-        <PlaybackProvider>
-          {undockId ? (
-            <>
-              <MultiWindowSync role="satellite" />
-              <UndockedToolApp toolId={undockId} />
-            </>
-          ) : (
-            <WorkspaceProvider>
-              <MultiWindowSync role="primary" />
-              <AppShell />
-            </WorkspaceProvider>
-          )}
-        </PlaybackProvider>
+        <ProjectReadyProvider>
+          <PlaybackProvider>
+            {undockId ? (
+              <WorkspaceProvider>
+                <MultiWindowSync role="satellite" />
+                <PluginHostBootstrap />
+                <FloatingDockApp initialToolId={undockId} />
+              </WorkspaceProvider>
+            ) : (
+              <WorkspaceProvider>
+                <MultiWindowSync role="primary" />
+                <PluginHostBootstrap />
+                <PluginHostLifecycle />
+                <MidiControllerHost />
+                <AgentAuditHost key={AGENT_BRIDGE_REV} />
+                <AppShell />
+              </WorkspaceProvider>
+            )}
+          </PlaybackProvider>
+        </ProjectReadyProvider>
       </ImportProgressProvider>
     </DAWProvider>
   )

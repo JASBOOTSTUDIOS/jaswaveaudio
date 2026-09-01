@@ -2,6 +2,8 @@ export type DockZone = 'left' | 'center' | 'right' | 'bottom'
 
 export type ToolId =
   | 'coproducer'
+  | 'docs'
+  | 'docs-explorer'
   | 'arrange'
   | 'mixer'
   | 'library'
@@ -9,7 +11,12 @@ export type ToolId =
   | 'meters'
   | 'routing'
   | 'instruments'
+  | 'fx-chain'
+  | 'plugin-editor'
+  | 'midi-map'
   | 'piano-roll'
+  | 'score-editor'
+  | 'settings'
 
 export interface ToolDefinitionUI {
   id: ToolId
@@ -25,6 +32,20 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     id: 'coproducer',
     title: 'Asistente Jas',
     description: 'Asistente JasWave',
+    defaultZone: 'left',
+    singleton: true,
+  },
+  docs: {
+    id: 'docs',
+    title: 'Docs',
+    description: 'Tabs de edición y vista de Markdown del proyecto',
+    defaultZone: 'left',
+    singleton: true,
+  },
+  'docs-explorer': {
+    id: 'docs-explorer',
+    title: 'Explorador',
+    description: 'Árbol de docs/ del proyecto (plan.md y contextos)',
     defaultZone: 'left',
     singleton: true,
   },
@@ -59,7 +80,7 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
   meters: {
     id: 'meters',
     title: 'Medidores',
-    description: 'Niveles y análisis',
+    description: 'Espectro, estéreo, LUFS y sync de timing',
     defaultZone: 'right',
     singleton: true,
   },
@@ -73,8 +94,29 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
   instruments: {
     id: 'instruments',
     title: 'Instrumentos',
-    description: 'Plugins e instrumentos',
+    description: 'Catálogo de plugins · acoplable / otra pantalla',
     defaultZone: 'left',
+    singleton: true,
+  },
+  'fx-chain': {
+    id: 'fx-chain',
+    title: 'FX Chain',
+    description: 'Cadena de plugins de la pista activa',
+    defaultZone: 'right',
+    singleton: true,
+  },
+  'plugin-editor': {
+    id: 'plugin-editor',
+    title: 'Editor de plugin',
+    description: 'IU del instrumento / efecto activo',
+    defaultZone: 'right',
+    singleton: true,
+  },
+  'midi-map': {
+    id: 'midi-map',
+    title: 'MIDI Learn',
+    description: 'Asigna nota, CC o tecla a una función del DAW',
+    defaultZone: 'right',
     singleton: true,
   },
   'piano-roll': {
@@ -82,6 +124,20 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     title: 'Piano roll',
     description: 'Editor MIDI de notas',
     defaultZone: 'bottom',
+    singleton: true,
+  },
+  'score-editor': {
+    id: 'score-editor',
+    title: 'Partitura',
+    description: 'Editor de partitura sincronizado con el clip MIDI',
+    defaultZone: 'bottom',
+    singleton: true,
+  },
+  settings: {
+    id: 'settings',
+    title: 'Configuración',
+    description: 'Proyecto, audio, IA, rutas y permisos',
+    defaultZone: 'right',
     singleton: true,
   },
 }
@@ -95,10 +151,10 @@ export type WorkspaceLayout = {
 
 export const DEFAULT_WORKSPACE: WorkspaceLayout = {
   zones: {
-    left: ['coproducer', 'library', 'instruments'],
+    left: ['coproducer', 'docs-explorer', 'docs', 'library', 'instruments'],
     center: ['arrange'],
-    right: ['track-detail', 'meters', 'routing'],
-    bottom: ['mixer', 'piano-roll'],
+    right: ['track-detail', 'fx-chain', 'plugin-editor', 'midi-map', 'meters', 'routing', 'settings'],
+    bottom: ['mixer', 'piano-roll', 'score-editor'],
   },
   activeTab: {
     left: 'coproducer',

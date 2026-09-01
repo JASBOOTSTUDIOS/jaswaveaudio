@@ -1,5 +1,7 @@
 # Motor de Audio
 
+> **Estado 2026-08-22:** el camino audible del DAW es **Web Audio** (`jas-wave/lib/audio-engine.ts`). `native/audio-engine` es stub de playhead (sin salida HW). El plugin-host tiene WASAPI propio, desacoplado. Unificar: [ADR-0013](../decisiones/ADR-0013-fx-runtime-pipeline.md) **[REQUIERE APROBACIÓN]**. El texto siguiente describe el **objetivo**, no la app de hoy.
+
 ## 1. Propósito
 
 El Motor de Audio es responsable de todo el procesamiento de señal digital en tiempo real. Está estrictamente separado de Electron y se implementará en C++. Nunca se comunica directamente con la UI; todas las órdenes fluyen a través del Native Bridge.

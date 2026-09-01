@@ -6,6 +6,8 @@ export interface ConfiguracionProyecto {
   bufferSizeMin: number;
   dispositivoEntrada: string;
   dispositivoSalida: string;
+  /** id Web MIDI o `all`. Vacío = usar el último de la sesión. */
+  dispositivoMidiEntrada?: string;
   dispositivosAlternativos: string[];
   latenciaObjetivo: number;
   modoAltaLatencia: boolean;

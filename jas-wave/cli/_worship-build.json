@@ -1,0 +1,135 @@
+{
+  "aplicar": true,
+  "prompt": "Worship moderno suave DescentSample guitars piano bass BFD drums",
+  "nombre": "Worship Soft Descent",
+  "bpm": 74,
+  "minutos": 2.5,
+  "genero": "worship modern ballad",
+  "tonalidad": "G major",
+  "progresion": [
+    "G",
+    "D",
+    "Em",
+    "C"
+  ],
+  "secciones": [
+    {
+      "nombre": "Intro",
+      "bars": 4,
+      "degrees": [
+        1,
+        5,
+        6,
+        4
+      ],
+      "density": 0.35
+    },
+    {
+      "nombre": "Verse",
+      "bars": 8,
+      "degrees": [
+        1,
+        5,
+        6,
+        4
+      ],
+      "density": 0.45
+    },
+    {
+      "nombre": "Chorus",
+      "bars": 8,
+      "degrees": [
+        1,
+        5,
+        6,
+        4
+      ],
+      "density": 0.7
+    },
+    {
+      "nombre": "Verse 2",
+      "bars": 8,
+      "degrees": [
+        1,
+        5,
+        6,
+        4
+      ],
+      "density": 0.5
+    },
+    {
+      "nombre": "Chorus 2",
+      "bars": 8,
+      "degrees": [
+        1,
+        5,
+        6,
+        4
+      ],
+      "density": 0.75
+    },
+    {
+      "nombre": "Bridge",
+      "bars": 8,
+      "degrees": [
+        6,
+        4,
+        1,
+        5
+      ],
+      "density": 0.55
+    },
+    {
+      "nombre": "Final Chorus",
+      "bars": 8,
+      "degrees": [
+        1,
+        5,
+        6,
+        4
+      ],
+      "density": 0.8
+    },
+    {
+      "nombre": "Outro",
+      "bars": 4,
+      "degrees": [
+        1,
+        4,
+        1,
+        1
+      ],
+      "density": 0.3
+    }
+  ],
+  "pistas": [
+    {
+      "nombre": "Drums BFD",
+      "rol": "drums",
+      "articulacion": "kit",
+      "pluginId": "BFD Player"
+    },
+    {
+      "nombre": "Bass",
+      "rol": "bass",
+      "articulacion": "finger"
+    },
+    {
+      "nombre": "Guitarra Descent soft",
+      "rol": "guitar",
+      "articulacion": "pad",
+      "pluginId": "Descent"
+    },
+    {
+      "nombre": "Guitarra ritmo soft",
+      "rol": "guitar",
+      "articulacion": "strum",
+      "pluginId": "Descent"
+    },
+    {
+      "nombre": "Piano",
+      "rol": "piano",
+      "articulacion": "block"
+    }
+  ]
+}

@@ -1,82 +1,832 @@
 import {
   ArrowUp,
+  Check,
+  Copy,
+  GitCompare,
+  Hammer,
   Loader2,
+  Quote,
+  Square,
   User,
+  X,
   Zap,
   WifiOff,
   History,
   Trash2,
   MessageSquarePlus,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react'
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useDAWState, useDAW } from '@/src/context/daw-context'
-import { answerLocalReadQuery } from '@/src/lib/ai-read-context'
+import {
+  answerLocalReadQuery,
+  buildMidiAuditReport,
+  buildMidiAuditFixActions,
+  buildMidiAuditClarifications,
+  isGarbageAssistantReply,
+  isOffTopicCreatePlanReply,
+  buildStyleGapReport,
+  buildWorshipDrumEnhanceActions,
+  buildMidiClipEditActions,
+  buildSplitLongClipsActions,
+  actionsLackMidiNoteEdits,
+} from '@/src/lib/ai-read-context'
 import {
   loadAiSettings,
   getActiveProvider,
   formatAiUserError,
-  PROVIDER_PRESETS,
+  toAiChatPayload,
+  toAiHealthPayload,
+  providerReasoningPaceMs,
+  aiChatWithFallback,
+  selectCatalogModel,
+  saveAiSettings,
+  type AiChatWithFallbackResult,
 } from '@/src/lib/ai-settings'
 import {
   buildAgentSystemPrompt,
   stripActionsBlock,
   parseActionsFromText,
+  parsePlanFromText,
   fallbackActionsFromUserIntent,
   executeDawActions,
   formatActionResultsForUser,
+  type ActionResult,
+  type DawAction,
 } from '@/src/lib/ai-daw-agent'
+import {
+  forcePreviewAplicar,
+  ensureMusicBuildForFullProject,
+  isMutatingAction,
+  modeBlocksMutation,
+  autonomyBlocksMutation,
+  logPermissionForAction,
+  partitionActions,
+} from '@/src/lib/ai-action-policy'
+import { buildHarnessHealthContext } from '@/src/lib/agent-audit-bridge'
+import {
+  ASK_AI_SELECTION_EVENT,
+  clearMusicalSelectionAnchor,
+  formatMusicalSelectionForPrompt,
+  getMusicalSelectionAnchor,
+  selectionChipInsertText,
+  subscribeMusicalSelection,
+} from '@/src/lib/ai-selection-context'
+import {
+  assistantAskedUserToWriteOptions,
+  extractGenreFromClarifyText,
+  extractMinutesFromClarifyText,
+  formatClarificationAnswersForPrompt,
+  isAffirmativeBuildIntent,
+  isClarificationReply,
+  isMidiAuditFixReply,
+  isMidiAuditSkipFixReply,
+  isTrackPickClarificationReply,
+  mustForceMusicBuild,
+  resolveClarificationsFromAssistant,
+  stripProseClarifyLists,
+  type ClarificationQuestion,
+} from '@/src/lib/ai-clarify'
+import {
+  buildTrackPickClarifications,
+  extractTrackHintFromUserText,
+  extractTrackIdFromClarifyAnswer,
+  formatResolvedTrackContext,
+  resolveTrackHint,
+} from '@/src/lib/track-resolve'
+import {
+  AGENT_MODE_META,
+  detectAgentMode,
+  inferBpmFromTempoIntent,
+  isProjectAuditIntent,
+  isSongRefineIntent,
+  isStyleGapIntent,
+  isStyleApplyIntent,
+  isMidiClipEditIntent,
+  isClipSectionSplitIntent,
+  isTempoOnlyRefine,
+  loadAgentMode,
+  saveAgentMode,
+  wantsFullProject,
+  type AgentMode,
+} from '@/src/lib/ai-modes'
+import {
+  buildAssembledAgentContext,
+  endCoproducerSession,
+  startCoproducerSession,
+} from '@/src/lib/agent-context-bridge'
+import {
+  dryRunDawActions,
+  ensureToolRegistryContext,
+  getToolRegistryPromptFragment,
+  planDawActions,
+} from '@/src/lib/agent-tool-bridge'
+import { runPostTurnCertifyPipeline } from '@/src/lib/agent-certify-pipeline'
+import {
+  enqueueAgentJob,
+  planHasPendingTasks,
+  registerAgentJobRunner,
+  cancelAgentJobs,
+} from '@/src/lib/agent-job-queue'
+import {
+  buildChecklistFromActions,
+  parseChecklistFromText,
+  stripChecklistBlock,
+  type AgentChecklist,
+} from '@/src/lib/ai-agent-checklist'
+import {
+  runHarnessUntilPlanComplete,
+  stashHarnessJobContext,
+  type HarnessJobContext,
+} from '@/src/lib/agent-harness-job-runner'
+import { appendAiDawAudit } from '@/src/lib/ai-daw-audit-store'
+import { PendingActionsCard } from '@/components/pending-actions-card'
+import { AgentChecklistCard } from '@/components/agent-checklist-card'
+import { ClarificationCard } from '@/components/clarification-card'
+import { RevertTurnButton, TurnCertifyBadges } from '@/components/turn-verify-ui'
+import { DestructiveConfirmCard } from '@/components/destructive-confirm-card'
+import { AiAuditPanel } from '@/components/ai-audit-panel'
+import { MidiGenerationPreview, type MidiPreviewData } from '@/components/midi-generation-preview'
+import { MidiClipMdPreview, type MidiClipMdPreviewData } from '@/components/midi-clip-md-preview'
+import { ProjectPlanPreview } from '@/components/project-plan-preview'
+import { MusicBuildPreview } from '@/components/music-build-preview'
+import { AiModelPicker } from '@/components/ai-model-picker'
+import {
+  collectCitedMessages,
+  filterMentionables,
+  formatUserTurnWithCitations,
+  groupMentionables,
+  historyWithCitedPins,
+  listMentionables,
+  MAX_CITED_MESSAGES,
+  mentionDraftAtCaret,
+  messagePreview,
+  type Mentionable,
+} from '@/src/lib/ai-mentions'
+import type { ProjectPlanData } from '@/src/lib/project-plan'
+import { specToProjectPlan } from '@/src/lib/music-build'
+import type { MusicBuildResult } from '@/src/lib/music-build/types'
+import { copyTextToClipboard } from '@/src/lib/copy-text'
 import {
   ensureActiveConversation,
   listConversations,
   createConversation,
   deleteConversation,
   setActiveConversationId,
+  setChatProjectScope,
   appendMessage,
   updateMessageContent,
+  patchMessage,
   getConversation,
   type ChatConversation,
   type StoredChatMessage,
 } from '@/src/lib/ai-chat-store'
+import { AgentModePicker } from '@/components/agent-mode-picker'
+import { ReasoningStepsPanel } from '@/components/reasoning-steps-panel'
 import { JasWaveLogo } from '@/components/brand'
+import { ChatMarkdown, sanitizeAssistantMarkdown } from '@/components/chat-markdown'
+import {
+  bumpChatTextZoom,
+  getChatTextZoom,
+  setChatPanelMounted,
+  setChatTextZoom,
+  subscribeChatTextZoom,
+} from '@/src/lib/chat-ui-store'
+import type { TiendaDAW } from '../../shared/src/state/tienda'
+import type { DAWState } from '../../shared/src/types/state'
+import { applyMarkdownDocsFromModel, bindAgentDocsDisk, parseDocBlocksFromText } from '@/src/lib/agent-docs'
+import {
+  extractDocEditsFromResults,
+  mergeDocEdits,
+  type ChatDocEdit,
+} from '@/src/lib/chat-doc-edits'
+import { DocEditCards } from '@/components/doc-edit-card'
+import { ensurePlanFromCompose, syncPlanAfterDawChange, type PlanEvaluation } from '@/src/lib/agent-plan-eval'
+import {
+  buildHarnessReviewMessage,
+  formatHarnessProgress,
+  formatHarnessStopLine,
+  harnessReviewNeeded,
+  runHarnessFollowups,
+} from '@/src/lib/agent-harness'
+import { requestOpenTool } from '@/src/workspace/types'
 
 function newMsgId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
+function appendDocEdits(acc: ChatDocEdit[], results: ActionResult[]): ChatDocEdit[] {
+  return mergeDocEdits(acc, extractDocEditsFromResults(results))
+}
+
+function absorbTurnMeta(
+  out: ProcessActionsOutcome,
+  dest: { undo?: number; diff?: string },
+): void {
+  if (out.undoDepthAtStart != null) dest.undo = out.undoDepthAtStart
+  if (out.appliedDiffSummary) dest.diff = out.appliedDiffSummary
+}
+
+/** Texto plano completo de un mensaje (razonamiento + respuesta + acciones). */
+function formatMessageForCopy(msg: StoredChatMessage): string {
+  const parts: string[] = []
+  if (msg.reasoningSteps?.length) {
+    parts.push('--- Razonamiento ---')
+    for (const step of msg.reasoningSteps) {
+      const body = sanitizeAssistantMarkdown(step.content ?? '').trim()
+      if (!body) continue
+      parts.push(`${step.title}\n${body}`.trim())
+    }
+  }
+  if (msg.content?.trim()) parts.push(sanitizeAssistantMarkdown(msg.content).trim())
+  if (msg.docEdits?.length) {
+    parts.push(
+      '--- Documentos ---',
+      ...msg.docEdits.map((d) => `${d.slug} (${d.action})`),
+    )
+  }
+  if (msg.actionsSummary?.trim()) {
+    parts.push('--- Acciones ---', msg.actionsSummary.trim())
+  }
+  return parts.join('\n\n')
+}
+
+function finishAgentTurn(
+  projectId: string,
+  state: DAWState,
+  results: ActionResult[],
+  modelText?: string,
+  opts?: {
+    preferModelEval?: boolean
+    forcePlanMd?: boolean
+    planFromModel?: ProjectPlanData | null
+    planEval?: PlanEvaluation | null
+  },
+): { extra: string; evaluation: PlanEvaluation | null; mutated: boolean; docsWritten: string[]; docEdits: ChatDocEdit[] } {
+  bindAgentDocsDisk(projectId, state.project?.ruta)
+
+  const planHit = results.find(
+    (r) =>
+      (r.type === 'daw.composeProject' && (r.data as { kind?: string } | undefined)?.kind === 'projectPlan') ||
+      (r.type === 'daw.musicBuild' && (r.data as { kind?: string } | undefined)?.kind === 'musicBuild'),
+  )
+  if (planHit?.data) {
+    const data = planHit.data as { kind?: string }
+    if (data.kind === 'musicBuild') {
+      const build = data as MusicBuildResult
+      ensurePlanFromCompose(projectId, specToProjectPlan(build.spec, build.applied), {
+        force: opts?.forcePlanMd,
+      })
+    } else {
+      ensurePlanFromCompose(projectId, planHit.data as import('@/src/lib/project-plan').ProjectPlanData, {
+        force: opts?.forcePlanMd,
+      })
+    }
+  } else if (opts?.planFromModel) {
+    ensurePlanFromCompose(projectId, opts.planFromModel, { force: true })
+  }
+
+  const skipSync = new Set(['doc.list', 'doc.read', 'doc.evaluate', 'doc.write', 'doc.create', 'doc.append'])
+  const musicBuildPlanned = results.some((r) => {
+    if (r.type !== 'daw.musicBuild') return false
+    const d = r.data as MusicBuildResult | undefined
+    return d?.kind === 'musicBuild' && !d.applied
+  })
+  const mutated = results.some((r) => r.success && !skipSync.has(r.type))
+  let extra = ''
+  let evaluation: PlanEvaluation | null = null
+  let docsWritten: string[] = []
+  let docEdits: ChatDocEdit[] = []
+  const applyDocs = () => {
+    const applied = modelText ? applyMarkdownDocsFromModel(projectId, modelText) : { slugs: [], edits: [] }
+    docsWritten = applied.slugs
+    docEdits = applied.edits
+    if (docsWritten.length && !musicBuildPlanned) {
+      extra = [extra, `Docs actualizados: ${docsWritten.join(', ')}`].filter(Boolean).join('\n')
+    }
+    return docsWritten
+  }
+  if (opts?.preferModelEval) {
+    if (mutated) {
+      evaluation = opts?.planEval ?? syncPlanAfterDawChange(projectId, state)
+      if (evaluation?.summary && !musicBuildPlanned) {
+        extra = [extra, evaluation.summary].filter(Boolean).join('\n')
+      }
+    }
+    applyDocs()
+  } else {
+    applyDocs()
+    if (mutated) {
+      evaluation = opts?.planEval ?? syncPlanAfterDawChange(projectId, state)
+      if (evaluation?.summary && !musicBuildPlanned) {
+        extra = [extra, evaluation.summary].filter(Boolean).join('\n')
+      }
+    }
+  }
+
+  // Si el modelo no mandó <<<DOC>>> pero sí <<<PLAN>>>, forzar plan.md
+  if (
+    opts?.forcePlanMd &&
+    opts.planFromModel &&
+    !docsWritten.includes('plan.md') &&
+    !parseDocBlocksFromText(modelText || '').some((b) => b.slug === 'plan.md')
+  ) {
+    ensurePlanFromCompose(projectId, opts.planFromModel, { force: true })
+    docsWritten = [...docsWritten, 'plan.md']
+    extra = [extra, 'Docs actualizados: plan.md (desde <<<PLAN>>>)'].filter(Boolean).join('\n')
+  }
+
+  if (extra || planHit || evaluation || docsWritten.length || opts?.planFromModel) {
+    requestOpenTool('docs', { zone: 'left' })
+  }
+  return { extra, evaluation, mutated, docsWritten, docEdits }
+}
+
+function pickMusicBuild(results: ActionResult[]): MusicBuildResult | undefined {
+  const hit = results.find(
+    (r) => r.type === 'daw.musicBuild' && (r.data as { kind?: string } | undefined)?.kind === 'musicBuild',
+  )
+  return hit?.data as MusicBuildResult | undefined
+}
+
+type ProcessActionsOutcome = {
+  results: ActionResult[]
+  pendingActions?: StoredChatMessage['pendingActions']
+  confirmActions?: StoredChatMessage['confirmActions']
+  ranMutations: boolean
+  undoDepthAtStart?: number
+  appliedDiffSummary?: string
+}
+
+function resultsOrPending(out: ProcessActionsOutcome): ActionResult[] {
+  if (out.results.length) return out.results
+  const pending = out.pendingActions?.actions ?? []
+  if (pending.length) {
+    return pending.map((a) => ({
+      type: a.type,
+      success: true,
+      message: `Propuesto: ${a.type} (Construir para aplicar)`,
+    }))
+  }
+  const confirm = out.confirmActions?.actions ?? []
+  return confirm.map((a) => ({
+    type: a.type,
+    success: true,
+    message: `Pendiente de confirmación: ${a.type}`,
+  }))
+}
+
+/** Gate: mutaciones siempre van a propuesta (Aplicar) salvo READ_ONLY vacío. */
+async function processActionsForMode(opts: {
+  tienda: TiendaDAW
+  actions: DawAction[]
+  resolvedMode: AgentMode
+  userText: string
+  conversationId: string
+  messageId: string
+  source: 'model_actions' | 'fallback'
+}): Promise<ProcessActionsOutcome> {
+  const { tienda, resolvedMode, userText, conversationId, messageId, source } = opts
+  const actions = forcePreviewAplicar(opts.actions, resolvedMode)
+  const ctx = { conversationId, messageId, agentMode: resolvedMode, source }
+
+  for (const a of actions) {
+    logPermissionForAction(a, 'ai')
+    appendAiDawAudit({
+      ...ctx,
+      tool: a.type,
+      params: { ...(a.payload ?? {}) },
+      status: 'proposed',
+    })
+  }
+
+  // Confirm-before-apply: plan/think/ask O create — mutaciones → pending + diff (como Cursor).
+  const proposeFirst =
+    modeBlocksMutation(resolvedMode) ||
+    autonomyBlocksMutation() ||
+    resolvedMode === 'create' ||
+    resolvedMode === 'auto'
+
+  if (proposeFirst) {
+    const readonly = actions.filter((a) => !isMutatingAction(a))
+    const pending = actions.filter(isMutatingAction)
+    let results: ActionResult[] = []
+    if (readonly.length) {
+      results = await executeDawActions(tienda, readonly, {
+        agentMode: resolvedMode,
+        forceApply: false,
+        source,
+        conversationId,
+        messageId,
+      })
+    }
+    let previewDiff: import('../../shared/src/state/diff-estado').SemanticStateDiff | undefined
+    let previewSummary = ''
+    if (pending.length) {
+      ensureToolRegistryContext(tienda)
+      const preview = await dryRunDawActions(tienda, pending)
+      previewDiff = preview.diff
+      previewSummary = preview.summary
+      appendAiDawAudit({
+        ...ctx,
+        tool: 'planner.preview',
+        params: { summary: previewSummary, pending: pending.length },
+        status: preview.ok ? 'executed' : 'failed',
+        result: { success: preview.ok, message: previewSummary || 'preview' },
+      })
+      const { publishMidiProposalFromActions } = await import('@/src/lib/ai-midi-proposal-store')
+      publishMidiProposalFromActions(pending, { messageId })
+    }
+    for (const a of pending) {
+      appendAiDawAudit({
+        ...ctx,
+        tool: a.type,
+        params: { ...(a.payload ?? {}) },
+        status: 'skipped_by_mode',
+        result: { success: false, message: 'Pendiente de Aplicar' },
+      })
+    }
+    const actionStatuses: Record<string, 'pending' | 'accepted' | 'rejected'> = {}
+    pending.forEach((_, i) => {
+      actionStatuses[String(i)] = 'accepted'
+    })
+    return {
+      results,
+      pendingActions:
+        pending.length > 0
+          ? {
+              status: 'pending',
+              actions: pending,
+              agentMode: resolvedMode,
+              previewDiff,
+              previewSummary: previewSummary || undefined,
+              actionStatuses,
+            }
+          : undefined,
+      ranMutations: false,
+    }
+  }
+
+  const { readonly, mutating, destructive } = partitionActions(actions, userText)
+  let appliedDiffSummary: string | undefined
+  let undoDepthAtStart: number | undefined
+  if (mutating.length) {
+    ensureToolRegistryContext(tienda)
+    const preview = await dryRunDawActions(tienda, mutating)
+    appliedDiffSummary = preview.summary || undefined
+    const plan = planDawActions(mutating, preview.diff)
+    appendAiDawAudit({
+      ...ctx,
+      tool: 'planner.preview',
+      params: { summary: plan.summary, risk: plan.estimatedRisk },
+      status: preview.ok ? 'executed' : 'failed',
+      result: { success: preview.ok, message: preview.summary },
+    })
+  }
+  const toRun = [...readonly, ...mutating]
+  let results: ActionResult[] = []
+  if (toRun.length) {
+    const { snapshotUndoDepth } = await import('@/src/lib/agent-turn-undo')
+    undoDepthAtStart = snapshotUndoDepth(tienda)
+    results = await executeDawActions(tienda, toRun, {
+      agentMode: resolvedMode,
+      forceApply: false,
+      source,
+      conversationId,
+      messageId,
+    })
+  }
+  if (destructive.length) {
+    for (const a of destructive) {
+      appendAiDawAudit({
+        ...ctx,
+        tool: a.type,
+        params: { ...(a.payload ?? {}) },
+        status: 'pending_confirm',
+        result: { success: false, message: 'Esperando confirmación del usuario' },
+      })
+    }
+  }
+  return {
+    results,
+    confirmActions:
+      destructive.length > 0
+        ? {
+            status: 'pending',
+            actions: destructive,
+            reason: 'Esta acción borra o altera contenido de forma irreversible. ¿Confirmas?',
+          }
+        : undefined,
+    ranMutations: results.some((r) => r.success && isMutatingAction({ type: r.type })),
+    undoDepthAtStart,
+    appliedDiffSummary,
+  }
+}
+
+
 export function CoProducerPanel() {
   const [inputMessage, setInputMessage] = useState('')
-  const [conversation, setConversation] = useState<ChatConversation>(() => ensureActiveConversation())
+  const [conversation, setConversation] = useState<ChatConversation>(() =>
+    ensureActiveConversation('default'),
+  )
   const [historyOpen, setHistoryOpen] = useState(false)
-  const [conversations, setConversations] = useState<ChatConversation[]>(() => listConversations())
+  const [conversations, setConversations] = useState<ChatConversation[]>(() =>
+    listConversations('default'),
+  )
   const [isGenerating, setIsGenerating] = useState(false)
   const [aiStatus, setAiStatus] = useState<'unknown' | 'online' | 'offline' | 'misconfigured'>('unknown')
   const [statusDetail, setStatusDetail] = useState('')
-  const [modelLabel, setModelLabel] = useState(() => {
-    const s = loadAiSettings()
-    const p = getActiveProvider(s)
-    return `${PROVIDER_PRESETS[p.kind].label} · ${p.selectedModel}`
-  })
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const [mentionStart, setMentionStart] = useState(0)
+  const [mentionIndex, setMentionIndex] = useState(0)
+  const [agentMode, setAgentMode] = useState<AgentMode>(() => loadAgentMode())
+  const [harnessPhase, setHarnessPhase] = useState('')
+  const [copiedMsgId, setCopiedMsgId] = useState('')
+  const [copiedAll, setCopiedAll] = useState(false)
+  const [citedIds, setCitedIds] = useState<string[]>([])
+  const [selectionLabel, setSelectionLabel] = useState(() => getMusicalSelectionAnchor()?.label ?? '')
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const panelRootRef = useRef<HTMLElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  /** Incrementa al detener para invalidar turnos en vuelo. */
+  const genEpochRef = useRef(0)
+  const liveAssistantMsgIdRef = useRef<string | null>(null)
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const chatTextZoom = useSyncExternalStore(subscribeChatTextZoom, getChatTextZoom, getChatTextZoom)
+  const chatFontPx = Math.round(13 * chatTextZoom)
+
+  useEffect(() => {
+    setChatPanelMounted(true)
+    return () => setChatPanelMounted(false)
+  }, [])
+
+  /** Ctrl/Cmd + / - / 0: zoom tipográfico solo del chat (como Docs). */
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      const root = panelRootRef.current
+      if (!root) return
+      const undockChat =
+        new URLSearchParams(window.location.search).get('undock') === 'coproducer' ||
+        new URLSearchParams(window.location.search).get('undock') === 'chat' ||
+        window.location.hash.replace(/^#/, '').startsWith('undock/coproducer') ||
+        window.location.hash.replace(/^#/, '').startsWith('undock/chat')
+      const inPanel =
+        undockChat ||
+        root.contains(document.activeElement) ||
+        root === document.activeElement
+      if (!inPanel) return
+      const key = e.key
+      const code = e.code
+      const zoomIn =
+        key === '=' || key === '+' || code === 'NumpadAdd' || code === 'Equal'
+      const zoomOut = key === '-' || key === '_' || code === 'NumpadSubtract' || code === 'Minus'
+      const zoomReset = key === '0' || code === 'Digit0' || code === 'Numpad0'
+      if (!zoomIn && !zoomOut && !zoomReset) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (zoomIn) bumpChatTextZoom(0.1)
+      else if (zoomOut) bumpChatTextZoom(-0.1)
+      else setChatTextZoom(1)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
+
+  const onChatZoomKeyDown = (e: ReactKeyboardEvent) => {
+    if (!(e.ctrlKey || e.metaKey)) return
+    if (e.key === '=' || e.key === '+' || e.code === 'NumpadAdd') {
+      e.preventDefault()
+      e.stopPropagation()
+      bumpChatTextZoom(0.1)
+    } else if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') {
+      e.preventDefault()
+      e.stopPropagation()
+      bumpChatTextZoom(-0.1)
+    } else if (e.key === '0') {
+      e.preventDefault()
+      e.stopPropagation()
+      setChatTextZoom(1)
+    }
+  }
+
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+  }, [inputMessage])
+
+  useEffect(() => subscribeMusicalSelection(() => {
+    setSelectionLabel(getMusicalSelectionAnchor()?.label ?? '')
+  }), [])
+
+  useEffect(() => {
+    const onAsk = () => {
+      requestOpenTool('coproducer', { zone: 'left' })
+      const a = getMusicalSelectionAnchor()
+      if (!a || a.notes.length === 0) {
+        inputRef.current?.focus()
+        return
+      }
+      setSelectionLabel(a.label)
+      setInputMessage((prev) => {
+        const chip = selectionChipInsertText(a)
+        if (prev.includes('[selección:')) return prev
+        return `${chip}${prev}`
+      })
+      window.setTimeout(() => {
+        const el = inputRef.current
+        if (!el) return
+        el.focus()
+        const pos = el.value.length
+        el.setSelectionRange(pos, pos)
+      }, 50)
+    }
+    window.addEventListener(ASK_AI_SELECTION_EVENT, onAsk)
+    return () => window.removeEventListener(ASK_AI_SELECTION_EVENT, onAsk)
+  }, [])
 
   const dawStore = useDAW()
+  const projectId = useDAWState((state) => state.project?.id || 'default')
   const projectName = useDAWState((state) => state.project?.nombre || 'Nuevo Proyecto')
   const trackCount = useDAWState((state) => state.project?.tracks?.length ?? 0)
+  const messages =
+    conversation.projectId === projectId
+      ? conversation.messages.filter((m) => m.role === 'user' || m.role === 'assistant')
+      : []
+  const pendingProposal = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]!
+      if (m.pendingActions?.status === 'pending' && m.pendingActions.actions.length) {
+        return {
+          messageId: m.id,
+          count: m.pendingActions.actions.length,
+          cardId: `pending-actions-${m.id}`,
+        }
+      }
+    }
+    return null
+  }, [messages])
+  const citedMessages = citedIds
+    .map((id) => messages.find((m) => m.id === id))
+    .filter((m): m is StoredChatMessage => Boolean(m))
+  const mentionHits =
+    mentionQuery != null
+      ? filterMentionables(listMentionables(dawStore.obtenerEstado(), messages), mentionQuery)
+      : []
+  const mentionGroups = groupMentionables(mentionHits)
 
-  const messages = conversation.messages.filter((m) => m.role === 'user' || m.role === 'assistant')
+  const citeMessage = (msg: StoredChatMessage) => {
+    if (!msg.content?.trim() && !msg.actionsSummary?.trim()) return
+    setCitedIds((ids) => {
+      if (ids.includes(msg.id)) return ids
+      return [...ids, msg.id].slice(-MAX_CITED_MESSAGES)
+    })
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }
+
+  const insertMention = (item: Mentionable) => {
+    if (item.kind === 'message' && item.messageId) {
+      const target = messages.find((m) => m.id === item.messageId)
+      if (target) citeMessage(target)
+      const el = inputRef.current
+      const caret = el?.selectionStart ?? inputMessage.length
+      const draft = mentionDraftAtCaret(inputMessage, caret)
+      if (draft) {
+        const next = `${inputMessage.slice(0, draft.start)}${inputMessage.slice(caret)}`
+        setInputMessage(next)
+      }
+      setMentionQuery(null)
+      requestAnimationFrame(() => el?.focus())
+      return
+    }
+    if (item.kind === 'mode' && item.mode) {
+      setAgentMode(item.mode)
+      saveAgentMode(item.mode)
+    }
+    const el = inputRef.current
+    const caret = el?.selectionStart ?? inputMessage.length
+    const draft = mentionDraftAtCaret(inputMessage, caret)
+    const start = draft?.start ?? mentionStart
+    const before = inputMessage.slice(0, start)
+    const after = inputMessage.slice(caret)
+    const token =
+      item.insertText ??
+      (item.label.includes(' ') ? `@"${item.label}"` : `@${item.label}`)
+    const next = `${before}${token} ${after}`
+    setInputMessage(next)
+    setMentionQuery(null)
+    requestAnimationFrame(() => {
+      const pos = (before + token + ' ').length
+      el?.focus()
+      el?.setSelectionRange(pos, pos)
+    })
+  }
+
+  const onInputChange = (value: string, caret: number) => {
+    setInputMessage(value)
+    const draft = mentionDraftAtCaret(value, caret)
+    if (draft) {
+      setMentionQuery(draft.query)
+      setMentionStart(draft.start)
+      setMentionIndex(0)
+    } else {
+      setMentionQuery(null)
+    }
+  }
 
   const refreshHistoryList = useCallback(() => {
-    setConversations(listConversations())
-  }, [])
+    setConversations(listConversations(projectId))
+  }, [projectId])
+
+  useEffect(() => {
+    setChatProjectScope(projectId)
+    const next = ensureActiveConversation(projectId)
+    setConversation(next)
+    setConversations(listConversations(projectId))
+  }, [projectId])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isGenerating])
 
   useEffect(() => {
+    startCoproducerSession(dawStore)
+    ensureToolRegistryContext(dawStore)
+    registerAgentJobRunner(async (job, signal) => {
+      if (signal.aborted) return
+      if (job.kind === 'certify') {
+        await runPostTurnCertifyPipeline(dawStore, [], {})
+        return
+      }
+      if (job.kind === 'harness-until-plan') {
+        const cfg = loadAiSettings()
+        const provider = getActiveProvider(cfg)
+        if (!window.electron?.aiChat) {
+          await runPostTurnCertifyPipeline(dawStore, [], {})
+          return
+        }
+        await runHarnessUntilPlanComplete(
+          {
+            dawStore,
+            chat: async (userContent) => {
+              const r = await window.electron!.aiChat!(
+                toAiChatPayload(
+                  provider,
+                  [
+                    {
+                      role: 'system',
+                      content: buildAgentSystemPrompt(dawStore.obtenerEstado(), userContent, 'create', []),
+                    },
+                    { role: 'user', content: userContent },
+                  ],
+                  { temperature: Math.max(cfg.temperature, 0.35), maxTokens: Math.min(cfg.maxTokens, 8192) },
+                ),
+              )
+              return { success: !!r.success, content: r.content }
+            },
+            parseActions: parseActionsFromText,
+            execute: (actions) =>
+              executeDawActions(dawStore, actions, {
+                agentMode: 'create',
+                forceApply: true,
+                source: 'harness',
+                respectModeGate: false,
+              }),
+            formatResults: formatActionResultsForUser,
+            buildSystemPrompt: (state, userText) => buildAgentSystemPrompt(state, userText, 'create', []),
+            onProgress: (phase) => setHarnessPhase(phase),
+            afterHarnessTurn: (turnResults, raw) => {
+              const step = finishAgentTurn(
+                dawStore.obtenerEstado().project.id,
+                dawStore.obtenerEstado(),
+                turnResults,
+                raw,
+                { preferModelEval: true },
+              )
+              return step.evaluation
+            },
+          },
+          signal,
+        )
+      }
+    })
+    return () => endCoproducerSession(dawStore)
+  }, [dawStore])
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
     const refresh = () => {
       const cfg = loadAiSettings()
       const provider = getActiveProvider(cfg)
-      setModelLabel(`${PROVIDER_PRESETS[provider.kind].label} · ${provider.selectedModel}`)
 
       if (!window.electron?.aiHealth) {
         setAiStatus('misconfigured')
@@ -85,11 +835,7 @@ export function CoProducerPanel() {
       }
 
       void window.electron
-        .aiHealth({
-          kind: provider.kind,
-          baseUrl: provider.baseUrl,
-          apiKey: provider.apiKey,
-        })
+        .aiHealth(toAiHealthPayload(provider))
         .then((result) => {
           if (result.status === 'healthy') {
             setAiStatus('online')
@@ -120,15 +866,15 @@ export function CoProducerPanel() {
 
   const switchConversation = (id: string) => {
     const c = getConversation(id)
-    if (!c) return
-    setActiveConversationId(id)
+    if (!c || c.projectId !== projectId) return
+    setActiveConversationId(id, projectId)
     setConversation(c)
     setHistoryOpen(false)
   }
 
   const startNewChat = () => {
-    const c = createConversation()
-    setActiveConversationId(c.id)
+    const c = createConversation('Nueva conversación', projectId)
+    setActiveConversationId(c.id, projectId)
     setConversation(c)
     refreshHistoryList()
     setHistoryOpen(false)
@@ -137,22 +883,98 @@ export function CoProducerPanel() {
   const removeChat = (id: string) => {
     deleteConversation(id)
     if (conversation.id === id) {
-      const next = ensureActiveConversation()
+      const next = ensureActiveConversation(projectId)
       setConversation(next)
     }
     refreshHistoryList()
   }
 
-  const handleSendMessage = async () => {
-    if (!inputMessage.trim() || isGenerating) return
+  const stopGeneration = () => {
+    const msgId = liveAssistantMsgIdRef.current
+    const convId = conversation.id
+    abortRef.current?.abort()
+    cancelAgentJobs()
+    genEpochRef.current += 1
+    abortRef.current = null
+    setIsGenerating(false)
+    setHarnessPhase('')
+    if (msgId) {
+      const before = getConversation(convId)
+      const msg = before?.messages.find((m) => m.id === msgId)
+      const checklist =
+        msg?.agentChecklist?.status === 'active'
+          ? { ...msg.agentChecklist, status: 'stopped' as const }
+          : msg?.agentChecklist
+      patchMessage(convId, msgId, {
+        content: '⏹ Ejecución detenida.',
+        ...(checklist ? { agentChecklist: checklist } : {}),
+      })
+      const refreshed = getConversation(convId)
+      if (refreshed) setConversation(refreshed)
+    }
+    liveAssistantMsgIdRef.current = null
+  }
 
-    const userText = inputMessage.trim()
-    setInputMessage('')
+  const copyChatMessage = async (msg: StoredChatMessage) => {
+    const text = formatMessageForCopy(msg)
+    if (!text.trim()) return
+    const ok = await copyTextToClipboard(text)
+    if (!ok) return
+    setCopiedMsgId(msg.id)
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    copiedTimerRef.current = setTimeout(() => {
+      setCopiedMsgId((id) => (id === msg.id ? '' : id))
+      copiedTimerRef.current = null
+    }, 1600)
+  }
+
+  const copyEntireChat = async () => {
+    if (!messages.length) return
+    const blocks = messages
+      .map((m) => {
+        const body = formatMessageForCopy(m).trim()
+        if (!body) return ''
+        const who = m.role === 'user' ? 'Tú' : 'Asistente Jas'
+        return `### ${who}\n${body}`
+      })
+      .filter(Boolean)
+    if (!blocks.length) return
+    const ok = await copyTextToClipboard(blocks.join('\n\n---\n\n'))
+    if (!ok) return
+    setCopiedAll(true)
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    copiedTimerRef.current = setTimeout(() => {
+      setCopiedAll(false)
+      copiedTimerRef.current = null
+    }, 1600)
+  }
+
+  const handleSendMessage = async (overrideText?: string) => {
+    const rawInput = (overrideText ?? inputMessage).trim()
+    if (!rawInput || isGenerating) return
+
+    const userText = rawInput
+    const stateForCite = dawStore.obtenerEstado()
+    const cited = collectCitedMessages(userText, citedIds, stateForCite, messages)
+    if (!overrideText) setInputMessage('')
+    else setInputMessage('')
+    setCitedIds([])
+    const ac = new AbortController()
+    abortRef.current = ac
+    const myEpoch = genEpochRef.current
+    const stillMine = () => myEpoch === genEpochRef.current && !ac.signal.aborted
+    setHarnessPhase('Trabajando en el DAW…')
 
     const userMsgId = newMsgId('user')
     const assistantMsgId = newMsgId('asst')
+    liveAssistantMsgIdRef.current = assistantMsgId
 
-    appendMessage(conversation.id, { id: userMsgId, role: 'user', content: userText })
+    appendMessage(conversation.id, {
+      id: userMsgId,
+      role: 'user',
+      content: userText,
+      citedMessageIds: cited.map((m) => m.id),
+    })
     appendMessage(conversation.id, { id: assistantMsgId, role: 'assistant', content: '' })
     const refreshed = getConversation(conversation.id)
     if (refreshed) setConversation(refreshed)
@@ -166,21 +988,133 @@ export function CoProducerPanel() {
       const local = preferLocal ? answerLocalReadQuery(state, userText) : null
       let accumulated = local ?? ''
       let actionsSummary = ''
+      let lastResults: ActionResult[] = []
+      let modelRaw = ''
+      let pendingActions: StoredChatMessage['pendingActions']
+      let confirmActions: StoredChatMessage['confirmActions']
+      let clarifications: StoredChatMessage['clarifications']
+      let agentChecklist: AgentChecklist | undefined
+      let ranMutations = false
+      let parsedPlanForDocs: ProjectPlanData | null = null
+      let finalReasoningSteps: StoredChatMessage['reasoningSteps']
+      let docEdits: ChatDocEdit[] = []
+      let turnUndoDepthAtStart: number | undefined
+      let turnAppliedDiffSummary: string | undefined
+      let turnCertify: StoredChatMessage['certify']
+      const turnMeta: { undo?: number; diff?: string } = {}
+      let skipAiTurn = false
+      let trackContextExtra = ''
+      const resolvedMode = detectAgentMode(userText, agentMode)
+      const styleGapIntent = isStyleGapIntent(userText)
+      const styleApplyIntent = isStyleApplyIntent(userText)
+      const midiClipEditIntent = isMidiClipEditIntent(userText)
+      const clipSectionSplitIntent = isClipSectionSplitIntent(userText)
+      const auditIntent = isProjectAuditIntent(userText) || styleGapIntent
+      const midiAuditReport =
+        isProjectAuditIntent(userText) && !styleGapIntent && !styleApplyIntent
+          ? buildMidiAuditReport(state)
+          : ''
+      const styleGapSeed = styleGapIntent
+        ? buildStyleGapReport(state, { userText })
+        : ''
+      const worshipEnhanceFallback = styleApplyIntent
+        ? (buildWorshipDrumEnhanceActions(state) as DawAction[])
+        : []
+      const midiClipEditFallback =
+        midiClipEditIntent || styleApplyIntent
+          ? (buildMidiClipEditActions(state, userText) as DawAction[])
+          : []
+      const sectionSplitFallback = clipSectionSplitIntent
+        ? (buildSplitLongClipsActions(state) as DawAction[])
+        : []
+      const wantsAuditFix =
+        isMidiAuditFixReply(userText) ||
+        (/^arr[eé]glalo\b/i.test(userText.trim()) && !auditIntent)
 
-      if (!local) {
+      if (isTrackPickClarificationReply(userText)) {
+        const trackId = extractTrackIdFromClarifyAnswer(userText)
+        if (trackId) trackContextExtra = formatResolvedTrackContext(state, trackId)
+      } else if (
+        !isClarificationReply(userText) &&
+        !auditIntent &&
+        !wantsAuditFix &&
+        !isMidiAuditSkipFixReply(userText)
+      ) {
+        const hint = extractTrackHintFromUserText(userText)
+        if (hint) {
+          const resolved = resolveTrackHint(state, hint)
+          if (resolved.ambiguous && resolved.candidates.length >= 2) {
+            clarifications = {
+              status: 'pending',
+              questions: buildTrackPickClarifications(resolved.candidates, hint.label),
+            }
+            accumulated = `Hay varias pistas que podrían ser «${hint.label}». Elige cuál quieres que use para esta edición:`
+            skipAiTurn = true
+          } else if (resolved.trackId) {
+            trackContextExtra = formatResolvedTrackContext(state, resolved.trackId)
+          }
+        }
+      }
+
+      // Respuesta al formulario de auditoría / «arréglalo» → propuesta Aplicar (sin musicBuild)
+      if (wantsAuditFix && !isMidiAuditSkipFixReply(userText)) {
+        const fixes = buildMidiAuditFixActions(state)
+        if (fixes.length) {
+          setHarnessPhase('Preparando arreglo de duplicados…')
+          const out = await processActionsForMode({
+            tienda: dawStore,
+            actions: fixes,
+            resolvedMode: 'create',
+            userText,
+            conversationId: conversation.id,
+            messageId: assistantMsgId,
+            source: 'fallback',
+          })
+          pendingActions = out.pendingActions
+          confirmActions = out.confirmActions
+          lastResults = out.results
+          absorbTurnMeta(out, turnMeta)
+          actionsSummary = formatActionResultsForUser(resultsOrPending(out))
+          accumulated = [
+            `Listo: **${fixes.length}** acción(es) para quitar duplicados.`,
+            'Revisa la tarjeta abajo y pulsa **Aplicar seleccionadas**.',
+          ].join('\n')
+        } else {
+          accumulated = 'No hay clips con duplicados detectados para arreglar ahora.'
+        }
+      } else if (isMidiAuditSkipFixReply(userText)) {
+        accumulated = 'De acuerdo — dejo el proyecto como está. El informe anterior sigue válido.'
+      } else if (!local && !skipAiTurn) {
         if (!window.electron?.aiChat) {
           // Sin Electron: si pide crear, ejecutamos igual en el DAW local
-          const forced = fallbackActionsFromUserIntent(userText)
+          const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
           if (forced.length) {
-            const results = await executeDawActions(dawStore, forced)
-            actionsSummary = formatActionResultsForUser(results)
+            const out = await processActionsForMode({
+              tienda: dawStore,
+              actions: forced,
+              resolvedMode,
+              userText,
+              conversationId: conversation.id,
+              messageId: assistantMsgId,
+              source: 'fallback',
+            })
+            lastResults = out.results
+            docEdits = appendDocEdits(docEdits, out.results)
+            pendingActions = out.pendingActions
+            confirmActions = out.confirmActions
+            ranMutations = out.ranMutations
+            absorbTurnMeta(out, turnMeta)
+            actionsSummary = formatActionResultsForUser(resultsOrPending(out))
             accumulated = [
-              'He aplicado los cambios directamente en JasWave (sin modelo remoto).',
+              modeBlocksMutation(resolvedMode)
+                ? 'Propuesta lista — pulsa Construir para aplicar (sin modelo remoto).'
+                : 'He aplicado los cambios directamente en JasWave (sin modelo remoto).',
               actionsSummary,
             ].join('\n\n')
           } else {
             accumulated =
-              answerLocalReadQuery(state, userText) ??
+              midiAuditReport ||
+              answerLocalReadQuery(state, userText) ||
               formatAiUserError({
                 error: 'No hay modelo remoto disponible.',
                 errorCode: 'not_available',
@@ -189,65 +1123,573 @@ export function CoProducerPanel() {
               })
           }
         } else {
-          const cfg = loadAiSettings()
-          const provider = getActiveProvider(cfg)
-          const systemContext = buildAgentSystemPrompt(state)
-          const prior = (refreshed?.messages ?? messages)
-            .filter((m) => m.content.trim().length > 0 && m.id !== assistantMsgId)
-            .slice(-12)
-            .map((m) => ({
-              role: m.role as 'user' | 'assistant',
-              content: m.content,
-            }))
+          const { formatLibraryPresetsForContext } = await import('@/src/lib/library/ops')
+          const presetsBlock = await formatLibraryPresetsForContext(dawStore, 12)
+          const chatTurns = messages
+            .filter((m) => m.role === 'user' || m.role === 'assistant')
+            .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+
+          setHarnessPhase('Razonando…')
+          const { runAgentReasoningForTurn } = await import('@/src/lib/agent-reasoning-bridge')
+          let cfg = loadAiSettings()
+          let provider = getActiveProvider(cfg)
+
+          const rememberWorkingModel = (usedProviderId?: string, usedModel?: string, fallbackUsed?: boolean) => {
+            if (!fallbackUsed || !usedProviderId || !usedModel) return
+            const next = selectCatalogModel(loadAiSettings(), usedProviderId, usedModel)
+            saveAiSettings(next)
+            window.dispatchEvent(new CustomEvent('jaswave-ai-settings-changed'))
+            cfg = next
+            provider = getActiveProvider(cfg)
+          }
+
+          const reasoning = await runAgentReasoningForTurn({
+            tienda: dawStore,
+            state,
+            userText,
+            resolvedMode,
+            chatTurns,
+            libraryPresetsBlock: presetsBlock,
+            projectContextExtra: (() => {
+              const parts: string[] = []
+              if (styleGapSeed) {
+                parts.push(
+                  [
+                    '## Borrador local de gap de estilo (datos del DAW — ancla)',
+                    styleGapSeed,
+                    'Úsalo como base. Mejora con web.search si hace falta. Responde al usuario en este tono de productor (NO Auditoría MIDI P1/P2, NO «244.0b»).',
+                    'PROHIBIDO musicBuild y plan de días.',
+                  ].join('\n'),
+                )
+              } else if (midiAuditReport) {
+                parts.push(
+                  [
+                    '## Informe técnico local (datos reales del DAW — ancla obligatoria)',
+                    midiAuditReport,
+                    'Razona como productor sobre ESTOS hallazgos. No inventes clips ni ignores duplicados/largos.',
+                    'En el turno final: explica en prosa + prioriza; no respondas solo con ¡¡¡.',
+                  ].join('\n'),
+                )
+              }
+              if (trackContextExtra) parts.push(trackContextExtra)
+              return parts.length ? parts.join('\n\n') : undefined
+            })(),
+            abort: ac.signal,
+            paceBetweenPhasesMs: providerReasoningPaceMs(provider.kind),
+            onPhaseLabel: (label) => setHarnessPhase(label),
+            onStep: (steps) => {
+              patchMessage(conversation.id, assistantMsgId, {
+                reasoningSteps: steps.map((s) => ({ ...s, collapsed: false })),
+              })
+              const after = getConversation(conversation.id)
+              if (after) setConversation(after)
+            },
+            chatFn: async (reasonMessages) => {
+              if (!stillMine()) return { success: false }
+              cfg = loadAiSettings()
+              const fallbackPromise = aiChatWithFallback(
+                (req) => window.electron!.aiChat!(req),
+                reasonMessages,
+                {
+                  temperature: Math.min(0.85, Math.max(cfg.temperature, 0.55)),
+                  maxTokens: 1024,
+                  settings: cfg,
+                  abort: ac.signal,
+                  onAttempt: ({ label, index, total }) => {
+                    if (total > 1 && index > 0) {
+                      setHarnessPhase(`Reintentando ${index + 1}/${total}: ${label}`)
+                    }
+                  },
+                },
+              )
+              const abortPromise = new Promise<AiChatWithFallbackResult>((resolve) => {
+                if (ac.signal.aborted) {
+                  resolve({ success: false, error: 'Abortado', errorCode: 'unknown' })
+                  return
+                }
+                ac.signal.addEventListener(
+                  'abort',
+                  () => resolve({ success: false, error: 'Abortado', errorCode: 'unknown' }),
+                  { once: true },
+                )
+              })
+              const r = await Promise.race([fallbackPromise, abortPromise])
+              if (!stillMine()) return { success: false }
+              if ('fallbackUsed' in r) {
+                rememberWorkingModel(r.usedProviderId, r.usedModel, r.fallbackUsed)
+              }
+              return {
+                success: Boolean(r.success),
+                content: r.content,
+              }
+            },
+          })
+          if (!stillMine()) throw new DOMException('Aborted', 'AbortError')
+          finalReasoningSteps = reasoning.steps.map((s) => ({ ...s, collapsed: true }))
+
+          const systemContext = [
+            buildAssembledAgentContext(dawStore, state, userText, chatTurns, presetsBlock),
+            formatMusicalSelectionForPrompt(getMusicalSelectionAnchor()),
+            getToolRegistryPromptFragment(dawStore),
+            buildAgentSystemPrompt(state, userText, agentMode, messages),
+            styleGapSeed
+              ? [
+                  '## Gap de estilo (borrador local con datos reales)',
+                  styleGapSeed,
+                  'Responde al usuario en español claro de productor DAW. Mejora este borrador; no lo sustituyas por «Auditoría MIDI» ni códigos P1/P2.',
+                ].join('\n')
+              : midiAuditReport
+                ? [
+                    '## Informe técnico local (datos reales)',
+                    midiAuditReport,
+                    'Responde al usuario como productor usando estos datos. Si propones ACTIONS, que sean propuestas para Aplicar.',
+                  ].join('\n')
+                : '',
+            trackContextExtra,
+          ]
+            .filter(Boolean)
+            .join('\n\n')
+          const think = resolvedMode === 'think' || resolvedMode === 'ask'
+          const modelUser = formatUserTurnWithCitations(reasoning.finalUserMessage, cited)
+          const prior = historyWithCitedPins(refreshed?.messages ?? messages, cited, [
+            assistantMsgId,
+            userMsgId,
+          ])
 
           try {
-            const result = await window.electron.aiChat({
-              messages: [
+            if (!stillMine()) throw new DOMException('Aborted', 'AbortError')
+            cfg = loadAiSettings()
+            provider = getActiveProvider(cfg)
+            const finalAbort = new Promise<AiChatWithFallbackResult>((resolve) => {
+              if (ac.signal.aborted) {
+                resolve({ success: false, error: 'Abortado', errorCode: 'unknown' })
+                return
+              }
+              ac.signal.addEventListener(
+                'abort',
+                () => resolve({ success: false, error: 'Abortado', errorCode: 'unknown' }),
+                { once: true },
+              )
+            })
+            const finalChatPromise = aiChatWithFallback(
+              (req) => window.electron!.aiChat!(req),
+              [
                 { role: 'system', content: systemContext },
                 ...prior,
-                { role: 'user', content: userText },
+                { role: 'user', content: modelUser },
               ],
-              kind: provider.kind,
-              model: provider.selectedModel,
-              baseUrl: provider.baseUrl,
-              apiKey: provider.apiKey,
-              temperature: cfg.temperature,
-              maxTokens: cfg.maxTokens,
-            })
+              {
+                temperature: think ? Math.max(cfg.temperature, 0.55) : cfg.temperature,
+                maxTokens: Math.max(cfg.maxTokens, think ? 16384 : 8192),
+                settings: cfg,
+                abort: ac.signal,
+                onAttempt: ({ label, index, total }) => {
+                  if (index === 0) setHarnessPhase(`Consultando ${label}…`)
+                  else setHarnessPhase(`Modelo sin respuesta → ${label} (${index + 1}/${total})`)
+                },
+              },
+            )
+            const result: AiChatWithFallbackResult = await Promise.race([finalChatPromise, finalAbort])
+            if (!stillMine()) throw new DOMException('Aborted', 'AbortError')
+            if ('fallbackUsed' in result) {
+              rememberWorkingModel(result.usedProviderId, result.usedModel, result.fallbackUsed)
+              if (result.fallbackUsed && result.usedModel) {
+                setHarnessPhase(`Respondió con ${result.usedModel}`)
+              }
+            }
 
             if (result.success && result.content?.trim()) {
               const raw = result.content
-              let actions = parseActionsFromText(raw)
-              if (actions.length === 0) {
-                actions = fallbackActionsFromUserIntent(userText)
+              modelRaw = raw
+              let actions = parseActionsFromText(raw).filter(
+                (a) => typeof a.type === 'string' && /^[a-z0-9]+(\.[a-z0-9]+)+$/i.test(a.type),
+              )
+              let clarifyQs = resolveClarificationsFromAssistant(raw)
+              // Modelo pidió opciones en prosa (sin bloque CLARIFY válido) → fallo de protocolo
+              if (assistantAskedUserToWriteOptions(raw) && clarifyQs.length === 0) {
+                clarifyQs = []
+              }
+              const forceBuild =
+                mustForceMusicBuild(userText) ||
+                (isSongRefineIntent(userText) && !isTempoOnlyRefine(userText)) ||
+                assistantAskedUserToWriteOptions(raw) ||
+                messages.some(
+                  (m) =>
+                    m.clarifications?.status === 'answered' ||
+                    m.clarifications?.status === 'skipped',
+                )
+              // Tras respuestas / créalo / refinar / ya aclarado: NUNCA otra ronda de preguntas
+              if (forceBuild) clarifyQs = []
+
+              const parsedPlan = parsePlanFromText(raw)
+              if (parsedPlan) parsedPlanForDocs = parsedPlan
+              if (parsedPlan && !actions.some((a) => a.type === 'daw.composeProject' || a.type === 'daw.musicBuild')) {
+                if (wantsFullProject(userText) || forceBuild) {
+                  const bpmHint =
+                    inferBpmFromTempoIntent(userText, state.project?.bpm?.valor ?? 120) ??
+                    parsedPlan.bpm
+                  actions = [
+                    {
+                      type: 'daw.musicBuild',
+                      payload: {
+                        aplicar: true,
+                        prompt: userText,
+                        nombre: parsedPlan.nombre,
+                        bpm: bpmHint,
+                        minutos: parsedPlan.minutes,
+                        midiSource: 'ai',
+                      },
+                    },
+                    ...actions,
+                  ]
+                } else {
+                  actions = [
+                    {
+                      type: 'daw.composeProject',
+                      payload: {
+                        aplicar: resolvedMode === 'create',
+                        nombre: parsedPlan.nombre,
+                        bpm: parsedPlan.bpm,
+                        tonalidad: parsedPlan.keyLabel,
+                        minutos: parsedPlan.minutes,
+                        pensamiento: parsedPlan.pensamiento,
+                        pistas: parsedPlan.tracks,
+                      },
+                    },
+                    ...actions,
+                  ]
+                }
+              }
+              if (actions.length === 0 && clarifyQs.length === 0) {
+                actions = fallbackActionsFromUserIntent(userText, state, forceBuild ? 'create' : agentMode)
+              }
+              if (actions.length === 0 && forceBuild) {
+                const mins = extractMinutesFromClarifyText(userText)
+                const genero = extractGenreFromClarifyText(userText)
+                const bpm =
+                  inferBpmFromTempoIntent(userText, state.project?.bpm?.valor ?? 120) ?? 72
+                actions = [
+                  {
+                    type: 'project.setBpm',
+                    payload: { bpm },
+                  },
+                  {
+                    type: 'daw.musicBuild',
+                    payload: {
+                      aplicar: true,
+                      prompt: isClarificationReply(userText)
+                        ? `Canción según plan.md y respuestas: ${userText.slice(0, 1200)}`
+                        : userText,
+                      minutos: mins ?? 3,
+                      ...(genero ? { genero } : {}),
+                      midiSource: 'ai',
+                      bpm,
+                    },
+                  },
+                ]
+              }
+              if (
+                actions.length === 0 &&
+                clarifyQs.length > 0 &&
+                (wantsFullProject(userText) || resolvedMode === 'create') &&
+                !forceBuild
+              ) {
+                // Una sola ronda de tarjeta; esperar Enviar respuestas
+              } else if (actions.length === 0 && clarifyQs.length === 0 && wantsFullProject(userText)) {
+                actions = fallbackActionsFromUserIntent(userText, state, 'create')
+              }
+              // Aplicar estilo worship → parche de batería si el modelo no emitió ACTIONS útiles
+              if (
+                styleApplyIntent &&
+                worshipEnhanceFallback.length > 0 &&
+                !actions.some((a) =>
+                  /^(midi\.notes\.(set|patch)|midi\.humanize|midi\.clip\.md\.apply)$/i.test(a.type),
+                )
+              ) {
+                actions = [...worshipEnhanceFallback, ...actions]
+                clarifyQs = []
+              }
+              // Suavizar / intro / toms / pads: forzar edición MIDI si el modelo solo puso setBpm
+              if (
+                (midiClipEditIntent || styleApplyIntent) &&
+                midiClipEditFallback.length > 0 &&
+                actionsLackMidiNoteEdits(actions)
+              ) {
+                actions = [
+                  ...actions.filter((a) => a.type !== 'daw.musicBuild' && a.type !== 'daw.composeProject'),
+                  ...midiClipEditFallback,
+                ]
+                clarifyQs = []
+              }
+              // Partir mega-clips en pedazos / secciones
+              if (
+                clipSectionSplitIntent &&
+                sectionSplitFallback.length > 0 &&
+                !actions.some((a) => a.type === 'midi.clip.splitIntoSections' || a.type === 'clip.split')
+              ) {
+                actions = [
+                  ...actions.filter((a) => a.type !== 'daw.musicBuild' && a.type !== 'daw.composeProject'),
+                  ...sectionSplitFallback,
+                ]
+                clarifyQs = []
+              }
+              // Si el modelo inventó ACTIONS inválidas pero hay forceBuild, garantizar musicBuild
+              if (forceBuild && !actions.some((a) => a.type === 'daw.musicBuild' || a.type === 'project.setBpm')) {
+                const mins = extractMinutesFromClarifyText(userText)
+                const genero = extractGenreFromClarifyText(userText)
+                const bpm =
+                  inferBpmFromTempoIntent(userText, state.project?.bpm?.valor ?? 120) ?? 72
+                actions = [
+                  { type: 'project.setBpm', payload: { bpm } },
+                  {
+                    type: 'daw.musicBuild',
+                    payload: {
+                      aplicar: true,
+                      prompt: userText.slice(0, 1500),
+                      minutos: mins ?? 3,
+                      ...(genero ? { genero } : {}),
+                      midiSource: 'ai',
+                      bpm,
+                    },
+                  },
+                  ...actions,
+                ]
+              }
+              // Solo tempo: si el modelo no emitió nada útil, bajar/subir BPM
+              if (
+                isTempoOnlyRefine(userText) &&
+                !actions.some((a) => a.type === 'project.setBpm')
+              ) {
+                const bpm =
+                  inferBpmFromTempoIntent(userText, state.project?.bpm?.valor ?? 120) ?? 72
+                actions = [{ type: 'project.setBpm', payload: { bpm } }, ...actions]
+                clarifyQs = []
+              }
+              // Refinar tempo+estilo: asegurar setBpm; corregir musicBuild a 120 si pidió más lenta
+              if (isSongRefineIntent(userText) && !isTempoOnlyRefine(userText)) {
+                const bpm =
+                  inferBpmFromTempoIntent(userText, state.project?.bpm?.valor ?? 120) ?? 72
+                if (!actions.some((a) => a.type === 'project.setBpm')) {
+                  actions = [{ type: 'project.setBpm', payload: { bpm } }, ...actions]
+                }
+                actions = actions.map((a) => {
+                  if (a.type !== 'daw.musicBuild') return a
+                  const p = (a.payload ?? {}) as Record<string, unknown>
+                  const modelBpm = typeof p.bpm === 'number' ? p.bpm : null
+                  if (modelBpm != null && modelBpm <= 100) return a
+                  return { ...a, payload: { ...p, bpm, aplicar: true } }
+                })
+              }
+              actions = ensureMusicBuildForFullProject(actions, userText, {
+                aplicar: resolvedMode === 'create' || forceBuild,
+              })
+              if (auditIntent || isStyleGapIntent(userText) || (resolvedMode === 'ask' && !styleApplyIntent)) {
+                actions = actions.filter((a) => a.type !== 'daw.musicBuild' && a.type !== 'daw.composeProject')
+              }
+              if (styleApplyIntent || midiClipEditIntent) {
+                // Evitar reconstruir canción entera: solo edición de groove / humanize
+                actions = actions.filter((a) => a.type !== 'daw.musicBuild' && a.type !== 'daw.composeProject')
               }
 
-              let text = stripActionsBlock(raw)
-              if (actions.length > 0) {
-                const results = await executeDawActions(dawStore, actions)
-                actionsSummary = formatActionResultsForUser(results)
-                if (!text.trim() || /ableton|logic pro|no puedo generar|<<<ACTIONS/i.test(text)) {
-                  text = 'Listo — cambios aplicados en JasWave.'
+              // Si pidió editar MIDI y aún no hay notes.set/patch, inyectar fallback otra vez
+              if (
+                (midiClipEditIntent || styleApplyIntent) &&
+                midiClipEditFallback.length > 0 &&
+                actionsLackMidiNoteEdits(actions)
+              ) {
+                actions = [...actions, ...midiClipEditFallback]
+              }
+
+              let text = stripProseClarifyLists(
+                stripChecklistBlock(
+                  sanitizeAssistantMarkdown(
+                    raw
+                      .replace(/<<<ACTIONS[\s\S]*?ACTIONS>>>/gi, '')
+                      .replace(/<<<PLAN[\s\S]*?PLAN>>>/gi, '')
+                      .replace(/<<<DOC[\s\S]*?DOC>>>/gi, ''),
+                  ),
+                ),
+              )
+              if (
+                (isGarbageAssistantReply(text) ||
+                  isOffTopicCreatePlanReply(userText, text) ||
+                  (isStyleGapIntent(userText) && /Auditor[ií]a MIDI|P[123]\s*[·:]/i.test(text))) &&
+                (auditIntent ||
+                  resolvedMode === 'ask' ||
+                  isProjectAuditIntent(userText) ||
+                  isStyleGapIntent(userText))
+              ) {
+                if (isStyleGapIntent(userText)) {
+                  text = buildStyleGapReport(state, { userText })
+                } else {
+                  text =
+                    midiAuditReport ||
+                    buildMidiAuditReport(state) ||
+                    [
+                      'No pude cerrar un informe útil en este intento.',
+                      'Reintenta el mismo pedido.',
+                    ].join('\n')
                 }
-                // Texto limpio; el resumen de acciones va aparte (actionsSummary), no duplicado
-                accumulated = text
+              }
+              // Si el modelo contestó poco o con jerga técnica en un style_gap, preferir el informe productor
+              if (
+                styleGapIntent &&
+                (isGarbageAssistantReply(text) ||
+                  /Auditor[ií]a MIDI|\*{0,2}P[123]\*{0,2}|🔴\s*P1|🟡\s*P2|🟢\s*P3|244\.0b|formulario/i.test(
+                    text,
+                  ) ||
+                  text.trim().length < 120)
+              ) {
+                text = styleGapSeed || buildStyleGapReport(state, { userText })
+              }
+              if (
+                (styleApplyIntent || midiClipEditIntent) &&
+                actions.some((a) => /midi\./i.test(a.type)) &&
+                (isGarbageAssistantReply(text) ||
+                  /Auditor[ií]a MIDI|gap analysis|Qué le falta|🔴\s*P1|P[123]\s*[·:(]/i.test(text) ||
+                  text.trim().length < 40)
+              ) {
+                text = midiClipEditIntent
+                  ? [
+                      'Voy a editar los **clips MIDI** (no solo el tempo):',
+                      '- Intro / groove de batería más suave (toms, platillos, build al redoblante si aplica)',
+                      '- Dinámicas más bajas donde pediste suavidad',
+                      '- Pads / capas ambientales si lo pediste',
+                      '',
+                      'Revisa la tarjeta **Aplicar** abajo.',
+                    ].join('\n')
+                  : [
+                      'Voy a acercar la **batería** al feel worship moderno (Averly Morillo):',
+                      '- Ghost notes suaves en la caja',
+                      '- Hats abiertos en tramos de “coro”',
+                      '- Fills + crashes cada 8 compases',
+                      '- Humanize leve del timing/velocidad',
+                      '',
+                      'Revisa la tarjeta **Aplicar** abajo. El resto de pistas (bajo, keys, pad, lead) las puedo adecuar en un segundo paso si quieres.',
+                    ].join('\n')
+              }
+              // Preguntas solo si aún no se respondió / no hay créalo
+              if (clarifyQs.length > 0 && !forceBuild) {
+                clarifications = { status: 'pending', questions: clarifyQs }
+                accumulated =
+                  text.trim() ||
+                  'Elige las opciones con los botones y pulsa Enviar respuestas. Si ninguna encaja, usa el campo del final.'
+              } else if (actions.length > 0) {
+                if (!stillMine()) throw new DOMException('Aborted', 'AbortError')
+                const modeForApply = forceBuild ? 'create' : resolvedMode
+                const wantStepChecklist =
+                  !modeBlocksMutation(modeForApply) &&
+                  (modeForApply === 'create' || modeForApply === 'auto' || forceBuild)
+
+                if (wantStepChecklist) {
+                  const checklist =
+                    parseChecklistFromText(raw) ?? buildChecklistFromActions(actions)
+                  const readonly = actions.filter((a) => !isMutatingAction(a))
+                  if (readonly.length) {
+                    lastResults = await executeDawActions(dawStore, readonly, {
+                      agentMode: modeForApply,
+                      forceApply: false,
+                      source: 'model_actions',
+                      conversationId: conversation.id,
+                      messageId: assistantMsgId,
+                    })
+                    docEdits = appendDocEdits(docEdits, lastResults)
+                  }
+                  if (checklist) {
+                    agentChecklist = checklist
+                    pendingActions = undefined
+                    actionsSummary = `Checklist: ${checklist.items.length} paso(s). Pulsa Continuar en cada uno.`
+                    accumulated =
+                      text.trim() ||
+                      'Tengo claro el plan. Revisa el checklist y pulsa **Continuar** para ejecutar cada paso en el DAW (sin perder el flujo).'
+                  } else {
+                    const out = await processActionsForMode({
+                      tienda: dawStore,
+                      actions,
+                      resolvedMode: modeForApply,
+                      userText,
+                      conversationId: conversation.id,
+                      messageId: assistantMsgId,
+                      source: 'model_actions',
+                    })
+                    lastResults = out.results
+                    docEdits = appendDocEdits(docEdits, out.results)
+                    pendingActions = out.pendingActions
+                    confirmActions = out.confirmActions
+                    ranMutations = out.ranMutations
+                    absorbTurnMeta(out, turnMeta)
+                    actionsSummary = formatActionResultsForUser(resultsOrPending(out))
+                    accumulated = text.trim() || 'Listo.'
+                  }
+                } else {
+                  const out = await processActionsForMode({
+                    tienda: dawStore,
+                    actions,
+                    resolvedMode: modeForApply,
+                    userText,
+                    conversationId: conversation.id,
+                    messageId: assistantMsgId,
+                    source: parseActionsFromText(raw).length ? 'model_actions' : 'fallback',
+                  })
+                  lastResults = out.results
+                  docEdits = appendDocEdits(docEdits, out.results)
+                  pendingActions = out.pendingActions
+                  confirmActions = out.confirmActions
+                  ranMutations = out.ranMutations
+                  absorbTurnMeta(out, turnMeta)
+                  actionsSummary = formatActionResultsForUser(resultsOrPending(out))
+                  if (!text.trim() || /ableton|logic pro|no puedo generar|<<<ACTIONS|<<<CLARIFY/i.test(text)) {
+                    text = out.pendingActions
+                      ? 'Listo: propuesta de Music Build. Revisa el diff y pulsa Aplicar.'
+                      : 'Listo.'
+                  }
+                  accumulated = text
+                }
               } else {
-                accumulated = text || 'Hecho.'
+                accumulated = text.trim() || midiAuditReport || 'Hecho.'
               }
               setAiStatus('online')
               setStatusDetail('')
             } else {
-              // Si el modelo falla pero el usuario pidió crear, igual generamos
-              const forced = fallbackActionsFromUserIntent(userText)
+              const forced =
+                (styleApplyIntent || midiClipEditIntent) &&
+                (midiClipEditFallback.length || worshipEnhanceFallback.length)
+                  ? [
+                      ...(midiClipEditFallback.length ? midiClipEditFallback : worshipEnhanceFallback),
+                    ]
+                  : fallbackActionsFromUserIntent(userText, state, agentMode)
               if (forced.length) {
-                const results = await executeDawActions(dawStore, forced)
-                actionsSummary = formatActionResultsForUser(results)
-                accumulated =
-                  'El modelo no respondió bien; apliqué la generación directamente en el DAW.'
+                const out = await processActionsForMode({
+                  tienda: dawStore,
+                  actions: forced,
+                  resolvedMode: styleApplyIntent || midiClipEditIntent ? 'create' : resolvedMode,
+                  userText,
+                  conversationId: conversation.id,
+                  messageId: assistantMsgId,
+                  source: 'fallback',
+                })
+                lastResults = out.results
+                docEdits = appendDocEdits(docEdits, out.results)
+                pendingActions = out.pendingActions
+                confirmActions = out.confirmActions
+                ranMutations = out.ranMutations
+                absorbTurnMeta(out, turnMeta)
+                actionsSummary = formatActionResultsForUser(resultsOrPending(out))
+                accumulated = styleApplyIntent || midiClipEditIntent
+                  ? [
+                      'El modelo no respondió bien; dejé lista la edición MIDI de los clips (groove / dinámica / pads según el pedido).',
+                      'Revisa **Aplicar** abajo.',
+                      actionsSummary,
+                    ].join('\n\n')
+                  : modeBlocksMutation(resolvedMode)
+                    ? `El modelo no devolvió texto usable; dejé una propuesta lista para Construir.\n\n${actionsSummary}`
+                    : `El modelo no devolvió texto usable; apliqué tu brief en el DAW.\n\n${actionsSummary}`
               } else {
-                accumulated = formatAiUserError({
+                accumulated =
+                  (auditIntent && midiAuditReport) ||
+                  formatAiUserError({
                   error: result.error || 'No se pudo obtener respuesta del modelo.',
-                  errorCode: result.errorCode as import('@/src/lib/ai-settings').AiErrorCode | undefined,
+                  errorCode: result.errorCode,
                   hint: result.hint,
                   provider: result.provider || provider.kind,
                 })
@@ -257,11 +1699,27 @@ export function CoProducerPanel() {
             }
           } catch (err) {
             const message = err instanceof Error ? err.message : 'Error de comunicación con el motor de IA'
-            const forced = fallbackActionsFromUserIntent(userText)
+            const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
             if (forced.length) {
-              const results = await executeDawActions(dawStore, forced)
-              actionsSummary = formatActionResultsForUser(results)
-              accumulated = 'Hubo un error de red con el modelo; apliqué la generación en el DAW.'
+              const out = await processActionsForMode({
+                tienda: dawStore,
+                actions: forced,
+                resolvedMode,
+                userText,
+                conversationId: conversation.id,
+                messageId: assistantMsgId,
+                source: 'fallback',
+              })
+              lastResults = out.results
+              docEdits = appendDocEdits(docEdits, out.results)
+              pendingActions = out.pendingActions
+              confirmActions = out.confirmActions
+              ranMutations = out.ranMutations
+              absorbTurnMeta(out, turnMeta)
+              actionsSummary = formatActionResultsForUser(resultsOrPending(out))
+              accumulated = modeBlocksMutation(resolvedMode)
+                ? 'Hubo un error de red; dejé una propuesta para Construir.'
+                : 'Hubo un error de red con el modelo; apliqué la generación en el DAW.'
             } else {
               accumulated = formatAiUserError({
                 error: message,
@@ -276,31 +1734,394 @@ export function CoProducerPanel() {
         }
       }
 
+      // Tras auditoría MIDI “técnica” (duplicados): formulario. NO en gap de estilo / Averill.
+      const auditRemediationEligible =
+        !isStyleGapIntent(userText) &&
+        (isProjectAuditIntent(userText) ||
+          /Revisión rápida del proyecto|Auditoría MIDI/i.test(accumulated) ||
+          Boolean(midiAuditReport)) &&
+        !wantsAuditFix &&
+        !isMidiAuditSkipFixReply(userText) &&
+        !pendingActions &&
+        !clarifications
+      if (auditRemediationEligible) {
+        const snap = dawStore.obtenerEstado()
+        const qs = buildMidiAuditClarifications(snap)
+        const fixes = buildMidiAuditFixActions(snap)
+        if (qs.length) {
+          clarifications = { status: 'pending', questions: qs as ClarificationQuestion[] }
+        }
+        if (fixes.length) {
+          setHarnessPhase('Preparando propuesta de arreglo…')
+          const out = await processActionsForMode({
+            tienda: dawStore,
+            actions: fixes as DawAction[],
+            resolvedMode: 'create',
+            userText,
+            conversationId: conversation.id,
+            messageId: assistantMsgId,
+            source: 'fallback',
+          })
+          pendingActions = out.pendingActions
+          confirmActions = out.confirmActions
+          absorbTurnMeta(out, turnMeta)
+          if (!actionsSummary) {
+            actionsSummary = formatActionResultsForUser(resultsOrPending(out))
+          }
+        }
+        if (auditIntent && midiAuditReport && !/Revisión rápida|Auditoría MIDI/i.test(accumulated)) {
+          accumulated = [accumulated, midiAuditReport].filter(Boolean).join('\n\n')
+        }
+        if (styleGapIntent && styleGapSeed && !/Qué le falta|gap de estilo|ghost notes/i.test(accumulated)) {
+          // Si el modelo no dejó respuesta usable, el seed productor es la respuesta
+          if (
+            !accumulated.trim() ||
+            /Auditor[ií]a MIDI|\*{0,2}P[123]\*{0,2}|🔴\s*P1|244\.0b|formulario/i.test(accumulated)
+          ) {
+            accumulated = styleGapSeed
+          }
+        }
+      }
+
+      const sidechainAppliedPre = lastResults.some((r) => r.type === 'sidechain.connect' && r.success)
+      if (!stillMine()) throw new DOMException('Aborted', 'AbortError')
+      const certifyPre = ranMutations
+        ? await runPostTurnCertifyPipeline(dawStore, lastResults, { sidechainApplied: sidechainAppliedPre })
+        : null
+      if (certifyPre) {
+        const { toStoredCertify } = await import('@/src/lib/agent-turn-undo')
+        turnCertify = toStoredCertify(certifyPre)
+      }
+      if (certifyPre && certifyPre.issues.length) {
+        actionsSummary = [actionsSummary, `Certify: ${certifyPre.issues.slice(0, 3).join('; ')}`]
+          .filter(Boolean)
+          .join('\n')
+      }
+      turnUndoDepthAtStart = turnMeta.undo
+      turnAppliedDiffSummary = turnMeta.diff
+      if (turnAppliedDiffSummary) {
+        actionsSummary = [turnAppliedDiffSummary, actionsSummary].filter(Boolean).join('\n')
+      }
+
+      const firstReview = finishAgentTurn(
+        dawStore.obtenerEstado().project.id,
+        dawStore.obtenerEstado(),
+        lastResults,
+        modelRaw,
+        {
+          forcePlanMd: modeBlocksMutation(resolvedMode) || Boolean(parsedPlanForDocs),
+          planFromModel: parsedPlanForDocs,
+          planEval: certifyPre?.planEval ?? null,
+          preferModelEval: true,
+        },
+      )
+      if (ranMutations && !agentChecklist && planHasPendingTasks(dawStore.obtenerEstado().project.id)) {
+        const harnessCtx: HarnessJobContext = {
+          userText,
+          initialResults: lastResults,
+          evaluation: certifyPre?.planEval ?? firstReview.evaluation,
+          actionsSummary,
+          conversationId: conversation.id,
+          messageId: assistantMsgId,
+        }
+        stashHarnessJobContext(harnessCtx)
+        enqueueAgentJob('harness-until-plan', dawStore.obtenerEstado().project.id)
+      }
+      if (firstReview.extra) {
+        actionsSummary = [actionsSummary, firstReview.extra].filter(Boolean).join('\n')
+      }
+      docEdits = mergeDocEdits(docEdits, firstReview.docEdits)
+
+      const canReview =
+        Boolean(window.electron?.aiChat) &&
+        !local &&
+        !ac.signal.aborted &&
+        ranMutations &&
+        !modeBlocksMutation(resolvedMode) &&
+        harnessReviewNeeded(lastResults) &&
+        (firstReview.mutated || Boolean(firstReview.evaluation))
+      if (canReview) {
+        try {
+          const cfg = loadAiSettings()
+          const provider = getActiveProvider(cfg)
+          const chatOnce = async (userContent: string) => {
+            if (ac.signal.aborted) return { success: false as const, content: '' }
+            const r = await window.electron!.aiChat!(
+              toAiChatPayload(
+                provider,
+                [
+                  { role: 'system', content: buildAgentSystemPrompt(dawStore.obtenerEstado(), userText, 'think', messages) },
+                  { role: 'user', content: userContent },
+                ],
+                { temperature: Math.max(cfg.temperature, 0.35), maxTokens: Math.min(cfg.maxTokens, 8192) },
+              ),
+            )
+            return { success: !!r.success, content: r.content }
+          }
+
+          setHarnessPhase('Inspeccionando el DAW…')
+          const sidechainApplied = lastResults.some(
+            (r) => r.type === 'sidechain.connect' && r.success,
+          )
+          const follow = await runHarnessFollowups({
+            userText,
+            initialResults: lastResults,
+            evaluation: firstReview.evaluation,
+            actionsSummary,
+            projectId: dawStore.obtenerEstado().project.id,
+            abort: ac.signal,
+            chat: chatOnce,
+            parseActions: parseActionsFromText,
+            execute: (actions) =>
+              executeDawActions(dawStore, actions, {
+                agentMode: 'create',
+                forceApply: true,
+                source: 'harness',
+                conversationId: conversation.id,
+                messageId: assistantMsgId,
+                respectModeGate: false,
+              }),
+            getState: () => dawStore.obtenerEstado(),
+            getHealthContext: () =>
+              buildHarnessHealthContext(dawStore, { sidechainApplied }),
+            afterTurn: (turnResults, raw) => {
+              const step = finishAgentTurn(
+                dawStore.obtenerEstado().project.id,
+                dawStore.obtenerEstado(),
+                turnResults,
+                raw,
+                { preferModelEval: true },
+              )
+              return step.evaluation ?? firstReview.evaluation
+            },
+            formatResults: formatActionResultsForUser,
+            onProgress: ({ turn, maxTurns, report }) => {
+              setHarnessPhase(formatHarnessProgress(turn, maxTurns, report))
+            },
+            preChat: async (repairPrompt) => {
+              try {
+                const { runAbbreviatedReasoning } = await import('@jaswave/ai-harness')
+                const { formatLibraryPresetsForContext } = await import('@/src/lib/library/ops')
+                const presetsBlock = await formatLibraryPresetsForContext(dawStore, 8)
+                const ctx = buildAssembledAgentContext(
+                  dawStore,
+                  dawStore.obtenerEstado(),
+                  userText,
+                  [],
+                  presetsBlock,
+                )
+                const brief = await runAbbreviatedReasoning({
+                  userText,
+                  mode: 'create',
+                  projectContext: ctx,
+                  repairContext: repairPrompt,
+                  chat: async (msgs) => chatOnce(msgs.find((m) => m.role === 'user')?.content ?? repairPrompt),
+                  runReadTools: async () => '(omitido en reparación)',
+                  abort: ac.signal,
+                })
+                return brief || repairPrompt
+              } catch {
+                return repairPrompt
+              }
+            },
+          })
+          lastResults = follow.results
+          docEdits = appendDocEdits(docEdits, follow.results)
+          actionsSummary = follow.actionsSummary
+          if (follow.text.trim()) {
+            accumulated = [accumulated, follow.text].filter(Boolean).join('\n\n')
+          }
+          const leftover = follow.lastReport.errors.map((e) => e.message)
+          if (follow.turns.length > 0 || follow.stoppedReason !== 'healthy') {
+            actionsSummary = [
+              actionsSummary,
+              formatHarnessStopLine(follow.stoppedReason, follow.turns.length, leftover),
+            ]
+              .filter(Boolean)
+              .join('\n')
+          }
+
+          if (!ac.signal.aborted && follow.stoppedReason !== 'aborted') {
+          const afterState = dawStore.obtenerEstado()
+          setHarnessPhase('Revisión vs plan.md…')
+          const reviewUser = buildHarnessReviewMessage({
+            userText,
+            evalSummary: follow.evaluation?.summary || firstReview.evaluation?.summary || firstReview.extra,
+            actionsSummary,
+            projectId: afterState.project.id,
+            evaluation: follow.evaluation ?? firstReview.evaluation,
+          })
+          const reviewResult = await window.electron.aiChat(
+            toAiChatPayload(
+              provider,
+              [
+                { role: 'system', content: buildAgentSystemPrompt(afterState, userText, 'think', messages) },
+                { role: 'user', content: reviewUser },
+              ],
+              { temperature: Math.max(cfg.temperature, 0.4), maxTokens: Math.min(cfg.maxTokens, 8192) },
+            ),
+          )
+          if (reviewResult.success && reviewResult.content?.trim()) {
+            const reviewRaw = reviewResult.content
+            const reviewActions = parseActionsFromText(reviewRaw)
+            let reviewResults: ActionResult[] = []
+            if (reviewActions.length) {
+              reviewResults = await executeDawActions(dawStore, reviewActions, {
+                agentMode: 'create',
+                forceApply: true,
+                source: 'harness',
+                conversationId: conversation.id,
+                messageId: assistantMsgId,
+                respectModeGate: false,
+              })
+              lastResults = [...lastResults, ...reviewResults]
+              docEdits = appendDocEdits(docEdits, reviewResults)
+            }
+            const second = finishAgentTurn(
+              dawStore.obtenerEstado().project.id,
+              dawStore.obtenerEstado(),
+              reviewResults,
+              reviewRaw,
+              { preferModelEval: true },
+            )
+            const reviewText = stripActionsBlock(reviewRaw)
+            if (reviewText.trim()) {
+              accumulated = [accumulated, reviewText].filter(Boolean).join('\n\n')
+            }
+            if (reviewResults.length) {
+              actionsSummary = [actionsSummary, formatActionResultsForUser(reviewResults), second.extra]
+                .filter(Boolean)
+                .join('\n')
+            } else if (second.extra) {
+              actionsSummary = [actionsSummary, second.extra].filter(Boolean).join('\n')
+            }
+            docEdits = mergeDocEdits(docEdits, second.docEdits)
+          }
+          }
+        } catch (err) {
+          const reviewErr = err instanceof Error ? err.message : 'Error en revisión del harness'
+          appendAiDawAudit({
+            conversationId: conversation.id,
+            messageId: assistantMsgId,
+            agentMode: resolvedMode,
+            tool: 'harness.review',
+            params: {},
+            status: 'failed',
+            source: 'harness',
+            result: { success: false, message: reviewErr },
+          })
+          accumulated = [accumulated, `⚠ Revisión del plan: ${reviewErr}`].filter(Boolean).join('\n\n')
+        }
+      }
+
+      const midiPreview = (() => {
+        const hit = lastResults.find(
+          (r) =>
+            r.success &&
+            r.type === 'daw.generateMidiSong' &&
+            (r.data as { kind?: string } | undefined)?.kind === 'midiPreview',
+        )
+        const data = hit?.data as MidiPreviewData | undefined
+        return data
+          ? { ...data, status: (data.applied ? 'applied' : 'pending') as 'applied' | 'pending' }
+          : undefined
+      })()
+      const midiClipMdPreview = (() => {
+        const hit = lastResults.find(
+          (r) =>
+            r.success &&
+            (r.type === 'midi.clip.md.upsert' || r.type === 'midi.clip.md.apply') &&
+            (r.data as { kind?: string } | undefined)?.kind === 'midiClipMdPreview',
+        )
+        const data = hit?.data as MidiClipMdPreviewData | undefined
+        if (!data) return undefined
+        if (!data.applied && data.notes?.length) {
+          void import('@/src/lib/ai-midi-proposal-store').then(({ publishMidiProposalFromMdPreview }) => {
+            publishMidiProposalFromMdPreview({
+              trackId: data.trackId,
+              clipId: data.clipId,
+              notes: data.notes,
+              label: data.nombre,
+              messageId: assistantMsgId,
+            })
+          })
+        }
+        return {
+          ...data,
+          status: (data.applied ? 'applied' : 'pending') as 'applied' | 'pending',
+        }
+      })()
+      const projectPlan = (() => {
+        const hit = lastResults.find(
+          (r) => r.type === 'daw.composeProject' && (r.data as { kind?: string } | undefined)?.kind === 'projectPlan',
+        )
+        const data = hit?.data as ProjectPlanData | undefined
+        return data
+          ? { ...data, status: (data.applied ? 'applied' : 'pending') as 'applied' | 'pending' }
+          : undefined
+      })()
+      const musicBuild = pickMusicBuild(lastResults)
+      const chatBody =
+        musicBuild && !musicBuild.applied
+          ? `Te preparé el plan de **${musicBuild.spec.nombre}** (${musicBuild.spec.tracks.length} pistas). Revisa la tarjeta y pulsa **Crear en el proyecto**.`
+          : musicBuild?.applied
+            ? `Listo: **${musicBuild.spec.nombre}** ya está en el arrange.`
+            : accumulated || '⚠️ Sin respuesta.'
       updateMessageContent(
         conversation.id,
         assistantMsgId,
-        accumulated || '⚠️ Sin respuesta.',
-        actionsSummary || undefined,
+        chatBody,
+        musicBuild ? undefined : actionsSummary || undefined,
+        midiPreview,
+        projectPlan,
+        musicBuild,
+        pendingActions,
+        confirmActions,
+        finalReasoningSteps,
+        docEdits.length ? docEdits : undefined,
+        midiClipMdPreview,
       )
+      patchMessage(conversation.id, assistantMsgId, {
+        ...(turnCertify ? { certify: turnCertify } : {}),
+        ...(turnUndoDepthAtStart != null ? { undoDepthAtStart: turnUndoDepthAtStart } : {}),
+        ...(turnAppliedDiffSummary ? { appliedDiffSummary: turnAppliedDiffSummary } : {}),
+        ...(clarifications ? { clarifications } : {}),
+        ...(agentChecklist ? { agentChecklist } : {}),
+      })
       const after = getConversation(conversation.id)
       if (after) setConversation(after)
       refreshHistoryList()
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
-      updateMessageContent(
-        conversation.id,
-        assistantMsgId,
-        formatAiUserError({
-          error: `Error al procesar: ${message}`,
-          errorCode: 'unknown',
-          hint: 'Inténtalo de nuevo.',
-        }),
-      )
-      const after = getConversation(conversation.id)
-      if (after) setConversation(after)
-      setStatusDetail(message)
+      const aborted =
+        (err instanceof DOMException && err.name === 'AbortError') ||
+        ac.signal.aborted ||
+        myEpoch !== genEpochRef.current
+      if (aborted) {
+        updateMessageContent(conversation.id, assistantMsgId, '⏹ Ejecución detenida.')
+        const after = getConversation(conversation.id)
+        if (after) setConversation(after)
+      } else {
+        const message = err instanceof Error ? err.message : 'Error desconocido'
+        updateMessageContent(
+          conversation.id,
+          assistantMsgId,
+          formatAiUserError({
+            error: `Error al procesar: ${message}`,
+            errorCode: 'unknown',
+            hint: 'Inténtalo de nuevo.',
+          }),
+        )
+        const after = getConversation(conversation.id)
+        if (after) setConversation(after)
+        setStatusDetail(message)
+      }
     } finally {
-      setIsGenerating(false)
+      if (myEpoch === genEpochRef.current) {
+        abortRef.current = null
+        setHarnessPhase('')
+        setIsGenerating(false)
+        liveAssistantMsgIdRef.current = null
+      }
     }
   }
 
@@ -325,15 +2146,73 @@ export function CoProducerPanel() {
         setIsGenerating(true)
         try {
           const state = dawStore.obtenerEstado()
-          if (/crea|midi|piano/i.test(userText)) {
-            const forced = fallbackActionsFromUserIntent(userText)
-            const results = await executeDawActions(dawStore, forced)
-            const summary = formatActionResultsForUser(results)
+          if (/crea|midi|piano|proyecto|plan/i.test(userText)) {
+            const forced = fallbackActionsFromUserIntent(userText, state, agentMode)
+            const resolvedMode = detectAgentMode(userText, agentMode)
+            const out = await processActionsForMode({
+              tienda: dawStore,
+              actions: forced,
+              resolvedMode,
+              userText,
+              conversationId: conversation.id,
+              messageId: assistantMsgId,
+              source: 'fallback',
+            })
+            const results = out.results
+            const firstReview = finishAgentTurn(
+              dawStore.obtenerEstado().project.id,
+              dawStore.obtenerEstado(),
+              results,
+            )
+            const quickDocEdits = mergeDocEdits(appendDocEdits([], results), firstReview.docEdits)
+            const summary = [formatActionResultsForUser(resultsOrPending(out)), firstReview.extra]
+              .filter(Boolean)
+              .join('\n')
+            const midiPreview = (() => {
+              const hit = results.find(
+                (r) =>
+                  r.success &&
+                  r.type === 'daw.generateMidiSong' &&
+                  (r.data as { kind?: string } | undefined)?.kind === 'midiPreview',
+              )
+              const data = hit?.data as MidiPreviewData | undefined
+              return data
+                ? { ...data, status: (data.applied ? 'applied' : 'pending') as 'applied' | 'pending' }
+                : undefined
+            })()
+            const projectPlan = (() => {
+              const hit = results.find(
+                (r) => r.type === 'daw.composeProject' && (r.data as { kind?: string } | undefined)?.kind === 'projectPlan',
+              )
+              return hit?.data as ProjectPlanData | undefined
+            })()
+            const musicBuild = pickMusicBuild(results)
             updateMessageContent(
               conversation.id,
               assistantMsgId,
-              ['He creado el material en el arrange de JasWave.', summary].join('\n\n'),
-              summary,
+              musicBuild
+                ? musicBuild.applied
+                  ? `Listo: **${musicBuild.spec.nombre}** ya está en el arrange.`
+                  : `Te preparé el plan de **${musicBuild.spec.nombre}** (${musicBuild.spec.tracks.length} pistas). Revisa la tarjeta y pulsa **Crear en el proyecto**.`
+                : projectPlan
+                ? projectPlan.applied
+                  ? `Proyecto aplicado: ${projectPlan.nombre}.`
+                  : `Plan listo: ${projectPlan.tracks.length} pistas. Revisa y aplica cuando quieras.`
+                : out.pendingActions
+                  ? 'Propuesta lista — pulsa Construir para aplicar.'
+                : midiPreview
+                  ? midiPreview.status === 'applied'
+                    ? `Clip aplicado: ${midiPreview.keyLabel}.`
+                    : 'Vista previa lista en el chat. Escucha y aplica cuando quieras.'
+                  : ['He creado el material en el arrange de JasWave.', summary].join('\n\n'),
+              musicBuild ? undefined : summary,
+              midiPreview,
+              projectPlan,
+              musicBuild,
+              out.pendingActions,
+              out.confirmActions,
+              undefined,
+              quickDocEdits.length ? quickDocEdits : undefined,
             )
           } else {
             const reply =
@@ -373,37 +2252,79 @@ export function CoProducerPanel() {
     )
 
   return (
-    <aside className="relative flex h-full w-full min-w-0 flex-col bg-panel">
-      <header className="flex items-center gap-2.5 border-b border-border px-3 py-2.5">
-        <JasWaveLogo className="h-10 w-auto max-w-[120px] shrink-0" alt="Asistente Jas" />
-        <div className="min-w-0 flex-1 truncate">
-          <h2 className="truncate text-[13px] font-semibold text-foreground">Asistente Jas</h2>
-          <p className="truncate text-[11px] text-muted-foreground" title={`${conversation.title} · ${modelLabel}`}>
-            {projectName} • {trackCount} pistas · {modelLabel}
-          </p>
+    <aside
+      ref={panelRootRef}
+      data-shortcut-scope="ignore"
+      data-chat-panel
+      data-coproducer-chat
+      tabIndex={-1}
+      onKeyDown={onChatZoomKeyDown}
+      onPointerDown={() => {
+        panelRootRef.current?.focus({ preventScroll: true })
+      }}
+      className="relative flex h-full w-full min-w-0 flex-col bg-panel outline-none"
+    >
+      <header className="flex flex-col gap-1.5 border-b border-border px-3 py-2">
+        <div className="flex items-center gap-2.5">
+          <JasWaveLogo className="h-10 w-auto max-w-[120px] shrink-0" alt="Asistente Jas" />
+          <div className="min-w-0 flex-1 truncate">
+            <h2 className="truncate text-[13px] font-semibold text-foreground">Asistente Jas</h2>
+            <p className="truncate text-[11px] text-muted-foreground">
+              {projectName} • {trackCount} pistas
+            </p>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              title="Alejar texto del chat (Ctrl+-)"
+              onClick={() => bumpChatTextZoom(-0.1)}
+              className="rounded p-1 text-muted-foreground hover:bg-panel-raised hover:text-foreground"
+            >
+              <ZoomOut className="size-3.5" />
+            </button>
+            <span className="min-w-[2.4rem] text-center text-[10px] tabular-nums text-muted-foreground">
+              {Math.round(chatTextZoom * 100)}%
+            </span>
+            <button
+              type="button"
+              title="Acercar texto del chat (Ctrl+=)"
+              onClick={() => bumpChatTextZoom(0.1)}
+              className="rounded p-1 text-muted-foreground hover:bg-panel-raised hover:text-foreground"
+            >
+              <ZoomIn className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              title="Copiar todo el chat"
+              disabled={!messages.length}
+              onClick={() => void copyEntireChat()}
+              className="rounded p-1.5 text-muted-foreground hover:bg-panel-raised hover:text-foreground disabled:opacity-40"
+            >
+              {copiedAll ? <Check className="size-4 text-accent-amber" /> : <Copy className="size-4" />}
+            </button>
+            {statusBadge}
+            <button
+              type="button"
+              title="Historial de chats"
+              onClick={() => {
+                refreshHistoryList()
+                setHistoryOpen((v) => !v)
+              }}
+              className={`rounded p-1.5 ${historyOpen ? 'bg-panel-raised text-foreground' : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'}`}
+            >
+              <History className="size-4" />
+            </button>
+            <button
+              type="button"
+              title="Nueva conversación"
+              onClick={startNewChat}
+              className="rounded p-1.5 text-muted-foreground hover:bg-panel-raised hover:text-foreground"
+            >
+              <MessageSquarePlus className="size-4" />
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-1">
-          {statusBadge}
-          <button
-            type="button"
-            title="Historial de chats"
-            onClick={() => {
-              refreshHistoryList()
-              setHistoryOpen((v) => !v)
-            }}
-            className={`rounded p-1.5 ${historyOpen ? 'bg-panel-raised text-foreground' : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'}`}
-          >
-            <History className="size-4" />
-          </button>
-          <button
-            type="button"
-            title="Nueva conversación"
-            onClick={startNewChat}
-            className="rounded p-1.5 text-muted-foreground hover:bg-panel-raised hover:text-foreground"
-          >
-            <MessageSquarePlus className="size-4" />
-          </button>
-        </div>
+        <AiModelPicker compact />
       </header>
 
       {historyOpen && (
@@ -445,6 +2366,7 @@ export function CoProducerPanel() {
               </div>
             ))
           )}
+          <AiAuditPanel />
         </div>
       )}
 
@@ -453,19 +2375,31 @@ export function CoProducerPanel() {
           {statusDetail}
         </div>
       ) : null}
+      {isGenerating && harnessPhase ? (
+        <div className="flex items-center gap-2 border-b border-border bg-accent-amber/10 px-3 py-1.5 text-[11px] text-accent-amber">
+          <Loader2 className="size-3 shrink-0 animate-spin" />
+          <span className="min-w-0 truncate">{harnessPhase}</span>
+        </div>
+      ) : null}
 
-      <div className="flex-1 space-y-4 overflow-y-auto p-4">
+      <div
+        data-coproducer-chat
+        data-chat-selectable
+        className="flex-1 space-y-4 overflow-y-auto p-4 select-text"
+        style={{ fontSize: `${chatFontPx}px` }}
+      >
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center p-4 text-center text-muted-foreground">
             <JasWaveLogo className="mb-3 h-28 w-auto max-w-[220px]" alt="JasWave" />
             <h3 className="mb-1 text-[14px] font-semibold text-foreground">Asistente Jas</h3>
             <p className="max-w-[280px] text-[12px]">
-              Puedo crear pistas y clips MIDI en el proyecto. El historial se guarda entre sesiones.
+              Puedo planear o crear el proyecto: pistas, VSTs y MIDI. Escribe @ para ver pistas, clips, plugins y acciones.
             </p>
             <div className="mt-4 flex flex-wrap justify-center gap-1.5">
               {[
                 'Resumen del proyecto',
-                'Crea una pista MIDI de piano suave en C mayor de 3 minutos',
+                'Haz un plan de un tema pop desde cero',
+                'Crea un clip MIDI en la pista seleccionada',
               ].map((s) => (
                 <button
                   key={s}
@@ -479,10 +2413,15 @@ export function CoProducerPanel() {
             </div>
           </div>
         ) : (
-          messages.map((msg: StoredChatMessage) => (
+          messages.map((msg: StoredChatMessage) => {
+            const canCopy = Boolean(formatMessageForCopy(msg).trim())
+            const copied = copiedMsgId === msg.id
+            return (
             <div
               key={msg.id}
-              className={`flex gap-2 text-[13px] ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              className={`group flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'} ${
+                citedIds.includes(msg.id) ? 'rounded-md ring-1 ring-accent-amber/60' : ''
+              }`}
             >
               {msg.role === 'assistant' && (
                 <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-panel-raised ring-1 ring-border">
@@ -490,23 +2429,215 @@ export function CoProducerPanel() {
                 </div>
               )}
               <div
-                className={`max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 leading-relaxed ${
-                  msg.role === 'user'
-                    ? 'rounded-br-none bg-accent text-accent-foreground'
-                    : 'rounded-bl-none border border-border bg-panel-raised text-foreground'
+                className={`flex max-w-[85%] min-w-0 flex-col gap-0.5 ${
+                  msg.role === 'user' ? 'items-end' : 'items-start'
                 }`}
               >
-                {msg.content ||
-                  (isGenerating && msg.role === 'assistant' ? (
-                    <span className="flex items-center gap-1.5 text-muted-foreground">
-                      <Loader2 className="size-3.5 animate-spin" /> Trabajando en el DAW…
-                    </span>
-                  ) : null)}
-                {msg.actionsSummary ? (
-                  <div className="mt-2 border-t border-border/60 pt-2 text-[11px] whitespace-pre-wrap text-emerald-400/90">
-                    {msg.actionsSummary}
+              <div
+                data-chat-selectable
+                className={`select-text rounded-lg px-3 py-2 leading-relaxed ${
+                  msg.role === 'user'
+                    ? 'cursor-text rounded-br-none bg-accent text-accent-foreground'
+                    : 'cursor-text rounded-bl-none border border-border bg-panel-raised text-foreground'
+                }`}
+              >
+                {msg.reasoningSteps?.length ? (
+                  <ReasoningStepsPanel
+                    steps={msg.reasoningSteps}
+                    defaultOpen={isGenerating && msg.id === messages.at(-1)?.id}
+                  />
+                ) : null}
+                {msg.content ? (
+                  <ChatMarkdown text={msg.content} />
+                ) : isGenerating && msg.role === 'assistant' ? (
+                  <span className="flex items-center gap-1.5 text-muted-foreground">
+                    <Loader2 className="size-3.5 animate-spin" /> {harnessPhase || 'Trabajando en el DAW…'}
+                  </span>
+                ) : null}
+                {msg.docEdits?.length ? <DocEditCards edits={msg.docEdits} /> : null}
+                {msg.citedMessageIds?.length ? (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {msg.citedMessageIds.map((id) => {
+                      const src = messages.find((m) => m.id === id)
+                      return (
+                        <span
+                          key={id}
+                          className={`rounded px-1.5 py-0.5 text-[10px] ${
+                            msg.role === 'user'
+                              ? 'bg-background/15 text-accent-foreground/80'
+                              : 'bg-muted text-muted-foreground'
+                          }`}
+                        >
+                          {src ? messagePreview(src.content, 28) : 'mensaje citado'}
+                        </span>
+                      )
+                    })}
                   </div>
                 ) : null}
+                {msg.actionsSummary && !msg.musicBuild ? (
+                  <div className="mt-2 border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
+                    <ChatMarkdown text={msg.actionsSummary} />
+                  </div>
+                ) : null}
+                {msg.clarifications?.questions?.length ? (
+                  <ClarificationCard
+                    questions={msg.clarifications.questions as ClarificationQuestion[]}
+                    status={msg.clarifications.status}
+                    onSubmit={(answers, formCustom) => {
+                      patchMessage(conversation.id, msg.id, {
+                        clarifications: {
+                          ...msg.clarifications!,
+                          status: 'answered',
+                        },
+                      })
+                      void handleSendMessage(
+                        formatClarificationAnswersForPrompt(
+                          msg.clarifications!.questions as ClarificationQuestion[],
+                          answers,
+                          formCustom,
+                        ),
+                      )
+                    }}
+                    onSkip={() => {
+                      patchMessage(conversation.id, msg.id, {
+                        clarifications: {
+                          ...msg.clarifications!,
+                          status: 'skipped',
+                        },
+                      })
+                      void handleSendMessage(
+                        'Usa defaults razonables según el plan y mi pedido. Emite <<<ACTIONS>>> ahora (propuesta para Aplicar). No preguntes más.',
+                      )
+                    }}
+                  />
+                ) : null}
+                {msg.agentChecklist?.items?.length ? (
+                  <AgentChecklistCard
+                    conversationId={conversation.id}
+                    messageId={msg.id}
+                    checklist={msg.agentChecklist}
+                    agentMode={agentMode}
+                    onChange={() => {
+                      const after = getConversation(conversation.id)
+                      if (after) setConversation(after)
+                    }}
+                  />
+                ) : null}
+                {msg.pendingActions ? (
+                  <PendingActionsCard
+                    conversationId={conversation.id}
+                    messageId={msg.id}
+                    cardId={`pending-actions-${msg.id}`}
+                    actions={msg.pendingActions.actions}
+                    agentMode={msg.pendingActions.agentMode}
+                    status={msg.pendingActions.status}
+                    previewDiff={msg.pendingActions.previewDiff}
+                    previewSummary={msg.pendingActions.previewSummary}
+                    actionStatuses={msg.pendingActions.actionStatuses}
+                    checklistStepId={msg.pendingActions.checklistStepId}
+                    onDone={() => {
+                      const after = getConversation(conversation.id)
+                      if (after) setConversation(after)
+                    }}
+                  />
+                ) : null}
+                {msg.appliedDiffSummary && !msg.pendingActions ? (
+                  <div className="mt-2 rounded-md border border-emerald-900/40 bg-emerald-950/20 px-2.5 py-1.5 text-[11px] text-emerald-300/90">
+                    {msg.appliedDiffSummary}
+                  </div>
+                ) : null}
+                {msg.certify ? <TurnCertifyBadges certify={msg.certify} /> : null}
+                {msg.role === 'assistant' && (msg.undoDepthAtStart != null || msg.reverted) ? (
+                  <RevertTurnButton
+                    conversationId={conversation.id}
+                    messageId={msg.id}
+                    undoDepthAtStart={msg.undoDepthAtStart}
+                    reverted={msg.reverted}
+                    onDone={() => {
+                      const after = getConversation(conversation.id)
+                      if (after) setConversation(after)
+                    }}
+                  />
+                ) : null}
+                {msg.confirmActions ? (
+                  <DestructiveConfirmCard
+                    conversationId={conversation.id}
+                    messageId={msg.id}
+                    actions={msg.confirmActions.actions}
+                    reason={msg.confirmActions.reason}
+                    status={msg.confirmActions.status}
+                    onDone={() => {
+                      const after = getConversation(conversation.id)
+                      if (after) setConversation(after)
+                    }}
+                  />
+                ) : null}
+                {msg.role === 'assistant' ? <AiAuditPanel messageId={msg.id} compact /> : null}
+                {msg.midiPreview ? (
+                  <MidiGenerationPreview
+                    preview={msg.midiPreview}
+                    status={msg.midiPreview.status ?? 'pending'}
+                  />
+                ) : null}
+                {msg.midiClipMdPreview ? (
+                  <MidiClipMdPreview
+                    preview={msg.midiClipMdPreview}
+                    status={msg.midiClipMdPreview.status ?? 'pending'}
+                    onStatusChange={(s) => {
+                      patchMessage(conversation.id, msg.id, {
+                        midiClipMdPreview: { ...msg.midiClipMdPreview!, status: s, applied: s === 'applied' },
+                      })
+                      const after = getConversation(conversation.id)
+                      if (after) setConversation(after)
+                    }}
+                  />
+                ) : null}
+                {msg.projectPlan ? (
+                  <ProjectPlanPreview
+                    plan={msg.projectPlan}
+                    status={msg.projectPlan.status ?? 'pending'}
+                  />
+                ) : null}
+                {msg.musicBuild ? (
+                  <MusicBuildPreview
+                    build={msg.musicBuild}
+                    status={msg.musicBuild.applied ? 'applied' : 'pending'}
+                    conversationId={conversation.id}
+                    messageId={msg.id}
+                    onApplied={() => {
+                      const after = getConversation(conversation.id)
+                      if (after) setConversation(after)
+                    }}
+                  />
+                ) : null}
+              </div>
+              {canCopy ? (
+                <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  title={copied ? 'Copiado' : 'Copiar mensaje completo (incluye razonamiento)'}
+                  aria-label={copied ? 'Mensaje copiado' : 'Copiar mensaje completo'}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => void copyChatMessage(msg)}
+                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-panel-raised hover:text-foreground"
+                >
+                  {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+                  {copied ? 'Copiado' : 'Copiar'}
+                </button>
+                <button
+                  type="button"
+                  title="Citar este mensaje (el hilo actual se conserva)"
+                  aria-label="Citar mensaje"
+                  onClick={() => citeMessage(msg)}
+                  className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] hover:bg-panel-raised hover:text-foreground ${
+                    citedIds.includes(msg.id) ? 'text-accent-amber' : 'text-muted-foreground'
+                  }`}
+                >
+                  <Quote className="size-3" />
+                  Citar
+                </button>
+                </div>
+              ) : null}
               </div>
               {msg.role === 'user' && (
                 <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
@@ -514,34 +2645,202 @@ export function CoProducerPanel() {
                 </div>
               )}
             </div>
-          ))
+            )
+          })
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="border-t border-border p-3">
+      {pendingProposal ? (
+        <div className="flex items-center gap-2 border-t border-accent-amber/40 bg-accent-amber/10 px-3 py-2">
+          <GitCompare className="size-3.5 shrink-0 text-accent-amber" />
+          <span className="min-w-0 flex-1 truncate text-[11px] text-foreground">
+            Hay {pendingProposal.count} cambio{pendingProposal.count === 1 ? '' : 's'} por aprobar
+          </span>
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-accent-amber/50 px-2 py-1 text-[10px] font-medium text-accent-amber hover:bg-accent-amber/15"
+            onClick={() => {
+              const el = document.getElementById(pendingProposal.cardId)
+              el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            }}
+          >
+            Ver propuesta
+          </button>
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-amber px-2 py-1 text-[10px] font-semibold text-background"
+            onClick={() => {
+              const el = document.getElementById(pendingProposal.cardId)
+              el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              requestAnimationFrame(() => {
+                const applyBtn = Array.from(el?.querySelectorAll('button') ?? []).find((b) =>
+                  /Aplicar seleccionadas/i.test(b.textContent ?? ''),
+                )
+                applyBtn?.click()
+              })
+            }}
+          >
+            <Hammer className="size-3" />
+            Aplicar
+          </button>
+        </div>
+      ) : null}
+
+      <div className="relative border-t border-border p-3">
+        {citedMessages.length > 0 ? (
+          <div className="mb-2 flex flex-wrap gap-1">
+            {citedMessages.map((m) => (
+              <span
+                key={m.id}
+                className="flex max-w-full items-center gap-1 rounded-full border border-accent-amber/40 bg-accent-amber/10 px-2 py-0.5 text-[10px] text-accent-amber"
+              >
+                <Quote className="size-2.5 shrink-0" />
+                <span className="truncate">
+                  {m.role === 'user' ? 'Tú' : 'Jas'}: {messagePreview(m.content, 36)}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Quitar cita"
+                  title="Quitar cita"
+                  onClick={() => setCitedIds((ids) => ids.filter((id) => id !== m.id))}
+                  className="rounded-full p-0.5 hover:bg-accent-amber/20"
+                >
+                  <X className="size-2.5" />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {mentionQuery != null ? (
+          <div className="absolute inset-x-3 bottom-full z-20 mb-1 max-h-64 overflow-y-auto rounded-md border border-border bg-panel-raised shadow-lg">
+            {mentionHits.length === 0 ? (
+              <div className="px-3 py-2 text-[11px] text-muted-foreground">Sin coincidencias</div>
+            ) : (
+              mentionGroups.map((g) => (
+                <div key={g.kind}>
+                  <div className="sticky top-0 bg-panel-raised px-3 py-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {g.label}
+                  </div>
+                  {g.items.map((item) => {
+                    const flatIndex = mentionHits.indexOf(item)
+                    const active = flatIndex === mentionIndex
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          insertMention(item)
+                        }}
+                        className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] ${
+                          active ? 'bg-accent-amber/20' : 'hover:bg-accent-amber/15'
+                        }`}
+                      >
+                        <span className="truncate text-foreground">
+                          {item.kind === 'action' || item.kind === 'mode' || item.kind === 'message'
+                            ? item.label
+                            : `@${item.label}`}
+                        </span>
+                        <span className="max-w-[45%] shrink-0 truncate text-[10px] text-muted-foreground">
+                          {item.hint}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
         <form
           onSubmit={(e) => {
             e.preventDefault()
+            setMentionQuery(null)
             void handleSendMessage()
           }}
-          className="flex items-center gap-2 rounded-lg bg-panel-raised px-3 py-2 ring-1 ring-border focus-within:ring-2 focus-within:ring-ring"
+          className="flex flex-col gap-1.5"
         >
-          <input
+          {selectionLabel ? (
+            <div className="flex items-center gap-2 rounded-md bg-accent-amber/10 px-2 py-1 text-[11px] text-foreground ring-1 ring-accent-amber/40">
+              <Quote className="size-3 shrink-0 text-accent-amber" />
+              <span className="min-w-0 flex-1 truncate" title={selectionLabel}>
+                Contexto: {selectionLabel}
+              </span>
+              <button
+                type="button"
+                className="shrink-0 text-muted-foreground hover:text-foreground"
+                title="Quitar selección del contexto"
+                onClick={() => {
+                  clearMusicalSelectionAnchor()
+                  setSelectionLabel('')
+                  setInputMessage((prev) => prev.replace(/\[selección:[^\]]*\]\s*/g, ''))
+                }}
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          ) : null}
+          <div className="flex items-end gap-2 rounded-lg bg-panel-raised px-2 py-2 ring-1 ring-border focus-within:ring-2 focus-within:ring-ring">
+          <AgentModePicker value={agentMode} onChange={setAgentMode} />
+          <textarea
+            ref={inputRef}
+            rows={1}
             value={inputMessage}
-            onChange={(e) => setInputMessage(e.target.value)}
+            onChange={(e) => onInputChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+            onKeyUp={(e) => onInputChange(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setMentionQuery(null)
+                if (isGenerating) stopGeneration()
+              }
+              if (e.key === 'Enter' && !e.shiftKey && mentionQuery == null) {
+                e.preventDefault()
+                setMentionQuery(null)
+                void handleSendMessage()
+                return
+              }
+              if (mentionQuery != null && mentionHits.length > 0) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setMentionIndex((i) => Math.min(mentionHits.length - 1, i + 1))
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setMentionIndex((i) => Math.max(0, i - 1))
+                } else if (e.key === 'Enter') {
+                  e.preventDefault()
+                  insertMention(mentionHits[mentionIndex] ?? mentionHits[0]!)
+                } else if (e.key === 'Tab') {
+                  e.preventDefault()
+                  insertMention(mentionHits[mentionIndex] ?? mentionHits[0]!)
+                }
+              }
+            }}
             disabled={isGenerating}
-            placeholder="Pide crear MIDI, pistas, o pregunta por el proyecto…"
-            className="flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
+            placeholder="Pide un clip, o @ / Ctrl+L selección… (Shift+Enter nueva línea)"
+            className="max-h-40 min-h-[2rem] flex-1 resize-none bg-transparent py-1 text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
           />
-          <button
-            type="submit"
-            disabled={!inputMessage.trim() || isGenerating}
-            aria-label="Enviar mensaje"
-            className="flex size-7 items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-90 disabled:opacity-40"
-          >
-            {isGenerating ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
-          </button>
+          {isGenerating ? (
+            <button
+              type="button"
+              onClick={stopGeneration}
+              aria-label="Detener agente"
+              title="Detener"
+              className="flex size-7 items-center justify-center rounded-full bg-destructive text-destructive-foreground transition-opacity hover:opacity-90"
+            >
+              <Square className="size-3 fill-current" />
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={!inputMessage.trim()}
+              aria-label="Enviar mensaje"
+              className="flex size-7 items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              <ArrowUp className="size-4" />
+            </button>
+          )}
+          </div>
         </form>
       </div>
     </aside>

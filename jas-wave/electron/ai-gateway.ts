@@ -12,6 +12,19 @@ export type AiProviderKind =
   | 'kilocode'
   | 'openai-compatible'
 
+export type AiApiStyle = 'openai' | 'anthropic' | 'gemini' | 'ollama'
+export type AiAuthStyle = 'bearer' | 'x-api-key' | 'none'
+
+export type AiProviderCustom = {
+  apiStyle?: AiApiStyle
+  chatPath?: string
+  modelsPath?: string
+  appendV1?: boolean
+  authStyle?: AiAuthStyle
+  extraHeaders?: Record<string, string>
+  needsApiKey?: boolean
+}
+
 export type AiErrorCode =
   | 'missing_api_key'
   | 'missing_model'
@@ -21,8 +34,10 @@ export type AiErrorCode =
   | 'unauthorized'
   | 'forbidden'
   | 'rate_limit'
+  | 'service_unavailable'
   | 'model_not_found'
   | 'bad_request'
+  | 'payment_required'
   | 'provider_error'
   | 'empty_response'
   | 'not_available'
@@ -38,12 +53,14 @@ export type AiChatRequest = {
   apiKey?: string
   temperature?: number
   maxTokens?: number
+  custom?: AiProviderCustom
 }
 
 export type AiHealthRequest = {
   kind: AiProviderKind
   baseUrl: string
   apiKey?: string
+  custom?: AiProviderCustom
 }
 
 export type AiChatResult = {
@@ -67,6 +84,48 @@ export type AiHealthResult = {
 }
 
 const DEFAULT_TIMEOUT_MS = 90_000
+/** Reintentos ante 429/503 u otros fallos transitorios del gateway. */
+const MAX_CHAT_RETRIES = 4
+const RETRY_BASE_MS = 1500
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Cola global: evita ráfagas concurrentes que saturan gateways (p.ej. Kilo Code). */
+let chatQueue: Promise<void> = Promise.resolve()
+let lastChatFinishedAt = 0
+
+function minGapBetweenChatsMs(kind: AiProviderKind): number {
+  if (kind === 'ollama') return 0
+  if (kind === 'kilocode') return 2000
+  return 1000
+}
+
+function isRetriableErrorCode(code: AiErrorCode | undefined): boolean {
+  return (
+    code === 'rate_limit' ||
+    code === 'service_unavailable' ||
+    code === 'timeout' ||
+    code === 'connection'
+  )
+}
+
+function extractProviderMessage(body: string): string {
+  const trimmed = body.trim()
+  if (!trimmed.startsWith('{')) return body.replace(/\s+/g, ' ').slice(0, 280)
+  try {
+    const data = JSON.parse(trimmed) as {
+      error?: { message?: string; type?: string }
+      message?: string
+    }
+    const msg = data.error?.message ?? data.message
+    if (typeof msg === 'string' && msg.trim()) return msg.trim()
+  } catch {
+    /* ignore */
+  }
+  return body.replace(/\s+/g, ' ').slice(0, 280)
+}
 
 function hintFor(code: AiErrorCode, kind?: AiProviderKind): string {
   switch (code) {
@@ -87,11 +146,17 @@ function hintFor(code: AiErrorCode, kind?: AiProviderKind): string {
     case 'forbidden':
       return 'Tu cuenta no tiene permiso para este modelo o región.'
     case 'rate_limit':
-      return 'Límite de peticiones alcanzado. Espera unos segundos e inténtalo de nuevo.'
+      return 'Límite de peticiones alcanzado. JasWave reintenta automáticamente; si persiste, espera 30 s.'
+    case 'service_unavailable':
+      return kind === 'kilocode'
+        ? 'El gateway Kilo Code limita peticiones seguidas (JasWave hace varias por mensaje). Reintenta en unos segundos o espera entre mensajes.'
+        : 'El proveedor está temporalmente saturado. Espera unos segundos e inténtalo de nuevo.'
     case 'model_not_found':
       return 'El modelo no existe o no está disponible. Verifica el nombre exacto.'
     case 'bad_request':
       return 'Revisa el nombre del modelo, la URL y los parámetros.'
+    case 'payment_required':
+      return 'Sin crédito en este modelo. Activa Auto (fallback) o elige un modelo gratuito en el selector.'
     case 'empty_response':
       return 'El proveedor respondió vacío. Prueba otro modelo.'
     default:
@@ -135,16 +200,54 @@ function normalizeBase(url: string): string {
   return String(url || '').trim().replace(/\/$/, '')
 }
 
-function needsKey(kind: AiProviderKind): boolean {
+function needsKey(kind: AiProviderKind, custom?: AiProviderCustom): boolean {
+  if (custom?.needsApiKey != null) return custom.needsApiKey
   return kind !== 'ollama' && kind !== 'openai-compatible'
 }
 
+function joinUrl(base: string, path: string): string {
+  const b = normalizeBase(base)
+  const p = path.startsWith('/') ? path : `/${path}`
+  return `${b}${p}`
+}
+
+function applyAuthHeaders(
+  headers: Record<string, string>,
+  apiKey: string | undefined,
+  kind: AiProviderKind,
+  custom?: AiProviderCustom,
+): void {
+  const style = custom?.authStyle ?? (apiKey?.trim() ? 'bearer' : 'none')
+  const key = apiKey?.trim()
+  if (style === 'bearer' && key) headers.Authorization = `Bearer ${key}`
+  if (style === 'x-api-key' && key) headers['x-api-key'] = key
+  if (custom?.extraHeaders) {
+    for (const [k, v] of Object.entries(custom.extraHeaders)) {
+      if (k && typeof v === 'string') headers[k] = v
+    }
+  }
+  if (kind === 'openrouter') {
+    headers['HTTP-Referer'] = headers['HTTP-Referer'] || 'https://jaswave.app'
+    headers['X-Title'] = headers['X-Title'] || 'JasWave'
+  }
+}
+
 function mapHttpStatus(status: number, body: string, kind: AiProviderKind): AiChatResult {
-  const snippet = body.replace(/\s+/g, ' ').slice(0, 280)
+  const snippet = extractProviderMessage(body)
+  if (status === 402) {
+    return fail(
+      `Sin crédito / pago requerido (${status}). ${snippet || 'Add credits or switch to a free model.'}`,
+      'payment_required',
+      kind,
+    )
+  }
   if (status === 401) return fail(`No autorizado (${status}). ${snippet}`, 'unauthorized', kind)
   if (status === 403) return fail(`Acceso denegado (${status}). ${snippet}`, 'forbidden', kind)
   if (status === 404) return fail(`Recurso no encontrado (${status}). ${snippet}`, 'model_not_found', kind)
   if (status === 429) return fail(`Límite de tasa (${status}). ${snippet}`, 'rate_limit', kind)
+  if (status === 502 || status === 503 || status === 504) {
+    return fail(`Servicio no disponible (${status}). ${snippet}`, 'service_unavailable', kind)
+  }
   if (status >= 400 && status < 500) return fail(`Petición inválida (${status}). ${snippet}`, 'bad_request', kind)
   return fail(`Error del proveedor (${status}). ${snippet}`, 'provider_error', kind)
 }
@@ -178,7 +281,7 @@ function validateRequest(req: AiChatRequest): AiChatResult | null {
   if (!req.kind) return fail('Falta el tipo de proveedor.', 'bad_request', 'openai-compatible')
   if (!normalizeBase(req.baseUrl)) return fail('Falta la URL base del proveedor.', 'missing_base_url', req.kind)
   if (!String(req.model || '').trim()) return fail('Falta el modelo.', 'missing_model', req.kind)
-  if (needsKey(req.kind) && !String(req.apiKey || '').trim()) {
+  if (needsKey(req.kind, req.custom) && !String(req.apiKey || '').trim()) {
     return fail(`El proveedor ${req.kind} requiere API key.`, 'missing_api_key', req.kind)
   }
   if (!Array.isArray(req.messages) || req.messages.length === 0) {
@@ -191,23 +294,29 @@ function isOpenAiCompatible(kind: AiProviderKind): boolean {
   return kind === 'openai' || kind === 'openrouter' || kind === 'kilocode' || kind === 'openai-compatible'
 }
 
-function openAiBase(url: string): string {
+/**
+ * Base URL para clientes OpenAI-compatible.
+ * Kilo usa `…/api/gateway` (sin /v1). OpenAI/OpenRouter suelen necesitar /v1.
+ * `custom.appendV1` tiene prioridad.
+ */
+function openAiBase(url: string, kind?: AiProviderKind, custom?: AiProviderCustom): string {
   const base = normalizeBase(url)
-  return base.endsWith('/v1') ? base : `${base}/v1`
+  if (custom?.appendV1 === true) return /\/v1$/i.test(base) ? base : `${base}/v1`
+  if (custom?.appendV1 === false) return base
+  if (kind === 'kilocode') return base
+  if (/\/v1$/i.test(base) || /\/gateway$/i.test(base)) return base
+  return `${base}/v1`
 }
 
 async function chatOpenAiCompatible(req: AiChatRequest): Promise<AiChatResult> {
-  const base = openAiBase(req.baseUrl)
+  const base = openAiBase(req.baseUrl, req.kind, req.custom)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (req.apiKey?.trim()) headers.Authorization = `Bearer ${req.apiKey.trim()}`
-  if (req.kind === 'openrouter') {
-    headers['HTTP-Referer'] = 'https://jaswave.app'
-    headers['X-Title'] = 'JasWave'
-  }
+  applyAuthHeaders(headers, req.apiKey, req.kind, req.custom)
 
+  const chatPath = req.custom?.chatPath?.trim() || '/chat/completions'
   let res: Response
   try {
-    res = await fetchWithTimeout(`${base}/chat/completions`, {
+    res = await fetchWithTimeout(joinUrl(base, chatPath), {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -227,7 +336,7 @@ async function chatOpenAiCompatible(req: AiChatRequest): Promise<AiChatResult> {
 
   let data: {
     choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>
-    error?: { message?: string }
+    error?: { message?: string; type?: string; statusCode?: number }
   }
   try {
     data = JSON.parse(text)
@@ -236,7 +345,14 @@ async function chatOpenAiCompatible(req: AiChatRequest): Promise<AiChatResult> {
   }
 
   if (data.error?.message) {
-    return fail(data.error.message, 'provider_error', req.kind)
+    const errType = String(data.error.type ?? '')
+    const code: AiErrorCode =
+      errType.includes('service_unavailable') || data.error.statusCode === 503
+        ? 'service_unavailable'
+        : errType.includes('rate_limit') || data.error.statusCode === 429
+          ? 'rate_limit'
+          : 'provider_error'
+    return fail(data.error.message, code, req.kind)
   }
 
   const raw = data.choices?.[0]?.message?.content
@@ -391,7 +507,40 @@ export async function aiChat(req: AiChatRequest): Promise<AiChatResult> {
   const invalid = validateRequest(req)
   if (invalid) return invalid
 
+  let result!: AiChatResult
+  const run = async () => {
+    const gap = minGapBetweenChatsMs(req.kind)
+    if (gap > 0) {
+      const wait = Math.max(0, lastChatFinishedAt + gap - Date.now())
+      if (wait > 0) await sleep(wait)
+    }
+    result = await aiChatWithRetry(req)
+    lastChatFinishedAt = Date.now()
+  }
+  chatQueue = chatQueue.then(run, run)
+  await chatQueue
+  return result
+}
+
+async function aiChatWithRetry(req: AiChatRequest): Promise<AiChatResult> {
+  let last: AiChatResult = fail('Sin respuesta del proveedor.', 'unknown', req.kind)
+  for (let attempt = 0; attempt <= MAX_CHAT_RETRIES; attempt++) {
+    last = await aiChatOnce(req)
+    if (last.success) return last
+    if (!isRetriableErrorCode(last.errorCode) || attempt === MAX_CHAT_RETRIES) return last
+    const delay = RETRY_BASE_MS * 2 ** attempt + Math.floor(Math.random() * 500)
+    await sleep(delay)
+  }
+  return last
+}
+
+async function aiChatOnce(req: AiChatRequest): Promise<AiChatResult> {
+  const style = req.custom?.apiStyle
   try {
+    if (style === 'ollama' || (!style && req.kind === 'ollama')) return await chatOllama(req)
+    if (style === 'anthropic' || (!style && req.kind === 'anthropic')) return await chatAnthropic(req)
+    if (style === 'gemini' || (!style && req.kind === 'gemini')) return await chatGemini(req)
+    if (style === 'openai' || (!style && isOpenAiCompatible(req.kind))) return await chatOpenAiCompatible(req)
     if (req.kind === 'ollama') return await chatOllama(req)
     if (req.kind === 'anthropic') return await chatAnthropic(req)
     if (req.kind === 'gemini') return await chatGemini(req)
@@ -403,15 +552,16 @@ export async function aiChat(req: AiChatRequest): Promise<AiChatResult> {
 }
 
 async function healthOpenAi(req: AiHealthRequest): Promise<AiHealthResult> {
-  if (needsKey(req.kind) && !req.apiKey?.trim()) {
+  if (needsKey(req.kind, req.custom) && !req.apiKey?.trim()) {
     return healthFail(`El proveedor ${req.kind} requiere API key.`, 'missing_api_key', req.kind, 'misconfigured')
   }
-  const base = openAiBase(req.baseUrl)
+  const base = openAiBase(req.baseUrl, req.kind, req.custom)
   const headers: Record<string, string> = {}
-  if (req.apiKey?.trim()) headers.Authorization = `Bearer ${req.apiKey.trim()}`
+  applyAuthHeaders(headers, req.apiKey, req.kind, req.custom)
 
+  const modelsPath = req.custom?.modelsPath?.trim() || '/models'
   try {
-    const res = await fetchWithTimeout(`${base}/models`, { method: 'GET', headers }, 20_000)
+    const res = await fetchWithTimeout(joinUrl(base, modelsPath), { method: 'GET', headers }, 20_000)
     const text = await res.text()
     if (!res.ok) {
       const mapped = mapHttpStatus(res.status, text, req.kind)
@@ -524,7 +674,12 @@ export async function aiHealth(req: AiHealthRequest): Promise<AiHealthResult> {
   if (!normalizeBase(req.baseUrl)) {
     return healthFail('Falta la URL base.', 'missing_base_url', req.kind, 'misconfigured')
   }
+  const style = req.custom?.apiStyle
   try {
+    if (style === 'ollama' || (!style && req.kind === 'ollama')) return await healthOllama(req)
+    if (style === 'anthropic' || (!style && req.kind === 'anthropic')) return await healthAnthropic(req)
+    if (style === 'gemini' || (!style && req.kind === 'gemini')) return await healthGemini(req)
+    if (style === 'openai' || (!style && isOpenAiCompatible(req.kind))) return await healthOpenAi(req)
     if (req.kind === 'ollama') return await healthOllama(req)
     if (req.kind === 'anthropic') return await healthAnthropic(req)
     if (req.kind === 'gemini') return await healthGemini(req)

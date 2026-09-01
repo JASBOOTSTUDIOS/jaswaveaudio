@@ -17,6 +17,7 @@ import {
 import {
   crearComandoTrackCreate,
   crearComandoTrackDelete,
+  crearComandoTrackMove,
   crearComandoTrackRestore,
   crearComandoTrackUpdate,
   crearComandoTrackToggleMute,
@@ -44,16 +45,20 @@ import {
   crearComandoMidiSetCc,
   crearComandoMidiSetPitchBend,
   crearComandoClipDelete,
+  crearComandoClipMerge,
   crearComandoClipRestore,
   crearComandoClipMove,
   crearComandoClipResize,
   crearComandoClipSplit,
+  crearComandoMidiClipSplitIntoSections,
   crearComandoTransportToggle,
   crearComandoTransportStop,
   crearComandoTransportSeek,
   crearComandoTransportToggleLoop,
   crearComandoTransportToggleMetronome,
   crearComandoTransportToggleRecord,
+  crearComandoTransportTogglePunch,
+  crearComandoTransportToggleCountIn,
   crearComandoProjectSetBpm,
 } from '../commands/domain-commands';
 import {
@@ -71,6 +76,46 @@ import {
   crearComandoSelectionClear,
   crearComandoUiSetPalette,
 } from '../commands/selection-commands';
+import {
+  crearComandoPluginInsert,
+  crearComandoPluginRemove,
+  crearComandoPluginMove,
+  crearComandoPluginBypass,
+  crearComandoPluginDuplicate,
+  crearComandoPluginReplace,
+  crearComandoPluginSetParameter,
+  crearComandoFxChainCopy,
+  crearComandoFxChainPaste,
+  crearComandoFxChainPasteUndo,
+  crearComandoFxChainLoadPreset,
+  crearComandoFxChainSavePreset,
+} from '../commands/plugin-commands';
+import {
+  crearComandoRenderStart,
+  crearComandoRenderCancel,
+  crearComandoRenderGetStatus,
+} from '../commands/render-commands';
+import {
+  crearComandoAnalysisLoudness,
+  crearComandoAnalysisCompareTarget,
+  crearComandoAnalysisSpectrum,
+  crearComandoAnalysisStereo,
+  crearComandoAnalysisFullReport,
+} from '../commands/analysis-commands';
+import {
+  crearComandoAutomationSetCurve,
+  crearComandoAutomationClear,
+  crearComandoAutomationWritePoint,
+} from '../commands/automation-commands';
+import {
+  crearComandoBusCreate,
+  crearComandoSendSet,
+  crearComandoSidechainConnect,
+} from '../commands/routing-commands';
+import {
+  crearComandoTrackFreeze,
+  crearComandoTrackUnfreeze,
+} from '../commands/freeze-commands';
 
 /**
  * Crea un evento de dominio estandarizado para el bus.
@@ -115,6 +160,7 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoProjectSetBpm(), registry);
   registrar(crearComandoTrackCreate(), registry);
   registrar(crearComandoTrackDelete(), registry);
+  registrar(crearComandoTrackMove(), registry);
   registrar(crearComandoTrackRestore(), registry);
   registrar(crearComandoTrackUpdate(), registry);
   registrar(crearComandoTrackToggleMute(), registry);
@@ -142,16 +188,20 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoMidiSetCc(), registry);
   registrar(crearComandoMidiSetPitchBend(), registry);
   registrar(crearComandoClipDelete(), registry);
+  registrar(crearComandoClipMerge(), registry);
   registrar(crearComandoClipRestore(), registry);
   registrar(crearComandoClipMove(), registry);
   registrar(crearComandoClipResize(), registry);
   registrar(crearComandoClipSplit(), registry);
+  registrar(crearComandoMidiClipSplitIntoSections(), registry);
   registrar(crearComandoTransportToggle(), registry);
   registrar(crearComandoTransportStop(), registry);
   registrar(crearComandoTransportSeek(), registry);
   registrar(crearComandoTransportToggleLoop(), registry);
   registrar(crearComandoTransportToggleMetronome(), registry);
   registrar(crearComandoTransportToggleRecord(), registry);
+  registrar(crearComandoTransportTogglePunch(), registry);
+  registrar(crearComandoTransportToggleCountIn(), registry);
   registrar(crearComandoAtajoListar(), registry);
   registrar(crearComandoAtajoActualizar(), registry);
   registrar(crearComandoAtajoRestaurar(), registry);
@@ -168,6 +218,34 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoSelectionSet(), registry);
   registrar(crearComandoSelectionClear(), registry);
   registrar(crearComandoUiSetPalette(), registry);
+  registrar(crearComandoPluginInsert(), registry);
+  registrar(crearComandoPluginRemove(), registry);
+  registrar(crearComandoPluginMove(), registry);
+  registrar(crearComandoPluginBypass(), registry);
+  registrar(crearComandoPluginDuplicate(), registry);
+  registrar(crearComandoPluginReplace(), registry);
+  registrar(crearComandoPluginSetParameter(), registry);
+  registrar(crearComandoFxChainCopy(), registry);
+  registrar(crearComandoFxChainPaste(), registry);
+  registrar(crearComandoFxChainPasteUndo(), registry);
+  registrar(crearComandoFxChainLoadPreset(), registry);
+  registrar(crearComandoFxChainSavePreset(), registry);
+  registrar(crearComandoRenderStart(), registry);
+  registrar(crearComandoRenderCancel(), registry);
+  registrar(crearComandoRenderGetStatus(), registry);
+  registrar(crearComandoAnalysisLoudness(), registry);
+  registrar(crearComandoAnalysisCompareTarget(), registry);
+  registrar(crearComandoAnalysisSpectrum(), registry);
+  registrar(crearComandoAnalysisStereo(), registry);
+  registrar(crearComandoAnalysisFullReport(), registry);
+  registrar(crearComandoAutomationSetCurve(), registry);
+  registrar(crearComandoAutomationClear(), registry);
+  registrar(crearComandoAutomationWritePoint(), registry);
+  registrar(crearComandoBusCreate(), registry);
+  registrar(crearComandoSendSet(), registry);
+  registrar(crearComandoSidechainConnect(), registry);
+  registrar(crearComandoTrackFreeze(), registry);
+  registrar(crearComandoTrackUnfreeze(), registry);
 }
 /**
  * Alias de `registrarComandosBuiltin` para registrar comandos de proyecto.

@@ -461,6 +461,17 @@ export const ACTION_CATALOG: readonly ActionDefinition[] = [
     defaultShortcuts: ['5'],
   },
 
+  {
+    id: 'ai.askSelection',
+    name: 'Preguntar a Jas sobre selección',
+    description: 'Ancla las notas MIDI seleccionadas al chat (Ctrl+L)',
+    category: 'AI',
+    context: 'global',
+    risk: 'read',
+    aliases: ['ia.preguntarSeleccion', 'ventana.preguntarSeleccion'],
+    defaultShortcuts: ['Ctrl+L'],
+  },
+
   // Window
   {
     id: 'window.commandPalette',
@@ -481,6 +492,16 @@ export const ACTION_CATALOG: readonly ActionDefinition[] = [
     risk: 'read',
     aliases: ['ventana.atajos'],
     defaultShortcuts: ['Ctrl+Shift+,'],
+  },
+  {
+    id: 'window.midiMap',
+    name: 'Control MIDI / MIDI Learn',
+    description: 'Asigna notas, CC y teclas a comandos, mixer, sustain y plugins',
+    category: 'MIDI',
+    context: 'global',
+    risk: 'write',
+    aliases: ['ventana.midiMap', 'ventana.controlMidi'],
+    defaultShortcuts: ['Ctrl+Shift+M'],
   },
   {
     id: 'window.toggleLeft',
