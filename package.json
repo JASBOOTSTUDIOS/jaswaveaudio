@@ -12,6 +12,8 @@
     "test": "cd shared && npm test && cd ../ai-harness && npm test",
     "test:harness": "cd ai-harness && npm test",
     "certify": "cd jas-wave && npm run cli:certify:quick",
+    "soak:4h": "cd jas-wave && npm run cli:soak-host:4h",
+    "soak:30": "cd jas-wave && npm run cli:soak-host:30",
     "typecheck": "cd shared && npm run typecheck",
     "native:build": "cd native/audio-engine && npm install && npm run build",
     "native:roles-vst": "cd jas-wave && npm run native:roles-vst",

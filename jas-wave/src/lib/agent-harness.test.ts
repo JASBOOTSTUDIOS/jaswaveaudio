@@ -14,7 +14,12 @@ import {
 import type { HarnessActionResult } from '@jaswave/ai-harness'
 import type { DAWState } from '../../../shared/src/types/state'
 
-function midiState(opts: { nombre: string; notes: number; tipo?: 'midi' | 'audio' }): DAWState {
+function midiState(opts: {
+  nombre: string
+  notes: number
+  tipo?: 'midi' | 'audio'
+  markers?: Array<{ nombre: string; tiempo: number }>
+}): DAWState {
   const notas = Array.from({ length: opts.notes }, (_, i) => ({ pitch: 60, inicio: i, duracion: 0.5 }))
   return {
     project: {
@@ -25,10 +30,15 @@ function midiState(opts: { nombre: string; notes: number; tipo?: 'midi' | 'audio
           tipo: opts.tipo ?? 'midi',
           plugins: [],
           clips: opts.notes
-            ? [{ id: 'c1', nombre: 'Clip', notas }]
-            : [{ id: 'c1', nombre: 'Clip', notas: [] }],
+            ? [{ id: 'c1', nombre: 'Clip', inicio: 0, duracion: 16, notas }]
+            : [{ id: 'c1', nombre: 'Clip', inicio: 0, duracion: 16, notas: [] }],
         },
       ],
+      marcadores: (opts.markers ?? []).map((m) => ({
+        nombre: m.nombre,
+        tiempo: m.tiempo,
+        tipo: 'marcador',
+      })),
     },
   } as unknown as DAWState
 }
@@ -41,7 +51,7 @@ describe('agent-harness producción', () => {
     assert.equal(harnessShouldRepair(report), false)
   })
 
-  it('marca acciones fallidas y MIDI vacío tras generar', () => {
+  it('marca acciones fallidas; clips vacíos no son empty-midi', () => {
     const results: HarnessActionResult[] = [
       { type: 'midi.clip.create', success: true, message: 'clip' },
       { type: 'plugin.insert', success: false, message: 'VST no carga' },
@@ -49,7 +59,7 @@ describe('agent-harness producción', () => {
     const report = inspectDawHealth(midiState({ nombre: 'Lead', notes: 0 }), results, null)
     assert.equal(harnessShouldRepair(report), true)
     assert.ok(report.errors.some((e) => e.code === 'action-failed'))
-    assert.ok(report.errors.some((e) => e.code === 'empty-midi'))
+    assert.equal(report.errors.some((e) => e.code === 'empty-midi'), false)
   })
 
   it('marca instrumento faltante tras un musicBuild y plugins en error', () => {
@@ -231,7 +241,15 @@ describe('agent-harness producción', () => {
         n += 1
         return [{ type: 'midi.notes.set', success: true, message: 'notas' }]
       },
-      getState: () => midiState({ nombre: 'Bajo', notes: n > 0 ? 12 : 0 }),
+      getState: () => {
+        const st = midiState({
+          nombre: 'Bajo',
+          notes: n > 0 ? 12 : 0,
+          markers: [{ nombre: 'Tema', tiempo: 0 }],
+        })
+        st.project!.tracks[0]!.plugins = [{ nombre: 'JasWave Roles', estado: 'cargado' } as never]
+        return st
+      },
       formatResults: () => '✓ notas',
     })
     assert.equal(out.stoppedReason, 'healthy')

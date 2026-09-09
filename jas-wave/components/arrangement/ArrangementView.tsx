@@ -21,6 +21,7 @@ import { ChannelFxBank } from '@/components/channel-fx-bank'
 import { TrackMidiInput } from '@/components/track-midi-input'
 import { TrackAudioInput } from '@/components/track-audio-input'
 import { TrackContextMenu, type TrackMenuState } from './TrackContextMenu'
+import { TakeLanesPanel } from '@/components/take-lanes-panel'
 import { ClipContextMenu, type ClipMenuState } from './ClipContextMenu'
 import { clipsInLassoRect, type ClipLassoRect } from '@/src/lib/arrange-clip-lasso'
 import type { PluginInfo } from '../../../shared/src/types/entidades'
@@ -135,6 +136,7 @@ export function ArrangementView() {
   const [deleteConfirmTrack, setDeleteConfirmTrack] = useState<string | null>(null)
   const [trackMenu, setTrackMenu] = useState<TrackMenuState | null>(null)
   const [clipMenu, setClipMenu] = useState<ClipMenuState | null>(null)
+  const [takeLanesTrackId, setTakeLanesTrackId] = useState<string | null>(null)
   const [clipLasso, setClipLasso] = useState<ClipLassoRect | null>(null)
   const clipLassoActiveRef = useRef(false)
   const [dragTrackId, setDragTrackId] = useState<string | null>(null)
@@ -833,6 +835,7 @@ export function ArrangementView() {
           setImportTargetTrack(trackId)
           addTrackFileRef.current?.click()
         }}
+        onShowTakeLanes={(trackId) => setTakeLanesTrackId(trackId)}
         trackIndex={
           trackMenu
             ? tracks.findIndex((t) => t.id === trackMenu.trackId)
@@ -841,6 +844,11 @@ export function ArrangementView() {
         trackCount={tracks.length}
       />
       <ClipContextMenu menu={clipMenu} onClose={() => setClipMenu(null)} tienda={tienda} />
+      {takeLanesTrackId ? (
+        <div className="fixed bottom-4 right-4 z-[180] w-[min(420px,92vw)]">
+          <TakeLanesPanel pistaId={takeLanesTrackId} onClose={() => setTakeLanesTrackId(null)} />
+        </div>
+      ) : null}
       <input
         type="file"
         ref={addTrackFileRef}

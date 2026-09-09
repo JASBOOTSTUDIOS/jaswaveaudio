@@ -78,6 +78,7 @@ import {
 } from '../commands/selection-commands';
 import {
   crearComandoPluginInsert,
+  crearComandoPluginUpdate,
   crearComandoPluginRemove,
   crearComandoPluginMove,
   crearComandoPluginBypass,
@@ -116,6 +117,16 @@ import {
   crearComandoTrackFreeze,
   crearComandoTrackUnfreeze,
 } from '../commands/freeze-commands';
+import {
+  crearComandoTakeFolderEnsure,
+  crearComandoTakeAdd,
+  crearComandoTakeDelete,
+  crearComandoTakeRename,
+  crearComandoTakePreview,
+  crearComandoCompSegmentSet,
+  crearComandoCompSegmentClear,
+  crearComandoTransportSetRecordMode,
+} from '../commands/take-commands';
 
 /**
  * Crea un evento de dominio estandarizado para el bus.
@@ -219,6 +230,7 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoSelectionClear(), registry);
   registrar(crearComandoUiSetPalette(), registry);
   registrar(crearComandoPluginInsert(), registry);
+  registrar(crearComandoPluginUpdate(), registry);
   registrar(crearComandoPluginRemove(), registry);
   registrar(crearComandoPluginMove(), registry);
   registrar(crearComandoPluginBypass(), registry);
@@ -246,6 +258,14 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoSidechainConnect(), registry);
   registrar(crearComandoTrackFreeze(), registry);
   registrar(crearComandoTrackUnfreeze(), registry);
+  registrar(crearComandoTakeFolderEnsure(), registry);
+  registrar(crearComandoTakeAdd(), registry);
+  registrar(crearComandoTakeDelete(), registry);
+  registrar(crearComandoTakeRename(), registry);
+  registrar(crearComandoTakePreview(), registry);
+  registrar(crearComandoCompSegmentSet(), registry);
+  registrar(crearComandoCompSegmentClear(), registry);
+  registrar(crearComandoTransportSetRecordMode(), registry);
 }
 /**
  * Alias de `registrarComandosBuiltin` para registrar comandos de proyecto.

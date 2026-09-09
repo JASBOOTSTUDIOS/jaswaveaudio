@@ -598,6 +598,7 @@ export function syncReaperTrackGraph(
       activo?: boolean
       origenTrackId: string
       destinoTrackId: string
+      destinoSlotId?: string
       cantidad?: number
     }>
     buses?: Array<{ id: string }>
@@ -628,7 +629,7 @@ export function syncReaperTrackGraph(
     sendsBySrc.set(send.origenTrackId, list)
   }
 
-  const sidechainsByDest = new Map<string, Array<{ srcStem: number; amount: number }>>()
+  const sidechainsByDest = new Map<string, Array<{ srcStem: number; amount: number; destSlotId?: string }>>()
   for (const sc of routing?.sidechains ?? []) {
     if (sc.activo === false) continue
     const amount = Math.max(0, Math.min(1, Number(sc.cantidad ?? 1)))
@@ -636,7 +637,7 @@ export function syncReaperTrackGraph(
     const srcStem = stemByTrackId.get(sc.origenTrackId)
     if (srcStem == null) continue
     const list = sidechainsByDest.get(sc.destinoTrackId) ?? []
-    list.push({ srcStem, amount })
+    list.push({ srcStem, amount, destSlotId: sc.destinoSlotId })
     sidechainsByDest.set(sc.destinoTrackId, list)
   }
 

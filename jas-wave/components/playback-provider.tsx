@@ -14,6 +14,7 @@ import { audioEngine, type AudioClipPlaybackInfo, type MidiClipPlaybackInfo, typ
 import type { AudioClip } from '../../shared/src/types/clips'
 import { beatsASegundos, segundosABeats } from '@/lib/audio-conversions'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
+import { safeProjectBpm } from '../../shared/src'
 import { useImportProgress } from '@/src/context/import-progress-context'
 import { extractStereoPeaks, packStereoPeaks } from '@/lib/stereo-peaks'
 import { nativeAudioBridge } from '@/src/lib/native-audio-bridge'
@@ -33,6 +34,7 @@ import {
   recordingBasename,
   saveRecordingWav,
 } from '@/src/lib/audio-recording-persist'
+import { scheduleCompPlayback } from '@/src/lib/comp-playback'
 import {
   ensureProjectVstInstruments,
   getLoadedInstrumentForTrack,
@@ -171,6 +173,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   const importProgress = useImportProgress()
   const transportStatePlaying = useDAWState((s) => Boolean(s.transport?.reproduciendo))
   const transportGrabacion = useDAWState((s) => s.transport?.grabacion)
+  const transportModoGrabacion = useDAWState((s) => s.transport?.modoGrabacion ?? 'normal')
   const transportLoopActivo = useDAWState((s) => Boolean(s.transport?.loop?.activo))
   const transportMetronomo = useDAWState((s) => Boolean(s.transport?.metronomo?.activo))
   const transportPosSegundos = useDAWState((s) => s.transport?.posicion?.segundos ?? 0)
@@ -214,7 +217,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       }
     })
   }, [sharedTracks])
-  const projectBpm = useDAWState((s) => s.project?.bpm?.valor ?? 120)
+  const projectBpm = useDAWState((s) => safeProjectBpm(s))
   const masterState = useDAWState((s) => s.project?.master)
   const timeSignatureNum = useDAWState((s) => s.project?.timeSignature?.numerador ?? 4)
   const timeSignatureDen = useDAWState((s) => s.project?.timeSignature?.denominador ?? 4)
@@ -645,6 +648,15 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       console.warn('[playback] MIDI con notas pero sin slots VST', { noteN, tracks: freshTracks.length })
     }
     audioEngine.playClips(startMs / 1000, playbackClips, cfg0, midiClips, BPM)
+    const stComp = tienda.obtenerEstado()
+    if ((stComp.project.takeFolders ?? []).some((f) => f.segments.length > 0 || f.takeActivoId)) {
+      const stemByTrackId = new Map(freshTracks.map((t, i) => [t.id, i]))
+      void scheduleCompPlayback(stComp, {
+        startSec: startMs / 1000,
+        sampleRate: audioEngine.getSampleRate(),
+        stemByTrackId,
+      })
+    }
     void loadP.then(() => {
       const cfg = trackAudioConfig()
       audioEngine.applyTracksConfig(cfg)
@@ -1034,19 +1046,53 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
             audioEngine.setAudioBuffer(sourceId, buffer)
           }
           for (const trackId of trackIds) {
-            await tienda.executor.execute('clip.create', {
-              pistaId: trackId,
-              nombre: 'Grabación',
-              inicio: clipStart,
-              duracion: durationBeats,
-              sourceId,
-              waveform,
-            })
+            const modo = tienda.obtenerEstado().transport?.modoGrabacion ?? 'normal'
+            if (modo === 'comping') {
+              await tienda.executor.execute('take.folder.ensure', { pistaId: trackId })
+              const added = await tienda.executor.execute('take.add', {
+                pistaId: trackId,
+                archivo: sourceId,
+                nombre: `Take ${Date.now().toString(36).slice(-4)}`,
+                inicioGrabacion: clipStart,
+                finGrabacion: clipStart + durationBeats,
+                sampleRate: buffer.sampleRate,
+                bitDepth: 24,
+                canales: buffer.numberOfChannels,
+              })
+              const takeId = (added.result as { takeId?: string })?.takeId
+              if (takeId) {
+                await tienda.executor.execute('comp.segment.set', {
+                  pistaId: trackId,
+                  takeId,
+                  timelineInicio: clipStart,
+                  timelineFin: clipStart + durationBeats,
+                  origenInicio: 0,
+                  origenFin: durationSec,
+                })
+              }
+              await tienda.executor.execute('clip.create', {
+                pistaId: trackId,
+                nombre: `Take`,
+                inicio: clipStart,
+                duracion: durationBeats,
+                sourceId,
+                waveform,
+              })
+            } else {
+              await tienda.executor.execute('clip.create', {
+                pistaId: trackId,
+                nombre: 'Grabación',
+                inicio: clipStart,
+                duracion: durationBeats,
+                sourceId,
+                waveform,
+              })
+            }
           }
         }
       })()
     }
-  }, [recording, satellite, sharedTracks, tienda, BPM, projectRuta, BEATS_PER_BAR])
+  }, [recording, satellite, sharedTracks, tienda, BPM, projectRuta, BEATS_PER_BAR, transportModoGrabacion])
 
   const toggleLooping = useCallback(() => {
     void tienda.executor.execute('transport.toggleLoop', {})

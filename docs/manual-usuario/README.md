@@ -27,6 +27,7 @@ Guía práctica para producir música en JasWave: interfaz, transporte, arrange,
 | 10 | [Atajos de teclado](./10-atajos.md) | Tabla completa + personalización |
 | 11 | [Flujos prácticos](./11-flujos-practicos.md) | Recetas de punta a punta |
 | 12 | [Solución de problemas](./12-solucion-problemas.md) | Silencio, ASIO, cuarentena, ffmpeg |
+| 13 | [Terminal](./13-terminal.md) | CLI en español, sesiones, split |
 
 ## Qué puedes esperar (y qué no)
 

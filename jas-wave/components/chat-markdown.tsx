@@ -1,4 +1,92 @@
-import { Fragment, type ReactNode } from 'react'
+import { createContext, Fragment, useContext, type ReactNode } from 'react'
+import { Hammer } from 'lucide-react'
+import { MermaidDiagram } from '@/components/mermaid-diagram'
+
+export type MarkdownVariant = 'chat' | 'doc'
+
+export type DocMdActions = {
+  onRunTask?: (task: string) => void
+  onRunSection?: (heading: string) => void
+}
+
+const DocMdActionsContext = createContext<DocMdActions | null>(null)
+
+/** Solo secciones accionables en el DAW (tareas). Intención/meta no llevan «Hacer». */
+function canRunHeading(title: string, level: number): boolean {
+  if (level < 2) return false
+  if (/^Notas del usuario$/i.test(title)) return false
+  if (/^Evaluación$/i.test(title)) return false
+  if (/^Intención$/i.test(title)) return false
+  if (/^(Qué se busca|Forma|Pistas previstas|Último pedido)$/i.test(title)) return false
+  if (/^Implementado$/i.test(title)) return false
+  if (/^Intención vs|^Por implementar \(|^Implementado en el DAW|^Criterios/i.test(title)) return false
+  // Por implementar / En curso / secciones de canción (Intro, Verso…)
+  return /^(Por implementar|En curso)$/i.test(title) || level === 2 || level === 3
+}
+
+function DocRunButton({
+  label,
+  onClick,
+}: {
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onClick()
+      }}
+      className="doc-md-run"
+    >
+      <Hammer className="size-3" />
+      Hacer
+    </button>
+  )
+}
+
+function DocHeadingRow({
+  level,
+  title,
+  children,
+}: {
+  level: 1 | 2 | 3 | 4 | 5 | 6
+  title: string
+  children: ReactNode
+}) {
+  const actions = useContext(DocMdActionsContext)
+  const Tag = (`h${level}`) as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6'
+  const run = actions?.onRunSection && canRunHeading(title, level)
+  return (
+    <div className="doc-md-heading-row">
+      <Tag>{children}</Tag>
+      {run ? <DocRunButton label={`Hacer «${title}»`} onClick={() => actions.onRunSection!(title)} /> : null}
+    </div>
+  )
+}
+
+function DocTaskItem({
+  text,
+  done,
+  children,
+}: {
+  text: string
+  done: boolean
+  children: ReactNode
+}) {
+  const actions = useContext(DocMdActionsContext)
+  return (
+    <li className="doc-md-task">
+      {children}
+      {!done && actions?.onRunTask ? (
+        <DocRunButton label={`Hacer: ${text}`} onClick={() => actions.onRunTask!(text)} />
+      ) : null}
+    </li>
+  )
+}
 
 /**
  * Markdown ligero para el chat del Asistente Jas.
@@ -17,37 +105,76 @@ export function sanitizeAssistantMarkdown(text: string): string {
   t = t.replace(/<<<DOC\s*[\s\S]*?\s*DOC>>>/gi, '')
   // Marcadores sueltos / truncados
   t = t.replace(/<<<(?:INTENT|READ|ACTIONS|CLARIFY|PLAN|DOC)\b[\s\S]*?(?:>>>|$)/gi, '')
+  t = t.replace(/Escribe solo el pensamiento de ESTA capa[^\n]*/gi, '')
+  t = t.replace(/<<<READY_FOR_GAP_REPORT>>>/gi, '')
+  t = t.replace(/^#{1,3}\s*Capa\s+\d+\s*\/\s*\d+[^\n]*/gim, '')
+  t = t.replace(/^\s*Pedido canónico \(capa[^\n]*/gim, '')
   t = t.replace(/^\s*Consult[eé]:\s*[^\n]*$/gim, '')
   t = t.replace(/\n{3,}/g, '\n\n').trim()
   return t
 }
 
-export function ChatMarkdown({ text }: { text: string }) {
+export function ChatMarkdown({
+  text,
+  variant = 'chat',
+}: {
+  text: string
+  variant?: MarkdownVariant
+}) {
   if (!text) return null
-  const clean = sanitizeAssistantMarkdown(text)
+  const clean = variant === 'doc' ? text.replace(/\r\n/g, '\n') : sanitizeAssistantMarkdown(text)
   if (!clean) return null
   const blocks = splitFences(clean)
+  const isDoc = variant === 'doc'
   return (
-    <div className="chat-md select-text space-y-2 text-[1em] leading-relaxed">
-      {blocks.map((block, i) =>
-        block.type === 'code' ? (
-          <pre
-            key={i}
-            className="overflow-x-auto rounded-md bg-background/80 px-2.5 py-2 font-mono text-[0.85em] leading-snug text-foreground ring-1 ring-border"
-          >
-            <code>{block.content}</code>
-          </pre>
-        ) : (
+    <div
+      className={
+        isDoc
+          ? 'doc-md select-text break-words'
+          : 'chat-md select-text space-y-2 break-words text-[1em] leading-relaxed'
+      }
+    >
+      {blocks.map((block, i) => {
+        if (block.type === 'code') {
+          if (isDoc && (block.lang || '').toLowerCase() === 'mermaid') {
+            return <MermaidDiagram key={i} source={block.content} />
+          }
+          return (
+            <pre
+              key={i}
+              className={
+                isDoc
+                  ? 'doc-md-code'
+                  : 'overflow-x-auto rounded-md bg-background/80 px-2.5 py-2 font-mono text-[0.85em] leading-snug text-foreground ring-1 ring-border'
+              }
+            >
+              <code>{block.content}</code>
+            </pre>
+          )
+        }
+        if (isDoc) {
+          return <div key={i}>{renderBlock(block.content, 'doc')}</div>
+        }
+        return (
           <div key={i} className="space-y-1.5">
             {block.content.split(/\n{2,}/).map((para, j) => (
               <div key={j} className="whitespace-pre-wrap break-words">
-                {renderBlock(para.trim())}
+                {renderBlock(para.trim(), 'chat')}
               </div>
             ))}
           </div>
-        ),
-      )}
+        )
+      })}
     </div>
+  )
+}
+
+/** Preview de documento (Docs): tipografía tipo Cursor / VS Code. */
+export function DocMarkdown({ text, actions }: { text: string; actions?: DocMdActions }) {
+  return (
+    <DocMdActionsContext.Provider value={actions ?? null}>
+      <ChatMarkdown text={text} variant="doc" />
+    </DocMdActionsContext.Provider>
   )
 }
 
@@ -98,7 +225,7 @@ function splitTableCells(line: string): string[] {
     .map((c) => c.trim())
 }
 
-function renderBlock(text: string): ReactNode[] {
+function renderBlock(text: string, variant: MarkdownVariant = 'chat'): ReactNode[] {
   const lines = text.split('\n')
   const nodes: ReactNode[] = []
   let listBuf: Array<{ kind: 'ul' | 'ol'; text: string; checked?: boolean; n?: number }> = []
@@ -112,30 +239,49 @@ function renderBlock(text: string): ReactNode[] {
       <Tag
         key={`list-${keyBase}`}
         className={
-          kind === 'ol'
-            ? 'my-1 list-decimal space-y-1 pl-5 marker:text-muted-foreground'
-            : 'my-1 list-disc space-y-0.5 pl-4'
+          variant === 'doc'
+            ? kind === 'ol'
+              ? 'doc-md-ol'
+              : 'doc-md-ul'
+            : kind === 'ol'
+              ? 'my-1 list-decimal space-y-1 pl-5 marker:text-muted-foreground'
+              : 'my-1 list-disc space-y-0.5 pl-4'
         }
       >
-        {listBuf.map((item, i) => (
+        {listBuf.map((item, i) =>
+          variant === 'doc' && item.checked != null ? (
+            <DocTaskItem key={i} text={item.text} done={Boolean(item.checked)}>
+              <span className={`doc-md-check${item.checked ? ' is-done' : ''}`} />
+              <span className="min-w-0 flex-1">{inlineMarks(item.text, variant)}</span>
+            </DocTaskItem>
+          ) : (
           <li
             key={i}
             className={
               item.checked != null
-                ? 'flex list-none items-start gap-1.5'
-                : 'marker:text-muted-foreground'
+                ? variant === 'doc'
+                  ? 'doc-md-task'
+                  : 'flex list-none items-start gap-1.5'
+                : variant === 'doc'
+                  ? undefined
+                  : 'marker:text-muted-foreground'
             }
           >
             {item.checked != null ? (
               <span
-                className={`mt-0.5 inline-block size-3 shrink-0 rounded-sm border ${
-                  item.checked ? 'border-accent-amber bg-accent-amber/80' : 'border-muted-foreground/50'
-                }`}
+                className={
+                  variant === 'doc'
+                    ? `doc-md-check${item.checked ? ' is-done' : ''}`
+                    : `mt-0.5 inline-block size-3 shrink-0 rounded-sm border ${
+                        item.checked ? 'border-accent-amber bg-accent-amber/80' : 'border-muted-foreground/50'
+                      }`
+                }
               />
             ) : null}
-            <span className="min-w-0 flex-1">{inlineMarks(item.text)}</span>
+            <span className="min-w-0 flex-1">{inlineMarks(item.text, variant)}</span>
           </li>
-        ))}
+          ),
+        )}
       </Tag>,
     )
     listBuf = []
@@ -149,15 +295,22 @@ function renderBlock(text: string): ReactNode[] {
     const head = rows[0]!
     const body = rows.slice(1)
     nodes.push(
-      <table key={`tbl-${keyBase}`} className="my-1 w-full border-collapse text-[0.85em]">
+      <table
+        key={`tbl-${keyBase}`}
+        className={variant === 'doc' ? 'doc-md-table' : 'my-1 w-full border-collapse text-[0.85em]'}
+      >
         <thead>
           <tr>
             {head.map((c, i) => (
               <th
                 key={i}
-                className="border border-border bg-background/60 px-1.5 py-0.5 text-left font-medium"
+                className={
+                  variant === 'doc'
+                    ? undefined
+                    : 'border border-border bg-background/60 px-1.5 py-0.5 text-left font-medium'
+                }
               >
-                {inlineMarks(c)}
+                {inlineMarks(c, variant)}
               </th>
             ))}
           </tr>
@@ -167,8 +320,8 @@ function renderBlock(text: string): ReactNode[] {
             {body.map((row, ri) => (
               <tr key={ri}>
                 {row.map((c, ci) => (
-                  <td key={ci} className="border border-border px-1.5 py-0.5">
-                    {inlineMarks(c)}
+                    <td key={ci} className={variant === 'doc' ? undefined : 'border border-border px-1.5 py-0.5'}>
+                    {inlineMarks(c, variant)}
                   </td>
                 ))}
               </tr>
@@ -189,19 +342,27 @@ function renderBlock(text: string): ReactNode[] {
 
     if (/^\s*-{3,}\s*$/.test(line)) {
       flushList(idx)
-      nodes.push(<hr key={`hr-${idx}`} className="my-2 border-border/60" />)
+      nodes.push(<hr key={`hr-${idx}`} className={variant === 'doc' ? 'doc-md-hr' : 'my-2 border-border/60'} />)
       return
     }
 
     const heading = line.match(/^(#{1,6})\s+(.+)$/)
     if (heading) {
       flushList(idx)
-      const level = heading[1]!.length
+      const level = Math.min(6, heading[1]!.length) as 1 | 2 | 3 | 4 | 5 | 6
+      if (variant === 'doc') {
+        nodes.push(
+          <DocHeadingRow key={`h-${idx}`} level={level} title={heading[2]!.trim()}>
+            {inlineMarks(heading[2]!, 'doc')}
+          </DocHeadingRow>,
+        )
+        return
+      }
       const cls =
         level === 1
           ? 'mb-0.5 mt-1 text-[1.15em] font-semibold text-foreground'
           : level === 2
-            ? 'mb-0.5 mt-1 text-[1.08em] font-semibold text-accent-amber'
+            ? 'mb-0.5 mt-1 text-[1.08em] font-semibold text-foreground'
             : level === 3
               ? 'mb-0.5 mt-1 text-[1.02em] font-semibold text-foreground'
               : 'mb-0.5 mt-1 text-[0.95em] font-medium text-muted-foreground'
@@ -209,6 +370,17 @@ function renderBlock(text: string): ReactNode[] {
         <div key={`h-${idx}`} className={cls}>
           {inlineMarks(heading[2]!)}
         </div>,
+      )
+      return
+    }
+
+    const quote = line.match(/^>\s?(.*)$/)
+    if (quote && variant === 'doc') {
+      flushList(idx)
+      nodes.push(
+        <blockquote key={`q-${idx}`}>
+          {inlineMarks(quote[1]!, 'doc')}
+        </blockquote>,
       )
       return
     }
@@ -236,12 +408,12 @@ function renderBlock(text: string): ReactNode[] {
 
     flushList(idx)
     if (line.trim() === '') {
-      nodes.push(<br key={`br-${idx}`} />)
+      if (variant !== 'doc') nodes.push(<br key={`br-${idx}`} />)
       return
     }
     nodes.push(
-      <p key={`p-${idx}`} className="m-0">
-        {inlineMarks(line)}
+      <p key={`p-${idx}`} className={variant === 'doc' ? undefined : 'm-0'}>
+        {inlineMarks(line, variant)}
       </p>,
     )
   })
@@ -250,7 +422,7 @@ function renderBlock(text: string): ReactNode[] {
   return nodes
 }
 
-function inlineMarks(text: string): ReactNode[] {
+function inlineMarks(text: string, variant: MarkdownVariant = 'chat'): ReactNode[] {
   const parts: ReactNode[] = []
   // **bold**, *italic*, `code` — también __bold__
   const re = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|`[^`]+`)/g
@@ -276,7 +448,11 @@ function inlineMarks(text: string): ReactNode[] {
       parts.push(
         <code
           key={key++}
-          className="rounded bg-background/70 px-1 py-0.5 font-mono text-[11px] ring-1 ring-border"
+          className={
+            variant === 'doc'
+              ? 'doc-md-inline-code'
+              : 'rounded bg-background/70 px-1 py-0.5 font-mono text-[11px] ring-1 ring-border'
+          }
         >
           {token.slice(1, -1)}
         </code>,

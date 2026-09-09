@@ -146,6 +146,30 @@ export function crearPipelineValidacion(opciones?: {
             if (propSchema.type === 'number' && typeof value !== 'number') {
               errors.push({ code: 'SCHEMA_TYPE_MISMATCH', message: `Campo '${key}' debe ser number, recibido ${typeof value}`, field: key });
             }
+            if (propSchema.type === 'number' && typeof value === 'number') {
+              if (!Number.isFinite(value)) {
+                errors.push({
+                  code: 'SCHEMA_TYPE_MISMATCH',
+                  message: `Campo '${key}' debe ser un número finito`,
+                  field: key,
+                })
+              } else {
+                if (typeof propSchema.minimum === 'number' && value < propSchema.minimum) {
+                  errors.push({
+                    code: 'SCHEMA_OUT_OF_RANGE',
+                    message: `Campo '${key}' debe ser ≥ ${propSchema.minimum}`,
+                    field: key,
+                  })
+                }
+                if (typeof propSchema.maximum === 'number' && value > propSchema.maximum) {
+                  errors.push({
+                    code: 'SCHEMA_OUT_OF_RANGE',
+                    message: `Campo '${key}' debe ser ≤ ${propSchema.maximum}`,
+                    field: key,
+                  })
+                }
+              }
+            }
             if (propSchema.type === 'boolean' && typeof value !== 'boolean') {
               errors.push({ code: 'SCHEMA_TYPE_MISMATCH', message: `Campo '${key}' debe ser boolean, recibido ${typeof value}`, field: key });
             }

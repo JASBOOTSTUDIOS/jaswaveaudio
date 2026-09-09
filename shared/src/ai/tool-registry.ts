@@ -198,15 +198,21 @@ export function crearToolRegistry(): ToolRegistry {
       const lines: string[] = [];
       const sorted = Array.from(tools.values())
         .filter(tool => !brokenHandlers.has(tool.name))
-        .sort((a, b) => a.name.localeCompare(b.name));
+        .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
+      let lastCat = '';
       for (const tool of sorted) {
+        if (tool.category !== lastCat) {
+          lastCat = tool.category;
+          lines.push(`### ${tool.category}`);
+        }
         const deprecated = tool.deprecated ? ' (deprecated' + (tool.deprecationMessage ? `, ${tool.deprecationMessage}` : '') + ')' : '';
         lines.push(`- ${tool.name}: ${tool.description} (${tool.risk})${deprecated}`);
         if (tool.parameters && tool.parameters.length > 0) {
           const params = tool.parameters
-            .map(p => `${p.name} (${p.type}${p.required ? ', required' : ''}${p.min !== undefined ? `, min: ${p.min}` : ''}${p.max !== undefined ? `, max: ${p.max}` : ''})`)
+            .slice(0, 8)
+            .map(p => `${p.name}${p.required ? '*' : ''}:${p.type}`)
             .join(', ');
-          lines.push(`  Parámetros: ${params}`);
+          lines.push(`  params: ${params}`);
         }
       }
       return lines.join('\n');

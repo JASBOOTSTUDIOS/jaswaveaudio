@@ -13,7 +13,12 @@ import {
 } from '../loop/harness'
 import type { DAWState } from '@jaswave/shared'
 
-function midiState(opts: { nombre: string; notes: number; tipo?: 'midi' | 'audio' }): DAWState {
+function midiState(opts: {
+  nombre: string
+  notes: number
+  tipo?: 'midi' | 'audio'
+  markers?: Array<{ nombre: string; tiempo: number }>
+}): DAWState {
   const notas = Array.from({ length: opts.notes }, (_, i) => ({ pitch: 60, inicio: i, duracion: 0.5 }))
   return {
     project: {
@@ -24,10 +29,15 @@ function midiState(opts: { nombre: string; notes: number; tipo?: 'midi' | 'audio
           tipo: opts.tipo ?? 'midi',
           plugins: [],
           clips: opts.notes
-            ? [{ id: 'c1', nombre: 'Clip', notas }]
-            : [{ id: 'c1', nombre: 'Clip', notas: [] }],
+            ? [{ id: 'c1', nombre: 'Clip', inicio: 0, duracion: 16, notas }]
+            : [{ id: 'c1', nombre: 'Clip', inicio: 0, duracion: 16, notas: [] }],
         },
       ],
+      marcadores: (opts.markers ?? []).map((m) => ({
+        nombre: m.nombre,
+        tiempo: m.tiempo,
+        tipo: 'marcador',
+      })),
     },
   } as unknown as DAWState
 }
@@ -40,7 +50,7 @@ describe('harness producción', () => {
     expect(harnessShouldRepair(report)).toBe(false)
   })
 
-  it('marca acciones fallidas y MIDI vacío tras generar', () => {
+  it('marca acciones fallidas; clips vacíos no son empty-midi (son huecos de plan)', () => {
     const results: HarnessActionResult[] = [
       { type: 'midi.clip.create', success: true, message: 'clip' },
       { type: 'plugin.insert', success: false, message: 'VST no carga' },
@@ -48,7 +58,18 @@ describe('harness producción', () => {
     const report = inspectDawHealth(midiState({ nombre: 'Lead', notes: 0 }), results, null)
     expect(harnessShouldRepair(report)).toBe(true)
     expect(report.errors.some((e) => e.code === 'action-failed')).toBe(true)
-    expect(report.errors.some((e) => e.code === 'empty-midi')).toBe(true)
+    expect(report.errors.some((e) => e.code === 'empty-midi')).toBe(false)
+  })
+
+  it('section-gap cuando hay marcador y la pista no tiene notas en ese rango', () => {
+    const results: HarnessActionResult[] = [{ type: 'daw.musicBuild', success: true, message: 'ok' }]
+    const report = inspectDawHealth(
+      midiState({ nombre: 'Drums', notes: 0, markers: [{ nombre: 'Coro', tiempo: 0 }] }),
+      results,
+      null,
+    )
+    expect(report.errors.some((e) => e.code === 'section-gap')).toBe(true)
+    expect(harnessShouldRepair(report)).toBe(true)
   })
 
   it('marca instrumento faltante tras un musicBuild y plugins en error', () => {
@@ -90,10 +111,30 @@ describe('harness producción', () => {
     expect(filtered[0]?.payload?.nombre).toBe('JasWave Roles')
   })
 
-  it('fingerprint distingue pistas', () => {
-    expect(actionFingerprint('track.create', { nombre: 'Bajo' })).not.toBe(
-      actionFingerprint('track.create', { nombre: 'Pad' }),
+  it('fingerprint distingue midi.clip.create por pista+inicio', () => {
+    expect(
+      actionFingerprint('midi.clip.create', { pistaId: 't1', inicio: 0, nombre: 'Intro' }),
+    ).not.toBe(
+      actionFingerprint('midi.clip.create', { pistaId: 't1', inicio: 32, nombre: 'Intro' }),
     )
+    expect(
+      actionFingerprint('midi.clip.create', { pistaId: 't1', inicio: 0 }),
+    ).not.toBe(
+      actionFingerprint('midi.clip.create', { pistaId: 't2', inicio: 0 }),
+    )
+  })
+
+  it('no bloquea create de otra sección tras un create exitoso', () => {
+    const filtered = filterRedundantRepairActions(
+      [
+        { type: 'midi.clip.create', payload: { pistaId: 't1', inicio: 0, notas: [{ pitch: 36 }] } },
+        { type: 'midi.clip.create', payload: { pistaId: 't1', inicio: 32, notas: [{ pitch: 36 }] } },
+      ],
+      [{ type: 'midi.clip.create', success: true, message: 'ok' }],
+      new Set(['midi.clip.create:t1:0']),
+    )
+    expect(filtered).toHaveLength(1)
+    expect(filtered[0]?.payload?.inicio).toBe(32)
   })
 
   it('para el bucle si la firma de error no cambia (stale limit)', async () => {
@@ -227,11 +268,35 @@ describe('harness producción', () => {
         n += 1
         return [{ type: 'midi.notes.set', success: true, message: 'notas' }]
       },
-      getState: () => midiState({ nombre: 'Bajo', notes: n > 0 ? 12 : 0 }),
+      getState: () => {
+        const st = midiState({
+          nombre: 'Bajo',
+          notes: n > 0 ? 12 : 0,
+          markers: [{ nombre: 'Tema', tiempo: 0 }],
+        })
+        st.project!.tracks[0]!.plugins = [{ nombre: 'JasWave Roles', estado: 'cargado' } as never]
+        return st
+      },
       formatResults: () => '✓ notas',
     })
     expect(out.stoppedReason).toBe('healthy')
     expect(out.turns.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('exige listen-missing tras musicBuild con secciones cubiertas', () => {
+    const st = midiState({
+      nombre: 'Keys',
+      notes: 8,
+      markers: [{ nombre: 'Tema', tiempo: 0 }],
+    })
+    st.project!.tracks[0]!.plugins = [{ nombre: 'Piano', estado: 'cargado' } as never]
+    const report = inspectDawHealth(
+      st,
+      [{ type: 'daw.musicBuild', success: true, message: 'ok' }],
+      null,
+      { loudnessTarget: 'streaming' },
+    )
+    expect(report.errors.some((e) => e.code === 'listen-missing')).toBe(true)
   })
 
   it('sigue pidiendo revisión solo tras mutar', () => {

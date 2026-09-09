@@ -1,4 +1,5 @@
 import { Construction, Library, Gauge, GitBranch, Piano, SlidersHorizontal } from 'lucide-react'
+import { DawTerminalPanel } from '@/components/daw-terminal-panel'
 import { ArrangeView } from '@/components/arrange-view'
 import { Mixer } from '@/components/mixer'
 import { MixAnalyzerPanel } from '@/components/mix-analyzer-panel'
@@ -50,6 +51,8 @@ export function ToolHost({ toolId }: { toolId: ToolId }) {
       return <PianoRollToolPanel />
     case 'score-editor':
       return <ScoreEditorToolPanel />
+    case 'terminal':
+      return <DawTerminalPanel />
     case 'instruments':
       return <InstrumentsPanel />
     case 'fx-chain':

@@ -93,7 +93,7 @@ export function buildAssembledAgentContext(
     libraryPresetsBlock
       ? `## Biblioteca de presets (global + proyecto)\nUsa presetId en Music Build; preferir sobre plugin.setParameter.\n${libraryPresetsBlock}`
       : '',
-    plan?.content ? `## plan.md (resumen)\n${plan.content.slice(0, 2000)}` : '',
+    plan?.content ? `## plan.md (fuente de verdad)\n${plan.content.slice(0, 8000)}` : '',
     '',
     memoryBlock,
     '',

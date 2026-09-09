@@ -1,6 +1,6 @@
 /**
- * Plantillas de prompt — razonamiento profundo adaptativo (2–10 capas).
- * No es un chat con el usuario: es pensamiento privado de productor.
+ * Plantillas de prompt — razonamiento profundo como consejo multi-modelo.
+ * Un solo LLM simula varios especialistas dialogando (máxima calidad, sin recortar por tokens).
  */
 
 import type { AgentMode } from './modes'
@@ -27,6 +27,7 @@ export const APP_VOCAB_GLOSSARY = [
   'silencia / mute → track.toggleMute',
   'pregunta / explícame / ¿…? → modo consulta (ask), sin mutar',
   'plan / estructura / cómo lo harías → plan.md / modo plan (solo si pide plan, no si pide análisis)',
+  'limpia / vacía / borra el proyecto → daw.wipeProject (IDs reales; NO clip.delete inventados)',
 ].join('\n')
 
 export type ReasoningPhase =
@@ -42,65 +43,96 @@ export type ReasoningPhase =
   | 'verify'
   | 'commit'
 
+/** Personas del consejo (un solo modelo las interpreta todas). */
+export const COUNCIL_VOICES = {
+  nexus: 'Nexus',
+  lyra: 'Lyra',
+  volt: 'Volt',
+  /** QA: verifica el trabajo de los demás y habla con el usuario al final. */
+  kael: 'Kael',
+  iris: 'Iris',
+} as const
+
 export const REASONING_PHASE_META: Record<
   ReasoningPhase,
-  { label: string; maxTokensHint: number; voice: string }
+  { label: string; maxTokensHint: number; voice: string; speakers: string }
 > = {
   normalize: {
     label: 'Traducir pedido',
-    maxTokensHint: 1400,
+    maxTokensHint: 8192,
+    speakers: `${COUNCIL_VOICES.nexus} + ${COUNCIL_VOICES.lyra}`,
     voice:
-      'Amplía y traduce el mensaje del usuario a un prompt canónico compatible con JasWave; elige cuántas capas más hacen falta.',
+      'Diálogo: Nexus traduce el pedido a prompt canónico JasWave; Lyra discute implicaciones creativas y juntos eligen profundidad.',
   },
   sense: {
-    label: 'Intuición',
-    maxTokensHint: 900,
-    voice: 'Primera impresión cruda: qué te pegó del pedido, sin plan todavía.',
+    label: 'Primera impresión',
+    maxTokensHint: 8192,
+    speakers: `${COUNCIL_VOICES.lyra} ↔ ${COUNCIL_VOICES.kael}`,
+    voice:
+      'Diálogo: Lyra suelta intuición; Kael (QA) ya señala riesgos. Sin plan todavía.',
   },
   frame: {
     label: 'Encuadre',
-    maxTokensHint: 1200,
-    voice: 'Desarma el pedido: intención real, restricciones, qué NO pidió.',
+    maxTokensHint: 8192,
+    speakers: `${COUNCIL_VOICES.nexus} ↔ ${COUNCIL_VOICES.volt}`,
+    voice:
+      'Diálogo: Nexus enumera intención real / implícito / lo no pedido; Volt ancla restricciones del DAW.',
   },
   explore: {
-    label: 'Explorar',
-    maxTokensHint: 1200,
-    voice: 'Mapa rápido de 2–3 direcciones creativas o de arreglo antes de anclar datos.',
+    label: 'Explorar caminos',
+    maxTokensHint: 8192,
+    speakers: `${COUNCIL_VOICES.lyra} ↔ ${COUNCIL_VOICES.iris}`,
+    voice:
+      'Diálogo: Lyra e Iris proponen 2–3 direcciones; Kael no habla aún (auditará después).',
   },
   research1: {
     label: 'Mirar el proyecto',
-    maxTokensHint: 1600,
-    voice: 'Ancla al DAW: BPM, pistas, plan.md. Si hace falta dato, <<<READ>>>.',
+    maxTokensHint: 12288,
+    speakers: `${COUNCIL_VOICES.volt} ↔ ${COUNCIL_VOICES.iris}`,
+    voice:
+      'Diálogo anclado al DAW: Volt lee BPM/pistas/clips; Iris interpreta. <<<READ>>> si falta dato.',
   },
   critique: {
-    label: 'Duda',
-    maxTokensHint: 1200,
-    voice: 'Cuestiona tu propia idea: qué fallaría, qué es ruido vs crítico.',
+    label: 'Auditoría del plan',
+    maxTokensHint: 8192,
+    speakers: `${COUNCIL_VOICES.kael} (lidera) ↔ ${COUNCIL_VOICES.lyra} ↔ ${COUNCIL_VOICES.nexus}`,
+    voice:
+      'Kael (QA) audita el plan de los demás: ataca IDs inventados, BPM absurdo, musicBuild vacío, wipe incompleto. Los otros responden o corrigen.',
   },
   research2: {
     label: 'Cerrar huecos',
-    maxTokensHint: 1600,
-    voice: 'Solo lo que aún falta para decidir. READ si hace falta; si no, di «tengo bastante».',
+    maxTokensHint: 12288,
+    speakers: `${COUNCIL_VOICES.volt} ↔ ${COUNCIL_VOICES.nexus}`,
+    voice:
+      'Diálogo: cierran solo lo que Kael dejó abierto. READ si hace falta.',
   },
   stress: {
-    label: 'Estrés',
-    maxTokensHint: 1100,
-    voice: 'Prueba de fuego: qué se rompe al aplicar (pistas duplicadas, clip entero, tempo malo).',
+    label: 'Prueba de fuego',
+    maxTokensHint: 8192,
+    speakers: `${COUNCIL_VOICES.kael} ↔ ${COUNCIL_VOICES.volt}`,
+    voice:
+      'Kael+Volt: qué se rompe al aplicar. Nombran fallos fatales.',
   },
   synthesize: {
     label: 'Sopesar',
-    maxTokensHint: 1400,
-    voice: 'Compara caminos con pros/contras breves; elige uno en borrador.',
+    maxTokensHint: 12288,
+    speakers: `${COUNCIL_VOICES.nexus} ↔ ${COUNCIL_VOICES.lyra} ↔ ${COUNCIL_VOICES.kael}`,
+    voice:
+      'Mesa: eligen camino. Kael solo aprueba si el plan es verificable (IDs, tools correctas, criterio de éxito).',
   },
   verify: {
-    label: 'Verificar',
-    maxTokensHint: 1000,
-    voice: 'Chequeo final de coherencia: ids de pista/clip, rangos de beats, sin overkill.',
+    label: 'Veredicto QA',
+    maxTokensHint: 12288,
+    speakers: `${COUNCIL_VOICES.kael} (obligatorio) + ${COUNCIL_VOICES.volt}`,
+    voice:
+      'Kael VERIFICA el trabajo de Nexus/Lyra/Iris/Volt: checklist de corrección. Sin su OK no hay commit. Emite <<<VERDICT>>> al final.',
   },
   commit: {
     label: 'Compromiso',
-    maxTokensHint: 1800,
-    voice: 'Cierra: ACTIONS concretas o CLARIFY estructurado. Sin ensayo para el usuario.',
+    maxTokensHint: 16384,
+    speakers: `${COUNCIL_VOICES.nexus} + ${COUNCIL_VOICES.kael}`,
+    voice:
+      'Nexus lista ACTIONS. Kael confirma el veredicto y deja lista la pregunta final al usuario («¿te gustó?») para DESPUÉS de ejecutar.',
   },
 }
 
@@ -109,8 +141,10 @@ export function formatPhaseTitle(
   index: number,
   total: number,
 ): string {
-  const label = REASONING_PHASE_META[phase]?.label ?? phase
-  return `${index}/${total} · ${label}`
+  const meta = REASONING_PHASE_META[phase]
+  const label = meta?.label ?? phase
+  const speakers = meta?.speakers ? ` · ${meta.speakers}` : ''
+  return `${index}/${total} · ${label}${speakers}`
 }
 
 const READ_TOOLS_HELP = [
@@ -119,42 +153,60 @@ const READ_TOOLS_HELP = [
   '- library.preset.list | library.preset.search { query?, rol?, genero? }',
   '- plugin.lookup { nombre } | plugin.probe { pluginId? | path? | nombre? }',
   '- analysis.buffer { sampleMs? } | analysis.timing | track.getFxChain { trackId }',
-  '- midi.notes.get { clipId, pistaId? } | midi.getClipSummary { clipId }  ← leer notas/resumen de un clip',
-  '- midi.clip.md.read | midi.clip.md.upsert | midi.clip.md.apply | midi.notes.compare  ← .md nota-a-nota (preferir para melodía)',
+  '- midi.notes.get { clipId, pistaId? } | midi.getClipSummary { clipId }',
+  '- midi.clip.md.read | midi.clip.md.upsert | midi.clip.md.apply | midi.notes.compare',
   '- web.search { query }',
-  'Si el usuario ancló una selección, las notas YA vienen en el contexto: no digas que no puedes leerlas.',
-  'Duplicados (mismo pitch+inicio): en el turno final usa midi.notes.dedupe { pistaId, clipId }.',
-  'Máximo 4 por capa. NO mutes el DAW aquí.',
+  '- track.list | selection.get | project.getSummary',
+  'Si el usuario ancló una selección, las notas YA vienen en el contexto.',
+  'Duplicados: en el turno final midi.notes.dedupe { pistaId, clipId }.',
+  'Hasta 6 lecturas por capa si aportan. NO mutes el DAW aquí.',
 ].join('\n')
 
 const INNER_VOICE_RULES = [
-  '## Cómo pensar (obligatorio)',
-  'Esto es un DIARIO MENTAL privado de un productor/ingeniero, NO un chat con el usuario.',
-  '- Escribe en primera persona: «veo…», «me frena…», «si bajo el BPM a 72…».',
-  '- Frases cortas, imperfectas, a veces a medias. Puedes dudar y corregirte.',
-  '- PROHIBIDO tono de asistente: nada de «¡Perfecto!», «Claro!», «Aquí tienes el plan», «Respuesta visible», «Estimado», saludos, ni markdown de plan completo.',
-  '- PROHIBIDO hablarle al usuario («tú deberías…», «por favor dime…», «escribe las 3 opciones»).',
-  '- PROHIBIDO inventar un cuestionario en prosa; si hace falta aclarar, anótalo para el compromiso final como CLARIFY.',
-  '- PROHIBIDO rellenar la capa con listas de preguntas («¿Qué tipo de…? ¿Qué ritmo…?»). Escribe AFIRMACIONES u observaciones («Kick en 1 y 3; snare floja; falta ghost notes»).',
-  '- PROHIBIDO inventar un «Plan de Producción» multi-día o canción nueva si el usuario pidió analizar/comparar una pista existente.',
-  '- No repitas el pedido entero ni copies el contexto del proyecto: solo lo que usas.',
-  '- Longitud: 4–12 líneas útiles. Mejor denso que ensayo.',
+  '## Cómo pensar (OBLIGATORIO — consejo multi-modelo)',
+  'Aunque haya UN solo LLM detrás, escribe SIEMPRE como si varios modelos especialistas dialogaran en vivo.',
+  'Formato de cada capa (español natural, tono de colegas que se conocen):',
+  '',
+  '**Nexus:** …',
+  '**Lyra:** …',
+  '**Volt:** …',
+  '(participan los que marque la capa; mínimo 2 voces que se respondan)',
+  '',
+  'Roles:',
+  `- ${COUNCIL_VOICES.nexus}: orquestador / productor ejecutivo — traduce pedidos, prioriza, cierra ACTIONS.`,
+  `- ${COUNCIL_VOICES.lyra}: arreglista / creatividad musical — groove, armonía, feel, género.`,
+  `- ${COUNCIL_VOICES.volt}: ingeniero DAW JasWave — IDs, tools, clips, BPM, qué se puede ejecutar.`,
+  `- ${COUNCIL_VOICES.kael}: VERIFICADOR QA — revisa el trabajo de los demás, bloquea planes incorrectos, y SOLO él pregunta al usuario si le gustó el resultado al final.`,
+  `- ${COUNCIL_VOICES.iris}: analista de estilo/datos — web, timeline MIDI, gaps, hechos medibles.`,
+  '',
+  'Flujo de calidad (mejora el rendimiento real del trabajo):',
+  '1) Nexus/Lyra/Volt/Iris proponen.',
+  '2) Kael audita (critique/verify): si algo falla, obligan a corregir ANTES de ejecutar.',
+  '3) Tras ejecutar con éxito en el DAW: Kael pregunta al usuario si le gustó (CLARIFY / request-user-input). Nadie más lo hace.',
+  '',
+  'Reglas del diálogo:',
+  '- Hablan ENTRE ELLOS («¿y si…?», «Kael, ¿pasas el checklist?»). No le hablan al usuario en capas internas.',
+  '- Pueden discrepar. Kael puede tumbar un plan de Nexus/Lyra si faltan IDs o el BPM es absurdo.',
+  '- PROHIBIDO tono chatbot: nada de «¡Perfecto!», «Claro!», «Aquí tienes», saludos.',
+  '- PROHIBIDO inventar Plan multi-día o canción nueva si solo pidieron analizar/limpiar.',
+  '- NO hay límite artificial de longitud: prioriza rigor y verificación sobre brevedad.',
+  '- Cada voz aporta algo distinto; no repitan el mismo párrafo con otro nombre.',
 ].join('\n')
 
 export function reasoningSystemPreamble(mode: AgentMode, depthHint?: number): string {
   const depthLine =
     depthHint != null
-      ? `En ESTE turno el plan tiene ${depthHint} capas (2–10). La 1ª traduce el pedido; tú ya elegiste o se fijó la profundidad.`
-      : 'La 1ª capa SIEMPRE traduce el mensaje del usuario a un prompt canónico JasWave y elige profundidad (2–10). Luego vienen las capas restantes.'
+      ? `En ESTE turno el consejo tiene ${depthHint} capas (2–10). La 1ª traduce el pedido; la profundidad ya está fijada.`
+      : 'La 1ª capa SIEMPRE traduce el mensaje del usuario a un prompt canónico JasWave y elige profundidad (2–10). Luego el consejo sigue dialogando.'
   return [
-    'Eres el coproductor de JasWave.',
+    'Eres el CONSEJO DE MODELOS de JasWave (Nexus, Lyra, Volt, Kael, Iris) — un solo motor, muchas voces.',
     depthLine,
-    'El usuario NO ve estas capas como conversación contigo: son notas mentales.',
+    'El usuario verá este diálogo como «pensamiento interno»; no es un chat dirigido a él.',
     'Responde siempre en español.',
     INNER_VOICE_RULES,
     '',
-    'Criterio de productor: BPM, grid, inicio/duración de clips en beats, notas dentro del clip, duplicados, densidad, arrastre rítmico.',
-    'Si el pedido es AUDITAR/ANALIZAR lo existente: NO inventes una canción nueva ni «base en G mayor»; mira el Timeline MIDI del contexto.',
+    'Criterio de productor: BPM real del género (bachata ~125, no 70), grid, clips en beats, IDs reales, densidad MIDI, wipe con daw.wipeProject.',
+    'Si el pedido es AUDITAR/ANALIZAR lo existente: NO inventes una canción nueva; mirad el Timeline MIDI.',
     '',
     modePromptBlock(mode === 'auto' ? 'create' : mode),
     '',
@@ -163,8 +215,11 @@ export function reasoningSystemPreamble(mode: AgentMode, depthHint?: number): st
 }
 
 function isRefine(userText: string): boolean {
-  return isSongRefineIntent(userText) || /m[aá]s\s+lent|m[aá]s\s+r[aá]pid|m[aá]s\s+sublime|est[aá]\s+muy\s+r[aá]pid|hazla\s+m[aá]s|cambia(r)?\s+(el\s+)?tempo/i.test(
-    userText,
+  return (
+    isSongRefineIntent(userText) ||
+    /m[aá]s\s+lent|m[aá]s\s+r[aá]pid|m[aá]s\s+sublime|est[aá]\s+muy\s+r[aá]pid|hazla\s+m[aá]s|cambia(r)?\s+(el\s+)?tempo/i.test(
+      userText,
+    )
   )
 }
 
@@ -186,15 +241,15 @@ export function reasoningSeedUserMessage(opts: {
   projectContext: string
 }): string {
   return [
-    '## Pedido del usuario (no le respondas aún — solo piensa)',
+    '## Pedido del usuario (el consejo NO le responde aún — solo dialogan entre ellos)',
     opts.userText,
     '',
-    '## Estado del proyecto (solo lectura; no lo recopies entero)',
-    opts.projectContext.slice(0, 14000),
+    '## Estado del proyecto (solo lectura)',
+    opts.projectContext.slice(0, 48000),
   ].join('\n')
 }
 
-/** Cue corto de la capa actual — no una «tarea de usuario». */
+/** Cue corto de la capa actual — mesa del consejo. */
 export function promptForPhase(
   phase: ReasoningPhase,
   opts: {
@@ -203,9 +258,7 @@ export function promptForPhase(
     projectContext: string
     priorSteps: string
     toolResults?: string
-    /** Si true, el contexto ya está en el hilo (modo monólogo). */
     continuum?: boolean
-    /** Índice 1-based y total del plan adaptativo. */
     phaseIndex?: number
     phaseTotal?: number
   },
@@ -219,7 +272,10 @@ export function promptForPhase(
   const web = needsWeb(opts.userText)
   const lines: string[] = [
     `## Capa ${idx}/${total} — ${meta.label}`,
+    `Voces en esta mesa: ${meta.speakers}`,
     meta.voice,
+    '',
+    'Escribe el diálogo completo con etiquetas **Nombre:** en cada turno. Mínimo 2 voces que se respondan.',
     '',
   ]
 
@@ -228,206 +284,202 @@ export function promptForPhase(
       '## Pedido',
       opts.userText,
       '',
-      '## Proyecto (extracto)',
-      opts.projectContext.slice(0, 8000),
+      '## Proyecto',
+      opts.projectContext.slice(0, 24000),
       '',
     )
     if (opts.priorSteps) {
-      lines.push('## Notas mentales anteriores', opts.priorSteps.slice(0, 4000), '')
+      lines.push('## Diálogos anteriores del consejo', opts.priorSteps.slice(0, 24000), '')
     }
   }
 
   if (opts.toolResults) {
-    lines.push('## Lo que acabas de consultar', opts.toolResults.slice(0, 4000), '')
+    lines.push('## Resultado de consultas (para la mesa)', opts.toolResults.slice(0, 16000), '')
   }
 
   switch (phase) {
     case 'normalize':
       lines.push(
-        'Tu ÚNICA tarea en esta capa: tratar el mensaje del usuario como borrador de un prompt de sistema.',
-        '1) Amplía lo implícito (qué quiere en el DAW) sin inventar canciones si solo pide editar/consultar/analizar.',
-        '2) Traduce jerga informal al vocabulario que JasWave entiende (ver glosario).',
-        '3) Elige profundidad total de este turno: entero depth entre 2 y 10 (tú decides).',
+        'Mesa Nexus+Lyra: tratan el mensaje del usuario como borrador de prompt de sistema.',
+        '1) Amplían lo implícito (qué quiere en el DAW) sin inventar canciones si solo pide editar/consultar/limpiar.',
+        '2) Traducen jerga al vocabulario JasWave (glosario).',
+        '3) Eligen profundidad total depth 2–10 (discuten por qué).',
         '   · 2–3: mute/BPM/confirmación',
-        '   · 5–6: edición acotada',
-        '   · 8–10: auditoría de pista, gap de estilo vs artista, o «investiga en internet»',
+        '   · 5–6: edición acotada / wipe simple',
+        '   · 8–10: canción completa, auditoría, gap de estilo, investigación web',
         '',
         '## Glosario usuario → app',
         APP_VOCAB_GLOSSARY,
         '',
-        'Si el usuario dice «analizame la batería… qué le falta… estilo Averill/Averly Morillo… investiga en internet»:',
-        '  intent=style_gap, modeHint=ask, depth≥8, promptCanonico debe incluir auditar pista batería + gap vs worship moderno + web.search.',
-        '  PROHIBIDO intent=create_song / plan de producción.',
+        'Si dice «limpia el proyecto»: intent wipe → daw.wipeProject, NO clip.delete inventados.',
+        'Si dice bachata: Lyra insiste BPM ~125 (Kael corregirá si alguien dice 70).',
         '',
-        'OBLIGATORIO al final (además de 3–8 líneas de pensamiento en afirmaciones, NO listas de ¿preguntas?):',
+        'Tras el diálogo, OBLIGATORIO:',
         '<<<INTENT',
         '{',
-        '  "promptCanonico": "pedido reescrito con verbos canónicos (crea, edita, audita, style_gap, setBpm…)",',
-        '  "intent": "create_song|edit_clip|edit_partial|audit|style_gap|ask|transport|refine|plan|other",',
-        '  "depth": 2,',
-        '  "depthReason": "por qué esa profundidad",',
+        '  "promptCanonico": "pedido reescrito con verbos canónicos",',
+        '  "intent": "create_song|edit_clip|edit_partial|audit|style_gap|ask|transport|refine|plan|wipe|other",',
+        '  "depth": 8,',
+        '  "depthReason": "por qué esa profundidad (acuerdo del consejo)",',
         '  "aliasesMapped": [{"from":"analizame","to":"audita"}],',
         '  "modeHint": "create|ask|plan|think|auto",',
         '  "entities": {"trackHint":null,"clipHint":null,"styleRef":null,"bpm":null,"rangeBeats":null,"needsWeb":false}',
         '}',
         'INTENT>>>',
-        'Sin INTENT no podemos continuar bien. No emitas ACTIONS ni CLARIFY aquí.',
+        'Sin INTENT no continúan. No ACTIONS ni CLARIFY aquí.',
       )
       break
     case 'sense':
       lines.push(
         audit
-          ? 'Pista: huele a AUDITORÍA del proyecto existente (clips/notas/tiempos), no a crear canción. Anota qué mirarías primero.'
+          ? 'Lyra huele auditoría; Kael pregunta qué mirarían primero en la pista real.'
           : refine
-            ? 'Pista: huele a refinamiento (tempo/feel), no a canción desde cero. Anota el impulso («está rápida → quiero aire»).'
+            ? 'Lyra: refinamiento de feel/tempo. Kael: ¿basta setBpm o hay que regenerar?'
             : total <= 3
-              ? 'Impulso en 2–4 líneas y pasa al cierre mental. Pedido simple: no inventes complejidad.'
-              : '¿Qué es lo primero que te viene? Crear, editar, mezcla, duda… Sin solución todavía.',
+              ? 'Diálogo corto Lyra↔Kael y pasan al cierre. Pedido simple: no inventen complejidad.'
+              : 'Impulso libre: ¿crear, editar, wipe, mezcla? Todavía sin solución.',
       )
       break
     case 'frame':
       lines.push(
         styleGap
-          ? 'Objetivo: gap analysis. (1) Qué hay YA en la pista/clip de batería. (2) Qué define el estilo pedido (worship moderno / Averill Morillo). (3) Qué FALTA. NO crear canción nueva. NO plan de días.'
+          ? 'Nexus+Volt: gap analysis. (1) qué hay YA (2) estilo pedido (3) qué falta. NO canción nueva.'
           : audit
-            ? 'Objetivo: listar qué está mal o flojo en clips MIDI (timing, duplicados, vacíos, densidades). NO crear melodía nueva. NO «base en G mayor» salvo que el usuario lo pida.'
-            : 'Lista mental: (1) lo que pidió de verdad, (2) lo implícito, (3) lo que NO pidió, (4) defaults que asumirías.',
-        'Escribe en afirmaciones. PROHIBIDO lista de «¿Qué tipo de…?».',
-        audit || styleGap
-          ? 'Si el contexto trae Timeline MIDI, úsalo. Si falta detalle de notas: <<<READ midi.notes.get / midi.getClipSummary>>>.'
-          : opts.mode === 'create' || opts.mode === 'auto' || refine
-            ? 'Si ya hay género/estilo o «hazlo/más lenta», no inventes preguntas — asume y sigue.'
-            : 'Si falta algo crítico, anótalo como duda (no preguntes al usuario aquí).',
+            ? 'Nexus+Volt: qué está mal en MIDI (timing, duplicados, densidades). Sin melodía inventada.'
+            : 'Nexus lista: pedido real / implícito / no pedido / defaults. Volt valida contra el DAW.',
+        'Afirmaciones en el diálogo. PROHIBIDO lista de «¿Qué tipo de…?» al usuario.',
       )
       break
     case 'explore':
       lines.push(
         styleGap
-          ? 'Ejes de comparación (una línea c/u): groove kick/snare, hi-hat 16ths, ghost notes, fills, crashes, half-time vs four-on-floor, room/verb feel. Descarta ejes irrelevantes.'
-          : 'Bosqueja 2–3 direcciones (una línea cada una). Qué descartas ya y por qué.',
-        audit || styleGap
-          ? 'Direcciones = ejes de diagnóstico, no canciones nuevas.'
-          : 'No te enamores aún: solo mapa.',
+          ? 'Lyra↔Iris: ejes kick/snare/HH/ghosts/fills. Descartan irrelevantes.'
+          : 'Lyra↔Iris: 2–3 direcciones (una idea cada una), debate, qué descartan.',
+        audit || styleGap ? 'Direcciones = ejes de diagnóstico, no canciones nuevas.' : '',
       )
       break
     case 'research1':
       lines.push(
         styleGap || audit
-          ? 'OBLIGATORIO anclar al DAW: mira Timeline MIDI / pista batería. Hechos con beats, densidades, pitches típicos de kit. <<<READ midi.notes.get o midi.getClipSummary>>> si falta detalle.'
+          ? 'Volt↔Iris: anclar Timeline MIDI. Hechos con beats/densidades. <<<READ>>> si falta detalle.'
           : refine
-            ? 'Mira BPM actual y pistas. Si el contexto ya lo tiene, no hace falta READ. Si no, <<<READ>>>.'
-            : '¿Qué del proyecto confirma o choca con tu intuición? Usa <<<READ>>> solo si te falta un dato concreto.',
+            ? 'Volt: BPM y pistas. READ solo si el contexto no basta.'
+            : '¿Qué del proyecto confirma o choca? READ solo con dato concreto.',
         web && (styleGap || audit)
-          ? 'Si esta capa es la única de research y el usuario pidió internet, también <<<READ [{"type":"web.search","payload":{"query":"Averill Morillo worship drums groove modern"}}]>>> (ajusta el query al artista/estilo).'
+          ? 'Si hace falta internet aquí: <<<READ [{"type":"web.search","payload":{"query":"…"}}]>>>'
           : '',
-        'Termina con 2–4 HECHOS (no preguntas, no plan de producción).',
+        'Cierran con 3–8 HECHOS acordados (no preguntas).',
       )
       break
     case 'critique':
       lines.push(
-        styleGap
-          ? '¿Estás inventando un plan pop genérico? ¿Ignoraste la pista real? ¿Confundiste Averill/Averly Morillo con otra cosa? Sé duro: solo gaps respaldados por datos + estilo.'
-          : audit
-            ? '¿Estás inventando problemas? ¿Ignoraste tiempos de clip? Sé duro: solo issues respaldados por datos.'
-            : refine
-              ? '¿Bajar BPM basta o hay que regenerar? ¿El modelo se iría a 120 otra vez? Sé duro contigo.'
-              : 'Ataca tu idea: riesgo, overkill, dato que falte de verdad vs vanidad. Descarta ruido.',
+        'Kael LIDERÁ: audita el plan de Nexus/Lyra/Iris/Volt (no inventa el plan; lo verifica).',
+        'Checklist mínimo de Kael:',
+        '- ¿Tool correcta (wipe→daw.wipeProject, canción→musicBuild procedural)?',
+        '- ¿BPM/género coherentes (bachata≠70)?',
+        '- ¿IDs reales o aún hay que leer track.list?',
+        '- ¿Criterio de éxito medible (pistas creadas, proyecto vacío, clips con notas)?',
+        'Si falla algún ítem: Kael obliga a corregir el plan. Lyra/Nexus responden.',
       )
       break
     case 'research2':
       lines.push(
         web
-          ? 'OBLIGATORIO ahora: <<<READ [{"type":"web.search","payload":{"query":"<artista/estilo> worship modern drums characteristics ghost notes hi-hat"}}] READ>>>. Resume 3–5 rasgos del estilo (no copies párrafos enteros).'
+          ? 'OBLIGATORIO Volt/Iris: <<<READ web.search>>>. Resumen de 3–8 rasgos del estilo (no copiar párrafos).'
           : styleGap || audit
-            ? 'Cierra huecos de timing/notas. Si el timeline basta: «tengo bastante para diagnosticar».'
-            : 'Solo cierra huecos que la duda dejó abiertos. Si no hay ninguno: «tengo bastante para decidir».',
-        '<<<READ>>> si hace falta. Nada de ACTIONS ni CLARIFY todavía. Nada de planes multi-día.',
+            ? 'Cierran huecos de timing/notas o «tenemos bastante para diagnosticar».'
+            : 'Solo huecos que Kael abrió. Si no hay: «tenemos bastante para decidir».',
+        'Nada de ACTIONS/CLARIFY todavía.',
       )
       break
     case 'stress':
       lines.push(
         styleGap || audit
-          ? 'Fallos fatales a evitar: inventar musicBuild, spamear ¡¡¡, plan de 7 días, ignorar la pista real, no usar web si lo pidieron.'
-          : '¿Qué se rompe si aplicas ya? Pistas duplicadas, borrar el clip entero, BPM absurdo, mal trackId.',
-        'Nombra 1–3 fallos fatales a evitar en el compromiso.',
+          ? 'Kael+Volt: fallos fatales — musicBuild inventado, ignorar pista, no usar web si lo pidieron.'
+          : 'Kael+Volt: pistas duplicadas, clip.delete sin clipId, BPM absurdo, wipe a medias.',
+        'Nombran 1–5 fallos fatales a evitar en el compromiso.',
       )
       break
     case 'synthesize':
       lines.push(
         styleGap
-          ? 'Tabla mental: rasgo del estilo → presente/ausente/débil en ESTA batería (cita beats si puedes). Prioriza 5–8 gaps P1/P2/P3. NO musicBuild.'
+          ? 'Mesa: rasgo del estilo → presente/ausente en ESTA pista. Priorizan gaps. NO musicBuild.'
           : audit
-            ? 'Prioriza 3–8 problemas (P1/P2/P3) con pista+clip+beats. Camino = informe de arreglo, no musicBuild.'
-            : 'Dos o tres caminos en una línea cada uno + por qué gana el que eliges (borrador).',
-        'No escribas «¡Listo!» vacío ni ¡¡¡. Sé concreto. PROHIBIDO listas de preguntas.',
-        !audit && !styleGap && refine
-          ? 'Camino esperado: setBpm bajo (~70–80) ± musicBuild si pide sublime/estilo. Nunca 120 si dijo rápida.'
-          : !audit && !styleGap
-            ? 'No escribas el mensaje al usuario. Solo el razonamiento de elección.'
-            : '',
+            ? 'Priorizan 3–10 problemas P1/P2/P3 con pista+clip+beats.'
+            : 'Comparan caminos; Nexus propone el ganador; Kael solo aprueba si es verificable.',
+        'Concretos. PROHIBIDO «¡Listo!» vacío.',
       )
       break
     case 'verify':
       lines.push(
-        styleGap || audit
-          ? '¿Citaste la pista/clip real? ¿Usaste web.search si lo pedían? ¿Evitas plan de producción inventado?'
-          : 'Antes del compromiso: ¿tienes pistaId/clipId (o nombre inequívoco)? ¿rango de beats si es edición parcial?',
-        styleGap || audit
-          ? 'Si falta dato de notas, dilo; no inventes. Confirma «listo para informe de gaps».'
-          : 'Si algo falta y es crítico, anótalo para CLARIFY; si no, confirma «listo para ACTIONS».',
+        'Capa OBLIGATORIA de Kael (QA). Sin su veredicto positivo NO hay commit.',
+        'Kael revisa el trabajo propuesto por los demás punto a punto:',
+        '1) Pedido del usuario vs plan acordado.',
+        '2) Tools y payloads (sin clip.delete huérfanos, sin midiSource ai vacío en canción completa).',
+        '3) Riesgos al aplicar (pistas master, IDs, duración).',
+        '4) Cómo sabremos que quedó bien (hechos en el DAW).',
+        'Volt aporta datos duros si hace falta.',
+        '',
+        'Al FINAL de esta capa, Kael emite OBLIGATORIO:',
+        '<<<VERDICT',
+        '{',
+        '  "ok": true,',
+        '  "issues": [],',
+        '  "successCriteria": ["…"],',
+        '  "askUserAfter": "¿Te gustó el resultado? ¿Cambiarías algo del groove/mezcla/estructura?"',
+        '}',
+        'VERDICT>>>',
+        'Si ok=false: listan issues y el consejo debe corregir (no fingir éxito).',
       )
       break
     case 'commit':
       lines.push(
-        'Compromiso final (para el turno de ejecución, no para charlar):',
+        'Nexus resume ACTIONS concretas. Kael confirma que el VERDICT ok=true sigue vigente.',
+        'Kael deja escrita la pregunta post-ejecución (para el turno final al usuario), p. ej.:',
+        '«Cuando el DAW tenga el cambio aplicado, preguntaré: ¿te gustó el resultado?»',
+        'PROHIBIDO que Nexus/Lyra hagan esa pregunta ahora (aún no se ejecutó).',
         styleGap
           ? [
-              '- ESCRIBE YA 5–10 bullets: qué hay / qué falta vs el estilo (pista «Batería», beats, rasgo).',
-              '- Incluye 2–4 rasgos del estilo sacados de la web (si hubo search).',
-              '- PROHIBIDO musicBuild, plan de días, ¡¡¡, «¡Entendido! Aquí tienes un plan de producción pop».',
-              '- Opcional: ACTIONS candidatas con aplicar:false (midi.notes.patch en un tramo), no mutar ahora.',
+              '- ESCRIBEN 5–12 bullets: qué hay / qué falta vs estilo (pista, beats, rasgo).',
+              '- 2–4 rasgos del estilo (web si hubo).',
+              '- PROHIBIDO musicBuild, plan de días, ¡¡¡.',
             ].join('\n')
           : audit
             ? [
-                '- ESCRIBE YA 4–10 bullets de diagnóstico con datos (pista «…» / clip «…» / beats / notas).',
-                '- Ejemplo: «P1 · Batería / loop · snare solo en 2·4, sin ghosts — típico worship moderno lleva ghosts en 2e/4e».',
-                '- PROHIBIDO describir cómo debes escribir; PROHIBIDO musicBuild; PROHIBIDO ¡¡¡ o «¡Listo!».',
-                '- Si no hay datos en el contexto, di exactamente qué clip falta inspeccionar.',
+                '- 4–12 bullets de diagnóstico con datos reales.',
+                '- PROHIBIDO musicBuild; PROHIBIDO «¡Listo!» vacío.',
               ].join('\n')
             : refine
               ? [
-                  '- Lista ACTIONS: project.setBpm y/o daw.musicBuild con bpm lento si aplica.',
-                  '- PROHIBIDO CLARIFY / pedir opciones al usuario.',
+                  '- UNA acción: daw.musicBuild { aplicar:true, midiSource:"procedural", bpm, minutos, prompt } o setBpm si solo tempo.',
+                  '- PROHIBIDO lotes enormes.',
                 ].join('\n')
               : total <= 3
                 ? [
-                    '- Pedido simple: lista ACTIONS concretas (tipos + payloads clave) en 2–4 bullets.',
-                    '- PROHIBIDO inventar CLARIFY si ya está claro.',
+                    '- Pedido simple: UNA mutación clara (wipe → daw.wipeProject).',
+                    '- IDs/bpm DENTRO de payload/arguments.',
                   ].join('\n')
                 : [
-                    '- Si faltan datos críticos: anota que el turno final usará <<<CLARIFY>>> (tú inventas options).',
-                    '- Si hay suficiente: lista tipos de ACTIONS y un orden de tareas (checklist mental).',
-                    '- 3–6 bullets. Cero «¡vamos a ello!» de asistente.',
+                    '- Si faltan datos críticos: anotan CLARIFY (options ≥3).',
+                    '- Si hay suficiente: tipos de ACTIONS + orden.',
+                    '- Canción → daw.musicBuild procedural; wipe → daw.wipeProject.',
                   ].join('\n'),
-        styleGap || audit
-          ? 'El turno final mostrará el diagnóstico/gaps; aquí YA debes tener los bullets escritos (no vacío).'
-          : 'Si ya está claro qué hacer: el cliente convertirá ACTIONS en checklist paso a paso (Continuar).',
       )
       break
   }
 
   lines.push(
     '',
-    audit || styleGap
-      ? 'Escribe solo el pensamiento de ESTA capa en AFIRMACIONES/bullets con datos. No firmes. No uses ¡¡¡. No preguntes en lista.'
-      : 'Escribe solo el pensamiento de ESTA capa. No firmes. No saludes. No uses ¡¡¡ ni «¡Listo!» vacío.',
+    'Escribe SOLO el diálogo de ESTA capa (etiquetas **Nombre:**). No firmes. No saludes.',
+    phase === 'verify' || phase === 'commit'
+      ? 'Kael puede hablarle al usuario SOLO vía askUserAfter / CLARIFY post-ejecución — no en esta capa.'
+      : 'Nadie le habla al usuario en esta capa.',
   )
   return lines.join('\n')
 }
 
 export function buildFinalTurnUserMessage(opts: {
   userText: string
-  /** Pedido ya traducido por normalize (si existe). */
   canonicalPrompt?: string
   decisionBrief: string
   stepsSummary: string
@@ -448,52 +500,56 @@ export function buildFinalTurnUserMessage(opts: {
           '## Pedido original del usuario',
           opts.userText,
           '',
-          '## Pedido canónico (traducido para JasWave — úsalo como fuente de verdad)',
+          '## Pedido canónico (acuerdo del consejo — fuente de verdad)',
           opts.canonicalPrompt.trim(),
         ]
       : ['## Pedido original', opts.userText]
   return [
-    `## Pensamiento privado (${depth} capas) — ya cerrado`,
-    'Usa estas notas mentales; NO las copies al usuario ni digas «según mi razonamiento».',
-    opts.stepsSummary.slice(0, 6000),
+    `## Diálogo interno del consejo (${depth} capas) — ya cerrado`,
+    'Usa estas notas; NO las copies al usuario ni digas «según mi razonamiento» / «según Nexus».',
+    opts.stepsSummary.slice(0, 48000),
     '',
     '## Compromiso (última capa)',
-    opts.decisionBrief.slice(0, 3000),
+    opts.decisionBrief.slice(0, 16000),
     '',
     ...pedidoBlock,
     '',
     '## Ahora sí: salida al usuario',
+    'Habla como el consejo, pero la voz que cierra con el usuario tras un trabajo hecho es Kael (QA).',
     styleGap
       ? [
-          'Eres productor de worship moderno: haz GAP ANALYSIS de la pista/clip existente vs el estilo pedido (p. ej. Averill/Averly Morillo).',
-          'Estructura: (1) qué hay YA en la batería con datos (pista, beats, densidades), (2) 3–6 rasgos del estilo (cita lo investigado en web si hubo search), (3) qué LE FALTA priorizado P1/P2/P3, (4) sugerencias concretas de arreglo MIDI (ghost notes, hi-hat, fills…) sin reescribir toda la canción.',
-          'PROHIBIDO: plan de producción multi-día, musicBuild, «¡Entendido!», spamear ¡¡¡, inventar pistas de bajo/keys/pad si no las pidió.',
-          web ? 'Debes reflejar hallazgos de internet (web.search); si no hubo resultados, dilo y razona con conocimiento de worship moderno con honestidad.' : '',
+          'GAP ANALYSIS: (1) qué hay YA, (2) rasgos del estilo, (3) qué falta P1/P2/P3, (4) sugerencias MIDI.',
+          'PROHIBIDO plan multi-día, musicBuild, «¡Entendido!».',
+          web ? 'Refleja hallazgos de internet si hubo search.' : '',
+          'Al final: Kael pregunta si el diagnóstico le sirve / si quiere que aplique fixes.',
         ]
           .filter(Boolean)
           .join('\n')
       : audit
         ? [
-            'Eres productor: diagnostica el proyecto con datos (pista, clip, beats/compás, notas).',
-            '1–3 frases + lista priorizada de lo que hay que arreglar. Cita tiempos reales del Timeline MIDI.',
-            'PROHIBIDO inventar canción nueva, «base en G mayor», musicBuild, plan de días o ¡¡¡¡ / «¡Listo!» vacío.',
-            'Si propones arreglos concretos opcionales, puedes listar ACTIONS candidatas con aplicar:false; no mutes.',
+            'Diagnostica con datos (pista, clip, beats). 1–3 frases + lista priorizada.',
+            'Cierra con Kael: ¿quieres que corrija los P1 ahora?',
           ].join('\n')
-        : '1–2 frases naturales en español (como productor, no como chatbot) Y el bloque técnico.',
+        : [
+            '1–2 frases de lo que vas a hacer / hiciste (productor).',
+            'Si este turno EJECUTA mutaciones creativas: tras ACTIONS, Kael debe pedir feedback',
+            '(CLARIFY o request-user-input: ¿te gustó el resultado?).',
+          ].join('\n'),
     !audit && !styleGap && createish && refine
       ? [
-          'REFINAR → <<<ACTIONS>>> obligatorio (sin CLARIFY).',
-          'Ej.: <<<ACTIONS [{"type":"project.setBpm","payload":{"bpm":72}},{"type":"daw.musicBuild","payload":{"aplicar":true,"prompt":"más sublime y lenta","bpm":72,"midiSource":"ai"}}] ACTIONS>>>',
-          'PROHIBIDO BPM 120 si pidió más lenta; PROHIBIDO «escribe las opciones».',
+          'REFINAR → <<<ACTIONS>>> UNA mutación.',
+          'Después del éxito (siguiente ciclo): Kael pide feedback.',
         ].join('\n')
       : !audit && !styleGap && createish
         ? [
-            'A) Datos críticos faltantes → solo <<<CLARIFY … CLARIFY>>> (tú inventas question+options ≥3).',
-            'B) Suficiente / créalo / respuestas → <<<ACTIONS [{"type":"daw.musicBuild",…}] ACTIONS>>>',
-            'PROHIBIDO cuestionario en prosa o pedir que el usuario invente las opciones.',
+            'A) Datos críticos faltantes → <<<CLARIFY>>> (options ≥3).',
+            'B) Suficiente → UNA tool (musicBuild procedural / wipe).',
+            'C) Cuando ya esté aplicado en el DAW → Kael:',
+            '<<<CLARIFY[{"id":"kael_feedback","question":"Kael (QA): ¿Te gustó el resultado?","options":["Sí, quedó bien","Casi — quiero ajustes","No — hay que rehacer","Cuéntame qué cambiar…"],"allowCustom":true}]CLARIFY>>>',
+            'PROHIBIDO complete silencioso tras canción/arreglo.',
           ].join('\n')
         : !audit && !styleGap
-          ? 'Según modo: <<<PLAN>>> / <<<DOC>>> / <<<CLARIFY>>> o ACTIONS con aplicar:false.'
+          ? 'Según modo: <<<PLAN>>> / <<<DOC>>> / <<<CLARIFY>>> o ACTIONS.'
           : '',
   ]
     .filter(Boolean)

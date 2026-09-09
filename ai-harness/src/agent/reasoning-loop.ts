@@ -75,7 +75,7 @@ export function parseReadBlockFromText(text: string): HarnessDawAction[] {
       /* ignore malformed READ */
     }
   }
-  return actions.slice(0, 4)
+  return actions.slice(0, 6)
 }
 
 export function stripReadBlock(text: string): string {
@@ -96,9 +96,8 @@ function newStepId(phase: ReasoningPhase): string {
 }
 
 function summarizeSteps(steps: ReasoningStep[]): string {
-  return steps
-    .map((s) => `${s.title}\n${s.content.slice(0, 500)}${s.content.length > 500 ? '…' : ''}`)
-    .join('\n\n—\n\n')
+  // Conservar el diálogo completo del consejo — no recortar por “ahorrar tokens”.
+  return steps.map((s) => `${s.title}\n${s.content}`).join('\n\n—\n\n')
 }
 
 export type RunReasoningLoopOpts = {
@@ -402,19 +401,19 @@ async function runOnePhase(
             query: `${q} worship contemporary christian drummer characteristics`,
           },
         },
-      ].slice(0, 4)
+      ].slice(0, 6)
     }
     if (readActions.length) {
       if (opts.abort?.aborted) throw new DOMException('Aborted', 'AbortError')
       const toolOut = await opts.runReadTools(readActions)
       if (opts.abort?.aborted) throw new DOMException('Aborted', 'AbortError')
       toolsUsed = readActions.map((a) => ({ type: a.type, summary: a.type }))
-      const toolNote = `Consulté: ${toolOut.slice(0, 2500)}`
+      const toolNote = `Consulté: ${toolOut.slice(0, 120000)}`
       content = `${content}\n\n${toolNote}`.trim()
       thread.push({ role: 'assistant', content })
       thread.push({
         role: 'user',
-        content: `## Resultado de consultas (capa ${index}/${total || '?'})\n${toolOut.slice(0, 3500)}\nIncorpóralo en silencio en capas siguientes; no lo recopies entero.`,
+        content: `## Resultado de consultas (capa ${index}/${total || '?'})\n${toolOut.slice(0, 160000)}\nIncorporadlo en el diálogo de capas siguientes; no lo recopiéis entero si es enorme.`,
       })
     } else {
       thread.push({ role: 'assistant', content })
@@ -441,6 +440,14 @@ async function runOnePhase(
 /** Subconjunto abreviado para harness de reparación (3 capas). */
 export const REASONING_REPAIR_PHASES: ReasoningPhase[] = ['normalize', 'research1', 'commit']
 
+/** Tras Aplicar / respuesta del usuario: el consejo revisa si el trabajo va bien. */
+export const REASONING_POST_APPLY_PHASES: ReasoningPhase[] = [
+  'critique',
+  'research1',
+  'verify',
+  'commit',
+]
+
 export async function runAbbreviatedReasoning(
   opts: Omit<RunReasoningLoopOpts, 'phases'> & { repairContext: string },
 ): Promise<string> {
@@ -450,4 +457,24 @@ export async function runAbbreviatedReasoning(
     phases: REASONING_REPAIR_PHASES,
   })
   return r.finalUserMessage
+}
+
+/** Consejo post-acción: Kael audita lo aplicado y acuerdan si continuar o pedir feedback. */
+export async function runCouncilReviewReasoning(
+  opts: Omit<RunReasoningLoopOpts, 'phases'> & { applyOutcome: string },
+): Promise<Awaited<ReturnType<typeof runReasoningLoop>>> {
+  return runReasoningLoop({
+    ...opts,
+    userText: [
+      opts.userText,
+      '',
+      '## Evento: el usuario confirmó (Aplicar / respuesta)',
+      'El consejo DEBE dialogar ahora: ¿se está haciendo bien el trabajo?',
+      'Kael lidera la verificación. Volt mira el DAW. Nexus/Lyra proponen el siguiente paso o feedback al usuario.',
+      '',
+      '## Resultado de lo aplicado',
+      opts.applyOutcome,
+    ].join('\n'),
+    phases: REASONING_POST_APPLY_PHASES,
+  })
 }

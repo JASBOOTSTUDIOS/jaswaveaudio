@@ -15,11 +15,16 @@ export type CertifyPipelineResult = {
   planEval: PlanEvaluation | null
   issues: string[]
   shouldRepair: boolean
+  /** Errores del auditor de producción / health. */
+  auditErrors: number
+  /** Huecos sección×pista pendientes. */
+  sectionGaps: number
 }
 
 const g = globalThis as unknown as {
   __jaswaveLastRender?: { paths: string[]; lufs?: number }
   __jaswaveCompareTarget?: { ok: boolean; deltaDb?: number }
+  __jaswaveLastListen?: { ok: boolean; issues?: string[]; summary?: string; target?: string }
 }
 
 export function recordRenderOutput(path: string, lufs?: number): void {
@@ -38,14 +43,41 @@ function ingestResultsEvidence(results: ActionResult[]): void {
       const delta = typeof cmp.deltaDb === 'number' ? cmp.deltaDb : undefined
       const ok = cmp.ok === true || (delta != null && Math.abs(delta) <= 1.5)
       recordCompareTargetResult(ok, delta)
+      g.__jaswaveLastListen = {
+        ...(g.__jaswaveLastListen ?? { ok }),
+        ok,
+        target: 'streaming',
+      }
     }
     if (
-      (r.type === 'render.start' || r.type === 'daw.masterPass') &&
+      (r.type === 'render.start' || r.type === 'daw.masterPass' || r.type === 'analysis.fullReport') &&
       r.success &&
       r.data &&
       typeof r.data === 'object'
     ) {
-      const data = r.data as { outputPath?: string; loudness?: { integratedLufs?: number; integrated?: number } }
+      const data = r.data as {
+        outputPath?: string
+        loudness?: { integratedLufs?: number; integrated?: number }
+        listenReport?: { ok?: boolean; issues?: string[]; summary?: string; target?: string }
+        ok?: boolean
+        issues?: string[]
+        summary?: string
+      }
+      const listen = data.listenReport
+      if (listen && typeof listen === 'object') {
+        g.__jaswaveLastListen = {
+          ok: listen.ok !== false,
+          issues: listen.issues,
+          summary: listen.summary,
+          target: listen.target,
+        }
+      } else if (r.type === 'analysis.fullReport' && typeof data.ok === 'boolean') {
+        g.__jaswaveLastListen = {
+          ok: data.ok,
+          issues: data.issues,
+          summary: data.summary,
+        }
+      }
       if (data.outputPath) {
         recordRenderOutput(data.outputPath, data.loudness?.integratedLufs ?? data.loudness?.integrated)
       }
@@ -103,5 +135,7 @@ export async function runPostTurnCertifyPipeline(
     planEval,
     issues,
     shouldRepair: harnessShouldRepair(health),
+    auditErrors: health.errors.length,
+    sectionGaps: health.sectionGaps?.length ?? 0,
   }
 }

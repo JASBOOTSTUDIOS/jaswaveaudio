@@ -653,6 +653,9 @@ export function formatAiUserError(result: {
   provider?: string
 }): string {
   let errorLine = result.error || 'Error al contactar el proveedor de IA.'
+  if (/ReferenceError|TypeError|SyntaxError/.test(errorLine)) {
+    errorLine = 'Fallo interno al procesar el turno. Inténtalo de nuevo.'
+  }
   if (errorLine.includes('{"error"') || errorLine.includes('"service_unavailable_error"')) {
     const match = errorLine.match(/"message"\s*:\s*"([^"]+)"/)
     if (match?.[1]) errorLine = match[1]

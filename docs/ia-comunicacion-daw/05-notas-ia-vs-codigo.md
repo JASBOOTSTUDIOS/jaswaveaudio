@@ -4,10 +4,10 @@
 
 | Camino | ¿Quién decide pitch / tiempo / velocity de **cada** nota? |
 |--------|------------------------------------------------------------|
-| **Music Build** con `midiSource: "ai"` (**default**) | Estructura + stubs `clip-*.md`; **la IA** rellena el `.md` nota a nota (`midi.clip.md.upsert` → preview → `apply`) |
+| **Music Build** con `midiSource: "ai"` (**default**) | Estructura (BPM, marcadores, pistas, VST, vol/pan) + `plan.md` por sección×pista; **sin clips vacíos**. La IA inserta `midi.clip.create` **con notas[]** por hueco. |
 | **Music Build** con `midiSource: "procedural"` (legado) | **El código** (`composeMidiFromBrief`), guiado por el *brief*/spec |
-| **ACTIONS** `midi.clip.md.*` | **La IA** — herramienta más precisa (tabla completa + ids estables) |
-| **ACTIONS** `midi.clip.create` / `midi.notes.set` | **La IA** (o la UI), nota a nota (JSON directo) |
+| **ACTIONS** `midi.clip.create` / `midi.notes.set` / `midi.notes.patch` | **La IA** (o la UI), nota a nota. `patch` crea el clip si falta cobertura. |
+| **ACTIONS** `midi.clip.md.*` | **La IA** — camino opcional (tabla + preview); no es el feliz path de canciones |
 | **Piano roll + Ctrl+L** | El usuario ancla notas; la IA opera sobre esos `noteIds` |
 | **Piano roll humano** | El usuario |
 
@@ -16,32 +16,35 @@
 
 ---
 
-## Flujo canción (nota a nota vía `.md`)
+## Flujo canción (camino feliz)
 
 ```mermaid
 flowchart TD
   LLM1[Turno1_daw.musicBuild_ai]
-  Struct[Pistas_VST_clips_vacios_clip_md]
-  LLM2[TurnoN_midi.clip.md.upsert]
-  Card[MidiClipMdPreview]
-  Aud[Escuchar_softsynth_o_VST]
-  Apply[midi.clip.md.apply]
-  State[Notas_en_DAWState]
+  Struct[Pistas_VST_marcadores_plan]
+  Gap[Mapa_seccion_x_pista]
+  LLM2[TurnoN_midi.clip.create_con_notas]
+  Audit[ProductionAudit]
+  Harness[Harness_siguiente_hueco]
+  Bounce[Bounce_compareTarget]
+  Done[Plan_y_audit_OK]
 
-  LLM1 --> Struct --> LLM2 --> Card --> Aud
-  Card -->|Aplicar| Apply --> State
+  LLM1 --> Struct --> Gap --> LLM2 --> Audit
+  Audit -->|issues| Harness --> LLM2
+  Audit -->|secciones_cubiertas| Bounce --> Done
 ```
 
-1. `daw.musicBuild { aplicar:true, midiSource:"ai", … }` crea BPM, pistas, instrumentos, **clips vacíos** y Docs `clip-<clipId>.md` (tabla vacía). `plan.md` lista tareas por slug.
-2. Cada turno: la IA lee `midi.clip.md.read`, escribe filas (id, pitch, inicio, duración, velocidad, …) con `midi.clip.md.upsert` → tarjeta de preview (no timeline).
-3. Usuario: Escuchar (Plugin Host / motor de audio, o VST de pista) → **Aplicar al proyecto** (`midi.clip.md.apply` → `notes.set`).
-4. `midi.notes.compare` para diff por id (md vs DAW u otro clip).
+1. `daw.musicBuild { aplicar:true, midiSource:"ai", … }` crea BPM, marcadores, pistas, instrumentos y mezcla por rol. **No** crea clips vacíos ni `clip-*.md`. Escribe checkboxes en `plan.md`:
+   `- [ ] MIDI «Drums» · sección Intro (beats 0–16) · {trackId} · rol drums`
+2. El harness / Agent Loop pide el **siguiente hueco** y la IA emite `midi.clip.create { pistaId, inicio, duracion, notas:[...] }` (notas obligatorias).
+3. Tras cada create/patch: audición corta + meters; el **auditor de producción** emite issues (VST, rango MIDI, huecos, mezcla, listen).
+4. Cuando no quedan huecos: `render.start` + `analysis.compareTarget` (target `streaming` por defecto; `club`/`cd` según el plan/nombre).
 
 ### Selección tipo Cursor (Ctrl+L)
 
 1. Selecciona notas en el piano roll → **Preguntar a Jas** o **Ctrl+L**.
 2. Se ancla el contexto (`trackId`, `clipId`, `noteIds`, pitches…) al chat.
-3. Pedidos del tipo «reordena esta secuencia» deben usar ACTIONS con esos `noteIds` (o editar el `.md` y comparar).
+3. Pedidos del tipo «reordena esta secuencia» deben usar ACTIONS con esos `noteIds`.
 
 ---
 
@@ -74,12 +77,12 @@ Archivo: `shared/src/commands/domain-commands.ts`.
 | `id` | `generarId()` |
 | `presion` | **0** |
 
-Expresión (CC / bend): ACTIONS `midi.setCC` / `midi.setPitchBend` (también bloque `## Expresión` en el `.md`).
+Expresión (CC / bend): ACTIONS `midi.setCC` / `midi.setPitchBend`.
 
 ---
 
 ## Implicaciones
 
-1. Canciones: Music Build (estructura + stubs md) + turnos `midi.clip.md.upsert` / `apply`; una pista/clip por turno.
-2. El `.md` es la vista Cursor-like: cada nota es una fila identificable y comparable.
-3. La timeline no cambia hasta **Aplicar** (preview en chat / Docs).
+1. Canciones: Music Build (estructura) + turnos `midi.clip.create` con notas por sección; harness hasta completar huecos + audit limpio.
+2. Prohibido `midi.clip.create` con `notas: []`.
+3. `midi.notes.patch` crea el clip si el rango no está cubierto.

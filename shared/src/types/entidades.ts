@@ -83,6 +83,28 @@ export interface Take {
   notas: string;
 }
 
+/** Franja de una toma promovida al comp activo. */
+export interface CompSegment {
+  id: string;
+  takeId: string;
+  /** Offset dentro del WAV de la toma (segundos). */
+  origenInicio: number;
+  origenFin: number;
+  /** Posición en timeline del proyecto (beats). */
+  timelineInicio: number;
+  timelineFin: number;
+}
+
+/** Carpeta de tomas + matriz de comp por pista. */
+export interface TakeFolder {
+  id: string;
+  pistaId: string;
+  takes: Take[];
+  segments: CompSegment[];
+  /** Preview/audition de una sola toma. */
+  takeActivoId?: string;
+}
+
 export interface Version {
   id: string;
   proyectoId: string;

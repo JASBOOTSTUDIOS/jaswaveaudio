@@ -79,6 +79,17 @@ export type PluginInsertPayload = {
   plugin: PluginInfo
   /** Índice de inserción; default = final */
   position?: number
+  /** Alias de position (compat agente) */
+  index?: number
+  /** Ruta VST/host a persistir en plugin.descripcion */
+  path?: string
+}
+
+export type PluginUpdatePayload = {
+  trackId: string
+  pluginInstanceId: string
+  /** Parches permitidos sobre PluginInfo (p.ej. descripcion = path host) */
+  patch: Partial<Pick<PluginInfo, 'descripcion' | 'nombre' | 'bypass' | 'estadoPluginBase64'>>
 }
 
 export type PluginRemovePayload = {
@@ -115,6 +126,8 @@ export function crearComandoPluginInsert(): CommandDefinition<PluginInsertPayloa
         trackId: { type: 'string' },
         plugin: { type: 'object' },
         position: { type: 'number' },
+        index: { type: 'number' },
+        path: { type: 'string' },
       },
       required: ['trackId', 'plugin'],
       additionalProperties: false,
@@ -122,17 +135,20 @@ export function crearComandoPluginInsert(): CommandDefinition<PluginInsertPayloa
     handler: (estado, payload): StateTransition<PluginInsertPayload> => {
       const pista = findTrack(estado, payload.trackId)
       const chain = [...(pista.plugins ?? [])]
+      const path = typeof payload.path === 'string' && payload.path.length > 0 ? payload.path : undefined
       const plugin: PluginInfo = {
         ...payload.plugin,
         id: payload.plugin.id || generarId(),
+        ...(path ? { descripcion: path } : {}),
       }
       if (chain.some((p) => p.id === plugin.id)) {
         throw new Error(`Ya existe plugin instanceId: ${plugin.id}`)
       }
+      const rawPos = payload.position ?? payload.index
       const pos =
-        payload.position === undefined
+        rawPos === undefined
           ? chain.length
-          : Math.max(0, Math.min(payload.position, chain.length))
+          : Math.max(0, Math.min(Number(rawPos), chain.length))
       chain.splice(pos, 0, plugin)
 
       return {
@@ -164,6 +180,59 @@ export function crearComandoPluginInsert(): CommandDefinition<PluginInsertPayloa
           trackId: payload.trackId,
           pluginInstanceId: plugin.id,
         } satisfies PluginRemovePayload,
+      }
+    },
+  }
+}
+
+export function crearComandoPluginUpdate(): CommandDefinition<PluginUpdatePayload> {
+  return {
+    type: 'plugin.update',
+    inverseType: 'plugin.update',
+    description: 'Actualiza metadatos de un plugin en la FX Chain (p.ej. descripcion/path)',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        trackId: { type: 'string' },
+        pluginInstanceId: { type: 'string' },
+        patch: { type: 'object' },
+      },
+      required: ['trackId', 'pluginInstanceId', 'patch'],
+      additionalProperties: false,
+    },
+    handler: (estado, payload): StateTransition<PluginUpdatePayload> => {
+      const pista = findTrack(estado, payload.trackId)
+      const chain = [...(pista.plugins ?? [])]
+      const idx = chain.findIndex((p) => p.id === payload.pluginInstanceId)
+      if (idx < 0) throw new Error(`Plugin no encontrado: ${payload.pluginInstanceId}`)
+      const prev = chain[idx]!
+      const inversePatch: PluginUpdatePayload['patch'] = {}
+      if (payload.patch.descripcion !== undefined) inversePatch.descripcion = prev.descripcion
+      if (payload.patch.nombre !== undefined) inversePatch.nombre = prev.nombre
+      if (payload.patch.bypass !== undefined) inversePatch.bypass = prev.bypass
+      if (payload.patch.estadoPluginBase64 !== undefined) {
+        inversePatch.estadoPluginBase64 = prev.estadoPluginBase64
+      }
+      const next: PluginInfo = { ...prev, ...payload.patch }
+      chain[idx] = next
+      return {
+        state: { ...estado, project: withPlugins(estado, payload.trackId, chain) },
+        events: [
+          {
+            nombre: EventosTrack.actualizada,
+            version: 1,
+            marcaTiempo: Date.now(),
+            fuente: 'plugin-commands',
+            payload: { trackId: payload.trackId, cambios: { plugins: chain } as never },
+          },
+        ],
+        result: { ...payload, plugin: next } as PluginUpdatePayload & { plugin: PluginInfo },
+        inversePayload: {
+          trackId: payload.trackId,
+          pluginInstanceId: payload.pluginInstanceId,
+          patch: inversePatch,
+        } satisfies PluginUpdatePayload,
       }
     },
   }

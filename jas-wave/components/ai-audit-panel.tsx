@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ClipboardList, Download, Trash2 } from 'lucide-react'
+import { ChevronRight, ClipboardList, Download, Trash2 } from 'lucide-react'
 import {
   clearAiDawAudit,
   exportAiDawAuditJson,
@@ -8,6 +8,7 @@ import {
   subscribeAiDawAudit,
   type AiDawAuditEntry,
 } from '@/src/lib/ai-daw-audit-store'
+import { cn } from '@/lib/utils'
 
 type Props = {
   messageId?: string
@@ -29,18 +30,28 @@ export function AiAuditPanel({ messageId, compact }: Props) {
   if (compact && entries.length === 0) return null
 
   return (
-    <div className={compact ? 'mt-2' : 'border-t border-border'}>
+    <div className={compact ? 'mt-1.5 w-full min-w-0' : 'border-t border-border'}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[10px] font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground"
+        className={
+          compact
+            ? 'flex w-full min-w-0 items-center gap-1 py-0.5 text-left text-[0.85em] text-muted-foreground/70 hover:text-muted-foreground'
+            : 'flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[10px] font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground'
+        }
       >
-        <ClipboardList className="size-3" />
-        Auditoría IA ({entries.length})
-        <span className="ml-auto text-[9px]">{open ? '▾' : '▸'}</span>
+        {compact ? (
+          <ChevronRight
+            className={cn('size-3.5 shrink-0 transition-transform duration-150', open && 'rotate-90')}
+          />
+        ) : (
+          <ClipboardList className="size-3" />
+        )}
+        {compact ? `Auditoría · ${entries.length}` : `Auditoría IA (${entries.length})`}
+        {compact ? null : <span className="ml-auto text-[9px]">{open ? '▾' : '▸'}</span>}
       </button>
       {open ? (
-        <div className="max-h-48 space-y-1 overflow-y-auto px-2.5 pb-2">
+        <div className={compact ? 'max-h-40 space-y-1 overflow-y-auto pl-4' : 'max-h-48 space-y-1 overflow-y-auto px-2.5 pb-2'}>
           {!compact ? (
             <div className="mb-1 flex gap-1">
               <button

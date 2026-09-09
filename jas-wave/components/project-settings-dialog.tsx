@@ -1551,7 +1551,7 @@ function AiTab() {
                 ...p,
                 lastHealth: (result.status === 'misconfigured'
                   ? 'misconfigured'
-                  : 'disconnected') as const,
+                  : 'disconnected') as AiProviderProfile['lastHealth'],
                 lastHealthAt: Date.now(),
               }
             : p,

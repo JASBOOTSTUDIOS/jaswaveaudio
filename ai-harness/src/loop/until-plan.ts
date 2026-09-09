@@ -32,7 +32,9 @@ export type HarnessUntilPlanDeps = {
   shouldContinue?: (evaluation: PlanEvaluation | null) => boolean
 }
 
-const MAX_OUTER_LOOPS = 4
+const MAX_OUTER_LOOPS = 8
+
+export const HARNESS_MAX_OUTER_LOOPS = MAX_OUTER_LOOPS
 
 export function createHarnessJobContextStore(): { current: HarnessJobContext | null } {
   return { current: null }

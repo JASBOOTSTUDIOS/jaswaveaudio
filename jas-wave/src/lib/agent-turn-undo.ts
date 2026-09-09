@@ -59,12 +59,16 @@ export function toStoredCertify(result: {
   shouldRepair: boolean
   issues: string[]
   planEval: { done: number; planned: number } | null
+  auditErrors?: number
+  sectionGaps?: number
 }): {
   healthOk: boolean
   shouldRepair: boolean
   issues: string[]
   planDone?: number
   planPlanned?: number
+  auditErrors?: number
+  sectionGaps?: number
 } {
   return {
     healthOk: result.healthOk,
@@ -72,5 +76,7 @@ export function toStoredCertify(result: {
     issues: result.issues.slice(0, 12),
     planDone: result.planEval?.done,
     planPlanned: result.planEval?.planned,
+    auditErrors: result.auditErrors,
+    sectionGaps: result.sectionGaps,
   }
 }

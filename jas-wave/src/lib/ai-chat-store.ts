@@ -17,8 +17,12 @@ export type StoredChatMessage = {
     /** Diff semántico del dry-run (plan/think/ask). */
     previewDiff?: import('../../../shared/src/state/diff-estado').SemanticStateDiff
     previewSummary?: string
-    /** Índice de acción → estado de revisión (checkbox). */
-    actionStatuses?: Record<string, 'pending' | 'accepted' | 'rejected'>
+    /** Índice de acción → estado de revisión (checkbox / resultado). */
+    actionStatuses?: Record<string, 'pending' | 'accepted' | 'rejected' | 'applied' | 'skipped'>
+    /** Índices ya ejecutados (aplicar uno a uno). Independiente del checkbox legado. */
+    applied?: number[]
+    /** Índices omitidos por el usuario, sin ejecutar. */
+    skipped?: number[]
     /** Si la propuesta viene de un paso del checklist, id del item. */
     checklistStepId?: string
   }
@@ -29,6 +33,8 @@ export type StoredChatMessage = {
     issues: string[]
     planDone?: number
     planPlanned?: number
+    auditErrors?: number
+    sectionGaps?: number
   }
   /** Profundidad de undo antes de aplicar mutaciones de este turno. */
   undoDepthAtStart?: number
@@ -181,6 +187,19 @@ function loadAllRaw(): ChatConversation[] {
   }
 }
 
+const chatListeners = new Set<() => void>()
+
+function notifyChatListeners(): void {
+  for (const l of chatListeners) l()
+}
+
+export function subscribeChatStore(cb: () => void): () => void {
+  chatListeners.add(cb)
+  return () => {
+    chatListeners.delete(cb)
+  }
+}
+
 function saveAllRaw(list: ChatConversation[]): void {
   const trimmed = list
     .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -191,6 +210,7 @@ function saveAllRaw(list: ChatConversation[]): void {
       messages: c.messages.slice(-MAX_MESSAGES),
     }))
   localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed))
+  notifyChatListeners()
 }
 
 function loadForProject(projectId = scopedProjectId): ChatConversation[] {
@@ -210,6 +230,15 @@ function upsertConversation(conv: ChatConversation): void {
 
 export function listConversations(projectId = scopedProjectId): ChatConversation[] {
   return loadForProject(projectId)
+}
+
+/** Abre un chat solo si pertenece a este proyecto. */
+export function openConversation(id: string, projectId = scopedProjectId): ChatConversation | null {
+  const c = getConversation(id)
+  const pid = projectId || 'default'
+  if (!c || c.projectId !== pid) return null
+  setActiveConversationId(c.id, pid)
+  return c
 }
 
 export function getConversation(id: string): ChatConversation | null {
@@ -233,8 +262,11 @@ export function createConversation(
   return conv
 }
 
-export function deleteConversation(id: string): void {
-  saveAllRaw(loadAllRaw().filter((c) => c.id !== id))
+export function deleteConversation(id: string, projectId = scopedProjectId): void {
+  const c = getConversation(id)
+  const pid = projectId || 'default'
+  if (!c || c.projectId !== pid) return
+  saveAllRaw(loadAllRaw().filter((x) => x.id !== id))
 }
 
 export function renameConversation(id: string, title: string): void {
@@ -343,6 +375,7 @@ export function setActiveConversationId(id: string | null, projectId = scopedPro
   const key = activeKey(projectId)
   if (!id) localStorage.removeItem(key)
   else localStorage.setItem(key, id)
+  notifyChatListeners()
 }
 
 /** Obtiene o crea la conversación activa del proyecto en scope. */

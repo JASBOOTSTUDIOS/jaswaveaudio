@@ -331,7 +331,14 @@ export function isGarbageAssistantReply(text: string): boolean {
   if (!t) return true
   if (/^[¡!]{3,}$/.test(t)) return true
   if (/[¡!]{8,}/.test(t) && t.replace(/[¡!\s]/g, '').length < 40) return true
-  if (/^[\s¡!?.…,;:\-–—*•]+$/.test(t)) return true
+  if (
+    /Escribe solo el pensamiento de ESTA capa|##\s*Capa\s+\d+\s*\/\s*\d+|<<<READY_FOR_GAP_REPORT>>>/i.test(
+      t,
+    ) &&
+    t.replace(/Escribe solo el pensamiento[\s\S]{0,80}/gi, '').trim().length < 40
+  ) {
+    return true
+  }
   // Solo meta-instrucciones sin datos de clips
   if (
     t.length < 80 &&
@@ -451,6 +458,15 @@ export function buildReadOnlyProjectContext(state: DAWState): string {
     `Duración: ${resumen.duracion.toFixed(2)}s`,
     `Sample rate: ${resumen.sampleRate} / ${resumen.bitDepth}-bit`,
     `Pistas: ${resumen.pistas} · Clips: ${resumen.clips} · Modificado: ${resumen.modificado ? 'sí' : 'no'}`,
+    (() => {
+      const folders = state.project?.takeFolders ?? []
+      if (!folders.length) return ''
+      const lines = folders.map((f) => {
+        const segs = f.segments.length
+        return `- pista ${f.pistaId}: ${f.takes.length} toma(s), ${segs} segmento(s) comp`
+      })
+      return `\n## Tomas / Comp\n${lines.join('\n')}`
+    })(),
     '',
     '## Transporte',
     `Reproduciendo: ${transporte?.reproduciendo ? 'sí' : 'no'}`,
@@ -500,7 +516,7 @@ export function answerLocalReadQuery(state: DAWState, question: string): string 
   if (/clips|cu[aá]ntos clips/.test(lower)) {
     return `Hay **${resumen.clips}** clip(s) en total.`
   }
-  if (/resumen|estado del proyecto|qu[eé] hay/.test(lower)) {
+  if (/resumen|estado (del|de (este|el))? proyecto|qu[eé] hay/.test(lower)) {
     return [
       `**${resumen.nombre}** — ${resumen.bpm} BPM, ${resumen.pistas} pistas, ${resumen.clips} clips.`,
       resumen.modificado ? 'Hay cambios sin guardar.' : 'Sin cambios pendientes.',

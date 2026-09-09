@@ -18,17 +18,27 @@ export const USER_NOTES_HEADING = 'Notas del usuario'
 export const DEFAULT_PLAN_MD = `# Plan
 
 ## Intención
-_Describe qué quieres producir. La IA y tú pueden editar este archivo._
+### Qué se busca
+_Género, tempo, tonalidad, mood y referencia. La IA lo reescribe en cada pedido._
+
+### Forma
+_Intro / verso / coro / puente — compases y qué debe pasar en cada uno._
+
+### Pistas previstas
+_Nombre, rol e instrumento de cada pista._
+
+### Último pedido
+_Se actualiza en cada mensaje del usuario._
 
 ## Por implementar
-- [ ] (añade tareas o pistas aquí)
+- [ ] (tareas concretas y comprobables: pista «Nombre», BPM, clip de sección con notas, mezcla…)
 
 ## En curso
 
 ## Implementado
 
 ## Evaluación
-Aún no hay ejecución. Cuando la IA cree pistas o clips, comparará lo planeado con el DAW.
+Aún no hay ejecución. Cada turno compara lo planeado con el DAW y marca \`[x]\` lo hecho.
 
 ## ${USER_NOTES_HEADING}
 _Tus notas no se pisan automáticamente. Escríbelas aquí._
@@ -245,6 +255,7 @@ export function writeAgentDoc(
   if ((opts?.preserveUserNotes ?? true) && prev) {
     body = mergePreservingUserNotes(prev.content, body)
   }
+  if (s === PLAN_SLUG) body = normalizePlanCheckboxes(ensurePlanTemplate(body))
   const now = Date.now()
   const doc: AgentDoc = {
     slug: s,
@@ -323,6 +334,48 @@ export function setMarkdownSection(md: string, heading: string, body: string): s
     .join('\n\n') + '\n'
 }
 
+export const PLAN_SECTION_HEADINGS = [
+  'Intención',
+  'Por implementar',
+  'En curso',
+  'Implementado',
+  'Evaluación',
+  USER_NOTES_HEADING,
+] as const
+
+export function normalizePlanCheckboxes(md: string): string {
+  let next = md
+  for (const heading of ['Por implementar', 'En curso'] as const) {
+    const body = getMarkdownSection(next, heading)
+    if (!body.trim()) continue
+    const lines = body.split('\n').map((line) => {
+      if (/^\s*[-*]\s*\[[ xX]\]/.test(line)) return line
+      const m = /^\s*[-*]\s+(.+)$/.exec(line)
+      if (!m) return line
+      const text = m[1]!.trim()
+      if (!text || text.startsWith('_') || /^\(/.test(text)) return line
+      return `- [ ] ${text}`
+    })
+    next = setMarkdownSection(next, heading, lines.join('\n'))
+  }
+  return next
+}
+
+/** Completa secciones que el modelo suele omitir, sin pisar lo ya escrito. */
+export function ensurePlanTemplate(md: string): string {
+  let next = (md || '').replace(/\r\n/g, '\n').trim()
+  if (!next) return DEFAULT_PLAN_MD
+  if (!/^#\s+/m.test(next)) next = `# Plan\n\n${next}`
+  for (const heading of PLAN_SECTION_HEADINGS) {
+    const parts = splitMarkdownSections(next)
+    const has = parts.some((p) => p.heading && p.heading.toLowerCase() === heading.toLowerCase())
+    if (has) continue
+    const fallback = getMarkdownSection(DEFAULT_PLAN_MD, heading).trim() || '_'
+    next = setMarkdownSection(next, heading, fallback)
+  }
+  return next.endsWith('\n') ? next : `${next}\n`
+}
+
 export function mergePreservingUserNotes(previous: string, incoming: string): string {
   const userNotes = getMarkdownSection(previous, USER_NOTES_HEADING)
   let next = incoming
@@ -367,7 +420,7 @@ export function applyMarkdownDocsFromModel(
   return { slugs, edits }
 }
 
-export function formatDocsForPrompt(projectId: string, maxChars = 8000): string {
+export function formatDocsForPrompt(projectId: string, maxChars = 14000): string {
   const docs = listAgentDocs(projectId)
   const names = docs.map((d) => d.slug).join(', ')
   const plan = docs.find((d) => d.slug === PLAN_SLUG)
@@ -376,12 +429,14 @@ export function formatDocsForPrompt(projectId: string, maxChars = 8000): string 
   return [
     '## Documentos Markdown del proyecto (editables por el USUARIO y por ti)',
     `Archivos: ${names || 'plan.md'}`,
-    'El usuario puede abrir el panel Plan / Docs y editar estos .md. NO borres «Notas del usuario».',
-    'Para crear o actualizar un .md usa el bloque:',
+    'El usuario puede abrir el panel Docs y editar estos .md. NO borres «Notas del usuario».',
+    'plan.md es la fuente de verdad del trabajo. Actualízalo cuando cambie el objetivo, arranque o falle una operación compleja, o el usuario lo pida — no en cada pregunta corta.',
+    '1) Si el pedido cambia género, pistas, forma o mezcla: reescribe intención y tareas `- [ ]` concretas (pista «Nombre», clip de sección, BPM…).',
+    '2) Emite ACTIONS alineadas a las tareas pendientes de ESTE pedido.',
+    '3) Tras mutar el DAW el cliente marcará `[x]` lo que ya exista. Tú también puedes doc.evaluate.',
     '<<<DOC plan.md',
-    '(markdown)',
+    '(markdown completo del plan)',
     'DOC>>>',
-    'o las acciones doc.create / doc.write / doc.append.',
     '',
     '### plan.md actual',
     planBody,
@@ -395,8 +450,8 @@ export function docsPromptActions(): string {
     '- doc.append { slug, markdown, section? }  ← añade al final o a una sección ##',
     '- doc.list',
     '- doc.read { slug }',
-    '- doc.evaluate  ← compara plan.md (intención / por implementar) con el DAW y reescribe Evaluación + Implementado',
-    'Ciclo del agente: 1) escribe/ajusta plan.md  2) implementa en el DAW  3) evalúa intención vs por implementar vs lo hecho y actualiza ## Evaluación e ## Implementado.',
+    '- doc.evaluate  ← compara plan.md con el DAW y reescribe Evaluación + marca Implementado',
+    'Ciclo: si el objetivo cambió, actualizar plan.md → implementar → evaluar y marcar lo hecho.',
   ].join('\n')
 }
 

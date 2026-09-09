@@ -120,9 +120,33 @@ export function formatClarificationAnswersForPrompt(
       'OBLIGATORIO: usa el trackId/pistaId indicado en TODAS las acciones MIDI de este turno.',
     )
     lines.push(
-      'Para editar SOLO una sección del clip: midi.notes.patch { pistaId, clipId, rangeStart, rangeEnd, notas } o midi.clip.md.apply con rangeStart/rangeEnd (beats). NO reemplaces el clip entero si solo pidió una parte.',
+      'Para editar SOLO una sección: midi.notes.patch { pistaId, rangeStart, rangeEnd, notas } (crea el clip si no existe). NO reemplaces el clip entero si solo pidió una parte.',
     )
     lines.push('PROHIBIDO: track.create, daw.musicBuild u otro <<<CLARIFY>>>.')
+    return lines.join('\n')
+  }
+  const isKaelFeedback = questions.some((q) => q.id === 'kael_feedback')
+  if (isKaelFeedback) {
+    const kaelAns =
+      answers.find((x) => x.id === 'kael_feedback')?.value.trim() || formCustom?.trim() || ''
+    lines.push(
+      'El consejo (Nexus, Lyra, Volt, Kael, Iris) DEBE dialogar ahora sobre si el trabajo va bien.',
+    )
+    lines.push('Kael lidera. Volt confirma el estado real del DAW (READ si hace falta).')
+    if (/sí|quedo bien|quedó bien|perfecto|ok\b/i.test(kaelAns)) {
+      lines.push(
+        'El usuario APROBÓ el resultado. Cierra con prosa breve de Kael; sin más ACTIONS creativas salvo que pida explícitamente otra cosa.',
+      )
+    } else if (/rehacer|no\b/i.test(kaelAns)) {
+      lines.push(
+        'El usuario quiere REHACER. Consejo propone plan concreto + <<<ACTIONS>>> (propuesta Aplicar). Sin musicBuild a ciegas si basta wipe+rebuild justificado.',
+      )
+    } else {
+      lines.push(
+        'El usuario quiere AJUSTES. Consejo acuerda cambios concretos + <<<ACTIONS>>> (propuesta Aplicar). PROHIBIDO complete silencioso.',
+      )
+    }
+    lines.push('PROHIBIDO forzar daw.musicBuild solo porque había clarificación.')
     return lines.join('\n')
   }
   if (isMidiAudit) {
@@ -198,13 +222,64 @@ export function extractGenreFromClarifyText(text: string): string | undefined {
   return undefined
 }
 
+export function isGreetingOrChitchat(text: string): boolean {
+  return /^(hola+|hi+|hey|hello|buenas|buenos d[ií]as|buenas tardes|qu[eé] tal)[\s!.]*$/i.test(
+    text.trim(),
+  )
+}
+
+export function isProjectStatusQuestion(text: string): boolean {
+  const t = text.trim()
+  return (
+    /^(hola[,.]?\s*)?(dame el |dime el |c[uú]al es el )?estado (de |del )?(este |el )?proyecto\b/i.test(
+      t,
+    ) || /^(resumen( del proyecto)?|qu[eé] hay en (este |el )?proyecto)\??$/i.test(t)
+  )
+}
+
+function isFollowupNoise(text: string): boolean {
+  const t = text.trim()
+  if (!t) return true
+  if (isGreetingOrChitchat(t) || isProjectStatusQuestion(t) || isAffirmativeBuildIntent(t)) return true
+  if (t.length < 90 && /no se cre[oó]|no (se )?(cre[oó]|hizo|aplic[oó])|no funciona|est[aá] vac[ií]o/i.test(t)) {
+    return true
+  }
+  return false
+}
+
+function looksLikeCreativeBrief(text: string): boolean {
+  return /\b(crea|cr[eé]ame|creame|genera|hazme|arm[aá]|pista|clip|midi|bater|drum|canci[oó]n|tema|groove|toms?|pad|bajo|guitar)\b/i.test(
+    text,
+  )
+}
+
+/** «hazlo» debe continuar el último pedido creativo, no un plan.md viejo ni un «hola». */
+export function lastCreativeUserText(
+  messages: Array<{ role: string; content?: string }>,
+  current: string,
+): string {
+  if (!isAffirmativeBuildIntent(current)) return current
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role !== 'user') continue
+    const t = (m.content ?? '').trim()
+    if (isFollowupNoise(t)) continue
+    if (looksLikeCreativeBrief(t) || t.length > 40) return t
+  }
+  return current
+}
+
 export function isAffirmativeBuildIntent(text: string): boolean {
   const t = text.trim().toLowerCase()
   if (!t) return false
   if (
-    /^(s[ií]|ok|vale|dale|hazlo|cr[eé]alo|aplica|construir|adelante|go|yes|do it)[\s!.]*$/i.test(t)
+    /^(s[ií]|ok|vale|dale|hazlo|cr[eé]alo|aplica|construir|adelante|go|yes|do it|contin[uú]a)[\s!.]*$/i.test(
+      t,
+    )
   ) {
     return true
   }
-  return /\b(hazlo|cr[eé]alo|aplica(lo)? ya|construir ahora|adelante|si hazlo|sí hazlo)\b/i.test(t)
+  return /\b(hazlo|cr[eé]alo|aplica(lo)? ya|construir ahora|adelante|si hazlo|sí hazlo|contin[uú]a)\b/i.test(
+    t,
+  )
 }

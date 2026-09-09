@@ -74,6 +74,12 @@ public:
   /** Compat: entrada silenciosa. */
   void process(float* outL, float* outR, int frames) { process(nullptr, nullptr, outL, outR, frames); }
 
+  /** true si el plugin expone bus aux/sidechain de entrada. */
+  bool hasSidechainInput() const;
+  /** Alimenta el bus sidechain (estéreo) para el próximo process(). */
+  void setSidechainInput(const float* l, const float* r, int frames);
+  void clearSidechainInput();
+
   bool openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h, std::string& err);
   void setEditorBounds(int x, int y, int w, int h);
   void closeEditor();

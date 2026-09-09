@@ -1,5 +1,4 @@
 import { useCallback, useState } from 'react'
-import { Check, Loader2, ListMusic } from 'lucide-react'
 import { useDAW } from '@/src/context/daw-context'
 import { executeDawActions } from '@/src/lib/ai-daw-agent'
 import type { ProjectPlanData } from '@/src/lib/project-plan'
@@ -46,58 +45,40 @@ export function ProjectPlanPreview({ plan, status = 'pending' }: Props) {
   }, [plan, tienda])
 
   return (
-    <div className="mt-2 overflow-hidden rounded-lg border border-border bg-background/50 ring-1 ring-accent-amber/20">
-      <div className="flex items-center justify-between gap-2 border-b border-border/60 px-2.5 py-1.5">
+    <div className="mt-1.5 w-full min-w-0">
+      <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className="flex items-center gap-1.5 truncate text-[12px] font-semibold text-foreground">
-            <ListMusic className="size-3.5 shrink-0 text-accent-amber" />
-            {plan.nombre}
-          </div>
-          <div className="truncate text-[10px] text-muted-foreground">
-            {plan.keyLabel} · {plan.bpm} BPM · {plan.minutes} min · {plan.tracks.length} pistas
+          <div className="truncate text-[0.85em] text-foreground/90">{plan.nombre}</div>
+          <div className="truncate text-[0.8em] text-muted-foreground/70">
+            {plan.keyLabel} · {plan.bpm} BPM · {plan.tracks.length} pistas
           </div>
         </div>
         {local === 'applied' ? (
-          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-400">
-            <Check className="size-3" /> Aplicado
-          </span>
+          <span className="text-[10px] text-muted-foreground/50">ok</span>
         ) : (
-          <span className="text-[9px] uppercase tracking-wide text-accent-amber">Vista previa</span>
-        )}
-      </div>
-      {plan.pensamiento ? (
-        <p className="border-b border-border/40 px-2.5 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
-          {plan.pensamiento}
-        </p>
-      ) : null}
-      <ul className="max-h-48 space-y-1 overflow-y-auto px-2.5 py-2">
-        {plan.tracks.map((t, i) => (
-          <li key={`${t.nombre}-${i}`} className="text-[11px] leading-snug">
-            <span className="font-medium text-foreground">{t.nombre}</span>
-            <span className="text-muted-foreground">
-              {' '}
-              · {t.rol}
-              {t.pluginNombre ? ` · ${t.pluginNombre}` : ' · (sin VST aún)'}
-            </span>
-            {t.noteMapSummary ? (
-              <div className="pl-2 text-[10px] text-muted-foreground/90">{t.noteMapSummary}</div>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-      {local !== 'applied' ? (
-        <div className="border-t border-border/60 px-2.5 py-1.5">
           <button
             type="button"
             disabled={busy}
             onClick={() => void apply()}
-            className="inline-flex items-center gap-1 rounded-md bg-accent-amber/20 px-2 py-1 text-[11px] font-semibold text-accent-amber hover:bg-accent-amber/30 disabled:opacity-50"
+            className="shrink-0 text-[0.85em] text-foreground/80 hover:text-foreground disabled:opacity-50"
           >
-            {busy ? <Loader2 className="size-3 animate-spin" /> : null}
-            Crear pistas, cargar VSTs y MIDI
+            {busy ? '…' : 'Crear pistas'}
           </button>
-        </div>
+        )}
+      </div>
+      {plan.pensamiento ? (
+        <p className="mt-0.5 text-[0.8em] text-muted-foreground/70">{plan.pensamiento}</p>
       ) : null}
+      <ul className="mt-0.5 max-h-40 space-y-0.5 overflow-y-auto text-[0.85em] text-muted-foreground">
+        {plan.tracks.map((t, i) => (
+          <li key={`${t.nombre}-${i}`} className="truncate">
+            <span className="text-foreground/80">{t.nombre}</span>
+            {' · '}
+            {t.rol}
+            {t.pluginNombre ? ` · ${t.pluginNombre}` : ''}
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

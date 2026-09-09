@@ -4,9 +4,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Eye, FileText, Hammer, Loader2, PlayCircle, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { Eye, FileText, Hammer, Loader2, MessageSquareQuote, PlayCircle, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
-import { ChatMarkdown } from '@/components/chat-markdown'
+import { DocMarkdown } from '@/components/chat-markdown'
 import {
   PLAN_SLUG,
   bindAgentDocsDisk,
@@ -20,6 +20,13 @@ import {
 import { syncPlanAfterDawChange } from '@/src/lib/agent-plan-eval'
 import { executeDawActions, formatActionResultsForUser } from '@/src/lib/ai-daw-agent'
 import type { ProjectPlanData } from '@/src/lib/project-plan'
+import {
+  buildDocTextAnchor,
+  captureActiveDocTextSelection,
+  dispatchAskAiAboutSelection,
+  rememberOpenDoc,
+  setMusicalSelectionAnchor,
+} from '@/src/lib/ai-selection-context'
 import {
   bumpDocsTextZoom,
   closeDocsTab,
@@ -64,8 +71,15 @@ export function AgentDocsPanel() {
   const [execMsg, setExecMsg] = useState('')
   const userDirty = useRef(false)
   const rootRef = useRef<HTMLDivElement>(null)
+  const previewHostRef = useRef<HTMLDivElement>(null)
+  const [editSel, setEditSel] = useState('')
+  const [askPop, setAskPop] = useState<{ x: number; y: number; text: string } | null>(null)
 
   useEffect(() => startDocsEditorChannel(), [])
+
+  useEffect(() => {
+    if (activeDoc) rememberOpenDoc(activeDoc.slug, activeTab?.mode === 'edit' ? draft : activeDoc.content)
+  }, [activeDoc?.slug, activeDoc?.content, activeTab?.mode, draft])
 
   useEffect(() => {
     bindAgentDocsDisk(projectId, projectRuta)
@@ -101,6 +115,72 @@ export function AgentDocsPanel() {
       userDirty.current = false
     }
   }, [activeDoc, activeTab, draft, projectId])
+
+  const sourceMd = (activeTab?.mode === 'edit' ? draft : activeDoc?.content) || ''
+
+  const askAboutText = useCallback(
+    (text: string, autoSend?: string) => {
+      const slug = activeDoc?.slug || PLAN_SLUG
+      const md = sourceMd || activeDoc?.content || ''
+      if (text.trim().length < 2) return
+      setMusicalSelectionAnchor(buildDocTextAnchor({ slug, markdown: md, text }))
+      dispatchAskAiAboutSelection(autoSend ? { autoSend } : undefined)
+      setAskPop(null)
+    },
+    [activeDoc?.slug, activeDoc?.content, sourceMd],
+  )
+
+  const runSection = useCallback(
+    (heading: string) => {
+      const md = activeDoc?.content || draft
+      const body = getMarkdownSection(md, heading).trim()
+      const placeholder =
+        !body ||
+        /^_/.test(body) ||
+        /por definir|tareas concretas|a[ñn]ade tareas|reescribe en cada pedido/i.test(body)
+      if (placeholder) {
+        askAboutText(
+          `## ${heading}\n${body || '(vacío)'}`,
+          `La sección «${heading}» del plan está vacía o es placeholder. NO inventes una canción nueva. Pide al usuario qué quiere ahí, o reescribe SOLO esa sección en plan.md con contenido musical concreto (BPM, género, pistas, forma). No toques Notas del usuario.`,
+        )
+        return
+      }
+      // Incluir el cuerpo en el mensaje visible: evita recursión «implementa implementa…»
+      askAboutText(
+        `## ${heading}\n${body}`,
+        [
+          `Ejecuta en el DAW lo descrito en «${heading}» del plan (fragmento anclado abajo).`,
+          'Emite <<<ACTIONS>>> reales (midi.clip.create / notes.set / musicBuild según haga falta).',
+          'MIDI denso y musical — PROHIBIDO esqueletos (kick cada 4 beats, 4 notas en 32 beats).',
+          'Actualiza SOLO esa parte del plan.md al marcar progreso. No reescribas Notas del usuario ni inventes otro género.',
+          '',
+          '### Contenido a ejecutar',
+          body.slice(0, 4000),
+        ].join('\n'),
+      )
+    },
+    [activeDoc?.content, draft, askAboutText],
+  )
+
+  const runTask = useCallback(
+    (task: string) => {
+      const clean = task.replace(/^\s*[-*]\s*\[[ xX]?\]\s*/, '').trim()
+      askAboutText(
+        `- [ ] ${clean}`,
+        [
+          `Ejecuta YA esta tarea del plan en el DAW. Emite <<<ACTIONS>>> con notas MIDI reales (no esqueleto).`,
+          `Tarea: ${clean}`,
+          'No reescribas todo el plan ni Notas del usuario. Tras aplicar, marca la tarea [x] en plan.md.',
+        ].join('\n'),
+      )
+    },
+    [askAboutText],
+  )
+
+  const syncEditSelection = useCallback((el: HTMLTextAreaElement) => {
+    const t = el.value.slice(el.selectionStart, el.selectionEnd)
+    setEditSel(t.trim().length >= 2 ? t : '')
+  }, [])
 
   const onEval = useCallback(() => {
     flushDraft()
@@ -203,6 +283,19 @@ export function AgentDocsPanel() {
 
   const onKeyDown = (e: ReactKeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey)) return
+    if (e.key === 'l' || e.key === 'L') {
+      e.preventDefault()
+      e.stopPropagation()
+      if (!captureActiveDocTextSelection()) {
+        const t = editSel || askPop?.text
+        if (t) askAboutText(t)
+        else return
+      } else {
+        dispatchAskAiAboutSelection()
+      }
+      setAskPop(null)
+      return
+    }
     if (e.key === '=' || e.key === '+' || e.code === 'NumpadAdd') {
       e.preventDefault()
       e.stopPropagation()
@@ -232,7 +325,7 @@ export function AgentDocsPanel() {
     >
       <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-2 py-1">
         <div className="flex min-w-0 items-center gap-1.5 text-[12px] font-semibold text-foreground">
-          <FileText className="size-3.5 shrink-0 text-accent-amber" />
+          <FileText className="size-3.5 shrink-0 text-muted-foreground" />
           Docs
         </div>
         <div className="flex items-center gap-0.5">
@@ -261,7 +354,7 @@ export function AgentDocsPanel() {
               title="Ejecutar plan"
               disabled={execBusy}
               onClick={() => void onExecutePlan()}
-              className="ml-1 inline-flex items-center gap-1 rounded-md bg-accent-amber px-1.5 py-1 text-[10px] font-semibold text-background disabled:opacity-50"
+              className="ml-1 inline-flex items-center gap-1 rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50"
             >
               {execBusy ? <Loader2 className="size-3 animate-spin" /> : <Hammer className="size-3" />}
               Ejecutar
@@ -271,7 +364,7 @@ export function AgentDocsPanel() {
             type="button"
             title="Evaluar plan vs DAW"
             onClick={onEval}
-            className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-accent-amber hover:bg-accent-amber/15"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:text-foreground"
           >
             <PlayCircle className="size-3.5" />
             Evaluar
@@ -349,21 +442,96 @@ export function AgentDocsPanel() {
             Abre un archivo desde el Explorador
           </div>
         ) : activeTab.mode === 'edit' ? (
-          <textarea
-            value={draft}
-            onChange={(e) => {
-              userDirty.current = true
-              setDraft(e.target.value)
-            }}
-            onKeyDown={onKeyDown}
-            spellCheck={false}
-            style={{ fontSize: fontPx }}
-            className="h-full w-full resize-none bg-background/40 px-2 py-1.5 font-mono leading-relaxed text-foreground outline-none"
-            aria-label={`Editar ${activeTab.slug}`}
-          />
+          <div className="flex h-full min-h-0 flex-col">
+            {editSel ? (
+              <div className="flex shrink-0 items-center gap-2 border-b border-border px-2 py-1">
+                <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground" title={editSel}>
+                  {editSel.replace(/\s+/g, ' ').slice(0, 80)}
+                </span>
+                <button
+                  type="button"
+                  title="Preguntar a Jas sobre esta selección (Ctrl+L)"
+                  onClick={() => askAboutText(editSel)}
+                  className="inline-flex items-center gap-1 rounded-md bg-accent-amber px-2 py-0.5 text-[10px] font-semibold text-background"
+                >
+                  <MessageSquareQuote className="size-3" />
+                  Preguntar a Jas
+                  <kbd className="rounded bg-background/20 px-1 font-mono text-[9px]">Ctrl+L</kbd>
+                </button>
+              </div>
+            ) : null}
+            <textarea
+              value={draft}
+              data-doc-slug={activeTab.slug}
+              onChange={(e) => {
+                userDirty.current = true
+                setDraft(e.target.value)
+                syncEditSelection(e.target)
+              }}
+              onSelect={(e) => syncEditSelection(e.currentTarget)}
+              onKeyUp={(e) => syncEditSelection(e.currentTarget)}
+              onMouseUp={(e) => syncEditSelection(e.currentTarget)}
+              onKeyDown={onKeyDown}
+              spellCheck={false}
+              style={{ fontSize: fontPx }}
+              className="h-full w-full resize-none bg-background/40 px-2 py-1.5 font-mono leading-relaxed text-foreground outline-none"
+              aria-label={`Editar ${activeTab.slug}`}
+            />
+          </div>
         ) : (
-          <div className="h-full overflow-y-auto px-3 py-2" style={{ fontSize: fontPx }}>
-            <ChatMarkdown text={activeDoc.content} />
+          <div
+            ref={previewHostRef}
+            className="doc-md-preview relative h-full overflow-y-auto"
+            data-doc-preview=""
+            data-doc-slug={activeTab.slug}
+            data-chat-selectable=""
+            onMouseUp={() => {
+              const sel = window.getSelection()
+              const text = sel?.toString().trim() ?? ''
+              const host = previewHostRef.current
+              if (!host || text.length < 2 || !sel || sel.rangeCount === 0) {
+                setAskPop(null)
+                return
+              }
+              const node = sel.anchorNode
+              const el = node instanceof Element ? node : node?.parentElement
+              if (!el || !host.contains(el)) {
+                setAskPop(null)
+                return
+              }
+              const r = sel.getRangeAt(0).getBoundingClientRect()
+              const box = host.getBoundingClientRect()
+              setAskPop({
+                x: r.left - box.left + r.width / 2 + host.scrollLeft,
+                y: r.top - box.top + host.scrollTop,
+                text,
+              })
+            }}
+          >
+            <nav className="doc-md-crumb" aria-label="Ruta del documento">
+              <span>docs</span>
+              <span className="doc-md-crumb-sep">›</span>
+              <span className="text-[#cccccc]">{activeTab.slug}</span>
+            </nav>
+            <article className="doc-md-page" style={{ fontSize: `${Math.round(15 * zoom)}px` }}>
+              <DocMarkdown
+                text={activeDoc.content}
+                actions={{ onRunTask: runTask, onRunSection: runSection }}
+              />
+            </article>
+            {askPop ? (
+              <button
+                type="button"
+                className="doc-md-ask-pop"
+                style={{ left: askPop.x, top: Math.max(8, askPop.y - 8) }}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => askAboutText(askPop.text)}
+              >
+                <MessageSquareQuote className="size-3" />
+                Preguntar a Jas
+                <kbd>Ctrl+L</kbd>
+              </button>
+            ) : null}
           </div>
         )}
       </div>

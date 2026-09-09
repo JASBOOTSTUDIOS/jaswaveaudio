@@ -1,5 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react'
-import { AlertTriangle, CheckCircle2, FileText, RotateCcw, ShieldAlert } from 'lucide-react'
+import { RotateCcw } from 'lucide-react'
 import { useDAW } from '@/src/context/daw-context'
 import type { StoredChatMessage } from '@/src/lib/ai-chat-store'
 import { patchMessage } from '@/src/lib/ai-chat-store'
@@ -17,35 +17,24 @@ export function TurnCertifyBadges({ certify }: CertifyProps) {
       ? `Plan ${certify.planDone ?? 0}/${certify.planPlanned}`
       : null
   const issueTitle = certify.issues.length ? certify.issues.join('\n') : undefined
+  const gaps = certify.sectionGaps ?? 0
+  const audit = certify.auditErrors ?? 0
 
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[0.8em] text-muted-foreground/70">
       {certify.healthOk && !certify.shouldRepair ? (
-        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-800/50 bg-emerald-950/40 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
-          <CheckCircle2 className="size-3" /> OK
-        </span>
+        <span>ok</span>
       ) : (
-        <span
-          className="inline-flex items-center gap-1 rounded-full border border-amber-800/50 bg-amber-950/40 px-2 py-0.5 text-[10px] font-medium text-amber-300"
-          title={issueTitle}
-        >
-          <ShieldAlert className="size-3" />
-          {certify.shouldRepair ? 'Reparar' : 'Avisos'}
+        <span title={issueTitle} className={certify.shouldRepair ? 'text-destructive/80' : undefined}>
+          {certify.shouldRepair ? 'reparar' : 'avisos'}
           {certify.issues.length ? ` · ${certify.issues.length}` : ''}
         </span>
       )}
-      {planLabel ? (
-        <span className="inline-flex items-center gap-1 rounded-full border border-sky-900/40 bg-sky-950/30 px-2 py-0.5 text-[10px] text-sky-300">
-          <FileText className="size-3" />
-          {planLabel}
-        </span>
-      ) : null}
+      {planLabel ? <span>{planLabel.toLowerCase()}</span> : null}
+      {gaps > 0 ? <span title="Huecos sección×pista">huecos {gaps}</span> : null}
+      {audit > 0 ? <span title="Errores del auditor de producción">audit {audit}</span> : null}
       {certify.issues.length > 0 && !certify.shouldRepair ? (
-        <span
-          className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground"
-          title={issueTitle}
-        >
-          <AlertTriangle className="size-3" />
+        <span className="min-w-0 truncate" title={issueTitle}>
           {certify.issues[0]}
         </span>
       ) : null}

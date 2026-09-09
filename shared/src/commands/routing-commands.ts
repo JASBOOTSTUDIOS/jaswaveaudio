@@ -300,6 +300,7 @@ export function crearComandoSidechainConnect(): CommandDefinition<any> {
       properties: {
         origenTrackId: { type: 'string' },
         destinoTrackId: { type: 'string' },
+        destinoSlotId: { type: 'string' },
         cantidad: { type: 'number' },
         activo: { type: 'boolean' },
       },
@@ -315,6 +316,10 @@ export function crearComandoSidechainConnect(): CommandDefinition<any> {
         cantidad: Math.max(0, Math.min(1, Number(payload.cantidad ?? 1))),
         fuente: 'interna',
         tags: [],
+        destinoSlotId:
+          typeof payload.destinoSlotId === 'string' && payload.destinoSlotId
+            ? String(payload.destinoSlotId)
+            : undefined,
         orden: routing.sidechains.length,
       }
       const sidechains = [

@@ -77,5 +77,6 @@ Ver también tooltips del piano roll (`?`):
 
 - Timeline: `Ctrl+=` / `Ctrl+-` · `Ctrl` + rueda  
 - Docs (con foco): zoom tipográfico del markdown  
+- Terminal: `Ctrl+`` abre la pestaña; dentro, `Ctrl+L` equivale a `limpiar`
 
-Siguiente: [11 · Flujos prácticos](./11-flujos-practicos.md).
+Siguiente: [11 · Flujos prácticos](./11-flujos-practicos.md). Comandos de la CLI: [13 · Terminal](./13-terminal.md).

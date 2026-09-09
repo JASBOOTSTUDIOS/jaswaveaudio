@@ -95,22 +95,43 @@ export function isMidiClipEditIntent(text: string): boolean {
     /\b(bater[ií]a|drums?|clip|midi|intro|pads?|toms?|platillos?|redoblant|groove|grove|pista)\b/i.test(
       t,
     ) || /\b(suave|ambiental|explosiv)\b/i.test(t)
-  // No tratar “crea canción completa” como edit de clip
-  if (/\b(desde cero|canci[oó]n nueva|proyecto completo)\b/i.test(t)) return false
+  // No tratar “crea canción / varias pistas” como edit de un clip
+  if (
+    /\b(desde cero|canci[oó]n( nueva)?|proyecto completo|banda completa)\b/i.test(t) &&
+    /\b(crea|crees|cr[eé]a|genera|produce|construy|arm[aá]|quiero que)\b/i.test(t)
+  ) {
+    return false
+  }
   return editVerb && midiTarget
+}
+
+/** BPM explícito en el texto (72 bpm, tempo 72, tiempo sea 72, 72 4/4). */
+export function parseExplicitBpm(text: string): number | null {
+  const lower = text.toLowerCase()
+  const hit =
+    lower.match(/\b(\d{2,3})\s*bpm\b/) ||
+    lower.match(/\bbpm\s*(?:a|de|=|:)?\s*(\d{2,3})\b/) ||
+    lower.match(/\btempo\s*(?:sea|a|de|=|:)?\s*(\d{2,3})\b/) ||
+    lower.match(/\btiempo\s*(?:sea|a|de|=|:)?\s*(\d{2,3})\b/) ||
+    lower.match(/\b(\d{2,3})\s*4\s*\/\s*4\b/)
+  if (!hit) return null
+  const n = Number(hit[1])
+  if (!Number.isFinite(n) || n < 40 || n > 240) return null
+  return Math.round(n)
+}
+
+/** Compás explícito (4/4, 6/8…). */
+export function parseExplicitTimeSignature(text: string): { numerador: number; denominador: number } | null {
+  const m = text.match(/\b([1-9]|1[0-6])\s*\/\s*(2|4|8|16)\b/)
+  if (!m) return null
+  return { numerador: Number(m[1]), denominador: Number(m[2]) }
 }
 
 /** BPM sugerido a partir de lenguaje natural (más lenta / más rápida). */
 export function inferBpmFromTempoIntent(text: string, currentBpm = 120): number | null {
+  const explicit = parseExplicitBpm(text)
+  if (explicit != null) return explicit
   const lower = text.toLowerCase()
-  const explicit =
-    lower.match(/\b(\d{2,3})\s*bpm\b/) ||
-    lower.match(/\bbpm\s*(?:a|de|=|:)?\s*(\d{2,3})\b/) ||
-    lower.match(/\btempo\s*(?:a|de|=|:)?\s*(\d{2,3})\b/)
-  if (explicit) {
-    const n = Number(explicit[1])
-    if (Number.isFinite(n) && n >= 40 && n <= 240) return Math.round(n)
-  }
   const cur = Number.isFinite(currentBpm) && currentBpm > 0 ? currentBpm : 120
   if (/\b(m[aá]s\s+lent|ralentiz|baja(r)?\s+(el\s+)?(tempo|bpm)|muy\s+r[aá]pid|demasiado\s+r[aá]pid|est[aá]\s+muy\s+r[aá]pid)/i.test(lower)) {
     // Ambiental/sublime lento: ~70–80; si ya es lento, baja un poco más
@@ -123,17 +144,57 @@ export function inferBpmFromTempoIntent(text: string, currentBpm = 120): number 
   return null
 }
 
+/**
+ * Pedido de vaciar/borrar clips del proyecto (sin necesariamente reconstruir).
+ */
+export function isProjectWipeIntent(text: string): boolean {
+  const t = text.toLowerCase()
+  return (
+    /\b(limpia(r)?|vac[ií]a(r)?|borra(r)?|elimina(r)?)\s+(todo|todos|toda|el\s+proyecto|este\s+proyecto|el\s+timeline|los\s+clips)\b/i.test(
+      t,
+    ) ||
+    /\b(clear\s+project|wipe\s+(the\s+)?project|borra\s+todo|hazlo,?\s*borra)\b/i.test(t)
+  )
+}
+
+/**
+ * Reescritura de género / estilo sobre un proyecto existente (bachata, etc.).
+ */
+export function isGenreRewriteIntent(text: string): boolean {
+  const t = text.toLowerCase()
+  const genre =
+    /\b(bachata|reggaet[oó]n|salsa|cumbia|merengue|trap|hip.?hop|edm|techno|house|rock|pop|jazz|r&b|rnb|worship|gospel|prince\s*royce)\b/i.test(
+      t,
+    )
+  const rewrite =
+    /\b(arma(me)?|crea(me)?|haz(me)?|arregla(me)?|limpia(r)?|transforma|convierte|reescribe|cambia(r)?\s+(a|de|el)\s+estilo|como\s+)\b/i.test(
+      t,
+    )
+  return genre && rewrite
+}
+
 export function wantsFullProject(text: string): boolean {
   const t = text
   // Edición de clip/intro/groove: NO reconstruir proyecto
   if (isMidiClipEditIntent(t) && !/\b(desde cero|canci[oó]n nueva|proyecto completo)\b/i.test(t)) {
     return false
   }
+  // Solo wipe sin armar género → no musicBuild (borra clips)
+  if (isProjectWipeIntent(t) && !isGenreRewriteIntent(t) && !/\b(arma|crea|hazme|genera|monta)\b/i.test(t)) {
+    return false
+  }
+  if (isGenreRewriteIntent(t)) return true
   if (isSongRefineIntent(t) && !isTempoOnlyRefine(t) && !isMidiClipEditIntent(t)) return true
   if (
     /proyecto completo|desde cero|todas las pistas|producci[oó]n completa|arreglo completo|canci[oó]n completa|full (song|mix|project)|armame (el |un )?tema|banda completa|music build/i.test(
       t,
     )
+  ) {
+    return true
+  }
+  if (
+    /arm[aá](me)?\s+(una?\s+)?pista\s+de\b/i.test(t) ||
+    /limpia(r)?\s+(este\s+|el\s+)?proyecto.{0,40}arm[aá]/i.test(t)
   ) {
     return true
   }
@@ -222,8 +283,16 @@ export function isStyleApplyIntent(text: string): boolean {
 export function isStyleGapIntent(text: string): boolean {
   if (isStyleApplyIntent(text)) return false
   const t = text.toLowerCase()
+  // «créame una pista worship» es CREACIÓN, no gap analysis.
+  if (
+    /\b(crea|cr[eé]ame|creame|genera|hazme|arm[aá]|ponme|inserta)\b/i.test(t) &&
+    /\b(pista|clip|midi|bater|drum|proyecto)\b/i.test(t) &&
+    !isProjectAuditIntent(text)
+  ) {
+    return false
+  }
   const wantsGap =
-    /\b(qu[eé]\s+(le\s+)?falta|c[oó]mo\s+(hacerlo|dejarlo|ponerlo)|para\s+que\s+(est[eé]|suene|quede)|estilo|como\s+[aá]ver|tipo\s+[aá]ver|suene\s+(a|como)|worship|referenci)/i.test(
+    /\b(qu[eé]\s+(le\s+)?falta|c[oó]mo\s+(hacerlo|dejarlo|ponerlo)|para\s+que\s+(est[eé]|suene|quede)|como\s+[aá]ver|tipo\s+[aá]ver|suene\s+(a|como)|referenci)/i.test(
       t,
     )
   return (isProjectAuditIntent(text) || wantsGap) && hasStyleReference(text)
@@ -249,8 +318,8 @@ export function detectAgentMode(text: string, forced: AgentMode = 'auto'): Agent
   if (forced !== 'auto') return forced
   const t = text.toLowerCase()
   if (
-    /^(s[ií]|ok|vale|dale|hazlo|cr[eé]alo|aplica|construir|construye|adelante|go)[\s!.]*$/i.test(text.trim()) ||
-    /\b(hazlo|cr[eé]alo|aplica(lo)? ya|construir ahora|construye ahora|si hazlo|sí hazlo)\b/i.test(t)
+    /^(s[ií]|ok|vale|dale|hazlo|cr[eé]alo|aplica|construir|construye|adelante|go|contin[uú]a)[\s!.]*$/i.test(text.trim()) ||
+    /\b(hazlo|cr[eé]alo|aplica(lo)? ya|construir ahora|construye ahora|si hazlo|sí hazlo|contin[uú]a)\b/i.test(t)
   ) {
     return 'create'
   }
@@ -307,13 +376,21 @@ export function modePromptBlock(mode: AgentMode): string {
       'Si faltan datos críticos: emite <<<CLARIFY[{"id","question","options":["…","…","…"],"allowCustom":true,"multi":false}]CLARIFY>>>.',
       'TÚ inventas question y options para ESTE pedido (no plantillas fijas). ≥3 options por pregunta. NUNCA listas 1.2.3 en prosa.',
       'Si ya hay suficiente, cierra el plan.',
-      'OBLIGATORIO: escribe el plan en plan.md con este bloque (markdown completo):',
+      'OBLIGATORIO: escribe el plan en plan.md con este bloque (markdown completo, detallado):',
       '<<<DOC plan.md',
       '# Plan: …',
       '## Intención',
+      '### Qué se busca',
+      '…',
+      '### Forma',
+      '…',
+      '### Pistas previstas',
+      '…',
+      '### Último pedido',
       '…',
       '## Por implementar',
-      '- [ ] Pista «…» (rol · VST …)',
+      '- [ ] Crear pista MIDI «…» (rol · VST …)',
+      '- [ ] Escribir MIDI de «…» por sección (notas no vacías)',
       '## En curso',
       '## Implementado',
       '## Evaluación',
@@ -337,18 +414,42 @@ export function modePromptBlock(mode: AgentMode): string {
     ].join('\n')
   }
   return [
-    '## Modo: CREACIÓN',
-    'Propón cambios en <<<ACTIONS>>>; el usuario confirma Aplicar en el chat (diff + preview). No digas "listo aplicado" hasta que el usuario acepte.',
-    'Si plan.md existe, síguelo hasta vaciar «Por implementar».',
-    'Si el usuario dijo créalo/hazlo/aplica: emite ACTIONS de inmediato (daw.musicBuild o midi…), NO preguntes otra vez.',
-    'REFINAR canción existente (más lenta, más sublime, cambia tempo, hazla más…): PROHIBIDO <<<CLARIFY>>> y PROHIBIDO pedir al usuario que escriba opciones.',
-    '  → Tempo: <<<ACTIONS [{"type":"project.setBpm","payload":{"bpm":72}}] ACTIONS>>> (baja si pide lenta; NUNCA dejes 120 si dijo que está rápida).',
-    '  → Sublime/calidad/estilo: además daw.musicBuild { aplicar:true, midiSource:"ai", bpm:<lento>, prompt:"…" }.',
-    'Si faltan 1–3 datos críticos SOLO en pedidos nuevos ambiguos: <<<CLARIFY>>> — TÚ escribes question y options[] (≥3). Nunca preguntas sueltas en el texto.',
-    'PROHIBIDO: «escribe las 3 opciones», «proporciona las opciones», cuestionarios en markdown.',
-    'Canciones nuevas: (1) daw.musicBuild { aplicar:true, midiSource:"ai", … }. (2) Luego 1 pista/turno con midi.clip.create + notas[].',
-    'NUNCA uses daw.generateMidiSong ni midiSource:"procedural" para multi-pista.',
+    '## Modo: CREACIÓN — EJECUTAR acciones reales en el DAW',
+    'OBLIGATORIO emitir <<<ACTIONS>>> en CADA respuesta de este modo. Si no emites ACTIONS, no se hace nada.',
+    'Si el usuario dijo hazlo / créalo / continua / aplica: PROHIBIDO otro informe de gaps, PROHIBIDO CLARIFY, PROHIBIDO solo diagnosticar. Emite ACTIONS ahora.',
+    '',
+    '### Densidad MIDI mínima (si fallas esto, el harness lo rechaza)',
+    '- Batería: ≥1.5 notas/beat (kick+snare+HH o toms). PROHIBIDO solo kick cada 4 beats.',
+    '- Bajo: ≥0.5 notas/beat, legato. PROHIBIDO 4 notas en 32 beats.',
+    '- Pad: cambios de voicing cada 4–8 beats. PROHIBIDO un acorde estático de 32 beats.',
+    '- Piano/Keys: ≥0.4 notas/beat con voicings reales, no 6 notas placeholder.',
+    '',
+    '### Flujo por turno:',
+    '1. Actualiza plan.md (<<<DOC plan.md>>>): intención + checklist `- [ ]`.',
+    '2. Emite <<<ACTIONS>>> con las acciones concretas de las tareas pendientes del plan.',
+    '3. El usuario pulsa Aplicar UNA vez (todas juntas). No digas "listo" hasta que confirme.',
+    '',
+    '### Canción nueva (flujo completo, UNO A UNO):',
+    'Paso A: SOLO daw.musicBuild { aplicar:true, midiSource:"ai", bpm, minutos, genero, prompt } — NO setBpm aparte.',
+    'Paso B+: UN midi.clip.create por sección×pista (notas[] densas). Tras cada success, el siguiente hueco.',
+    'PROHIBIDO proponer setBpm + musicBuild + N clips en el mismo bloque.',
+    '',
+    '### Clip/pista individual:',
+    'Si pidió UNA pista/clip: SOLO eso — track.create (si no existe) + midi.clip.create con notas. PROHIBIDO reconstruir el proyecto.',
+    '',
+    '### Limpia / borra todo:',
+    'USA daw.wipeProject { aplicar:true } — borra TODAS las pistas con IDs reales en un paso.',
+    'PROHIBIDO clip.delete sin clipId. PROHIBIDO inventar IDs. PROHIBIDO 10+ deletes sueltos.',
+    'Tras Aplicar wipe vacío: complete breve OK.',
+    'Tras canción/arreglo exitoso: Kael pregunta si le gustó (no complete silencioso).',
+    '',
+    'PREFERIDO canción: UNA sola acción daw.musicBuild { aplicar:true, midiSource:"procedural", bpm, prompt }.',
+    'PROHIBIDO emitir 15–25× clip.delete / track.toggleMute / midi.clip.create SIN pistaId+clipId+notas reales.',
+    'PROHIBIDO solo gap analysis. PROHIBIDO payloads vacíos { } o campos flat fuera de payload/arguments.',
+    '',
+    'Si faltan 1–3 datos críticos SOLO en pedidos nuevos ambiguos: <<<CLARIFY>>> con question+options[] (≥3).',
+    'PROHIBIDO cuestionarios en markdown ni pedir al usuario que escriba opciones.',
     'Tras MIDI de todas las pistas: mezcla, sends, master. Entrega con listen OK.',
-    'VSTs: plugin.probe → library.preset.search/apply. Actualiza plan.md en cada cierre.',
+    'VSTs: plugin.probe → library.preset.search/apply. Actualiza plan.md marcando [x] lo completado.',
   ].join('\n')
 }

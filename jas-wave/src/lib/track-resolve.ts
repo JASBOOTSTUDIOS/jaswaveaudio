@@ -206,7 +206,7 @@ export function formatResolvedTrackContext(state: DAWState, trackId: string): st
   return [
     `[Pista resuelta por el usuario: id=${t.id} «${t.nombre}» tipo=${t.tipo}]`,
     'OBLIGATORIO: usa pistaId/trackId=' + t.id + ' en midi.clip.md.* / midi.notes.*. NO track.create.',
-    'Para editar solo una sección: midi.notes.patch { pistaId, clipId, rangeStart, rangeEnd, notas } o midi.clip.md.apply con rangeStart/rangeEnd.',
+    'Para editar solo una sección: midi.notes.patch { pistaId, rangeStart, rangeEnd, notas } (crea el clip si no hay uno en ese rango).',
     midiClips.length ? 'Clips MIDI en esta pista:' : 'Sin clips MIDI aún en esta pista.',
     ...clipLines,
   ].join('\n')

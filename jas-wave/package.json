@@ -24,6 +24,8 @@
     "cli:certify:quick": "node cli/_certify.mjs --quick",
     "cli:certify:vst": "node cli/_e2e-decent-4front.mjs 14 && node cli/_test-three-vst.mjs",
     "cli:soak-host": "node cli/_soak-host.mjs",
+    "cli:soak-host:30": "cross-env SOAK_MINUTES=30 node cli/_soak-host.mjs",
+    "cli:soak-host:4h": "cross-env SOAK_MINUTES=240 node cli/_soak-host.mjs",
     "native:roles-vst": "cmake -B ../native/jaswave-roles-vst/build -S ../native/jaswave-roles-vst -G \"Visual Studio 17 2022\" -A x64 && cmake --build ../native/jaswave-roles-vst/build --config Release --target JasWaveRoles"
   },
   "dependencies": {
@@ -33,6 +35,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.16.0",
+    "mermaid": "^11.17.2",
     "pdf-lib": "^1.17.1",
     "react": "^19",
     "react-dom": "^19",

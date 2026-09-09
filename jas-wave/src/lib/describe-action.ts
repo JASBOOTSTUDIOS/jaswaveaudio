@@ -67,6 +67,11 @@ export function describeActionForUser(a: DawAction): ActionDescription {
         label: `Music Build: ${String(p.prompt ?? p.nombre ?? 'arreglo').slice(0, 56)}`,
         detail: tech,
       }
+    case 'daw.wipeProject':
+      return {
+        label: 'Vaciar proyecto (todas las pistas)',
+        detail: tech,
+      }
     case 'daw.composeProject':
       return {
         label: `Componer proyecto «${String(p.nombre ?? 'sin nombre').slice(0, 40)}»`,

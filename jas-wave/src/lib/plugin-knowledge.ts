@@ -246,6 +246,7 @@ const GENRE_ROLES: Record<string, InstrumentRole[]> = {
   trap: ['drums', 'bass', 'synth', 'lead'],
   jazz: ['drums', 'bass', 'piano', 'brass'],
   latin: ['drums', 'percussion', 'bass', 'keys', 'guitar'],
+  bachata: ['drums', 'percussion', 'bass', 'guitar', 'guitar', 'piano'],
   orchestral: ['strings', 'brass', 'woodwind', 'choir', 'percussion'],
   ballad: ['piano', 'pad', 'strings', 'bass'],
   worship: ['drums', 'bass', 'guitar', 'guitar', 'piano', 'pad'],
@@ -263,6 +264,7 @@ export function inferGenreRoles(text: string): InstrumentRole[] {
   if (/trap/.test(t)) return GENRE_ROLES.trap!
   if (/hip\s*hop|rap/.test(t)) return GENRE_ROLES.hiphop!
   if (/jazz/.test(t)) return GENRE_ROLES.jazz!
+  if (/bachata|prince\s*royce|merengue/.test(t)) return GENRE_ROLES.bachata!
   if (/latin|salsa|cumbia|reggaet/.test(t)) return GENRE_ROLES.latin!
   if (/orquest|cinem|film|trailer/.test(t)) return GENRE_ROLES.orchestral!
   if (/balad|ballad|piano suave/.test(t)) return GENRE_ROLES.ballad!
