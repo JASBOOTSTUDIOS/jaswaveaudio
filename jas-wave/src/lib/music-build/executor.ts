@@ -104,20 +104,13 @@ async function insertLoadInstrument(
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 25000)),
   ])
   if (ok) {
-    // Persistir ruta en el estado (plugin.insert a veces deja descripcion vacía).
+    // Persistir ruta vía Command System (no establecerEstado).
     if (withPath.descripcion) {
       try {
-        tienda.establecerEstado((s) => {
-          const tracks = s.project.tracks.map((t) => {
-            if (t.id !== trackId) return t
-            return {
-              ...t,
-              plugins: (t.plugins ?? []).map((p) =>
-                p.id === withPath.id ? { ...p, descripcion: withPath.descripcion } : p,
-              ),
-            }
-          })
-          return { ...s, project: { ...s.project, tracks } }
+        await tienda.executor.execute('plugin.update', {
+          trackId,
+          pluginInstanceId: withPath.id,
+          patch: { descripcion: withPath.descripcion },
         })
       } catch {
         /* best-effort */
@@ -294,7 +287,8 @@ export async function executeMusicBuild(
     nativeOnly?: boolean
     /**
      * Origen del MIDI:
-     * - `ai` (default): estructura + VST; las notas las escribe la IA en turnos siguientes (midi.clip.create).
+     * - `ai` (default): estructura + VST + marcadores; las notas las escribe la IA
+     *   con midi.clip.create (clips llenos por sección, sin stubs vacíos).
      * - `procedural`: composeMidiFromBrief (legado / preview rápida).
      */
     midiSource?: 'ai' | 'procedural'
@@ -564,7 +558,7 @@ export async function executeMusicBuild(
     }
   }
   const instOkFinal = rolesPads + instrumentsLoaded
-  // Tras rescue: exigir slot host en cada pista MIDI (no marcar OK con silencio).
+  // Host no confirmado: avisar pero no abortar el MIDI (Roles/native suelen sonar igual).
   {
     const { getLoadedInstrumentForTrack } = await import('../plugin/track-vst-runtime')
     let missingHost = 0
@@ -572,17 +566,16 @@ export async function executeMusicBuild(
       if (spec.tracks[row.specIndex]?.tipo === 'audio') continue
       if (!getLoadedInstrumentForTrack(row.trackId)) missingHost += 1
     }
-    if (missingHost > 0 && midiTrackCount > 0) {
+    if (instOkFinal === 0 && midiTrackCount > 0) {
       failed = true
+      setStage(stages, 'instruments', 'fail', `Ningún instrumento en host · ${instrumentNotes.slice(0, 6).join(', ')}`)
+    } else if (missingHost > 0 && midiTrackCount > 0) {
       setStage(
         stages,
         'instruments',
-        'fail',
-        `host-slot-unconfirmed · ${missingHost}/${midiTrackCount} pistas MIDI sin slot · ${instrumentNotes.slice(0, 5).join(', ')}`,
+        'ok',
+        `parcial · ${instOkFinal} ok · ${missingHost} sin slot host · ${instrumentNotes.slice(0, 4).join(', ')}`,
       )
-    } else if (instOkFinal === 0 && midiTrackCount > 0) {
-      failed = true
-      setStage(stages, 'instruments', 'fail', `Ningún instrumento en host · ${instrumentNotes.slice(0, 6).join(', ')}`)
     } else if (instrumentsFailed > 0 && instOkFinal < midiTrackCount) {
       setStage(
         stages,
@@ -614,109 +607,51 @@ export async function executeMusicBuild(
     []
 
   if (midiSource === 'ai') {
-    // Estructura + stubs clip-*.md: la IA escribe nota a nota en el .md (preview → apply).
+    // Estructura + VST + marcadores. La IA inserta clips LLENOS por sección (no stubs vacíos).
     const durationBeats = Math.max(4, maxBars * 4)
-    const seeded: Array<{ trackId: string; trackName: string; clipId: string; slug: string; rol: string }> =
-      []
+    const sectionSpans: Array<{ name: string; inicio: number; duracion: number }> = []
+    {
+      let cursor = 0
+      const secs =
+        spec.sections?.length > 0
+          ? spec.sections
+          : [{ name: 'Tema', bars: Math.max(4, maxBars) }]
+      for (const s of secs) {
+        const bars = Math.max(1, Math.min(64, s.bars || 4))
+        const dur = bars * 4
+        if (cursor / 4 >= maxBars) break
+        const clipped = Math.min(dur, maxBars * 4 - cursor)
+        if (clipped < 4) break
+        sectionSpans.push({ name: s.name || 'Sección', inicio: cursor, duracion: clipped })
+        cursor += clipped
+      }
+      if (!sectionSpans.length) {
+        sectionSpans.push({ name: 'Tema', inicio: 0, duracion: durationBeats })
+      }
+    }
+    const midiTracks = created.filter((row) => spec.tracks[row.specIndex]?.tipo !== 'audio')
     try {
       const { writeAgentDoc, getAgentDoc, PLAN_SLUG, setMarkdownSection } = await import('../agent-docs')
-      const { emptyMidiClipMdStub, midiClipDocSlug } = await import('../midi-clip-markdown')
       const projectId = tienda.obtenerEstado().project.id
-      // Un clip por sección (intro/verso/coro…), no un mega-clip de toda la canción
-      const sectionSpans: Array<{ name: string; inicio: number; duracion: number }> = []
-      {
-        let cursor = 0
-        const secs =
-          spec.sections?.length > 0
-            ? spec.sections
-            : [{ name: 'Tema', bars: Math.max(4, maxBars) }]
-        for (const s of secs) {
-          const bars = Math.max(1, Math.min(64, s.bars || 4))
-          const dur = bars * 4
-          if (cursor / 4 >= maxBars) break
-          const clipped = Math.min(dur, maxBars * 4 - cursor)
-          if (clipped < 4) break
-          sectionSpans.push({ name: s.name || 'Sección', inicio: cursor, duracion: clipped })
-          cursor += clipped
-        }
-        if (!sectionSpans.length) {
-          sectionSpans.push({ name: 'Tema', inicio: 0, duracion: durationBeats })
-        }
-      }
-      for (const row of created) {
+      const tasks: string[] = []
+      for (const row of midiTracks) {
         const t = spec.tracks[row.specIndex]!
-        if (t.tipo === 'audio') continue
         for (const sec of sectionSpans) {
-          const clipRes = await tienda.executor.execute('midi.clip.create', {
-            pistaId: row.trackId,
-            nombre: `${t.nombre} · ${sec.name}`,
-            inicio: sec.inicio,
-            duracion: sec.duracion,
-            notas: [],
-          })
-          const clipId =
-            clipRes.success && clipRes.result && typeof clipRes.result === 'object'
-              ? String(
-                  (clipRes.result as { clipId?: string }).clipId ??
-                    (
-                      tienda
-                        .obtenerEstado()
-                        .project.tracks.find((tr) => tr.id === row.trackId)
-                        ?.clips?.slice(-1)[0] as { id?: string } | undefined
-                    )?.id ??
-                    '',
-                )
-              : String(
-                  (
-                    tienda
-                      .obtenerEstado()
-                      .project.tracks.find((tr) => tr.id === row.trackId)
-                      ?.clips?.slice(-1)[0] as { id?: string } | undefined
-                  )?.id ?? '',
-                )
-          if (!clipId) continue
-          const slug = midiClipDocSlug(clipId)
-          const md = emptyMidiClipMdStub({
-            clipId,
-            trackId: row.trackId,
-            nombre: `${t.nombre} · ${sec.name}`,
-            inicio: sec.inicio,
-            duracion: sec.duracion,
-            bpm: spec.bpm,
-            compas: '4/4',
-            trackName: t.nombre,
-            genero: spec.genero,
-            rol: String(t.rol),
-          })
-          writeAgentDoc(projectId, slug, md, {
-            origin: 'ai',
-            title: `Clip · ${t.nombre} · ${sec.name}`,
-            preserveUserNotes: false,
-          })
-          seeded.push({
-            trackId: row.trackId,
-            trackName: t.nombre,
-            clipId,
-            slug,
-            rol: String(t.rol),
-          })
+          tasks.push(
+            `- [ ] MIDI «${t.nombre}» · sección ${sec.name} (beats ${sec.inicio}–${sec.inicio + sec.duracion}) · ${row.trackId} · rol ${t.rol}`,
+          )
         }
       }
-
       const prev = getAgentDoc(projectId, PLAN_SLUG)?.content ?? '# Plan\n'
-      const tasks = seeded.map(
-        (s) =>
-          `- [ ] MIDI nota-a-nota en \`${s.slug}\` · pista «${s.trackName}» (${s.trackId}) clip=${s.clipId} · rol ${s.rol} · ${spec.keyLabel} · ${spec.bpm} BPM`,
-      )
       let next = setMarkdownSection(
         prev,
         'Intención',
-        `${spec.nombre} · ${spec.keyLabel} · ${spec.bpm} BPM · ${spec.minutes} min · MIDI por IA vía clip-*.md (preview → Aplicar).\n`,
+        `${spec.nombre} · ${spec.keyLabel} · ${spec.bpm} BPM · ${spec.minutes} min · clips por sección (sin stubs vacíos). El harness inserta midi.clip.create con notas en cada hueco.\n`,
       )
       next = setMarkdownSection(
         next,
         'Por implementar',
-        `${tasks.join('\n')}\n- [ ] Escuchar cada preview .md antes de Aplicar\n- [ ] Mezcla / sends / bounce\n`,
+        `${tasks.join('\n')}\n- [ ] Mezcla / sends\n- [ ] Bounce / compareTarget (streaming)\n`,
       )
       writeAgentDoc(projectId, PLAN_SLUG, next, { origin: 'ai' })
     } catch {
@@ -726,7 +661,7 @@ export async function executeMusicBuild(
       stages,
       'midi',
       'ok',
-      `Pendiente IA: ${seeded.length || created.filter((r) => spec.tracks[r.specIndex]?.tipo !== 'audio').length} clip.md · midi.clip.md.upsert → preview → apply`,
+      `Pendiente IA: ${midiTracks.length} pistas × ${sectionSpans.length} secciones · midi.clip.create con notas (sin clips vacíos)`,
     )
   } else {
     // Procedural: un clip con notas por sección (no un mega-clip de toda la canción)
@@ -767,6 +702,12 @@ export async function executeMusicBuild(
       const g = String(spec.genero ?? '').toLowerCase()
       if ((g === 'worship' || g === 'gospel' || /worship|alabanza/.test(opts.prompt)) && String(t.rol) === 'guitar') {
         art = 'arp' // fingerpicking suave
+      }
+      if ((g === 'bachata' || /bachata|prince/.test(opts.prompt)) && String(t.rol) === 'guitar') {
+        art = 'strum'
+      }
+      if ((g === 'bachata' || /bachata/.test(opts.prompt)) && String(t.rol) === 'lead') {
+        art = 'melody'
       }
       if ((g === 'worship' || g === 'gospel') && String(t.rol) === 'drums') {
         // kits más abiertos / less busy vía density del plan

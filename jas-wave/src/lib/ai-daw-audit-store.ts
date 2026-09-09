@@ -59,7 +59,13 @@ function save(entries: AiDawAuditEntry[]): void {
   } catch {
     /* quota */
   }
-  for (const l of listeners) l()
+  for (const l of listeners) {
+    try {
+      l()
+    } catch {
+      /* el espejo de terminal no puede tumbar el turno de la IA */
+    }
+  }
 }
 
 export function subscribeAiDawAudit(cb: () => void): () => void {

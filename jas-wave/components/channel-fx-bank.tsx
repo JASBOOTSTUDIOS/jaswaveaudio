@@ -4,7 +4,7 @@
  */
 
 import { Plus } from 'lucide-react'
-import { useDAW } from '@/src/context/daw-context'
+import { useDAW, useDAWState } from '@/src/context/daw-context'
 import type { PluginInfo } from '../../shared/src/types/entidades'
 import { openFxChain } from '@/src/lib/plugin/fx-chain-store'
 import { openPluginEditor } from '@/src/lib/plugin/plugin-editor-store'
@@ -23,6 +23,9 @@ export function ChannelFxBank({
   compact?: boolean
 }) {
   const tienda = useDAW()
+  const allTracks = useDAWState((s) => s.project?.tracks ?? [])
+  const sidechains = useDAWState((s) => s.project?.routing?.sidechains ?? [])
+  const scFrom = sidechains.find((sc) => sc.destinoTrackId === trackId && sc.activo !== false)
   const maxH = compact ? 'max-h-[80px]' : 'max-h-[160px]'
 
   const openChain = () => {
@@ -105,6 +108,35 @@ export function ChannelFxBank({
           ))
         )}
       </div>
+      {trackId !== MASTER_FX_TRACK_ID && plugins.length > 0 ? (
+        <div className="border-t border-border/60 px-1 py-0.5">
+          <label className="flex items-center gap-1 text-[8px] text-muted-foreground">
+            SC
+            <select
+              className="min-w-0 flex-1 rounded bg-panel-raised px-0.5 text-[8px] text-foreground"
+              value={scFrom?.origenTrackId ?? ''}
+              onChange={(e) => {
+                const origenTrackId = e.target.value
+                if (!origenTrackId) return
+                void tienda.executor.execute('sidechain.connect', {
+                  origenTrackId,
+                  destinoTrackId: trackId,
+                  cantidad: 1,
+                })
+              }}
+            >
+              <option value="">—</option>
+              {allTracks
+                .filter((t) => t.id !== trackId)
+                .map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.nombre}
+                  </option>
+                ))}
+            </select>
+          </label>
+        </div>
+      ) : null}
     </div>
   )
 }

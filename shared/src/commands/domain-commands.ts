@@ -2560,10 +2560,16 @@ export function crearComandoProjectSetBpm(): CommandDefinition<ProjectSetBpmPayl
       additionalProperties: false,
     },
     handler: (estado: DAWState, payload: ProjectSetBpmPayload): StateTransition<ProjectSetBpmPayload> => {
-      const bpmAnterior = estado.project.bpm?.valor ?? 120;
+      const bpm = payload.bpm
+      if (typeof bpm !== 'number' || !Number.isFinite(bpm) || bpm < 20 || bpm > 300) {
+        throw new Error(`BPM inválido: ${String(bpm)} (rango 20–300)`)
+      }
+      const bpmAnteriorRaw = estado.project.bpm?.valor
+      const bpmAnterior =
+        typeof bpmAnteriorRaw === 'number' && Number.isFinite(bpmAnteriorRaw) ? bpmAnteriorRaw : 120
       const proyecto: ProjectState = {
         ...estado.project,
-        bpm: { ...estado.project.bpm, valor: payload.bpm },
+        bpm: { ...estado.project.bpm, valor: bpm },
         modificado: true,
         fechaModificacion: Date.now(),
       };
@@ -2576,7 +2582,7 @@ export function crearComandoProjectSetBpm(): CommandDefinition<ProjectSetBpmPayl
             version: 1,
             marcaTiempo: Date.now(),
             fuente: 'domain-commands',
-            payload: { bpm: payload.bpm },
+            payload: { bpm },
           },
         ],
         result: payload,

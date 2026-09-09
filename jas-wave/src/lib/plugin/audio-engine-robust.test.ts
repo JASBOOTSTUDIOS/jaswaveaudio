@@ -90,4 +90,20 @@ describe('encodeTrackGraph', () => {
     })
     assert.equal(enc, '0~0.8~-0.5~0|t1:p1:i:0||master:eq:e:1')
   })
+  it('sidechain con destSlotId', () => {
+    const enc = encodeTrackGraph({
+      tracks: [
+        {
+          stemIndex: 1,
+          gain: 1,
+          pan: 0,
+          muted: false,
+          slots: [{ slotId: 't2:comp', instrument: false, bypass: false }],
+          sidechains: [{ srcStem: 0, amount: 0.8, destSlotId: 't2:comp' }],
+        },
+      ],
+      master: [],
+    })
+    assert.match(enc, /\$0:0\.8@t2:comp/)
+  })
 })

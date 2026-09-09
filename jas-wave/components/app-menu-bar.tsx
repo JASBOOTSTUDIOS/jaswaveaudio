@@ -25,6 +25,7 @@ export type MenuActionId =
   | 'ventana.paletaComandos'
   | 'ventana.atajos'
   | 'ventana.midiMap'
+  | 'ventana.terminal'
   | 'transporte.reproducir'
   | 'transporte.detener'
   | 'transporte.grabar'
@@ -97,6 +98,7 @@ const MENUS: MenuGroup[] = [
       { type: 'action', id: 'ventana.paletaComandos', label: 'Paleta de comandos', shortcut: 'Ctrl+K' },
       { type: 'action', id: 'ventana.atajos', label: 'Atajos de teclado…' },
       { type: 'action', id: 'ventana.midiMap', label: 'Control MIDI / MIDI Learn…' },
+      { type: 'action', id: 'ventana.terminal', label: 'Terminal', shortcut: 'Ctrl+`' },
     ],
   },
   {

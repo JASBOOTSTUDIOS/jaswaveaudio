@@ -3,6 +3,7 @@ import {
   classifyPlanTask,
   evaluatePlanAgainstDaw,
   evaluatePlanTask,
+  planMarkdownFromProjectPlan,
 } from '../plan/eval'
 import type { DAWState } from '@jaswave/shared'
 
@@ -48,6 +49,21 @@ describe('plan eval estructurado', () => {
     expect(check.ok).toBe(true)
   })
 
+  it('track MIDI por sección exige notas en el rango de beats', () => {
+    const st = stateWithTrack({ nombre: 'Drums', notes: 8 })
+    ;(st.project as { tracks: Array<{ clips: Array<{ inicio: number; duracion: number; notas: unknown[] }> }> }).tracks[0]!.clips =
+      [
+        {
+          inicio: 0,
+          duracion: 16,
+          notas: Array.from({ length: 8 }, (_, i) => ({ pitch: 36, inicio: i, duracion: 0.5 })),
+        },
+      ]
+    const fail = evaluatePlanTask('MIDI «Drums» · sección Coro (beats 64–96)', st)
+    expect(fail.ok).toBe(false)
+    expect(fail.reason).toMatch(/64–96|64-96/)
+  })
+
   it('sidechain con routing sigue no-audible en 1.0', () => {
     const st = stateWithTrack({ nombre: 'X', notes: 0 }) as DAWState
     const fail = evaluatePlanTask('Sidechain kick → bass', st)
@@ -56,6 +72,37 @@ describe('plan eval estructurado', () => {
     const still = evaluatePlanTask('Sidechain kick → bass', st)
     expect(still.ok).toBe(false)
     expect(still.reason).toMatch(/sidechain-unverified|I\/O audible/)
+  })
+
+  it('planMarkdownFromProjectPlan desglosa crear pista y MIDI', () => {
+    const md = planMarkdownFromProjectPlan({
+      kind: 'projectPlan',
+      nombre: 'Demo',
+      bpm: 90,
+      keyLabel: 'C',
+      minutes: 2,
+      tracks: [{ nombre: 'Bajo', rol: 'bass', tipo: 'midi' }],
+    })
+    expect(md).toMatch(/### Qué se busca/)
+    expect(md).toMatch(/- \[ \] Crear pista MIDI «Bajo»/)
+    expect(md).toMatch(/- \[ \] Escribir MIDI por sección en «Bajo»/)
+  })
+
+  it('evaluatePlanAgainstDaw conserva prosa y marca [x]', () => {
+    const md = `# Plan
+
+## Por implementar
+Ritmo: 120 BPM, 4/4.
+
+- [ ] Pista «Bajo»
+
+## Implementado
+`
+    const st = stateWithTrack({ nombre: 'Bajo', notes: 8 })
+    const ev = evaluatePlanAgainstDaw(md, st)
+    expect(ev.checks[0]!.ok).toBe(true)
+    expect(ev.markdown).toMatch(/Ritmo: 120 BPM/)
+    expect(ev.markdown).toMatch(/- \[x\] Pista «Bajo»/)
   })
 
   it('evaluatePlanAgainstDaw incluye checks', () => {

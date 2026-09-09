@@ -5,6 +5,12 @@
 import type { DAWState } from '@jaswave/shared'
 import { getMarkdownSection, setMarkdownSection, USER_NOTES_HEADING } from './markdown'
 import type { PlanEvalContext } from './eval-context'
+import {
+  listSectionSpans,
+  parseBeatsRangeFromTask,
+  parseSectionNameFromTask,
+  trackHasNotesInRange,
+} from './section-coverage'
 import type {
   PlanEvaluation,
   PlanTask,
@@ -160,18 +166,55 @@ export function evaluatePlanTask(task: string, state: DAWState, ctx?: PlanEvalCo
     }
 
     if (isMidi) {
-      if (clips.length === 0) {
-        return { task, ok: false, kind: 'track', reason: `Pista «${track.nombre}» sin clips.` }
-      }
-      if (notes === 0) {
-        return { task, ok: false, kind: 'track', reason: `Pista «${track.nombre}» con clips vacíos (0 notas).` }
+      const range = parseBeatsRangeFromTask(task)
+      const sectionName = parseSectionNameFromTask(task)
+      if (range) {
+        if (!trackHasNotesInRange(track, range.start, range.end)) {
+          return {
+            task,
+            ok: false,
+            kind: 'track',
+            reason: `Pista «${track.nombre}» sin notas en beats ${range.start}–${range.end}${sectionName ? ` (${sectionName})` : ''}.`,
+          }
+        }
+      } else {
+        const spans = listSectionSpans(state)
+        if (sectionName && spans.length) {
+          const sec = spans.find((s) => {
+            const a = s.name.toLowerCase()
+            const b = sectionName.toLowerCase()
+            return a === b || a.includes(b) || b.includes(a)
+          })
+          if (sec && !trackHasNotesInRange(track, sec.start, sec.end)) {
+            return {
+              task,
+              ok: false,
+              kind: 'track',
+              reason: `Pista «${track.nombre}» sin notas en sección ${sec.name} (beats ${sec.start}–${sec.end}).`,
+            }
+          }
+        } else if (spans.length) {
+          const missing = spans.filter((s) => !trackHasNotesInRange(track, s.start, s.end))
+          if (missing.length) {
+            return {
+              task,
+              ok: false,
+              kind: 'track',
+              reason: `Pista «${track.nombre}» sin MIDI en: ${missing.map((s) => `${s.name} ${s.start}–${s.end}`).join('; ')}.`,
+            }
+          }
+        } else if (clips.length === 0) {
+          return { task, ok: false, kind: 'track', reason: `Pista «${track.nombre}» sin clips.` }
+        } else if (notes === 0) {
+          return { task, ok: false, kind: 'track', reason: `Pista «${track.nombre}» con clips vacíos (0 notas).` }
+        }
       }
       if (plugins.length === 0) {
         return {
           task,
           ok: false,
           kind: 'track',
-          reason: `Pista «${track.nombre}» con ${notes} notas pero sin instrumento.`,
+          reason: `Pista «${track.nombre}» con MIDI pero sin instrumento.`,
         }
       }
       return {
@@ -275,14 +318,26 @@ export function evaluatePlanTask(task: string, state: DAWState, ctx?: PlanEvalCo
 
 export function planMarkdownFromProjectPlan(plan: ProjectPlanData): string {
   const intent = [
+    '### Qué se busca',
     plan.pensamiento || `Producción «${plan.nombre}».`,
-    `${plan.keyLabel} · ${plan.bpm} BPM · ${plan.minutes} min.`,
-  ].join(' ')
+    '',
+    '### Forma',
+    `${plan.keyLabel} · ${plan.bpm} BPM · ${plan.minutes} min. Cada pista debe tener clips MIDI con notas reales (no clips vacíos).`,
+    '',
+    '### Pistas previstas',
+    plan.tracks.map((t) => `- ${t.nombre} (${t.rol})`).join('\n') || '_Por definir._',
+    '',
+    '### Último pedido',
+    plan.pensamiento || `Producción «${plan.nombre}».`,
+  ].join('\n')
   const todos = plan.tracks
     .map((t) => {
       const plug = t.pluginNombre ? ` · VST ${t.pluginNombre}` : ''
       const art = t.articulacion ? ` · ${t.articulacion}` : ''
-      return `- [ ] Pista «${t.nombre}» (${t.rol}${plug}${art})`
+      return [
+        `- [ ] Crear pista MIDI «${t.nombre}» (${t.rol}${plug}${art}) y asignar instrumento`,
+        `- [ ] Escribir MIDI por sección en «${t.nombre}» (intro/verso/coro; notas no vacías, contraste rítmico)`,
+      ].join('\n')
     })
     .join('\n')
   return `# Plan: ${plan.nombre}
@@ -291,18 +346,63 @@ export function planMarkdownFromProjectPlan(plan: ProjectPlanData): string {
 ${intent}
 
 ## Por implementar
-${todos || '- [ ] (sin pistas aún)'}
+${todos || '- [ ] Definir pistas y arreglo'}
 
 ## En curso
 
 ## Implementado
 
 ## Evaluación
-Pendiente de ejecutar en el DAW. Puedes editar este archivo antes de aplicar.
+Pendiente de ejecutar en el DAW.
 
 ## ${USER_NOTES_HEADING}
 _Tus notas no se pisan automáticamente. Escríbelas aquí._
 `
+}
+
+function checkboxLine(line: string): { done: boolean; text: string } | null {
+  const m = /^\s*[-*]\s*\[( |x|X)\]\s+(.+?)\s*$/.exec(line)
+  if (!m) return null
+  return { done: m[1] !== ' ', text: m[2]!.trim() }
+}
+
+function rewritePendingBody(body: string, doneNorm: Set<string>): string {
+  const out: string[] = []
+  for (const line of body.split('\n')) {
+    const cb = checkboxLine(line)
+    if (!cb) {
+      if (line.trim() === '_Nada pendiente._') continue
+      out.push(line)
+      continue
+    }
+    if (doneNorm.has(norm(cb.text))) continue
+    out.push(`- [ ] ${cb.text}`)
+  }
+  const trimmed = out.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+  return trimmed || '_Nada pendiente._'
+}
+
+function mergeDoneBody(body: string, doneItems: string[]): string {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const line of body.split('\n')) {
+    const cb = checkboxLine(line)
+    if (!cb) {
+      if (/^_Aún no/.test(line.trim())) continue
+      out.push(line)
+      continue
+    }
+    seen.add(norm(cb.text))
+    out.push(`- [x] ${cb.text}`)
+  }
+  for (const t of doneItems) {
+    const k = norm(t)
+    if (!k || seen.has(k)) continue
+    out.push(`- [x] ${t}`)
+    seen.add(k)
+  }
+  const trimmed = out.join('\n').trim()
+  return trimmed || '_Aún no hay ítems implementados._'
 }
 
 export function evaluatePlanAgainstDaw(md: string, state: DAWState, ctx?: PlanEvalContext): PlanEvaluation {
@@ -379,16 +479,9 @@ export function evaluatePlanAgainstDaw(md: string, state: DAWState, ctx?: PlanEv
     .join('\n')
 
   let next = md
-  next = setMarkdownSection(
-    next,
-    'Por implementar',
-    missing.length ? missing.map((t) => `- [ ] ${t}`).join('\n') : '_Nada pendiente._',
-  )
-  next = setMarkdownSection(
-    next,
-    'Implementado',
-    doneItems.length ? doneItems.map((t) => `- [x] ${t}`).join('\n') : '_Aún no hay ítems implementados._',
-  )
+  const doneNorm = new Set(doneItems.map((t) => norm(t)))
+  next = setMarkdownSection(next, 'Por implementar', rewritePendingBody(getMarkdownSection(md, 'Por implementar'), doneNorm))
+  next = setMarkdownSection(next, 'Implementado', mergeDoneBody(getMarkdownSection(md, 'Implementado'), doneItems))
   next = setMarkdownSection(next, 'Evaluación', evalBody)
 
   return {

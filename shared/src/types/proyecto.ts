@@ -62,6 +62,7 @@ export interface ProjectState {
   timeSignature: import('./tiempo').TimeSignature;
   timeline: import('./timeline').TimelineState;
   tracks: import('./tracks').Track[];
+  takeFolders?: import('./entidades').TakeFolder[];
   routing: import('./routing').RoutingMatrix;
   master: import('./mezcla').MasterChannel;
   analysis: import('./analisis').ProjectAnalysis;

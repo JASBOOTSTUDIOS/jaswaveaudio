@@ -3,6 +3,11 @@
  * Incluye comandos del registry + orquestaciones solo-cliente (musicBuild, masterPass, …).
  */
 
+import type { ToolCategory, RiskLevel } from '../../../shared/src/types/command'
+import type { ToolDefinitionExtended, ToolHandler, ToolRegistry } from '../../../shared/src/ai/tool-registry'
+import { toolRegistry } from '../../../shared/src/ai/tool-registry'
+import { registroComandos } from '../../../shared/src/state/registro-comandos'
+
 export type CatalogEntry = {
   type: string
   kind: 'command' | 'agent' | 'both'
@@ -17,6 +22,12 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     kind: 'agent',
     description: 'Orquesta proyecto/MIDI/VSTs por fases',
     examplePayload: { aplicar: true, prompt: 'techno 120bpm', genero: 'techno', bpm: 120 },
+  },
+  {
+    type: 'daw.wipeProject',
+    kind: 'agent',
+    description: 'Vacía el proyecto: borra todas las pistas (excepto master) con IDs reales',
+    examplePayload: { aplicar: true },
   },
   {
     type: 'daw.composeProject',
@@ -115,6 +126,24 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     kind: 'agent',
     description: 'Compara dos conjuntos de notas por id (clip vs md, o clipA vs clipB)',
     examplePayload: { clipId: '…', pistaId: '…', otherClipId: '…' },
+  },
+  {
+    type: 'selection.get',
+    kind: 'agent',
+    description: 'Devuelve pista/clip seleccionados (solo lectura)',
+    examplePayload: {},
+  },
+  {
+    type: 'project.getSummary',
+    kind: 'agent',
+    description: 'Resumen del proyecto: BPM, pistas, fingerprint',
+    examplePayload: {},
+  },
+  {
+    type: 'track.list',
+    kind: 'agent',
+    description: 'Lista id/nombre/tipo de pistas',
+    examplePayload: {},
   },
   {
     type: 'plugin.lookup',
@@ -353,6 +382,7 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'ui.setZoom',
   'track.create',
   'track.delete',
+  'daw.wipeProject',
   'track.move',
   'track.update',
   'track.toggleMute',
@@ -423,6 +453,14 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'bus.create',
   'send.set',
   'sidechain.connect',
+  'take.folder.ensure',
+  'take.add',
+  'take.delete',
+  'take.rename',
+  'take.preview',
+  'comp.segment.set',
+  'comp.segment.clear',
+  'transport.setRecordMode',
   'track.freeze',
   'track.unfreeze',
   'audio.listDevices',
@@ -470,4 +508,91 @@ export function mergeActionCatalog(
     }
   }
   return [...byType.values()].sort((a, b) => a.type.localeCompare(b.type))
+}
+
+const READ_PREFIX = /^(analysis\.|doc\.(list|read)|plugin\.(lookup|list|search|get)|library\.preset\.(list|search)|midi\.(notes\.get|getClipSummary|clip\.md\.read)|render\.getStatus|audio\.(list|get)Devices)/
+
+function categoryFromType(type: string): ToolCategory {
+  const p = type.split('.')[0] ?? 'ai'
+  if (p === 'transport') return 'transport'
+  if (p === 'track') return 'track'
+  if (p === 'clip') return 'clip'
+  if (p === 'midi') return 'midi'
+  if (p === 'plugin' || p === 'fxChain') return 'plugin'
+  if (p === 'automation') return 'automation'
+  if (p === 'ui') return 'ui'
+  if (p === 'audio' || p === 'render' || p === 'analysis' || p === 'bus' || p === 'send' || p === 'sidechain' || p === 'take' || p === 'comp' || p === 'reference' || p === 'master') {
+    return 'audio'
+  }
+  return 'ai'
+}
+
+function riskFromType(type: string): RiskLevel {
+  if (READ_PREFIX.test(type)) return 'read'
+  if (/delete|clear|masterPass|render\.start/.test(type)) return 'dangerous'
+  return 'write'
+}
+
+const deferredHandler: ToolHandler = async () => ({
+  success: false,
+  error: { code: 'DEFERRED', message: 'Ejecutar vía executeDawActions / Command System' },
+  events: [],
+})
+
+/** Handler que delega al Command System (ADR-0017 smoke path). */
+const viaCommand =
+  (type: string): ToolHandler =>
+  async (params, ctx) => {
+    try {
+      const r = await ctx.commandExecutor.execute(type, (params ?? {}) as Record<string, unknown>)
+      return {
+        success: r.success,
+        data: r.result,
+        error: r.success
+          ? undefined
+          : {
+              code: 'CMD',
+              message: String((r as { error?: { message?: string } }).error?.message ?? 'falló'),
+            },
+        events: [],
+      }
+    } catch (e) {
+      return {
+        success: false,
+        error: { code: 'CMD', message: e instanceof Error ? e.message : String(e) },
+        events: [],
+      }
+    }
+  }
+
+/**
+ * Registra el catálogo agente en un Tool Registry.
+ * Si el tipo existe en el Command Registry → handler real (viaCommand).
+ * Si no (orquestaciones agent-only) → DEFERRED → Tool Runner cae al switch legacy.
+ */
+export function registerAgentCatalogOnRegistry(
+  registry: ToolRegistry,
+  types: string[] = KNOWN_AGENT_ACTION_TYPES,
+  commandRegistry: { get(type: string): unknown } = registroComandos,
+): void {
+  const desc = new Map(AGENT_ONLY_ACTIONS.map((a) => [a.type, a]))
+  for (const type of types) {
+    if (registry.get(type)) continue
+    const meta = desc.get(type)
+    const def: ToolDefinitionExtended = {
+      name: type,
+      type,
+      description: meta?.description ?? type,
+      category: categoryFromType(type),
+      risk: riskFromType(type),
+      version: '1.0.0',
+      tags: ['agent-catalog'],
+    }
+    const hasCommand = Boolean(commandRegistry.get(type))
+    registry.register(def, hasCommand ? viaCommand(type) : deferredHandler)
+  }
+}
+
+export function registerAgentCatalogTools(): void {
+  registerAgentCatalogOnRegistry(toolRegistry)
 }

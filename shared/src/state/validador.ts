@@ -65,8 +65,13 @@ export function validarEstado(estado: DAWState): ValidacionEstadoResultado {
   if (typeof estado.project.bitDepth !== 'number' || estado.project.bitDepth <= 0) {
     reg('project.bitDepth', 'bitDepth debe ser un número mayor a 0', 'error');
   }
-  if (!estado.project.bpm || typeof estado.project.bpm.valor !== 'number' || estado.project.bpm.valor <= 0) {
-    reg('project.bpm.valor', 'BPM debe ser mayor a 0', 'error');
+  if (
+    !estado.project.bpm ||
+    typeof estado.project.bpm.valor !== 'number' ||
+    !Number.isFinite(estado.project.bpm.valor) ||
+    estado.project.bpm.valor <= 0
+  ) {
+    reg('project.bpm.valor', 'BPM debe ser un número finito mayor a 0', 'error');
   }
   if (!estado.project.timeSignature || typeof estado.project.timeSignature.numerador !== 'number' || estado.project.timeSignature.numerador <= 0) {
     reg('project.timeSignature.numerador', 'El numerador del compás debe ser mayor a 0', 'error');

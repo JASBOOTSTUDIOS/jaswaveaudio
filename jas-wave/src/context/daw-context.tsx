@@ -20,6 +20,7 @@ import {
 } from '../../../shared/src'
 import { configurarFileService } from '../../../shared/src/commands/project-commands'
 import { FileServiceElectron } from '@/src/lib/file-service'
+import { registerAgentCatalogOnRegistry } from '@/src/lib/agent-action-catalog'
 import {
   attachSessionAutosave,
   hydrateSession,
@@ -47,6 +48,7 @@ function getSharedStore() {
       registrarMidiAiTools(toolRegistry, () => sharedStore!.obtenerEstado())
       registrarPluginTools(toolRegistry, () => sharedStore!.obtenerEstado())
       registrarAnalysisTools(toolRegistry)
+      registerAgentCatalogOnRegistry(toolRegistry, undefined, sharedStore!.registroComandos)
     } catch {
       /* HMR */
     }

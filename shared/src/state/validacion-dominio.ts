@@ -103,16 +103,16 @@ export function crearReglasDominio(): ReglasDominio {
     validate: (_state: DAWState, payload: unknown): ValidationResult => {
       const p = payload as { bpm?: number } | null;
       if (p?.bpm === undefined) return { valid: true, errors: [], warnings: [] };
-      if (p.bpm < 20 || p.bpm > 300) {
+      if (typeof p.bpm !== 'number' || !Number.isFinite(p.bpm) || p.bpm < 20 || p.bpm > 300) {
         return {
           valid: false,
-          errors: [{ code: 'INVALID_BPM', field: 'bpm', message: `BPM ${p.bpm} fuera de rango [20, 300]` }],
+          errors: [{ code: 'INVALID_BPM', field: 'bpm', message: `BPM ${String(p.bpm)} fuera de rango [20, 300]` }],
           warnings: [],
         };
       }
       return { valid: true, errors: [], warnings: [] };
     },
-    appliesTo: ['proyecto.bpm.set', 'transport.bpm.set'],
+    appliesTo: ['project.setBpm', 'proyecto.bpm.set', 'transport.bpm.set'],
   };
 
   reglas.push(trackNameUnique, volumeRange, validTimeSignature, validBPM);

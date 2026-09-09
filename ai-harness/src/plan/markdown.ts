@@ -4,17 +4,27 @@ export const USER_NOTES_HEADING = 'Notas del usuario'
 export const DEFAULT_PLAN_MD = `# Plan
 
 ## Intención
-_Describe qué quieres producir. La IA y tú pueden editar este archivo._
+### Qué se busca
+_Género, tempo, tonalidad, mood y referencia. La IA lo reescribe en cada pedido._
+
+### Forma
+_Intro / verso / coro / puente — compases y qué debe pasar en cada uno._
+
+### Pistas previstas
+_Nombre, rol e instrumento de cada pista._
+
+### Último pedido
+_Se actualiza en cada mensaje del usuario._
 
 ## Por implementar
-- [ ] (añade tareas o pistas aquí)
+- [ ] (tareas concretas y comprobables: pista «Nombre», BPM, clip de sección con notas, mezcla…)
 
 ## En curso
 
 ## Implementado
 
 ## Evaluación
-Aún no hay ejecución. Cuando la IA cree pistas o clips, comparará lo planeado con el DAW.
+Aún no hay ejecución. Cada turno compara lo planeado con el DAW y marca \`[x]\` lo hecho.
 
 ## ${USER_NOTES_HEADING}
 _Tus notas no se pisan automáticamente. Escríbelas aquí._

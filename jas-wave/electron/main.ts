@@ -110,6 +110,7 @@ function buildAppMenu() {
         { label: 'Paleta de comandos', accelerator: 'CmdOrCtrl+Shift+P', click: () => sendMenuAction('ventana.paletaComandos') },
         { label: 'Atajos de teclado…', click: () => sendMenuAction('ventana.atajos') },
         { label: 'Control MIDI / MIDI Learn', accelerator: 'CmdOrCtrl+Shift+M', click: () => sendMenuAction('ventana.midiMap') },
+        { label: 'Terminal', accelerator: 'CmdOrCtrl+`', click: () => sendMenuAction('ventana.terminal') },
       ],
     },
     {
@@ -752,26 +753,9 @@ ipcMain.handle('plugin-host-send', async (e: IpcMainInvokeEvent, cmd: unknown) =
   return sendPluginHostCommand(record)
 })
 ipcMain.on('plugin-host-pcm', (e: IpcMainInvokeEvent, data: unknown) => {
-  if (senderIsSatellite(e.sender)) return
-  if (!data) return
-  if (Buffer.isBuffer(data)) {
-    pushPluginHostPcm(data)
-    return
-  }
-  if (data instanceof Uint8Array || ArrayBuffer.isView(data)) {
-    const view = data as ArrayBufferView
-    pushPluginHostPcm(Buffer.from(view.buffer, view.byteOffset, view.byteLength))
-    return
-  }
-  if (data instanceof ArrayBuffer) {
-    pushPluginHostPcm(Buffer.from(data))
-    return
-  }
-  // Clone IPC a veces entrega { type:'Buffer', data:number[] }
-  const rec = data as { type?: string; data?: number[] }
-  if (rec?.type === 'Buffer' && Array.isArray(rec.data)) {
-    pushPluginHostPcm(Buffer.from(rec.data))
-  }
+  // Legacy JWST pipe retirado — live/bounce usan clip_player nativo.
+  void e
+  void data
 })
 ipcMain.handle('plugin-host-stop', () => {
   stopPluginHost()

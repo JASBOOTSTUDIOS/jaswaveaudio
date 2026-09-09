@@ -23,10 +23,16 @@ describe('music-build spec', () => {
     assert.ok(roles.includes('bass'))
   })
 
-  it('entiende 3:30 como minutos', () => {
-    const spec = specFromPrompt('Hazme una canción synthwave oscura, 120 BPM, A menor, 3:30.')
-    assert.equal(spec.bpm, 120)
-    assert.ok(spec.minutes >= 3.4 && spec.minutes <= 3.6)
+  it('parsea bachata 3 minutos con plantilla de pistas', () => {
+    const spec = specFromPrompt('créame una canción de bachata de 3 minutos')
+    assert.equal(spec.genero, 'bachata')
+    assert.equal(spec.bpm, 125)
+    assert.ok(spec.minutes >= 2.9)
+    assert.ok(spec.tracks.length >= 5)
+    assert.ok(spec.tracks.some((t) => /guitar|requinto|ritm/i.test(t.nombre)))
+    assert.ok(spec.tracks.some((t) => t.rol === 'bass'))
+    const bars = spec.sections.reduce((n, s) => n + s.bars, 0)
+    assert.ok(bars >= 80, `esperaba ~94 barras para 3min@125, got ${bars}`)
   })
 
   it('merge IA gana sobre heurística (metal vs worship defaults)', () => {

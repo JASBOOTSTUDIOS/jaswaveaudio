@@ -9,6 +9,13 @@
 import type { PlanEvaluation } from '../plan/types'
 import type { HarnessActionResult, HarnessDawAction } from '../types/actions'
 import type { DAWState } from '@jaswave/shared'
+import {
+  formatNextGapInstruction,
+  inspectProduction,
+  type ProductionListenEvidence,
+  type ProductionPluginGuide,
+} from './production-audit'
+import { formatSectionGapLine, listSectionGaps, type SectionGap } from '../plan/section-coverage'
 
 export type { HarnessActionResult, HarnessDawAction } from '../types/actions'
 
@@ -36,7 +43,7 @@ const READ_ONLY = new Set([
   'render.getStatus',
 ])
 
-export const HARNESS_MAX_REPAIR_TURNS = 8
+export const HARNESS_MAX_REPAIR_TURNS = 24
 export const HARNESS_MAX_ACTIONS_PER_REPAIR = 12
 /** Cuántas veces seguidas puede repetirse la misma firma de error antes de parar. */
 export const HARNESS_STALE_LIMIT = 2
@@ -70,6 +77,11 @@ export type HarnessHealthContext = {
   sidechainHostRouted?: boolean
   /** Peak sidechain por track destino (id → peak). */
   sidechainPeaks?: Record<string, number>
+  pluginGuides?: ProductionPluginGuide[]
+  lastListen?: ProductionListenEvidence | null
+  loudnessTarget?: 'streaming' | 'club' | 'cd'
+  /** Si true, 0 huecos de sección exige bounce+compareTarget. */
+  requireListen?: boolean
 }
 
 export const HARNESS_MIN_AUDIBLE_PEAK = 0.0005
@@ -89,6 +101,7 @@ export type DawHealthReport = {
   }
   /** Dump legible del proyecto para el modelo (debug real). */
   debugDump: string
+  sectionGaps?: SectionGap[]
 }
 
 export type HarnessFollowupTurn = {
@@ -129,6 +142,19 @@ const NO_RETRY = new Set([
 ])
 
 export function actionFingerprint(type: string, payload?: Record<string, unknown>): string {
+  // Clips por sección: no colapsar dos creates distintos en la misma pista.
+  if (
+    type === 'midi.clip.create' ||
+    type === 'midi.notes.patch' ||
+    type === 'midi.notes.set' ||
+    type === 'midi.clip.md.apply' ||
+    type === 'midi.clip.md.upsert'
+  ) {
+    const pista = String(payload?.pistaId ?? payload?.trackId ?? payload?.clipId ?? '')
+    const inicio =
+      payload?.inicio ?? payload?.rangeStart ?? payload?.start ?? payload?.inicioBeats ?? ''
+    return `${type}:${pista.toLowerCase()}:${String(inicio)}`
+  }
   const plugin = payload?.plugin as { nombre?: unknown } | undefined
   const nombre =
     payload?.nombre ??
@@ -257,8 +283,8 @@ function applyAudibilityAndRuntimeChecks(opts: {
     const slot = audit?.vstSlot
     const label = t.nombre || t.id
 
-    if (opts.builtProject || opts.mutatedMidi) {
-      if (chain.length === 0) continue // missing-instrument ya lo cubre
+    if (audit) {
+      if (chain.length === 0) continue
       if (!slot) {
         hostSlotMissing.push(label)
       }
@@ -288,20 +314,56 @@ function applyAudibilityAndRuntimeChecks(opts: {
 }
 
 /** Inventario real del DAW para que el modelo debuggee sin inventar. */
-export function formatDawDebugDump(state: DAWState): string {
+export function formatDawDebugDump(state: DAWState, gaps?: SectionGap[]): string {
   const tracks = state.project?.tracks ?? []
   if (!tracks.length) return '(proyecto sin pistas)'
   const lines: string[] = []
   for (const t of tracks) {
     const clips = t.clips ?? []
     let notes = 0
-    for (const c of clips) notes += clipNoteCount(c)
+    let pitchMin = Infinity
+    let pitchMax = -Infinity
+    for (const c of clips) {
+      notes += clipNoteCount(c)
+      const raw = (c as { notas?: Array<{ pitch?: number }> }).notas ?? []
+      for (const n of raw) {
+        const p = Math.round(Number(n.pitch))
+        if (!Number.isFinite(p)) continue
+        if (p < pitchMin) pitchMin = p
+        if (p > pitchMax) pitchMax = p
+      }
+    }
+    const role =
+      (t.tags ?? [])
+        .map((x) => String(x))
+        .find((x) => x.startsWith('role:'))
+        ?.slice(5) || '—'
     const plugs = (t.plugins ?? [])
       .map((p) => `${p.nombre}${p.estado === 'error' ? '[ERR]' : p.estado === 'cargado' ? '' : `[${p.estado ?? '?'}]`}`)
       .join(', ')
+    const clipBits = clips
+      .slice(0, 6)
+      .map((c) => {
+        const cl = c as { inicio?: number; duracion?: number; nombre?: string; notas?: unknown[] }
+        const n = Array.isArray(cl.notas) ? cl.notas.length : 0
+        return `${cl.nombre ?? 'clip'}@${Number(cl.inicio ?? 0)}+${Number(cl.duracion ?? 0)}n=${n}`
+      })
+      .join(', ')
+    const pitchBit =
+      notes > 0 && Number.isFinite(pitchMin) ? ` pitch=${pitchMin}–${pitchMax}` : ''
     lines.push(
-      `- «${t.nombre || t.id}» tipo=${t.tipo} vol=${Number(t.volumen ?? 1).toFixed(2)} pan=${Number(t.paneo ?? 0).toFixed(2)} clips=${clips.length} notas=${notes} plugins=[${plugs || '—'}]`,
+      `- «${t.nombre || t.id}» rol=${role} tipo=${t.tipo} vol=${Number(t.volumen ?? 1).toFixed(2)} pan=${Number(t.paneo ?? 0).toFixed(2)} mute=${t.silenciada ? 1 : 0} clips=${clips.length} notas=${notes}${pitchBit} plugins=[${plugs || '—'}]${clipBits ? ` [${clipBits}]` : ''}`,
     )
+  }
+  const markers = state.project?.marcadores ?? []
+  if (markers.length) {
+    lines.push(
+      `- Marcadores: ${markers.map((m) => `${m.nombre}@${Number(m.tiempo)}`).join(' → ')}`,
+    )
+  }
+  const gapList = gaps ?? listSectionGaps(state)
+  if (gapList.length) {
+    lines.push(`- Huecos: ${gapList.slice(0, 8).map(formatSectionGapLine).join('; ')}`)
   }
   const master = state.project?.master
   if (master) {
@@ -375,15 +437,7 @@ export function inspectDawHealth(
       notes += n
     }
     if (isMidi && clips.length > 0 && notes === 0) emptyMidiTracks.push(t.nombre || t.id)
-    if (isMidi && mutatedMidi && clips.length === 0) emptyMidiTracks.push(t.nombre || t.id)
     if (builtProject && isMidi && chain.length === 0) bareInstruments.push(t.nombre || t.id)
-  }
-  if (mutatedMidi && emptyMidiTracks.length) {
-    errors.push({
-      severity: 'error',
-      code: 'empty-midi',
-      message: `Pistas MIDI sin notas: ${emptyMidiTracks.slice(0, 8).join(', ')}`,
-    })
   }
   if (bareInstruments.length) {
     errors.push({
@@ -516,6 +570,42 @@ export function inspectDawHealth(
     ctx,
   })
 
+  let lastListen = ctx?.lastListen ?? null
+  for (const r of results) {
+    if ((r.type === 'render.start' || r.type === 'daw.masterPass') && r.success && r.data && typeof r.data === 'object') {
+      const listen = (r.data as { listenReport?: ProductionListenEvidence }).listenReport
+      if (listen) lastListen = listen
+    }
+  }
+  const gapsPreview = listSectionGaps(state)
+  const hasMidiNotes = tracks.some((t) => {
+    if (!isMidiLikeTrack(t.tipo)) return false
+    return (t.clips ?? []).some((c) => clipNoteCount(c) > 0)
+  })
+  const wantListen =
+    ctx?.requireListen === true ||
+    (evaluation?.missing ?? []).some((t) => /bounce|lufs|comparetarget|escuchar|listen|entrega/i.test(t)) ||
+    // Tras Music Build + secciones cubiertas: exigir bounce + compareTarget.
+    (gapsPreview.length === 0 &&
+      hasMidiNotes &&
+      builtProject &&
+      Boolean(state.project?.marcadores?.length))
+
+  const production = inspectProduction(state, {
+    pluginGuides: ctx?.pluginGuides,
+    lastListen,
+    loudnessTarget: ctx?.loudnessTarget,
+    requireListen: wantListen,
+    builtProject,
+    mutatedMidi,
+  })
+  for (const e of production.errors) {
+    if (!errors.some((x) => x.code === e.code && x.message === e.message)) errors.push(e)
+  }
+  for (const w of production.warnings) {
+    if (!warnings.some((x) => x.code === w.code && x.message === w.message)) warnings.push(w)
+  }
+
   const snapshot = {
     tracks: tracks.length,
     midiClips,
@@ -530,7 +620,8 @@ export function inspectDawHealth(
     warnings,
     failedActions,
     snapshot,
-    debugDump: formatDawDebugDump(state),
+    debugDump: formatDawDebugDump(state, production.sectionGaps),
+    sectionGaps: production.sectionGaps,
   }
 }
 
@@ -539,7 +630,9 @@ export function harnessShouldRepair(report: DawHealthReport): boolean {
 }
 
 export function healthSignature(report: DawHealthReport): string {
-  return [...new Set(report.errors.map((e) => `${e.code}:${e.message}`))].sort().join('|')
+  const codes = [...new Set(report.errors.map((e) => e.code))].sort()
+  const gaps = (report.sectionGaps ?? []).map((g) => `${g.trackId}:${g.start}-${g.end}`).sort()
+  return [...codes, ...gaps].join('|')
 }
 
 export function formatHarnessProgress(turn: number, maxTurns: number, report: DawHealthReport): string {
@@ -597,6 +690,7 @@ export function buildHarnessReviewMessage(opts: {
     'Actualiza plan.md con <<<DOC plan.md ... DOC>>> o doc.write / doc.evaluate:',
     '- ## Evaluación: tu juicio (no copies solo la tabla mecánica)',
     '- ## Implementado / ## Por implementar / ## En curso',
+    '- Marca `[x]` lo que el DAW ya cubre; deja `- [ ]` lo pendiente. Conserva la prosa de intención.',
     'Si falta algo concreto y puedes crearlo ahora, un bloque ACTIONS (un ajuste, no rehacer el proyecto). Si el usuario debe decidir, déjalo pendiente en el plan.',
     'NO pises la sección «Notas del usuario». NO repitas las acciones que ya salieron bien.',
   ]
@@ -640,11 +734,18 @@ export function buildHarnessRepairMessage(opts: {
     '',
     'Reglas:',
     `- Máximo ${HARNESS_MAX_ACTIONS_PER_REPAIR} acciones por turno; habrá hasta ${opts.maxTurns} turnos.`,
+    formatNextGapInstruction(opts.report.sectionGaps?.[0] ?? null),
+    '- PROHIBIDO midi.clip.create con notas:[]. Cada clip NACE con notas reales.',
+    '- Batería: pitches GM (kick=36, snare=38, HH=42, ride=51). NUNCA pitches cromáticos.',
+    '- Bajo: pitch 28–55. Piano: 36–84. Pads: 48–79. Lead: 55–84.',
+    '- Velocidades variadas nota a nota (60–110). No todas iguales.',
     '- NO hagas daw.musicBuild ni daw.composeProject de nuevo si ya se aplicó.',
-    '- NO crees pistas que ya existen (mira el debug). Completa clips/plugins/notas / marca checkboxes del plan.',
-    '- Si el error es listen-failed / compare-target / master-pass-target: ajusta master/gain/limiter, re-bounce o daw.masterPass; NO digas listo sin AudioListenReport OK.',
-    '- Si el error es plan-incomplete: crea lo que falta O mueve el ítem a ## Implementado con doc.write si YA existe en el DAW.',
-    '- Si un VST falló: plugin.probe + otro del catálogo / library.preset / JasWave Roles.',
+    '- NO crees pistas que ya existen (mira el debug). Completa clips/plugins/notas.',
+    '- Si el error es midi-skeleton-drums / midi-skeleton-bass: midi.notes.set con patrón denso (no esqueleto).',
+    '- Si el error es section-gap: midi.clip.create { pistaId, inicio, duracion, notas:[...] } del siguiente hueco.',
+    '- Si el error es listen-missing: render.start + analysis.compareTarget.',
+    '- Si un VST falló: plugin.probe + otro del catálogo / library.preset.',
+    '- Tras completar clips: track.update vol/pan para mezcla (NO dejar defaults 0.8/0.0).',
     planOnly
       ? '- Este turno es cierre de plan: prioriza alinear plan.md con el DAW real.'
       : '- Si no puedes arreglarlo sin decisión del usuario, 2 frases y CERO ACTIONS.',

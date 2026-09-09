@@ -3,9 +3,7 @@
  *
  * Contenido real:
  *  - Notas/CCs de clips MIDI → slots VST con delaySamples absolutos
- *    (la cola por-slot del host los dispara sample-accurate).
- *  - Clips de audio → pre-render OfflineAudioContext por pista,
- *    alimentados como paquetes JWST inline en cada renderOfflineStep.
+ *  - Clips de audio → clip_player nativo (mismo motor que Play)
  */
 
 import {
@@ -32,9 +30,13 @@ import type {
   BounceSlotResolution,
 } from './bounce-content'
 import { buildBounceContent } from './bounce-content'
+import {
+  prepareNativeClipsForBounce,
+  teardownNativeClipsAfterBounce,
+} from './bounce-native-clips'
 import { prerenderWebStems } from './bounce-offline-audio'
 import { bakeVolumeAutomationIntoStem } from './automation-runtime'
-import { applySendsToStemBuffers } from './send-mix'
+import { syncReaperTrackGraph } from '@/src/lib/plugin/track-vst-runtime'
 import type { DAWState } from '../../../shared/src/types/state'
 
 const BLOCK = 512
@@ -48,23 +50,6 @@ async function hostSend(cmd: Record<string, unknown>): Promise<Record<string, un
     throw new Error(String(raw.message ?? raw.code ?? 'render host error'))
   }
   return raw ?? {}
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = ''
-  const chunk = 0x8000
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
-  }
-  return btoa(binary)
-}
-
-/** PCM float interleaved → bytes little-endian f32 (para base64). */
-function f32ToBytes(src: Float32Array): Uint8Array {
-  const out = new Uint8Array(src.length * 4)
-  const view = new DataView(out.buffer)
-  for (let i = 0; i < src.length; i++) view.setFloat32(i * 4, src[i]!, true)
-  return out
 }
 
 function decodeWavPcm16Stereo(bin: Uint8Array): { l: Float32Array; r: Float32Array; sampleRate: number } | null {
@@ -202,17 +187,32 @@ export async function runNativeBounce(
     return cur ?? { ...job, status: 'failed' as const, error: msg }
   }
 
-  // Stems Web Audio (clips de audio), DRY por stemIndex.
-  let webStems = await prerenderWebStems(bounceContent, {
+  // Stems nativos: clip_player + grafo VST (mismo motor que Play).
+  if (dawState?.project?.tracks?.length) {
+    syncReaperTrackGraph(
+      dawState.project.tracks,
+      dawState.project.master?.plugins,
+      dawState.project.routing,
+    )
+  }
+
+  await prepareNativeClipsForBounce(bounceContent, dawState, {
     startSec,
     durationSec: duration,
     sampleRate: sr,
   })
 
-  // Automatización de volumen → bake en stems (el fader nativo queda en valor base)
-  if (dawState) {
-    const trackIndexById = new Map<string, number>()
-    bounceContent.tracks.forEach((t) => trackIndexById.set(t.trackId, t.stemIndex))
+  // Stems dry para export opcional (fallback Web Audio solo si exportStems).
+  const webStems =
+    job.exportStems
+      ? await prerenderWebStems(bounceContent, {
+          startSec,
+          durationSec: duration,
+          sampleRate: sr,
+        })
+      : new Map<number, Float32Array>()
+
+  if (dawState && webStems.size) {
     for (const bt of bounceContent.tracks) {
       const pcm = webStems.get(bt.stemIndex)
       if (!pcm) continue
@@ -222,11 +222,12 @@ export async function runNativeBounce(
       )
       const baseVol = typeof track?.volumen === 'number' ? track.volumen : 0.8
       if (lane) {
-        webStems.set(bt.stemIndex, bakeVolumeAutomationIntoStem(pcm, sr, startSec, lane, baseVol))
+        webStems.set(
+          bt.stemIndex,
+          bakeVolumeAutomationIntoStem(pcm, sr, startSec, lane, baseVol),
+        )
       }
     }
-    // Sends en el host nativo (stems DRY); evita doble suma TS+host.
-    // webStems permanecen dry; renderMix aplica sends live.
   }
 
   await hostSend({
@@ -251,14 +252,7 @@ export async function runNativeBounce(
         return renderJobGet(job.id) ?? { ...job, status: 'cancelled' }
       }
       const frames = Math.min(BLOCK, totalFrames - done)
-
-      // Paquetes JWST inline: sin carrera entre pipe de PCM y el paso.
-      const stems: Array<{ trackIndex: number; b64: string }> = []
-      for (const [stemIndex, pcm] of webStems) {
-        const slice = pcm.subarray(done * 2, (done + frames) * 2)
-        stems.push({ trackIndex: stemIndex, b64: bytesToBase64(f32ToBytes(slice)) })
-      }
-      await hostSend({ type: 'renderOfflineStep', frames, stems })
+      await hostSend({ type: 'renderOfflineStep', frames })
 
       done += frames
       const progress = done / totalFrames
@@ -383,13 +377,15 @@ export async function runNativeBounce(
     emit?.('render.completed', { jobId: job.id, path: outPathFinal, loudness, listenReport })
     return completed
   } catch (e) {
-    // Restaurar el device aunque falle el bounce
+    teardownNativeClipsAfterBounce()
     try {
       await hostSend({ type: 'renderOfflineCancel' })
     } catch {
       /* ignore */
     }
     throw e
+  } finally {
+    teardownNativeClipsAfterBounce()
   }
 }
 

@@ -16,6 +16,7 @@ export type ToolId =
   | 'midi-map'
   | 'piano-roll'
   | 'score-editor'
+  | 'terminal'
   | 'settings'
 
 export interface ToolDefinitionUI {
@@ -133,6 +134,13 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     defaultZone: 'bottom',
     singleton: true,
   },
+  terminal: {
+    id: 'terminal',
+    title: 'Terminal',
+    description: 'CLI del DAW y log de lo que ejecuta la IA',
+    defaultZone: 'bottom',
+    singleton: true,
+  },
   settings: {
     id: 'settings',
     title: 'Configuración',
@@ -154,7 +162,7 @@ export const DEFAULT_WORKSPACE: WorkspaceLayout = {
     left: ['coproducer', 'docs-explorer', 'docs', 'library', 'instruments'],
     center: ['arrange'],
     right: ['track-detail', 'fx-chain', 'plugin-editor', 'midi-map', 'meters', 'routing', 'settings'],
-    bottom: ['mixer', 'piano-roll', 'score-editor'],
+    bottom: ['mixer', 'piano-roll', 'score-editor', 'terminal'],
   },
   activeTab: {
     left: 'coproducer',
