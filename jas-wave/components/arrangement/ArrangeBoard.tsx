@@ -1,12 +1,12 @@
 /**
  * Tablero arrangement: un solo scroll X+Y.
  * Cabeceras sticky a la izquierda — misma altura de fila que los clips.
+ * Overlay de playhead unificado (regla + lanes) en coords de viewport.
  */
 
 import type { ReactNode, RefObject, UIEventHandler } from 'react'
 import { TrackCanvas } from './TrackCanvas'
-
-const HEADER_W = 300
+import { HEADER_W } from './constants'
 
 export function ArrangeBoard({
   tracksHeight,
@@ -15,6 +15,7 @@ export function ArrangeBoard({
   ruler,
   headers,
   lanes,
+  playhead,
   scrollRef,
   extraRef,
   onScroll,
@@ -29,6 +30,8 @@ export function ArrangeBoard({
   ruler: ReactNode
   headers: ReactNode
   lanes: ReactNode
+  /** Playhead continuo encima de regla + carriles (coords viewport, left = HEADER_W). */
+  playhead?: ReactNode
   scrollRef: RefObject<HTMLDivElement | null>
   extraRef?: RefObject<HTMLDivElement | null>
   onScroll?: UIEventHandler<HTMLDivElement>
@@ -38,7 +41,7 @@ export function ArrangeBoard({
   onWheel?: (e: WheelEvent) => void
 }) {
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {/* Fila superior fija: acciones + regla */}
       <div className="flex shrink-0 border-b border-border bg-panel">
         <div
@@ -47,7 +50,7 @@ export function ArrangeBoard({
         >
           {headerToolbar}
         </div>
-        <div className="min-w-0 flex-1 overflow-hidden" style={{ height: 40 }}>
+        <div className="relative min-w-0 flex-1 overflow-hidden" style={{ height: 40 }}>
           {ruler}
         </div>
       </div>
@@ -82,6 +85,16 @@ export function ArrangeBoard({
           </div>
         </div>
       </TrackCanvas>
+
+      {/* Una sola línea amarilla: misma X que regla y rejilla */}
+      {playhead ? (
+        <div
+          className="pointer-events-none absolute bottom-0 top-0 z-40 overflow-hidden"
+          style={{ left: HEADER_W, right: 0 }}
+        >
+          {playhead}
+        </div>
+      ) : null}
     </div>
   )
 }

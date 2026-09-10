@@ -484,6 +484,8 @@ export interface UIState {
   vistaPanelDerecho: VistasPanelDerecho;
   layout: PanelLayout;
   playheadVisible: boolean;
+  /** Magnético: anclar playhead a la rejilla visible (transporte). Default true. */
+  playheadSnap?: boolean;
   scrollX: number;
   scrollY: number;
   zoomHorizontal: number;

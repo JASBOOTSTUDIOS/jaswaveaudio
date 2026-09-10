@@ -10,6 +10,7 @@ import { pluginRegistry } from '../plugin/registry'
 import { descriptorToPluginInfo } from '../plugin/plugin-info-adapter'
 import { ensureKnownVstInRegistry } from '../plugin/ensure-known-vst'
 import { pickVstForRole, type InstrumentRole } from '../plugin-knowledge'
+import { isPluginAiEnabled, getRoleDefault } from '../plugin/instrument-ai-prefs'
 import {
   applyJasWaveRolesParameter,
   ensureJasWaveRolesRegistered,
@@ -204,17 +205,23 @@ function resolveCatalogPlugin(t: {
 }): ReturnType<typeof pluginRegistry.findById> {
   const fuzzy = (q: string) => {
     const hits = pluginRegistry.findByName(q)
-    if (hits[0]) return hits[0]
+    if (hits[0] && isPluginAiEnabled(hits[0].pluginId)) return hits[0]
     const known = ensureKnownVstInRegistry(q)
-    if (known) return known
+    if (known && isPluginAiEnabled(known.pluginId)) return known
     const compact = q.replace(/\s+/g, '').toLowerCase()
-    return pluginRegistry.list().find((d) => d.name.replace(/\s+/g, '').toLowerCase().includes(compact))
+    return pluginRegistry
+      .list()
+      .find(
+        (d) =>
+          isPluginAiEnabled(d.pluginId) &&
+          d.name.replace(/\s+/g, '').toLowerCase().includes(compact),
+      )
   }
   if (t.pluginId) {
     const byId = pluginRegistry.findById(t.pluginId)
-    if (byId) return byId
+    if (byId && isPluginAiEnabled(byId.pluginId)) return byId
     const known = ensureKnownVstInRegistry(t.pluginId)
-    if (known) return known
+    if (known && isPluginAiEnabled(known.pluginId)) return known
     const byIdAsName = fuzzy(t.pluginId)
     if (byIdAsName) return byIdAsName
   }
@@ -471,6 +478,34 @@ export async function executeMusicBuild(
         }
       } catch {
         markFail('preset✗')
+      }
+    }
+
+    // Default de usuario: config guardada por rol (p. ej. DecentSampler «Piano acústico»).
+    if (!loadedVst && !t.presetId) {
+      const rolePref = getRoleDefault((rol as InstrumentRole) || 'unknown')
+      if (rolePref?.presetId) {
+        try {
+          const { libraryApplyPreset } = await import('../library/ops')
+          const applied = await libraryApplyPreset(tienda, {
+            presetId: rolePref.presetId,
+            trackId: row.trackId,
+          })
+          if (applied.ok) {
+            t.presetId = rolePref.presetId
+            t.pluginNombre = rolePref.pluginNombre
+            t.pluginId = rolePref.pluginId
+            const { ensureProjectVstInstruments, getLoadedInstrumentForTrack } = await import(
+              '../plugin/track-vst-runtime'
+            )
+            const st = tienda.obtenerEstado()
+            await ensureProjectVstInstruments(st.project.tracks, st.project.master?.plugins)
+            if (getLoadedInstrumentForTrack(row.trackId)) markOk('preset-default', false)
+            else markFail('preset-default✗host')
+          }
+        } catch {
+          /* fallback a VST por rol */
+        }
       }
     }
 

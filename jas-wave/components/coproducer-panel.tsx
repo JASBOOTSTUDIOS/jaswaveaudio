@@ -83,7 +83,6 @@ import {
   extractGenreFromClarifyText,
   extractMinutesFromClarifyText,
   formatClarificationAnswersForPrompt,
-  isAffirmativeBuildIntent,
   isClarificationReply,
   isGreetingOrChitchat,
   isProjectStatusQuestion,
@@ -104,7 +103,6 @@ import {
   resolveTrackHint,
 } from '@/src/lib/track-resolve'
 import {
-  AGENT_MODE_META,
   detectAgentMode,
   inferBpmFromTempoIntent,
   isProjectAuditIntent,
@@ -726,10 +724,13 @@ export function CoProducerPanel() {
   const projectId = useDAWState((state) => state.project?.id || 'default')
   const projectName = useDAWState((state) => state.project?.nombre || 'Nuevo Proyecto')
   const trackCount = useDAWState((state) => state.project?.tracks?.length ?? 0)
-  const messages =
-    conversation.projectId === projectId
-      ? conversation.messages.filter((m) => m.role === 'user' || m.role === 'assistant')
-      : []
+  const messages = useMemo(
+    () =>
+      conversation.projectId === projectId
+        ? conversation.messages.filter((m) => m.role === 'user' || m.role === 'assistant')
+        : [],
+    [conversation.projectId, conversation.messages, projectId],
+  )
   const pendingProposal = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i]!
@@ -1087,8 +1088,6 @@ export function CoProducerPanel() {
       let parsedPlanForDocs: ProjectPlanData | null = null
       let finalReasoningSteps: StoredChatMessage['reasoningSteps']
       let docEdits: ChatDocEdit[] = []
-      let turnUndoDepthAtStart: number | undefined
-      let turnAppliedDiffSummary: string | undefined
       let turnCertify: StoredChatMessage['certify']
       const turnMeta: { undo?: number; diff?: string } = {}
       let skipAiTurn = false
@@ -2070,8 +2069,8 @@ export function CoProducerPanel() {
           .filter(Boolean)
           .join('\n')
       }
-      turnUndoDepthAtStart = turnMeta.undo
-      turnAppliedDiffSummary = turnMeta.diff
+      const turnUndoDepthAtStart = turnMeta.undo
+      const turnAppliedDiffSummary = turnMeta.diff
       if (turnAppliedDiffSummary) {
         actionsSummary = [turnAppliedDiffSummary, actionsSummary].filter(Boolean).join('\n')
       }
@@ -2799,7 +2798,7 @@ export function CoProducerPanel() {
                         isKael
                           ? formatClarificationAnswersForPrompt(
                               qs,
-                              [{ id: 'kael_feedback', value: 'Sí, quedó bien' }],
+                              [{ id: 'kael_feedback', optionIndexes: [0], value: 'Sí, quedó bien' }],
                             )
                           : 'Usa defaults razonables según el plan y mi pedido. Emite <<<ACTIONS>>> ahora (propuesta para Aplicar). No preguntes más.',
                       )

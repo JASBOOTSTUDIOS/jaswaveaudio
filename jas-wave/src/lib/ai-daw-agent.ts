@@ -90,6 +90,11 @@ import {
   type InstrumentRole,
   type PluginUsageGuide,
 } from './plugin-knowledge'
+import {
+  filterCatalogForAi,
+  formatInstrumentAiPrefsForPrompt,
+  isPluginAiEnabled,
+} from './plugin/instrument-ai-prefs'
 import type { PluginInfo } from '../../../shared/src/types/entidades'
 import type { ProjectPlanData, ProjectPlanTrack } from './project-plan'
 import {
@@ -163,17 +168,19 @@ export function buildAgentSystemPrompt(
 ): string {
   const mentions = userText ? resolveAtMentions(userText, state, chatMessages) : []
   const resolvedMode = detectAgentMode(userText, mode)
-  const catalog = pluginRegistry.list()
+  const catalog = filterCatalogForAi(pluginRegistry.list())
   const instruments = catalog.filter((d) => d.isInstrument).slice(0, 80)
   const effects = catalog.filter((d) => d.isEffect && !d.isInstrument).slice(0, 40)
+  const prefsBlock = formatInstrumentAiPrefsForPrompt()
   const catalogBlock = [
     instruments.length
-      ? 'Instrumentos VST/builtin:\n' +
+      ? 'Instrumentos VST/builtin (solo habilitados para IA):\n' +
         instruments.map((d) => `  - ${d.name} [${d.format}] id=${d.pluginId} · ${d.vendor}`).join('\n')
-      : 'Instrumentos: (catálogo vacío — inserta JasWave Roles / VST)',
+      : 'Instrumentos: (catálogo vacío o todos desactivados — inserta JasWave Roles / VST)',
     effects.length
       ? 'Efectos:\n' + effects.map((d) => `  - ${d.name} [${d.format}] id=${d.pluginId}`).join('\n')
       : '',
+    prefsBlock,
   ]
     .filter(Boolean)
     .join('\n')
@@ -1621,8 +1628,15 @@ export async function executeDawActions(
             const trackId = tienda.obtenerEstado().project.tracks.at(-1)?.id
             if (!trackId) continue
             const d =
-              (t.pluginId ? pluginRegistry.findById(t.pluginId) : undefined) ??
-              (t.pluginNombre ? pluginRegistry.findByName(t.pluginNombre)[0] : undefined) ??
+              (t.pluginId
+                ? (() => {
+                    const hit = pluginRegistry.findById(t.pluginId)
+                    return hit && isPluginAiEnabled(hit.pluginId) ? hit : undefined
+                  })()
+                : undefined) ??
+              (t.pluginNombre
+                ? pluginRegistry.findByName(t.pluginNombre).find((x) => isPluginAiEnabled(x.pluginId))
+                : undefined) ??
               pickVstForRole(pluginRegistry.list(), (t.rol as InstrumentRole) || 'unknown')
             if (d) {
               const info = descriptorToPluginInfo(d)
@@ -1824,7 +1838,7 @@ export async function executeDawActions(
           break
         }
         case 'midi.clip.create': {
-          let pistaId = p.pistaId ? String(p.pistaId) : ''
+          let pistaId = String(p.pistaId ?? p.trackId ?? '').trim()
           if (!pistaId) {
             const track = await resolveMidiTrackForClip(tienda, {
               nombre: String(p.nombre ?? 'MIDI'),

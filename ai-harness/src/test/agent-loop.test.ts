@@ -304,6 +304,28 @@ describe('runAgentLoop', () => {
     expect(v.rejected.some((r) => r.tool === 'midi.clip.create')).toBe(true)
   })
 
+  it('midi.clip.create con trackId se normaliza a pistaId y elimina trackId', () => {
+    const st = state()
+    const v = validateAgentToolCalls(
+      [
+        {
+          id: 'c1',
+          tool: 'midi.clip.create',
+          arguments: {
+            trackId: 'bass_01',
+            inicio: 0,
+            duracion: 4,
+            notas: [{ pitch: 36, inicio: 0, duracion: 1 }],
+          },
+        },
+      ],
+      { knownTools: known.concat(['midi.clip.create']), state: st, maxPerIteration: 4 },
+    )
+    expect(v.accepted).toHaveLength(1)
+    expect(v.accepted[0]?.arguments.pistaId).toBe('bass_01')
+    expect(v.accepted[0]?.arguments.trackId).toBeUndefined()
+  })
+
   it('toggleMute con pistaId se acepta y normaliza trackId', () => {
     const st = state()
     const v = validateAgentToolCalls(

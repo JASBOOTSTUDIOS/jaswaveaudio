@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { Check, ChevronRight } from 'lucide-react'
+import { useWorkspace } from '@/src/workspace/workspace-context'
+import { TOOL_CATALOG, requestToggleTool, type ToolId } from '@/src/workspace/types'
 
 export type MenuActionId =
   | 'proyecto.nuevo'
@@ -42,6 +44,7 @@ export type MenuActionId =
 type MenuItem =
   | { type: 'action'; id: MenuActionId; label: string; shortcut?: string }
   | { type: 'separator' }
+  | { type: 'tools'; label: string }
 
 type MenuGroup = { id: string; label: string; items: MenuItem[] }
 
@@ -95,6 +98,8 @@ const MENUS: MenuGroup[] = [
       { type: 'action', id: 'ventana.panelDerecho', label: 'Panel derecho' },
       { type: 'action', id: 'ventana.panelInferior', label: 'Panel inferior / Mixer' },
       { type: 'separator' },
+      { type: 'tools', label: 'Herramientas' },
+      { type: 'separator' },
       { type: 'action', id: 'ventana.paletaComandos', label: 'Paleta de comandos', shortcut: 'Ctrl+K' },
       { type: 'action', id: 'ventana.atajos', label: 'Atajos de teclado…' },
       { type: 'action', id: 'ventana.midiMap', label: 'Control MIDI / MIDI Learn…' },
@@ -132,6 +137,58 @@ function dispatchMenuAction(id: MenuActionId) {
     return
   }
   window.dispatchEvent(new CustomEvent('jaswave-menu-action', { detail: { id } }))
+}
+
+function ToolsSubmenu({ onPicked }: { onPicked: () => void }) {
+  const { isToolOpen } = useWorkspace()
+  const [open, setOpen] = useState(false)
+  const ids = Object.keys(TOOL_CATALOG) as ToolId[]
+
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        className="flex w-full items-center justify-between gap-6 px-3 py-1.5 text-left text-[12px] text-foreground hover:bg-panel-raised"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span>Herramientas</span>
+        <ChevronRight className="size-3 text-muted-foreground" />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          className="absolute left-full top-0 z-[95] ml-0.5 max-h-80 min-w-[200px] overflow-y-auto rounded-md border border-border bg-panel py-1 shadow-xl"
+        >
+          {ids.map((toolId) => {
+            const on = isToolOpen(toolId)
+            return (
+              <button
+                key={toolId}
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={on}
+                onClick={() => {
+                  requestToggleTool(toolId)
+                  onPicked()
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-foreground hover:bg-panel-raised"
+              >
+                <span className="flex size-3.5 items-center justify-center">
+                  {on ? <Check className="size-3 text-accent-amber" /> : null}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{TOOL_CATALOG[toolId].title}</span>
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 export function AppMenuBar() {
@@ -189,6 +246,9 @@ export function AppMenuBar() {
               {menu.items.map((item, idx) => {
                 if (item.type === 'separator') {
                   return <div key={`sep-${idx}`} className="my-1 border-t border-border" />
+                }
+                if (item.type === 'tools') {
+                  return <ToolsSubmenu key="tools" onPicked={() => setOpenId(null)} />
                 }
                 return (
                   <button

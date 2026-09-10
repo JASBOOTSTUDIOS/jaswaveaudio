@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Piano, Crosshair, Timer } from 'lucide-react'
+import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Piano, Crosshair, Timer, Magnet } from 'lucide-react'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { DAWState } from '../../shared/src'
 import { safeProjectBpm } from '../../shared/src'
@@ -388,6 +388,7 @@ export function TransportBar() {
   const isPunch = Boolean(transport.punch?.activo)
   const isCountIn = Boolean(transport.countIn?.activo)
   const isComping = transport.modoGrabacion === 'comping'
+  const playheadSnap = useDAWState((s: DAWState) => s.ui?.playheadSnap !== false)
   // Solo bloquear Play si falta host/audio. La carga de VSTs muestra progreso pero no congela la UI.
   const blocked =
     !isPlaying &&
@@ -446,6 +447,13 @@ export function TransportBar() {
 
   const toggleCountIn = async () => {
     await tienda.executor.execute('transport.toggleCountIn', {})
+  }
+
+  const togglePlayheadSnap = () => {
+    tienda.establecerEstado((s) => ({
+      ...s,
+      ui: { ...s.ui, playheadSnap: !(s.ui?.playheadSnap !== false) },
+    }))
   }
 
   const setBpm = async (bpm: number) => {
@@ -567,6 +575,24 @@ export function TransportBar() {
           }`}
         >
           <Timer className="size-4" />
+        </button>
+        <button
+          type="button"
+          onClick={togglePlayheadSnap}
+          aria-label="Precisión del playhead"
+          aria-pressed={playheadSnap}
+          title={
+            playheadSnap
+              ? 'Precisión ON: playhead anclado a la rejilla visible (zoom más fino = más subdivisiones)'
+              : 'Precisión OFF: seek libre sin anclar a la rejilla'
+          }
+          className={`flex size-9 items-center justify-center rounded-md transition-colors ${
+            playheadSnap
+              ? 'bg-accent-amber/20 text-accent-amber'
+              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+          }`}
+        >
+          <Magnet className="size-4" />
         </button>
       </div>
 

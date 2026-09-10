@@ -94,8 +94,17 @@ export function validateAgentToolCalls(
     }
 
     const args = { ...(c.arguments ?? {}) }
+    // Alias: la IA usa trackId o pistaId indistintamente.
     if (args.pistaId == null && args.trackId != null) args.pistaId = args.trackId
-    if (args.trackId == null && args.pistaId != null) args.trackId = args.pistaId
+    // NO copiar pistaId→trackId en midi.* / clip.*: sus schemas usan pistaId y
+    // additionalProperties:false → "Propiedad no permitida: trackId".
+    const usesPistaIdSchema = /^(midi\.|clip\.)/.test(c.tool)
+    if (!usesPistaIdSchema && args.trackId == null && args.pistaId != null) {
+      args.trackId = args.pistaId
+    }
+    if (usesPistaIdSchema) {
+      delete args.trackId
+    }
 
     if (c.tool === 'project.setBpm') {
       const bpm = Number(args.bpm ?? args.valor ?? args.tempo)
@@ -112,7 +121,6 @@ export function validateAgentToolCalls(
         const resolved = findPistaIdForClip(opts.state, String(args.clipId))
         if (resolved) {
           args.pistaId = resolved
-          args.trackId = resolved
         }
       }
       if (isBlankId(args.pistaId) || isBlankId(args.clipId)) {
