@@ -52,7 +52,8 @@ import {
   startEditorPreviewFocusBridge,
   subscribeEditorPreviewTrack,
 } from '@/src/lib/plugin/editor-preview-focus'
-import { publishPlayheadTick, startPlayheadSyncReceiver } from '@/src/lib/playhead-window-sync'
+import { publishPlayheadTick, startPlayheadSyncReceiver, startPlayheadSyncResponder, requestPlayheadSync, extrapolatePlayheadMs, mergeSatellitePlayheadTick, type PlayheadAnchor } from '@/src/lib/playhead-window-sync'
+import { snapSeekBeat } from '@/src/lib/timeline-snap'
 import {
   getProjectReadyGeneration,
   markProjectBuffersNotNeeded,
@@ -256,6 +257,8 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   const [positionMs, setPositionMs] = useState(0)
   const positionMsRef = useRef(0)
+  /** Ancla para extrapolación en ventanas undock (Date.now comparable). */
+  const satelliteAnchorRef = useRef<PlayheadAnchor | null>(null)
 
   const playing = transportStatePlaying
   const playingRef = useRef(playing)
@@ -273,7 +276,32 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         return prev
       })
       positionMsRef.current = sharedMs
-      if (!satellite) publishPlayheadTick(sharedMs, false)
+      // Crítico: alinear motor (si no, al play se republica la posición anterior al undock).
+      if (!satellite) {
+        try {
+          audioEngine.seekTimeline(sharedMs / 1000)
+        } catch {
+          /* ignore */
+        }
+        try {
+          const beats = (sharedMs / 1000) * (BPM / 60)
+          clock.seek({
+            beats,
+            segundos: sharedMs / 1000,
+            samples: Math.round((sharedMs / 1000) * audioEngine.getSampleRate()),
+            ticks: beats * PPQ,
+            compases: 0,
+            frames: 0,
+            tiempoMusical: '',
+            porcentaje: 0,
+          })
+        } catch {
+          /* ignore */
+        }
+        publishPlayheadTick(sharedMs, false)
+      } else {
+        satelliteAnchorRef.current = { ms: sharedMs, wall: Date.now(), playing: false }
+      }
     }
   }, [transportPosSegundos, playing, satellite])
 
@@ -484,24 +512,20 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let lastUiMs = 0
-    let lastPub = 0
     const unsubscribe = clock.subscribe((position) => {
       const ms = position.segundos * 1000
       const loopMs = loopMsRef.current
       const clamped = progressToMs(msToProgress(ms, loopMs), loopMs)
       const ahora = performance.now()
-      positionMsRef.current = clamped
-      // React clock context poco frecuente (progress bars); displays usan getPositionMs+RAF
+      // En play, el intervalo de audio es la fuente de verdad para satélites.
+      // Aquí solo actualizamos UI local / ref cuando no estamos publicando audio.
+      if (!playingRef.current) {
+        positionMsRef.current = clamped
+      }
       if (ahora - lastUiMs >= 250) {
         lastUiMs = ahora
         setPositionMs(clamped)
       }
-      // Satélites (piano roll flotante) necesitan playhead fluido.
-      if (!satellite && ahora - lastPub >= 33) {
-        lastPub = ahora
-        publishPlayheadTick(clamped, playingRef.current)
-      }
-      // No escribir posición al store durante play (re-render global + BroadcastChannel = tirones)
     })
 
     return () => {
@@ -509,14 +533,91 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     }
   }, [clock, tienda, satellite])
 
-  // Ventana undock: seguir el playhead de la principal en tiempo real.
+  // Primary: responder sync con reloj monotónico.
+  useEffect(() => {
+    if (satellite) return
+    return startPlayheadSyncResponder(() => {
+      if (playingRef.current) {
+        try {
+          const ms = audioEngine.getMonotonicTimelineSeconds() * 1000
+          if (Number.isFinite(ms) && ms >= 0) return ms
+        } catch {
+          /* fall through */
+        }
+      }
+      return positionMsRef.current
+    }, () => playingRef.current)
+  }, [satellite])
+
+  // Primary: actualizar ref local a menudo; publicar a undock poco (satélite free-runea).
+  useEffect(() => {
+    if (satellite || !playing) return
+    const tickLocal = () => {
+      if (!playingRef.current) return
+      try {
+        const ms = audioEngine.getMonotonicTimelineSeconds() * 1000
+        if (!Number.isFinite(ms) || ms < 0) return
+        positionMsRef.current = ms
+      } catch {
+        /* ignore */
+      }
+    }
+    tickLocal()
+    const localId = window.setInterval(tickLocal, 32)
+    const pubId = window.setInterval(() => {
+      if (!playingRef.current) return
+      publishPlayheadTick(positionMsRef.current, true)
+    }, 500)
+    publishPlayheadTick(positionMsRef.current, true)
+    return () => {
+      window.clearInterval(localId)
+      window.clearInterval(pubId)
+    }
+  }, [satellite, playing])
+
+  // Ventana undock: free-run (ancla fija) + solo seek/pause re-anclan.
   useEffect(() => {
     if (!satellite) return
+    requestPlayheadSync()
     return startPlayheadSyncReceiver((tick) => {
-      positionMsRef.current = tick.ms
-      setPositionMs((prev) => (Math.abs(prev - tick.ms) > 16 ? tick.ms : prev))
+      const prev = satelliteAnchorRef.current
+      const merged = mergeSatellitePlayheadTick(prev, tick)
+      if (
+        prev &&
+        prev.playing === merged.playing &&
+        prev.ms === merged.ms &&
+        prev.wall === merged.wall
+      ) {
+        return
+      }
+      satelliteAnchorRef.current = merged
+      positionMsRef.current = merged.playing ? extrapolatePlayheadMs(merged) : merged.ms
+      if (!merged.playing || !prev?.playing) {
+        setPositionMs(merged.ms)
+      }
     })
   }, [satellite])
+
+  // Store pause/play en satélite.
+  useEffect(() => {
+    if (!satellite) return
+    if (!playing) {
+      // No pisar un seek reciente (W→0): preferir ancla/store ya en 0.
+      const a = satelliteAnchorRef.current
+      const ms = a && !a.playing ? a.ms : a ? extrapolatePlayheadMs(a) : positionMsRef.current
+      satelliteAnchorRef.current = { ms, wall: Date.now(), playing: false }
+      positionMsRef.current = ms
+      setPositionMs(ms)
+      return
+    }
+    // Al pasar a play: invalidar ancla para que el próximo tick (posición actual) fije el free-run.
+    satelliteAnchorRef.current = {
+      ms: satelliteAnchorRef.current?.ms ?? positionMsRef.current,
+      wall: Date.now(),
+      playing: false,
+    }
+    requestPlayheadSync()
+  }, [playing, satellite])
 
   const triggerAudioPlayback = useCallback(async (startMs: number, currentClips: LoadedClip[]) => {
     // Estado fresco (CLI/musicBuild puede ir por delante del cierre React).
@@ -668,13 +769,23 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   }, [sharedTracks, BPM, masterState, projectRouting, tienda])
 
   // Sync clock & audio: Space = pause/resume en el playhead; Stop = cero
-  positionMsRef.current = positionMs
+  // NO pisar positionMsRef aquí: en satélite (undock) el ref lo actualiza
+  // BroadcastChannel ~30 Hz; en primary lo actualiza clock.subscribe. Si
+  // reasignamos desde el state React (lento) en cada render, el playhead
+  // se congela hasta pausar.
 
   useEffect(() => {
     if (satellite) return
     if (playing) {
+      // Usar posición del store/ref YA alineada (p.ej. tras W → 0), y fijar motor YA.
       const ms = positionMsRef.current
       const seconds = ms / 1000
+      try {
+        audioEngine.seekTimeline(seconds)
+      } catch {
+        /* ignore */
+      }
+      publishPlayheadTick(ms, true)
       const beats = (seconds * BPM) / 60
       clock.seek({
         beats,
@@ -695,7 +806,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         if (!clock.isPlaying) clock.play()
         // Metrónomo DESPUÉS de playClips (mismo reloj / epoch). Antes corría en paralelo → desync.
         if (metronomeOn) {
-          const beat = audioEngine.getTimelineSeconds() / (60 / BPM)
+          const beat = audioEngine.getMonotonicTimelineSeconds() / (60 / BPM)
           audioEngine.startMetronome(BPM, BEATS_PER_BAR, beat)
         }
       })()
@@ -710,7 +821,14 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     }
     const pos = clock.getCurrentPosition()
     const ms = Math.max(0, pos.segundos * 1000)
+    positionMsRef.current = ms
     setPositionMs(ms)
+    try {
+      audioEngine.seekTimeline(ms / 1000)
+    } catch {
+      /* ignore */
+    }
+    publishPlayheadTick(ms, false)
     lastStoreSyncRef.current = performance.now()
     tienda.establecerEstado((s) => ({
       ...s,
@@ -789,6 +907,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   const stop = useCallback(() => {
     // Primero congelar reloj en 0 para que el effect de pause no reintroduzca posición
     clock.stop()
+    positionMsRef.current = 0
     setPositionMs(0)
     audioEngine.stopAllSources()
     audioEngine.stopMetronome()
@@ -1117,6 +1236,13 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         porcentaje: p,
       })
       setPositionMs(targetMs)
+      positionMsRef.current = targetMs
+      try {
+        audioEngine.seekTimeline(targetSeconds)
+      } catch {
+        /* ignore */
+      }
+      if (!satellite) publishPlayheadTick(targetMs, playingRef.current)
       void tienda.executor.execute('transport.seek', { segundos: targetSeconds })
 
       if (playing) {
@@ -1127,13 +1253,19 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         })
       }
     },
-    [clock, playing, clips, triggerAudioPlayback, tienda, TOTAL_BEATS, BEATS_PER_BAR, metronomeOn, BPM],
+    [clock, playing, clips, triggerAudioPlayback, tienda, TOTAL_BEATS, BEATS_PER_BAR, metronomeOn, BPM, satellite],
   )
 
   const seekToBeats = useCallback(
     (beats: number) => {
       const msPerBeat = msPerBeatRef.current
-      const targetBeats = Math.max(0, beats)
+      const st = tienda.obtenerEstado()
+      const targetBeats = snapSeekBeat(Math.max(0, beats), {
+        playheadSnap: st.ui?.playheadSnap !== false,
+        snapEnabled: st.project?.timeline?.snap ?? true,
+        snapValor: st.project?.timeline?.snapValor ?? 1,
+        beatsPerBar: st.project?.timeSignature?.numerador ?? BEATS_PER_BAR,
+      })
       const targetMs = targetBeats * msPerBeat
       const targetTicks = targetBeats * PPQ
       const targetSeconds = targetMs / 1000
@@ -1149,6 +1281,13 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         porcentaje: targetBeats / TOTAL_BEATS,
       })
       setPositionMs(targetMs)
+      positionMsRef.current = targetMs
+      try {
+        audioEngine.seekTimeline(targetSeconds)
+      } catch {
+        /* ignore */
+      }
+      if (!satellite) publishPlayheadTick(targetMs, playingRef.current)
       void tienda.executor.execute('transport.seek', { segundos: targetSeconds })
 
       if (playing) {
@@ -1159,7 +1298,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         })
       }
     },
-    [clock, playing, clips, triggerAudioPlayback, tienda, TOTAL_BEATS, BEATS_PER_BAR, metronomeOn, BPM],
+    [clock, playing, clips, triggerAudioPlayback, tienda, TOTAL_BEATS, BEATS_PER_BAR, metronomeOn, BPM, satellite],
   )
 
   const addClipFromFile = useCallback(
@@ -1203,7 +1342,20 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     [tienda, playing, positionMs, BPM, importProgress, triggerAudioPlayback, clips],
   )
 
-  const getPositionMs = useCallback(() => positionMsRef.current, [])
+  const getPositionMs = useCallback(() => {
+    if (satellite) {
+      return extrapolatePlayheadMs(satelliteAnchorRef.current)
+    }
+    if (playingRef.current) {
+      try {
+        const ms = audioEngine.getMonotonicTimelineSeconds() * 1000
+        if (Number.isFinite(ms) && ms >= 0) return ms
+      } catch {
+        /* fall through */
+      }
+    }
+    return positionMsRef.current
+  }, [satellite])
 
   const actionsValue = useMemo(
     () => ({

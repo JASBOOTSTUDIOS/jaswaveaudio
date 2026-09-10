@@ -67,15 +67,21 @@ Los atajos **no** se disparan con el foco en un campo de texto (salvo combinacio
 
 ## Piano roll (resumen)
 
-Ver también tooltips del piano roll (`?`):
+Ver también tooltips del piano roll (`?`) y [06 · Piano roll](./06-piano-roll-y-midi.md):
 
 - `V` seleccionar · `D`/`B` dibujar · `E`/`X` borrar  
 - `Q` cuantizar · `G` velocidad · `F` expresión  
-- `↑↓` semitono · `←→` mover en tiempo  
+- `↑↓` semitono · `←→` mover notas (con selección) o pan (sin selección)  
+- `Alt+←` / `Alt+→` pan ~1 compás (sin selección)  
+- Rueda / `+`/`−` zoom H anclado al playhead · `Shift+rueda` pan  
+- Regla: arrastrar seek · clic vacío: seek · Magnet: imán de seek  
+- `Alt+Ctrl+arrastrar` vacío: crear nota con duración  
+- `Ctrl+arrastrar` nota o clip: duplicar (estilo Reaper); `Ctrl+clic` sin mover = toggle selección  
 
 ## Zoom
 
-- Timeline: `Ctrl+=` / `Ctrl+-` · `Ctrl` + rueda  
+- Arrange: rueda = zoom H (playhead) · `Shift+rueda` = pan · `Ctrl+rueda` = zoom vertical de pistas  
+- Piano roll: misma semántica temporal; `Ctrl+Shift+rueda` = altura de teclas  
 - Docs (con foco): zoom tipográfico del markdown  
 - Terminal: `Ctrl+`` abre la pestaña; dentro, `Ctrl+L` equivale a `limpiar`
 

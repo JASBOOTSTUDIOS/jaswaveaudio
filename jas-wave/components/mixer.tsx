@@ -29,6 +29,13 @@ import { extractHostPluginPath } from '@/src/lib/plugin/plugin-info-adapter'
 import { isBuiltinInstrument } from '@/src/lib/plugin/track-vst-runtime'
 import { maybeWriteAutomationPoint } from '@/components/automation-lanes-panel'
 
+/** El VU del motor usa curva peak^0.6; invertir para lectura en dBFS. */
+function meterLevelToDbLabel(meter: number): string {
+  if (meter < 0.0005) return '−∞'
+  const linear = Math.min(1, Math.pow(meter, 1 / 0.6))
+  return `${formatearDb(linealADb(linear))} dB`
+}
+
 type MixerRow = {
   id: string
   name: string
@@ -488,6 +495,12 @@ export function Mixer() {
           <p className="mb-1.5 truncate text-center text-[11px] font-medium text-foreground" title={masterTrack.name}>
             {masterTrack.name}
           </p>
+          <div
+            className="mb-1 h-1.5 overflow-hidden rounded-full bg-panel-raised"
+            title="Nivel Master (post-fader)"
+          >
+            <LevelMeterBarHorizontal level={meters.master ?? 0} alwaysShowRail />
+          </div>
           <div className="mb-1">
             <ChannelFxBank
               trackId="master"
@@ -497,13 +510,13 @@ export function Mixer() {
           </div>
 
           <div className="mb-1 flex items-center justify-center gap-1">
-            <TrackButton label={`Silenciar Master`} active={master.muted} onClick={() => {
-              void tienda.executor.execute('master.update', { datos: { muted: !master.muted } })
+            <TrackButton label={`Silenciar Master`} active={Boolean(master?.muted)} onClick={() => {
+              void tienda.executor.execute('master.update', { datos: { muted: !master?.muted } })
             }}>
               M
             </TrackButton>
-            <TrackButton label={`Solo Master`} active={master.solo} onClick={() => {
-              void tienda.executor.execute('master.update', { datos: { solo: !master.solo } })
+            <TrackButton label={`Solo Master`} active={Boolean(master?.solo)} onClick={() => {
+              void tienda.executor.execute('master.update', { datos: { solo: !master?.solo } })
             }}>
               S
             </TrackButton>
@@ -514,21 +527,37 @@ export function Mixer() {
           }} />
 
           <div className="mt-2 flex-1">
-            <FaderControl db={masterTrack.db} color={masterTrack.color} meter={meters.master ?? 0} onChange={(db) => {
-              const volumen = db > DB_INFERIOR ? dbALineal(db) : 0
-              void tienda.executor.execute('master.update', { datos: { volumen } })
-            }} />
+            <FaderControl
+              db={masterTrack.db}
+              color={masterTrack.color}
+              meter={meters.master ?? 0}
+              showScale
+              onChange={(db) => {
+                const volumen = db > DB_INFERIOR ? dbALineal(db) : 0
+                void tienda.executor.execute('master.update', { datos: { volumen } })
+              }}
+            />
           </div>
 
-          <p className="mt-1 text-center font-mono text-[10px] tabular-nums text-muted-foreground">
+          <p
+            className="mt-1 text-center font-mono text-[10px] tabular-nums text-foreground"
+            title="Ganancia del fader Master"
+          >
             {formatearDb(masterTrack.db)}
+            <span className="text-muted-foreground"> dB</span>
+          </p>
+          <p
+            className="text-center font-mono text-[9px] tabular-nums text-muted-foreground"
+            title="Pico de nivel (medidor)"
+          >
+            pk {meterLevelToDbLabel(meters.master ?? 0)}
           </p>
 
           <div
             className="mt-1 h-1 w-full rounded-full transition-opacity"
             style={{
               backgroundColor: masterTrack.color,
-              opacity: master.muted ? 0.25 : 1,
+              opacity: master?.muted ? 0.25 : 1,
             }}
           />
         </div>

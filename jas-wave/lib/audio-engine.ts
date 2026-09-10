@@ -11,6 +11,7 @@ import { routeMidiToActiveVst } from '@/src/lib/plugin/vst-voice-router'
 import { allNotesOffAllTracks, sendVstCc, sendVstNote, setHostTransportPlaying } from '@/src/lib/plugin/track-vst-runtime'
 import {
   getNativeMasterPeak,
+  getNativeMaxStemPeak,
   getNativeTrackPeak,
   isNativeMeterHostAvailable,
   setMixMeterTrackOrder,
@@ -167,6 +168,29 @@ export class WebAudioEngine {
       return this.playheadStartSec + Math.max(0, (performance.now() - this.playWallEpochMs) / 1000)
     }
     return this.playheadStartSec
+  }
+
+  /**
+   * Fija la posición de timeline (p.ej. W / seek en pause) sin arrancar audio.
+   * Evita que al reanudar play se republicque la posición anterior al undock.
+   */
+  public seekTimeline(sec: number): void {
+    const t = Math.max(0, sec)
+    this.playheadStartSec = t
+    if (this.isPlaying) {
+      this.playWallEpochMs = performance.now()
+    } else {
+      this.playWallEpochMs = 0
+    }
+  }
+
+  /**
+   * Reloj monotónico (pared) para sync a ventanas undock.
+   * No alterna host/wall (eso tambalea el playhead remoto).
+   */
+  public getMonotonicTimelineSeconds(): number {
+    if (!this.isPlaying) return this.playheadStartSec
+    return this.wallClockSec()
   }
 
   /**
@@ -1133,7 +1157,8 @@ export class WebAudioEngine {
   public getMasterMeterLevel(): number {
     let native = 0
     if (isNativeMeterHostAvailable()) {
-      native = getNativeMasterPeak()
+      // Preferir pico de master; si el bus no reporta, usar el máximo de stems.
+      native = Math.max(getNativeMasterPeak(), getNativeMaxStemPeak())
     }
     let web = 0
     if (this.masterAnalyser && this.masterMeterData) {

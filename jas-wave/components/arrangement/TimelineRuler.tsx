@@ -1,12 +1,24 @@
 import { useEffect, useRef } from 'react'
 import type { TimelineProjection } from '@/lib/timeline-projection'
-import { adaptiveGridForZoom } from '../../../shared/src/midi/grid'
 import { BASE_PIXELS_PER_BEAT } from './constants'
-import { beatToViewX, crispX, majorBarInterval } from './timeline-grid-math'
+import {
+  beatToViewX,
+  crispX,
+  formatRulerLabel,
+  gridLevelsForZoom,
+  majorBarInterval,
+  pickZoomGridPrimary,
+  zoomLevelRank,
+} from './timeline-grid-math'
 
 const MAX_CANVAS_EDGE = 8192
+const MAX_TICKS = 8000
+const GRID_BLUE = 'rgba(125, 211, 252, 1)'
+const GRID_BLUE_SOFT = 'rgba(56, 189, 248, 1)'
 
-/** Regla sticky — etiquetas alineadas con la rejilla (incl. subdivisiones). */
+/**
+ * Regla: 3 niveles según zoom; números en el nivel primario.
+ */
 export function TimelineRuler({
   projection,
   zoom,
@@ -15,6 +27,8 @@ export function TimelineRuler({
   height = 40,
   getScrollX,
   scrollEpoch,
+  /** Profundidad máxima (snap): no dibujar/numerar más fino que esto. */
+  snapDivision = 0,
 }: {
   projection: TimelineProjection
   zoom: number
@@ -26,6 +40,7 @@ export function TimelineRuler({
   height?: number
   getScrollX?: () => number
   scrollEpoch?: number
+  snapDivision?: number
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -59,13 +74,11 @@ export function TimelineRuler({
       const muted =
         getComputedStyle(document.documentElement).getPropertyValue('--muted-foreground').trim() ||
         'rgba(160,160,160,0.9)'
-      const line =
-        getComputedStyle(document.documentElement).getPropertyValue('--border').trim() ||
-        'rgba(255,255,255,0.22)'
 
+      const primary = pickZoomGridPrimary(pxPerBeat, beatsPerBar, snapDivision)
+      const levels = gridLevelsForZoom(pxPerBeat, beatsPerBar, snapDivision)
       const pxPerBar = pxPerBeat * beatsPerBar
       const barInterval = majorBarInterval(pxPerBar, 36)
-      const levels = adaptiveGridForZoom(pxPerBeat, beatsPerBar)
       const startBeat = scrollX / pxPerBeat
       const endBeat = (scrollX + cssW) / pxPerBeat
       const toX = (beat: number) => crispX(beatToViewX(beat, pxPerBeat, scrollX))
@@ -74,84 +87,69 @@ export function TimelineRuler({
       ctx.textBaseline = 'top'
       ctx.lineWidth = 1
 
-      const firstBar = Math.max(1, Math.floor(startBeat / beatsPerBar) - 1)
-      const lastBar = Math.ceil(endBeat / beatsPerBar) + 2
-
-      // Compases / beats etiquetados
-      for (let bar = firstBar; bar <= lastBar; bar++) {
-        const beatPos = (bar - 1) * beatsPerBar
-        const x = toX(beatPos)
-        if (x < -48 || x > cssW + 48) continue
-
-        const isMajor = (bar - 1) % barInterval === 0
-        if (!isMajor && pxPerBar < 10) continue
-
-        ctx.strokeStyle = line
-        ctx.globalAlpha = isMajor ? 0.95 : 0.4
-        ctx.beginPath()
-        ctx.moveTo(x, isMajor ? 0 : cssH * 0.35)
-        ctx.lineTo(x, cssH)
-        ctx.stroke()
-        ctx.globalAlpha = 1
-
-        if (isMajor) {
-          ctx.fillStyle = muted
-          ctx.fillText(String(bar), x + 4, 2)
-        }
-
-        // Beats dentro del compás
-        if (pxPerBeat >= 14) {
-          for (let b = 1; b < beatsPerBar; b++) {
-            const bx = toX(beatPos + b)
-            if (bx < -2 || bx > cssW + 2) continue
-            ctx.strokeStyle = line
-            ctx.globalAlpha = 0.35
-            ctx.beginPath()
-            ctx.moveTo(bx, cssH * 0.4)
-            ctx.lineTo(bx, cssH)
-            ctx.stroke()
-            ctx.globalAlpha = 1
-            if (pxPerBeat >= 28) {
-              ctx.fillStyle = muted
-              ctx.globalAlpha = 0.8
-              ctx.fillText(`${bar}.${b + 1}`, bx + 3, 2)
-              ctx.globalAlpha = 1
-            }
+      // Números de compás cuando el primario es ≤ 1 compás (o cada N compases al alejarse)
+      if (primary <= beatsPerBar + 1e-9) {
+        const firstBar = Math.max(1, Math.floor(startBeat / beatsPerBar) - 1)
+        const lastBar = Math.ceil(endBeat / beatsPerBar) + 2
+        for (let bar = firstBar; bar <= lastBar; bar++) {
+          const beatPos = (bar - 1) * beatsPerBar
+          const x = toX(beatPos)
+          if (x < -48 || x > cssW + 48) continue
+          const isMajor = (bar - 1) % barInterval === 0
+          if (!isMajor && pxPerBar < 10) continue
+          if (isMajor) {
+            ctx.fillStyle = muted
+            ctx.fillText(String(bar), x + 4, 2)
           }
         }
       }
 
-      // Subdivisiones con número (1/8 … 1/128) cuando hay espacio
-      const labelStep = levels.find((l) => l.spacingBeats < 1 && l.spacingBeats * pxPerBeat >= 28)
-      if (labelStep) {
-        const step = labelStep.spacingBeats
+      for (const level of levels) {
+        const step = level.spacingBeats
+        if (step * pxPerBeat < 2) continue
+        const rank = zoomLevelRank(step, primary)
+        if (rank < 0) continue
+
         const first = Math.floor(startBeat / step) * step
-        for (let n = 0; n < 8000; n++) {
+        const showLabels = rank === 0 && step * pxPerBeat >= 22
+
+        for (let n = 0; n < MAX_TICKS; n++) {
           const b = first + n * step
           if (b > endBeat + step) break
-          if (b < 0) continue
-          // Saltar beats enteros (ya etiquetados)
-          const modBeat = ((b % 1) + 1) % 1
-          if (modBeat < 1e-6 || Math.abs(modBeat - 1) < 1e-6) continue
+          if (b < -1e-9) continue
+
+          // Evitar etiquetar/dibujar encima de otro nivel más grueso del trío
+          if (rank > 0) {
+            const coarser = rank === 1 ? primary : primary / 2
+            const mod = ((b % coarser) + coarser) % coarser
+            if (mod < 1e-6 || Math.abs(mod - coarser) < 1e-6) continue
+          }
+
           const x = toX(b)
           if (x < -4 || x > cssW + 4) continue
 
-          ctx.strokeStyle = line
-          ctx.globalAlpha = 0.25
+          const tickTop = rank === 0 ? cssH * 0.16 : rank === 1 ? cssH * 0.34 : cssH * 0.5
+          ctx.strokeStyle = rank === 2 ? GRID_BLUE_SOFT : GRID_BLUE
+          ctx.globalAlpha = rank === 0 ? 0.92 : rank === 1 ? 0.58 : 0.38
+          ctx.lineWidth = rank === 0 ? 1.7 : rank === 1 ? 1.25 : 1
           ctx.beginPath()
-          ctx.moveTo(x, cssH * 0.55)
+          ctx.moveTo(x, tickTop)
           ctx.lineTo(x, cssH)
           ctx.stroke()
           ctx.globalAlpha = 1
+          ctx.lineWidth = 1
 
-          if (step * pxPerBeat >= 36) {
-            const bar = Math.floor(b / beatsPerBar) + 1
-            const beatInBar = Math.floor(b % beatsPerBar) + 1
-            const sub = Math.round((b % 1) / step)
-            ctx.fillStyle = muted
-            ctx.globalAlpha = 0.65
-            ctx.font = '500 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
-            ctx.fillText(`${bar}.${beatInBar}.${sub}`, x + 2, 2)
+          if (showLabels) {
+            // Si primary ≥ 1 compás, etiqueta como número de compás / bloque
+            ctx.fillStyle = GRID_BLUE
+            ctx.globalAlpha = 0.95
+            ctx.font = '600 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+            if (step >= beatsPerBar - 1e-9) {
+              const barNum = Math.floor(b / beatsPerBar) + 1
+              ctx.fillText(String(barNum), x + 3, 2)
+            } else {
+              ctx.fillText(formatRulerLabel(b, beatsPerBar, step), x + 3, 2)
+            }
             ctx.globalAlpha = 1
             ctx.font = '500 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
           }
@@ -173,6 +171,7 @@ export function TimelineRuler({
     pxPerBeat,
     getScrollX,
     scrollEpoch,
+    snapDivision,
   ])
 
   return (

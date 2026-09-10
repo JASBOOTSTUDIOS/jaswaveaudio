@@ -583,8 +583,8 @@ export function TransportBar() {
           aria-pressed={playheadSnap}
           title={
             playheadSnap
-              ? 'Precisión ON: playhead anclado a la rejilla visible (zoom más fino = más subdivisiones)'
-              : 'Precisión OFF: seek libre sin anclar a la rejilla'
+              ? 'Imán ON: playhead y clips anclados a la profundidad del selector de encaje'
+              : 'Imán OFF: seek y clips libres (sin anclar a la rejilla)'
           }
           className={`flex size-9 items-center justify-center rounded-md transition-colors ${
             playheadSnap

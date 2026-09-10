@@ -1,17 +1,21 @@
 import { useEffect, useRef } from 'react'
 import type { TimelineProjection } from '@/lib/timeline-projection'
-import { adaptiveGridForZoom } from '../../../shared/src/midi/grid'
 import { BASE_PIXELS_PER_BEAT } from './constants'
-import { beatToViewX, crispX, majorBarInterval } from './timeline-grid-math'
+import {
+  beatToViewX,
+  crispX,
+  gridLevelsForZoom,
+  pickZoomGridPrimary,
+  zoomLevelRank,
+} from './timeline-grid-math'
 
 /** Límite seguro de bitmap (evitar canvas blanco / OOM al zoom). */
 const MAX_CANVAS_EDGE = 8192
 const MAX_LINES_PER_LEVEL = 12000
 
-function cssVar(name: string, fallback: string): string {
-  if (typeof window === 'undefined') return fallback
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
-}
+/** Azul claro visible sobre fondos oscuros. */
+const GRID_BLUE = 'rgba(125, 211, 252, 1)'
+const GRID_BLUE_SOFT = 'rgba(56, 189, 248, 1)'
 
 function findScrollParent(el: HTMLElement | null): HTMLElement | null {
   let cur: HTMLElement | null = el
@@ -25,8 +29,8 @@ function findScrollParent(el: HTMLElement | null): HTMLElement | null {
 }
 
 /**
- * Rejilla anclada al viewport de lanes — profundidad = adaptiveGridForZoom
- * (mismas divisiones a las que ancla el playhead).
+ * Rejilla adaptativa al zoom: solo 3 niveles (primary, /2, /4).
+ * Al alejar, primary crece (2, 4, 8, 16…) para no saturar.
  */
 export function GridLayer({
   projection,
@@ -34,12 +38,15 @@ export function GridLayer({
   beatsPerBar,
   viewportWidth,
   contentHeight,
+  /** Profundidad máxima (snap): no dibujar más fino que esto. */
+  snapDivision = 0,
 }: {
   projection: TimelineProjection
   zoom: number
   beatsPerBar: number
   viewportWidth: number
   contentHeight: number
+  snapDivision?: number
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const pxPerBeat = BASE_PIXELS_PER_BEAT * zoom
@@ -69,17 +76,12 @@ export function GridLayer({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, cssW, cssH)
 
-      const border = cssVar('--border', 'rgba(255,255,255,0.22)')
-      const grid = cssVar('--grid-line', 'rgba(255,255,255,0.14)')
-
-      const pxPerBar = pxPerBeat * beatsPerBar
-      const barInterval = majorBarInterval(pxPerBar, 36)
-      const majorStep = beatsPerBar * barInterval
-      const levels = adaptiveGridForZoom(pxPerBeat, beatsPerBar)
+      const primary = pickZoomGridPrimary(pxPerBeat, beatsPerBar, snapDivision)
+      const levels = gridLevelsForZoom(pxPerBeat, beatsPerBar, snapDivision)
 
       const startBeat = scrollX / pxPerBeat
       const endBeat = (scrollX + cssW) / pxPerBeat
-      const pad = Math.max(majorStep, beatsPerBar * 2)
+      const pad = Math.max(primary * 2, beatsPerBar * 2)
       const from = Math.max(0, startBeat - pad)
       const to = endBeat + pad
 
@@ -89,10 +91,10 @@ export function GridLayer({
         stepBeats: number,
         alpha: number,
         color: string,
-        opts?: { skipIfOnStep?: number },
+        opts?: { skipIfOnStep?: number; lineWidth?: number },
       ) => {
         if (stepBeats <= 0 || !Number.isFinite(stepBeats)) return
-        if (stepBeats * pxPerBeat < 1.25) return
+        if (stepBeats * pxPerBeat < 1.05) return
         const first = Math.floor(from / stepBeats) * stepBeats
         const skipStep = opts?.skipIfOnStep ?? 0
         ctx.beginPath()
@@ -114,24 +116,30 @@ export function GridLayer({
         if (drawn === 0) return
         ctx.strokeStyle = color
         ctx.globalAlpha = alpha
-        ctx.lineWidth = 1
+        ctx.lineWidth = opts?.lineWidth ?? 1
         ctx.stroke()
         ctx.globalAlpha = 1
+        ctx.lineWidth = 1
       }
 
-      // De fino a grueso: micros → beats → mayores
+      // Fino → grueso (el primario se dibuja encima)
       const sorted = [...levels].sort((a, b) => a.spacingBeats - b.spacingBeats)
       for (const level of sorted) {
-        if (level.spacingBeats >= majorStep) continue
-        const alpha =
-          level.kind === 'micro' ? 0.28 : level.kind === 'subdivision' ? 0.4 : 0.55
-        strokeBeats(level.spacingBeats, alpha, grid, { skipIfOnStep: majorStep })
+        const rank = zoomLevelRank(level.spacingBeats, primary)
+        if (rank === 2) {
+          strokeBeats(level.spacingBeats, 0.36, GRID_BLUE_SOFT, {
+            skipIfOnStep: primary / 2,
+            lineWidth: 1,
+          })
+        } else if (rank === 1) {
+          strokeBeats(level.spacingBeats, 0.55, GRID_BLUE, {
+            skipIfOnStep: primary,
+            lineWidth: 1.35,
+          })
+        } else if (rank === 0) {
+          strokeBeats(level.spacingBeats, 0.88, GRID_BLUE, { lineWidth: 1.75 })
+        }
       }
-
-      if (barInterval > 1 && pxPerBar >= 8) {
-        strokeBeats(beatsPerBar, 0.5, grid, { skipIfOnStep: majorStep })
-      }
-      strokeBeats(majorStep, 0.95, border)
     }
 
     const sync = () => {
@@ -151,7 +159,7 @@ export function GridLayer({
       scroller?.removeEventListener('scroll', sync)
       ro.disconnect()
     }
-  }, [projection.scrollX, projection, zoom, beatsPerBar, viewportWidth, contentHeight, pxPerBeat])
+  }, [projection.scrollX, projection, zoom, beatsPerBar, viewportWidth, contentHeight, pxPerBeat, snapDivision])
 
   return (
     <canvas

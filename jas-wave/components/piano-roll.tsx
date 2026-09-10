@@ -4,7 +4,7 @@ import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { usePlaybackActions } from '@/components/playback-provider'
 import type { DAWState } from '../../shared/src/types/state'
 import type { MidiNote } from '../../shared/src/types/clips'
-import { adaptiveGridForZoom } from '../../shared/src/midi/grid'
+import { gridLevelsForZoom, pickZoomGridPrimary, zoomLevelRank } from '@/components/arrangement/timeline-grid-math'
 import { quantizeBeats } from '../../shared/src/midi/ppq'
 import { audioEngine } from '@/lib/audio-engine'
 import { PianoRollCanvasNotes, shouldUseCanvasNotes } from '@/components/piano-roll-canvas-notes'
@@ -33,6 +33,9 @@ import {
   getMidiProposalOverlay,
   subscribeMidiProposal,
 } from '@/src/lib/ai-midi-proposal-store'
+import { snapSeekBeat, resolveSnapDivision, SNAP_BAR } from '@/src/lib/timeline-snap'
+import { scrollLeftKeepingBeat, nextPxPerBeat } from '@/src/lib/timeline-viewport'
+import { PlayheadOverlay } from '@/components/arrangement/PlayheadOverlay'
 
 type PianoRollProps = {
   trackId: string
@@ -57,6 +60,9 @@ const HIGHEST = 96
 const KEYS = HIGHEST - LOWEST + 1
 /** Altura de la regla temporal — debe coincidir con PianoRollTimelineRuler. */
 const RULER_H = 22
+const KEYS_W_MIN = 48
+const KEYS_W_MAX = 160
+const KEYS_W_DEFAULT = 72
 
 function noteName(pitch: number): string {
   const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
@@ -85,7 +91,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   const bpm = useDAWState((s: DAWState) => s.project?.bpm?.valor ?? 120)
   const beatsPerBar = useDAWState((s: DAWState) => s.project?.timeSignature?.numerador ?? 4)
   const isPlaying = useDAWState((s: DAWState) => s.transport?.reproduciendo === true)
-  const { getPositionMs } = usePlaybackActions()
+  const { getPositionMs, seekToBeats } = usePlaybackActions()
 
   const [notes, setNotes] = useState<LocalNote[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -95,8 +101,38 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   const [heldKey, setHeldKey] = useState<number | null>(null)
   const [pxPerBeat, setPxPerBeat] = useState(48)
   const [keyH, setKeyH] = useState(KEY_H_BASE)
-  const [snapOn, setSnapOn] = useState(true)
-  const [snapDiv, setSnapDiv] = useState(0.25)
+  const [keysWidth, setKeysWidth] = useState(KEYS_W_DEFAULT)
+  const [viewportBeats, setViewportBeats] = useState(32)
+  const projectSnapValor = useDAWState((s: DAWState) => s.project?.timeline?.snapValor ?? 1)
+  const projectSnapOn = useDAWState((s: DAWState) => s.project?.timeline?.snap ?? true)
+  const playheadSnap = useDAWState((s: DAWState) => s.ui?.playheadSnap !== false)
+  const resolvedSnap = resolveSnapDivision(projectSnapValor, beatsPerBar)
+  const snapOn = projectSnapOn && resolvedSnap > 0
+  const snapDiv = resolvedSnap > 0 ? resolvedSnap : 0.25
+  const setSnapOn = useCallback(
+    (on: boolean | ((prev: boolean) => boolean)) => {
+      const next = typeof on === 'function' ? on(snapOn) : on
+      void tienda.executor.execute('timeline.setSnap', {
+        snap: next,
+        snapValor: next
+          ? projectSnapValor === SNAP_BAR || projectSnapValor > 0
+            ? projectSnapValor
+            : 0.25
+          : projectSnapValor,
+      })
+    },
+    [tienda, snapOn, projectSnapValor],
+  )
+  const setSnapDiv = useCallback(
+    (div: number | ((prev: number) => number)) => {
+      const next = typeof div === 'function' ? div(projectSnapValor) : div
+      void tienda.executor.execute('timeline.setSnap', {
+        snap: next === SNAP_BAR || next > 0,
+        snapValor: next,
+      })
+    },
+    [tienda, projectSnapValor],
+  )
   const [showVelocity, setShowVelocity] = useState(true)
   const [showExpression, setShowExpression] = useState(true)
   const [showShortcuts, setShowShortcuts] = useState(false)
@@ -115,12 +151,14 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   const useCanvas = shouldUseCanvasNotes(notes.length)
   const rootRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const keysScrollRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
-  const playheadRef = useRef<HTMLDivElement>(null)
+  const syncingScrollRef = useRef(false)
   const notesRef = useRef(notes)
   const selectedRef = useRef(selectedIds)
   const pxPerBeatRef = useRef(pxPerBeat)
   const keyHRef = useRef(keyH)
+  const viewDurationBeatsRef = useRef(32)
   notesRef.current = notes
   selectedRef.current = selectedIds
   pxPerBeatRef.current = pxPerBeat
@@ -136,7 +174,68 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
     return tr?.plugins
   })
   const draggingRef = useRef(false)
-  const keysOffsetRef = useRef<HTMLDivElement>(null)
+  const alignTimelineRef = useRef(alignTimeline)
+  const localPlayheadMsRef = useRef(localPlayheadMs)
+  const clipStartBeatRef = useRef(clipStartBeat)
+  const bpmRef = useRef(bpm)
+  const followPlayheadRef = useRef(followPlayhead)
+  const isPlayingRef = useRef(isPlaying)
+  alignTimelineRef.current = alignTimeline
+  localPlayheadMsRef.current = localPlayheadMs
+  clipStartBeatRef.current = clipStartBeat
+  bpmRef.current = bpm
+  followPlayheadRef.current = followPlayhead
+  isPlayingRef.current = isPlaying
+
+  const getPlayheadAbsBeat = useCallback(() => {
+    const sourceMs = alignTimelineRef.current ? getPositionMs() : localPlayheadMsRef.current
+    return Math.max(0, (sourceMs / 1000) * (bpmRef.current / 60))
+  }, [getPositionMs])
+
+  const seekAbsBeats = useCallback(
+    (absBeats: number) => {
+      const snapped = snapSeekBeat(absBeats, {
+        playheadSnap,
+        snapEnabled: projectSnapOn,
+        snapValor: projectSnapValor,
+        beatsPerBar,
+      })
+      if (alignTimelineRef.current) {
+        seekToBeats(snapped)
+      } else {
+        const sec = (snapped * 60) / Math.max(1, bpmRef.current)
+        setLocalPlayheadMs(sec * 1000)
+      }
+    },
+    [playheadSnap, projectSnapOn, projectSnapValor, beatsPerBar, seekToBeats],
+  )
+
+  /** Zoom H anclado al playhead (paridad arrange). */
+  const zoomHorizontalAtPlayhead = useCallback(
+    (zoomIn: boolean) => {
+      const scroll = scrollRef.current
+      const prev = pxPerBeatRef.current
+      const next = nextPxPerBeat(prev, zoomIn)
+      if (Math.abs(next - prev) < 0.05) return
+      const absBeat = getPlayheadAbsBeat()
+      const relBeat = absBeat - clipStartBeatRef.current
+      pxPerBeatRef.current = next
+      setPxPerBeat(next)
+      if (scroll) {
+        const viewX = relBeat * prev - scroll.scrollLeft
+        requestAnimationFrame(() => {
+          scroll.scrollLeft = scrollLeftKeepingBeat(relBeat, next, viewX)
+        })
+      }
+    },
+    [getPlayheadAbsBeat],
+  )
+
+  const panTimelinePx = useCallback((deltaPx: number) => {
+    const scroll = scrollRef.current
+    if (!scroll || !Number.isFinite(deltaPx) || deltaPx === 0) return
+    scroll.scrollLeft = Math.max(0, scroll.scrollLeft + deltaPx)
+  }, [])
 
   const syncSelectionAnchor = useCallback(() => {
     if (selectedIds.size === 0) {
@@ -379,23 +478,35 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
     void audioEngine.armNativeMixOutput()
   }, [])
 
-  /** Ctrl/Cmd + rueda = zoom horizontal (hacia el cursor). Ctrl+Shift + rueda = zoom vertical.
-   *  Capture en window: en ventanas undock Chromium intercepta Ctrl+rueda como zoom de página. */
+  /** Rueda = zoom/pan como arrange. Ctrl+Shift = zoom vertical teclas.
+   *  Capture en window: en undock Chromium intercepta Ctrl+rueda como zoom de página. */
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return
       const root = rootRef.current
       if (!root) return
       const target = e.target
       if (!(target instanceof Node) || !root.contains(target)) return
-
-      e.preventDefault()
-      e.stopPropagation()
+      if (target instanceof Element && target.closest('[data-expression-lanes]')) return
+      // Sobre el teclado: rueda sin modificador = scroll vertical nativo
+      if (
+        target instanceof Element &&
+        target.closest('[data-piano-keys]') &&
+        !e.shiftKey &&
+        !e.ctrlKey &&
+        !e.metaKey
+      ) {
+        return
+      }
 
       const scroll = scrollRef.current
-      const factor = Math.exp(-e.deltaY * 0.0025)
+      const ctrl = e.ctrlKey || e.metaKey
+      const shift = e.shiftKey
 
-      if (e.shiftKey) {
+      // Ctrl+Shift → zoom vertical teclas (ancla pitch bajo cursor)
+      if (ctrl && shift) {
+        e.preventDefault()
+        e.stopPropagation()
+        const factor = Math.exp(-e.deltaY * 0.0025)
         const prev = keyHRef.current
         const next = Math.min(28, Math.max(8, Math.round(prev * factor * 10) / 10))
         if (next === prev) return
@@ -416,83 +527,177 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         return
       }
 
-      const prev = pxPerBeatRef.current
-      const next = Math.min(256, Math.max(12, prev * factor))
-      if (Math.abs(next - prev) < 0.05) return
-      if (scroll) {
-        const rect = scroll.getBoundingClientRect()
-        const mouseX = e.clientX - rect.left
-        const beatUnder = (scroll.scrollLeft + mouseX) / prev
-        pxPerBeatRef.current = next
-        setPxPerBeat(next)
-        requestAnimationFrame(() => {
-          scroll.scrollLeft = Math.max(0, beatUnder * next - mouseX)
-        })
-      } else {
-        pxPerBeatRef.current = next
-        setPxPerBeat(next)
+      // Shift sin Ctrl → pan horizontal
+      if (shift && !ctrl) {
+        e.preventDefault()
+        e.stopPropagation()
+        const deltaPx = e.deltaY !== 0 ? e.deltaY : e.deltaX
+        if (scroll && Number.isFinite(deltaPx) && deltaPx !== 0) {
+          scroll.scrollLeft = Math.max(0, scroll.scrollLeft + deltaPx)
+        }
+        return
       }
+
+      // Trackpad pan H nativo: dejar pasar
+      if (!ctrl && Math.abs(e.deltaY) < 0.5 && Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        return
+      }
+
+      // Rueda o Ctrl+rueda → zoom H anclado al playhead
+      e.preventDefault()
+      e.stopPropagation()
+      const zoomIn = e.deltaY < 0 || (e.deltaY === 0 && e.deltaX < 0)
+      const absDy = Math.abs(e.deltaY) || Math.abs(e.deltaX) || 100
+      const ticks = Math.min(4, Math.max(1, Math.round(absDy / 80)))
+      for (let i = 0; i < ticks; i++) zoomHorizontalAtPlayhead(zoomIn)
     }
     window.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => window.removeEventListener('wheel', onWheel, { capture: true })
-  }, [])
+  }, [zoomHorizontalAtPlayhead])
 
-  const durationBeats = useMemo(() => {
+  const clipDurationBeats = useMemo(() => {
     const fromNotes = notes.reduce((m, n) => Math.max(m, n.inicio + n.duracion), 4)
-    return Math.max(clip?.duracion ?? 4, fromNotes, 16)
+    return Math.max(clip?.duracion ?? 4, fromNotes, 4)
   }, [notes, clip?.duracion])
 
+  /** Timeline extendida más allá del clip para ver rejilla y playhead de la canción. */
+  const viewDurationBeats = useMemo(() => {
+    const pad = Math.max(beatsPerBar * 8, viewportBeats + beatsPerBar * 2)
+    return Math.max(clipDurationBeats + beatsPerBar * 4, pad, clipDurationBeats + 1)
+  }, [clipDurationBeats, viewportBeats, beatsPerBar])
+  viewDurationBeatsRef.current = viewDurationBeats
+
+  // Medir beats visibles del viewport para extender la rejilla.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const measure = () => {
+      const ppb = Math.max(1, pxPerBeatRef.current)
+      setViewportBeats(Math.max(8, el.clientWidth / ppb))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [pxPerBeat])
+
+  /** Follow playhead + sync scroll vertical teclas↔grid (RAF estable vía refs). */
   useEffect(() => {
     let raf = 0
     const tick = () => {
-      const el = playheadRef.current
       const scroll = scrollRef.current
-      if (el) {
-        const sourceMs = alignTimeline ? getPositionMs() : localPlayheadMs
-        const absBeats = (sourceMs / 1000) * (bpm / 60)
-        const rel = absBeats - clipStartBeat
-        const inView = rel >= -0.05 && rel <= durationBeats + 0.05
-        el.style.visibility = inView ? 'visible' : 'hidden'
-        const x = rel * pxPerBeat
-        el.style.transform = `translate3d(${x}px,0,0)`
-        if (followPlayhead && alignTimeline && isPlaying && scroll && inView) {
-          const viewL = scroll.scrollLeft
-          const viewR = viewL + scroll.clientWidth
-          const margin = scroll.clientWidth * 0.15
+      if (scroll && followPlayheadRef.current && alignTimelineRef.current && isPlayingRef.current) {
+        const sourceMs = getPositionMs()
+        const absBeats = (sourceMs / 1000) * (bpmRef.current / 60)
+        const rel = absBeats - clipStartBeatRef.current
+        const x = rel * pxPerBeatRef.current
+        const viewL = scroll.scrollLeft
+        const viewR = viewL + scroll.clientWidth
+        const margin = scroll.clientWidth * 0.15
+        if (x >= -8 && x <= viewDurationBeatsRef.current * pxPerBeatRef.current + 8) {
           if (x < viewL + margin || x > viewR - margin) {
             scroll.scrollLeft = Math.max(0, x - scroll.clientWidth * 0.3)
           }
         }
       }
-      const keys = keysOffsetRef.current
-      if (keys && scroll) {
-        keys.style.transform = `translateY(${-scroll.scrollTop}px)`
-      }
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [
-    getPositionMs,
-    localPlayheadMs,
-    alignTimeline,
-    bpm,
-    clipStartBeat,
-    durationBeats,
-    pxPerBeat,
-    followPlayhead,
-    isPlaying,
-  ])
+  }, [getPositionMs])
 
-  const gridWidth = durationBeats * pxPerBeat
+  const syncVerticalFromGrid = useCallback(() => {
+    if (syncingScrollRef.current) return
+    const scroll = scrollRef.current
+    const keys = keysScrollRef.current
+    if (!scroll || !keys) return
+    syncingScrollRef.current = true
+    keys.scrollTop = scroll.scrollTop
+    requestAnimationFrame(() => {
+      syncingScrollRef.current = false
+    })
+  }, [])
+
+  const syncVerticalFromKeys = useCallback(() => {
+    if (syncingScrollRef.current) return
+    const scroll = scrollRef.current
+    const keys = keysScrollRef.current
+    if (!scroll || !keys) return
+    syncingScrollRef.current = true
+    scroll.scrollTop = keys.scrollTop
+    requestAnimationFrame(() => {
+      syncingScrollRef.current = false
+    })
+  }, [])
+
+  const beginKeysResize = useCallback((e: ReactPointerEvent) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startW = keysWidth
+    const onMove = (ev: PointerEvent) => {
+      const next = Math.min(KEYS_W_MAX, Math.max(KEYS_W_MIN, startW + (ev.clientX - startX)))
+      setKeysWidth(next)
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }, [keysWidth])
+
+  const getPlayheadSeconds = useCallback(() => {
+    const ms = alignTimelineRef.current ? getPositionMs() : localPlayheadMsRef.current
+    return Math.max(0, ms / 1000)
+  }, [getPositionMs])
+
+  const beatToPianoPixel = useCallback(
+    (absBeat: number) => (absBeat - clipStartBeatRef.current) * pxPerBeatRef.current,
+    [],
+  )
+
+  const onPlayheadPointerDown = useCallback(
+    (e: ReactPointerEvent) => {
+      if (e.button !== 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      const scroll = scrollRef.current
+      if (!scroll) return
+      const seekFromClientX = (clientX: number) => {
+        const rect = scroll.getBoundingClientRect()
+        const x = clientX - rect.left + scroll.scrollLeft
+        const rel = Math.max(0, x / pxPerBeatRef.current)
+        seekAbsBeats(clipStartBeatRef.current + rel)
+      }
+      seekFromClientX(e.clientX)
+      const onMove = (ev: PointerEvent) => seekFromClientX(ev.clientX)
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onUp)
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onUp)
+    },
+    [seekAbsBeats],
+  )
+
+  const gridWidth = viewDurationBeats * pxPerBeat
   const gridHeight = KEYS * keyH
   const gridLines = useMemo(() => {
-    const all = adaptiveGridForZoom(pxPerBeat, beatsPerBar)
-    const bar = all.filter((l) => l.kind === 'bar')
-    const beat = all.filter((l) => l.kind === 'beat')
-    const sub = all.filter((l) => l.kind === 'subdivision').slice(-1)
-    return [...bar, ...beat, ...sub].filter((l) => durationBeats / l.spacingBeats <= 512)
-  }, [pxPerBeat, durationBeats, beatsPerBar])
+    const depth = snapOn ? snapDiv : 0
+    const all = gridLevelsForZoom(pxPerBeat, beatsPerBar, depth)
+    return all.filter((l) => viewDurationBeats / l.spacingBeats <= 512)
+  }, [pxPerBeat, viewDurationBeats, beatsPerBar, snapOn, snapDiv])
+  const zoomPrimary = useMemo(
+    () => pickZoomGridPrimary(pxPerBeat, beatsPerBar, snapOn ? snapDiv : 0),
+    [pxPerBeat, beatsPerBar, snapOn, snapDiv],
+  )
 
   const snapBeat = useCallback(
     (beats: number) => (snapOn ? Math.max(0, quantizeBeats(beats, snapDiv, 1)) : Math.max(0, beats)),
@@ -528,37 +733,74 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
   )
 
   /** Arrastre de notas (individual o grupo) con pointer capture; no pisa el store hasta soltar.
-   *  Alt = sin imán (posición libre). Al cambiar pitch se re-audiciona. */
+   *  Alt = sin imán. Ctrl/Cmd + cuerpo = duplicar (Reaper). Clic Ctrl sin mover = toggle selección. */
   const beginNoteDrag = useCallback(
     (
-      ev: Pick<PointerEvent, 'clientX' | 'clientY' | 'pointerId' | 'target' | 'altKey' | 'shiftKey'>,
+      ev: Pick<
+        PointerEvent,
+        'clientX' | 'clientY' | 'pointerId' | 'target' | 'altKey' | 'shiftKey' | 'ctrlKey' | 'metaKey'
+      >,
       hitId: string,
       edge: false | 'start' | 'end',
       previewPitch: number,
       previewVel: number,
     ) => {
       if (herramienta === 'borrar') return
-      const ids =
+      const wantDuplicate = !edge && (ev.ctrlKey || ev.metaKey) && !ev.altKey
+      const sourceIds =
         selectedIds.has(hitId) && selectedIds.size > 0 ? selectedIds : new Set([hitId])
-      setSelectedIds(ids)
+      if (!wantDuplicate) {
+        setSelectedIds(sourceIds)
+      }
       draggingRef.current = true
-      setDirty(true)
       let lastAuditionPitch = previewPitch
       let ended = false
+      let duplicated = false
+      let dragIds = sourceIds
+      let primaryId = hitId
+      if (!wantDuplicate) setDirty(true)
       previewNoteRef.current(previewPitch, Math.max(previewVel, 100))
 
       const startX = ev.clientX
       const startY = ev.clientY
       const freeMove = Boolean(ev.altKey)
       const fineMove = Boolean(ev.shiftKey)
+      const MOVE_PX = 3
       const origins = new Map(
-        notesRef.current.filter((x) => ids.has(x.id)).map((x) => [x.id, { ...x }]),
+        notesRef.current.filter((x) => sourceIds.has(x.id)).map((x) => [x.id, { ...x }]),
       )
 
       const quantOrFree = (beats: number) => {
         if (freeMove) return Math.max(0, beats)
         if (fineMove) return Math.max(0, quantizeBeats(beats, snapDiv / 4, 1))
         return snapBeat(beats)
+      }
+
+      const ensureDuplicates = () => {
+        if (!wantDuplicate || duplicated) return
+        duplicated = true
+        setDirty(true)
+        const stamp = Date.now()
+        const copies: LocalNote[] = []
+        const nextOrigins = new Map<string, LocalNote>()
+        let nextPrimary = primaryId
+        for (const id of sourceIds) {
+          const o = origins.get(id)
+          if (!o) continue
+          const copy: LocalNote = {
+            ...o,
+            id: `n-${stamp}-${Math.random().toString(36).slice(2, 6)}`,
+          }
+          copies.push(copy)
+          nextOrigins.set(copy.id, { ...copy })
+          if (id === hitId) nextPrimary = copy.id
+        }
+        origins.clear()
+        for (const [id, o] of nextOrigins) origins.set(id, o)
+        dragIds = new Set(copies.map((c) => c.id))
+        primaryId = nextPrimary
+        setNotes((prev) => [...prev, ...copies])
+        setSelectedIds(dragIds)
       }
 
       const target = ev.target as HTMLElement | null
@@ -572,6 +814,10 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
       const move = (e2: PointerEvent) => {
         const dx = e2.clientX - startX
         const dy = e2.clientY - startY
+        if (wantDuplicate && !duplicated) {
+          if (Math.hypot(dx, dy) < MOVE_PX) return
+          ensureDuplicates()
+        }
         const pitchStep = fineMove ? Math.round(dy / (keyH * 2)) : Math.round(dy / keyH)
         setNotes((prev) =>
           prev.map((x) => {
@@ -607,7 +853,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
           }),
         )
         if (!edge) {
-          const primary = origins.get(hitId)
+          const primary = origins.get(primaryId)
           if (primary) {
             const nextPitch = Math.max(LOWEST, Math.min(HIGHEST, primary.pitch - pitchStep))
             if (nextPitch !== lastAuditionPitch) {
@@ -632,6 +878,17 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         }
         releaseNoteRef.current(lastAuditionPitch)
         releaseAllAuditionRef.current()
+        if (wantDuplicate && !duplicated) {
+          // Ctrl/Cmd + clic sin mover: toggle selección (como antes)
+          draggingRef.current = false
+          setSelectedIds((prev) => {
+            const next = new Set(prev)
+            if (next.has(hitId)) next.delete(hitId)
+            else next.add(hitId)
+            return next
+          })
+          return
+        }
         setNotes((prev) => {
           void persist(prev)
           return prev
@@ -961,19 +1218,32 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
       }
       if (!mod && (key === '+' || key === '=')) {
         e.preventDefault()
-        setPxPerBeat((z) => Math.min(256, z * 1.25))
+        e.stopPropagation()
+        zoomHorizontalAtPlayhead(true)
         return
       }
       if (!mod && (key === '-' || key === '_')) {
         e.preventDefault()
-        setPxPerBeat((z) => Math.max(12, z / 1.25))
+        e.stopPropagation()
+        zoomHorizontalAtPlayhead(false)
         return
       }
-      if (!mod && ['1', '2', '3', '4', '5'].includes(key)) {
+      if (!mod && ['1', '2', '3', '4', '5', '6', '7', '8', '0'].includes(key)) {
         e.preventDefault()
-        const map: Record<string, number> = { '1': 1, '2': 0.5, '3': 0.25, '4': 0.125, '5': 0.0625 }
-        setSnapDiv(map[key]!)
-        setSnapOn(true)
+        const map: Record<string, number> = {
+          '1': SNAP_BAR,
+          '2': 2,
+          '3': 1,
+          '4': 0.5,
+          '5': 0.25,
+          '6': 0.125,
+          '7': 0.0625,
+          '8': 0.03125,
+          '0': 0,
+        }
+        const next = map[key]
+        if (next === undefined) return
+        setSnapDiv(next)
         return
       }
       if (e.code === 'Space') {
@@ -1030,14 +1300,18 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         transposeSelected(e.shiftKey ? -12 : -1)
         return
       }
-      if (e.key === 'ArrowLeft') {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault()
-        nudgeSelected(-(e.shiftKey ? 1 : snapDiv))
-        return
-      }
-      if (e.key === 'ArrowRight') {
-        e.preventDefault()
-        nudgeSelected(e.shiftKey ? 1 : snapDiv)
+        e.stopPropagation()
+        const dir = e.key === 'ArrowLeft' ? -1 : 1
+        if (selectedRef.current.size > 0) {
+          nudgeSelected(dir * (e.shiftKey ? 1 : snapDiv))
+        } else if (e.altKey) {
+          panTimelinePx(dir * beatsPerBar * pxPerBeatRef.current)
+        } else {
+          const stepBeats = e.shiftKey ? 1 : snapDiv
+          panTimelinePx(dir * stepBeats * pxPerBeatRef.current)
+        }
         return
       }
     }
@@ -1057,8 +1331,11 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
     isPlaying,
     clip,
     bpm,
+    beatsPerBar,
     tienda,
     getPositionMs,
+    zoomHorizontalAtPlayhead,
+    panTimelinePx,
   ])
 
   if (!clip || clip.tipo !== 'midi') {
@@ -1086,10 +1363,11 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         onHerramienta={setHerramienta}
         snapOn={snapOn}
         onSnapToggle={() => setSnapOn((v) => !v)}
+        snapValor={projectSnapValor}
         snapDiv={snapDiv}
         onSnapDiv={setSnapDiv}
-        onZoomIn={() => setPxPerBeat((z) => Math.min(256, z * 1.25))}
-        onZoomOut={() => setPxPerBeat((z) => Math.max(12, z / 1.25))}
+        onZoomIn={() => zoomHorizontalAtPlayhead(true)}
+        onZoomOut={() => zoomHorizontalAtPlayhead(false)}
         onZoomVertical={() => setKeyH((h) => (h >= 20 ? KEY_H_BASE : h + 3))}
         showVelocity={showVelocity}
         onToggleVelocity={() => setShowVelocity((v) => !v)}
@@ -1157,7 +1435,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
 
       <PianoRollTransport
         clipInicioBeats={clip.inicio ?? 0}
-        clipDuracionBeats={clip.duracion ?? durationBeats}
+        clipDuracionBeats={clip.duracion ?? clipDurationBeats}
         soloClip={soloClip}
         onSoloClipChange={setSoloClip}
         alignTimeline={alignTimeline}
@@ -1303,12 +1581,19 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
       )}
 
       <div className="flex min-h-0 flex-1">
-        <div className="flex w-14 shrink-0 flex-col overflow-hidden border-r border-border bg-panel-raised">
+        <div
+          className="relative flex shrink-0 flex-col overflow-hidden border-r border-border bg-panel-raised"
+          style={{ width: keysWidth }}
+        >
           {/* Misma altura que PianoRollTimelineRuler para alinear teclas ↔ notas */}
           <div className="shrink-0 border-b border-border/60 bg-panel" style={{ height: RULER_H }} />
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div
+            ref={keysScrollRef}
+            data-piano-keys
+            className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
+            onScroll={syncVerticalFromKeys}
+          >
             <div
-              ref={keysOffsetRef}
               className="touch-none select-none"
               style={{ height: gridHeight }}
               onPointerDown={onKeyboardPointerDown}
@@ -1326,7 +1611,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                 return (
                   <div
                     key={pitch}
-                    className={`pointer-events-none flex w-full items-center justify-end border-b border-border/40 pr-1 font-mono text-[9px] ${
+                    className={`pointer-events-none flex w-full items-center justify-end border-b border-border/40 pr-1.5 font-mono text-[9px] ${
                       active
                         ? 'bg-accent-amber/40 text-foreground'
                         : selectedHere
@@ -1344,48 +1629,51 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
               })}
             </div>
           </div>
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Redimensionar teclado"
+            title="Arrastrar para redimensionar el teclado"
+            onPointerDown={beginKeysResize}
+            className="absolute inset-y-0 right-0 z-20 w-1.5 cursor-col-resize hover:bg-accent-amber/50 active:bg-accent-amber"
+          />
         </div>
 
-        <div ref={scrollRef} className="min-w-0 flex-1 overflow-auto">
-          <PianoRollTimelineRuler
-            pxPerBeat={pxPerBeat}
-            durationBeats={durationBeats}
-            beatsPerBar={beatsPerBar}
-            clipInicioBeats={clip?.inicio ?? 0}
-            onSeekBeats={(absBeats) => {
-              const sec = (absBeats * 60) / Math.max(1, bpm)
-              if (alignTimeline) {
-                void tienda.executor.execute('transport.seek', { segundos: sec })
-              } else {
-                setLocalPlayheadMs(sec * 1000)
-                const scroll = scrollRef.current
-                if (scroll) {
-                  const x = (absBeats - clipStartBeat) * pxPerBeat
-                  scroll.scrollLeft = Math.max(0, x - scroll.clientWidth * 0.3)
-                }
-              }
-            }}
-          />
-          <div
-            ref={gridRef}
-            className={`relative ${
-              herramienta === 'borrar'
-                ? 'cursor-not-allowed'
-                : herramienta === 'dibujar'
-                  ? 'cursor-cell'
-                  : 'cursor-crosshair'
-            }`}
-            style={{ width: gridWidth, height: gridHeight + velLaneH }}
-            onDoubleClick={(e) => {
-              if (herramienta === 'borrar') return
-              if ((e.target as HTMLElement).closest('[data-note]')) return
-              addNoteAt(e.clientX, e.clientY, e.currentTarget)
-            }}
-            onContextMenu={(e) => {
-              // Click derecho = marquee; no menú contextual del navegador.
-              e.preventDefault()
-            }}
-            onPointerDown={(e) => {
+        <div
+          ref={scrollRef}
+          className="relative min-w-0 flex-1 overflow-auto"
+          onScroll={syncVerticalFromGrid}
+        >
+          <div className="relative" style={{ width: gridWidth }}>
+            <PianoRollTimelineRuler
+              pxPerBeat={pxPerBeat}
+              durationBeats={viewDurationBeats}
+              beatsPerBar={beatsPerBar}
+              clipInicioBeats={clip?.inicio ?? 0}
+              clipDurationBeats={clipDurationBeats}
+              snapDivision={snapOn ? snapDiv : 0}
+              onSeekBeats={seekAbsBeats}
+            />
+            <div
+              ref={gridRef}
+              className={`relative ${
+                herramienta === 'borrar'
+                  ? 'cursor-not-allowed'
+                  : herramienta === 'dibujar'
+                    ? 'cursor-cell'
+                    : 'cursor-crosshair'
+              }`}
+              style={{ width: gridWidth, height: gridHeight + velLaneH }}
+              onDoubleClick={(e) => {
+                if (herramienta === 'borrar') return
+                if ((e.target as HTMLElement).closest('[data-note]')) return
+                addNoteAt(e.clientX, e.clientY, e.currentTarget)
+              }}
+              onContextMenu={(e) => {
+                // Click derecho = marquee; no menú contextual del navegador.
+                e.preventDefault()
+              }}
+              onPointerDown={(e) => {
               const isRight = e.button === 2
               const isLeft = e.button === 0
               if (!isLeft && !isRight) return
@@ -1398,20 +1686,22 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
               const { x, y } = toLocal(e.clientX, e.clientY)
               if (y > gridHeight) return
 
-              // Click derecho (o izquierdo en vacío con herramienta seleccionar):
-              // cuadro de selección, incluso empezando encima de una nota.
               const overNote = Boolean((e.target as HTMLElement).closest('[data-note]'))
+              // Alt+Ctrl o Alt: crear nota con duración (paridad gestual arrange / piano)
+              const wantCreateDur =
+                isLeft && !overNote && (herramienta === 'dibujar' || e.altKey)
+
+              // Marquee: izquierdo en vacío, o derecho en vacío (derecho sobre nota = borrar)
               const wantLasso =
-                isRight ||
+                (isRight && !overNote) ||
                 (isLeft &&
                   !overNote &&
-                  herramienta !== 'dibujar' &&
-                  herramienta !== 'borrar' &&
-                  !e.altKey)
+                  !wantCreateDur &&
+                  herramienta !== 'borrar')
 
               if (isLeft && !wantLasso) {
                 if (overNote) return
-                if (herramienta === 'dibujar' || e.altKey) {
+                if (wantCreateDur) {
                   addNoteAt(e.clientX, e.clientY, e.currentTarget, true)
                   return
                 }
@@ -1444,7 +1734,14 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                 const y1 = Math.max(y, yy)
                 setLasso(null)
                 if (Math.abs(x1 - x0) < 4 && Math.abs(y1 - y0) < 4) {
-                  if (!additive) setSelectedIds(new Set())
+                  if (!additive) {
+                    setSelectedIds(new Set())
+                    // Clic vacío (seleccionar): seek como en arrange
+                    if (herramienta === 'seleccionar' && isLeft) {
+                      const relBeat = Math.max(0, Math.min(viewDurationBeats, x / pxPerBeat))
+                      seekAbsBeats(clipStartBeat + relBeat)
+                    }
+                  }
                   return
                 }
                 const hit = notesAtStart.filter((n) => {
@@ -1482,34 +1779,45 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
             })}
 
             {gridLines.map((line) => {
-              const count = Math.ceil(durationBeats / line.spacingBeats) + 1
+              const rank = zoomLevelRank(line.spacingBeats, zoomPrimary)
+              const count = Math.ceil(viewDurationBeats / line.spacingBeats) + 1
               const className =
-                line.kind === 'bar'
-                  ? 'border-accent-amber/35'
-                  : line.kind === 'beat'
-                    ? 'border-border/45'
-                    : line.kind === 'subdivision'
-                      ? 'border-border/28'
-                      : 'border-border/14'
+                rank === 0
+                  ? 'border-sky-300/80'
+                  : rank === 1
+                    ? 'border-sky-400/55'
+                    : rank === 2
+                      ? 'border-sky-500/35'
+                      : 'border-border/25'
               return Array.from({ length: count }).map((_, i) => {
-                if (line.kind !== 'bar') {
-                  const beatsFromBar = (i * line.spacingBeats) % beatsPerBar
-                  if (Math.abs(beatsFromBar) < 1e-9) return null
+                if (rank > 0) {
+                  const coarser = rank === 1 ? zoomPrimary : zoomPrimary / 2
+                  const beatsFromCoarser = (i * line.spacingBeats) % coarser
+                  if (Math.abs(beatsFromCoarser) < 1e-9) return null
                 }
                 return (
                   <div
                     key={`${line.kind}-${line.spacingBeats}-${i}`}
                     className={`pointer-events-none absolute top-0 border-l ${className}`}
-                    style={{ left: i * line.spacingBeats * pxPerBeat, height: gridHeight }}
+                    style={{
+                      left: i * line.spacingBeats * pxPerBeat,
+                      height: gridHeight,
+                      borderLeftWidth: rank === 0 ? 2 : rank === 1 ? 1.5 : 1,
+                    }}
                   />
                 )
               })
             })}
 
+            {/* Zona más allá del clip: misma rejilla, distinta apariencia */}
             <div
-              ref={playheadRef}
-              className={`pointer-events-none absolute top-0 left-0 z-20 w-px ${isPlaying ? 'bg-accent-amber' : 'bg-foreground/50'}`}
-              style={{ height: gridHeight + velLaneH, visibility: 'hidden' }}
+              className="pointer-events-none absolute top-0 z-[5] border-l-2 border-dashed border-sky-300/70 bg-background/55"
+              style={{
+                left: clipDurationBeats * pxPerBeat,
+                width: Math.max(0, (viewDurationBeats - clipDurationBeats) * pxPerBeat),
+                height: gridHeight + velLaneH,
+              }}
+              title="Fuera del clip MIDI"
             />
 
             {lasso && (
@@ -1583,6 +1891,23 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                   if (!hit) return
                   const n = notesRef.current.find((x) => x.id === hit.id)
                   if (!n) return
+                  // Clic derecho = borrar nota (o toda la selección si está incluida)
+                  if (ev.button === 2) {
+                    const ids =
+                      selectedIds.has(hit.id) && selectedIds.size > 1
+                        ? selectedIds
+                        : new Set([hit.id])
+                    const next = notesRef.current.filter((x) => !ids.has(x.id))
+                    setNotes(next)
+                    setSelectedIds((prev) => {
+                      const s = new Set(prev)
+                      for (const id of ids) s.delete(id)
+                      return s
+                    })
+                    setDirty(true)
+                    void persist(next)
+                    return
+                  }
                   if (herramienta === 'borrar') {
                     const next = notesRef.current.filter((x) => x.id !== hit.id)
                     setNotes(next)
@@ -1590,7 +1915,8 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                     void persist(next)
                     return
                   }
-                  if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
+                  // Shift = toggle selección. Ctrl/Cmd + cuerpo = duplicar al arrastrar (clic sin mover = toggle).
+                  if (ev.shiftKey) {
                     setSelectedIds((prev) => {
                       const next = new Set(prev)
                       if (next.has(hit.id)) next.delete(hit.id)
@@ -1619,9 +1945,26 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                   role="button"
                   tabIndex={0}
                   onPointerDown={(e) => {
-                    if (e.button !== 0) return
+                    if (e.button !== 0 && e.button !== 2) return
                     e.stopPropagation()
                     e.preventDefault()
+                    // Clic derecho = borrar nota (o toda la selección si está incluida)
+                    if (e.button === 2) {
+                      const ids =
+                        selectedIds.has(n.id) && selectedIds.size > 1
+                          ? selectedIds
+                          : new Set([n.id])
+                      const next = notesRef.current.filter((x) => !ids.has(x.id))
+                      setNotes(next)
+                      setSelectedIds((prev) => {
+                        const s = new Set(prev)
+                        for (const id of ids) s.delete(id)
+                        return s
+                      })
+                      setDirty(true)
+                      void persist(next)
+                      return
+                    }
                     if (herramienta === 'borrar') {
                       const next = notesRef.current.filter((x) => x.id !== n.id)
                       setNotes(next)
@@ -1634,7 +1977,8 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                       void persist(next)
                       return
                     }
-                    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                    // Shift = toggle. Ctrl/Cmd + cuerpo = duplicar al arrastrar (clic sin mover = toggle).
+                    if (e.shiftKey) {
                       setSelectedIds((prev) => {
                         const next = new Set(prev)
                         if (next.has(n.id)) next.delete(n.id)
@@ -1650,6 +1994,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                       localX > width - 6 ? 'end' : localX < 6 ? 'start' : false
                     beginNoteDrag(e.nativeEvent, n.id, edge, n.pitch, n.velocidad)
                   }}
+                  onContextMenu={(e) => e.preventDefault()}
                   className={`absolute z-10 touch-none rounded-sm border ${
                     selected
                       ? 'border-accent-amber ring-1 ring-accent-amber'
@@ -1732,7 +2077,7 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
           {showExpression && (
             <PianoRollExpressionLanes
               width={gridWidth}
-              durationBeats={durationBeats}
+              durationBeats={viewDurationBeats}
               pxPerBeat={pxPerBeat}
               expression={clip?.expression}
               onSetCc={(cc, puntos) => {
@@ -1752,14 +2097,29 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
               }}
             />
           )}
+
+          {/* Playhead sincronizado con arrange (RAF estable, cruza regla + grid) */}
+          <div
+            className="pointer-events-none absolute inset-0 z-30 overflow-hidden"
+            style={{ height: RULER_H + gridHeight + velLaneH }}
+          >
+            <PlayheadOverlay
+              mode="content"
+              getSeconds={getPlayheadSeconds}
+              bpm={bpm}
+              beatToPixel={beatToPianoPixel}
+              onPointerDown={onPlayheadPointerDown}
+            />
+          </div>
+          </div>
         </div>
       </div>
 
             <div className="flex h-7 shrink-0 items-center gap-3 border-t border-border px-3 text-[10px] text-muted-foreground">
         <span>
-          Clic nota = oír · Arrastrar = pitch/tiempo · Bordes = duración · Carril Vel = velocidad · Alt = sin imán · Shift = fino
+          Rueda = zoom · Shift+rueda = pan · Regla = seek · Alt(+Ctrl)+arrastre vacío = nota · Alt en nota = sin imán
         </span>
-        <span>S imán · ↑↓ semitono · ←→ mover · G velocidad · F expresión · ? atajos</span>
+        <span>S imán notas · Magnet seek · Ctrl+arrastrar = duplicar · ↑↓ pitch · ←→ pan/nudge · G vel · F CC · ? atajos</span>
       </div>
     </div>
   )
@@ -1783,6 +2143,7 @@ function PianoRollEmptyShell({
         onHerramienta={() => {}}
         snapOn
         onSnapToggle={() => {}}
+        snapValor={0.25}
         snapDiv={0.25}
         onSnapDiv={() => {}}
         onZoomIn={() => {}}
