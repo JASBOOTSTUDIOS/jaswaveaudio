@@ -31,6 +31,9 @@ const SNAP_OPTIONS = [
   { label: '1/4 nota (Beat)', value: 1 },
   { label: '1/8 nota', value: 0.5 },
   { label: '1/16 nota', value: 0.25 },
+  { label: '1/32 nota', value: 0.125 },
+  { label: '1/64 nota', value: 0.0625 },
+  { label: '1/128 nota', value: 0.03125 },
 ]
 
 function MiniSlider({

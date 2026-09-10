@@ -19,6 +19,7 @@ import {
   Layers2,
   Sparkles,
   FileDown,
+  FileCode2,
 } from 'lucide-react'
 export type PianoRollTool = 'seleccionar' | 'dibujar' | 'borrar'
 
@@ -132,6 +133,7 @@ export function PianoRollToolbar({
   nombreClip,
   onSaveStyle,
   onExportScorePdf,
+  onOpenMidiMd,
 }: {
   herramienta: PianoRollTool
   onHerramienta: (t: PianoRollTool) => void
@@ -169,6 +171,7 @@ export function PianoRollToolbar({
   nombreClip: string
   onSaveStyle?: () => void
   onExportScorePdf?: () => void
+  onOpenMidiMd?: () => void
 }) {
   return (
     <div className="flex shrink-0 flex-col border-b border-border">
@@ -349,6 +352,9 @@ export function PianoRollToolbar({
         ) : null}
         {onExportScorePdf ? (
           <ToolBtn titulo="Vista previa / exportar partitura PDF" icon={FileDown} onClick={onExportScorePdf} />
+        ) : null}
+        {onOpenMidiMd ? (
+          <ToolBtn titulo="Abrir MIDI · MD (sync en vivo)" icon={FileCode2} onClick={onOpenMidiMd} />
         ) : null}
 
         <select

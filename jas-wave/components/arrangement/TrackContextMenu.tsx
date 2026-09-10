@@ -297,6 +297,14 @@ export function TrackContextMenu({
           })
         }
       />
+      <MenuItem
+        label="Abrir automatización"
+        onClick={() =>
+          run(() => {
+            requestOpenTool('automation')
+          })
+        }
+      />
       {onImportAudio ? (
         <MenuItem label="Importar audio…" onClick={() => run(() => onImportAudio(track.id))} />
       ) : null}

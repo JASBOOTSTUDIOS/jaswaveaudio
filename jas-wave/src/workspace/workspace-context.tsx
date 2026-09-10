@@ -26,6 +26,10 @@ type WorkspaceContextValue = {
   toggleZone: (zone: DockZone) => void
   undockTool: (toolId: ToolId) => Promise<void>
   dockTool: (toolId: ToolId, zone?: DockZone) => void
+  closeTool: (toolId: ToolId) => void
+  openTool: (toolId: ToolId, zone?: DockZone) => void
+  toggleTool: (toolId: ToolId) => void
+  isToolOpen: (toolId: ToolId) => boolean
   isUndocked: (toolId: ToolId) => boolean
   toolsInZone: (zone: DockZone) => ToolId[]
   resetLayout: () => void
@@ -160,6 +164,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         zones: { ...next.zones, [toZone]: list },
         activeTab: { ...next.activeTab, [toZone]: toolId },
         zoneVisible: { ...next.zoneVisible, [toZone]: true },
+        closed: (next.closed ?? []).filter((id) => id !== toolId),
       }
       return next
     })
@@ -170,6 +175,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       ...prev,
       activeTab: { ...prev.activeTab, [zone]: toolId },
       zoneVisible: { ...prev.zoneVisible, [zone]: true },
+      closed: (prev.closed ?? []).filter((id) => id !== toolId),
     }))
   }, [])
 
@@ -180,6 +186,82 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       zoneVisible: { ...prev.zoneVisible, [zone]: !prev.zoneVisible[zone] },
     }))
   }, [])
+
+  const closeTool = useCallback((toolId: ToolId) => {
+    if (!(toolId in TOOL_CATALOG)) return
+    // Arrange siempre puede cerrarse, pero no lo sacamos del catálogo.
+    setLayout((prev) => {
+      const cleaned = stripTool(prev, toolId)
+      const closed = cleaned.closed ?? []
+      return {
+        ...cleaned,
+        closed: closed.includes(toolId) ? closed : [...closed, toolId],
+        undocked: cleaned.undocked.filter((id) => id !== toolId),
+      }
+    })
+    const api = window.electron as typeof window.electron & {
+      closeToolWindow?: (toolId: string) => Promise<void>
+    }
+    void api?.closeToolWindow?.(toolId)
+  }, [])
+
+  const openTool = useCallback((toolId: ToolId, zone?: DockZone) => {
+    if (!(toolId in TOOL_CATALOG)) return
+    const target = zone ?? TOOL_CATALOG[toolId].defaultZone
+    setLayout((prev) => {
+      if (prev.undocked.includes(toolId)) {
+        // Ya flotando: solo quitar de closed; dockTool se encarga si hace falta
+        return {
+          ...prev,
+          closed: (prev.closed ?? []).filter((id) => id !== toolId),
+          zoneVisible: { ...prev.zoneVisible, [target]: true },
+        }
+      }
+      const already =
+        prev.zones.left.includes(toolId) ||
+        prev.zones.center.includes(toolId) ||
+        prev.zones.right.includes(toolId) ||
+        prev.zones.bottom.includes(toolId)
+      if (already) {
+        let found: DockZone = target
+        for (const z of ['left', 'center', 'right', 'bottom'] as DockZone[]) {
+          if (prev.zones[z].includes(toolId)) {
+            found = z
+            break
+          }
+        }
+        return {
+          ...prev,
+          closed: (prev.closed ?? []).filter((id) => id !== toolId),
+          activeTab: { ...prev.activeTab, [found]: toolId },
+          zoneVisible: { ...prev.zoneVisible, [found]: true },
+        }
+      }
+      const cleaned = stripTool(prev, toolId)
+      return {
+        ...cleaned,
+        zones: {
+          ...cleaned.zones,
+          [target]: [...cleaned.zones[target], toolId],
+        },
+        activeTab: { ...cleaned.activeTab, [target]: toolId },
+        zoneVisible: { ...cleaned.zoneVisible, [target]: true },
+        closed: (cleaned.closed ?? []).filter((id) => id !== toolId),
+      }
+    })
+  }, [])
+
+  const isToolOpen = useCallback(
+    (toolId: ToolId) => {
+      if (layout.undocked.includes(toolId)) return true
+      if ((layout.closed ?? []).includes(toolId)) return false
+      for (const z of ['left', 'center', 'right', 'bottom'] as DockZone[]) {
+        if (layout.zones[z].includes(toolId)) return true
+      }
+      return false
+    },
+    [layout],
+  )
 
   const undockTool = useCallback(async (toolId: ToolId) => {
     // Publicar estado YA (antes de abrir satélite) para que el panel flotante no arranque vacío.
@@ -256,6 +338,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         activeTab: { ...cleaned.activeTab, [target]: toolId },
         zoneVisible: { ...cleaned.zoneVisible, [target]: true },
         undocked: cleaned.undocked.filter((id) => id !== toolId),
+        closed: (cleaned.closed ?? []).filter((id) => id !== toolId),
       }
     })
     const api = window.electron as typeof window.electron & {
@@ -263,6 +346,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
     void api?.closeToolWindow?.(toolId)
   }, [])
+
+  const toggleTool = useCallback(
+    (toolId: ToolId) => {
+      if (layout.undocked.includes(toolId)) {
+        dockTool(toolId)
+        return
+      }
+      if (isToolOpen(toolId)) closeTool(toolId)
+      else openTool(toolId)
+    },
+    [closeTool, dockTool, isToolOpen, layout.undocked, openTool],
+  )
 
   const isUndocked = useCallback(
     (toolId: ToolId) => layout.undocked.includes(toolId),
@@ -286,11 +381,29 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       toggleZone,
       undockTool,
       dockTool,
+      closeTool,
+      openTool,
+      toggleTool,
+      isToolOpen,
       isUndocked,
       toolsInZone,
       resetLayout,
     }),
-    [layout, moveTool, setActiveTab, toggleZone, undockTool, dockTool, isUndocked, toolsInZone, resetLayout],
+    [
+      layout,
+      moveTool,
+      setActiveTab,
+      toggleZone,
+      undockTool,
+      dockTool,
+      closeTool,
+      openTool,
+      toggleTool,
+      isToolOpen,
+      isUndocked,
+      toolsInZone,
+      resetLayout,
+    ],
   )
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>

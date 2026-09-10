@@ -466,18 +466,75 @@ export async function libraryProbeByRef(
   return probePluginLoad({ path, pluginId: d?.pluginId ?? opts.pluginId })
 }
 
-/** Resumen corto para contexto IA (top N por rol/género). */
+export async function libraryUpdateMeta(
+  tienda: TiendaDAW,
+  presetId: string,
+  patch: Partial<Pick<LibraryPreset, 'nombre' | 'rol' | 'generoTags' | 'notas'>>,
+): Promise<{ ok: boolean; message: string; preset?: LibraryPreset }> {
+  const { projectId, ruta } = projectIds(tienda)
+  const local = getLibraryPreset(projectId, presetId)
+  if (local) {
+    const next = await updateLibraryPresetMeta(projectId, presetId, patch, ruta)
+    return next
+      ? { ok: true, message: `Actualizado «${next.nombre}»`, preset: next }
+      : { ok: false, message: 'No se pudo actualizar' }
+  }
+  const global = await getGlobalPreset(presetId)
+  if (global) {
+    const next = await updateGlobalPresetMeta(presetId, patch)
+    return next
+      ? { ok: true, message: `Actualizado «${next.nombre}»`, preset: next }
+      : { ok: false, message: 'No se pudo actualizar' }
+  }
+  return { ok: false, message: 'Config no encontrada' }
+}
+
+/** Resumen para contexto IA: agrupado por plugin (configs DecentSampler, etc.). */
 export async function formatLibraryPresetsForContext(
   tienda: TiendaDAW,
-  limit = 12,
+  limit = 40,
 ): Promise<string> {
-  const list = await libraryList(tienda, 'all')
-  if (!list.length) return '(sin presets en biblioteca)'
-  const top = list.slice(0, limit)
-  return top
-    .map(
-      (p) =>
-        `- id=${p.id} «${p.nombre}» plugin=${p.pluginNombre}${p.rol ? ` rol=${p.rol}` : ''}${p.scope === 'global' ? ' [global]' : ''}${p.type === 'fxChain' ? ' [fxChain]' : ''}${p.generoTags.length ? ` tags=${p.generoTags.join('/')}` : ''}`,
-    )
-    .join('\n')
+  const list = (await libraryList(tienda, 'all')).filter((p) => (p.type ?? 'plugin') === 'plugin')
+  if (!list.length) {
+    return '(sin configs en biblioteca — guarda estados VST desde Instrumentos → Configs)'
+  }
+  const byPlugin = new Map<string, typeof list>()
+  for (const p of list) {
+    const key = p.pluginNombre || p.pluginId || 'plugin'
+    const arr = byPlugin.get(key) ?? []
+    arr.push(p)
+    byPlugin.set(key, arr)
+  }
+  const lines: string[] = []
+  let n = 0
+  for (const [plugin, presets] of [...byPlugin.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    if (n >= limit) break
+    lines.push(`${plugin}:`)
+    for (const p of presets) {
+      if (n >= limit) break
+      lines.push(
+        `  - id=${p.id} «${p.nombre}»${p.rol ? ` rol=${p.rol}` : ''}${p.scope === 'global' ? ' [global]' : ''}${p.generoTags.length ? ` refs=${p.generoTags.join('/')}` : ''}${p.notas ? ` notas=${p.notas}` : ''}${p.estadoPluginBase64 ? ' [estado]' : ''}`,
+      )
+      n++
+    }
+  }
+  return lines.join('\n')
+}
+
+/** Busca configs de un VST (por nombre/path/id) en proyecto + global. */
+export async function libraryListConfigsForPlugin(
+  tienda: TiendaDAW,
+  opts: { pluginNombre?: string; pluginPath?: string; pluginId?: string },
+): Promise<LibraryPreset[]> {
+  const all = (await libraryList(tienda, 'all')).filter((p) => (p.type ?? 'plugin') === 'plugin')
+  const name = (opts.pluginNombre ?? '').toLowerCase().trim()
+  const path = (opts.pluginPath ?? '').toLowerCase().trim()
+  const id = (opts.pluginId ?? '').trim()
+  return all.filter((p) => {
+    if (id && (p.pluginId === id || p.id === id)) return true
+    if (path && p.pluginPath && p.pluginPath.toLowerCase() === path) return true
+    if (name && p.pluginNombre.toLowerCase().includes(name)) return true
+    if (name && name.includes(p.pluginNombre.toLowerCase())) return true
+    return false
+  })
 }

@@ -1143,6 +1143,11 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
             exportClipScorePdfDialog(tienda, trackId, clipId),
           )
         }}
+        onOpenMidiMd={() => {
+          void import('@/src/lib/open-midi-clip-md').then(({ openMidiClipMdPanel }) =>
+            openMidiClipMdPanel(tienda, clipId, trackId),
+          )
+        }}
         notasCount={notes.length}
         seleccionCount={selectedIds.size}
         duplicadosCount={duplicadosCount}

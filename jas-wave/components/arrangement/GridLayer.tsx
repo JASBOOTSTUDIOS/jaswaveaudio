@@ -1,18 +1,32 @@
 import { useEffect, useRef } from 'react'
 import type { TimelineProjection } from '@/lib/timeline-projection'
+import { adaptiveGridForZoom } from '../../../shared/src/midi/grid'
 import { BASE_PIXELS_PER_BEAT } from './constants'
+import { beatToViewX, crispX, majorBarInterval } from './timeline-grid-math'
 
 /** Límite seguro de bitmap (evitar canvas blanco / OOM al zoom). */
-const MAX_CANVAS_EDGE = 4096
+const MAX_CANVAS_EDGE = 8192
+const MAX_LINES_PER_LEVEL = 12000
 
 function cssVar(name: string, fallback: string): string {
   if (typeof window === 'undefined') return fallback
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 }
 
+function findScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let cur: HTMLElement | null = el
+  while (cur) {
+    const style = getComputedStyle(cur)
+    const ox = style.overflowX
+    if (ox === 'auto' || ox === 'scroll' || ox === 'overlay') return cur
+    cur = cur.parentElement
+  }
+  return null
+}
+
 /**
- * Grid en canvas del **viewport** (sticky), no del contentWidth completo.
- * Al zoom alto el content puede tener cientos de miles de px — eso rompía el canvas.
+ * Rejilla anclada al viewport de lanes — profundidad = adaptiveGridForZoom
+ * (mismas divisiones a las que ancla el playhead).
  */
 export function GridLayer({
   projection,
@@ -29,107 +43,120 @@ export function GridLayer({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const pxPerBeat = BASE_PIXELS_PER_BEAT * zoom
-  const scrollX = projection.scrollX
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas || viewportWidth <= 0 || contentHeight <= 0) return
 
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
-    const cssW = Math.max(1, Math.min(Math.floor(viewportWidth), MAX_CANVAS_EDGE))
-    const cssH = Math.max(1, Math.min(Math.floor(contentHeight), MAX_CANVAS_EDGE))
-    const bw = Math.floor(cssW * dpr)
-    const bh = Math.floor(cssH * dpr)
-    if (canvas.width !== bw) canvas.width = bw
-    if (canvas.height !== bh) canvas.height = bh
-    canvas.style.width = `${cssW}px`
-    canvas.style.height = `${cssH}px`
+    const scroller = findScrollParent(canvas)
+    let raf = 0
 
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, cssW, cssH)
+    const draw = (scrollX: number) => {
+      canvas.style.left = `${scrollX}px`
 
-    const border = cssVar('--border', 'rgba(255,255,255,0.12)')
-    const grid = cssVar('--grid-line', 'rgba(255,255,255,0.08)')
+      const dpr = Math.min(2, window.devicePixelRatio || 1)
+      const cssW = Math.max(1, Math.min(Math.ceil(viewportWidth), MAX_CANVAS_EDGE))
+      const cssH = Math.max(1, Math.min(Math.ceil(contentHeight), MAX_CANVAS_EDGE))
+      const bw = Math.floor(cssW * dpr)
+      const bh = Math.floor(cssH * dpr)
+      if (canvas.width !== bw) canvas.width = bw
+      if (canvas.height !== bh) canvas.height = bh
+      canvas.style.width = `${cssW}px`
+      canvas.style.height = `${cssH}px`
 
-    type Level = { beat: number; minPx: number; alpha: number }
-    const levels: Level[] = []
-    if (pxPerBeat >= 80) {
-      levels.push({ beat: 1 / 32, minPx: 4, alpha: 0.25 })
-      levels.push({ beat: 1 / 16, minPx: 6, alpha: 0.35 })
-      levels.push({ beat: 1 / 8, minPx: 10, alpha: 0.45 })
-      levels.push({ beat: 1 / 4, minPx: 16, alpha: 0.55 })
-      levels.push({ beat: 1 / 2, minPx: 24, alpha: 0.7 })
-      levels.push({ beat: 1, minPx: 40, alpha: 0.9 })
-    } else if (pxPerBeat >= 30) {
-      levels.push({ beat: 1 / 16, minPx: 4, alpha: 0.3 })
-      levels.push({ beat: 1 / 8, minPx: 6, alpha: 0.4 })
-      levels.push({ beat: 1 / 4, minPx: 10, alpha: 0.5 })
-      levels.push({ beat: 1 / 2, minPx: 16, alpha: 0.7 })
-      levels.push({ beat: 1, minPx: 30, alpha: 0.9 })
-    } else if (pxPerBeat >= 12) {
-      levels.push({ beat: 1 / 8, minPx: 4, alpha: 0.3 })
-      levels.push({ beat: 1 / 4, minPx: 6, alpha: 0.4 })
-      levels.push({ beat: 1 / 2, minPx: 12, alpha: 0.65 })
-      levels.push({ beat: 1, minPx: 20, alpha: 0.9 })
-    } else if (pxPerBeat >= 5) {
-      levels.push({ beat: 1 / 4, minPx: 4, alpha: 0.3 })
-      levels.push({ beat: 1 / 2, minPx: 8, alpha: 0.45 })
-      levels.push({ beat: 1, minPx: 14, alpha: 0.85 })
-    } else {
-      levels.push({ beat: 1, minPx: 10, alpha: 0.7 })
-      if (pxPerBeat >= 2) levels.push({ beat: beatsPerBar, minPx: 40, alpha: 0.95 })
-    }
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, cssW, cssH)
 
-    const { start: startBeat, end: endBeat } = projection.visibleBeatRange()
-    const pad = beatsPerBar
-    const from = Math.max(0, startBeat - pad)
-    const to = endBeat + pad
+      const border = cssVar('--border', 'rgba(255,255,255,0.22)')
+      const grid = cssVar('--grid-line', 'rgba(255,255,255,0.14)')
 
-    const toViewX = (beat: number) => projection.beatToPixel(beat) - scrollX
+      const pxPerBar = pxPerBeat * beatsPerBar
+      const barInterval = majorBarInterval(pxPerBar, 36)
+      const majorStep = beatsPerBar * barInterval
+      const levels = adaptiveGridForZoom(pxPerBeat, beatsPerBar)
 
-    for (const level of levels) {
-      const pxPerSub = level.beat * pxPerBeat
-      if (pxPerSub < level.minPx) continue
-      const firstBeat = Math.floor(from / level.beat) * level.beat
-      ctx.beginPath()
-      for (let beat = firstBeat; beat <= to; beat += level.beat) {
-        if (beat < 0) continue
-        const isBar = Math.abs(beat % beatsPerBar) < 1e-9
-        if (isBar && level.beat < beatsPerBar) continue
-        const x = Math.round(toViewX(beat)) + 0.5
-        if (x < -1 || x > cssW + 1) continue
-        ctx.moveTo(x, 0)
-        ctx.lineTo(x, cssH)
+      const startBeat = scrollX / pxPerBeat
+      const endBeat = (scrollX + cssW) / pxPerBeat
+      const pad = Math.max(majorStep, beatsPerBar * 2)
+      const from = Math.max(0, startBeat - pad)
+      const to = endBeat + pad
+
+      const toX = (beat: number) => crispX(beatToViewX(beat, pxPerBeat, scrollX))
+
+      const strokeBeats = (
+        stepBeats: number,
+        alpha: number,
+        color: string,
+        opts?: { skipIfOnStep?: number },
+      ) => {
+        if (stepBeats <= 0 || !Number.isFinite(stepBeats)) return
+        if (stepBeats * pxPerBeat < 1.25) return
+        const first = Math.floor(from / stepBeats) * stepBeats
+        const skipStep = opts?.skipIfOnStep ?? 0
+        ctx.beginPath()
+        let drawn = 0
+        for (let n = 0; n < MAX_LINES_PER_LEVEL; n++) {
+          const b = first + n * stepBeats
+          if (b > to + 1e-9) break
+          if (b < -1e-9) continue
+          if (skipStep > 0) {
+            const mod = ((b % skipStep) + skipStep) % skipStep
+            if (mod < 1e-6 || Math.abs(mod - skipStep) < 1e-6) continue
+          }
+          const x = toX(b)
+          if (x < -2 || x > cssW + 2) continue
+          ctx.moveTo(x, 0)
+          ctx.lineTo(x, cssH)
+          drawn++
+        }
+        if (drawn === 0) return
+        ctx.strokeStyle = color
+        ctx.globalAlpha = alpha
+        ctx.lineWidth = 1
+        ctx.stroke()
+        ctx.globalAlpha = 1
       }
-      ctx.strokeStyle = grid
-      ctx.globalAlpha = level.alpha
-      ctx.lineWidth = 1
-      ctx.stroke()
-      ctx.globalAlpha = 1
+
+      // De fino a grueso: micros → beats → mayores
+      const sorted = [...levels].sort((a, b) => a.spacingBeats - b.spacingBeats)
+      for (const level of sorted) {
+        if (level.spacingBeats >= majorStep) continue
+        const alpha =
+          level.kind === 'micro' ? 0.28 : level.kind === 'subdivision' ? 0.4 : 0.55
+        strokeBeats(level.spacingBeats, alpha, grid, { skipIfOnStep: majorStep })
+      }
+
+      if (barInterval > 1 && pxPerBar >= 8) {
+        strokeBeats(beatsPerBar, 0.5, grid, { skipIfOnStep: majorStep })
+      }
+      strokeBeats(majorStep, 0.95, border)
     }
 
-    ctx.beginPath()
-    const firstBarBeat = Math.floor(from / beatsPerBar) * beatsPerBar
-    for (let beat = firstBarBeat; beat <= to; beat += beatsPerBar) {
-      if (beat < 0) continue
-      const x = Math.round(toViewX(beat)) + 0.5
-      if (x < -1 || x > cssW + 1) continue
-      ctx.moveTo(x, 0)
-      ctx.lineTo(x, cssH)
+    const sync = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        const x = scroller?.scrollLeft ?? projection.scrollX
+        draw(x)
+      })
     }
-    ctx.strokeStyle = border
-    ctx.globalAlpha = 0.85
-    ctx.lineWidth = 1
-    ctx.stroke()
-    ctx.globalAlpha = 1
-  }, [projection, zoom, beatsPerBar, viewportWidth, contentHeight, pxPerBeat, scrollX])
+
+    draw(scroller?.scrollLeft ?? projection.scrollX)
+    scroller?.addEventListener('scroll', sync, { passive: true })
+    const ro = new ResizeObserver(sync)
+    if (scroller) ro.observe(scroller)
+    return () => {
+      cancelAnimationFrame(raf)
+      scroller?.removeEventListener('scroll', sync)
+      ro.disconnect()
+    }
+  }, [projection.scrollX, projection, zoom, beatsPerBar, viewportWidth, contentHeight, pxPerBeat])
 
   return (
     <canvas
       ref={canvasRef}
-      className="pointer-events-none absolute left-0 top-0 z-0"
+      className="pointer-events-none absolute top-0 z-0"
       aria-hidden
     />
   )

@@ -4,6 +4,10 @@
  */
 
 import type { PluginDescriptor } from './plugin/types'
+import {
+  filterCatalogForAi,
+  resolveRoleDefaultFromCatalog,
+} from './plugin/instrument-ai-prefs'
 
 export type InstrumentRole =
   | 'drums'
@@ -214,9 +218,13 @@ export function scoreDescriptorForRole(d: PluginDescriptor, role: InstrumentRole
 }
 
 export function pickVstForRole(catalog: PluginDescriptor[], role: InstrumentRole): PluginDescriptor | undefined {
+  const usable = filterCatalogForAi(catalog)
+  const preferred = resolveRoleDefaultFromCatalog(usable, role)
+  if (preferred) return preferred
+
   let best: PluginDescriptor | undefined
   let bestScore = 0
-  for (const d of catalog) {
+  for (const d of usable) {
     const sc = scoreDescriptorForRole(d, role)
     if (sc > bestScore) {
       bestScore = sc

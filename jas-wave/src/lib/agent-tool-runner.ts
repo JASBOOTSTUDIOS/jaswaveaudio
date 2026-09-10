@@ -19,9 +19,14 @@ export type RunRegisteredToolOpts = ExecuteDawOptions & {
   executedCallIds?: ReadonlySet<string>
 }
 
-function stripInternalArgs(args: Record<string, unknown>): Record<string, unknown> {
+function stripInternalArgs(tool: string, args: Record<string, unknown>): Record<string, unknown> {
   const out = { ...args }
   delete out.__expectedRevision
+  // trackId ↔ pistaId (schemas de midi/clip solo admiten pistaId)
+  if (out.pistaId == null && out.trackId != null) out.pistaId = out.trackId
+  if (/^(midi\.|clip\.)/.test(tool)) {
+    delete out.trackId
+  }
   return out
 }
 
@@ -59,7 +64,7 @@ export async function runRegisteredTool(
     }
   }
 
-  const args = stripInternalArgs(call.arguments)
+  const args = stripInternalArgs(call.tool, call.arguments)
 
   if (isSyntheticReadTool(call.tool)) {
     const syn = syntheticReadResult(call.tool, args, st0)

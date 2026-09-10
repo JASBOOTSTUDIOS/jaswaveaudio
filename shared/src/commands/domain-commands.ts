@@ -118,6 +118,8 @@ export type MidiNotePayload = {
 
 export type MidiClipCreatePayload = {
   pistaId: string;
+  /** Alias de pistaId (IA / UI en inglés). Se normaliza antes del handler. */
+  trackId?: string;
   nombre?: string;
   inicio?: number;
   duracion?: number;
@@ -1007,6 +1009,7 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
       type: 'object',
       properties: {
         pistaId: { type: 'string' },
+        trackId: { type: 'string' },
         nombre: { type: 'string' },
         inicio: { type: 'number' },
         duracion: { type: 'number' },
@@ -1026,13 +1029,18 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
           },
         },
       },
-      required: ['pistaId', 'notas'],
+      // pistaId o trackId (alias); el handler unifica.
+      required: ['notas'],
       additionalProperties: false,
     },
     handler: (estado: DAWState, payload: MidiClipCreatePayload): StateTransition<MidiClipCreatePayload> => {
-      const pista = estado.project.tracks.find(t => t.id === payload.pistaId);
+      const pistaId = String(payload.pistaId ?? payload.trackId ?? '').trim()
+      if (!pistaId) {
+        throw new Error('Falta pistaId/trackId');
+      }
+      const pista = estado.project.tracks.find(t => t.id === pistaId);
       if (!pista) {
-        throw new Error(`Pista no encontrada: ${payload.pistaId}`);
+        throw new Error(`Pista no encontrada: ${pistaId}`);
       }
       if (pista.tipo !== 'midi' && pista.tipo !== 'instrumento' && pista.tipo !== 'audio') {
         throw new Error(`La pista «${pista.nombre}» no admite clips MIDI (tipo=${pista.tipo}).`);
@@ -1056,7 +1064,7 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
 
       const clip: MidiClip = {
         id: generarId(),
-        trackId: payload.pistaId,
+        trackId: pistaId,
         nombre: payload.nombre || 'Clip MIDI',
         inicio: payload.inicio ?? 0,
         duracion,
@@ -1077,7 +1085,7 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
 
       const proyecto: ProjectState = {
         ...estado.project,
-        tracks: estado.project.tracks.map(t => (t.id === payload.pistaId ? pistaActualizada : t)),
+        tracks: estado.project.tracks.map(t => (t.id === pistaId ? pistaActualizada : t)),
         modificado: true,
         fechaModificacion: Date.now(),
       };
@@ -1090,11 +1098,11 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
             version: 1,
             marcaTiempo: Date.now(),
             fuente: 'domain-commands',
-            payload: { clipId: clip.id, pistaId: payload.pistaId, tipo: 'midi', notas: notas.length },
+            payload: { clipId: clip.id, pistaId, tipo: 'midi', notas: notas.length },
           },
         ],
-        result: { ...payload, notas },
-        inversePayload: { pistaId: payload.pistaId, clipId: clip.id },
+        result: { ...payload, pistaId, notas },
+        inversePayload: { pistaId, clipId: clip.id },
       };
     },
   };

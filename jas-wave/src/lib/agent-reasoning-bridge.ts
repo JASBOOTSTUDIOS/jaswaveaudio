@@ -54,7 +54,7 @@ export async function runAgentReasoningForTurn(opts: {
 }> {
   const { formatLibraryPresetsForContext } = await import('./library/ops')
   const presetsBlock =
-    opts.libraryPresetsBlock ?? (await formatLibraryPresetsForContext(opts.tienda, 12))
+    opts.libraryPresetsBlock ?? (await formatLibraryPresetsForContext(opts.tienda, 40))
   const baseContext = buildAssembledAgentContext(
     opts.tienda,
     opts.state,
@@ -158,7 +158,7 @@ export async function runCouncilReviewForTurn(opts: {
   decisionBrief: string
 }> {
   const { formatLibraryPresetsForContext } = await import('./library/ops')
-  const presetsBlock = await formatLibraryPresetsForContext(opts.tienda, 12)
+  const presetsBlock = await formatLibraryPresetsForContext(opts.tienda, 40)
   const projectContext = buildAssembledAgentContext(
     opts.tienda,
     opts.state,

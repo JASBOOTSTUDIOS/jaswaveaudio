@@ -16,7 +16,7 @@ import { FaderControl, KnobControl, LevelMeterBarHorizontal } from './ui/control
 import { ChannelFxBank } from '@/components/channel-fx-bank'
 import { TrackMidiInput } from '@/components/track-midi-input'
 import { TrackAudioInput } from '@/components/track-audio-input'
-import { getSelectedTrackId } from '@/src/lib/selection-helpers'
+import { getSelectedTrackId, selectTrackPayload } from '@/src/lib/selection-helpers'
 import { midiInputOf } from '@/src/lib/midi-track-io'
 import { audioInputOf } from '@/src/lib/audio-track-io'
 import { audioEngine } from '@/lib/audio-engine'
@@ -27,7 +27,7 @@ import {
 } from '@/src/lib/plugin/native-mix-meters'
 import { extractHostPluginPath } from '@/src/lib/plugin/plugin-info-adapter'
 import { isBuiltinInstrument } from '@/src/lib/plugin/track-vst-runtime'
-import { AutomationLanesPanel, maybeWriteAutomationPoint } from '@/components/automation-lanes-panel'
+import { maybeWriteAutomationPoint } from '@/components/automation-lanes-panel'
 
 type MixerRow = {
   id: string
@@ -275,7 +275,7 @@ export function Mixer() {
       </div>
 
       {/* Tiras de canal */}
-      <div className="flex min-h-0 flex-1 overflow-auto">
+      <div className="flex min-h-0 flex-1 overflow-x-auto overflow-y-hidden bg-panel">
         {trackList.map((track, trackIndex) => (
           <div
             key={track.id}
@@ -299,11 +299,16 @@ export function Mixer() {
               if (!id || id === track.id) return
               moveTrackToIndex(id, trackIndex)
             }}
-            className={`flex shrink-0 flex-col border-r border-border px-2 py-2 ${collapsed ? 'w-[52px]' : 'w-[124px]'} ${
-              selectedTrackId === track.id ? 'bg-accent-amber/10' : ''
+            className={`flex shrink-0 cursor-pointer flex-col border-r border-border px-2 py-2 ${collapsed ? 'w-[52px]' : 'w-[124px]'} ${
+              selectedTrackId === track.id
+                ? 'bg-accent-amber/20 ring-1 ring-inset ring-accent-amber/50'
+                : 'hover:bg-panel-raised/40'
             } ${dragOverTrackId === track.id && dragTrackId !== track.id ? 'ring-1 ring-inset ring-accent-amber' : ''} ${
               dragTrackId === track.id ? 'opacity-60' : ''
             }`}
+            onClick={() => {
+              void tienda.executor.execute('selection.set', selectTrackPayload(track.id))
+            }}
           >
             {/* Nombre */}
             <div className="mb-1.5 flex items-center justify-center gap-0.5">
@@ -527,8 +532,20 @@ export function Mixer() {
             }}
           />
         </div>
+
+        {/* Espacio en blanco: doble clic → nueva pista */}
+        <div
+          className="min-w-[96px] flex-1 cursor-pointer self-stretch"
+          title="Doble clic: nueva pista"
+          onDoubleClick={() => {
+            const count = tracks.length + 1
+            void tienda.executor.execute('track.create', {
+              nombre: `MIDI ${count}`,
+              tipo: 'midi',
+            })
+          }}
+        />
       </div>
-      {!collapsed ? <AutomationLanesPanel /> : null}
     </section>
   )
 }

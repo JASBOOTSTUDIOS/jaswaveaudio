@@ -16,6 +16,16 @@ No hay Soft Pad Web Audio: el sonido de instrumentos sale del **Plugin Host** (V
 2. Escanea el catálogo.
 3. Inserta en la pista seleccionada (o pide al Asistente `plugin.insert`).
 
+### Preferencias para la IA
+
+En **Instrumentos**:
+
+- **Catálogo VST**: buscar / filtrar; **IA / Off**; default de **plugin** por rol.
+- **Configs**: guarda el estado completo del VST (p. ej. un instrumento DecentSampler = una config). Cada una tiene `presetId`; puedes marcarla default de rol para que la IA la use al producir.
+- Flujo típico: inserta DecentSampler → carga el sonido en su UI → **Configs → Guardar de pista** → opcionalmente default Piano/Pad/etc.
+
+Las carpetas de escaneo y la vista previa MIDI están colapsadas abajo para dejar espacio al catálogo.
+
 ### Preferencias de formato
 
 | Formato | Recomendación |

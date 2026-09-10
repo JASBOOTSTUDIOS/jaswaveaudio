@@ -9,6 +9,7 @@ import { requestOpenTool } from '@/src/workspace/types'
 import { dawClipboard, type ClipboardClip } from '@/src/lib/daw-clipboard'
 import { exportClipScorePdfDialog } from '@/src/lib/midi-score-export'
 import { styleSaveFromClip } from '@/src/lib/styles/ops'
+import { openMidiClipMdPanel } from '@/src/lib/open-midi-clip-md'
 
 export type ClipMenuState = {
   trackId: string
@@ -202,7 +203,6 @@ export function ClipContextMenu({ menu, onClose, tienda }: Props) {
 
   const multi = menuClips.length > 1
   const midi = clipIsMidi(clip)
-  const allMidi = menuClips.every((c) => clipIsMidi(c))
   const beat = menu.beatAtClick
   const canSplit =
     !multi &&
@@ -261,6 +261,22 @@ export function ClipContextMenu({ menu, onClose, tienda }: Props) {
           })
         }
       />
+      ) : null}
+      {!multi && midi ? (
+        <MenuItem
+          label="Abrir MIDI · MD"
+          onClick={() =>
+            run(() => {
+              void tienda.executor.execute('selection.set', {
+                idsClips: menu.clipIds,
+                idsPistas: [track.id],
+                tipo: 'clip',
+                idPrincipal: track.id,
+              })
+              openMidiClipMdPanel(tienda, clip.id, track.id)
+            })
+          }
+        />
       ) : null}
       {!multi ? (
       <MenuItem

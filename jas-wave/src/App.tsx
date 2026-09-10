@@ -200,7 +200,9 @@ function AppShell() {
   const dispatcher = useShortcutDispatcher()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
-  const { layout, setActiveTab, toggleZone, moveTool, toolsInZone, dockTool } = useWorkspace()
+  const [railActive, setRailActive] = useState<ToolId | null>(null)
+  const { layout, setActiveTab, toggleZone, toolsInZone, dockTool, closeTool, openTool, toggleTool, isToolOpen } =
+    useWorkspace()
 
   useEffect(() => {
     const handler = () => setShortcutsOpen(true)
@@ -212,6 +214,12 @@ function AppShell() {
     const handler = (e: Event) => {
       const id = (e as CustomEvent<{ id?: string }>).detail?.id
       if (id === 'archivo.exportarBounce') setExportOpen(true)
+      if (id?.startsWith('ventana.tool.')) {
+        const toolId = id.slice('ventana.tool.'.length) as ToolId
+        if (toolId in TOOL_CATALOG) {
+          window.dispatchEvent(new CustomEvent('jaswave-toggle-tool', { detail: { toolId } }))
+        }
+      }
     }
     window.addEventListener('jaswave-menu-action', handler)
     return () => window.removeEventListener('jaswave-menu-action', handler)
@@ -241,7 +249,6 @@ function AppShell() {
       const toolId = detail?.toolId
       if (!toolId || !(toolId in TOOL_CATALOG)) return
       if (layout.undocked.includes(toolId)) {
-        // Ya está en otra ventana: enfocarla (no volver a acoplar)
         const api = window.electron as typeof window.electron & {
           openToolWindow?: (id: string, title: string) => Promise<unknown>
         }
@@ -251,29 +258,44 @@ function AppShell() {
       for (const zone of ['left', 'right', 'bottom', 'center'] as const) {
         if (toolsInZone(zone).includes(toolId)) {
           setActiveTab(zone, toolId)
-          if (!layout.zoneVisible[zone] && zone !== 'center') toggleZone(zone)
           return
         }
       }
-      moveTool(toolId, detail.zone ?? TOOL_CATALOG[toolId].defaultZone)
+      openTool(toolId, detail.zone ?? TOOL_CATALOG[toolId].defaultZone)
     }
     window.addEventListener('jaswave-open-tool', handler)
     return () => window.removeEventListener('jaswave-open-tool', handler)
-  }, [layout.undocked, layout.zoneVisible, toolsInZone, setActiveTab, toggleZone, moveTool])
+  }, [layout.undocked, toolsInZone, setActiveTab, openTool])
+
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const toolId = (ev as CustomEvent<{ toolId: ToolId }>).detail?.toolId
+      if (!toolId || !(toolId in TOOL_CATALOG)) return
+      toggleTool(toolId)
+    }
+    window.addEventListener('jaswave-toggle-tool', handler)
+    return () => window.removeEventListener('jaswave-toggle-tool', handler)
+  }, [toggleTool])
 
   const handleRailSelect = (toolId: ToolId) => {
+    setRailActive(toolId)
     if (layout.undocked.includes(toolId)) {
       dockTool(toolId)
       return
     }
+    // Si ya está abierta y activa → cerrar tab (toggle).
     for (const zone of ['left', 'right', 'bottom', 'center'] as const) {
       if (toolsInZone(zone).includes(toolId)) {
+        const zoneShown = zone === 'center' || layout.zoneVisible[zone]
+        if (zoneShown && layout.activeTab[zone] === toolId) {
+          closeTool(toolId)
+          return
+        }
         setActiveTab(zone, toolId)
-        if (!layout.zoneVisible[zone] && zone !== 'center') toggleZone(zone)
         return
       }
     }
-    moveTool(toolId, TOOL_CATALOG[toolId].defaultZone)
+    openTool(toolId, TOOL_CATALOG[toolId].defaultZone)
   }
 
   // Mostrar zona aunque esté vacía (para poder + / soltar herramientas)
@@ -297,10 +319,12 @@ function AppShell() {
         <div className="flex flex-1 min-h-0">
           <IconRail
             activeTool={
-              layout.activeTab.left ??
-              layout.activeTab.right ??
-              layout.activeTab.bottom ??
-              layout.activeTab.center
+              railActive && isToolOpen(railActive)
+                ? railActive
+                : layout.activeTab.left ??
+                  layout.activeTab.right ??
+                  layout.activeTab.bottom ??
+                  layout.activeTab.center
             }
             undockedTools={layout.undocked}
             onToolSelect={handleRailSelect}
@@ -312,26 +336,32 @@ function AppShell() {
             <TransportBar />
             <EditToolbar />
 
-            <ResizablePanelGroup direction="horizontal" autoSaveId="jaswave-ide-h" className="min-h-0 flex-1">
+            <ResizablePanelGroup direction="horizontal" autoSaveId="jaswave-ide-h" className="min-h-0 flex-1 bg-panel">
               {leftVisible && (
                 <>
-                  <ResizablePanel id="jas-left" order={1} defaultSize={22} minSize={12} maxSize={40} className="min-w-0 border-r border-border">
-                    <DockZonePanel zone="left" />
+                  <ResizablePanel id="jas-left" order={1} defaultSize={22} minSize={12} maxSize={40} className="min-h-0 min-w-0 border-r border-border bg-panel">
+                    <div className="h-full min-h-0">
+                      <DockZonePanel zone="left" />
+                    </div>
                   </ResizablePanel>
                   <ResizableHandle withHandle />
                 </>
               )}
 
-              <ResizablePanel id="jas-center" order={2} defaultSize={leftVisible && rightVisible ? 56 : 78} minSize={30} className="min-w-0">
-                <ResizablePanelGroup direction="vertical" autoSaveId="jaswave-ide-v" className="h-full">
-                  <ResizablePanel id="jas-arrange" order={1} defaultSize={bottomVisible ? 62 : 100} minSize={20}>
-                    <DockZonePanel zone="center" />
+              <ResizablePanel id="jas-center" order={2} defaultSize={leftVisible && rightVisible ? 56 : 78} minSize={30} className="min-h-0 min-w-0 bg-panel">
+                <ResizablePanelGroup direction="vertical" autoSaveId="jaswave-ide-v" className="h-full min-h-0 bg-panel">
+                  <ResizablePanel id="jas-arrange" order={1} defaultSize={bottomVisible ? 62 : 100} minSize={20} className="min-h-0 bg-panel">
+                    <div className="h-full min-h-0">
+                      <DockZonePanel zone="center" />
+                    </div>
                   </ResizablePanel>
                   {bottomVisible && (
                     <>
                       <ResizableHandle withHandle />
-                      <ResizablePanel id="jas-bottom" order={2} defaultSize={38} minSize={12} maxSize={70} className="border-t border-border">
-                        <DockZonePanel zone="bottom" />
+                      <ResizablePanel id="jas-bottom" order={2} defaultSize={38} minSize={12} maxSize={70} className="min-h-0 border-t border-border bg-panel">
+                        <div className="h-full min-h-0">
+                          <DockZonePanel zone="bottom" />
+                        </div>
                       </ResizablePanel>
                     </>
                   )}
@@ -341,8 +371,10 @@ function AppShell() {
               {rightVisible && (
                 <>
                   <ResizableHandle withHandle />
-                  <ResizablePanel id="jas-right" order={3} defaultSize={22} minSize={12} maxSize={40} className="min-w-0 border-l border-border">
-                    <DockZonePanel zone="right" />
+                  <ResizablePanel id="jas-right" order={3} defaultSize={22} minSize={12} maxSize={40} className="min-h-0 min-w-0 border-l border-border bg-panel">
+                    <div className="h-full min-h-0">
+                      <DockZonePanel zone="right" />
+                    </div>
                   </ResizablePanel>
                 </>
               )}
