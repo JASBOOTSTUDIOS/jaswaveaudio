@@ -20,6 +20,7 @@ import { requestOpenTool } from '../src/workspace/types'
 import { bumpUiZoom, bumpDocsTextZoom, isDocsZoomTarget, setDocsTextZoom } from '../src/lib/docs-editor-store'
 import { bumpChatTextZoom, isChatZoomTarget, setChatTextZoom } from '../src/lib/chat-ui-store'
 import { captureActiveDocTextSelection } from '../src/lib/ai-selection-context'
+import { resolveSnapDivision } from '../src/lib/timeline-snap'
 
 /**
  * Sistema unificado: ActionSystem → Command System.
@@ -193,8 +194,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         const s = st()
         const zoom = s.ui?.zoomHorizontal ?? 1
         const snapOn = s.project?.timeline?.snap ?? true
-        const snap = s.project?.timeline?.snapValor ?? 1
-        const beats = snapOn ? Math.max(0.0625, snap) : 1
+        const bpb = s.project?.timeSignature?.numerador ?? 4
+        const division = resolveSnapDivision(s.project?.timeline?.snapValor ?? 1, bpb)
+        const beats = snapOn && division > 0 ? division : 1
         const deltaPx = -Math.max(4, Math.round(5 * zoom * beats))
         window.dispatchEvent(new CustomEvent('jaswave-scroll-timeline', { detail: { deltaPx } }))
       },
@@ -202,8 +204,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         const s = st()
         const zoom = s.ui?.zoomHorizontal ?? 1
         const snapOn = s.project?.timeline?.snap ?? true
-        const snap = s.project?.timeline?.snapValor ?? 1
-        const beats = snapOn ? Math.max(0.0625, snap) : 1
+        const bpb = s.project?.timeSignature?.numerador ?? 4
+        const division = resolveSnapDivision(s.project?.timeline?.snapValor ?? 1, bpb)
+        const beats = snapOn && division > 0 ? division : 1
         const deltaPx = Math.max(4, Math.round(5 * zoom * beats))
         window.dispatchEvent(new CustomEvent('jaswave-scroll-timeline', { detail: { deltaPx } }))
       },

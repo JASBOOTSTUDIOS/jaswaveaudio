@@ -14,6 +14,16 @@ import {
 
 let mainWindow: typeof BrowserWindow | null = null
 
+// Evitar que Chromium frise timers/RAF en la ventana principal cuando el foco
+// está en un panel undock (playhead sync / metrónomo UI).
+try {
+  app.commandLine.appendSwitch('disable-background-timer-throttling')
+  app.commandLine.appendSwitch('disable-renderer-backgrounding')
+  app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
+} catch {
+  /* ignore */
+}
+
 /** Icono de app (ventana / taskbar). */
 function resolveAppIconPath(): string | undefined {
   const fileName = 'jaswave-icono-con-frecuencia.png'
@@ -198,10 +208,17 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // Playhead sync a undock: no throttlear timers/RAF en background.
+      backgroundThrottling: false,
     },
   })
 
   disablePageZoom(mainWindow)
+  try {
+    mainWindow.webContents.setBackgroundThrottling(false)
+  } catch {
+    /* ignore */
+  }
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
@@ -606,10 +623,16 @@ ipcMain.handle('tool-window-open', async (_event: IpcMainInvokeEvent, toolId: st
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      backgroundThrottling: false,
     },
   })
 
   disablePageZoom(win)
+  try {
+    win.webContents.setBackgroundThrottling(false)
+  } catch {
+    /* ignore */
+  }
 
   toolWindows.set(toolId, win)
   win.once('ready-to-show', () => {

@@ -20,21 +20,30 @@ const METER_LEVEL_GRADIENT_H =
 export function LevelMeterBar({
   level,
   className = '',
+  /** Si true, muestra el riel aunque el nivel sea 0. */
+  alwaysShowRail = false,
 }: {
   level: number
   className?: string
+  alwaysShowRail?: boolean
 }) {
   const pct = Math.min(100, Math.max(0, level * 100))
-  if (pct < 0.05) return null
+  if (!alwaysShowRail && pct < 0.05) return null
   return (
     <div
-      className={`pointer-events-none absolute bottom-0 left-1/2 top-0 w-1.5 -translate-x-1/2 rounded-sm ${className}`}
-      style={{
-        background: METER_LEVEL_GRADIENT,
-        clipPath: `inset(${100 - pct}% 0 0 0)`,
-      }}
+      className={`pointer-events-none absolute bottom-0 left-1/2 top-0 w-1.5 -translate-x-1/2 rounded-sm bg-panel-raised/80 ${className}`}
       aria-hidden
-    />
+    >
+      {pct >= 0.05 ? (
+        <div
+          className="absolute inset-0 rounded-sm"
+          style={{
+            background: METER_LEVEL_GRADIENT,
+            clipPath: `inset(${100 - pct}% 0 0 0)`,
+          }}
+        />
+      ) : null}
+    </div>
   )
 }
 
@@ -42,21 +51,29 @@ export function LevelMeterBar({
 export function LevelMeterBarHorizontal({
   level,
   className = '',
+  alwaysShowRail = false,
 }: {
   level: number
   className?: string
+  alwaysShowRail?: boolean
 }) {
   const pct = Math.min(100, Math.max(0, level * 100))
-  if (pct < 0.05) return null
+  if (!alwaysShowRail && pct < 0.05) return null
   return (
     <div
-      className={`pointer-events-none h-full w-full rounded-sm ${className}`}
-      style={{
-        background: METER_LEVEL_GRADIENT_H,
-        clipPath: `inset(0 ${100 - pct}% 0 0)`,
-      }}
+      className={`pointer-events-none h-full w-full rounded-sm bg-panel-raised/80 ${className}`}
       aria-hidden
-    />
+    >
+      {pct >= 0.05 ? (
+        <div
+          className="h-full w-full rounded-sm"
+          style={{
+            background: METER_LEVEL_GRADIENT_H,
+            clipPath: `inset(0 ${100 - pct}% 0 0)`,
+          }}
+        />
+      ) : null}
+    </div>
   )
 }
 
@@ -121,7 +138,9 @@ export function FaderControl({
         className="relative w-4 cursor-ns-resize touch-none focus:outline-none"
       >
         <div className="absolute left-1/2 top-0 h-full w-0.5 -translate-x-1/2 rounded-full bg-panel-raised" />
-        {typeof meter === 'number' && meter > 0.0005 && <LevelMeterBar level={meter} />}
+        {typeof meter === 'number' && (
+          <LevelMeterBar level={meter} alwaysShowRail />
+        )}
         <div
           className="absolute left-1/2 w-0.5 -translate-x-1/2 rounded-full"
           style={{ top: `calc(${top}% - 8px)`, bottom: 0, backgroundColor: color, opacity: 0.6 }}

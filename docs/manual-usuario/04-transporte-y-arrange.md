@@ -37,6 +37,7 @@ El **medidor de buffer** (blanco → amarillo → rojo) indica ocupación mix→
 ## Clips
 
 - **Mover** — arrastra el cuerpo del clip (imán/snap según cuadrícula)
+- **Duplicar** — `Ctrl`/`Cmd` + arrastrar el cuerpo (estilo Reaper); el original se queda
 - **Recortar** — asas izquierda/derecha
 - **Dividir en playhead** — atajo `S` (herramienta cortar)
 - Copiar / cortar / pegar / duplicar / borrar — menú Editar o atajos

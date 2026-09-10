@@ -14,6 +14,7 @@ import {
 import { useRef, useCallback } from 'react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import type { HerramientaActiva } from '../../shared/src/types/ui'
+import { TIMELINE_SNAP_OPTIONS, snapSelectValue, SNAP_BAR } from '@/src/lib/timeline-snap'
 
 const TOOLS: { id: HerramientaActiva | 'loop'; icon: typeof Pencil; label: string; action?: 'loop' }[] = [
   { id: 'select', icon: MousePointer2, label: 'Seleccionar (N)' },
@@ -22,18 +23,6 @@ const TOOLS: { id: HerramientaActiva | 'loop'; icon: typeof Pencil; label: strin
   { id: 'split', icon: Scissors, label: 'Cortar / Split (S)' },
   { id: 'eraser', icon: Trash2, label: 'Borrador (Del)' },
   { id: 'loop', icon: Repeat2, label: 'Alternar bucle (L)', action: 'loop' },
-]
-
-const SNAP_OPTIONS = [
-  { label: 'Off (Sin encaje)', value: 0 },
-  { label: '1 Compás (1 Bar)', value: 4 },
-  { label: '1/2 nota', value: 2 },
-  { label: '1/4 nota (Beat)', value: 1 },
-  { label: '1/8 nota', value: 0.5 },
-  { label: '1/16 nota', value: 0.25 },
-  { label: '1/32 nota', value: 0.125 },
-  { label: '1/64 nota', value: 0.0625 },
-  { label: '1/128 nota', value: 0.03125 },
 ]
 
 function MiniSlider({
@@ -145,7 +134,10 @@ export function EditToolbar() {
   }
 
   const handleSnapChange = (val: number) => {
-    void tienda.executor.execute('timeline.setSnap', { snap: val > 0, snapValor: val })
+    void tienda.executor.execute('timeline.setSnap', {
+      snap: val === SNAP_BAR || val > 0,
+      snapValor: val,
+    })
   }
 
   return (
@@ -174,14 +166,18 @@ export function EditToolbar() {
         })}
       </div>
 
-      <div className="ml-auto flex items-center gap-1.5 rounded-md bg-panel-raised px-2 py-1 text-[12px] text-foreground ring-1 ring-border">
+      <div
+        className="ml-auto flex items-center gap-1.5 rounded-md bg-panel-raised px-2 py-1 text-[12px] text-foreground ring-1 ring-border"
+        title="Profundidad de encaje: playhead (línea amarilla) y edición en timelines"
+      >
         <Grid3x3 className="size-3.5 text-accent-amber" />
         <select
-          value={snapEnabled ? snapValor : 0}
+          value={snapSelectValue(snapEnabled, snapValor)}
           onChange={(e) => handleSnapChange(Number(e.target.value))}
           className="cursor-pointer bg-transparent font-medium text-foreground outline-none"
+          aria-label="Profundidad de encaje de la línea de tiempo"
         >
-          {SNAP_OPTIONS.map((opt) => (
+          {TIMELINE_SNAP_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value} className="bg-panel text-foreground">
               {opt.label}
             </option>

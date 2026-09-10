@@ -8,6 +8,7 @@ import type { DAWState } from '../../../shared/src'
 import { linealADb, panADisplay } from '@/lib/audio-conversions'
 import { ConfirmDialog } from '../ui/confirm-dialog'
 import { StereoWaveform } from '../stereo-waveform'
+import { executeOrNotify } from '@/src/lib/execute-or-toast'
 import { requestOpenTool } from '@/src/workspace/types'
 import { TrackButton } from './TrackButton'
 import { TimelineRuler } from './TimelineRuler'
@@ -34,6 +35,7 @@ import {
 import { useTimelineScale } from '@/hooks/arrangement/useTimelineScale'
 import { useSnap } from '@/hooks/arrangement/useSnap'
 import { getSelectedTrackId, selectTrackPayload } from '@/src/lib/selection-helpers'
+import { resolveSnapDivision } from '@/src/lib/timeline-snap'
 import { snapPlayheadBeat } from './timeline-grid-math'
 
 export { ARRANGE_MIN_ZOOM, ARRANGE_MAX_ZOOM } from './constants'
@@ -91,6 +93,16 @@ interface ClipDragState {
   previewInicio: number
   previewDuracion: number
   previewTrackId: string
+  /** Ctrl+arrastrar: dejar original y crear copia al soltar (Reaper). */
+  duplicate: boolean
+}
+
+/** Alt+Ctrl+arrastrar: crear clip MIDI vacío (estilo Reaper). */
+interface CreateMidiClipDrag {
+  trackId: string
+  originBeat: number
+  previewInicio: number
+  previewDuracion: number
 }
 
 export function ArrangementView() {
@@ -122,6 +134,9 @@ export function ArrangementView() {
   const lastPointerXRef = useRef<number | null>(null)
 
   const [dragging, setDragging] = useState(false)
+  const playheadDraggingRef = useRef(false)
+  /** Cleanup de listeners window (playhead / crear clip). */
+  const windowDragCleanupRef = useRef<(() => void) | null>(null)
   const [playheadTooltip, setPlayheadTooltip] = useState<{ beat: number; bar: number; beatInBar: number } | null>(null)
   const [viewportWidth, setViewportWidth] = useState(800)
   const [viewportHeight, setViewportHeight] = useState(400)
@@ -133,6 +148,10 @@ export function ArrangementView() {
   const clipDragRef = useRef<ClipDragState | null>(null)
   const lastClipDragUiMs = useRef(0)
   clipDragRef.current = clipDrag
+  const [createMidiDrag, setCreateMidiDrag] = useState<CreateMidiClipDrag | null>(null)
+  const createMidiDragRef = useRef<CreateMidiClipDrag | null>(null)
+  createMidiDragRef.current = createMidiDrag
+  const suppressLaneClickRef = useRef(false)
   const [showAddTrackMenu, setShowAddTrackMenu] = useState(false)
   const addTrackMenuRef = useRef<HTMLDivElement>(null)
   const addTrackFileRef = useRef<HTMLInputElement>(null)
@@ -193,7 +212,20 @@ export function ArrangementView() {
       }),
     [pixelsPerBeat, viewportWidth, liveScrollX, bpm],
   )
-  const { snapBeat, snapDuration } = useSnap(snapEnabled, snapValor)
+  const { snapBeat, snapDuration } = useSnap(
+    snapEnabled && playheadSnap,
+    snapValor,
+    beatsPerBar,
+  )
+  /** Profundidad visual del selector (0 = Off → solo compases). */
+  const snapDivision = snapEnabled ? resolveSnapDivision(snapValor, beatsPerBar) : 0
+
+  useEffect(() => {
+    return () => {
+      windowDragCleanupRef.current?.()
+      windowDragCleanupRef.current = null
+    }
+  }, [])
 
   // Ancho del viewport de LANES (sin columna TCP) + altura del scroll
   useEffect(() => {
@@ -488,7 +520,12 @@ export function ArrangementView() {
   const seekFromEvent = useCallback(
     (clientX: number, origin: 'lanes' | 'ruler' = 'lanes') => {
       const raw = clientXToBeat(clientX, origin)
-      const beat = snapPlayheadBeat(raw, pixelsPerBeat, beatsPerBar, playheadSnap)
+      const beat = snapPlayheadBeat(raw, {
+        playheadSnap,
+        snapEnabled,
+        snapValor,
+        beatsPerBar,
+      })
       seekToBeats(beat)
       const bar = Math.floor(beat / beatsPerBar) + 1
       const beatInBar = (beat % beatsPerBar) + 1
@@ -511,6 +548,8 @@ export function ArrangementView() {
       beatsPerBar,
       pixelsPerBeat,
       playheadSnap,
+      snapEnabled,
+      snapValor,
       TRACK_COL_W,
       centerScrollOnPlayhead,
     ],
@@ -526,15 +565,69 @@ export function ArrangementView() {
     e.preventDefault()
     e.stopPropagation()
     seekOriginRef.current = origin
+    playheadDraggingRef.current = true
     setDragging(true)
     seekFromEvent(e.clientX, origin)
-    // Capturar puntero para arrastre fluido aunque el cursor salga del timeline
-    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+
+    // El playhead vive fuera de TrackCanvas: hay que escuchar en window
+    // o el pointerup nunca limpia el arrastre.
+    windowDragCleanupRef.current?.()
+    const onMove = (ev: PointerEvent) => {
+      if (!playheadDraggingRef.current) return
+      seekFromEvent(ev.clientX, seekOriginRef.current)
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      windowDragCleanupRef.current = null
+      playheadDraggingRef.current = false
+      setDragging(false)
+      setPlayheadTooltip(null)
+      try {
+        ;(e.target as HTMLElement)?.releasePointerCapture?.(ev.pointerId)
+      } catch {
+        /* ignore */
+      }
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    windowDragCleanupRef.current = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+    try {
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
   }
 
   const handleTimelinePointerMove = (e: React.PointerEvent) => {
-    if (dragging) {
+    if (playheadDraggingRef.current || dragging) {
       seekFromEvent(e.clientX, seekOriginRef.current)
+    }
+
+    const creating = createMidiDragRef.current
+    if (creating) {
+      const cur = snapBeat(clientXToBeat(e.clientX))
+      const a = Math.min(creating.originBeat, cur)
+      const b = Math.max(creating.originBeat, cur)
+      const minDur = snapDivision > 0 ? snapDivision : 0.25
+      const next: CreateMidiClipDrag = {
+        ...creating,
+        previewInicio: a,
+        previewDuracion: Math.max(minDur, b - a || minDur),
+      }
+      createMidiDragRef.current = next
+      const now = performance.now()
+      if (now - lastClipDragUiMs.current >= 32) {
+        lastClipDragUiMs.current = now
+        setCreateMidiDrag(next)
+      }
+      return
     }
 
     const drag = clipDragRef.current
@@ -569,20 +662,109 @@ export function ArrangementView() {
 
     clipDragRef.current = next
     const now = performance.now()
-    // Preview a ~30fps: evita re-render completo del arrangement en cada pixel
     if (now - lastClipDragUiMs.current >= 32) {
       lastClipDragUiMs.current = now
       setClipDrag(next)
     }
   }
 
-  const handleTimelinePointerUp = (e?: React.PointerEvent) => {
+  const handleTimelinePointerUp = (e?: React.PointerEvent | PointerEvent) => {
+    playheadDraggingRef.current = false
     setDragging(false)
     setPlayheadTooltip(null)
 
+    const creating = createMidiDragRef.current
+    if (creating) {
+      // Limpiar antes de await para que un segundo pointerup no duplique
+      createMidiDragRef.current = null
+      setCreateMidiDrag(null)
+      suppressLaneClickRef.current = true
+      const minDur = snapDivision > 0 ? snapDivision : 0.25
+      const inicio = Math.max(0, creating.previewInicio)
+      const duracion = Math.max(minDur, creating.previewDuracion)
+      void (async () => {
+        const created = await executeOrNotify(tienda, 'midi.clip.create', {
+          pistaId: creating.trackId,
+          nombre: 'Clip MIDI',
+          inicio,
+          duracion,
+          notas: [],
+        })
+        if (created.success) {
+          await executeOrNotify(tienda, 'selection.set', selectTrackPayload(creating.trackId))
+        }
+      })()
+      if (e && 'pointerId' in e) {
+        try {
+          ;(e.target as HTMLElement)?.releasePointerCapture?.(e.pointerId)
+        } catch {
+          /* ignore */
+        }
+      }
+      return
+    }
+
     const drag = clipDragRef.current
     if (drag) {
-      if (drag.mode === 'move') {
+      if (drag.mode === 'move' && drag.duplicate) {
+        const moved =
+          Math.abs(drag.previewInicio - drag.initialInicio) > 1e-6 ||
+          drag.previewTrackId !== drag.trackId
+        if (moved) {
+          const src = sharedTracks
+            .flatMap((t) => (t.clips ?? []).map((c) => ({ track: t, clip: c })))
+            .find((x) => x.clip.id === drag.clipId)
+          if (src) {
+            const c = src.clip as {
+              tipo?: string
+              nombre?: string
+              duracion?: number
+              color?: string
+              notas?: Array<{
+                pitch: number
+                inicio: number
+                duracion: number
+                velocidad?: number
+                canal?: number
+              }>
+              sourceId?: string
+              source?: { ruta?: string }
+              waveform?: number[]
+            }
+            const destTrackId = drag.previewTrackId
+            const isMidi =
+              c.tipo === 'midi' || (Array.isArray(c.notas) && (c.notas?.length ?? 0) > 0)
+            void (async () => {
+              if (isMidi) {
+                await tienda.executor.execute('midi.clip.create', {
+                  pistaId: destTrackId,
+                  nombre: `${c.nombre || 'Clip'} (Copia)`,
+                  inicio: drag.previewInicio,
+                  duracion: c.duracion ?? drag.previewDuracion,
+                  color: c.color,
+                  notas: (c.notas ?? []).map((n) => ({
+                    pitch: n.pitch,
+                    inicio: n.inicio,
+                    duracion: n.duracion,
+                    velocidad: n.velocidad,
+                    canal: n.canal,
+                  })),
+                })
+              } else {
+                await tienda.executor.execute('clip.create', {
+                  pistaId: destTrackId,
+                  nombre: `${c.nombre || 'Clip'} (Copia)`,
+                  inicio: drag.previewInicio,
+                  duracion: c.duracion ?? drag.previewDuracion,
+                  color: c.color,
+                  sourceId: c.sourceId || c.source?.ruta,
+                  waveform: c.waveform,
+                })
+              }
+            })()
+          }
+        }
+      } else if (drag.mode === 'move') {
         void tienda.executor.execute('clip.move', {
           pistaId: drag.trackId,
           clipId: drag.clipId,
@@ -603,8 +785,12 @@ export function ArrangementView() {
       setClipDrag(null)
     }
 
-    if (e && (e.target as HTMLElement)?.hasPointerCapture?.(e.pointerId)) {
-      ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+    if (e && 'pointerId' in e) {
+      try {
+        ;(e.target as HTMLElement)?.releasePointerCapture?.(e.pointerId)
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -888,6 +1074,10 @@ export function ArrangementView() {
       mode = 'trim-right'
     }
 
+    // Ctrl/Cmd + arrastrar cuerpo = duplicar (Reaper). No en trim ni con Alt (crear MIDI).
+    const duplicate =
+      mode === 'move' && (e.ctrlKey || e.metaKey) && !e.altKey
+
     try {
       ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     } catch {}
@@ -903,6 +1093,7 @@ export function ArrangementView() {
       previewInicio: clip.inicioBeats,
       previewDuracion: clip.duracionBeats,
       previewTrackId: trackId,
+      duplicate,
     })
   }
 
@@ -911,6 +1102,10 @@ export function ArrangementView() {
   }
 
   const handleTrackLaneClick = (e: React.MouseEvent, trackId: string) => {
+    if (suppressLaneClickRef.current) {
+      suppressLaneClickRef.current = false
+      return
+    }
     if (activeTool === 'pencil') {
       const clickBeat = clientXToBeat(e.clientX)
       const snappedClick = snapBeat(clickBeat)
@@ -930,6 +1125,67 @@ export function ArrangementView() {
       selectTrack(trackId)
     } else {
       selectTrack(trackId)
+    }
+  }
+
+  const beginCreateMidiClipDrag = (e: React.PointerEvent, trackId: string) => {
+    if (e.button !== 0) return
+    if (!(e.altKey && (e.ctrlKey || e.metaKey))) return
+    if ((e.target as HTMLElement).closest('[data-clip-id]')) return
+    e.preventDefault()
+    e.stopPropagation()
+    const beat = snapBeat(clientXToBeat(e.clientX))
+    const minDur = snapDivision > 0 ? snapDivision : 0.25
+    const drag: CreateMidiClipDrag = {
+      trackId,
+      originBeat: beat,
+      previewInicio: beat,
+      previewDuracion: minDur,
+    }
+    createMidiDragRef.current = drag
+    setCreateMidiDrag(drag)
+
+    windowDragCleanupRef.current?.()
+    const onMove = (ev: PointerEvent) => {
+      const creating = createMidiDragRef.current
+      if (!creating) return
+      const cur = snapBeat(clientXToBeat(ev.clientX))
+      const a = Math.min(creating.originBeat, cur)
+      const b = Math.max(creating.originBeat, cur)
+      const next: CreateMidiClipDrag = {
+        ...creating,
+        previewInicio: a,
+        previewDuracion: Math.max(minDur, b - a || minDur),
+      }
+      createMidiDragRef.current = next
+      const now = performance.now()
+      if (now - lastClipDragUiMs.current >= 32) {
+        lastClipDragUiMs.current = now
+        setCreateMidiDrag(next)
+      }
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      windowDragCleanupRef.current = null
+      // Última posición antes de commit
+      onMove(ev)
+      handleTimelinePointerUp(ev)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    windowDragCleanupRef.current = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+
+    try {
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
     }
   }
 
@@ -1093,6 +1349,7 @@ export function ArrangementView() {
               height={HEADER_H}
               getScrollX={getLanesScrollX}
               scrollEpoch={scrollEpoch}
+              snapDivision={snapDivision}
             />
           </div>
         )}
@@ -1320,6 +1577,7 @@ export function ArrangementView() {
                 beatsPerBar={beatsPerBar}
                 viewportWidth={viewportWidth}
                 contentHeight={tracksHeight}
+                snapDivision={snapDivision}
               />
 
             {/* Loop region overlay */}
@@ -1395,10 +1653,13 @@ export function ArrangementView() {
                 armed: false,
               }
 
-              // Clips visibles en este carril (soporta preview al mover entre pistas)
+              // Clips visibles en este carril (soporta preview al mover / duplicar entre pistas)
               let trackClips = clips.filter((c) => c.trackId === track.id)
               if (clipDrag?.mode === 'move') {
-                trackClips = trackClips.filter((c) => c.id !== clipDrag.clipId)
+                // Mover: ocultar original; duplicar: dejar original y añadir fantasma
+                if (!clipDrag.duplicate) {
+                  trackClips = trackClips.filter((c) => c.id !== clipDrag.clipId)
+                }
                 if (clipDrag.previewTrackId === track.id) {
                   const dragged = clips.find((c) => c.id === clipDrag.clipId)
                   if (dragged) {
@@ -1406,6 +1667,7 @@ export function ArrangementView() {
                       ...trackClips,
                       {
                         ...dragged,
+                        id: clipDrag.duplicate ? `${dragged.id}__dup-preview` : dragged.id,
                         inicioBeats: clipDrag.previewInicio,
                         duracionBeats: clipDrag.previewDuracion,
                       },
@@ -1425,6 +1687,7 @@ export function ArrangementView() {
                     isDropTarget ? 'bg-accent-amber/10' : ''
                   } ${selectedTrackId === track.id ? 'bg-accent-amber/10' : ''}`}
                   style={{ height: rowH }}
+                  onPointerDown={(e) => beginCreateMidiClipDrag(e, track.id)}
                   onClick={(e) => handleTrackLaneClick(e, track.id)}
                   onContextMenu={(e) => {
                     if ((e.target as HTMLElement).closest('[data-clip-id]')) return
@@ -1445,7 +1708,7 @@ export function ArrangementView() {
                     }
                   }}
                 >
-                  {trackClips.length === 0 ? (
+                  {trackClips.length === 0 && createMidiDrag?.trackId !== track.id ? (
                     <div
                       className="pointer-events-none absolute inset-0 flex items-center pl-3 opacity-30"
                       style={{ height: rowH }}
@@ -1453,12 +1716,16 @@ export function ArrangementView() {
                       <span className="text-[11px] italic text-muted-foreground">
                         {activeTool === 'pencil'
                           ? '✏ Haz clic para crear un clip'
-                          : '↓ Arrastra un archivo de audio aquí'}
+                          : 'Alt+Ctrl+arrastrar: clip MIDI · o suelta audio aquí'}
                       </span>
                     </div>
-                  ) : (
-                    trackClips.map((clip) => {
-                      const isDraggingThis = clipDrag?.clipId === clip.id
+                  ) : null}
+                  {trackClips.map((clip) => {
+                      const isDupGhost = Boolean(
+                        clipDrag?.duplicate && String(clip.id).endsWith('__dup-preview'),
+                      )
+                      const isDraggingThis =
+                        clipDrag?.clipId === clip.id && !(clipDrag.duplicate && clipDrag.mode === 'move')
                       const inicio =
                         isDraggingThis && clipDrag.mode !== 'move'
                           ? clipDrag.previewInicio
@@ -1469,7 +1736,7 @@ export function ArrangementView() {
                         isDraggingThis ? clipDrag.previewDuracion : clip.duracionBeats
                       const clipLeft = projection.beatToPixel(inicio)
                       const clipWidth = Math.max(36, duracion * pixelsPerBeat)
-                      const isSelected = selectedClipIds.includes(clip.id)
+                      const isSelected = selectedClipIds.includes(clip.id) || isDupGhost
                       const barStart = Math.floor(inicio / beatsPerBar) + 1
                       const barEnd = Math.ceil((inicio + duracion) / beatsPerBar)
                       const barCount = barEnd - barStart + 1
@@ -1477,14 +1744,16 @@ export function ArrangementView() {
                       return (
                         <div
                           key={clip.id}
-                          data-clip-id={clip.id}
+                          data-clip-id={isDupGhost ? undefined : clip.id}
                           data-track-id={clip.trackId}
                           onPointerDown={(e) => {
+                            if (isDupGhost) return
                             if (e.button === 2) return
                             handleClipPointerDown(e, clip, clip.trackId)
                           }}
                           onContextMenu={(e) => e.preventDefault()}
                           onDoubleClick={(e) => {
+                            if (isDupGhost) return
                             e.stopPropagation()
                             if (clip.kind === 'midi') {
                               void tienda.executor.execute('selection.set', {
@@ -1498,15 +1767,19 @@ export function ArrangementView() {
                             }
                           }}
                           className={`group absolute inset-y-1 touch-none select-none overflow-hidden rounded-md border shadow-md transition-shadow ${
-                            activeTool === 'split'
-                              ? 'cursor-crosshair'
-                              : activeTool === 'eraser'
-                                ? 'cursor-not-allowed'
-                                : 'cursor-grab active:cursor-grabbing'
+                            isDupGhost
+                              ? 'pointer-events-none z-30 border-dashed border-accent-amber opacity-90'
+                              : activeTool === 'split'
+                                ? 'cursor-crosshair'
+                                : activeTool === 'eraser'
+                                  ? 'cursor-not-allowed'
+                                  : 'cursor-grab active:cursor-grabbing'
                           } ${
-                            isSelected
+                            isSelected && !isDupGhost
                               ? 'z-20 border-accent-amber shadow-lg ring-2 ring-accent-amber ring-offset-0'
-                              : 'z-10 hover:brightness-110'
+                              : isDupGhost
+                                ? ''
+                                : 'z-10 hover:brightness-110'
                           }`}
                           style={{
                             left: `${clipLeft}px`,
@@ -1515,9 +1788,13 @@ export function ArrangementView() {
                             borderColor: isSelected
                               ? undefined
                               : `color-mix(in oklch, ${track.color} 80%, transparent)`,
-                            opacity: t.muted ? 0.35 : 1,
+                            opacity: t.muted ? 0.35 : isDupGhost ? 0.85 : 1,
                           }}
-                          title={`${clip.name} — Compás ${barStart}→${barEnd} (${clip.duracionSeconds.toFixed(2)}s)`}
+                          title={
+                            isDupGhost
+                              ? 'Copia (Ctrl+arrastrar)'
+                              : `${clip.name} — Compás ${barStart}→${barEnd} (${clip.duracionSeconds.toFixed(2)}s)`
+                          }
                         >
                           <div
                             className="absolute bottom-0 left-0 top-0 z-10 w-2 cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100"
@@ -1572,8 +1849,23 @@ export function ArrangementView() {
                           </div>
                         </div>
                       )
-                    })
-                  )}
+                    })}
+                  {createMidiDrag?.trackId === track.id ? (
+                    <div
+                      className="pointer-events-none absolute top-1 bottom-1 z-20 rounded-md border-2 border-sky-300/90 bg-sky-400/25"
+                      style={{
+                        left: projection.beatToPixel(createMidiDrag.previewInicio),
+                        width: Math.max(
+                          8,
+                          createMidiDrag.previewDuracion * pixelsPerBeat,
+                        ),
+                      }}
+                    >
+                      <span className="px-1.5 text-[9px] font-semibold text-sky-200">
+                        Nuevo MIDI
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
               )
             })}

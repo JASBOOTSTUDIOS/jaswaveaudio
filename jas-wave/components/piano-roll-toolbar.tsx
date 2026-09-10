@@ -21,48 +21,55 @@ import {
   FileDown,
   FileCode2,
 } from 'lucide-react'
+import { TIMELINE_SNAP_OPTIONS, snapSelectValue } from '@/src/lib/timeline-snap'
+
 export type PianoRollTool = 'seleccionar' | 'dibujar' | 'borrar'
 
-export type SnapDivision = 1 | 0.5 | 0.25 | 0.125 | 0.0625
+export type SnapDivision = number
 
-const SNAP_LABELS: Record<number, string> = {
-  1: 'Negra (1/4)',
-  0.5: 'Corchea (1/8)',
-  0.25: 'Semicorchea (1/16)',
-  0.125: 'Fusa (1/32)',
-  0.0625: 'Semifusa (1/64)',
-}
+export const SNAP_LABELS: Record<number, string> = Object.fromEntries(
+  TIMELINE_SNAP_OPTIONS.map((o) => [o.value, o.label]),
+)
 
 export const PIANO_ROLL_ATAJOS: { teclas: string; accion: string }[] = [
   { teclas: 'V', accion: 'Herramienta seleccionar' },
   { teclas: 'D / B', accion: 'Herramienta dibujar' },
   { teclas: 'E / X', accion: 'Herramienta borrar' },
-  { teclas: 'S', accion: 'Activar / desactivar imán (snap)' },
-  { teclas: '1–5', accion: 'División del imán (1/4 … 1/64)' },
+  { teclas: 'S', accion: 'Activar / desactivar imán (snap de notas)' },
+  { teclas: '1–8 / 0', accion: 'Profundidad de encaje (compás … 1/128 / Off)' },
+  { teclas: 'Magnet', accion: 'Imán del seek/playhead (transporte)' },
   { teclas: 'Supr / Retroceso', accion: 'Eliminar selección' },
+  { teclas: 'Clic derecho en nota', accion: 'Borrar nota (o selección si la nota está seleccionada)' },
   { teclas: 'Ctrl+A', accion: 'Seleccionar todas las notas' },
   { teclas: 'Ctrl+D', accion: 'Duplicar selección' },
+  { teclas: 'Ctrl+arrastrar nota', accion: 'Duplicar al arrastrar (estilo Reaper); clic sin mover = toggle' },
   { teclas: 'Ctrl+C / Ctrl+V', accion: 'Copiar / pegar notas' },
-  { teclas: '↑ / ↓', accion: 'Trasponer ±1 semitono' },
+  { teclas: '↑ / ↓', accion: 'Trasponer ±1 semitono (con selección)' },
   { teclas: 'Shift+↑ / ↓', accion: 'Trasponer ±1 octava' },
-  { teclas: '← / →', accion: 'Mover ±1 división de imán' },
-  { teclas: 'Shift+← / →', accion: 'Mover ±1 negra' },
+  { teclas: '← / →', accion: 'Con selección: mover notas · sin selección: pan temporal' },
+  { teclas: 'Alt+← / →', accion: 'Pan ~1 compás (sin selección)' },
+  { teclas: 'Shift+← / →', accion: 'Con selección: ±1 negra · sin selección: pan 1 negra' },
   { teclas: 'Q', accion: 'Cuantizar selección (o todo)' },
   { teclas: '—', accion: 'Quitar notas duplicadas (mismo pitch+inicio)' },
   { teclas: 'G', accion: 'Mostrar / ocultar velocidad' },
   { teclas: 'F', accion: 'Mostrar / ocultar expresión (CC)' },
-  { teclas: '+ / −', accion: 'Zoom horizontal' },
-  { teclas: 'Ctrl + rueda', accion: 'Zoom horizontal (hacia el cursor)' },
+  { teclas: '+ / −', accion: 'Zoom horizontal (anclado al playhead)' },
+  { teclas: 'Rueda', accion: 'Zoom horizontal (anclado al playhead)' },
+  { teclas: 'Shift + rueda', accion: 'Pan horizontal' },
+  { teclas: 'Ctrl + rueda', accion: 'Zoom horizontal (anclado al playhead)' },
   { teclas: 'Ctrl+Shift + rueda', accion: 'Zoom vertical (altura de teclas)' },
   { teclas: 'H', accion: 'Zoom vertical (altura de teclas)' },
   { teclas: '?', accion: 'Mostrar / ocultar atajos' },
+  { teclas: 'Regla / arrastrar', accion: 'Seek (playhead); arrastrar línea de tiempo' },
+  { teclas: 'Clic vacío', accion: 'Seek (modo seleccionar)' },
   { teclas: 'Alt+arrastrar nota', accion: 'Mover / redimensionar sin imán (preciso)' },
   { teclas: 'Shift+arrastrar', accion: 'Movimiento fino (¼ del imán)' },
   { teclas: 'Bordes de la nota', accion: 'Cambiar duración (inicio / final)' },
   { teclas: 'Carril Velocidad', accion: 'Arrastrar barras = velocity 1–127' },
   { teclas: 'Clic / teclado', accion: 'Audicionar nota en el VST de la pista' },
   { teclas: 'Doble clic', accion: 'Crear nota (modo dibujar o seleccionar)' },
-  { teclas: 'Alt+arrastrar vacío', accion: 'Crear nota con duración' },
+  { teclas: 'Alt+arrastrar vacío', accion: 'Crear nota con duración del arrastre' },
+  { teclas: 'Alt+Ctrl+arrastrar vacío', accion: 'Crear nota con duración (mismo gesto que clip en arrange)' },
 ]
 
 type ToolBtnProps = {
@@ -101,6 +108,7 @@ export function PianoRollToolbar({
   onHerramienta,
   snapOn,
   onSnapToggle,
+  snapValor,
   snapDiv,
   onSnapDiv,
   onZoomIn,
@@ -139,6 +147,9 @@ export function PianoRollToolbar({
   onHerramienta: (t: PianoRollTool) => void
   snapOn: boolean
   onSnapToggle: () => void
+  /** Valor crudo del toolbar (SNAP_BAR / 0 / beats). */
+  snapValor: number
+  /** División resuelta en beats (para nudge / cuantizar). */
   snapDiv: number
   onSnapDiv: (d: number) => void
   onZoomIn: () => void
@@ -220,15 +231,15 @@ export function PianoRollToolbar({
           onClick={onSnapToggle}
         />
         <select
-          value={snapDiv}
+          value={snapSelectValue(snapOn, snapValor)}
           onChange={(e) => onSnapDiv(Number(e.target.value))}
-          className="h-6 max-w-[130px] rounded border border-border bg-background px-1 text-[10px] text-foreground"
-          title="División del imán"
-          aria-label="División del imán"
+          className="h-6 max-w-[160px] rounded border border-border bg-background px-1 text-[10px] text-foreground"
+          title="Profundidad de encaje (misma que arrange / playhead)"
+          aria-label="Profundidad de encaje"
         >
-          {([1, 0.5, 0.25, 0.125, 0.0625] as const).map((d) => (
-            <option key={d} value={d}>
-              {SNAP_LABELS[d]}
+          {TIMELINE_SNAP_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
             </option>
           ))}
         </select>
@@ -407,5 +418,3 @@ export function PianoRollToolbar({
     </div>
   )
 }
-
-export { SNAP_LABELS }

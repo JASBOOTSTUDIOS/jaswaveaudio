@@ -7,6 +7,30 @@
 
 Si no hay clip, verás un shell vacío: crea notas o pide al Asistente un clip.
 
+## Timeline (paridad con el Arrange)
+
+La regla y el grid del piano roll usan la misma profundidad de encaje y la misma semántica de gestos temporales:
+
+| Gesto | Efecto |
+|--------|--------|
+| Rueda (o Ctrl+rueda) | Zoom horizontal **anclado al playhead** |
+| Shift+rueda | Pan horizontal |
+| Ctrl+Shift+rueda | Zoom vertical (altura de teclas) |
+| `+` / `−` | Zoom H anclado al playhead |
+| Arrastrar en la regla | Seek (playhead); tooltip `compás.beat` |
+| Clic vacío (herramienta seleccionar) | Seek en esa posición |
+| Magnet (barra de transporte del piano) | Imán del seek (`ui.playheadSnap`) |
+| `S` | Imán de **notas** (snap del proyecto) |
+| `1–8` / `0` | Profundidad de encaje (mismo selector que el Arrange) |
+| ← / → | Con notas seleccionadas: mover notas · sin selección: pan |
+| Alt+← / → | Pan ~1 compás (sin selección) |
+| Alt+Ctrl+arrastrar vacío | Crear nota con duración del arrastre (como clip MIDI en Arrange) |
+| Alt+arrastrar vacío | Crear nota con duración |
+| Ctrl+arrastrar nota | Duplicar y colocar la copia (estilo Reaper); Ctrl+clic sin mover = toggle selección |
+| Clic derecho en nota | Borrar nota (si está en una selección múltiple, borra toda la selección) |
+
+La rejilla muestra como máximo el trío **S · S/2 · S/4** según el zoom (nunca más fino que S/4).
+
 ## Herramientas
 
 | Acción | Atajos habituales |
@@ -18,11 +42,13 @@ Si no hay clip, verás un shell vacío: crea notas o pide al Asistente un clip.
 | Velocidad | `G` |
 | Expresión / CC | `F` |
 
-También: transponer (↑↓), mover en tiempo (←→), copiar/pegar, Alt-drag para precisión.
+También: transponer (↑↓), mover en tiempo (←→ con selección), copiar/pegar, Alt-drag para precisión.
 
 ## Snap musical
 
-Negra, corchea, semicorchea… — alinea dibujo y movimientos al grid.
+Negra, corchea, semicorchea… — alinea dibujo y movimientos al grid. El selector de profundidad es el mismo que en el Arrange.
+
+**Magnet** (transporte) afecta solo al seek/playhead; **S** / toolbar Imán afecta el snap de notas y clips.
 
 ## Audición
 
