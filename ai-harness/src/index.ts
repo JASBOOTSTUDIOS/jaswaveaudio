@@ -107,6 +107,10 @@ export {
   HARNESS_MIN_AUDIBLE_PEAK,
   HARNESS_STALE_LIMIT,
   actionFingerprint,
+  HARNESS_ACTIONS_SUMMARY_MAX_CHARS,
+  HARNESS_AGENT_NOTES_MAX_CHARS,
+  compactActionsSummary,
+  formatAgentNotesBlock,
   buildHarnessRepairMessage,
   buildHarnessReviewMessage,
   filterRedundantRepairActions,
@@ -188,6 +192,7 @@ export {
   isMidiClipEditIntent,
   isClipSectionSplitIntent,
   hasStyleReference,
+  extractStyleReference,
   wantsWebResearch,
   type AgentMode,
 } from './agent/modes'
@@ -224,14 +229,31 @@ export {
   sanitizeInnerThought,
   REASONING_REPAIR_PHASES,
   REASONING_POST_APPLY_PHASES,
+  REASONING_THREAD_KEEP_RECENT,
+  REASONING_THREAD_MAX_CHARS,
+  REASONING_TOOL_RESULT_MAX_CHARS,
+  compactReasoningThread,
+  deriveWebSearchQuery,
+  threadChars,
+  type ReasoningBudgetStop,
   type ReasoningChatTurn,
   type ReasoningStep,
   type RunReasoningLoopOpts,
 } from './agent/reasoning-loop'
 
 export {
+  AGENT_ACTION_CLASSES,
   AGENT_DOCS_WRITE_ACTIONS,
   AGENT_READ_ONLY_ACTIONS,
+  actionAlwaysNeedsConfirm,
+  agentActionClass,
+  agentActionClassOfType,
+  gateAgentActionExecution,
+  isClassifiedAction,
+  isSystemAction,
+  unclassifiedActionTypes,
+  type AgentActionClass,
+  type AgentActionGateDecision,
   actionRiskLevel,
   batchNeedsDestructiveConfirm,
   ensureMusicBuildForFullProject,
@@ -265,7 +287,45 @@ export {
   isOffTopicCreatePlanReply,
 } from './ask/read-context'
 
-export { buildStyleGapReport, buildWorshipDrumEnhanceActions, worshipModernDrumExpectations, expectationsFromStyleProfileSummaries } from './ask/style-gap-report'
+export {
+  buildStyleGapReport,
+  buildStyleEnhanceActions,
+  styleEnhanceProfileFromText,
+  genericDrumStyleExpectations,
+  DEFAULT_STYLE_ENHANCE_PROFILE,
+  expectationsFromStyleProfileSummaries,
+  /** @deprecated usar buildStyleEnhanceActions */
+  buildWorshipDrumEnhanceActions,
+  /** @deprecated usar genericDrumStyleExpectations */
+  worshipModernDrumExpectations,
+  type StyleEnhanceAction,
+  type StyleEnhanceProfile,
+} from './ask/style-gap-report'
+
+export {
+  DEFAULT_AGENT_BUDGET,
+  AgentBudgetExceededError,
+  createAgentBudgetTracker,
+  formatAgentBudgetStop,
+  formatAgentBudgetStopFor,
+  isAgentBudgetExceededError,
+  resolveAgentBudget,
+  resolveAgentBudgetTracker,
+  type AgentBudget,
+  type AgentBudgetStopReason,
+  type AgentBudgetTracker,
+  type AgentBudgetUsage,
+} from './agent/budget'
+
+export {
+  UNTRUSTED_TOOL_DATA_RULE,
+  UNTRUSTED_TOOL_RESULT_MAX_CHARS,
+  capUntrustedText,
+  compactUntrustedBlocks,
+  hasUntrustedBlock,
+  sanitizeUntrustedText,
+  wrapUntrustedToolResult,
+} from './agent/untrusted'
 
 export {
   buildMidiClipEditActions,

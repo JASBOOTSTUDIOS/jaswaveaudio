@@ -54,7 +54,7 @@ describe('project audit intents', () => {
 
   it('detecta analizame + pista (sin word-boundary estricto)', () => {
     const t =
-      'analizame la pista de la bateria y dime que le falta para que este como worship moderno estilo averly morillo, investiga en internet'
+      'analizame la pista de la bateria y dime que le falta para que este como funk moderno estilo de los 70, investiga en internet'
     expect(isProjectAuditIntent(t)).toBe(true)
     expect(isStyleGapIntent(t)).toBe(true)
     expect(isStyleApplyIntent(t)).toBe(false)
@@ -63,9 +63,9 @@ describe('project audit intents', () => {
     expect(detectAgentMode(t, 'create')).toBe('ask')
   })
 
-  it('aplicar estilo worship → create (no ask)', () => {
+  it('aplicar estilo de referencia → create (no ask)', () => {
     const t =
-      'haz que la bateria tenga esa sensacion y estilo, adecua el proyecto completo para tenga el estilo worship como averly morrillo'
+      'haz que la bateria tenga esa sensacion y estilo, adecua el proyecto completo para tenga el estilo funk como los 70'
     expect(isStyleApplyIntent(t)).toBe(true)
     expect(isStyleGapIntent(t)).toBe(false)
     expect(detectAgentMode(t)).toBe('create')
