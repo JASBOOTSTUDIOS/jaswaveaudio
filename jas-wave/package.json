@@ -18,7 +18,7 @@
     "preview": "vite preview",
     "stage:host": "node scripts/stage-plugin-host.mjs",
     "notices": "node scripts/generate-third-party-notices.mjs",
-    "electron:build": "npm run build && npm run stage:host && electron-builder --win nsis",
+    "electron:build": "npm run build && npm run stage:host && electron-builder --win nsis --publish never",
     "pack:win": "npm run electron:build",
     "plugin-host:ping": "node ../native/plugin-host/scripts/ping.cjs",
     "cli": "node cli/daw-cli.mjs",
@@ -30,7 +30,13 @@
     "cli:soak-host": "node cli/_soak-host.mjs",
     "cli:soak-host:30": "cross-env SOAK_MINUTES=30 node cli/_soak-host.mjs",
     "cli:soak-host:4h": "cross-env SOAK_MINUTES=240 node cli/_soak-host.mjs",
-    "native:roles-vst": "cmake -B ../native/jaswave-roles-vst/build -S ../native/jaswave-roles-vst -G \"Visual Studio 17 2022\" -A x64 && cmake --build ../native/jaswave-roles-vst/build --config Release --target JasWaveRoles"
+    "native:roles-vst": "cmake -B ../native/jaswave-roles-vst/build -S ../native/jaswave-roles-vst -G \"Visual Studio 17 2022\" -A x64 && cmake --build ../native/jaswave-roles-vst/build --config Release --target JasWaveRoles",
+    "stage:host:strict": "node scripts/stage-plugin-host.mjs --strict",
+    "electron:dir": "npm run build && npm run stage:host && electron-builder --win dir --publish never",
+    "release:win": "npm run build && npm run stage:host:strict && electron-builder --win nsis --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.10"
   },
   "devDependencies": {
     "@base-ui/react": "^1.5.0",
@@ -70,65 +76,6 @@
     "vite": "^6.0.0",
     "vite-tsconfig-paths": "^5.1.4",
     "wait-on": "^8.0.1"
-  },
-  "build": {
-    "appId": "com.jaswave.app",
-    "productName": "JasWave",
-    "directories": {
-      "output": "release",
-      "buildResources": "build-resources"
-    },
-    "icon": "build-resources/icon.png",
-    "files": [
-      "dist/**/*",
-      "build/electron/**/*",
-      "public/jaswave-icono-con-frecuencia.png",
-      "public/jaswavelogo.png"
-    ],
-    "extraResources": [
-      {
-        "from": "resources/plugin-host",
-        "to": "plugin-host"
-      },
-      {
-        "from": "public/jaswave-icono-con-frecuencia.png",
-        "to": "jaswave-icono-con-frecuencia.png"
-      },
-      {
-        "from": "../THIRD_PARTY_NOTICES.md",
-        "to": "THIRD_PARTY_NOTICES.md"
-      }
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "build-resources/icon.png",
-      "artifactName": "JasWave-Setup-${version}.${ext}",
-      "signAndEditExecutable": true
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "JasWave",
-      "perMachine": false,
-      "license": "build-resources/eula.txt"
-    },
-    "electronFuses": {
-      "runAsNode": true,
-      "enableCookieEncryption": true,
-      "enableNodeOptionsEnvironmentVariable": false,
-      "enableNodeCliInspectArguments": false,
-      "enableEmbeddedAsarIntegrityValidation": true,
-      "onlyLoadAppFromAsar": true
-    }
   },
   "engines": {
     "node": ">=22"

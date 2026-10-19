@@ -7,6 +7,16 @@ contextBridge.exposeInMainWorld('electron', {
   openLogsFolder: () => ipcRenderer.invoke('open-logs-folder'),
   localAppData: () => ipcRenderer.invoke('env-local-appdata'),
   userDataPath: () => ipcRenderer.invoke('user-data-path'),
+  /** { resourcesPath, localAppData, bundledVst3Dir } — bundled solo en la app empaquetada. */
+  knownPaths: () => ipcRenderer.invoke('known-paths'),
+  // Auto-update (electron/updater.ts)
+  onUpdateStatus: (callback: (status: { state: string; version?: string; message?: string }) => void) => {
+    const handler = (_event: unknown, status: { state: string; version?: string; message?: string }) => callback(status)
+    ipcRenderer.on('update-status', handler)
+    return () => ipcRenderer.removeListener('update-status', handler)
+  },
+  updateInstallNow: () => ipcRenderer.invoke('update-install-now'),
+  updateCheck: () => ipcRenderer.invoke('update-check'),
   /** Sync — preload tiene process.env; el renderer a menudo no. */
   localAppDataSync: process.env.LOCALAPPDATA || '',
   clipboardWriteText: (text: string) => ipcRenderer.invoke('clipboard-write-text', text),

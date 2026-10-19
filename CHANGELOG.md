@@ -23,6 +23,16 @@ Endurecimiento para producción (rama `hardening/production`).
   el instalador), `docs/legal/PRIVACIDAD.md`, `THIRD_PARTY_NOTICES.md` (incluido en la app
   instalada) con script `npm run notices`, `SECURITY.md`, `docs/RELEASE.md` y ADR-0018
   (soporte VST2).
+- **Release reproducible:** `npm run native:sdk` (VST3 SDK fijado en `v3.8.1_build_84`),
+  `npm run native:build` (plugin host + JasWave Piano + JasWave Roles, Release x64) y workflows
+  `native.yml` y `release.yml` (al subir `vX.Y.Z`: verifica, compila nativo, empaqueta y publica
+  en GitHub Releases como borrador). El instalador incluye JasWave Roles/Piano en
+  `resources/vst3/JasWave`, usados si no hay instalación de usuario.
+- **Actualización automática** vía GitHub Releases (`electron-updater`): comprobación al
+  arrancar y cada 6 h, descarga en segundo plano y aviso "Actualización vX lista — Reiniciar".
+  La versión de la app se muestra en la barra de título.
+- Firma de código preparada (certificado .pfx o Azure Trusted Signing), activa solo si hay
+  credenciales en el entorno.
 
 ### Cambiado
 

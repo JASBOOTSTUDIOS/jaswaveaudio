@@ -8,6 +8,7 @@ import { pluginRegistry } from './registry'
 import { descriptorToPluginInfo } from './plugin-info-adapter'
 import { ensureTrackVstInstrument, setSlotParameter, slotIdForTrackPlugin } from './track-vst-runtime'
 import type { PluginInfo } from '../../../../shared/src/types/entidades'
+import { isBundledJasWavePath } from './bundled-plugins'
 
 export const JASWAVE_ROLES_PARAM_ID = 0
 export const JASWAVE_ROLES_NAME = 'JasWave Roles'
@@ -144,7 +145,10 @@ export function ensureJasWaveRolesRegistered(explicitPath?: string): PluginDescr
   const existing = findJasWaveRolesDescriptor()
   if (existing?.path) {
     // Corregir path si el registro previo usó Common Files vacío y ahora tenemos LOCALAPPDATA.
-    if (path && existing.path !== path && /AppData\\Local/i.test(path)) {
+    // Ruta explícita (bundle incluido en resources/): sustituye la de usuario inexistente.
+    const replaceWithExplicit =
+      !!explicitPath && (existing.path === defaultJasWaveRolesPath() || isBundledJasWavePath(existing.path))
+    if (path && existing.path !== path && (replaceWithExplicit || /AppData\\Local/i.test(path))) {
       existing.path = path
       pluginRegistry.register(existing)
     }

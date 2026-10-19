@@ -19,17 +19,37 @@ import {
   reportProjectDevice,
   reportProjectHost,
 } from '@/src/lib/project-ready'
-import { ensureJasWaveRolesRegistered, setLocalAppDataHint } from '@/src/lib/plugin/jaswave-roles'
-import { ensureJasWavePianoRegistered } from '@/src/lib/plugin/jaswave-piano'
+import {
+  defaultJasWaveRolesPath,
+  ensureJasWaveRolesRegistered,
+  setLocalAppDataHint,
+} from '@/src/lib/plugin/jaswave-roles'
+import { defaultJasWavePianoPath, ensureJasWavePianoRegistered } from '@/src/lib/plugin/jaswave-piano'
+import {
+  fetchKnownPaths,
+  JASWAVE_PIANO_BUNDLE,
+  JASWAVE_ROLES_BUNDLE,
+  pickJasWavePluginPath,
+} from '@/src/lib/plugin/bundled-plugins'
+import { setBundledVst3SearchDir } from '@/src/lib/plugin/search-paths'
 
 export function PluginHostBootstrap() {
   useEffect(() => {
     hydratePluginCatalog()
     pluginManager.ensureBuiltins()
-    void window.electron?.localAppData?.().then((p: string) => {
+    void window.electron?.localAppData?.().then(async (p: string) => {
       if (p) setLocalAppDataHint(p)
-      ensureJasWaveRolesRegistered()
-      ensureJasWavePianoRegistered()
+      // Instalación de usuario primero; si falta, los bundles de resources/vst3/JasWave (app empaquetada).
+      const known = await fetchKnownPaths()
+      const exists = (path: string) => window.electron?.fileExists?.(path) ?? Promise.resolve(false)
+      const roles = await pickJasWavePluginPath(JASWAVE_ROLES_BUNDLE, defaultJasWaveRolesPath(), known?.bundledVst3Dir, exists)
+      const piano = await pickJasWavePluginPath(JASWAVE_PIANO_BUNDLE, defaultJasWavePianoPath(), known?.bundledVst3Dir, exists)
+      ensureJasWaveRolesRegistered(roles.source === 'bundled' ? roles.path : undefined)
+      ensureJasWavePianoRegistered(piano.source === 'bundled' ? piano.path : undefined)
+      // Escanear la carpeta incluida solo si ninguno está instalado por el usuario (evita duplicados).
+      if (roles.source !== 'user' && piano.source !== 'user' && known?.bundledVst3Dir) {
+        setBundledVst3SearchDir(known.bundledVst3Dir)
+      }
     })
     ensureJasWaveRolesRegistered()
     ensureJasWavePianoRegistered()

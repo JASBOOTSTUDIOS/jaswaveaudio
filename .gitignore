@@ -36,6 +36,7 @@ npm-debug.log*
 # Binarios nativos (los genera CI / scripts de build)
 jas-wave/resources/plugin-host/jaswave-plugin-host.exe
 jas-wave/resources/plugin-host/jaswave-plugin-host.pdb
+jas-wave/resources/vst3/
 native/plugin-host/build*/
 native/plugin-host/third_party/
 native/jaswave-roles-vst/build*/

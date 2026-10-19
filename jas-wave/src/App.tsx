@@ -11,6 +11,7 @@ import {
   ResizableHandle,
 } from '@/components/ui/resizable'
 import { TitleBar } from '@/components/title-bar'
+import { UpdateBanner } from '@/components/update-banner'
 import { AppMenuBar } from '@/components/app-menu-bar'
 import { IconRail } from '@/components/icon-rail'
 import { TransportBar } from '@/components/transport-bar'
@@ -307,6 +308,7 @@ function AppShell() {
     <>
       <CommandPalette />
       <EventToasts />
+      <UpdateBanner />
       <ProjectCloseDialog />
       <ScoreExportMenuListener />
       <ScorePreviewDialog />

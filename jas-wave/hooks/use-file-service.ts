@@ -15,6 +15,16 @@ declare global {
       windowMinimize: () => Promise<void>
       localAppData?: () => Promise<string>
       userDataPath?: () => Promise<string>
+      knownPaths?: () => Promise<{ resourcesPath: string; localAppData: string; bundledVst3Dir: string }>
+      onUpdateStatus?: (
+        callback: (status: {
+          state: 'checking' | 'available' | 'downloaded' | 'error' | 'none'
+          version?: string
+          message?: string
+        }) => void,
+      ) => () => void
+      updateInstallNow?: () => Promise<boolean>
+      updateCheck?: () => Promise<{ state: string; version?: string; message?: string }>
       localAppDataSync?: string
       windowMaximize: () => Promise<void>
       windowClose: () => Promise<void>

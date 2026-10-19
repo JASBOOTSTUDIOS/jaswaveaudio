@@ -12,6 +12,7 @@ export function TitleBar() {
   const changesCount = useDAWState((s) => s.estadisticasUso?.cambiosNoGuardados ?? 0)
   const { save, saveAs, openDialog, newProject } = useFileService()
   const [lastEvent, setLastEvent] = useState<string | null>(null)
+  const [appVersion, setAppVersion] = useState<string | null>(null)
 
   const showTemporaryEvent = (msg: string) => {
     setLastEvent(msg)
@@ -29,6 +30,12 @@ export function TitleBar() {
 
   useEffect(() => {
     let mounted = true
+
+    void window.electron?.getAppVersion?.()
+      .then((v: string) => {
+        if (mounted && v) setAppVersion(v)
+      })
+      .catch(() => {})
 
     if (window.electron?.windowIsMaximized) {
       window.electron.windowIsMaximized().then((maximized: boolean) => {
@@ -59,7 +66,10 @@ export function TitleBar() {
     >
       <div className="flex min-w-0 items-center gap-2.5 px-2">
         <JasWaveAppIcon className="h-10 w-10 shrink-0" />
-        <span className="text-[13px] font-semibold text-foreground">JasWave</span>
+        <span className="text-[13px] font-semibold text-foreground" title={appVersion ? `JasWave v${appVersion}` : undefined}>
+          JasWave
+        </span>
+        {appVersion && <span className="text-[10px] text-muted-foreground/70">v{appVersion}</span>}
         <span className="text-[10px] text-muted-foreground">—</span>
         <span className="max-w-[220px] truncate text-[11px] text-muted-foreground">
           {projectName}
