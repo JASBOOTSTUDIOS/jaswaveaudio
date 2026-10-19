@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('electron', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  logError: (scope: string, message: string, stack?: string) => ipcRenderer.send('log-error', scope, message, stack),
+  openLogsFolder: () => ipcRenderer.invoke('open-logs-folder'),
   localAppData: () => ipcRenderer.invoke('env-local-appdata'),
   userDataPath: () => ipcRenderer.invoke('user-data-path'),
   /** Sync — preload tiene process.env; el renderer a menudo no. */

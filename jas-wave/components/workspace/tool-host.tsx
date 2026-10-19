@@ -20,6 +20,7 @@ import { SettingsPanel } from '@/components/project-settings-dialog'
 import { useDAWState } from '@/src/context/daw-context'
 import type { ToolId } from '@/src/workspace/types'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
+import { AppErrorBoundary } from '@/components/app-error-boundary'
 
 function _PlaceholderTool({ title }: { title: string }) {
   return (
@@ -33,7 +34,16 @@ function _PlaceholderTool({ title }: { title: string }) {
   )
 }
 
+/** Cada panel tiene su boundary: un fallo en uno no tumba el DAW ni el audio. */
 export function ToolHost({ toolId }: { toolId: ToolId }) {
+  return (
+    <AppErrorBoundary key={toolId} area={toolId} compact>
+      <ToolContent toolId={toolId} />
+    </AppErrorBoundary>
+  )
+}
+
+function ToolContent({ toolId }: { toolId: ToolId }) {
   const selectedTrackId = useDAWState((s) => getSelectedTrackId(s))
 
   switch (toolId) {

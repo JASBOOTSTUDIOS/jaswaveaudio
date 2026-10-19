@@ -27,6 +27,7 @@ import {
   hydrateSession,
   type HydrateProgress,
 } from '@/src/lib/session-persist'
+import { attachDiskAutosave } from '@/src/lib/disk-autosave'
 import { JasWaveLogo } from '@/components/brand'
 import { isUndockWindow } from '@/lib/undock-window'
 
@@ -36,7 +37,8 @@ let sharedStore: TiendaDAW | null = null
 
 export { isUndockWindow }
 
-function getSharedStore() {
+/** Tienda compartida de la ventana (también para recuperación tras errores fuera del provider). */
+export function getSharedStore() {
   if (!sharedStore) {
     const estado = crearEstadoInicial()
 
@@ -140,7 +142,12 @@ export function DAWProvider({ children }: { children: ReactNode }) {
       }
       if (cancelled) return
       window.clearTimeout(failsafe)
-      detachAutosave = attachSessionAutosave(store)
+      const detachSession = attachSessionAutosave(store)
+      const detachDisk = attachDiskAutosave(store)
+      detachAutosave = () => {
+        detachSession()
+        detachDisk()
+      }
       setReady(true)
     })()
 

@@ -60,8 +60,16 @@ export function ExportBounceDialog({ open, onClose }: Props) {
     let startedId: string | null = null
     try {
       const ext = format === 'wav' ? 'wav' : format
-      const path =
-        (await window.electron?.dialogSave?.(`bounce-${Date.now()}.${ext}`)) || undefined
+      // dialogSave devuelve { canceled, filePath } (antes se pasaba el objeto entero y render.start lo rechazaba).
+      const picked = window.electron?.dialogSave
+        ? await window.electron.dialogSave(`bounce-${Date.now()}.${ext}`)
+        : undefined
+      if (picked?.canceled) {
+        setBusy(false)
+        setMessage('Exportación cancelada')
+        return
+      }
+      const path = picked?.filePath
       const r = await tienda.executor.execute('render.start', {
         format,
         startSec: 0,

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain: rawIpcMain, dialog, Menu, session, clipboard, shell, safeStorage } = require('electron')
+const { app, BrowserWindow, ipcMain: rawIpcMain, dialog, Menu, session, clipboard, shell, safeStorage, crashReporter } = require('electron')
 const path = require('path')
 const fs = require('fs/promises')
 const fsSync = require('fs')
@@ -13,6 +13,7 @@ import {
 } from './agent-bridge'
 import { shouldStartAgentBridge } from './agent-bridge-auth'
 import { AiCredentialStore } from './ai-credentials'
+import { initLogger, logLine } from './logger'
 import { writeFileAtomic } from './atomic-write'
 import { defaultVstRoots, isAudioFile, PathAccessError, PathGrants, type AccessKind, type GrantMode } from './path-grants'
 import { checkHostCommand } from './plugin-host-guard'
@@ -24,6 +25,22 @@ import {
   isSafeExternalUrl,
   loadRenderer,
 } from './security'
+
+// ── Diagnóstico: log persistente y minidumps locales (sin envío a servidores) ──
+const logsDir = () => path.join(app.getPath('userData'), 'logs')
+try {
+  crashReporter.start({ uploadToServer: false })
+} catch {
+  /* entorno sin crashpad */
+}
+process.on('uncaughtException', (err: Error) => logLine('error', 'main', 'uncaughtException', err))
+process.on('unhandledRejection', (reason: unknown) => logLine('error', 'main', 'unhandledRejection', reason))
+app.on('render-process-gone', (_e: unknown, _wc: unknown, details: { reason: string; exitCode: number }) =>
+  logLine('error', 'renderer', 'render-process-gone', details),
+)
+app.on('child-process-gone', (_e: unknown, details: { type: string; reason: string; exitCode: number; name?: string }) =>
+  logLine('error', 'child', 'child-process-gone', details),
+)
 
 /** Todo IPC valida que el remitente sea el renderer propio. */
 const ipcMain = createGuardedIpc(rawIpcMain)
@@ -353,6 +370,8 @@ app.whenReady().then(() => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.jaswave.app')
   }
+  initLogger(logsDir())
+  logLine('info', 'main', `JasWave ${app.getVersion()} · Electron ${process.versions.electron} · ${process.platform}`)
   installPermissionHandlers(session.defaultSession)
   initPathGrants()
   buildAppMenu()
@@ -388,6 +407,19 @@ ipcMain.handle('clipboard-write-text', (_e: IpcMainInvokeEvent, text: unknown) =
 })
 ipcMain.handle('env-local-appdata', () => process.env.LOCALAPPDATA || '')
 ipcMain.handle('user-data-path', () => app.getPath('userData'))
+
+// Errores del renderer (window.onerror, rechazos, error boundaries) → log persistente.
+let rendererLogBudget = { windowStart: 0, count: 0 }
+ipcMain.on('log-error', (_e: IpcMainInvokeEvent, scope: unknown, message: unknown, stack: unknown) => {
+  const now = Date.now()
+  if (now - rendererLogBudget.windowStart > 60_000) rendererLogBudget = { windowStart: now, count: 0 }
+  if (++rendererLogBudget.count > 100) return
+  logLine('error', `renderer:${String(scope ?? '').slice(0, 40)}`, String(message ?? '').slice(0, 4000), String(stack ?? '').slice(0, 8000))
+})
+ipcMain.handle('open-logs-folder', async () => {
+  await shell.openPath(logsDir())
+  return logsDir()
+})
 
 ipcMain.handle('agent-bridge-get-enabled', () => !!readMainSettings().agentBridgeEnabled)
 ipcMain.handle('agent-bridge-set-enabled', async (_e: IpcMainInvokeEvent, enabled: unknown) => {

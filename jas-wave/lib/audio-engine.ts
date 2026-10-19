@@ -91,7 +91,12 @@ type InputCaptureSession = {
   peak: number
   capturing: boolean
   monitors: Set<string>
+  /** Se alcanzó MAX_CAPTURE_SECONDS: el resto de la toma no se guardó. */
+  truncated?: boolean
 }
+
+/** Tope de una toma en memoria (float estéreo 48 kHz ≈ 690 MB a 30 min). */
+const MAX_CAPTURE_SECONDS = 30 * 60
 
 export class WebAudioEngine {
   private audioCtx: AudioContext | null = null
@@ -1248,8 +1253,16 @@ export class WebAudioEngine {
     }
     session.peak = peak > 1 ? 1 : peak
     if (!session.capturing) return
-    const maxFrames = Math.floor(this.getSampleRate() * 300)
-    if (session.frames + n > maxFrames) return
+    const maxFrames = Math.floor(this.getSampleRate() * MAX_CAPTURE_SECONDS)
+    if (session.frames + n > maxFrames) {
+      if (!session.truncated) {
+        session.truncated = true
+        const msg = `Grabación detenida al llegar a ${MAX_CAPTURE_SECONDS / 60} min por toma (límite de memoria).`
+        console.warn(`[audio-engine] ${msg}`)
+        window.electron?.logError?.('recording', msg)
+      }
+      return
+    }
     session.chunksL.push(Float32Array.from(l))
     session.chunksR.push(Float32Array.from(r))
     session.frames += n

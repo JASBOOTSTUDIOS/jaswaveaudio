@@ -21,6 +21,8 @@ declare global {
       windowIsMaximized: () => Promise<boolean>
       onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => () => void
       getAppVersion: () => Promise<string>
+      logError?: (scope: string, message: string, stack?: string) => void
+      openLogsFolder?: () => Promise<string>
       fileSave: (ruta: string, contenido: string) => Promise<{ success: boolean; error?: string }>
       fileSaveBinary: (ruta: string, data: Uint8Array) => Promise<{ success: boolean; error?: string }>
       fileRead: (ruta: string) => Promise<string>
