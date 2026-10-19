@@ -12,6 +12,9 @@ export {
   isGarbageAssistantReply,
   isOffTopicCreatePlanReply,
   buildStyleGapReport,
+  buildStyleEnhanceActions,
+  styleEnhanceProfileFromText,
+  /** @deprecated usar buildStyleEnhanceActions */
   buildWorshipDrumEnhanceActions,
   buildMidiClipEditActions,
   buildSplitLongClipsActions,

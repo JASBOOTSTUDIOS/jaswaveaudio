@@ -105,7 +105,11 @@ export async function saveGlobalStyleProfile(profile: StyleProfile): Promise<Sty
   return next
 }
 
-export async function ensureMesiasSeed(seed: StyleProfile): Promise<StyleProfile> {
+/**
+ * Instala un preset de estilo en la biblioteca global si aún no existe (idempotente).
+ * Solo se llama por decisión explícita del usuario — nunca automáticamente.
+ */
+export async function installGlobalStylePreset(seed: StyleProfile): Promise<StyleProfile> {
   const existing = await getGlobalStyleProfile(seed.id)
   if (existing) return existing
   return saveGlobalStyleProfile(seed)

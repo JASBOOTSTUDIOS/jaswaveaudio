@@ -738,14 +738,11 @@ export async function executeMusicBuild(
       if ((g === 'worship' || g === 'gospel' || /worship|alabanza/.test(opts.prompt)) && String(t.rol) === 'guitar') {
         art = 'arp' // fingerpicking suave
       }
-      if ((g === 'bachata' || /bachata|prince/.test(opts.prompt)) && String(t.rol) === 'guitar') {
+      if ((g === 'bachata' || /bachata/.test(opts.prompt)) && String(t.rol) === 'guitar') {
         art = 'strum'
       }
       if ((g === 'bachata' || /bachata/.test(opts.prompt)) && String(t.rol) === 'lead') {
         art = 'melody'
-      }
-      if ((g === 'worship' || g === 'gospel') && String(t.rol) === 'drums') {
-        // kits más abiertos / less busy vía density del plan
       }
       const brief = parseMidiBriefFromText(`${opts.prompt} ${spec.genero ?? ''} ${t.rol} ${t.nombre}`, spec.bpm)
       brief.articulation = art

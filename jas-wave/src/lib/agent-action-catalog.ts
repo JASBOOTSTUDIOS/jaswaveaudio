@@ -7,6 +7,7 @@ import type { ToolCategory, RiskLevel } from '../../../shared/src/types/command'
 import type { ToolDefinitionExtended, ToolHandler, ToolRegistry } from '../../../shared/src/ai/tool-registry'
 import { toolRegistry } from '../../../shared/src/ai/tool-registry'
 import { registroComandos } from '../../../shared/src/state/registro-comandos'
+import { agentActionClassOfType } from '@jaswave/ai-harness'
 
 export type CatalogEntry = {
   type: string
@@ -263,13 +264,13 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     type: 'style.profile.search',
     kind: 'agent',
     description: 'Busca perfiles de estilo por query/rol/tag',
-    examplePayload: { query: 'worship', rol: 'drums', scope: 'all' },
+    examplePayload: { query: 'funk', rol: 'drums', scope: 'all' },
   },
   {
     type: 'style.profile.saveFromClip',
     kind: 'agent',
     description: 'Extrae StyleProfile del clip MIDI (sin embeber notas) y lo guarda',
-    examplePayload: { pistaId: '…', clipId: '…', nombre: 'Mi groove', tags: ['worship'], global: false },
+    examplePayload: { pistaId: '…', clipId: '…', nombre: 'Mi groove', tags: ['funk'], global: false },
   },
   {
     type: 'style.profile.apply',
@@ -471,6 +472,10 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'audio.clearQuarantine',
   'project.new',
   'project.update',
+  'project.save',
+  'project.saveAs',
+  'midi.notes.patch',
+  'midi.getNotes',
   ...AGENT_ONLY_ACTIONS.map((a) => a.type),
 ]
 
@@ -510,7 +515,6 @@ export function mergeActionCatalog(
   return [...byType.values()].sort((a, b) => a.type.localeCompare(b.type))
 }
 
-const READ_PREFIX = /^(analysis\.|doc\.(list|read)|plugin\.(lookup|list|search|get)|library\.preset\.(list|search)|midi\.(notes\.get|getClipSummary|clip\.md\.read)|render\.getStatus|audio\.(list|get)Devices)/
 
 function categoryFromType(type: string): ToolCategory {
   const p = type.split('.')[0] ?? 'ai'
@@ -527,10 +531,15 @@ function categoryFromType(type: string): ToolCategory {
   return 'ai'
 }
 
+/**
+ * Riesgo derivado de la política única del agente (@jaswave/ai-harness AGENT_ACTION_CLASSES):
+ * read → read; write → write; destructive/system/sin clase → dangerous (fail closed).
+ */
 function riskFromType(type: string): RiskLevel {
-  if (READ_PREFIX.test(type)) return 'read'
-  if (/delete|clear|masterPass|render\.start/.test(type)) return 'dangerous'
-  return 'write'
+  const cls = agentActionClassOfType(type)
+  if (cls === 'read') return 'read'
+  if (cls === 'write') return 'write'
+  return 'dangerous'
 }
 
 const deferredHandler: ToolHandler = async () => ({

@@ -149,23 +149,23 @@ function normalizeAiTracks(partial: MusicBuildAiPartial): MusicBuildTrackSpec[] 
 export function specFromPrompt(prompt: string, bpmHint?: number): MusicBuildSpec {
   const bpmMatch = prompt.match(/\b(\d{2,3})\s*bpm\b/i) || prompt.match(/\bbpm\s*(?:a|de|=|:)?\s*(\d{2,3})/i)
   const generoHit = prompt.match(
-    /\b(bachata|merengue|metal|rock|jazz|salsa|reggaeton|reggaet[oó]n|house|techno|ambient|trap|hip-?hop|funk|blues|classical|worship|gospel|synthwave|edm|pop|cumbia|bossa|flamenco|prince\s*royce)\b/i,
+    /\b(bachata|merengue|metal|rock|jazz|salsa|reggaeton|reggaet[oó]n|house|techno|ambient|trap|hip-?hop|funk|blues|classical|worship|gospel|synthwave|edm|pop|cumbia|bossa|flamenco)\b/i,
   )
   const g = generoHit?.[1]?.toLowerCase().replace(/\s+/g, ' ')
   let bpm = bpmHint || (bpmMatch ? Number(bpmMatch[1]) : undefined) || undefined
   if (bpm == null) {
-    if (g && /bachata|prince/.test(g)) bpm = 125
+    if (g && /bachata/.test(g)) bpm = 125
     else if (g && /reggaeton|reggaetón/.test(g)) bpm = 95
     else if (g && /worship|gospel/.test(g)) bpm = 72
     else bpm = 120
   }
   const brief = parseMidiBriefFromText(prompt, bpm)
   const key = inferKeyFromText(prompt)
-  const minutes = inferMinutesFromText(prompt, g && /bachata|prince|merengue/.test(g ?? '') ? 3 : 2)
+  const minutes = inferMinutesFromText(prompt, g && /bachata|merengue/.test(g ?? '') ? 3 : 2)
   const drafts = draftArrangement(prompt, pluginRegistry.list())
   const degrees = inferProgressionFromText(prompt) ?? brief.degrees
   const tracks =
-    g && /bachata|prince|merengue/.test(g)
+    g && /bachata|merengue/.test(g)
       ? bachataDefaultTracks()
       : drafts.map((d) => ({
           nombre: d.nombre,
@@ -186,7 +186,7 @@ export function specFromPrompt(prompt: string, bpmHint?: number): MusicBuildSpec
     degrees: degrees.length ? degrees : brief.degrees.length ? brief.degrees : [1, 5, 6, 4],
     sections: scaleSectionsToMinutes(sectionsFromText(prompt, minutes, bpm), minutes, bpm),
     tracks,
-    genero: g === 'prince royce' ? 'bachata' : g,
+    genero: g,
     usedHeuristicFallback: true,
   }
 }
@@ -300,7 +300,7 @@ export function mergeMusicBuildSpec(base: MusicBuildSpec, ai?: MusicBuildAiParti
 /** Evita bachata a 70 BPM / pocas pistas cuando el modelo alucina half-time. */
 function applyBachataGuards(spec: MusicBuildSpec): void {
   const blob = `${spec.genero ?? ''} ${spec.prompt ?? ''}`.toLowerCase()
-  if (!/bachata|prince\s*royce/.test(blob)) return
+  if (!/bachata/.test(blob)) return
   spec.genero = spec.genero || 'bachata'
   if (spec.bpm < 100 || spec.bpm > 160) spec.bpm = 125
   if (spec.tracks.length < 4) spec.tracks = bachataDefaultTracks()

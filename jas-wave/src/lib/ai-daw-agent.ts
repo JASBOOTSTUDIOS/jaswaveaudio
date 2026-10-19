@@ -71,6 +71,7 @@ import { findMidiClip, getClipSummary, getNotes, musicalSummaryText } from '../.
 import { resolveTrackHint } from './track-resolve'
 import {
   forcePreviewAplicar,
+  gateAgentActionExecution,
   isMutatingAction,
   modeBlocksMutation,
   payloadOfAction,
@@ -477,6 +478,16 @@ export type ExecuteDawOptions = {
   respectModeGate?: boolean
   /** Evita recursión: el plan-runner ya troceó por fases. */
   skipWorkPlan?: boolean
+  /**
+   * El usuario confirmó explícitamente estas acciones (p. ej. wipe tras el 1.er Aplicar).
+   * Los orígenes user_build / user_confirm / cli ya cuentan como confirmados.
+   */
+  userConfirmed?: boolean
+}
+
+/** ¿Este origen implica confirmación humana explícita (destructivas/sistema permitidas)? */
+export function sourceIsUserConfirmed(source: AiDawAuditSource | undefined): boolean {
+  return source === 'user_build' || source === 'user_confirm' || source === 'cli'
 }
 
 type CommandSource = 'user' | 'ai' | 'script'
@@ -598,6 +609,21 @@ export async function executeDawActions(
         success: false,
         message: `Omitido (modo ${mode}): ${action.type} — pulsa Construir para aplicar`,
       })
+      continue
+    }
+
+    // Política fail-closed: sin clase → bloqueada; destructiva/sistema sin confirmación humana → bloqueada.
+    const gate = gateAgentActionExecution(action, {
+      userConfirmed: opts.userConfirmed === true || sourceIsUserConfirmed(source),
+    })
+    if (!gate.allow) {
+      appendAiDawAudit({
+        ...auditBase,
+        status: gate.reason === 'unclassified' ? 'rejected' : 'pending_confirm',
+        result: { success: false, message: gate.message },
+      })
+      if (gate.reason === 'unclassified') console.warn('[agent-policy]', gate.message)
+      results.push({ type: action.type, success: false, message: gate.message })
       continue
     }
 
@@ -3030,9 +3056,15 @@ export async function executeDawActions(
           break
         }
         default: {
-          // Fallback: cualquier comando registrado en shared (CLI/IA no quedan atrás del registry)
-          const def = tienda.registroComandos?.get?.(action.type)
-          if (def) {
+          // Fallback: comando registrado en shared, SOLO si su definición declara un riesgo
+          // conocido y el tipo tiene clase en la política del agente (ya pasó la puerta arriba).
+          const def = tienda.registroComandos?.get?.(action.type) as { risk?: string } | undefined
+          const knownRisk = def?.risk === 'read' || def?.risk === 'write' || def?.risk === 'dangerous'
+          if (def && !knownRisk) {
+            const message = `Bloqueada: ${action.type} sin riesgo declarado en el registro de comandos`
+            console.warn('[agent-policy]', message)
+            results.push({ type: action.type, success: false, message })
+          } else if (def) {
             const r = await tienda.executor.execute(
               action.type,
               (action.payload ?? {}) as Record<string, unknown>,

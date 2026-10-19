@@ -6,6 +6,8 @@ import {
   observeAgentContext,
   runAgentLoop,
   isProjectWipeIntent,
+  type AgentBudget,
+  type AgentBudgetTracker,
   type AgentRunResult,
 } from '@jaswave/ai-harness'
 import { EventosIAExt, getStateRevision } from '../../../shared/src'
@@ -35,6 +37,8 @@ export type CoproducerAgentLoopInput = {
   resumeRun?: PersistedAgentRun
   /** Compromiso del reasoning loop (evita re-ensayar 1/6 sin DECISION). */
   priorBrief?: string
+  /** Presupuesto compartido del turno (defaults si se omite). */
+  budget?: AgentBudgetTracker | Partial<AgentBudget>
 }
 
 export async function runCoproducerAgentLoop(input: CoproducerAgentLoopInput): Promise<AgentRunResult> {
@@ -64,6 +68,7 @@ export async function runCoproducerAgentLoop(input: CoproducerAgentLoopInput): P
     // Tras el 1.er Aplicar: sigue uno a uno sin re-pedir confirm en cada paso
     requireConfirmationForDangerous: !(wipe && sessionStarted),
     priorBrief: input.priorBrief,
+    budget: input.budget,
     getState: () => tienda.obtenerEstado(),
     observe: (last) =>
       observeAgentContext({
@@ -83,6 +88,8 @@ export async function runCoproducerAgentLoop(input: CoproducerAgentLoopInput): P
         conversationId: input.conversationId,
         messageId: input.messageId,
         executedCallIds: executedIds,
+        // Wipe tras el 1.er Aplicar: el usuario ya confirmó el borrado completo.
+        userConfirmed: wipe && sessionStarted,
       }),
     onEvent: (name, payload) => {
       tienda.busEventos.emit(name, payload)
@@ -119,6 +126,8 @@ export async function applyPendingAgentRun(opts: {
   chat: (systemAndUser: string) => Promise<string>
   abort?: AbortSignal
   agentMode: AgentMode
+  /** Presupuesto del turno (defaults si se omite). */
+  budget?: AgentBudgetTracker | Partial<AgentBudget>
   /** Tras ejecutar pending y ANTES de reanudar el loop (p. ej. diálogo del consejo). */
   beforeResume?: (info: {
     applyResults: Awaited<ReturnType<typeof runRegisteredTools>>
@@ -224,6 +233,7 @@ export async function applyPendingAgentRun(opts: {
     messageId: updated.messageId,
     resumeRun: { ...updated, pendingCalls: [], results: mergedResults },
     priorBrief: [failureBrief, councilExtra?.trim()].filter(Boolean).join('\n\n'),
+    budget: opts.budget,
   })
   return { applyResults, loop }
 }

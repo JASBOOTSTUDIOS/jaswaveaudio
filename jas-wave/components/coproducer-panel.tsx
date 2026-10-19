@@ -25,11 +25,13 @@ import {
   isGarbageAssistantReply,
   isOffTopicCreatePlanReply,
   buildStyleGapReport,
-  buildWorshipDrumEnhanceActions,
+  buildStyleEnhanceActions,
+  styleEnhanceProfileFromText,
   buildMidiClipEditActions,
   buildSplitLongClipsActions,
   actionsLackMidiNoteEdits,
 } from '@/src/lib/ai-read-context'
+import { createAgentBudgetTracker, formatAgentBudgetStopFor } from '@jaswave/ai-harness'
 import {
   loadAiSettings,
   getActiveProvider,
@@ -58,6 +60,7 @@ import {
   forcePreviewAplicar,
   ensureMusicBuildForFullProject,
   isSoloMusicBuildPending,
+  isClassifiedAction,
   isMutatingAction,
   modeBlocksMutation,
   autonomyBlocksMutation,
@@ -356,6 +359,16 @@ function finishAgentTurn(
   return { extra, evaluation, mutated, docsWritten, docEdits }
 }
 
+/** Líneas visibles del realce de estilo según el perfil derivado del pedido. */
+function describeStyleEnhanceProfile(p: ReturnType<typeof styleEnhanceProfileFromText>): string[] {
+  const out: string[] = []
+  if (p.ghostNotes) out.push('- Ghost notes suaves en la caja')
+  if (p.openHats) out.push('- Hats abiertos en tramos de “coro”')
+  if (p.crashFills) out.push(`- Fills + crashes cada ${p.phraseBars ?? 8} compases`)
+  if (p.humanize) out.push('- Humanize leve del timing/velocidad')
+  return out.length ? out : ['- Ajustes de groove en el clip de batería']
+}
+
 function pickMusicBuild(results: ActionResult[]): MusicBuildResult | undefined {
   const hit = results.find(
     (r) => r.type === 'daw.musicBuild' && (r.data as { kind?: string } | undefined)?.kind === 'musicBuild',
@@ -425,18 +438,30 @@ async function processActionsForMode(opts: {
     resolvedMode === 'create' ||
     resolvedMode === 'auto'
 
+  // Fail closed: acciones sin clase de riesgo no se proponen ni ejecutan.
+  const blockedResults: ActionResult[] = []
+  for (const a of actions.filter((x) => !isClassifiedAction(x))) {
+    const message = `Bloqueada: ${a.type} no tiene clase de riesgo conocida`
+    appendAiDawAudit({ ...ctx, tool: a.type, params: { ...(a.payload ?? {}) }, status: 'rejected', result: { success: false, message } })
+    blockedResults.push({ type: a.type, success: false, message })
+  }
+
   if (proposeFirst) {
-    const readonly = actions.filter((a) => !isMutatingAction(a))
-    const pending = actions.filter(isMutatingAction)
-    let results: ActionResult[] = []
+    const classified = actions.filter((a) => isClassifiedAction(a))
+    const readonly = classified.filter((a) => !isMutatingAction(a))
+    const pending = classified.filter(isMutatingAction)
+    let results: ActionResult[] = [...blockedResults]
     if (readonly.length) {
-      results = await executeDawActions(tienda, readonly, {
-        agentMode: resolvedMode,
-        forceApply: false,
-        source,
-        conversationId,
-        messageId,
-      })
+      results = [
+        ...results,
+        ...(await executeDawActions(tienda, readonly, {
+          agentMode: resolvedMode,
+          forceApply: false,
+          source,
+          conversationId,
+          messageId,
+        })),
+      ]
     }
     let previewDiff: import('../../shared/src/state/diff-estado').SemanticStateDiff | undefined
     let previewSummary = ''
@@ -501,6 +526,7 @@ async function processActionsForMode(opts: {
     }
   }
 
+  // blocked (sin clase) ya quedó registrado arriba en blockedResults.
   const { readonly, mutating, destructive } = partitionActions(actions, userText)
   let appliedDiffSummary: string | undefined
   let undoDepthAtStart: number | undefined
@@ -518,17 +544,20 @@ async function processActionsForMode(opts: {
     })
   }
   const toRun = [...readonly, ...mutating]
-  let results: ActionResult[] = []
+  let results: ActionResult[] = [...blockedResults]
   if (toRun.length) {
     const { snapshotUndoDepth } = await import('@/src/lib/agent-turn-undo')
     undoDepthAtStart = snapshotUndoDepth(tienda)
-    results = await executeDawActions(tienda, toRun, {
-      agentMode: resolvedMode,
-      forceApply: false,
-      source,
-      conversationId,
-      messageId,
-    })
+    results = [
+      ...results,
+      ...(await executeDawActions(tienda, toRun, {
+        agentMode: resolvedMode,
+        forceApply: false,
+        source,
+        conversationId,
+        messageId,
+      })),
+    ]
   }
   if (destructive.length) {
     const { kept, deferred } = limitToOneMutatingAction(destructive)
@@ -1049,6 +1078,8 @@ export function CoProducerPanel() {
     setCitedIds([])
     const ac = new AbortController()
     abortRef.current = ac
+    // Presupuesto del turno: compartido por razonamiento, agent loop, harness y revisión.
+    const turnBudget = createAgentBudgetTracker()
     const myEpoch = genEpochRef.current
     const stillMine = () => myEpoch === genEpochRef.current && !ac.signal.aborted
     setHarnessPhase('Trabajando en el DAW…')
@@ -1105,8 +1136,9 @@ export function CoProducerPanel() {
       const styleGapSeed = styleGapIntent
         ? buildStyleGapReport(state, { userText })
         : ''
-      const worshipEnhanceFallback = styleApplyIntent
-        ? (buildWorshipDrumEnhanceActions(state) as DawAction[])
+      // Realce de estilo genérico: rasgos derivados del pedido del usuario (sin género por defecto).
+      const styleEnhanceFallback = styleApplyIntent
+        ? (buildStyleEnhanceActions(state, styleEnhanceProfileFromText(workText)) as DawAction[])
         : []
       const midiClipEditFallback =
         midiClipEditIntent || styleApplyIntent
@@ -1243,6 +1275,7 @@ export function CoProducerPanel() {
 
           const reasoning = await runAgentReasoningForTurn({
             tienda: dawStore,
+            budget: turnBudget,
             state,
             userText,
             resolvedMode,
@@ -1397,6 +1430,7 @@ export function CoProducerPanel() {
               setHarnessPhase('Agent Loop…')
               const loopOut = await runCoproducerAgentLoop({
                 tienda: dawStore,
+                budget: turnBudget,
                 userText: workText,
                 abort: ac.signal,
                 agentMode: resolvedMode,
@@ -1687,15 +1721,15 @@ export function CoProducerPanel() {
               } else if (actions.length === 0 && clarifyQs.length === 0 && wantsFullProject(workText)) {
                 actions = fallbackActionsFromUserIntent(workText, state, 'create')
               }
-              // Aplicar estilo worship → parche de batería si el modelo no emitió ACTIONS útiles
+              // Aplicar estilo → parche de batería si el modelo no emitió ACTIONS útiles
               if (
                 styleApplyIntent &&
-                worshipEnhanceFallback.length > 0 &&
+                styleEnhanceFallback.length > 0 &&
                 !actions.some((a) =>
                   /^(midi\.notes\.(set|patch)|midi\.humanize|midi\.clip\.md\.apply)$/i.test(a.type),
                 )
               ) {
-                actions = [...worshipEnhanceFallback, ...actions]
+                actions = [...styleEnhanceFallback, ...actions]
                 clarifyQs = []
               }
               // Suavizar / intro / toms / pads: forzar edición MIDI si el modelo solo puso setBpm
@@ -1848,11 +1882,8 @@ export function CoProducerPanel() {
                       'Revisa la tarjeta **Aplicar** abajo.',
                     ].join('\n')
                   : [
-                      'Voy a acercar la **batería** al feel worship moderno (Averly Morillo):',
-                      '- Ghost notes suaves en la caja',
-                      '- Hats abiertos en tramos de “coro”',
-                      '- Fills + crashes cada 8 compases',
-                      '- Humanize leve del timing/velocidad',
+                      'Voy a acercar la **batería** al estilo que pediste:',
+                      ...describeStyleEnhanceProfile(styleEnhanceProfileFromText(workText)),
                       '',
                       'Revisa la tarjeta **Aplicar** abajo. El resto de pistas (bajo, keys, pad, lead) las puedo adecuar en un segundo paso si quieres.',
                     ].join('\n')
@@ -1925,9 +1956,9 @@ export function CoProducerPanel() {
             } else {
               const forced =
                 (styleApplyIntent || midiClipEditIntent) &&
-                (midiClipEditFallback.length || worshipEnhanceFallback.length)
+                (midiClipEditFallback.length || styleEnhanceFallback.length)
                   ? [
-                      ...(midiClipEditFallback.length ? midiClipEditFallback : worshipEnhanceFallback),
+                      ...(midiClipEditFallback.length ? midiClipEditFallback : styleEnhanceFallback),
                     ]
                   : fallbackActionsFromUserIntent(workText, state, agentMode)
               if (forced.length) {
@@ -2006,7 +2037,7 @@ export function CoProducerPanel() {
         }
       }
 
-      // Tras auditoría MIDI “técnica” (duplicados): formulario. NO en gap de estilo / Averill.
+      // Tras auditoría MIDI “técnica” (duplicados): formulario. NO en gap de estilo.
       const auditRemediationEligible =
         !isStyleGapIntent(userText) &&
         (isProjectAuditIntent(userText) ||
@@ -2137,6 +2168,7 @@ export function CoProducerPanel() {
           )
           const follow = await runHarnessFollowups({
             userText,
+            budget: turnBudget,
             initialResults: lastResults,
             evaluation: firstReview.evaluation,
             actionsSummary,
@@ -2184,6 +2216,7 @@ export function CoProducerPanel() {
                 )
                 const brief = await runAbbreviatedReasoning({
                   userText,
+                  budget: turnBudget,
                   mode: 'create',
                   projectContext: ctx,
                   repairContext: repairPrompt,
@@ -2213,7 +2246,17 @@ export function CoProducerPanel() {
               .join('\n')
           }
 
-          if (!ac.signal.aborted && follow.stoppedReason !== 'aborted') {
+          if (follow.stoppedReason === 'budget') {
+            actionsSummary = [actionsSummary, follow.budgetMessage ?? formatAgentBudgetStopFor(turnBudget)]
+              .filter(Boolean)
+              .join('\n')
+          }
+          if (
+            !ac.signal.aborted &&
+            follow.stoppedReason !== 'aborted' &&
+            follow.stoppedReason !== 'budget' &&
+            !turnBudget.exceeded()
+          ) {
           const afterState = dawStore.obtenerEstado()
           setHarnessPhase('Revisión vs plan.md…')
           const reviewUser = buildHarnessReviewMessage({
@@ -2223,6 +2266,7 @@ export function CoProducerPanel() {
             projectId: afterState.project.id,
             evaluation: follow.evaluation ?? firstReview.evaluation,
           })
+          turnBudget.tryCharge(reviewUser.length)
           const reviewResult = await window.electron.aiChat(
             toAiChatPayload(
               provider,
