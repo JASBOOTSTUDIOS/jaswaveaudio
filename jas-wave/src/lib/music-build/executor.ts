@@ -378,7 +378,9 @@ export async function executeMusicBuild(
           color: colorForRole(String(t.rol)),
         })
         if (!createdTrack.success) continue
-        trackId = tienda.obtenerEstado().project.tracks.at(-1)?.id
+        trackId =
+          (createdTrack.result as { trackId?: string } | undefined)?.trackId ??
+          tienda.obtenerEstado().project.tracks.at(-1)?.id
         reused = false
       }
       if (!trackId) continue

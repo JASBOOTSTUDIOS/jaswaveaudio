@@ -372,7 +372,9 @@ export async function libraryAuditionPreset(
   if (!created.success) {
     return { ok: false, message: created.error?.message ?? 'No se pudo crear pista de audition' }
   }
-  const trackId = tienda.obtenerEstado().project.tracks.at(-1)?.id
+  const trackId =
+    (created.result as { trackId?: string } | undefined)?.trackId ??
+    tienda.obtenerEstado().project.tracks.at(-1)?.id
   if (!trackId) return { ok: false, message: 'Sin trackId de audition' }
 
   const applied = await libraryApplyPreset(tienda, { presetId: opts.presetId, trackId })

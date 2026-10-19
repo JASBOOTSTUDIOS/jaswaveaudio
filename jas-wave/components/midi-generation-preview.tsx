@@ -64,7 +64,10 @@ export function MidiGenerationPreview({ preview, status = 'pending', onStatusCha
         })
         if (create.success) {
           const tracks = tienda.obtenerEstado().project.tracks
-          pistaId = tracks[tracks.length - 1]?.id ?? ''
+          pistaId =
+            (create.result as { trackId?: string } | undefined)?.trackId ??
+            tracks[tracks.length - 1]?.id ??
+            ''
         }
       }
       if (!pistaId) {

@@ -306,6 +306,22 @@ function isMidiCapableTrack(tipo: string | undefined): boolean {
   return tipo === 'midi' || tipo === 'instrumento' || tipo === 'audio'
 }
 
+/**
+ * Pista creada por `track.create`: usa `result.trackId` (determinista); si no
+ * viene (versiones antiguas del comando), cae al último elemento de la lista.
+ */
+export function createdTrackFromResult<T extends { id: string }>(
+  tracks: readonly T[],
+  result: unknown,
+): T | undefined {
+  const trackId = (result as { trackId?: unknown } | undefined)?.trackId
+  if (typeof trackId === 'string' && trackId.length > 0) {
+    const hit = tracks.find((t) => t.id === trackId)
+    if (hit) return hit
+  }
+  return tracks[tracks.length - 1]
+}
+
 async function resolveMidiTrackForClip(
   tienda: TiendaDAW,
   opts: { pistaId?: string; nombre?: string; allowCreate?: boolean },
@@ -371,7 +387,7 @@ async function resolveMidiTrackForClip(
     }
   }
   const after = tienda.obtenerEstado()
-  const created = after.project.tracks[after.project.tracks.length - 1]
+  const created = createdTrackFromResult(after.project.tracks, result.result)
   if (!created) return { trackId: '', created: false, error: 'Pista creada pero no encontrada' }
   return { trackId: created.id, created: true, trackName: created.nombre }
 }
@@ -1657,7 +1673,7 @@ export async function executeDawActions(
               color: t.rol === 'drums' ? '#f59e0b' : t.rol === 'bass' ? '#38bdf8' : '#a78bfa',
             })
             if (!created.success) continue
-            const trackId = tienda.obtenerEstado().project.tracks.at(-1)?.id
+            const trackId = createdTrackFromResult(tienda.obtenerEstado().project.tracks, created.result)?.id
             if (!trackId) continue
             const d =
               (t.pluginId
