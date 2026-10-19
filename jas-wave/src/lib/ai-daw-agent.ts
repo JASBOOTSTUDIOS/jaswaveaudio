@@ -3044,6 +3044,26 @@ export async function executeDawActions(
           })
           break
         }
+        case 'project.load': {
+          const ruta = String(p.ruta ?? p.path ?? '').trim()
+          if (!ruta) {
+            results.push({ type: action.type, success: false, message: 'Falta ruta del .jaswave' })
+            break
+          }
+          const { cargarProyectoDesdeRutaIO } = await import('./project-io')
+          const r = await cargarProyectoDesdeRutaIO(tienda, ruta)
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success
+              ? `Proyecto cargado: ${ruta}`
+              : typeof r.error === 'string'
+                ? r.error
+                : r.error?.message ?? 'Error project.load',
+            data: r,
+          })
+          break
+        }
         case 'plugin.snapshotState': {
           const { snapshotLoadedPluginsIntoProject, snapshotTrackPluginIntoProject } = await import(
             './plugin/track-vst-runtime'
@@ -3127,7 +3147,8 @@ export async function executeDawActions(
     }
   }
 
-  return results
+  // Las herramientas desconocidas deben reportarse: si no, la CLI recibe ok:true con results vacío.
+  return [...unknownResults, ...results]
 }
 
 export function formatActionResultsForUser(results: ActionResult[]): string {

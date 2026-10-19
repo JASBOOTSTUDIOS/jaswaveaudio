@@ -158,6 +158,7 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'project.new': 'system',
   'project.save': 'system',
   'project.saveAs': 'system',
+  'project.load': 'system',
   'audio.setDevice': 'system',
   'audio.ensureBest': 'system',
   'audio.clearQuarantine': 'system',
