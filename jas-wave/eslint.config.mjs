@@ -32,6 +32,15 @@ export default tseslint.config(
     },
   },
   {
+    // E2E con Playwright: corre en Node; `async ({}, testInfo)` es el idioma de Playwright.
+    files: ['e2e/**/*.ts'],
+    languageOptions: { globals: { ...globals.node } },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+      'no-empty-pattern': 'off',
+    },
+  },
+  {
     // Config de Vite (JS plano), worklets de AudioWorkletGlobalScope y host Node.
     files: ['*.js', '**/*processor*.{ts,js}', '**/*.cjs'],
     languageOptions: {

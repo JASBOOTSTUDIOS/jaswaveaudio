@@ -84,8 +84,16 @@ export async function abrirProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
     return { success: false, error: result.error ?? 'No se pudo abrir el proyecto' }
   }
 
+  return cargarProyectoDesdeRutaIO(tienda, result.path)
+}
+
+/**
+ * Carga un .jaswave ya concedido por main (diálogo o CLI autenticada) y aplica
+ * los pasos posteriores comunes (biblioteca, migraciones).
+ */
+export async function cargarProyectoDesdeRutaIO(tienda: TiendaDAW, ruta: string): Promise<ResultadoIO> {
   // Camino canónico: Command System + FileService
-  const loaded = await tienda.executor.execute('project.load', { ruta: result.path })
+  const loaded = await tienda.executor.execute('project.load', { ruta })
   if (!loaded.success) {
     return { success: false, error: loaded.error ?? 'Error al cargar proyecto' }
   }
@@ -109,7 +117,7 @@ export async function abrirProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
   } catch {
     /* migración best-effort */
   }
-  return { success: true, path: result.path }
+  return { success: true, path: ruta }
 }
 
 export async function nuevoProyectoIO(tienda: TiendaDAW, nombre = 'Sin título'): Promise<ResultadoIO> {

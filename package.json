@@ -19,7 +19,8 @@
     "native:sdk": "node native/scripts/fetch-vst3sdk.mjs",
     "native:build": "node native/scripts/build-native.mjs",
     "pack:win": "npm run pack:win --prefix jas-wave",
-    "release:win": "npm run release:win --prefix jas-wave"
+    "release:win": "npm run release:win --prefix jas-wave",
+    "e2e": "npm run e2e --prefix jas-wave"
   },
   "engines": {
     "node": ">=22"

@@ -474,6 +474,7 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'project.update',
   'project.save',
   'project.saveAs',
+  'project.load',
   'midi.notes.patch',
   'midi.getNotes',
   ...AGENT_ONLY_ACTIONS.map((a) => a.type),
