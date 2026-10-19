@@ -5,6 +5,7 @@
 
 import type { DAWState } from '../../../shared/src/types/state'
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
+import { validarProyecto } from '../../../shared/src/schemas/proyecto'
 import { audioEngine } from '@/lib/audio-engine'
 import { markProjectBuffersNotNeeded, reportProjectBuffersSettled } from '@/src/lib/project-ready'
 import { migrateSoftPadPluginsInProject } from '@/src/lib/plugin/migrate-softpad-to-roles'
@@ -323,8 +324,33 @@ export async function clearSessionSnapshot(): Promise<void> {
   }
 }
 
-export function applySessionProject(tienda: TiendaDAW, snap: SessionMeta | SessionSnapshot): void {
-  const project = snap.project
+/**
+ * Valida el proyecto del snapshot de IndexedDB con el mismo esquema que la
+ * carga de `.jaswave`. Devuelve el mensaje de error o null si es válido.
+ */
+export function validarProyectoSesion(project: unknown): string | null {
+  const r = validarProyecto(project)
+  return r.ok ? null : r.error
+}
+
+/**
+ * Aplica el proyecto de la sesión guardada. Si el snapshot está corrupto,
+ * lo registra y NO toca la tienda (se arranca con proyecto nuevo).
+ * @returns true si se aplicó la sesión.
+ */
+export function applySessionProject(tienda: TiendaDAW, snap: SessionMeta | SessionSnapshot): boolean {
+  const project = snap?.project
+  const error = validarProyectoSesion(project)
+  if (error) {
+    const msg = `Sesión guardada descartada (proyecto corrupto): ${error}`
+    console.warn('[session-persist]', msg)
+    try {
+      window.electron?.logError?.('session', msg)
+    } catch {
+      /* el log nunca debe impedir el arranque */
+    }
+    return false
+  }
   try {
     migrateSoftPadPluginsInProject(project)
   } catch (err) {
@@ -347,13 +373,14 @@ export function applySessionProject(tienda: TiendaDAW, snap: SessionMeta | Sessi
     },
     ui: {
       ...s.ui,
-      zoomHorizontal: snap.ui.zoomHorizontal,
-      zoomVertical: snap.ui.zoomVertical,
-      scrollX: snap.ui.scrollX,
-      herramientaActiva: snap.ui.herramientaActiva,
+      zoomHorizontal: snap.ui?.zoomHorizontal ?? s.ui.zoomHorizontal,
+      zoomVertical: snap.ui?.zoomVertical ?? s.ui.zoomVertical,
+      scrollX: snap.ui?.scrollX ?? s.ui.scrollX,
+      herramientaActiva: snap.ui?.herramientaActiva ?? s.ui.herramientaActiva,
     },
     selection: snap.selection ?? s.selection,
   }))
+  return true
 }
 
 async function restoreAudioChunked(
@@ -387,8 +414,8 @@ async function restoreAudioChunked(
   }
 }
 
-export function applySessionSnapshot(tienda: TiendaDAW, snap: SessionSnapshot): void {
-  applySessionProject(tienda, snap)
+export function applySessionSnapshot(tienda: TiendaDAW, snap: SessionSnapshot): boolean {
+  if (!applySessionProject(tienda, snap)) return false
   if (snap.audio && Object.keys(snap.audio).length > 0) {
     try {
       audioEngine.restoreAudioBuffersFromPersist(snap.audio)
@@ -396,6 +423,7 @@ export function applySessionSnapshot(tienda: TiendaDAW, snap: SessionSnapshot): 
       console.warn('[session-persist] audio restore failed', err)
     }
   }
+  return true
 }
 
 export function attachSessionAutosave(tienda: TiendaDAW): () => void {
@@ -462,7 +490,11 @@ export async function hydrateSession(
     `${meta.project?.tracks?.length ?? 0} pistas`,
   )
   await yieldUi()
-  applySessionProject(tienda, meta)
+  if (!applySessionProject(tienda, meta)) {
+    // Snapshot corrupto: arranque con proyecto nuevo (la tienda no se tocó).
+    report(onProgress, 'empty', 'Sesión previa dañada · proyecto nuevo', 1)
+    return false
+  }
 
   if (skipAudio) {
     report(onProgress, 'done', 'Listo', 1)

@@ -193,7 +193,7 @@ describe('guardarProyecto / cargarProyecto round-trip', () => {
 
   it('deberia lanzar error al cargar JSON invalido', async () => {
     await fileService.guardar('corrupto.jaswave', '{ no es json');
-    await expect(cargarProyecto('corrupto.jaswave', fileService)).rejects.toThrow('JSON inválido');
+    await expect(cargarProyecto('corrupto.jaswave', fileService)).rejects.toThrow('JSON dañado');
   });
 
   it('deberia lanzar error al cargar version incompatible', async () => {
@@ -210,14 +210,14 @@ describe('guardarProyecto / cargarProyecto round-trip', () => {
     const proyecto = proyectoNuevo('X') as any;
     delete proyecto.id;
     await fileService.guardar('sin-id.jaswave', JSON.stringify({ version: FORMATO_ACTUAL, project: proyecto, audioReferences: {} }));
-    await expect(cargarProyecto('sin-id.jaswave', fileService)).rejects.toThrow('falta project.id');
+    await expect(cargarProyecto('sin-id.jaswave', fileService)).rejects.toThrow('project.id: falta el campo');
   });
 
   it('deberia lanzar error al cargar proyecto con sampleRate invalido', async () => {
     const proyecto = proyectoNuevo('X') as any;
     proyecto.sampleRate = 0;
     await fileService.guardar('bad-sr.jaswave', JSON.stringify({ version: FORMATO_ACTUAL, project: proyecto, audioReferences: {} }));
-    await expect(cargarProyecto('bad-sr.jaswave', fileService)).rejects.toThrow('sampleRate inválido');
+    await expect(cargarProyecto('bad-sr.jaswave', fileService)).rejects.toThrow('project.sampleRate: debe ser mayor que 0');
   });
 
   it('deberia guardar solo archivos .jaswave', async () => {
