@@ -210,13 +210,17 @@ export function crearPipelineValidacion(opciones?: {
     {
       name: 'permission',
       execute: (request: ActionRequest, _state: DAWState): ValidationResult => {
+        const definicion = registry.get(request.type);
         const tool: ToolDefinition = {
           type: request.type,
           category: 'system',
-          description: '',
-          risk: 'write',
+          description: definicion?.description ?? '',
+          // Riesgo real del comando (read / write / dangerous); desconocido = write.
+          risk: definicion?.risk ?? 'write',
         };
-        const userLevel = (request.source === 'ai' ? 'ai' : 'user') as 'user' | 'ai' | 'admin' | 'engineer' | 'guest';
+        const userLevel = (
+          request.source === 'ai' ? 'ai' : request.source === 'script' ? 'guest' : 'user'
+        ) as 'user' | 'ai' | 'admin' | 'engineer' | 'guest';
         const result = permissionValidator.check(tool, userLevel);
         if (!result.allowed) {
           return {

@@ -100,7 +100,7 @@ export class CommandExecutor {
       payload: payload as never,
       source,
       userId: effectiveUserId,
-      context: {},
+      context: { source, userId: effectiveUserId },
     };
 
     const pipelineResult = await this.pipeline.validate(request, { state: this.estado });

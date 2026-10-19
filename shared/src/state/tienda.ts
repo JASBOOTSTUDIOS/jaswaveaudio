@@ -30,6 +30,7 @@ import { BusEventosMemoria } from '../events/event-bus';
 import type { SessionScope } from '../events/event-bus';
 import { iniciarSesionContextoIA } from '../events/ciclo-vida-suscripciones';
 import { crearPermissionManager, type PermissionManager } from './permissions';
+import { crearPipelineValidacion } from './pipeline-validacion';
 import { crearMemoryManager, type MemoryManager } from '../ai/memory-manager';
 import { crearGestorContexto, type ContextManagerConfig } from '../ai/context-manager';
 import type { AssembledContext, ImmediateContext, ProjectContext, RecentEvent, TurnoConversacion } from '../types/contexto';
@@ -79,17 +80,33 @@ export function crearTiendaDAW(opciones?: TiendaDAWOpciones): TiendaDAW {
   const registro = crearRegistroComandos();
   const pila = crearPilaDeshacerRehacer(1000);
   const auditoria = crearRegistroAuditoria();
+  const permisos = permisosInyectados ?? crearPermissionManager({ busEventos: bus });
   const executor = new CommandExecutorCls({
     busEventos: bus,
     pila,
     registro,
     auditoria,
     estadoInicial: estadoInicialResolved,
+    // Las acciones con source 'ai' respetan el nivel de autonomía (READ_ONLY/SUGGEST no escriben).
+    // La confirmación previa la gestiona la UI (tarjeta de acciones pendientes).
+    pipelineValidacion: crearPipelineValidacion({
+      registroComandos: registro,
+      permissionValidator: {
+        check: (tool, userLevel) => {
+          if (userLevel !== 'ai') return { allowed: true, requiresConfirmation: false };
+          const r = permisos.check(tool, 'ai');
+          return {
+            allowed: r.allowed,
+            requiresConfirmation: r.requiresConfirmation,
+            reason: r.reason ?? `Nivel ${r.userLevel} no permite a la IA acciones ${tool.risk}`,
+          };
+        },
+      },
+    }),
   });
 
   registrarComandosBuiltin(registro);
 
-  const permisos = permisosInyectados ?? crearPermissionManager({ busEventos: bus });
   const memoria = crearMemoryManager();
   const gestorContexto = crearGestorContexto();
 

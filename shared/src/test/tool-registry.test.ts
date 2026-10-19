@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { crearToolRegistry, toolRegistry } from '../ai/tool-registry';
+import { crearPermissionManager } from '../state/permissions';
 import type { ToolDefinitionExtended, ToolHandler, ToolFilter } from '../ai/tool-registry';
 import type { DAWState } from '../types/state';
 import type { DAWQuery } from '../types/query';
@@ -149,5 +150,38 @@ describe('ToolRegistry', () => {
     toolRegistry.register(toolDef({ name: 'singleton.tool' }), handler);
     expect(toolRegistry.get('singleton.tool')).toBeDefined();
     toolRegistry.unregister('singleton.tool');
+  });
+
+  it('falla cerrado sin PermissionManager', async () => {
+    const registry = crearToolRegistry();
+    registry.register(toolDef(), handler);
+    registry.setContext({ obtenerEstado: () => ({}) } as any, null as any);
+    const r = await registry.execute('project.getState', {});
+    expect(r.success).toBe(false);
+    expect(r.error?.code).toBe('PERMISSION_DENIED');
+  });
+
+  it('el contexto es por instancia (no se comparte entre registries)', async () => {
+    const a = crearToolRegistry();
+    const b = crearToolRegistry();
+    a.register(toolDef(), handler);
+    b.register(toolDef(), handler);
+    a.setContext({ obtenerEstado: () => ({}) } as any, crearPermissionManager());
+    expect((await a.execute('project.getState', {})).success).toBe(true);
+    expect((await b.execute('project.getState', {})).error?.code).toBe('NO_EXECUTOR');
+  });
+
+  it('un error puntual no marca el handler como roto; tres seguidos sí', async () => {
+    const registry = crearToolRegistry();
+    const failing: ToolHandler = async () => {
+      throw new Error('boom');
+    };
+    registry.register(toolDef(), failing);
+    registry.setContext({ obtenerEstado: () => ({}) } as any, crearPermissionManager());
+    await registry.execute('project.getState', {});
+    expect(registry.get('project.getState')).toBeDefined();
+    await registry.execute('project.getState', {});
+    await registry.execute('project.getState', {});
+    expect(registry.getHealth().brokenHandlers).toContain('project.getState');
   });
 });

@@ -479,11 +479,45 @@ export type ExecuteDawOptions = {
   skipWorkPlan?: boolean
 }
 
+type CommandSource = 'user' | 'ai' | 'script'
+
+/** Origen del comando para el pipeline: lo propuesto por el modelo cuenta como IA. */
+export function commandSourceFor(source: AiDawAuditSource | undefined): CommandSource {
+  if (source === 'user_build' || source === 'user_confirm') return 'user'
+  if (source === 'cli') return 'script'
+  return 'ai'
+}
+
+/**
+ * Vista de la tienda cuyo executor.execute usa por defecto `source`, para que los
+ * permisos de autonomía y la auditoría distingan IA / usuario / CLI sin tocar cada llamada.
+ */
+function withCommandSource(base: TiendaDAW, source: CommandSource): TiendaDAW {
+  const executor = new Proxy(base.executor, {
+    get(target, key) {
+      if (key === 'execute') {
+        return (type: string, payload?: unknown, src?: CommandSource, userId?: string) =>
+          target.execute(type, payload, src ?? source, userId)
+      }
+      const value = Reflect.get(target, key, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  return new Proxy(base, {
+    get(target, key) {
+      if (key === 'executor') return executor
+      const value = Reflect.get(target, key, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+}
+
 export async function executeDawActions(
-  tienda: TiendaDAW,
+  tiendaBase: TiendaDAW,
   actions: DawAction[],
   opts: ExecuteDawOptions = {},
 ): Promise<ActionResult[]> {
+  const tienda = withCommandSource(tiendaBase, commandSourceFor(opts.source ?? 'model_actions'))
   const results: ActionResult[] = []
   const st = tienda.obtenerEstado()
   bindAgentDocsDisk(st.project?.id || 'default', st.project?.ruta)
