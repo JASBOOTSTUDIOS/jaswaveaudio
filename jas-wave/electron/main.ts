@@ -1,9 +1,9 @@
-const { app, BrowserWindow, ipcMain: rawIpcMain, dialog, Menu, session, clipboard, shell } = require('electron')
+const { app, BrowserWindow, ipcMain: rawIpcMain, dialog, Menu, session, clipboard, shell, safeStorage } = require('electron')
 const path = require('path')
 const fs = require('fs/promises')
 const fsSync = require('fs')
 import type { IpcMainInvokeEvent } from 'electron'
-import { aiChat, aiHealth, legacyChatArgsToRequest, type AiChatRequest, type AiHealthRequest } from './ai-gateway'
+import { aiChat, aiHealth, cancelAiChat, legacyChatArgsToRequest, type AiChatRequest, type AiHealthRequest } from './ai-gateway'
 import { lookupPluginOnWeb } from './plugin-lookup'
 import { searchWeb } from './web-search'
 import {
@@ -12,6 +12,7 @@ import {
   stopAgentBridge,
 } from './agent-bridge'
 import { shouldStartAgentBridge } from './agent-bridge-auth'
+import { AiCredentialStore } from './ai-credentials'
 import { writeFileAtomic } from './atomic-write'
 import { defaultVstRoots, isAudioFile, PathAccessError, PathGrants, type AccessKind, type GrantMode } from './path-grants'
 import { checkHostCommand } from './plugin-host-guard'
@@ -69,6 +70,20 @@ function assertBinaryRead(p: unknown): string {
 
 function isProjectFile(p: string): boolean {
   return /.jaswave$/i.test(p)
+}
+
+// ── API keys de IA (cifradas; el renderer no puede leerlas) ─────────────────
+let aiCredentials: InstanceType<typeof AiCredentialStore> | null = null
+function credentials(): InstanceType<typeof AiCredentialStore> {
+  aiCredentials ??= new AiCredentialStore(path.join(app.getPath('userData'), 'ai-credentials.json'), safeStorage)
+  return aiCredentials
+}
+
+/** Completa apiKey desde el almacén cifrado cuando el renderer manda solo providerId. */
+function withStoredApiKey<T extends { apiKey?: string; providerId?: string }>(req: T): T {
+  if (req.apiKey?.trim() || !req.providerId) return req
+  const apiKey = credentials().get(req.providerId)
+  return apiKey ? { ...req, apiKey } : req
 }
 
 // ── Ajustes del proceso main (userData/jaswave-settings.json) ───────────────
@@ -605,14 +620,14 @@ ipcMain.handle('project-open-dialog', async () => {
 ipcMain.handle('ai-chat', async (_event: IpcMainInvokeEvent, payload: unknown, model?: string, baseUrl?: string, temperature?: number) => {
   // Nuevo: objeto AiChatRequest. Legacy: (messages[], model, baseUrl, temperature)
   if (payload && typeof payload === 'object' && !Array.isArray(payload) && 'messages' in (payload as object) && 'kind' in (payload as object)) {
-    return aiChat(payload as AiChatRequest)
+    return aiChat(withStoredApiKey(payload as AiChatRequest))
   }
   return aiChat(legacyChatArgsToRequest((payload as unknown[]) ?? [], model, baseUrl, temperature))
 })
 
 ipcMain.handle('ai-health', async (_event: IpcMainInvokeEvent, payload?: unknown) => {
   if (payload && typeof payload === 'object' && !Array.isArray(payload) && 'kind' in (payload as object)) {
-    return aiHealth(payload as AiHealthRequest)
+    return aiHealth(withStoredApiKey(payload as AiHealthRequest))
   }
   // Legacy: solo baseUrl string
   const baseUrl = typeof payload === 'string' ? payload : undefined
@@ -620,6 +635,17 @@ ipcMain.handle('ai-health', async (_event: IpcMainInvokeEvent, payload?: unknown
     kind: 'ollama',
     baseUrl: baseUrl || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434',
   })
+})
+
+ipcMain.handle('ai-chat-cancel', (_event: IpcMainInvokeEvent, requestId: unknown) =>
+  typeof requestId === 'string' ? cancelAiChat(requestId) : false,
+)
+ipcMain.handle('ai-cred-set', (_event: IpcMainInvokeEvent, providerId: unknown, apiKey: unknown) =>
+  credentials().set(providerId, apiKey),
+)
+ipcMain.handle('ai-cred-status', (_event: IpcMainInvokeEvent, providerIds: unknown) => {
+  const ids = Array.isArray(providerIds) ? providerIds.slice(0, 200) : []
+  return Object.fromEntries(ids.map((id) => [String(id), credentials().has(id)]))
 })
 
 ipcMain.handle('plugin-lookup', async (_event: IpcMainInvokeEvent, pluginName: unknown) => {

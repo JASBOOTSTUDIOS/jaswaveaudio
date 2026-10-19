@@ -1797,6 +1797,7 @@ function AiTab() {
                           <input
                             type={showKey ? 'text' : 'password'}
                             value={p.apiKey}
+                            placeholder={p.hasApiKey && !p.apiKey ? '•••••••• guardada y cifrada — escribe para reemplazar' : ''}
                             onChange={(e) => updateProvider(p.id, { apiKey: e.target.value })}
                             className={`min-w-0 flex-1 ${MONO}`}
                           />
@@ -1807,7 +1808,19 @@ function AiTab() {
                           >
                             {showKey ? 'Ocultar' : 'Ver'}
                           </button>
+                          {p.hasApiKey ? (
+                            <button
+                              type="button"
+                              onClick={() => updateProvider(p.id, { apiKey: '', hasApiKey: false })}
+                              className="shrink-0 rounded-md border border-border px-2.5 py-1.5 text-[11px] text-muted-foreground hover:text-destructive"
+                            >
+                              Borrar
+                            </button>
+                          ) : null}
                         </div>
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          La API key se guarda cifrada en este equipo y nunca se incluye en proyectos ni exportaciones.
+                        </p>
                       </Field>
                     ) : null}
 

@@ -34,6 +34,12 @@ contextBridge.exposeInMainWorld('electron', {
   aiChat: (payload: unknown, model?: string, baseUrl?: string, temperature?: number) =>
     ipcRenderer.invoke('ai-chat', payload, model, baseUrl, temperature),
   aiHealth: (payload?: unknown) => ipcRenderer.invoke('ai-health', payload),
+  aiChatCancel: (requestId: string) => ipcRenderer.invoke('ai-chat-cancel', requestId),
+  /** Guarda (o borra con '') la API key de un perfil; queda cifrada en main. */
+  aiCredSet: (providerId: string, apiKey: string) => ipcRenderer.invoke('ai-cred-set', providerId, apiKey),
+  aiCredStatus: (providerIds: string[]) => ipcRenderer.invoke('ai-cred-status', providerIds),
+  agentBridgeGetEnabled: () => ipcRenderer.invoke('agent-bridge-get-enabled'),
+  agentBridgeSetEnabled: (enabled: boolean) => ipcRenderer.invoke('agent-bridge-set-enabled', enabled),
   pluginLookup: (pluginName: string) => ipcRenderer.invoke('plugin-lookup', pluginName),
   webSearch: (query: string) => ipcRenderer.invoke('web-search', query),
   dialogMessage: (type: string, title: string, message: string) => ipcRenderer.invoke('dialog-message', type, title, message),

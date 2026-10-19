@@ -41,6 +41,7 @@ export type AiErrorCode =
   | 'provider_error'
   | 'empty_response'
   | 'not_available'
+  | 'cancelled'
   | 'unknown'
 
 export type ChatMessage = { role: string; content: string }
@@ -51,6 +52,10 @@ export type AiChatRequest = {
   model: string
   baseUrl: string
   apiKey?: string
+  /** Perfil cuyo API key guarda main (ai-credentials); el renderer no la envía. */
+  providerId?: string
+  /** Id para cancelar con cancelAiChat (botón Detener). */
+  requestId?: string
   temperature?: number
   maxTokens?: number
   custom?: AiProviderCustom
@@ -60,6 +65,7 @@ export type AiHealthRequest = {
   kind: AiProviderKind
   baseUrl: string
   apiKey?: string
+  providerId?: string
   custom?: AiProviderCustom
 }
 
@@ -211,6 +217,19 @@ function joinUrl(base: string, path: string): string {
   return `${b}${p}`
 }
 
+/** Cabeceras que un perfil personalizado no puede sobrescribir. */
+const FORBIDDEN_EXTRA_HEADERS = new Set(['host', 'content-length', 'connection', 'transfer-encoding', 'cookie'])
+
+/** Solo http(s); nada de file:, data:, etc. */
+export function isAllowedProviderUrl(raw: string | undefined): boolean {
+  try {
+    const u = new URL(String(raw || '').trim())
+    return (u.protocol === 'https:' || u.protocol === 'http:') && !u.username && !u.password
+  } catch {
+    return false
+  }
+}
+
 function applyAuthHeaders(
   headers: Record<string, string>,
   apiKey: string | undefined,
@@ -223,7 +242,7 @@ function applyAuthHeaders(
   if (style === 'x-api-key' && key) headers['x-api-key'] = key
   if (custom?.extraHeaders) {
     for (const [k, v] of Object.entries(custom.extraHeaders)) {
-      if (k && typeof v === 'string') headers[k] = v
+      if (k && typeof v === 'string' && !FORBIDDEN_EXTRA_HEADERS.has(k.toLowerCase())) headers[k] = v
     }
   }
   if (kind === 'openrouter') {
@@ -252,6 +271,18 @@ function mapHttpStatus(status: number, body: string, kind: AiProviderKind): AiCh
   return fail(`Error del proveedor (${status}). ${snippet}`, 'provider_error', kind)
 }
 
+/** Señal de cancelación del chat en curso (la cola es serial: uno a la vez). */
+let activeChatSignal: AbortSignal | null = null
+const chatControllers = new Map<string, AbortController>()
+
+/** Cancela un chat en cola o en curso (incluye sus reintentos). */
+export function cancelAiChat(requestId: string): boolean {
+  const c = chatControllers.get(requestId)
+  if (!c) return false
+  c.abort()
+  return true
+}
+
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
@@ -259,10 +290,15 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const outer = activeChatSignal
+  const onOuterAbort = () => controller.abort()
+  outer?.addEventListener('abort', onOuterAbort)
+  if (outer?.aborted) controller.abort()
   try {
     return await fetch(url, { ...init, signal: controller.signal })
   } finally {
     clearTimeout(timer)
+    outer?.removeEventListener('abort', onOuterAbort)
   }
 }
 
@@ -280,6 +316,7 @@ function classifyFetchError(err: unknown, kind: AiProviderKind): AiChatResult {
 function validateRequest(req: AiChatRequest): AiChatResult | null {
   if (!req.kind) return fail('Falta el tipo de proveedor.', 'bad_request', 'openai-compatible')
   if (!normalizeBase(req.baseUrl)) return fail('Falta la URL base del proveedor.', 'missing_base_url', req.kind)
+  if (!isAllowedProviderUrl(req.baseUrl)) return fail('La URL base debe ser http(s).', 'missing_base_url', req.kind)
   if (!String(req.model || '').trim()) return fail('Falta el modelo.', 'missing_model', req.kind)
   if (needsKey(req.kind, req.custom) && !String(req.apiKey || '').trim()) {
     return fail(`El proveedor ${req.kind} requiere API key.`, 'missing_api_key', req.kind)
@@ -431,12 +468,13 @@ async function chatGemini(req: AiChatRequest): Promise<AiChatResult> {
     return fail('Gemini requiere al menos un mensaje de usuario.', 'bad_request', req.kind)
   }
 
-  const url = `${base}/models/${encodeURIComponent(req.model)}:generateContent?key=${encodeURIComponent(key)}`
+  // API key por cabecera (no en la URL: evita que quede en logs/proxies).
+  const url = `${base}/models/${encodeURIComponent(req.model)}:generateContent`
   let res: Response
   try {
     res = await fetchWithTimeout(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
         systemInstruction: system ? { parts: [{ text: system }] } : undefined,
         contents,
@@ -507,26 +545,45 @@ export async function aiChat(req: AiChatRequest): Promise<AiChatResult> {
   const invalid = validateRequest(req)
   if (invalid) return invalid
 
+  const controller = new AbortController()
+  if (req.requestId) chatControllers.set(req.requestId, controller)
+  const cancelled = () => fail('Solicitud cancelada.', 'cancelled', req.kind)
+
   let result!: AiChatResult
   const run = async () => {
+    if (controller.signal.aborted) {
+      result = cancelled()
+      return
+    }
     const gap = minGapBetweenChatsMs(req.kind)
     if (gap > 0) {
       const wait = Math.max(0, lastChatFinishedAt + gap - Date.now())
       if (wait > 0) await sleep(wait)
     }
-    result = await aiChatWithRetry(req)
-    lastChatFinishedAt = Date.now()
+    activeChatSignal = controller.signal
+    try {
+      result = await aiChatWithRetry(req, controller.signal)
+      if (controller.signal.aborted) result = cancelled()
+    } finally {
+      activeChatSignal = null
+      lastChatFinishedAt = Date.now()
+    }
   }
-  chatQueue = chatQueue.then(run, run)
-  await chatQueue
-  return result
+  try {
+    chatQueue = chatQueue.then(run, run)
+    await chatQueue
+    return result
+  } finally {
+    if (req.requestId) chatControllers.delete(req.requestId)
+  }
 }
 
-async function aiChatWithRetry(req: AiChatRequest): Promise<AiChatResult> {
+async function aiChatWithRetry(req: AiChatRequest, signal?: AbortSignal): Promise<AiChatResult> {
   let last: AiChatResult = fail('Sin respuesta del proveedor.', 'unknown', req.kind)
   for (let attempt = 0; attempt <= MAX_CHAT_RETRIES; attempt++) {
+    if (signal?.aborted) return last
     last = await aiChatOnce(req)
-    if (last.success) return last
+    if (last.success || signal?.aborted) return last
     if (!isRetriableErrorCode(last.errorCode) || attempt === MAX_CHAT_RETRIES) return last
     const delay = RETRY_BASE_MS * 2 ** attempt + Math.floor(Math.random() * 500)
     await sleep(delay)
@@ -631,9 +688,9 @@ async function healthGemini(req: AiHealthRequest): Promise<AiHealthResult> {
     return healthFail('Gemini requiere API key.', 'missing_api_key', req.kind, 'misconfigured')
   }
   const base = normalizeBase(req.baseUrl) || 'https://generativelanguage.googleapis.com/v1beta'
-  const url = `${base}/models?key=${encodeURIComponent(req.apiKey.trim())}`
+  const url = `${base}/models`
   try {
-    const res = await fetchWithTimeout(url, { method: 'GET' }, 20_000)
+    const res = await fetchWithTimeout(url, { method: 'GET', headers: { 'x-goog-api-key': req.apiKey.trim() } }, 20_000)
     const text = await res.text()
     if (!res.ok) {
       const mapped = mapHttpStatus(res.status, text, req.kind)
@@ -673,6 +730,9 @@ export async function aiHealth(req: AiHealthRequest): Promise<AiHealthResult> {
   if (!req.kind) return healthFail('Falta el tipo de proveedor.', 'bad_request', 'openai-compatible', 'misconfigured')
   if (!normalizeBase(req.baseUrl)) {
     return healthFail('Falta la URL base.', 'missing_base_url', req.kind, 'misconfigured')
+  }
+  if (!isAllowedProviderUrl(req.baseUrl)) {
+    return healthFail('La URL base debe ser http(s).', 'missing_base_url', req.kind, 'misconfigured')
   }
   const style = req.custom?.apiStyle
   try {

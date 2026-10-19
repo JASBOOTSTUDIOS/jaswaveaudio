@@ -46,6 +46,11 @@ declare global {
         provider?: string
         baseUrl?: string
       }>
+      aiChatCancel?: (requestId: string) => Promise<boolean>
+      aiCredSet?: (providerId: string, apiKey: string) => Promise<{ ok: boolean; error?: string }>
+      aiCredStatus?: (providerIds: string[]) => Promise<Record<string, boolean>>
+      agentBridgeGetEnabled?: () => Promise<boolean>
+      agentBridgeSetEnabled?: (enabled: boolean) => Promise<{ enabled: boolean; running: boolean }>
       pluginLookup: (pluginName: string) => Promise<Array<{ title: string; snippet: string; url: string }>>
       webSearch: (query: string) => Promise<Array<{ title: string; snippet: string; url: string }>>
       dialogMessage: (type: string, title: string, message: string) => Promise<number>

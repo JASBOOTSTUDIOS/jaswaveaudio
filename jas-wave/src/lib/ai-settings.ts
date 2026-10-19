@@ -41,7 +41,13 @@ export type AiProviderProfile = {
   kind: AiProviderKind
   name: string
   baseUrl: string
+  /**
+   * Solo en memoria mientras el usuario la escribe. En Electron se guarda cifrada en main
+   * (ai-credentials) y aquí queda vacía con `hasApiKey: true`.
+   */
   apiKey: string
+  /** La API key está guardada en el almacén cifrado de Electron. */
+  hasApiKey?: boolean
   models: string[]
   selectedModel: string
   /** Config libre para proveedores fuera del catálogo preset. */
@@ -84,6 +90,10 @@ export type AiChatRequest = {
   model: string
   baseUrl: string
   apiKey?: string
+  /** Main resuelve la API key cifrada de este perfil. */
+  providerId?: string
+  /** Permite cancelar en main (aiChatCancel) también la petición HTTP y sus reintentos. */
+  requestId?: string
   temperature?: number
   maxTokens?: number
   custom?: AiProviderCustom
@@ -93,6 +103,7 @@ export type AiHealthRequest = {
   kind: AiProviderKind
   baseUrl: string
   apiKey?: string
+  providerId?: string
   custom?: AiProviderCustom
 }
 
@@ -112,6 +123,7 @@ export type AiErrorCode =
   | 'provider_error'
   | 'empty_response'
   | 'not_available'
+  | 'cancelled'
   | 'unknown'
 
 export type AiChatResult = {
@@ -262,6 +274,7 @@ export function createProviderProfile(
     name: overrides?.name ?? preset.label,
     baseUrl: overrides?.baseUrl ?? preset.defaultBaseUrl,
     apiKey: overrides?.apiKey ?? '',
+    hasApiKey: overrides?.hasApiKey,
     models: overrides?.models ?? [...preset.suggestedModels],
     selectedModel: overrides?.selectedModel ?? preset.defaultModel,
     custom,
@@ -294,7 +307,8 @@ export function toAiChatPayload(
     kind: provider.kind,
     model: opts.model?.trim() || provider.selectedModel,
     baseUrl: provider.baseUrl,
-    apiKey: provider.apiKey,
+    ...(provider.apiKey ? { apiKey: provider.apiKey } : {}),
+    providerId: provider.id,
     temperature: opts.temperature,
     maxTokens: opts.maxTokens,
     custom: provider.custom,
@@ -305,7 +319,8 @@ export function toAiHealthPayload(provider: AiProviderProfile): AiHealthRequest 
   return {
     kind: provider.kind,
     baseUrl: provider.baseUrl,
-    apiKey: provider.apiKey,
+    ...(provider.apiKey ? { apiKey: provider.apiKey } : {}),
+    providerId: provider.id,
     custom: provider.custom,
   }
 }
@@ -313,7 +328,7 @@ export function toAiHealthPayload(provider: AiProviderProfile): AiHealthRequest 
 export function providerIsReady(provider: AiProviderProfile): boolean {
   if (!String(provider.baseUrl || '').trim()) return false
   if (!String(provider.selectedModel || provider.models[0] || '').trim()) return false
-  if (providerNeedsApiKey(provider) && !String(provider.apiKey || '').trim()) return false
+  if (providerNeedsApiKey(provider) && !String(provider.apiKey || '').trim() && !provider.hasApiKey) return false
   return true
 }
 
@@ -504,6 +519,11 @@ export async function aiChatWithFallback(
       maxTokens: opts.maxTokens,
       model: attempt.model,
     })
+    req.requestId = `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    const cancelInMain = () => {
+      void window.electron?.aiChatCancel?.(req.requestId!)
+    }
+    opts.abort?.addEventListener('abort', cancelInMain, { once: true })
     try {
       last = await chat(req)
     } catch (e) {
@@ -514,6 +534,7 @@ export async function aiChatWithFallback(
         provider: attempt.provider.kind,
       }
     }
+    opts.abort?.removeEventListener('abort', cancelInMain)
     if (last.success && last.content?.trim()) {
       return {
         ...last,
@@ -598,6 +619,11 @@ export function loadAiSettings(): AiSettings {
           }),
           id: p.id || newId(),
         }))
+        if (secureKeyStoreAvailable() && providers.some((p) => String(p.apiKey || '').trim())) {
+          // Migración: keys en texto plano (versiones anteriores) → almacén cifrado.
+          moveKeysToSecureStore(providers)
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...parsed, providers: providers.map(stripApiKey) }))
+        }
         const activeProviderId = providers.some((p) => p.id === parsed.activeProviderId)
           ? (parsed.activeProviderId as string)
           : providers[0]!.id
@@ -631,8 +657,35 @@ export function loadAiSettings(): AiSettings {
   return createDefaultSettings()
 }
 
+function secureKeyStoreAvailable(): boolean {
+  return typeof window !== 'undefined' && typeof window.electron?.aiCredSet === 'function'
+}
+
+/** Envía a main las keys escritas y borra las que el usuario quitó. Marca hasApiKey en memoria. */
+function moveKeysToSecureStore(providers: AiProviderProfile[]): void {
+  for (const p of providers) {
+    const key = String(p.apiKey || '').trim()
+    if (key) {
+      void window.electron.aiCredSet!(p.id, key)
+      p.hasApiKey = true
+    } else if (p.hasApiKey === false) {
+      void window.electron.aiCredSet!(p.id, '')
+    }
+  }
+}
+
+function stripApiKey(p: AiProviderProfile): AiProviderProfile {
+  return { ...p, apiKey: '', hasApiKey: !!(p.hasApiKey || String(p.apiKey || '').trim()) }
+}
+
 export function saveAiSettings(settings: AiSettings): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+  if (!secureKeyStoreAvailable()) {
+    // Sin Electron (vite web:dev): no hay almacén seguro; se mantiene el comportamiento local.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+    return
+  }
+  moveKeysToSecureStore(settings.providers)
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...settings, providers: settings.providers.map(stripApiKey) }))
 }
 
 export function getActiveProvider(settings: AiSettings = loadAiSettings()): AiProviderProfile {
