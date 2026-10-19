@@ -17,6 +17,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "stage:host": "node scripts/stage-plugin-host.mjs",
+    "notices": "node scripts/generate-third-party-notices.mjs",
     "electron:build": "npm run build && npm run stage:host && electron-builder --win nsis",
     "pack:win": "npm run electron:build",
     "plugin-host:ping": "node ../native/plugin-host/scripts/ping.cjs",
@@ -93,6 +94,10 @@
       {
         "from": "public/jaswave-icono-con-frecuencia.png",
         "to": "jaswave-icono-con-frecuencia.png"
+      },
+      {
+        "from": "../THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
       }
     ],
     "win": {
@@ -114,7 +119,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "JasWave",
-      "perMachine": false
+      "perMachine": false,
+      "license": "build-resources/eula.txt"
     }
   },
   "engines": {
