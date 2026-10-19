@@ -48,9 +48,8 @@
     "clsx": "^2.1.1",
     "concurrently": "^9.1.2",
     "cross-env": "^10.1.0",
-    "electron": "^33.4.11",
-    "electron-builder": "^25.1.8",
-    "esbuild": "^0.24.0",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^5.2.0",
     "globals": "^15.15.0",
@@ -121,9 +120,20 @@
       "shortcutName": "JasWave",
       "perMachine": false,
       "license": "build-resources/eula.txt"
+    },
+    "electronFuses": {
+      "runAsNode": true,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
     }
   },
   "engines": {
     "node": ">=22"
+  },
+  "overrides": {
+    "katex": "^0.19.0"
   }
 }
