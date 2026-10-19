@@ -957,7 +957,6 @@ export class WebAudioEngine {
           if (k.startsWith(clip.id + ':')) this.midiCcKeys.delete(k)
         }
       }
-      const nowTimeline = this.getMidiTimelineSeconds()
       this.midiScheduledUntilSec = this.playheadStartSec
       this.scheduleMidiLookahead()
     }

@@ -12,8 +12,6 @@ import {
   inferTrackNameFromText,
   inferKeyFromText,
   inferMinutesFromText,
-  inferProgressionFromText,
-  inferArticulationFromText,
   parseMidiBriefFromText,
   type Articulation,
   type GeneratedNote,

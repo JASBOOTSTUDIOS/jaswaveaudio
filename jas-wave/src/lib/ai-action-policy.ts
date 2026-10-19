@@ -23,7 +23,6 @@ import {
   wantsFullProject,
   withAplicarTrue,
   type AgentAction,
-  type AgentMode,
 } from '@jaswave/ai-harness'
 import type { DawAction } from './ai-daw-agent'
 import { permissionManager, type AutonomyLevel } from '../../../shared/src/state/permissions'

@@ -4,7 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import globals from 'globals'
 
 export default tseslint.config(
-  { ignores: ['dist', 'release', 'node_modules', 'build', 'vite.config.d.ts'] },
+  { ignores: ['dist', 'release', 'node_modules', 'build', '**/*.d.ts', 'cli/_*', 'jas-wave'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -48,5 +48,10 @@ export default tseslint.config(
   {
     files: ['**/*.cjs'],
     rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+  {
+    // CLI y scripts de verificación: ESM sobre Node.
+    files: ['cli/**/*.mjs', 'scripts/**/*.mjs', '*.mjs'],
+    languageOptions: { globals: { ...globals.node } },
   },
 )

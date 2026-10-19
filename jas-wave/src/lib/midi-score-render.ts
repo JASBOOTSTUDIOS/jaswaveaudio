@@ -397,7 +397,7 @@ function wrapPageSvg(
     opts.subtitle ||
     `${opts.bpm} BPM · ${opts.drums ? 'Percusión' : 'Melódico'} · Compás 4/4`
 
-  let y = MARGIN_TOP
+  const y = MARGIN_TOP
   const systemFragments = systems
     .map((sys, i) => {
       const inner = extractSvgInner(sys.svg)

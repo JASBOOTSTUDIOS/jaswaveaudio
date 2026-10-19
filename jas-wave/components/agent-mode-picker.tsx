@@ -5,8 +5,6 @@ type Props = {
   onChange: (mode: AgentMode) => void
 }
 
-const MODES: AgentMode[] = ['auto', 'ask', 'plan', 'create', 'think']
-
 export function AgentModePicker({ value, onChange }: Props) {
   const selectClass =
     'max-w-[7.5rem] truncate rounded-md border border-border bg-panel-raised px-1.5 py-1 text-[10px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber'

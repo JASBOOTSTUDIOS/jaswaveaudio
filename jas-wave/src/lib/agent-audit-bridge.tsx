@@ -3,7 +3,7 @@
  * (reload bump: plugin.snapshotState)
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useDAW } from '@/src/context/daw-context'
 import { audioEngine } from '@/lib/audio-engine'
 import {
@@ -112,7 +112,6 @@ export async function buildAuditSnapshot(tienda: TiendaDAW): Promise<AuditSnapsh
 
   const playheadSec = audioEngine.getAudibleTimelineSeconds()
   const enginePlaying = playheadSec >= 0 && playing
-  const order = getMixMeterTrackOrder()
   const issues: string[] = []
 
   const lines: AuditTrackLine[] = tracks.map((t) => {

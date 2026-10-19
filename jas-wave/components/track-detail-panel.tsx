@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import type { Clip } from '../../shared/src/types/clips'
 import type { DAWState } from '../../shared/src/types/state'
-import type { PluginInfo } from '../../shared/src/types/entidades'
 import {
   Volume2,
   VolumeX,

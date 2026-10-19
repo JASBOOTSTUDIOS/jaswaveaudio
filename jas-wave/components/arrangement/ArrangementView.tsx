@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, LayoutGrid, MoreVertical, Circle, Music, Upload, FileAudio, Headphones, GripVertical } from 'lucide-react'
+import { Plus, LayoutGrid, MoreVertical, Circle, Music, FileAudio, Headphones, GripVertical } from 'lucide-react'
 import { usePlaybackActions } from '@/components/playback-provider'
 import { createProjection } from '@/lib/timeline-projection'
 import { TRACKS, type Track as UiTrack } from '@/lib/daw-data'
@@ -118,7 +118,6 @@ export function ArrangementView() {
   const zoom = useDAWState((state: DAWState) => state.ui?.zoomHorizontal ?? 1)
   const zoomVertical = useDAWState((state: DAWState) => state.ui?.zoomVertical ?? 1)
   const scrollLeft = useDAWState((state: DAWState) => state.ui?.scrollX ?? 0)
-  const selectedClipId = useDAWState((state: DAWState) => state.selection?.idsClips?.[0] ?? null)
   const selectedClipIds = useDAWState((state: DAWState) => state.selection?.idsClips ?? [])
   const selectedTrackId = useDAWState((state: DAWState) => getSelectedTrackId(state))
   const loopActivo = Boolean(loopState?.activo)

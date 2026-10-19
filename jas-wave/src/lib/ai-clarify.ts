@@ -49,7 +49,7 @@ function normalizeQuestion(o: Record<string, unknown>, i: number): Clarification
 
 /** Intenta recuperar JSON de CLARIFY aunque venga con basura alrededor. */
 function parseClarifyJson(rawInner: string): unknown {
-  let raw = rawInner.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim()
+  const raw = rawInner.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim()
   try {
     return JSON.parse(raw)
   } catch {

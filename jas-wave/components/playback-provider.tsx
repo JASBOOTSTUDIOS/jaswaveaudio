@@ -989,8 +989,6 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     })
   }, [satellite, sharedTracks, projectRuta])
 
-  const countInActive = useDAWState((s) => Boolean(s.transport?.countIn?.activo))
-  const countInBars = useDAWState((s) => Math.max(1, s.transport?.countIn?.compases ?? 1))
   const punchActive = useDAWState((s) => Boolean(s.transport?.punch?.activo))
   const punchStartBeats = useDAWState((s) => s.transport?.punch?.inicio?.beats ?? 0)
   const punchEndBeats = useDAWState((s) => s.transport?.punch?.fin?.beats ?? 0)
@@ -1119,7 +1117,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     if (!recOn && wasRecordingRef.current) {
       wasRecordingRef.current = false
       recGenRef.current += 1
-      let startBeats = recStartBeatsRef.current
+      const startBeats = recStartBeatsRef.current
       const plan = recPlanRef.current
       recPlanRef.current = []
       tienda.busEventos.emit('grabacion.detenida', {})
@@ -1133,7 +1131,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           if (!result) continue
           let buffer = result.buffer
           let durationSec = result.duration
-          let clipStart = startBeats
+          const clipStart = startBeats
           // Punch: recortar al fin de ventana si la toma se pasó
           if (punchOn && punchEnd > clipStart) {
             const maxBeats = punchEnd - clipStart

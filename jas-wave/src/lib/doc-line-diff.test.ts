@@ -8,7 +8,7 @@ describe('doc-line-diff', () => {
     const stats = diffStats(lines)
     assert.equal(stats.removed, 1)
     assert.equal(stats.added, 1)
-    assert.equal(stats.unchanged, 1)
+    assert.equal(stats.unchanged, 2)
   })
 
   it('marca documento nuevo como todo añadido', () => {

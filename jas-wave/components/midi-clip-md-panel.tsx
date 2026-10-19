@@ -8,7 +8,6 @@ import { useDAW, useDAWState } from '@/src/context/daw-context'
 import type { DAWState } from '../../shared/src/types/state'
 import { getAgentDoc, subscribeAgentDocs, writeAgentDoc } from '@/src/lib/agent-docs'
 import {
-  bindMidiClipMdSync,
   getMidiClipMdSyncStatus,
   getPreferredMidiClipMd,
   openMidiClipMdSync,

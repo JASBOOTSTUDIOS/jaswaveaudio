@@ -723,7 +723,6 @@ const {
   getPluginHostStatus,
   sendPluginHostCommand,
   sendPluginHostMidi,
-  pushPluginHostPcm,
   stopPluginHost,
   isEditorHostCommand,
   setPluginHostAudioDevice,

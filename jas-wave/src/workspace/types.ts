@@ -215,13 +215,6 @@ const STORAGE_KEY = 'jaswave.workspace.v1'
 function ensureCatalogTools(layout: WorkspaceLayout): WorkspaceLayout {
   const closed = [...(layout.closed ?? [])].filter((id) => id in TOOL_CATALOG)
   const closedSet = new Set(closed)
-  const placed = new Set<ToolId>([
-    ...layout.zones.left,
-    ...layout.zones.center,
-    ...layout.zones.right,
-    ...layout.zones.bottom,
-    ...layout.undocked,
-  ])
   const next: WorkspaceLayout = {
     ...layout,
     zones: {

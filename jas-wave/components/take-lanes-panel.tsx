@@ -4,8 +4,8 @@
 
 import { useCallback, useMemo, useState } from 'react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
-import type { CompSegment, Take, TakeFolder } from '../../shared/src/types/entidades'
-import { beatsASegundos, segundosABeats } from '@/lib/audio-conversions'
+import type { CompSegment, Take } from '../../shared/src/types/entidades'
+import { segundosABeats } from '@/lib/audio-conversions'
 import { flattenCompToClip } from '@/src/lib/comp-flatten'
 
 type Props = {

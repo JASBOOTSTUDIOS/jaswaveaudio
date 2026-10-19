@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Plus, Piano, MessageSquareQuote } from 'lucide-react'
+import { Piano, MessageSquareQuote } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { usePlaybackActions } from '@/components/playback-provider'
 import type { DAWState } from '../../shared/src/types/state'

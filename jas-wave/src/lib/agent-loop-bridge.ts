@@ -136,6 +136,16 @@ export async function applyPendingAgentRun(opts: {
     return { applyResults: [] }
   }
 
+  const currentRevision = getStateRevision(opts.tienda.obtenerEstado())
+  if (run.stateRevision && run.stateRevision !== currentRevision) {
+    clearActiveAgentRun()
+    return {
+      applyResults: [],
+      conflict: `STATE_CONFLICT: revision ${run.stateRevision} → ${currentRevision}. El proyecto cambió desde la propuesta; regenera.`,
+      runInvalidated: true,
+    }
+  }
+
   let calls = run.pendingCalls
   // Wipe: no ejecutar clip.delete rotos — un solo daw.wipeProject con IDs reales.
   if (isProjectWipeIntent(run.userText)) {

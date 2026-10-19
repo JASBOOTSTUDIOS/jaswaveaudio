@@ -85,6 +85,7 @@ export function compactDiffLines(lines: DiffLine[], context = 2): DiffLine[] {
 }
 
 function normalizeLines(src: string): string[] {
+  if (src === '') return []
   return src.replace(/\r\n/g, '\n').split('\n')
 }
 

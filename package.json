@@ -4,19 +4,21 @@
   "private": true,
   "description": "JasWave — AI-First Digital Audio Workstation",
   "scripts": {
-    "dev": "cd jas-wave && npm run dev",
-    "cli": "cd jas-wave && npm run cli --",
-    "cli:watch": "cd jas-wave && npm run cli:watch",
-    "build": "cd jas-wave && npm run build",
-    "lint": "cd jas-wave && npm run lint",
-    "test": "cd shared && npm test && cd ../ai-harness && npm test",
-    "test:harness": "cd ai-harness && npm test",
-    "certify": "cd jas-wave && npm run cli:certify:quick",
-    "soak:4h": "cd jas-wave && npm run cli:soak-host:4h",
-    "soak:30": "cd jas-wave && npm run cli:soak-host:30",
-    "typecheck": "cd shared && npm run typecheck",
-    "native:build": "cd native/audio-engine && npm install && npm run build",
-    "native:roles-vst": "cd jas-wave && npm run native:roles-vst",
-    "pack:win": "cd jas-wave && npm run pack:win"
+    "install:all": "npm ci --prefix shared && npm ci --prefix ai-harness && npm ci --prefix jas-wave",
+    "dev": "npm run dev --prefix jas-wave",
+    "cli": "npm run cli --prefix jas-wave --",
+    "cli:watch": "npm run cli:watch --prefix jas-wave",
+    "build": "npm run build --prefix jas-wave",
+    "lint": "npm run lint --prefix jas-wave",
+    "typecheck": "npm run typecheck --prefix shared && npm run typecheck --prefix ai-harness && npm run typecheck --prefix jas-wave",
+    "test": "npm test --prefix shared && npm test --prefix ai-harness && npm test --prefix jas-wave",
+    "test:harness": "npm test --prefix ai-harness",
+    "verify": "npm run lint && npm run typecheck && npm test",
+    "certify": "npm run cli:certify:quick --prefix jas-wave",
+    "native:roles-vst": "npm run native:roles-vst --prefix jas-wave",
+    "pack:win": "npm run pack:win --prefix jas-wave"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

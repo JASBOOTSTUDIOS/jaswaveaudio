@@ -323,12 +323,6 @@ let ensureProjectInFlight: Promise<Map<string, string>> | null = null
 /** Paths en cuarentena ya avisados (no spamear consola). */
 const quarantineWarned = new Set<string>()
 
-function isHostDeadLoadError(msg: string): boolean {
-  return /stdin cerrado|Plugin Host stdin|salió \(code=|tumbó el Plugin Host|PluginCrashedHost|HostNotReady/i.test(
-    msg,
-  )
-}
-
 function isQuarantineLoadError(msg: string): boolean {
   return /tumbó el Plugin Host|plugin-crash-quarantine|PluginCrashedHost|se aísla|skip \(cuarentena\)/i.test(
     msg,

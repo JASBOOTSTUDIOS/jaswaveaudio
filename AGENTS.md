@@ -1,71 +1,53 @@
 # AGENTS.md — Instrucciones para Agentes de Código
 
-> Este archivo es leído automáticamente por Kilo y agentes de código que trabajen en este proyecto.
+> Leído automáticamente por agentes de código que trabajen en este proyecto.
 
 ## Arquitectura del proyecto
 
-JasWave es un DAW (Digital Audio Workstation) basado en Electron + React + Vite.
+JasWave es un DAW (Digital Audio Workstation) basado en Electron + React + Vite, con host nativo de plugins (VST3/VST2) para Windows.
 
 ```
 jaswave-ia/
 ├── shared/              # Biblioteca @jaswave/shared (TypeScript)
 │   ├── src/types/       # Tipos del dominio
 │   ├── src/events/      # Event bus + eventos de dominio
-│   ├── src/state/       # Estado, validador, ejecutor, macros, undo/redo
+│   ├── src/state/       # Estado, validador, ejecutor, macros, undo/redo, permisos
 │   ├── src/commands/    # Definiciones de comandos
 │   ├── src/ai/          # Sistema de IA
 │   └── src/test/        # Tests con Vitest
 ├── ai-harness/          # Biblioteca @jaswave/ai-harness (bucle IA + plan.md)
 │   └── src/
 │       ├── plan/        # evaluación plan.md ↔ DAW
-│       ├── loop/        # harness de reparación + cola de jobs
+│       ├── loop/        # harness de reparación, agent loop, cola de jobs
 │       ├── agent/       # modos y política de acciones
 │       └── ask/         # contexto solo lectura (consultas)
-├── jas-wave/            # Aplicación cliente (Electron + React + TS + Tailwind)
+├── jas-wave/            # Aplicación (Electron + React + TS + Tailwind)
+│   ├── electron/        # Proceso main, preload, IPC, puente al plugin host
 │   ├── src/             # UI React: App, context, hooks, lib
 │   ├── lib/             # Audio engine, transport clock
-│   └── components/      # Componentes UI
-└── docs/                # Documentación de arquitectura
+│   ├── components/      # Componentes UI
+│   └── cli/             # CLI de control (daw-cli.mjs) y suites de certificación
+├── native/              # C++: plugin-host, jaswave-roles-vst, piano-synth, audio-engine
+└── docs/                # Arquitectura, ADRs (docs/decisiones), manual
 ```
 
-## Scripts de verificación
+## Verificación
 
-### Shared library
+Desde la raíz (Node según `.nvmrc`):
+
 ```bash
-cd shared
-npm test              # Vitest
-npx tsc --noEmit      # Typecheck
+npm run install:all   # npm ci en shared, ai-harness y jas-wave
+npm run verify        # lint + typecheck + tests de los tres paquetes
+npm run build         # build de renderer + main
 ```
 
-### AI Harness library
-```bash
-cd ai-harness
-npm test              # Vitest (harness + plan eval)
-npx tsc --noEmit      # Typecheck
-```
+Por paquete: `npm test` / `npm run typecheck` dentro de `shared/`, `ai-harness/` o `jas-wave/`.
+Los tests de `jas-wave` usan `node:test` (`tsx --test`); los de las librerías, Vitest.
 
-### Jas-wave UI
-```bash
-cd jas-wave
-npm run lint          # ESLint
-npm run build         # TypeScript build + Vite
-```
+CI (`.github/workflows/ci.yml`) ejecuta lint, typecheck, tests y build en cada PR.
 
-## Sistema de coordinación multi-agente
+## Convenciones
 
-Este proyecto usa un sistema de archivos compartidos en `.agents/` para coordinar agentes de código:
-
-- `.agents/config.md` — Protocolo de coordinación (INSTRUCCIONES ÚNICAS)
-- `.agents/tasks.json` — Tareas asignadas a cada agente
-- `.agents/status.json` — Estado actual (actualización atómica)
-- `.agents/messages/` — Canal de comunicación entre agentes
-- `.agents/locks/` — Locks para prevenir conflictos de escritura
-
-Ver `.agents/config.md` para el protocolo completo.
-
-## Agentes disponibles
-
-- **agent-a**: Biblioteca compartida (`shared/src/`) — Tests, estado, comandos, IA
-- **agent-b**: Interfaz de usuario (`jas-wave/`) — Componentes React, hooks, context, audio UI
-
-Ambos agentes están definidos en `.kilo/agent/`.
+- Identificadores de dominio en español en `shared/` (p. ej. `pista`, `clip`, `tienda`).
+- Toda mutación del proyecto pasa por comandos (`tienda.executor.execute`) para que exista undo y auditoría.
+- Los scripts `jas-wave/cli/_*` son temporales y están ignorados por git salvo los ya versionados.

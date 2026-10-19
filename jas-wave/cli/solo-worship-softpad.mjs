@@ -1,5 +1,4 @@
 import http from 'http'
-import fs from 'fs'
 
 function req(method, path, body) {
   return new Promise((resolve, reject) => {
