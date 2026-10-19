@@ -15,6 +15,12 @@
  */
 
 import type { CommandLogEntry } from '../types/command';
+import {
+  agregarAcotado,
+  MAX_BYTES_PAYLOAD_REGISTRO,
+  MAX_ENTRADAS_REGISTRO,
+  resumirPayloadParaRegistro,
+} from './resumen-payload';
 
 export interface AuditLog {
   log(entry: CommandLogEntry): void;
@@ -22,12 +28,21 @@ export interface AuditLog {
   clear(): void;
 }
 
-export function crearRegistroAuditoria(): AuditLog {
+export interface OpcionesRegistroAuditoria {
+  /** Máximo de entradas retenidas (ring buffer). Default 2000. */
+  maxEntradas?: number;
+  /** Payloads serializados por encima de este tamaño se guardan resumidos. Default 64KB. */
+  maxBytesPayload?: number;
+}
+
+export function crearRegistroAuditoria(opciones?: OpcionesRegistroAuditoria): AuditLog {
   const entradas: CommandLogEntry[] = [];
+  const maxEntradas = Math.max(1, opciones?.maxEntradas ?? MAX_ENTRADAS_REGISTRO);
+  const maxBytes = opciones?.maxBytesPayload ?? MAX_BYTES_PAYLOAD_REGISTRO;
 
   return {
     log(entry: CommandLogEntry): void {
-      entradas.push(entry);
+      agregarAcotado(entradas, { ...entry, payload: resumirPayloadParaRegistro(entry.payload, maxBytes) }, maxEntradas);
     },
 
     list(filtro?: { source?: CommandLogEntry['source']; success?: boolean; limit?: number }): CommandLogEntry[] {

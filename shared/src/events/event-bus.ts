@@ -93,8 +93,9 @@ export class BusEventosMemoria implements BusEventos {
   private replay: BufferReplay;
   private pendientesBatch: Map<string, EventoDominio> = new Map();
   private colaBajaPrioridad: EventoDominio[] = [];
-  private temporizadorBatch: ReturnType<typeof setInterval> | null = null;
-  private temporizadorBajaPrioridad: ReturnType<typeof setInterval> | null = null;
+  private temporizadorBatch: ReturnType<typeof setTimeout> | null = null;
+  private temporizadorBajaPrioridad: ReturnType<typeof setTimeout> | null = null;
+  private intervaloBatchMs: number;
   private contadorManejadores = 0;
   private schemas: RegistroSchemasEventos;
   private validacionEstricta: boolean;
@@ -104,6 +105,7 @@ export class BusEventosMemoria implements BusEventos {
   private static readonly INTERVALO_BATCH_MS = 50;
 
   constructor(config?: ConfigBusEventos) {
+    this.intervaloBatchMs = config?.intervaloBatchMs ?? BusEventosMemoria.INTERVALO_BATCH_MS;
     this.replay = new BufferReplay(config?.capacidadBufferReplay ?? 2000);
     this.schemas = config?.schemas ?? registroSchemasEventos;
     this.validacionEstricta = config?.validacionEstricta ?? false;
@@ -115,28 +117,46 @@ export class BusEventosMemoria implements BusEventos {
     } else {
       this.batchHabilitado = true;
     }
-
-    if (this.batchHabilitado) {
-      const intervalo = config?.intervaloBatchMs ?? BusEventosMemoria.INTERVALO_BATCH_MS;
-      this.temporizadorBatch = setInterval(() => this.procesarBatch(), intervalo);
-      this.unrefTemporizador(this.temporizadorBatch);
-    }
-    this.temporizadorBajaPrioridad = setInterval(
-      () => this.procesarColaBajaPrioridad(),
-      BusEventosMemoria.INTERVALO_BAJA_MS,
-    );
-    this.unrefTemporizador(this.temporizadorBajaPrioridad);
+    // Los temporizadores son perezosos: solo se programan cuando hay trabajo
+    // pendiente (importar el módulo no deja intervals vivos).
   }
 
-  private unrefTemporizador(timer: ReturnType<typeof setInterval>): void {
+  private unrefTemporizador(timer: ReturnType<typeof setTimeout>): void {
     const t = timer as { unref?: () => void };
     if (typeof t.unref === 'function') t.unref();
   }
 
+  private programarBatch(): void {
+    if (this.temporizadorBatch) return;
+    this.temporizadorBatch = setTimeout(() => {
+      this.temporizadorBatch = null;
+      this.procesarBatch();
+    }, this.intervaloBatchMs);
+    this.unrefTemporizador(this.temporizadorBatch);
+  }
+
+  private programarBajaPrioridad(): void {
+    if (this.temporizadorBajaPrioridad) return;
+    this.temporizadorBajaPrioridad = setTimeout(() => {
+      this.temporizadorBajaPrioridad = null;
+      this.procesarColaBajaPrioridad();
+    }, BusEventosMemoria.INTERVALO_BAJA_MS);
+    this.unrefTemporizador(this.temporizadorBajaPrioridad);
+  }
+
+  /** Elimina un registro concreto (no "el primero con el mismo manejador"). */
+  private eliminarRegistro(nombreEvento: string, registro: RegistroManejador): void {
+    const conjunto = this.manejadores.get(nombreEvento);
+    if (!conjunto) return;
+    conjunto.delete(registro);
+    if (conjunto.size === 0) {
+      this.manejadores.delete(nombreEvento);
+    }
+  }
+
   private crearSuscripcion(
     nombreEvento: string,
-    manejador: (payload: unknown) => void,
-    unaSolaVez: boolean,
+    registro: RegistroManejador,
     opciones?: { descripcion?: string; tipo?: string },
   ): Suscripcion {
     const id = `suscripcion-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -149,7 +169,9 @@ export class BusEventosMemoria implements BusEventos {
       descripcion: opciones?.descripcion,
     };
     const cancelar = () => {
-      this.off(nombreEvento, manejador);
+      // Cancela exactamente este registro: cancelar un `once` no debe quitar un
+      // `on` con el mismo manejador (ni viceversa).
+      this.eliminarRegistro(nombreEvento, registro);
       (estado as { cancelada: boolean; activa: boolean }).cancelada = true;
       (estado as { cancelada: boolean; activa: boolean }).activa = false;
     };
@@ -229,9 +251,9 @@ export class BusEventosMemoria implements BusEventos {
       this.manejadores.set(nombreEvento, new Set());
     }
     const conjunto = this.manejadores.get(nombreEvento)!;
-    for (const registro of conjunto) {
-      if (registro.manejador === manejador) {
-        return this.crearSuscripcion(nombreEvento, manejador as (payload: unknown) => void, false);
+    for (const existente of conjunto) {
+      if (existente.manejador === manejador && !existente.unaSolaVez) {
+        return this.crearSuscripcion(nombreEvento, existente);
       }
     }
     const registro: RegistroManejador = {
@@ -241,18 +263,23 @@ export class BusEventosMemoria implements BusEventos {
       nombreEvento,
     };
     conjunto.add(registro);
-    return this.crearSuscripcion(nombreEvento, manejador as (payload: unknown) => void, false);
+    return this.crearSuscripcion(nombreEvento, registro);
   }
 
   off(nombreEvento: string, manejador: ManejadorEvento<unknown>): void {
     const conjunto = this.manejadores.get(nombreEvento);
     if (!conjunto) return;
+    // Preferir el registro persistente; si solo hay `once`, quitar ese.
+    let objetivo: RegistroManejador | undefined;
     for (const registro of conjunto) {
-      if (registro.manejador === manejador) {
-        conjunto.delete(registro);
+      if (registro.manejador !== manejador) continue;
+      if (!registro.unaSolaVez) {
+        objetivo = registro;
         break;
       }
+      objetivo ??= registro;
     }
+    if (objetivo) conjunto.delete(objetivo);
     if (conjunto.size === 0) {
       this.manejadores.delete(nombreEvento);
     }
@@ -270,10 +297,12 @@ export class BusEventosMemoria implements BusEventos {
 
     if (prioridad === 'baja') {
       this.colaBajaPrioridad.push(evento);
+      this.programarBajaPrioridad();
     }
 
     if (this.esBatchable(nombreEvento)) {
       this.pendientesBatch.set(nombreEvento, evento);
+      this.programarBatch();
       return;
     }
 
@@ -307,7 +336,7 @@ export class BusEventosMemoria implements BusEventos {
       nombreEvento,
     };
     conjunto.add(registro);
-    return this.crearSuscripcion(nombreEvento, manejador as (payload: unknown) => void, true, { tipo: 'unaVez' });
+    return this.crearSuscripcion(nombreEvento, registro, { tipo: 'unaVez' });
   }
 
   clear(): void {
@@ -320,14 +349,19 @@ export class BusEventosMemoria implements BusEventos {
   /** Detiene temporizadores internos (útil en tests / shutdown). */
   destruir(): void {
     if (this.temporizadorBatch) {
-      clearInterval(this.temporizadorBatch);
+      clearTimeout(this.temporizadorBatch);
       this.temporizadorBatch = null;
     }
     if (this.temporizadorBajaPrioridad) {
-      clearInterval(this.temporizadorBajaPrioridad);
+      clearTimeout(this.temporizadorBajaPrioridad);
       this.temporizadorBajaPrioridad = null;
     }
     this.clear();
+  }
+
+  /** Alias de destruir(): libera temporizadores y suscripciones. */
+  dispose(): void {
+    this.destruir();
   }
 
   /** Fuerza el flush de eventos batchables pendientes (tests / shutdown). */
@@ -492,6 +526,8 @@ export interface SessionScope {
 
 export function crearSessionScope(bus: BusEventos): SessionScope {
   const suscripciones: Suscripcion[] = [];
+  /** Manejador original de cada suscripción del scope (para off() exacto). */
+  const manejadores = new WeakMap<Suscripcion, unknown>();
   let activo = true;
 
   return {
@@ -500,7 +536,9 @@ export function crearSessionScope(bus: BusEventos): SessionScope {
         console.warn('SessionScope destruido — ignorando nueva suscripción');
         return;
       }
-      suscripciones.push(bus.on(nombreEvento, manejador));
+      const sub = bus.on(nombreEvento, manejador);
+      manejadores.set(sub, manejador);
+      suscripciones.push(sub);
     },
 
     once<T = ValorJSON>(nombreEvento: string, manejador: ManejadorEvento<T>): void {
@@ -508,16 +546,21 @@ export function crearSessionScope(bus: BusEventos): SessionScope {
         console.warn('SessionScope destruido — ignorando nueva suscripción');
         return;
       }
-      suscripciones.push(bus.once(nombreEvento, manejador));
+      const sub = bus.once(nombreEvento, manejador);
+      manejadores.set(sub, manejador);
+      suscripciones.push(sub);
     },
 
     off(nombreEvento: string, manejador: ManejadorEvento): void {
-      const idx = suscripciones.findIndex(s => s.nombreEvento === nombreEvento && s.estado.activa);
+      // Solo cancela la suscripción del scope con ese evento Y ese manejador;
+      // no toca suscripciones ajenas al scope.
+      const idx = suscripciones.findIndex(
+        s => s.nombreEvento === nombreEvento && s.estado.activa && manejadores.get(s) === manejador,
+      );
       if (idx !== -1) {
-        suscripciones[idx].cancelarSuscripcion();
+        suscripciones[idx]!.cancelarSuscripcion();
         suscripciones.splice(idx, 1);
       }
-      bus.off(nombreEvento, manejador as (payload: unknown) => void);
     },
 
     destruir(): void {

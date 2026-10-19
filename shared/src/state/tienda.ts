@@ -78,7 +78,7 @@ export function crearTiendaDAW(opciones?: TiendaDAWOpciones): TiendaDAW {
 
   const bus = new BusEventosMemoria({ capacidadBufferReplay: 2000, tamanoBatch: 10 });
   const registro = crearRegistroComandos();
-  const pila = crearPilaDeshacerRehacer(1000);
+  const pila = crearPilaDeshacerRehacer(200);
   const auditoria = crearRegistroAuditoria();
   const permisos = permisosInyectados ?? crearPermissionManager({ busEventos: bus });
   const executor = new CommandExecutorCls({
@@ -131,10 +131,6 @@ export function crearTiendaDAW(opciones?: TiendaDAWOpciones): TiendaDAW {
   };
   bus.emit = wrappedEmit;
 
-  (globalThis as any).__jaswaveCommandRegistry = registro;
-  (globalThis as any).__jaswaveEventBus = bus;
-
-  let estadoActual = executor.obtenerEstado();
   const listeners = new Set<TiendaDAWListener>();
   let sesionIA: SessionScope | null = null;
 
@@ -154,48 +150,11 @@ export function crearTiendaDAW(opciones?: TiendaDAWOpciones): TiendaDAW {
     }
   }
 
-  // Interceptar ejecuciones de comandos en executor para notificar automáticamente a la tienda
-  const originalExecute = executor.execute.bind(executor);
-  executor.execute = (async (...args: Parameters<typeof originalExecute>) => {
-    const estadoAnterior = executor.obtenerEstado();
-    const res = await originalExecute(...args);
-    if (res.success) {
-      const estadoNuevo = executor.obtenerEstado();
-      if (estadoNuevo !== estadoAnterior) {
-        estadoActual = estadoNuevo;
-        notificar(estadoNuevo, estadoAnterior);
-      }
-    }
-    return res;
-  }) as typeof executor.execute;
-
-  const originalUndo = executor.undo.bind(executor);
-  executor.undo = (async (...args: Parameters<typeof originalUndo>) => {
-    const estadoAnterior = executor.obtenerEstado();
-    const res = await originalUndo(...args);
-    if (res?.success) {
-      const estadoNuevo = executor.obtenerEstado();
-      if (estadoNuevo !== estadoAnterior) {
-        estadoActual = estadoNuevo;
-        notificar(estadoNuevo, estadoAnterior);
-      }
-    }
-    return res;
-  }) as typeof executor.undo;
-
-  const originalRedo = executor.redo.bind(executor);
-  executor.redo = (async (...args: Parameters<typeof originalRedo>) => {
-    const estadoAnterior = executor.obtenerEstado();
-    const res = await originalRedo(...args);
-    if (res?.success) {
-      const estadoNuevo = executor.obtenerEstado();
-      if (estadoNuevo !== estadoAnterior) {
-        estadoActual = estadoNuevo;
-        notificar(estadoNuevo, estadoAnterior);
-      }
-    }
-    return res;
-  }) as typeof executor.redo;
+  // El executor avisa de cada cambio efectivo de estado (execute/undo/redo/batch/
+  // reemplazo). simulateBatch no notifica: es una simulación pura.
+  executor.onCambioEstado((estadoNuevo, estadoAnterior) => {
+    notificar(estadoNuevo, estadoAnterior);
+  });
 
   return {
     obtenerEstado(): DAWState {
@@ -206,18 +165,13 @@ export function crearTiendaDAW(opciones?: TiendaDAWOpciones): TiendaDAW {
       const estadoAnterior = executor.obtenerEstado();
       const parcial = typeof actualizador === 'function' ? actualizador(estadoAnterior) : actualizador;
       const estadoNuevo = { ...estadoAnterior, ...parcial } as DAWState;
-      executor['estado'] = estadoNuevo;
-      estadoActual = estadoNuevo;
-      notificar(estadoNuevo, estadoAnterior);
-      return estadoNuevo;
+      // Cambios parciales (UI efímera: scroll, zoom…) conservan undo/redo.
+      return executor.reemplazarEstado(estadoNuevo);
     },
 
     reemplazarEstado(estadoNuevo: DAWState): DAWState {
-      const estadoAnterior = executor.obtenerEstado();
-      executor['estado'] = estadoNuevo;
-      estadoActual = estadoNuevo;
-      notificar(estadoNuevo, estadoAnterior);
-      return estadoNuevo;
+      // Reemplazo completo: las entradas de undo/redo apuntan al estado anterior.
+      return executor.reemplazarEstado(estadoNuevo, { limpiarPila: true });
     },
 
     suscribir(listener: TiendaDAWListener): () => void {
@@ -229,25 +183,12 @@ export function crearTiendaDAW(opciones?: TiendaDAWOpciones): TiendaDAW {
     },
 
     async despachar(comando: CommandPayload): Promise<DAWState> {
-      const estadoAnterior = executor.obtenerEstado();
+      // execute ya notifica a los listeners y emite comando.fallido en caso de error.
       const resultado = await executor.execute(comando.type, comando.payload);
-
       if (resultado.success) {
-        const estadoNuevo = executor.obtenerEstado();
-        if (estadoNuevo !== estadoAnterior) {
-          estadoActual = estadoNuevo;
-          notificar(estadoNuevo, estadoAnterior);
-        }
-        return estadoNuevo;
+        return resultado.state;
       }
-
-      const msg = resultado.error?.message ?? `Comando fallido: ${comando.type}`;
-      bus.emit('comando.fallido', {
-        type: comando.type,
-        error: msg,
-        code: resultado.error?.code ?? 'DESPACHAR_FAILED',
-      });
-      throw new Error(msg);
+      throw new Error(resultado.error?.message ?? `Comando fallido: ${comando.type}`);
     },
 
     obtenerHistorialListeners(): number {
