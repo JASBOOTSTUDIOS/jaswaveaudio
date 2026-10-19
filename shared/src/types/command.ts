@@ -131,6 +131,17 @@ export interface StateTransition<TResult = unknown> {
   result: TResult;
   /** Payload para el comando inverso (si difiere del payload original). */
   inversePayload?: unknown;
+  /**
+   * Payload para rehacer (redo). Debe fijar los ids generados por el handler
+   * para que redo sea determinista y un undo posterior apunte a las mismas
+   * entidades. Si se omite, redo reutiliza el payload original.
+   */
+  redoPayload?: unknown;
+  /**
+   * Tipo del comando inverso para esta transición concreta (sobrescribe
+   * CommandDefinition.inverseType cuando el inverso depende de la rama ejecutada).
+   */
+  inverseType?: string;
 }
 
 export interface CommandPayload<T = unknown> {
@@ -176,6 +187,8 @@ export interface CommandDefinition<T = unknown> {
   risk: RiskLevel;
   schema?: Record<string, unknown>;
   inverseType?: string;
+  /** Si true, al ejecutarse con éxito vacía las pilas de undo/redo (p. ej. project.load). */
+  limpiaHistorialUndo?: boolean;
   handler: (state: import('../types/state').DAWState, payload: T) => StateTransition<T> | Promise<StateTransition<T>>;
   validate?: (state: import('../types/state').DAWState, payload: T) => ValidationResult;
 }

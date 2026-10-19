@@ -57,6 +57,7 @@ export function configurarFileService(fileService: FileService): void {
 export function crearComandoProjectNew(): CommandDefinition<ProjectNewPayload> {
   return {
     type: 'project.new',
+    limpiaHistorialUndo: true,
     description: 'Crea un nuevo proyecto con valores por defecto',
     risk: 'write',
     schema: {
@@ -155,6 +156,7 @@ export function crearComandoProjectSave(): CommandDefinition<ProjectSavePayload>
 export function crearComandoProjectLoad(): CommandDefinition<ProjectLoadPayload> {
   return {
     type: 'project.load',
+    limpiaHistorialUndo: true,
     description: 'Carga un proyecto desde disco',
     risk: 'write',
     schema: {

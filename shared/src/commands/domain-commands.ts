@@ -61,10 +61,37 @@ function generarId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+/**
+ * Generador de ids reproducible para redo determinista: entrega primero los ids
+ * fijados en el payload (`idsGenerados`) y registra todos los que entrega, para
+ * devolverlos en `redoPayload`. Así redo recrea las mismas entidades y un undo
+ * posterior apunta a ids que existen.
+ */
+function crearGeneradorIds(fijados?: readonly string[]): { siguiente: () => string; usados: string[] } {
+  const usados: string[] = [];
+  let i = 0;
+  return {
+    siguiente: () => {
+      const preset = fijados?.[i];
+      i++;
+      const id = typeof preset === 'string' && preset.length > 0 ? preset : generarId();
+      usados.push(id);
+      return id;
+    },
+    usados,
+  };
+}
+
+const SCHEMA_IDS_GENERADOS = { type: 'array', items: { type: 'string' } } as const;
+
 export type TrackCreatePayload = {
   nombre?: string;
   tipo?: 'audio' | 'midi' | 'instrumento' | 'bus' | 'carpeta';
   color?: string;
+  /** Id a usar para la pista (redo determinista / clientes que fijan el id). */
+  id?: string;
+  /** Id de la pista creada (solo en result del handler). */
+  trackId?: string;
 };
 
 export type TrackDeletePayload = {
@@ -100,6 +127,8 @@ export type ClipCreatePayload = {
   waveform?: number[];
   /** Id del clip creado (solo en result del handler). */
   clipId?: string;
+  /** Id a usar para el clip (redo determinista). */
+  id?: string;
 };
 
 export type MidiNotePayload = {
@@ -125,6 +154,10 @@ export type MidiClipCreatePayload = {
   duracion?: number;
   color?: string;
   notas: MidiNotePayload[];
+  /** Id a usar para el clip (redo determinista). */
+  id?: string;
+  /** Ids fijados para las notas creadas, en orden (redo determinista). */
+  idsGenerados?: string[];
 };
 
 export type MidiNotesSetPayload = {
@@ -219,6 +252,8 @@ export type MidiGeneratePayload = {
   replace?: boolean;
   nombre?: string;
   inicio?: number;
+  /** Id a usar para el clip nuevo (rama sin clipId; redo determinista). */
+  id?: string;
 };
 
 export type MidiApplyGroovePayload = {
@@ -320,6 +355,8 @@ export type ClipDeletePayload = {
 export type ClipMergePayload = {
   pistaId: string;
   clipIds: string[];
+  /** Ids fijados para las notas del clip unido (redo determinista). */
+  idsGenerados?: string[];
 };
 
 export type ClipMovePayload = {
@@ -343,6 +380,8 @@ export type ClipSplitPayload = {
   clipId: string;
   /** Tiempo absoluto en beats del arrange (no relativo al clip). */
   tiempo: number;
+  /** Ids fijados para el clip/notas nuevos (redo determinista). */
+  idsGenerados?: string[];
 };
 
 /** Parte un clip MIDI largo en varios clips por cortes (beats relativos al clip). */
@@ -356,6 +395,8 @@ export type MidiClipSplitIntoSectionsPayload = {
   cuts: number[];
   /** Nombres opcionales por pieza (mismo orden que las piezas resultantes). */
   names?: string[];
+  /** Ids fijados para los clips/notas nuevos (redo determinista). */
+  idsGenerados?: string[];
 };
 
 export type TransportTogglePayload = {};
@@ -370,9 +411,9 @@ export type ProjectSetBpmPayload = {
   bpm: number;
 };
 
-function crearPista(nombre: string, tipo: Track['tipo'] = 'audio', color?: string): Track {
+function crearPista(nombre: string, tipo: Track['tipo'] = 'audio', color?: string, id?: string): Track {
   const base = {
-    id: generarId(),
+    id: id && id.length > 0 ? id : generarId(),
     nombre,
     nombreOriginal: nombre,
     color: color || '#3b82f6',
@@ -518,13 +559,17 @@ export function crearComandoTrackCreate(): CommandDefinition<TrackCreatePayload>
         nombre: { type: 'string' },
         tipo: { type: 'string', enum: ['audio', 'midi', 'instrumento', 'bus', 'carpeta'] },
         color: { type: 'string' },
+        id: { type: 'string' },
       },
       additionalProperties: false,
     },
     handler: (estado: DAWState, payload: TrackCreatePayload): StateTransition<TrackCreatePayload> => {
       const nombre = (payload.nombre || `Pista ${(estado.project.tracks.length + 1)}`).trim();
       const tipo = payload.tipo || 'audio';
-      const pista = crearPista(nombre, tipo, payload.color);
+      const pista = crearPista(nombre, tipo, payload.color, payload.id);
+      if (estado.project.tracks.some((t) => t.id === pista.id)) {
+        throw new Error(`Ya existe una pista con id ${pista.id}`);
+      }
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: [...estado.project.tracks, pista],
@@ -543,8 +588,11 @@ export function crearComandoTrackCreate(): CommandDefinition<TrackCreatePayload>
             payload: { trackId: pista.id, nombre, tipo },
           },
         ],
-        result: payload,
+        // Compat: result conserva los campos del payload y añade trackId.
+        result: { ...payload, trackId: pista.id },
         inversePayload: { trackId: pista.id },
+        // Redo fija nombre e id: recrea exactamente la misma pista.
+        redoPayload: { ...payload, nombre, id: pista.id },
       };
     },
     validate: (estado: DAWState, payload: TrackCreatePayload): ValidationResult => {
@@ -557,6 +605,9 @@ export function crearComandoTrackCreate(): CommandDefinition<TrackCreatePayload>
       }
       if (estado.project.tracks.length >= 256) {
         errors.push({ code: 'MAX_TRACKS', message: 'Se ha alcanzado el límite máximo de 256 pistas' });
+      }
+      if (payload.id && estado.project.tracks.some((t) => t.id === payload.id)) {
+        errors.push({ code: 'DUPLICATE_ID', message: `Ya existe una pista con id ${payload.id}`, field: 'id' });
       }
       return { valid: errors.length === 0, errors, warnings: [] };
     },
@@ -932,6 +983,7 @@ export function crearComandoClipCreate(): CommandDefinition<ClipCreatePayload> {
         color: { type: 'string' },
         sourceId: { type: 'string' },
         waveform: { type: 'array', items: { type: 'number' } },
+        id: { type: 'string' },
       },
       required: ['pistaId'],
       additionalProperties: false,
@@ -942,8 +994,12 @@ export function crearComandoClipCreate(): CommandDefinition<ClipCreatePayload> {
         throw new Error(`Pista no encontrada: ${payload.pistaId}`);
       }
 
+      const clipIdNuevo = payload.id && payload.id.length > 0 ? payload.id : generarId();
+      if ((pista.clips as { id: string }[]).some((c) => c.id === clipIdNuevo)) {
+        throw new Error(`Ya existe un clip con id ${clipIdNuevo}`);
+      }
       const clip: AudioClip = {
-        id: generarId(),
+        id: clipIdNuevo,
         trackId: payload.pistaId,
         nombre: payload.nombre || 'Nuevo Clip',
         inicio: payload.inicio ?? 0,
@@ -994,6 +1050,7 @@ export function crearComandoClipCreate(): CommandDefinition<ClipCreatePayload> {
         ],
         result: { ...payload, clipId: clip.id },
         inversePayload: { pistaId: payload.pistaId, clipId: clip.id },
+        redoPayload: { ...payload, id: clip.id },
       };
     },
   };
@@ -1014,11 +1071,14 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
         inicio: { type: 'number' },
         duracion: { type: 'number' },
         color: { type: 'string' },
+        id: { type: 'string' },
+        idsGenerados: SCHEMA_IDS_GENERADOS,
         notas: {
           type: 'array',
           items: {
             type: 'object',
             properties: {
+              id: { type: 'string' },
               pitch: { type: 'number' },
               inicio: { type: 'number' },
               duracion: { type: 'number' },
@@ -1046,8 +1106,9 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
         throw new Error(`La pista «${pista.nombre}» no admite clips MIDI (tipo=${pista.tipo}).`);
       }
 
+      const ids = crearGeneradorIds(payload.idsGenerados);
       const notas: MidiNote[] = (payload.notas ?? []).map((n) => ({
-        id: generarId(),
+        id: ids.siguiente(),
         pitch: Math.max(0, Math.min(127, Math.round(n.pitch))),
         velocidad: Math.max(1, Math.min(127, Math.round(n.velocidad ?? 80))),
         inicio: Math.max(0, n.inicio),
@@ -1062,8 +1123,12 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
         duracion = notas.reduce((max, n) => Math.max(max, n.inicio + n.duracion), 4);
       }
 
+      const clipIdNuevo = payload.id && payload.id.length > 0 ? payload.id : generarId();
+      if ((pista.clips as { id: string }[]).some((c) => c.id === clipIdNuevo)) {
+        throw new Error(`Ya existe un clip con id ${clipIdNuevo}`);
+      }
       const clip: MidiClip = {
-        id: generarId(),
+        id: clipIdNuevo,
         trackId: pistaId,
         nombre: payload.nombre || 'Clip MIDI',
         inicio: payload.inicio ?? 0,
@@ -1101,8 +1166,9 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
             payload: { clipId: clip.id, pistaId, tipo: 'midi', notas: notas.length },
           },
         ],
-        result: { ...payload, pistaId, notas },
+        result: { ...payload, pistaId, notas, clipId: clip.id } as MidiClipCreatePayload,
         inversePayload: { pistaId, clipId: clip.id },
+        redoPayload: { ...payload, id: clip.id, idsGenerados: ids.usados },
       };
     },
   };
@@ -1553,6 +1619,7 @@ export function crearComandoMidiGenerate(): CommandDefinition<MidiGeneratePayloa
         replace: { type: 'boolean' },
         nombre: { type: 'string' },
         inicio: { type: 'number' },
+        id: { type: 'string' },
       },
       required: ['pistaId', 'kind'],
       additionalProperties: false,
@@ -1572,9 +1639,11 @@ export function crearComandoMidiGenerate(): CommandDefinition<MidiGeneratePayloa
       })) as MidiNote[];
 
       if (payload.clipId) {
-        return applyMidiNotesToClip(estado, payload.pistaId, payload.clipId, (notas) =>
+        const transicion = applyMidiNotesToClip(estado, payload.pistaId, payload.clipId, (notas) =>
           payload.replace ? generated : appendNotes(notas, generated),
         ) as StateTransition<MidiGeneratePayload>;
+        // Sobre un clip existente el inverso es restaurar las notas, no borrar el clip.
+        return { ...transicion, inverseType: 'midi.notes.set' };
       }
 
       const pista = estado.project.tracks.find((t) => t.id === payload.pistaId);
@@ -1584,8 +1653,12 @@ export function crearComandoMidiGenerate(): CommandDefinition<MidiGeneratePayloa
       }
       const endBeat = generated.reduce((m, n) => Math.max(m, n.inicio + n.duracion), (payload.bars ?? 8) * 4);
       const duracion = Math.max(4, endBeat);
+      const clipIdNuevo = payload.id && payload.id.length > 0 ? payload.id : generarId();
+      if ((pista.clips as { id: string }[]).some((c) => c.id === clipIdNuevo)) {
+        throw new Error(`Ya existe un clip con id ${clipIdNuevo}`);
+      }
       const clip: MidiClip = {
-        id: generarId(),
+        id: clipIdNuevo,
         trackId: payload.pistaId,
         nombre: payload.nombre || `Pattern ${payload.kind}`,
         inicio: payload.inicio ?? 0,
@@ -1619,6 +1692,7 @@ export function crearComandoMidiGenerate(): CommandDefinition<MidiGeneratePayloa
         ],
         result: { ...payload, clipId: clip.id },
         inversePayload: { pistaId: payload.pistaId, clipId: clip.id },
+        redoPayload: { ...payload, id: clip.id },
       };
     },
   };
@@ -1810,7 +1884,7 @@ export function crearComandoClipDelete(): CommandDefinition<ClipDeletePayload> {
 export function crearComandoClipMerge(): CommandDefinition<ClipMergePayload> {
   return {
     type: 'clip.merge',
-    inverseType: 'clip.restore',
+    inverseType: 'clip.restoreMany',
     description: 'Une varios clips de la misma pista en uno (MIDI o audio)',
     risk: 'write',
     schema: {
@@ -1818,6 +1892,7 @@ export function crearComandoClipMerge(): CommandDefinition<ClipMergePayload> {
       properties: {
         pistaId: { type: 'string' },
         clipIds: { type: 'array', items: { type: 'string' }, minItems: 2 },
+        idsGenerados: SCHEMA_IDS_GENERADOS,
       },
       required: ['pistaId', 'clipIds'],
       additionalProperties: false,
@@ -1840,15 +1915,23 @@ export function crearComandoClipMerge(): CommandDefinition<ClipMergePayload> {
       const minInicio = Math.min(...clips.map((c) => c.inicio ?? 0));
       const maxEnd = Math.max(...clips.map((c) => (c.inicio ?? 0) + (c.duracion ?? 0)));
       const removed = clips.map((c) => ({ clip: c, index: pista.clips.findIndex((x: { id: string }) => x.id === c.id) }));
+      // Undo: quitar el clip unido (conserva el id del primero) y reinsertar los originales.
+      const inversePayload: ClipRestoreManyPayload = {
+        pistaId: payload.pistaId,
+        removeClipIds: [clips[0]!.id],
+        clips: removed.map((r) => r.clip),
+        indices: removed.map((r) => r.index),
+      };
 
       if (allMidi) {
+        const genIds = crearGeneradorIds(payload.idsGenerados);
         const mergedNotes: MidiNote[] = [];
         for (const c of clips) {
           const offset = (c.inicio ?? 0) - minInicio;
           for (const n of c.notas ?? []) {
             mergedNotes.push({
               ...n,
-              id: generarId(),
+              id: genIds.siguiente(),
               inicio: (n.inicio ?? 0) + offset,
             });
           }
@@ -1883,7 +1966,8 @@ export function crearComandoClipMerge(): CommandDefinition<ClipMergePayload> {
             },
           ],
           result: { pistaId: payload.pistaId, clipIds: ids },
-          inversePayload: { pistaId: payload.pistaId, clips: removed.map((r) => r.clip), indices: removed.map((r) => r.index) } as never,
+          inversePayload,
+          redoPayload: { ...payload, idsGenerados: genIds.usados },
         };
       }
 
@@ -1917,7 +2001,7 @@ export function crearComandoClipMerge(): CommandDefinition<ClipMergePayload> {
           },
         ],
         result: { pistaId: payload.pistaId, clipIds: ids },
-        inversePayload: { pistaId: payload.pistaId, clips: removed.map((r) => r.clip), indices: removed.map((r) => r.index) } as never,
+        inversePayload,
       };
     },
   };
@@ -2102,6 +2186,7 @@ export function crearComandoClipResize(): CommandDefinition<ClipResizePayload> {
 export function crearComandoClipSplit(): CommandDefinition<ClipSplitPayload> {
   return {
     type: 'clip.split',
+    inverseType: 'clip.restoreMany',
     description: 'Divide un clip en dos en la posición indicada (MIDI reparte notas)',
     risk: 'write',
     schema: {
@@ -2110,6 +2195,7 @@ export function crearComandoClipSplit(): CommandDefinition<ClipSplitPayload> {
         pistaId: { type: 'string' },
         clipId: { type: 'string' },
         tiempo: { type: 'number' },
+        idsGenerados: SCHEMA_IDS_GENERADOS,
       },
       required: ['pistaId', 'clipId', 'tiempo'],
       additionalProperties: false,
@@ -2120,6 +2206,10 @@ export function crearComandoClipSplit(): CommandDefinition<ClipSplitPayload> {
         throw new Error(`Pista no encontrada: ${payload.pistaId}`);
       }
 
+      const ids = crearGeneradorIds(payload.idsGenerados);
+      const indiceOriginal = (pista.clips as any[]).findIndex(c => c.id === payload.clipId);
+      const original = indiceOriginal >= 0 ? (pista.clips as any[])[indiceOriginal] : undefined;
+      let idDerecho: string | null = null;
       const clips = (pista.clips as any[]).map(c => {
         if (c.id !== payload.clipId) return c;
         if (payload.tiempo <= c.inicio || payload.tiempo >= c.inicio + c.duracion) return c;
@@ -2139,7 +2229,7 @@ export function crearComandoClipSplit(): CommandDefinition<ClipSplitPayload> {
             } else if (n.inicio >= cutRel - 1e-9) {
               rightNotes.push({
                 ...n,
-                id: generarId(),
+                id: ids.siguiente(),
                 inicio: Math.max(0, n.inicio - cutRel),
               });
             } else {
@@ -2150,7 +2240,7 @@ export function crearComandoClipSplit(): CommandDefinition<ClipSplitPayload> {
               });
               rightNotes.push({
                 ...n,
-                id: generarId(),
+                id: ids.siguiente(),
                 inicio: 0,
                 duracion: Math.max(0.0625, noteEnd - cutRel),
               });
@@ -2162,9 +2252,10 @@ export function crearComandoClipSplit(): CommandDefinition<ClipSplitPayload> {
             notas: leftNotes,
             loop: { activo: false, inicio: 0, fin: duracionA },
           };
+          idDerecho = ids.siguiente();
           const right: MidiClip = {
             ...(c as MidiClip),
-            id: generarId(),
+            id: idDerecho,
             inicio: payload.tiempo,
             duracion: duracionB,
             notas: rightNotes,
@@ -2174,11 +2265,12 @@ export function crearComandoClipSplit(): CommandDefinition<ClipSplitPayload> {
           return [left, right];
         }
 
+        idDerecho = ids.siguiente();
         return [
           { ...c, duracion: duracionA },
           {
             ...c,
-            id: generarId(),
+            id: idDerecho,
             inicio: payload.tiempo,
             duracion: duracionB,
           },
@@ -2194,10 +2286,23 @@ export function crearComandoClipSplit(): CommandDefinition<ClipSplitPayload> {
         fechaModificacion: Date.now(),
       };
 
+      // Undo: quitar las dos mitades y reinsertar el clip original en su índice.
+      const inversePayload: ClipRestoreManyPayload =
+        original && idDerecho
+          ? {
+              pistaId: payload.pistaId,
+              removeClipIds: [original.id, idDerecho],
+              clips: [original],
+              indices: [indiceOriginal],
+            }
+          : { pistaId: payload.pistaId, removeClipIds: [], clips: [] };
+
       return {
         state: { ...estado, project: proyecto },
         events: [],
         result: payload,
+        inversePayload,
+        redoPayload: { ...payload, idsGenerados: ids.usados },
       };
     },
   };
@@ -2206,6 +2311,7 @@ export function crearComandoClipSplit(): CommandDefinition<ClipSplitPayload> {
 export function crearComandoMidiClipSplitIntoSections(): CommandDefinition<MidiClipSplitIntoSectionsPayload> {
   return {
     type: 'midi.clip.splitIntoSections',
+    inverseType: 'clip.restoreMany',
     description:
       'Parte un clip MIDI largo en varios clips por secciones (intro/verso/coro…) sin dejar un solo bloque de toda la canción',
     risk: 'write',
@@ -2216,6 +2322,7 @@ export function crearComandoMidiClipSplitIntoSections(): CommandDefinition<MidiC
         clipId: { type: 'string' },
         cuts: { type: 'array', items: { type: 'number' } },
         names: { type: 'array', items: { type: 'string' } },
+        idsGenerados: SCHEMA_IDS_GENERADOS,
       },
       required: ['pistaId', 'clipId', 'cuts'],
       additionalProperties: false,
@@ -2245,6 +2352,7 @@ export function crearComandoMidiClipSplitIntoSections(): CommandDefinition<MidiC
 
       const bounds = [0, ...cuts, dur];
       const names = payload.names ?? [];
+      const ids = crearGeneradorIds(payload.idsGenerados);
       const notas = clip.notas ?? [];
       const pieces: MidiClip[] = [];
 
@@ -2263,7 +2371,7 @@ export function crearComandoMidiClipSplitIntoSections(): CommandDefinition<MidiC
           if (newDur < 0.05) continue;
           pieceNotes.push({
             ...n,
-            id: i === 0 ? n.id : generarId(),
+            id: i === 0 ? n.id : ids.siguiente(),
             inicio: newInicio,
             duracion: newDur,
           });
@@ -2273,7 +2381,7 @@ export function crearComandoMidiClipSplitIntoSections(): CommandDefinition<MidiC
           `${clip.nombre || 'Clip'} · ${i + 1}/${bounds.length - 1}`;
         pieces.push({
           ...clip,
-          id: i === 0 ? clip.id : generarId(),
+          id: i === 0 ? clip.id : ids.siguiente(),
           nombre,
           inicio: clip.inicio + start,
           duracion: pieceDur,
@@ -2316,6 +2424,14 @@ export function crearComandoMidiClipSplitIntoSections(): CommandDefinition<MidiC
           },
         ],
         result: { ...payload, sections: pieces.length } as never,
+        // Undo: quitar las piezas y reinsertar el clip original en su índice.
+        inversePayload: {
+          pistaId: payload.pistaId,
+          removeClipIds: pieces.map((p) => p.id),
+          clips: [clip],
+          indices: [idx],
+        } satisfies ClipRestoreManyPayload,
+        redoPayload: { ...payload, idsGenerados: ids.usados },
       };
     },
   };
@@ -2699,6 +2815,105 @@ export function crearComandoClipRestore(): CommandDefinition<ClipRestorePayload>
         ],
         result: payload,
         inversePayload: { pistaId: payload.pistaId, clipId },
+      };
+    },
+  };
+}
+
+export type ClipRestoreManyPayload = {
+  pistaId: string;
+  /** Clips a quitar antes de reinsertar (p. ej. el clip unido o las piezas de un split). */
+  removeClipIds?: string[];
+  /** Clips a reinsertar. */
+  clips: unknown[];
+  /** Índice original de cada clip (mismo orden que `clips`); por defecto, al final. */
+  indices?: number[];
+};
+
+/**
+ * Reemplaza un conjunto de clips por otro en una pista. Es su propio inverso:
+ * undo de clip.merge / clip.split / midi.clip.splitIntoSections.
+ */
+export function crearComandoClipRestoreMany(): CommandDefinition<ClipRestoreManyPayload> {
+  return {
+    type: 'clip.restoreMany',
+    inverseType: 'clip.restoreMany',
+    description: 'Restaura varios clips (undo de unir/dividir clips)',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        pistaId: { type: 'string' },
+        removeClipIds: { type: 'array', items: { type: 'string' } },
+        clips: { type: 'array' },
+        indices: { type: 'array', items: { type: 'number' } },
+      },
+      required: ['pistaId', 'clips'],
+      additionalProperties: false,
+    },
+    handler: (estado: DAWState, payload: ClipRestoreManyPayload): StateTransition<ClipRestoreManyPayload> => {
+      const pista = estado.project.tracks.find(t => t.id === payload.pistaId);
+      if (!pista) {
+        throw new Error(`Pista no encontrada: ${payload.pistaId}`);
+      }
+      const actuales = pista.clips as { id: string }[];
+      const quitar = new Set(payload.removeClipIds ?? []);
+      const quitados = actuales
+        .map((clip, index) => ({ clip, index }))
+        .filter((x) => quitar.has(x.clip.id));
+      if (quitados.length !== quitar.size) {
+        const faltan = [...quitar].filter((id) => !actuales.some((c) => c.id === id));
+        throw new Error(`Clips no encontrados: ${faltan.join(', ')}`);
+      }
+      const clips = actuales.filter((c) => !quitar.has(c.id));
+      const aInsertar = (payload.clips ?? [])
+        .map((clip, i) => ({ clip: clip as { id: string }, index: payload.indices?.[i] ?? Number.POSITIVE_INFINITY }))
+        .sort((a, b) => a.index - b.index);
+      for (const { clip } of aInsertar) {
+        if (clips.some((c) => c.id === clip.id)) {
+          throw new Error(`Ya existe un clip con id ${clip.id}`);
+        }
+      }
+      for (const { clip, index } of aInsertar) {
+        clips.splice(Math.min(Math.max(index, 0), clips.length), 0, clip);
+      }
+
+      const pistaActualizada = { ...pista, clips, fechaModificacion: Date.now() } as Track;
+      const proyecto: ProjectState = {
+        ...estado.project,
+        tracks: estado.project.tracks.map(t => (t.id === payload.pistaId ? pistaActualizada : t)),
+        modificado: true,
+        fechaModificacion: Date.now(),
+      };
+      const insertadosIds = aInsertar.map((x) => x.clip.id);
+      const marcaTiempo = Date.now();
+      return {
+        state: { ...estado, project: proyecto },
+        events: [
+          ...quitados
+            .filter((x) => !insertadosIds.includes(x.clip.id))
+            .map((x) => ({
+              nombre: EventosClip.eliminado,
+              version: 1,
+              marcaTiempo,
+              fuente: 'domain-commands',
+              payload: { clipId: x.clip.id, pistaId: payload.pistaId },
+            })),
+          ...insertadosIds.map((clipId) => ({
+            nombre: EventosClip.creado,
+            version: 1,
+            marcaTiempo,
+            fuente: 'domain-commands',
+            payload: { clipId, pistaId: payload.pistaId, restaurado: true },
+          })),
+        ],
+        result: payload,
+        inversePayload: {
+          pistaId: payload.pistaId,
+          removeClipIds: insertadosIds,
+          clips: quitados.map((x) => x.clip),
+          indices: quitados.map((x) => x.index),
+        } satisfies ClipRestoreManyPayload,
       };
     },
   };

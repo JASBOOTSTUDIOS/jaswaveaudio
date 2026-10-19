@@ -112,6 +112,8 @@ export type PluginBypassPayload = {
 export type PluginDuplicatePayload = {
   trackId: string
   pluginInstanceId: string
+  /** Id de la copia (redo determinista / cliente que fija el id). */
+  newInstanceId?: string
 }
 
 export function crearComandoPluginInsert(): CommandDefinition<PluginInsertPayload> {
@@ -180,6 +182,8 @@ export function crearComandoPluginInsert(): CommandDefinition<PluginInsertPayloa
           trackId: payload.trackId,
           pluginInstanceId: plugin.id,
         } satisfies PluginRemovePayload,
+        // Redo determinista: reinserta con el mismo instanceId.
+        redoPayload: { ...payload, plugin: { ...payload.plugin, id: plugin.id } } satisfies PluginInsertPayload,
       }
     },
   }
@@ -423,6 +427,7 @@ export function crearComandoPluginDuplicate(): CommandDefinition<PluginDuplicate
       properties: {
         trackId: { type: 'string' },
         pluginInstanceId: { type: 'string' },
+        newInstanceId: { type: 'string' },
       },
       required: ['trackId', 'pluginInstanceId'],
       additionalProperties: false,
@@ -435,8 +440,11 @@ export function crearComandoPluginDuplicate(): CommandDefinition<PluginDuplicate
       const src = chain[idx]!
       const copy: PluginInfo = {
         ...structuredClone(src),
-        id: generarId(),
+        id: payload.newInstanceId || generarId(),
         nombre: `${src.nombre} (copia)`,
+      }
+      if (chain.some((p) => p.id === copy.id)) {
+        throw new Error(`Ya existe plugin instanceId: ${copy.id}`)
       }
       chain.splice(idx + 1, 0, copy)
 
@@ -461,6 +469,7 @@ export function crearComandoPluginDuplicate(): CommandDefinition<PluginDuplicate
           trackId: payload.trackId,
           pluginInstanceId: copy.id,
         } satisfies PluginRemovePayload,
+        redoPayload: { ...payload, newInstanceId: copy.id } satisfies PluginDuplicatePayload,
       }
     },
   }
@@ -530,6 +539,7 @@ export function crearComandoPluginReplace(): CommandDefinition<PluginReplacePayl
           pluginInstanceId: next.id,
           plugin: prev,
         },
+        redoPayload: { ...payload, plugin: { ...payload.plugin, id: next.id } } satisfies PluginReplacePayload,
       }
     },
   }
@@ -630,6 +640,8 @@ export type FxChainPastePayload = {
   trackId: string
   plugins: PluginInfo[]
   position?: number
+  /** Ids de las copias pegadas, en orden (redo determinista). */
+  ids?: string[]
 }
 
 export type FxChainPresetPayload = {
@@ -688,6 +700,7 @@ export function crearComandoFxChainPaste(): CommandDefinition<FxChainPastePayloa
         trackId: { type: 'string' },
         plugins: { type: 'array' },
         position: { type: 'number' },
+        ids: { type: 'array', items: { type: 'string' } },
       },
       required: ['trackId', 'plugins'],
       additionalProperties: false,
@@ -695,10 +708,13 @@ export function crearComandoFxChainPaste(): CommandDefinition<FxChainPastePayloa
     handler: (estado, payload): StateTransition<FxChainPastePayload> => {
       const host = resolveChainHost(estado, payload.trackId)
       const chain = [...host.plugins]
-      const copies = payload.plugins.map((p) => ({
+      const copies = payload.plugins.map((p, i) => ({
         ...structuredClone(p),
-        id: generarId(),
+        id: payload.ids?.[i] || generarId(),
       }))
+      for (const c of copies) {
+        if (chain.some((p) => p.id === c.id)) throw new Error(`Ya existe plugin instanceId: ${c.id}`)
+      }
       const pos =
         payload.position === undefined
           ? chain.length
@@ -721,6 +737,7 @@ export function crearComandoFxChainPaste(): CommandDefinition<FxChainPastePayloa
           trackId: payload.trackId,
           removeIds: newIds,
         },
+        redoPayload: { ...payload, ids: newIds } satisfies FxChainPastePayload,
       }
     },
   }
@@ -809,6 +826,11 @@ export function crearComandoFxChainLoadPreset(): CommandDefinition<FxChainPreset
           nombre: 'undo',
           plugins: prev,
         },
+        // Redo determinista: fija los ids asignados a plugins sin id.
+        redoPayload: {
+          ...payload,
+          plugins: payload.plugins.map((p, i) => ({ ...p, id: next[i]!.id })),
+        } satisfies FxChainPresetPayload,
       }
     },
   }
