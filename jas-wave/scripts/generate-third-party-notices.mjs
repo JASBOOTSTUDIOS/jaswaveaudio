@@ -36,6 +36,8 @@ const BUNDLED_ROOTS = [
   '@fontsource-variable/inter',
   '@fontsource-variable/jetbrains-mono',
   'class-variance-authority',
+  // Dependencia de runtime del proceso main ("dependencies": va en el asar con sus transitivas).
+  'electron-updater',
   'clsx',
   'lucide-react',
   'mermaid',

@@ -51,6 +51,9 @@ if(MSVC)
   )
 endif()
 
+# Copia a %LOCALAPPDATA% para desarrollo; el build de release (native/scripts/build-native.mjs)
+# lo desactiva: el instalador incluye el bundle de ${CMAKE_BINARY_DIR}.
+option(JASWAVE_INSTALL_USER_VST3 "Copiar el bundle a %LOCALAPPDATA%/Programs/Common/VST3/JasWave tras compilar" ON)
 set(VST3_INSTALL_DIR "$ENV{LOCALAPPDATA}/Programs/Common/VST3/JasWave")
 add_custom_command(TARGET JasWaveRoles POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -58,11 +61,16 @@ add_custom_command(TARGET JasWaveRoles POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "$<TARGET_FILE:JasWaveRoles>"
     "${CMAKE_BINARY_DIR}/JasWaveRoles.vst3/Contents/x86_64-win/JasWaveRoles.vst3"
-  COMMAND ${CMAKE_COMMAND} -E make_directory "${VST3_INSTALL_DIR}/JasWaveRoles.vst3/Contents/x86_64-win"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "$<TARGET_FILE:JasWaveRoles>"
-    "${VST3_INSTALL_DIR}/JasWaveRoles.vst3/Contents/x86_64-win/JasWaveRoles.vst3"
-  COMMENT "Packaging and installing JasWaveRoles.vst3"
+  COMMENT "Packaging JasWaveRoles.vst3"
 )
+if(JASWAVE_INSTALL_USER_VST3)
+  add_custom_command(TARGET JasWaveRoles POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${VST3_INSTALL_DIR}/JasWaveRoles.vst3/Contents/x86_64-win"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "$<TARGET_FILE:JasWaveRoles>"
+      "${VST3_INSTALL_DIR}/JasWaveRoles.vst3/Contents/x86_64-win/JasWaveRoles.vst3"
+    COMMENT "Installing JasWaveRoles.vst3 → ${VST3_INSTALL_DIR}"
+  )
+endif()
 
 message(STATUS "JasWaveRoles.vst3 → ${VST3_INSTALL_DIR}")

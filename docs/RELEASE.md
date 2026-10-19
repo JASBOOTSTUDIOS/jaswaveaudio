@@ -1,7 +1,8 @@
 # Cómo publicar una versión
 
 Guía para publicar una versión de JasWave para Windows. La versión de la aplicación es la de
-`jas-wave/package.json`.
+`jas-wave/package.json`. La configuración del instalador está en
+`jas-wave/electron-builder.cjs` (JS, para poder leer variables de entorno al empaquetar).
 
 ## 1. Preparar
 
@@ -16,7 +17,8 @@ Guía para publicar una versión de JasWave para Windows. La versión de la apli
 
 3. Mover las entradas de `## [Unreleased]` de `CHANGELOG.md` a una sección nueva
    `## [X.Y.Z] - AAAA-MM-DD`.
-4. Si hay componentes de terceros nuevos, regenerar los avisos:
+4. Si hay componentes de terceros nuevos (renderer o `dependencies` del proceso main, como
+   `electron-updater`), regenerar los avisos:
 
    ```bash
    cd jas-wave && npm run notices
@@ -36,59 +38,102 @@ git tag vX.Y.Z
 git push origin main vX.Y.Z
 ```
 
-La etiqueta debe tener la forma `vX.Y.Z` y coincidir con la versión de `jas-wave/package.json`.
-(Se usa `--no-git-tag-version` porque `jas-wave/` no es la raíz del repositorio.)
+La etiqueta debe tener la forma `vX.Y.Z` y coincidir con la versión de `jas-wave/package.json`
+(el workflow lo comprueba y falla si no coincide). Se usa `--no-git-tag-version` porque
+`jas-wave/` no es la raíz del repositorio.
 
-## 3. Workflow de release
+## 3. Workflow de release (`.github/workflows/release.yml`)
 
-Al subir la etiqueta `v*`, el workflow de GitHub Actions de release:
+Al subir la etiqueta `v*`, en `windows-latest`:
 
-1. instala dependencias y ejecuta la verificación;
-2. compila el plugin host nativo (`native/plugin-host`, CMake + Visual Studio 2022 + VST3 SDK
-   v3.8.1_build_84);
-3. empaqueta el instalador NSIS con electron-builder (`npm run pack:win` →
-   `jas-wave/release/JasWave-Setup-X.Y.Z.exe`);
-4. publica el instalador y `latest.yml` en **GitHub Releases**, que es la fuente que usa
-   `electron-updater` para la actualización automática.
+1. comprueba que la etiqueta coincide con `jas-wave/package.json`;
+2. `npm run install:all` y `npm run verify`;
+3. `npm run native:sdk`: clona el Steinberg VST3 SDK fijado en `v3.8.1_build_84` (submódulos
+   `base`, `cmake`, `pluginterfaces`, `public.sdk`) en `native/plugin-host/third_party/vst3sdk`
+   y verifica la etiqueta (`native/scripts/fetch-vst3sdk.mjs`);
+4. `npm run native:build`: CMake + "Visual Studio 17 2022", Release x64
+   (`native/scripts/build-native.mjs`) → `jaswave-plugin-host.exe`, `JasWavePiano.vst3` y
+   `JasWaveRoles.vst3` en las carpetas `build-release/`;
+5. `npm run release:win` con `CI=true`: build de la app, `stage:host` en **modo estricto** (falla
+   si falta cualquier binario nativo) y `electron-builder --win nsis --publish always`;
+6. publica en **GitHub Releases** (como **borrador**) el instalador
+   `JasWave-Setup-X.Y.Z.exe`, su `.blockmap` y `latest.yml`, que es lo que lee `electron-updater`.
+   También quedan como artefacto del workflow.
 
-Revisar el borrador o la release generada, completar las notas con la sección del
-`CHANGELOG.md` y publicarla.
+Revisar el borrador, completar las notas con la sección del `CHANGELOG.md` y **publicarlo**: los
+clientes solo ven releases publicadas (no borradores).
 
-### Repositorio privado y auto-actualización
+El instalador incluye en `resources/`:
 
-`electron-updater` descarga las actualizaciones de GitHub Releases **sin autenticación**. Si el
-repositorio de código (`JASBOOTSTUDIOS/jaswaveaudio`) es privado, los clientes no podrán leer sus
-releases. En ese caso hay que publicar los artefactos en un **repositorio público solo de
-releases** (por ejemplo `JASBOOTSTUDIOS/jaswave-releases`) configurando `build.publish`
-(`owner`/`repo`) en `jas-wave/package.json` y un token con permiso de escritura sobre ese
-repositorio en los secretos del workflow.
+- `plugin-host/jaswave-plugin-host.exe` (+ `node-host.cjs` de respaldo);
+- `vst3/JasWave/JasWaveRoles.vst3` y `vst3/JasWave/JasWavePiano.vst3`. La app usa la instalación
+  de usuario (`%LOCALAPPDATA%\Programs\Common\VST3\JasWave\`) si existe y, si no, estos bundles
+  (IPC `known-paths` → `bundledVst3Dir`).
 
-## 4. Firma de código
+`native/audio-engine` (addon N-API, stub detrás de `JASWAVE_NATIVE_AUDIO=1`) **no** forma parte
+del release.
 
-La firma de código está **desactivada** actualmente: el instalador se publica sin firmar y
-Windows SmartScreen mostrará una advertencia.
+El workflow `.github/workflows/native.yml` (manual o push a `main` que toque `native/**`)
+compila solo los binarios nativos y los sube como artefacto, para validar cambios en C++ sin
+publicar.
 
-Para activarla, configurar en *Settings → Secrets and variables → Actions* una de estas opciones:
+### Repositorio de releases y auto-actualización
 
-- **Certificado (.pfx):**
-  - `WIN_CSC_LINK`: el certificado en base64 (o una URL https).
-  - `WIN_CSC_KEY_PASSWORD`: la contraseña del certificado.
+`electron-updater` comprueba las actualizaciones 30 s después de arrancar y cada 6 h, las
+descarga en segundo plano y las instala al cerrar la app (o al pulsar **Reiniciar** en el aviso
+"Actualización vX lista"). Está desactivado fuera de la app empaquetada, con
+`JASWAVE_DISABLE_UPDATES=1` o si falta `resources/app-update.yml` (p. ej. builds `--win dir`).
+El registro va a `userData/logs/jaswave.log` (scope `updater`).
 
-  electron-builder firma automáticamente cuando estas variables están presentes.
-- **Azure Trusted Signing:** configurar `win.azureSignOptions` en `jas-wave/package.json` y los
-  secretos `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` y `AZURE_CLIENT_SECRET` de la aplicación con
-  acceso a la cuenta de firma.
+El repositorio del feed se fija **al empaquetar** con variables de entorno (en el workflow, como
+*variables* de Actions):
 
-Firmar también el `jaswave-plugin-host.exe` incluido en `resources/plugin-host`.
+| Variable | Por defecto |
+|---|---|
+| `JASWAVE_RELEASES_OWNER` | `JASBOOTSTUDIOS` |
+| `JASWAVE_RELEASES_REPO` | `jaswaveaudio` |
+
+`electron-updater` descarga de GitHub Releases **sin autenticación**. Si el repositorio de
+código es privado, los clientes no podrán leer sus releases: crear un repositorio **público solo
+de releases** (por ejemplo `JASBOOTSTUDIOS/jaswave-releases`), definir
+`JASWAVE_RELEASES_OWNER`/`JASWAVE_RELEASES_REPO` en *Settings → Secrets and variables → Actions →
+Variables* y un secreto `JASWAVE_RELEASES_TOKEN` (PAT con permiso de escritura en ese repo). Sin
+ese secreto se usa `GITHUB_TOKEN`, que solo puede publicar en el propio repositorio.
+
+## 4. Firma de código (preparada, desactivada)
+
+Sin certificado el instalador se publica **sin firmar** (electron-builder registra *"no signing
+info identified, signing is skipped"*) y Windows SmartScreen mostrará una advertencia.
+
+La firma se activa sola cuando el workflow recibe credenciales:
+
+- **Certificado (.pfx):** secretos `WIN_CSC_LINK` (certificado en base64 o URL https) y
+  `WIN_CSC_KEY_PASSWORD`. En local también vale `CSC_LINK`/`CSC_KEY_PASSWORD`.
+- **Azure Trusted Signing:** secretos `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`
+  y variables `AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT`,
+  `AZURE_TRUSTED_SIGNING_PROFILE`, `AZURE_TRUSTED_SIGNING_PUBLISHER`. Con las siete presentes
+  `electron-builder.cjs` añade `win.azureSignOptions` (tiene prioridad sobre el .pfx).
+
+Con firma activa se añade `win.signExts: [".exe", ".dll", ".vst3"]`, de modo que también se
+firman `jaswave-plugin-host.exe` y los binarios `JasWaveRoles.vst3`/`JasWavePiano.vst3` de
+`resources/`. Los secretos que no existen llegan vacíos y no activan nada.
 
 ## 5. Empaquetar en local
 
 ```bash
-npm run pack:win        # desde la raíz; build + stage del plugin host + NSIS
+npm run native:sdk      # una vez: VST3 SDK fijado
+npm run native:build    # binarios nativos (Release x64)
+npm run pack:win        # build + stage + NSIS (--publish never)
 ```
 
-Requiere haber compilado antes el plugin host nativo (ver `native/plugin-host/README.md`); el
-paso `stage:host` lo copia a `jas-wave/resources/plugin-host`.
+- `stage:host` (`jas-wave/scripts/stage-plugin-host.mjs`) copia el plugin host a
+  `jas-wave/resources/plugin-host` y los bundles VST3 a `jas-wave/resources/vst3/JasWave`
+  (desde `build-release/` u otras carpetas de build, o desde `%LOCALAPPDATA%`). En local solo
+  **avisa** si falta algo; con `CI` definido o `--strict` (`npm run stage:host:strict`) falla.
+- Para probar sin instalador: `cd jas-wave && npm run electron:dir` (o
+  `npx electron-builder --win dir` tras `npm run build` y `npm run stage:host`) →
+  `jas-wave/release/win-unpacked/`.
+- Otro generador de Visual Studio: `JASWAVE_CMAKE_GENERATOR="Visual Studio 18 2026" npm run native:build`.
 
 **Problema conocido:** si electron-builder falla al extraer `winCodeSign` con un error de
 creación de enlaces simbólicos (*"Cannot create symbolic link: El cliente no dispone de un
@@ -98,8 +143,9 @@ borra la caché `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign` y vuelve a i
 
 ## 6. Después de publicar
 
-- Instalar la versión publicada en una máquina limpia y comprobar que arranca, carga un plugin
-  VST3 y reproduce audio.
-- Comprobar que una instalación anterior detecta la actualización (si el auto-update está
-  activo).
+- Instalar la versión publicada en una máquina limpia (sin `%LOCALAPPDATA%\Programs\Common\VST3\JasWave`)
+  y comprobar que arranca, carga JasWave Roles/Piano desde `resources/vst3`, carga un plugin
+  VST3 de terceros y reproduce audio.
+- Comprobar que una instalación anterior detecta la actualización, muestra el aviso y se
+  actualiza al reiniciar.
 - Añadir una sección `## [Unreleased]` vacía en `CHANGELOG.md`.

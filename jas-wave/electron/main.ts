@@ -17,6 +17,7 @@ import { initLogger, logLine } from './logger'
 import { writeFileAtomic } from './atomic-write'
 import { defaultVstRoots, isAudioFile, PathAccessError, PathGrants, type AccessKind, type GrantMode } from './path-grants'
 import { checkHostCommand } from './plugin-host-guard'
+import { initAutoUpdater } from './updater'
 import {
   createGuardedIpc,
   devServerUrl,
@@ -376,6 +377,10 @@ app.whenReady().then(() => {
   initPathGrants()
   buildAppMenu()
   createWindow()
+  initAutoUpdater({
+    ipc: ipcMain,
+    getWindow: () => mainWindow as unknown as import('electron').BrowserWindow | null,
+  })
   startAgentBridgeIfAllowed()
 })
 
@@ -407,6 +412,16 @@ ipcMain.handle('clipboard-write-text', (_e: IpcMainInvokeEvent, text: unknown) =
 })
 ipcMain.handle('env-local-appdata', () => process.env.LOCALAPPDATA || '')
 ipcMain.handle('user-data-path', () => app.getPath('userData'))
+/** Rutas para localizar plugins propios: instalación de usuario o los incluidos en resources/. */
+ipcMain.handle('known-paths', () => {
+  const resourcesPath = app.isPackaged ? process.resourcesPath || '' : ''
+  return {
+    resourcesPath,
+    localAppData: process.env.LOCALAPPDATA || '',
+    // Solo en la app empaquetada (extraResources vst3/JasWave); en dev queda vacío.
+    bundledVst3Dir: resourcesPath ? path.join(resourcesPath, 'vst3', 'JasWave') : '',
+  }
+})
 
 // Errores del renderer (window.onerror, rechazos, error boundaries) → log persistente.
 let rendererLogBudget = { windowStart: 0, count: 0 }

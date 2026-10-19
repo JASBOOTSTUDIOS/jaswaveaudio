@@ -16,7 +16,10 @@
     "verify": "npm run lint && npm run typecheck && npm test",
     "certify": "npm run cli:certify:quick --prefix jas-wave",
     "native:roles-vst": "npm run native:roles-vst --prefix jas-wave",
-    "pack:win": "npm run pack:win --prefix jas-wave"
+    "native:sdk": "node native/scripts/fetch-vst3sdk.mjs",
+    "native:build": "node native/scripts/build-native.mjs",
+    "pack:win": "npm run pack:win --prefix jas-wave",
+    "release:win": "npm run release:win --prefix jas-wave"
   },
   "engines": {
     "node": ">=22"

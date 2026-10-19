@@ -40,14 +40,11 @@ jaswaveaudio/
 - Para compilar el código nativo (plugin host y plugins VST3):
   - **Visual Studio 2022 Build Tools** con la carga de trabajo "Desarrollo de escritorio con C++"
   - **CMake ≥ 3.25**
-  - **Steinberg VST3 SDK** en la etiqueta `v3.8.1_build_84`, clonado en
-    `native/plugin-host/third_party/vst3sdk` (no se versiona en este repositorio):
-
-    ```bash
-    git clone --branch v3.8.1_build_84 https://github.com/steinbergmedia/vst3sdk.git native/plugin-host/third_party/vst3sdk
-    cd native/plugin-host/third_party/vst3sdk
-    git submodule update --init base cmake pluginterfaces public.sdk
-    ```
+  - **git** en el PATH
+  - **Steinberg VST3 SDK** fijado en la etiqueta `v3.8.1_build_84` dentro de
+    `native/plugin-host/third_party/vst3sdk` (no se versiona en este repositorio). Lo descarga
+    y verifica `npm run native:sdk` (clona la etiqueta con los submódulos `base`, `cmake`,
+    `pluginterfaces` y `public.sdk`).
 
 ## Instalación
 
@@ -82,25 +79,30 @@ npm run build         # build del renderer (Vite) + proceso main
 
 ## Código nativo
 
-Plugin host (ver [`native/plugin-host/README.md`](native/plugin-host/README.md)):
-
 ```bash
-cd native/plugin-host
-cmake -B build-vst3 -S . -G "Visual Studio 17 2022" -A x64 -DJASWAVE_VST3_SDK=ON -DSMTG_ENABLE_VSTGUI_SUPPORT=OFF -DSMTG_ENABLE_VST3_PLUGIN_EXAMPLES=OFF
-cmake --build build-vst3 --config Release --target jaswave-plugin-host
+npm run native:sdk     # descarga/verifica el VST3 SDK v3.8.1_build_84
+npm run native:build   # Release x64, "Visual Studio 17 2022"
 ```
 
-Plugin propio JasWave Roles: `npm run native:roles-vst`.
+`native:build` compila `native/plugin-host` (`jaswave-plugin-host.exe` + `JasWavePiano.vst3`) y
+`native/jaswave-roles-vst` (`JasWaveRoles.vst3`) en sus carpetas `build-release/`. Para otro
+generador: `JASWAVE_CMAKE_GENERATOR="Visual Studio 18 2026" npm run native:build`. Detalles en
+[`native/plugin-host/README.md`](native/plugin-host/README.md).
+
+`native/audio-engine` (addon N-API, stub tras `JASWAVE_NATIVE_AUDIO=1`) no se compila en
+`native:build` ni se incluye en el instalador.
 
 ## Empaquetado
 
 ```bash
-npm run pack:win      # build + copia del plugin host + instalador NSIS
+npm run native:sdk && npm run native:build   # una vez, o tras cambios en native/
+npm run pack:win      # build + stage de binarios nativos + instalador NSIS (no publica)
 ```
 
-El instalador queda en `jas-wave/release/JasWave-Setup-<versión>.exe`. Requiere haber
-compilado antes el plugin host. Proceso completo de publicación, firma y auto-actualización en
-[`docs/RELEASE.md`](docs/RELEASE.md).
+El instalador queda en `jas-wave/release/JasWave-Setup-<versión>.exe` e incluye el plugin host y
+los plugins JasWave Roles/Piano. Las releases se publican desde GitHub Actions al subir una
+etiqueta `vX.Y.Z`, con auto-actualización vía GitHub Releases. Proceso completo, firma y
+auto-actualización en [`docs/RELEASE.md`](docs/RELEASE.md).
 
 ## Documentación
 
