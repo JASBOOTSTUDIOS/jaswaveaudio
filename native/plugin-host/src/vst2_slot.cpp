@@ -470,6 +470,13 @@ void Vst2Slot::midiCc(int cc, int value, int delaySamples) {
 }
 
 void Vst2Slot::allNotesOff() {
+  {
+    // Igual que Vst3Slot: descartar eventos diferidos (lookahead de hasta ~0.85 s).
+    // Sin esto, los noteOn ya encolados sonaban después de pausa/stop.
+    std::lock_guard<std::mutex> lock(impl_->midiMu);
+    impl_->midiQueue.clear();
+  }
+  impl_->pushMidi(0xB0, 64, 0, 0);
   impl_->pushMidi(0xB0, 123, 0, 0);
   impl_->pushMidi(0xB0, 120, 0, 0);
   for (int p = 0; p < 128; ++p) noteOff(p, 0);

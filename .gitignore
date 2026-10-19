@@ -48,3 +48,4 @@ jas-wave/jas-wave/
 
 # Worktrees/estado local de agentes
 .claude/
+native/plugin-host/build-release/
