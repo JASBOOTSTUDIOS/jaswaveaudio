@@ -5,6 +5,7 @@
  */
 import fs from 'node:fs'
 import process from 'node:process'
+import './lib/bridge-auth.mjs'
 
 const BASE = `http://127.0.0.1:${process.env.JASWAVE_AGENT_PORT || 18787}`
 

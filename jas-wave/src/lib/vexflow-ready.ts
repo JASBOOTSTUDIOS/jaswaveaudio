@@ -4,9 +4,9 @@
 
 export type VexFlowModule = typeof import('vexflow/bravura')
 
-/** Misma URL que usa VexFlow internamente (Font.HOST_URL + Font.FILES.Bravura). */
-const BRAVURA_WOFF2 =
-  'https://cdn.jsdelivr.net/npm/@vexflow-fonts/bravura@1.0.2/bravura.woff2'
+// Mismo data URI que registra 'vexflow/bravura' (Rollup lo deduplica): sin descargas externas.
+// El paquete no exporta ese subpath: alias 'vexflow-bravura-font' en vite.config.ts / tsconfig.json.
+import { Bravura as BRAVURA_WOFF2 } from 'vexflow-bravura-font'
 
 const BRAVURA_FACE = `@font-face{font-family:'Bravura';src:url('${BRAVURA_WOFF2}') format('woff2');font-display:block;}`
 

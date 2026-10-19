@@ -1,4 +1,5 @@
-﻿const BASE='http://127.0.0.1:18787'
+import './lib/bridge-auth.mjs'
+const BASE='http://127.0.0.1:18787'
 const state=await (await fetch(BASE+'/state')).then(r=>r.json())
 console.log('tracks', state.tracks?.length, 'bpm', state.bpm)
 for (const t of state.tracks||[]) {

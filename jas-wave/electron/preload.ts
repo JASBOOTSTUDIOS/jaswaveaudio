@@ -1,5 +1,5 @@
+// Preload en sandbox: solo 'electron' (contextBridge/ipcRenderer) y process.env.
 const { contextBridge, ipcRenderer } = require('electron')
-import type { IpcMainInvokeEvent } from 'electron'
 
 contextBridge.exposeInMainWorld('electron', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
@@ -13,9 +13,9 @@ contextBridge.exposeInMainWorld('electron', {
   windowClose: () => ipcRenderer.invoke('window-close'),
   windowIsMaximized: () => ipcRenderer.invoke('window-is-maximized'),
   onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => {
-    ipcRenderer.on('window-maximized-changed', (_event: IpcMainInvokeEvent, isMaximized: boolean) => {
-      callback(isMaximized)
-    })
+    const handler = (_event: unknown, isMaximized: boolean) => callback(isMaximized)
+    ipcRenderer.on('window-maximized-changed', handler)
+    return () => ipcRenderer.removeListener('window-maximized-changed', handler)
   },
   fileSave: (ruta: string, contenido: string) => ipcRenderer.invoke('file-save', ruta, contenido),
   fileSaveBinary: (ruta: string, data: Uint8Array) => ipcRenderer.invoke('file-save-binary', ruta, data),
@@ -29,13 +29,8 @@ contextBridge.exposeInMainWorld('electron', {
   fileSize: (ruta: string) => ipcRenderer.invoke('file-size', ruta),
   recordingsDir: (projectPath?: string) => ipcRenderer.invoke('recordings-dir', projectPath),
   dialogSave: (defaultPath?: string) => ipcRenderer.invoke('dialog-save', defaultPath),
-  dialogOpen: () => ipcRenderer.invoke('dialog-open'),
   dialogOpenDirectory: () => ipcRenderer.invoke('dialog-open-directory'),
-  projectSave: (projectId: string, data: unknown) => ipcRenderer.invoke('project-save', projectId, data),
-  projectLoad: (projectId: string) => ipcRenderer.invoke('project-load', projectId),
   projectOpenDialog: () => ipcRenderer.invoke('project-open-dialog'),
-  projectSaveAs: (projectId: string, data: unknown) => ipcRenderer.invoke('project-save-as', projectId, data),
-  projectList: () => ipcRenderer.invoke('project-list'),
   aiChat: (payload: unknown, model?: string, baseUrl?: string, temperature?: number) =>
     ipcRenderer.invoke('ai-chat', payload, model, baseUrl, temperature),
   aiHealth: (payload?: unknown) => ipcRenderer.invoke('ai-health', payload),

@@ -19,7 +19,7 @@ declare global {
       windowMaximize: () => Promise<void>
       windowClose: () => Promise<void>
       windowIsMaximized: () => Promise<boolean>
-      onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => void
+      onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => () => void
       getAppVersion: () => Promise<string>
       fileSave: (ruta: string, contenido: string) => Promise<{ success: boolean; error?: string }>
       fileSaveBinary: (ruta: string, data: Uint8Array) => Promise<{ success: boolean; error?: string }>
@@ -29,13 +29,8 @@ declare global {
       fileSize: (ruta: string) => Promise<number>
       recordingsDir: (projectPath?: string) => Promise<string>
       dialogSave: (defaultPath?: string) => Promise<{ canceled: boolean; filePath?: string }>
-      dialogOpen: () => Promise<{ canceled: boolean; filePaths?: string[] }>
       dialogOpenDirectory: () => Promise<{ canceled: boolean; filePaths?: string[] }>
-      projectSave: (projectId: string, data: unknown) => Promise<{ success: boolean; path?: string; size?: number; error?: string }>
-      projectLoad: (projectId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>
       projectOpenDialog: () => Promise<{ success: boolean; data?: unknown; path?: string; canceled?: boolean; error?: string }>
-      projectSaveAs: (projectId: string, data: unknown) => Promise<{ success: boolean; path?: string; size?: number; canceled?: boolean; error?: string }>
-      projectList: () => Promise<{ success: boolean; projects?: Array<{ id: string; name: string; modified: number; size: number }>; error?: string }>
       aiChat: (
         payload: AiChatRequest | unknown,
         model?: string,
@@ -54,7 +49,7 @@ declare global {
       pluginLookup: (pluginName: string) => Promise<Array<{ title: string; snippet: string; url: string }>>
       webSearch: (query: string) => Promise<Array<{ title: string; snippet: string; url: string }>>
       dialogMessage: (type: string, title: string, message: string) => Promise<number>
-      shellOpenExternal: (url: string) => Promise<void>
+      shellOpenExternal: (url: string) => Promise<boolean>
       nativeAudioAvailable: () => Promise<boolean>
       nativeAudioInitialize: (config: unknown) => Promise<void>
       nativeAudioShutdown: () => Promise<void>
@@ -151,43 +146,6 @@ export function useFileService() {
     }
   }, [tienda])
 
-  const load = useCallback(async (projectId: string) => {
-    if (!window.electron) return { success: false, error: 'Not in Electron' }
-    loadingRef.current = true
-    try {
-      const result = await window.electron.projectLoad(projectId)
-      if (result.success && result.data) {
-        const data = result.data as Record<string, unknown>
-        const actual = tienda.obtenerEstado()
-        tienda.reemplazarEstado({
-          ...actual,
-          ...(data.project ? { project: data.project as typeof actual.project } : {}),
-          ...(data.transport ? { transport: data.transport as typeof actual.transport } : {}),
-          ...(data.atajos ? { atajos: data.atajos as typeof actual.atajos } : {}),
-          ...(typeof data.version === 'string' ? { version: data.version } : {}),
-        })
-        try {
-          const { loadLibraryFromDisk } = await import('@/src/lib/library/preset-catalog')
-          const project = tienda.obtenerEstado().project
-          await loadLibraryFromDisk(project.id || 'default', project.ruta)
-        } catch {
-          /* best-effort */
-        }
-      } else if (!result.success) {
-        await notificarFallo(tienda, 'project.load', result.error)
-      }
-      return result
-    } finally {
-      loadingRef.current = false
-    }
-  }, [tienda])
-
-  const listProjects = useCallback(async () => {
-    if (!window.electron) return []
-    const result = await window.electron.projectList()
-    return result.projects || []
-  }, [])
-
   const newProject = useCallback(async () => {
     if (loadingRef.current) return { success: false, error: 'Operation in progress' }
     loadingRef.current = true
@@ -200,5 +158,5 @@ export function useFileService() {
     }
   }, [tienda])
 
-  return { save, saveAs, load, openDialog, listProjects, newProject }
+  return { save, saveAs, openDialog, newProject }
 }

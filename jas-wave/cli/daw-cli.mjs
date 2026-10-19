@@ -7,6 +7,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import './lib/bridge-auth.mjs'
 
 const DEFAULT_PORT = Number(process.env.JASWAVE_AGENT_PORT || 18787)
 const BASE = `http://127.0.0.1:${DEFAULT_PORT}`

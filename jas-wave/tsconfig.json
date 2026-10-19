@@ -16,7 +16,8 @@
     "paths": {
       "@/*": ["./*"],
       "@jaswave/ai-harness": ["../ai-harness/src/index.ts"],
-      "@jaswave/shared": ["../shared/src/index.ts"]
+      "@jaswave/shared": ["../shared/src/index.ts"],
+      "vexflow-bravura-font": ["./src/types/vexflow-bravura-font.d.ts"]
     }
   },
   "include": [

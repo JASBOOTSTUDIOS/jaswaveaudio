@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, session, clipboard } = require('electron')
+const { app, BrowserWindow, ipcMain: rawIpcMain, dialog, Menu, session, clipboard, shell } = require('electron')
 const path = require('path')
 const fs = require('fs/promises')
 const fsSync = require('fs')
@@ -11,6 +11,99 @@ import {
   startAgentBridge,
   stopAgentBridge,
 } from './agent-bridge'
+import { shouldStartAgentBridge } from './agent-bridge-auth'
+import { writeFileAtomic } from './atomic-write'
+import { defaultVstRoots, isAudioFile, PathAccessError, PathGrants, type AccessKind, type GrantMode } from './path-grants'
+import { checkHostCommand } from './plugin-host-guard'
+import {
+  createGuardedIpc,
+  devServerUrl,
+  installNavigationGuards,
+  installPermissionHandlers,
+  isSafeExternalUrl,
+  loadRenderer,
+} from './security'
+
+/** Todo IPC valida que el remitente sea el renderer propio. */
+const ipcMain = createGuardedIpc(rawIpcMain)
+installNavigationGuards()
+
+// ── Acceso a disco del renderer (ver path-grants.ts) ────────────────────────
+const pathGrants = new PathGrants()
+const grantsFile = () => path.join(app.getPath('userData'), 'path-grants.json')
+const MAX_PERSISTED_GRANTS = 300
+
+function readPersistedGrants(): Array<{ root: string; mode: GrantMode }> {
+  try {
+    const saved = JSON.parse(fsSync.readFileSync(grantsFile(), 'utf8'))
+    return Array.isArray(saved) ? saved : []
+  } catch {
+    return []
+  }
+}
+
+function initPathGrants() {
+  pathGrants.grant(app.getPath('userData'), 'readwrite')
+  for (const root of defaultVstRoots(process.env)) pathGrants.grant(root, 'read')
+  if (process.resourcesPath) pathGrants.grant(process.resourcesPath, 'read')
+  for (const g of readPersistedGrants()) pathGrants.grant(g.root, g.mode)
+}
+
+/** Concede (y recuerda entre sesiones) una carpeta elegida por el usuario en un diálogo. */
+function grantUserPath(dir: string, mode: GrantMode) {
+  if (!pathGrants.grant(dir, mode)) return
+  const key = dir.toLowerCase()
+  const merged = [...readPersistedGrants().filter((g) => String(g.root).toLowerCase() !== key), { root: dir, mode }]
+  writeFileAtomic(grantsFile(), JSON.stringify(merged.slice(-MAX_PERSISTED_GRANTS))).catch(() => undefined)
+}
+
+function assertPath(p: unknown, kind: AccessKind): string {
+  if (!pathGrants.isAllowed(p, kind)) throw new PathAccessError(p, kind)
+  return p as string
+}
+
+function assertBinaryRead(p: unknown): string {
+  if (!pathGrants.isBinaryReadAllowed(p)) throw new PathAccessError(p, 'read')
+  return p as string
+}
+
+function isProjectFile(p: string): boolean {
+  return /.jaswave$/i.test(p)
+}
+
+// ── Ajustes del proceso main (userData/jaswave-settings.json) ───────────────
+type MainSettings = { agentBridgeEnabled?: boolean }
+const settingsFile = () => path.join(app.getPath('userData'), 'jaswave-settings.json')
+function readMainSettings(): MainSettings {
+  try {
+    return JSON.parse(fsSync.readFileSync(settingsFile(), 'utf8')) as MainSettings
+  } catch {
+    return {}
+  }
+}
+async function writeMainSettings(patch: MainSettings): Promise<MainSettings> {
+  const next = { ...readMainSettings(), ...patch }
+  await writeFileAtomic(settingsFile(), JSON.stringify(next, null, 2))
+  return next
+}
+
+/** Puente HTTP para la CLI: en dev siempre; empaquetado solo con opt-in. */
+function startAgentBridgeIfAllowed(): boolean {
+  if (
+    !shouldStartAgentBridge({
+      isPackaged: app.isPackaged,
+      env: process.env,
+      settingEnabled: !!readMainSettings().agentBridgeEnabled,
+    })
+  ) {
+    return false
+  }
+  startAgentBridge({
+    getMainWindow: () => mainWindow as import('electron').BrowserWindow | null,
+    tokenFilePath: path.join(app.getPath('userData'), 'agent-bridge.json'),
+  })
+  return true
+}
 
 let mainWindow: typeof BrowserWindow | null = null
 
@@ -207,11 +300,20 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
+      webSecurity: true,
       // Playhead sync a undock: no throttlear timers/RAF en background.
       backgroundThrottling: false,
     },
   })
+
+  const emitMaximized = () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window-maximized-changed', mainWindow.isMaximized())
+    }
+  }
+  mainWindow.on('maximize', emitMaximized)
+  mainWindow.on('unmaximize', emitMaximized)
 
   disablePageZoom(mainWindow)
   try {
@@ -220,12 +322,8 @@ function createWindow() {
     /* ignore */
   }
 
-  if (process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
-    mainWindow.webContents.openDevTools()
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
-  }
+  void loadRenderer(mainWindow)
+  if (devServerUrl()) mainWindow.webContents.openDevTools()
 
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -236,42 +334,11 @@ app.whenReady().then(() => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.jaswave.app')
   }
-  session.defaultSession.setPermissionRequestHandler(
-    (_wc: unknown, perm: string, callback: (ok: boolean) => void) => {
-      callback(
-        perm === 'midi' ||
-          perm === 'midiSysex' ||
-          perm === 'media' ||
-          perm === 'audioCapture' ||
-          perm === 'mediaKeySystem',
-      )
-    },
-  )
-  session.defaultSession.setPermissionCheckHandler((_wc: unknown, perm: string) => {
-    return (
-      perm === 'midi' ||
-      perm === 'midiSysex' ||
-      perm === 'media' ||
-      perm === 'audioCapture'
-    )
-  })
-  try {
-    session.defaultSession.setDevicePermissionHandler((details: { deviceType?: string }) => {
-      return (
-        details?.deviceType === 'midi' ||
-        details?.deviceType === 'hid' ||
-        details?.deviceType === 'audio' ||
-        details?.deviceType === 'unknown'
-      )
-    })
-  } catch {
-    /* Electron viejo sin device permission handler */
-  }
+  installPermissionHandlers(session.defaultSession)
+  initPathGrants()
   buildAppMenu()
   createWindow()
-  startAgentBridge({
-    getMainWindow: () => mainWindow as import('electron').BrowserWindow | null,
-  })
+  startAgentBridgeIfAllowed()
 })
 
 app.on('window-all-closed', () => {
@@ -303,6 +370,13 @@ ipcMain.handle('clipboard-write-text', (_e: IpcMainInvokeEvent, text: unknown) =
 ipcMain.handle('env-local-appdata', () => process.env.LOCALAPPDATA || '')
 ipcMain.handle('user-data-path', () => app.getPath('userData'))
 
+ipcMain.handle('agent-bridge-get-enabled', () => !!readMainSettings().agentBridgeEnabled)
+ipcMain.handle('agent-bridge-set-enabled', async (_e: IpcMainInvokeEvent, enabled: unknown) => {
+  await writeMainSettings({ agentBridgeEnabled: enabled === true })
+  stopAgentBridge()
+  return { enabled: enabled === true, running: startAgentBridgeIfAllowed() }
+})
+
 ipcMain.on('agent-bridge-reply', (_event: IpcMainInvokeEvent, id: string, result: unknown, error?: string) => {
   resolveAgentBridgeReply(String(id), result, error ? String(error) : undefined)
 })
@@ -332,8 +406,8 @@ ipcMain.handle('window-is-maximized', () => {
 
 ipcMain.handle('file-save', async (_event: IpcMainInvokeEvent, ruta: string, contenido: string) => {
   try {
-    await fs.mkdir(path.dirname(ruta), { recursive: true })
-    await fs.writeFile(ruta, contenido, 'utf-8')
+    assertPath(ruta, 'write')
+    await writeFileAtomic(ruta, String(contenido ?? ''), { backup: isProjectFile(ruta) })
     return { success: true }
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
@@ -342,9 +416,9 @@ ipcMain.handle('file-save', async (_event: IpcMainInvokeEvent, ruta: string, con
 
 ipcMain.handle('file-save-binary', async (_event: IpcMainInvokeEvent, ruta: string, data: Uint8Array | ArrayBuffer) => {
   try {
-    await fs.mkdir(path.dirname(ruta), { recursive: true })
+    assertPath(ruta, 'write')
     const buf = Buffer.from(data instanceof ArrayBuffer ? new Uint8Array(data) : data)
-    await fs.writeFile(ruta, buf)
+    await writeFileAtomic(ruta, buf)
     return { success: true }
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
@@ -368,6 +442,27 @@ ipcMain.handle('ffmpeg-available', async () => {
   }
 })
 
+/** Solo opciones de codificación conocidas; el renderer no puede inyectar flags de ffmpeg. */
+const FFMPEG_ARG_RULES: Record<string, RegExp> = {
+  '-b:a': /^\d{2,3}k$/,
+  '-c:a': /^(flac|libmp3lame|pcm_s16le|pcm_s24le|pcm_f32le)$/,
+  '-compression_level': /^\d{1,2}$/,
+  '-ar': /^\d{4,6}$/,
+  '-ac': /^[12]$/,
+}
+const FFMPEG_OUTPUT_EXT = /\.(flac|mp3|wav)$/i
+const FFMPEG_TIMEOUT_MS = 5 * 60_000
+
+function sanitizeFfmpegArgs(extraArgs: unknown): string[] {
+  const args = Array.isArray(extraArgs) ? extraArgs.map(String) : []
+  if (args.length % 2 !== 0) throw new Error('ffmpeg: argumentos incompletos')
+  for (let i = 0; i < args.length; i += 2) {
+    const rule = FFMPEG_ARG_RULES[args[i]!]
+    if (!rule || !rule.test(args[i + 1]!)) throw new Error(`ffmpeg: opción no permitida ${args[i]}`)
+  }
+  return args
+}
+
 ipcMain.handle(
   'ffmpeg-convert',
   async (
@@ -377,17 +472,29 @@ ipcMain.handle(
     extraArgs: string[] = [],
   ) => {
     try {
+      assertBinaryRead(input)
+      assertPath(output, 'write')
+      if (!isAudioFile(input) || !FFMPEG_OUTPUT_EXT.test(output)) throw new Error('ffmpeg: solo conversión de audio')
+      const safeArgs = sanitizeFfmpegArgs(extraArgs)
       const { spawn } = await import('node:child_process')
       await fs.mkdir(path.dirname(output), { recursive: true })
-      const args = ['-y', '-i', input, ...extraArgs, output]
+      const args = ['-hide_banner', '-nostdin', '-y', '-i', input, ...safeArgs, output]
       await new Promise<void>((resolve, reject) => {
         const child = spawn('ffmpeg', args, { windowsHide: true })
+        const timer = setTimeout(() => {
+          child.kill()
+          reject(new Error('ffmpeg: tiempo agotado'))
+        }, FFMPEG_TIMEOUT_MS)
         let err = ''
         child.stderr?.on('data', (d: Buffer) => {
-          err += d.toString()
+          err = (err + d.toString()).slice(-4000)
         })
-        child.on('error', (e) => reject(e))
+        child.on('error', (e) => {
+          clearTimeout(timer)
+          reject(e)
+        })
         child.on('close', (code) => {
+          clearTimeout(timer)
           if (code === 0) resolve()
           else reject(new Error(err.slice(-400) || `ffmpeg exit ${code}`))
         })
@@ -400,28 +507,25 @@ ipcMain.handle(
 )
 
 ipcMain.handle('file-read-binary', async (_event: IpcMainInvokeEvent, ruta: string) => {
-  const buf = await fs.readFile(ruta)
-  return buf
+  return fs.readFile(assertBinaryRead(ruta))
 })
 
 ipcMain.handle('recordings-dir', async (_event: IpcMainInvokeEvent, projectPath?: string) => {
-  const base =
-    typeof projectPath === 'string' && projectPath.trim()
-      ? path.dirname(projectPath)
-      : app.getPath('userData')
+  const projectDir =
+    typeof projectPath === 'string' && projectPath.trim() ? path.dirname(projectPath) : null
+  const base = projectDir && pathGrants.isAllowed(projectDir, 'write') ? projectDir : app.getPath('userData')
   const dir = path.join(base, 'media', 'grabaciones')
   await fs.mkdir(dir, { recursive: true })
   return dir
 })
 
 ipcMain.handle('file-read', async (_event: IpcMainInvokeEvent, ruta: string) => {
-  const contenido = await fs.readFile(ruta, 'utf-8')
-  return contenido
+  return fs.readFile(assertPath(ruta, 'read'), 'utf-8')
 })
 
 ipcMain.handle('file-list-dir', async (_event: IpcMainInvokeEvent, dir: string) => {
   try {
-    const entries = await fs.readdir(dir, { withFileTypes: true })
+    const entries = await fs.readdir(assertPath(dir, 'read'), { withFileTypes: true })
     return {
       success: true,
       entries: entries.map((e: import('fs').Dirent) => ({
@@ -440,6 +544,7 @@ ipcMain.handle('file-list-dir', async (_event: IpcMainInvokeEvent, dir: string) 
 })
 
 ipcMain.handle('file-exists', async (_event: IpcMainInvokeEvent, ruta: string) => {
+  if (!pathGrants.isBinaryReadAllowed(ruta)) return false
   try {
     await fs.access(ruta)
     return true
@@ -449,90 +554,40 @@ ipcMain.handle('file-exists', async (_event: IpcMainInvokeEvent, ruta: string) =
 })
 
 ipcMain.handle('file-size', async (_event: IpcMainInvokeEvent, ruta: string) => {
-  const stat = await fs.stat(ruta)
+  const stat = await fs.stat(assertBinaryRead(ruta))
   return stat.size
 })
 
+const SAVE_FILTERS: Record<string, { name: string; extensions: string[] }> = {
+  pdf: { name: 'PDF', extensions: ['pdf'] },
+  wav: { name: 'WAV', extensions: ['wav'] },
+  flac: { name: 'FLAC', extensions: ['flac'] },
+  mp3: { name: 'MP3', extensions: ['mp3'] },
+  mid: { name: 'MIDI', extensions: ['mid'] },
+  jaswave: { name: 'JasWave Project', extensions: ['jaswave'] },
+}
+
 ipcMain.handle('dialog-save', async (_event: IpcMainInvokeEvent, defaultPath?: string) => {
   if (!mainWindow) return { canceled: true }
-  const isPdf = typeof defaultPath === 'string' && /\.pdf$/i.test(defaultPath)
+  const ext = typeof defaultPath === 'string' ? path.extname(defaultPath).slice(1).toLowerCase() : ''
+  const filter = SAVE_FILTERS[ext] ?? SAVE_FILTERS.jaswave!
   const result = await dialog.showSaveDialog(mainWindow, {
-    filters: isPdf
-      ? [{ name: 'PDF', extensions: ['pdf'] }]
-      : [{ name: 'JasWave Project', extensions: ['jaswave'] }],
+    filters: [filter],
     ...(typeof defaultPath === 'string' && defaultPath ? { defaultPath } : {}),
     properties: ['createDirectory', 'showOverwriteConfirmation'],
   })
-  return result
-})
-
-ipcMain.handle('dialog-open', async () => {
-  if (!mainWindow) return { canceled: true }
-  const result = await dialog.showOpenDialog(mainWindow, {
-    filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }],
-    properties: ['openFile'],
-  })
+  if (!result.canceled && result.filePath) grantUserPath(path.dirname(result.filePath), 'readwrite')
   return result
 })
 
 ipcMain.handle('dialog-open-directory', async () => {
   if (!mainWindow) return { canceled: true, filePaths: [] as string[] }
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Carpeta de plugins VST3',
+    title: 'Seleccionar carpeta',
     properties: ['openDirectory'],
   })
+  if (!result.canceled && result.filePaths[0]) grantUserPath(result.filePaths[0], 'readwrite')
   return result
-})
-
-ipcMain.handle('project-save', async (_event: IpcMainInvokeEvent, _projectId: string, data: unknown) => {
-  if (!mainWindow) return { success: false, error: 'No window' }
-  try {
-    const proyecto = (data as { project?: { ruta?: string; nombre?: string } })?.project
-    let ruta = proyecto?.ruta
-    if (!ruta) {
-      const dialogResult = await dialog.showSaveDialog(mainWindow, {
-        filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }],
-        defaultPath: `${proyecto?.nombre || 'proyecto'}.jaswave`,
-      })
-      if (dialogResult.canceled || !dialogResult.filePath) {
-        return { success: false, canceled: true }
-      }
-      ruta = dialogResult.filePath.endsWith('.jaswave')
-        ? dialogResult.filePath
-        : `${dialogResult.filePath}.jaswave`
-    }
-    const json = JSON.stringify(data)
-    await fs.writeFile(ruta, json, 'utf-8')
-    const stat = await fs.stat(ruta)
-    return { success: true, path: ruta, size: stat.size }
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
-  }
-})
-
-ipcMain.handle('project-load', async (_event: IpcMainInvokeEvent, projectId: string) => {
-  try {
-    const ruta = projectId.endsWith('.jaswave') ? projectId : `${projectId}.jaswave`
-    const contenido = await fs.readFile(ruta, 'utf-8')
-    return { success: true, data: JSON.parse(contenido), path: ruta }
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
-  }
-})
-
-ipcMain.handle('project-save-as', async (_event: IpcMainInvokeEvent, projectId: string, data: unknown) => {
-  if (!mainWindow) return { success: false, canceled: true }
-  const result = await dialog.showSaveDialog(mainWindow, {
-    filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }],
-    properties: ['createDirectory', 'showOverwriteConfirmation'],
-  })
-  if (result.canceled || !result.filePath) return { success: false, canceled: true }
-  try {
-    await fs.writeFile(result.filePath, JSON.stringify(data), 'utf-8')
-    return { success: true, path: result.filePath, size: 0 }
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
-  }
 })
 
 ipcMain.handle('project-open-dialog', async () => {
@@ -542,12 +597,9 @@ ipcMain.handle('project-open-dialog', async () => {
     properties: ['openFile'],
   })
   if (result.canceled || result.filePaths.length === 0) return { success: false, canceled: true }
+  grantUserPath(path.dirname(result.filePaths[0]), 'readwrite')
   // Solo devolvemos la ruta; project.load + FileService leen el archivo
   return { success: true, path: result.filePaths[0] }
-})
-
-ipcMain.handle('project-list', async () => {
-  return { success: true, projects: [] }
 })
 
 ipcMain.handle('ai-chat', async (_event: IpcMainInvokeEvent, payload: unknown, model?: string, baseUrl?: string, temperature?: number) => {
@@ -584,18 +636,20 @@ ipcMain.handle('web-search', async (_event: IpcMainInvokeEvent, query: unknown) 
 
 ipcMain.handle('dialog-message', async (_event: IpcMainInvokeEvent, type: string, title: string, message: string) => {
   if (!mainWindow) return 0
+  const safeType = ['none', 'info', 'error', 'question', 'warning'].includes(type) ? type : 'info'
   const result = await dialog.showMessageBox(mainWindow, {
-    type: type as any,
-    title,
-    message,
+    type: safeType as 'none' | 'info' | 'error' | 'question' | 'warning',
+    title: String(title ?? '').slice(0, 200),
+    message: String(message ?? '').slice(0, 4000),
     buttons: ['OK'],
   })
   return result.response
 })
 
 ipcMain.handle('shell-open-external', async (_event: IpcMainInvokeEvent, url: string) => {
-  const { shell } = require('electron')
+  if (!isSafeExternalUrl(url)) return false
   await shell.openExternal(url)
+  return true
 })
 
 /** Ventanas flotantes de herramientas (multi-monitor) */
@@ -622,7 +676,8 @@ ipcMain.handle('tool-window-open', async (_event: IpcMainInvokeEvent, toolId: st
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
+      webSecurity: true,
       backgroundThrottling: false,
     },
   })
@@ -649,26 +704,13 @@ ipcMain.handle('tool-window-open', async (_event: IpcMainInvokeEvent, toolId: st
     }
   })
 
-  const params = new URLSearchParams({ undock: String(toolId || '') })
-  if (extra && typeof extra === 'object') {
-    for (const [k, v] of Object.entries(extra)) {
-      if (v) params.set(k, String(v))
-    }
-  }
-  const query = `?${params.toString()}`
   const queryObj: Record<string, string> = { undock: String(toolId || '') }
   if (extra && typeof extra === 'object') {
     for (const [k, v] of Object.entries(extra)) {
       if (v) queryObj[k] = String(v)
     }
   }
-  if (process.env.VITE_DEV_SERVER_URL) {
-    await win.loadURL(`${process.env.VITE_DEV_SERVER_URL}${query}`)
-  } else {
-    await win.loadFile(path.join(__dirname, '../dist/index.html'), {
-      query: queryObj,
-    })
-  }
+  await loadRenderer(win, queryObj)
   return { success: true }
 })
 
@@ -763,6 +805,9 @@ ipcMain.handle('plugin-host-midi', async (e: IpcMainInvokeEvent, cmd: unknown) =
 ipcMain.handle('plugin-host-send', async (e: IpcMainInvokeEvent, cmd: unknown) => {
   const record = (cmd && typeof cmd === 'object' ? cmd : {}) as Record<string, unknown>
   const type = typeof record.type === 'string' ? record.type : ''
+
+  const allowed = checkHostCommand(record, pathGrants)
+  if (!allowed.ok) return { ok: false, error: allowed.error }
 
   if (!isEditorHostCommand(type)) {
     await ensurePluginHostStarted()

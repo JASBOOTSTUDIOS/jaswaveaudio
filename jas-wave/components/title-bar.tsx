@@ -36,15 +36,13 @@ export function TitleBar() {
       })
     }
 
-    if (window.electron?.onWindowMaximizedChanged) {
-      const handler = (maximized: boolean) => {
-        if (mounted) setIsMaximized(maximized)
-      }
-      window.electron.onWindowMaximizedChanged(handler)
-    }
+    const unsubscribe = window.electron?.onWindowMaximizedChanged?.((maximized: boolean) => {
+      if (mounted) setIsMaximized(maximized)
+    })
 
     return () => {
       mounted = false
+      unsubscribe?.()
     }
   }, [])
 

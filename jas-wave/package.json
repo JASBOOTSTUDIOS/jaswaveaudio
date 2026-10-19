@@ -12,7 +12,7 @@
     "clean": "node -e \"const fs=require('fs');fs.rmSync('build',{recursive:true,force:true});for(const f of fs.readdirSync('.'))if(f.endsWith('.tsbuildinfo'))fs.rmSync(f)\"",
     "build": "npm run clean && tsc -b && vite build && tsc -p tsconfig.electron.json",
     "typecheck": "tsc -b --noEmit && tsc -p tsconfig.electron.json --noEmit",
-    "test": "tsx --test \"src/**/*.test.ts\" \"lib/**/*.test.ts\"",
+    "test": "tsx --test \"src/**/*.test.ts\" \"lib/**/*.test.ts\" \"electron/**/*.test.ts\"",
     "test:plugins": "npm test",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -31,10 +31,11 @@
     "cli:soak-host:4h": "cross-env SOAK_MINUTES=240 node cli/_soak-host.mjs",
     "native:roles-vst": "cmake -B ../native/jaswave-roles-vst/build -S ../native/jaswave-roles-vst -G \"Visual Studio 17 2022\" -A x64 && cmake --build ../native/jaswave-roles-vst/build --config Release --target JasWaveRoles"
   },
-  "dependencies": {},
   "devDependencies": {
     "@base-ui/react": "^1.5.0",
     "@eslint/js": "^9.39.5",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@jaswave/ai-harness": "file:../ai-harness",
     "@jaswave/shared": "file:../shared",
     "@tailwindcss/postcss": "^4.3.3",
@@ -74,9 +75,10 @@
     "appId": "com.jaswave.app",
     "productName": "JasWave",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build-resources"
     },
-    "icon": "public/jaswave-icono-con-frecuencia.png",
+    "icon": "build-resources/icon.png",
     "files": [
       "dist/**/*",
       "build/electron/**/*",
@@ -102,9 +104,9 @@
           ]
         }
       ],
-      "icon": "public/jaswave-icono-con-frecuencia.png",
+      "icon": "build-resources/icon.png",
       "artifactName": "JasWave-Setup-${version}.${ext}",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": true
     },
     "nsis": {
       "oneClick": false,
