@@ -6,6 +6,7 @@ import { beatsASegundos } from '@/lib/audio-conversions'
 import { encodeWavPcm16 } from './encode-wav'
 import { audioEngine } from '@/lib/audio-engine'
 import type { DAWState } from '../../../shared/src/types/state'
+import { saveBinaryOrThrow } from './electron-fs'
 
 export async function flattenCompToClip(
   tienda: {
@@ -67,7 +68,7 @@ export async function flattenCompToClip(
   const fileName = `comp-${pistaId}-${Date.now()}.wav`
   const dir = await window.electron?.recordingsDir?.()
   const path = dir ? `${dir}/${fileName}` : fileName
-  await window.electron?.fileSaveBinary?.(path, wav)
+  if (typeof window.electron?.fileSaveBinary === 'function') await saveBinaryOrThrow(path, wav)
   audioEngine.setAudioBuffer(path, rendered)
 
   const cr = await tienda.executor.execute('clip.create', {

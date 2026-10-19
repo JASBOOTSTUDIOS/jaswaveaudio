@@ -9,7 +9,7 @@ import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as http from 'node:http'
 import { URL } from 'node:url'
-import { checkBridgeRequest, MAX_BRIDGE_BODY_BYTES } from './agent-bridge-auth'
+import { checkBridgeRequest, collectActionPaths, MAX_BRIDGE_BODY_BYTES } from './agent-bridge-auth'
 
 export type AgentAuditSnapshot = Record<string, unknown>
 
@@ -25,6 +25,7 @@ let server: http.Server | null = null
 let port = DEFAULT_PORT
 let token = ''
 let tokenFile: string | null = null
+let onTrustedPaths: (paths: string[]) => void = () => undefined
 let getMainWindow: () => BrowserWindow | null = () => null
 const pending = new Map<string, Pending>()
 let reqSeq = 0
@@ -226,6 +227,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         json(res, 400, { ok: false, error: 'Falta type' })
         return
       }
+      onTrustedPaths(collectActionPaths(body))
       const result = await askRenderer('actions.execute', {
         type: body.type,
         payload: body.payload ?? {},
@@ -247,6 +249,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         json(res, 400, { ok: false, error: 'JSON inválido' })
         return
       }
+      onTrustedPaths(collectActionPaths(body))
       if (Array.isArray(body.actions) && body.actions.length) {
         const result = await askRenderer('actions.execute', { actions: body.actions })
         json(res, 200, result)
@@ -291,8 +294,11 @@ export function startAgentBridge(opts: {
   getMainWindow: () => BrowserWindow | null
   port?: number
   tokenFilePath: string
+  /** Rutas de acciones de la CLI autenticada (el main las concede para la sesión). */
+  onTrustedPaths?: (paths: string[]) => void
 }): { port: number } {
   getMainWindow = opts.getMainWindow
+  onTrustedPaths = opts.onTrustedPaths ?? (() => undefined)
   port = opts.port ?? (Number(process.env.JASWAVE_AGENT_PORT) || DEFAULT_PORT)
   if (server) return { port }
 

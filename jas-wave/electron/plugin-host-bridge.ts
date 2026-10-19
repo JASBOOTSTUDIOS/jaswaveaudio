@@ -764,7 +764,9 @@ function wireChild(proc: ChildProcessWithoutNullStreams) {
 function writeHostStdin(line: string): boolean {
   if (!child || child.killed || !child.stdin || !child.stdin.writable) return false
   try {
-    return child.stdin.write(line, (err) => {
+    // write() devuelve false con backpressure (buffer lleno tras lotes grandes, p. ej. clip.load):
+    // el dato queda encolado y se envía; NO es stdin cerrado. Los errores reales llegan al callback.
+    child.stdin.write(line, (err) => {
       if (!err) return
       const msg = err instanceof Error ? err.message : String(err)
       console.error('[plugin-host] stdin write callback:', msg)
@@ -772,6 +774,7 @@ function writeHostStdin(line: string): boolean {
       lastError = `Plugin Host stdin: ${msg}`
       failAllRpc(lastError)
     })
+    return true
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[plugin-host] stdin write sync:', msg)
@@ -1056,11 +1059,36 @@ export async function setPluginHostAudioDevice(
   })
 }
 
+/**
+ * Último fallo de ASIO por dispositivo ausente (interfaz desconectada).
+ * Evita el bucle: reintento ASIO → respawn del host (descarga plugins) → falla → WASAPI →
+ * la UI reaplica prefs al recibir "host reiniciado" → reintento ASIO…
+ */
+const ASIO_ABSENT_COOLDOWN_MS = 30_000
+let asioAbsent: { deviceId: string; at: number; message: string } | null = null
+
+function isAsioDeviceAbsent(message: string): boolean {
+  return /no device is connected|device not (present|connected)|no se encuentra|desconectad/i.test(message)
+}
+
 async function applyAudioDeviceOrFallback(
   prefs: AudioDevicePrefs,
   opts?: { sessionFallbackOk?: boolean; persist?: boolean },
 ): Promise<PluginHostRpcResult> {
   const persist = opts?.persist !== false
+
+  if (
+    prefs.backend === 'asio' &&
+    asioAbsent &&
+    asioAbsent.deviceId === String(prefs.deviceId || '') &&
+    Date.now() - asioAbsent.at < ASIO_ABSENT_COOLDOWN_MS
+  ) {
+    // Interfaz ausente hace segundos: WASAPI sin reiniciar el host ni persistir (las prefs ASIO se conservan).
+    const fallback = await applyAudioDeviceOrFallback(wasapiPrefs(prefs), { persist: false })
+    const msg = `${asioAbsent.message} Audio en WASAPI (se reintentará ASIO al reconectar la interfaz).`
+    if (fallback.ok && opts?.sessionFallbackOk) return { ...fallback, message: msg }
+    return { ok: false, code: 'AudioDeviceFailed', message: msg, audio: fallback.audio }
+  }
 
   if (prefs.backend === 'asio' && !isRiskyAsioPrefs(prefs)) {
     const current = await sendPluginHostCommand({ type: 'getAudioDevice' }, 8000)
@@ -1097,6 +1125,7 @@ async function applyAudioDeviceOrFallback(
       20_000,
     )
     if (applied.ok) {
+      asioAbsent = null
       if (persist) writeAudioDevicePrefs(prefs)
       await ensureMixPipeConnected()
       // Solo avisar a la UI si el proceso murió: si no, forgetHostPlugins tumba el MIDI en play.
@@ -1104,6 +1133,9 @@ async function applyAudioDeviceOrFallback(
       return applied
     }
     console.error('[plugin-host] setAudioDevice ASIO falló:', applied.message)
+    if (isAsioDeviceAbsent(String(applied.message || ''))) {
+      asioAbsent = { deviceId: String(prefs.deviceId || ''), at: Date.now(), message: String(applied.message) }
+    }
     if (isSelfKillMessage(String(applied.message || ''))) {
       const alive = await sendPluginHostCommand({ type: 'ping' }, 4000)
       if (alive.ok) {

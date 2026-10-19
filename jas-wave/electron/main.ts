@@ -116,6 +116,10 @@ function startAgentBridgeIfAllowed(): boolean {
   startAgentBridge({
     getMainWindow: () => mainWindow as import('electron').BrowserWindow | null,
     tokenFilePath: path.join(app.getPath('userData'), 'agent-bridge.json'),
+    // La CLI autenticada actúa como el usuario: sus rutas explícitas se conceden solo en esta sesión.
+    onTrustedPaths: (paths) => {
+      for (const p of paths) pathGrants.grant(path.extname(p) ? path.dirname(p) : p, 'readwrite')
+    },
   })
   return true
 }

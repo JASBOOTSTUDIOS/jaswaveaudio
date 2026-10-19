@@ -237,7 +237,9 @@ export async function clearPluginQuarantineAndRestore(tienda: TiendaDAW): Promis
   const ensure = await ensureBestAudioDevice(tienda, 'UMC')
   const arm = await armNativeAudioOutput()
   return {
-    ok: Boolean(raw.ok) && ensure.ok && arm.ok,
+    // El dispositivo preferido (p. ej. ASIO desconectado) es un aviso: si el audio quedó armado
+    // en el fallback, limpiar la cuarentena fue exitoso.
+    ok: Boolean(raw.ok) && arm.ok,
     message: `${raw.message || `Cuarentena: ${cleared}`} · ${ensure.message} · ${arm.message}`,
     cleared,
   }

@@ -75,3 +75,26 @@ export function shouldStartAgentBridge(opts: {
   if (opts.settingEnabled) return true
   return !opts.isPackaged
 }
+
+/** Campos de payload que llevan rutas de disco (audio.import, render.start, score.export, plugin.insert…). */
+const PATH_FIELDS = new Set(['filePath', 'outputPath', 'outPath', 'folderPath', 'path', 'ruta', 'dir', 'directory'])
+
+/**
+ * Rutas absolutas presentes en acciones enviadas por la CLI autenticada.
+ * El token solo lo puede leer el usuario local, así que sus rutas cuentan como elegidas por él.
+ */
+export function collectActionPaths(body: unknown, out: string[] = [], depth = 0): string[] {
+  if (depth > 8 || out.length >= 64 || !body || typeof body !== 'object') return out
+  if (Array.isArray(body)) {
+    for (const item of body) collectActionPaths(item, out, depth + 1)
+    return out
+  }
+  for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+    if (typeof value === 'string') {
+      if (PATH_FIELDS.has(key) && value.length < 1024 && /^([a-zA-Z]:[\\/]|\/)/.test(value)) out.push(value)
+    } else if (value && typeof value === 'object') {
+      collectActionPaths(value, out, depth + 1)
+    }
+  }
+  return out
+}

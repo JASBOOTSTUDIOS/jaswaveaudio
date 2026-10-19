@@ -39,6 +39,8 @@ import { bakeVolumeAutomationIntoStem } from './automation-runtime'
 import { syncReaperTrackGraph } from '@/src/lib/plugin/track-vst-runtime'
 import type { DAWState } from '../../../shared/src/types/state'
 
+import { saveBinaryOrThrow } from './electron-fs'
+
 const BLOCK = 512
 
 async function hostSend(cmd: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -47,7 +49,7 @@ async function hostSend(cmd: Record<string, unknown>): Promise<Record<string, un
   await api.pluginHostEnsure?.()
   const raw = (await api.pluginHostSend(cmd)) as Record<string, unknown>
   if (raw && raw.ok === false) {
-    throw new Error(String(raw.message ?? raw.code ?? 'render host error'))
+    throw new Error(String(raw.error ?? raw.message ?? raw.code ?? 'render host error'))
   }
   return raw ?? {}
 }
@@ -125,7 +127,32 @@ function scheduleVstEvents(content: BounceContent, sampleRate: number, startSec:
   }
 }
 
+/**
+ * Bounce offline en el host nativo. Nunca deja el job colgado en 'rendering':
+ * cualquier excepción (host reiniciado, escritura denegada…) lo marca 'failed'.
+ */
 export async function runNativeBounce(
+  job: RenderJob,
+  content: BounceContent,
+  emit?: (nombre: string, payload: Record<string, unknown>) => void,
+  dawState?: DAWState,
+): Promise<RenderJob> {
+  try {
+    return await runNativeBounceUnsafe(job, content, emit, dawState)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    renderJobUpdate(job.id, { status: 'failed', error: msg })
+    emit?.('render.error', { jobId: job.id, message: msg })
+    try {
+      await window.electron?.pluginHostSend?.({ type: 'renderOfflineCancel' })
+    } catch {
+      /* host caído: nada que cancelar */
+    }
+    return renderJobGet(job.id) ?? { ...job, status: 'failed' as const, error: msg }
+  }
+}
+
+async function runNativeBounceUnsafe(
   job: RenderJob,
   content: BounceContent,
   emit?: (nombre: string, payload: Record<string, unknown>) => void,
@@ -320,7 +347,7 @@ export async function runNativeBounce(
       const gained = applyGainToChannels([pcmL, pcmR], gain)
       const wav = encodeWavPcm16(gained, finishSr)
       const normPath = path.replace(/\.wav$/i, '.norm.wav')
-      await window.electron?.fileSaveBinary?.(normPath, wav)
+      await saveBinaryOrThrow(normPath, wav)
       outPathFinal = normPath
       analysis = measureMixAnalysis(gained, finishSr)
       loudness = analysis.loudness
@@ -358,7 +385,7 @@ export async function runNativeBounce(
         }
         const stemPath = `${stemsDir}/stem${stemIndex}.wav`
         const wav = encodeWavPcm16([l, r], finishSr)
-        await window.electron?.fileSaveBinary?.(stemPath, wav)
+        await saveBinaryOrThrow(stemPath, wav)
         stemsPaths.push(stemPath)
       }
     }

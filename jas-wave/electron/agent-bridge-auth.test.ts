@@ -71,3 +71,17 @@ describe('agent-bridge-auth', () => {
     assert.equal(shouldStartAgentBridge({ isPackaged: false, env: { JASWAVE_AGENT_BRIDGE: '0' }, settingEnabled: false }), false)
   })
 })
+
+describe('collectActionPaths', () => {
+  it('extrae rutas absolutas de acciones anidadas', async () => {
+    const { collectActionPaths } = await import('./agent-bridge-auth')
+    const found = collectActionPaths({
+      actions: [
+        { type: 'audio.import', payload: { filePath: 'D:\\Samples\\kick.wav' } },
+        { type: 'render.start', payload: { outputPath: 'C:/Users/me/mix.wav' } },
+        { type: 'track.create', payload: { nombre: 'C:/no-es-ruta', path: 'relativa/x' } },
+      ],
+    })
+    assert.deepEqual(found, ['D:\\Samples\\kick.wav', 'C:/Users/me/mix.wav'])
+  })
+})

@@ -8,6 +8,7 @@ import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { renderScoreSheetPages, type ScorePage, type ScoreExportOpts, isDrumishNotes } from './midi-score-render'
 import { ensureVexFlowFonts, embedBravuraInSvg } from './vexflow-ready'
 import { openScorePreview } from './score-preview-store'
+import { saveBinaryOrThrow } from './electron-fs'
 
 export type { ScoreExportOpts } from './midi-score-render'
 export { isDrumishNotes } from './midi-score-render'
@@ -292,7 +293,11 @@ export async function exportProjectScoresToFolder(
       })
       const fname = scoreFileName(track.nombre, clip.nombre || clip.id)
       const path = `${scoresDir}/${fname}`
-      await saveBytes(path, bytes)
+      try {
+        await saveBytes(path, bytes)
+      } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : String(e), count }
+      }
       count += 1
     }
   }
@@ -315,8 +320,8 @@ export async function exportProjectScoresToFolder(
 }
 
 async function saveBytes(path: string, bytes: Uint8Array): Promise<void> {
-  if (typeof window !== 'undefined' && window.electron?.fileSaveBinary) {
-    await window.electron.fileSaveBinary(path, bytes)
+  if (typeof window !== 'undefined' && typeof window.electron?.fileSaveBinary === 'function') {
+    await saveBinaryOrThrow(path, bytes)
     return
   }
   downloadBlob(bytes, path.split(/[/\\]/).pop() || 'score.pdf')
