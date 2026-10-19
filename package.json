@@ -16,7 +16,8 @@
     "verify": "npm run lint && npm run typecheck && npm test",
     "certify": "npm run cli:certify:quick --prefix jas-wave",
     "native:roles-vst": "npm run native:roles-vst --prefix jas-wave",
-    "pack:win": "npm run pack:win --prefix jas-wave"
+    "pack:win": "npm run pack:win --prefix jas-wave",
+    "e2e": "npm run e2e --prefix jas-wave"
   },
   "engines": {
     "node": ">=22"
