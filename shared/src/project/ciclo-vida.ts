@@ -297,7 +297,10 @@ const archivoValido = (archivo: unknown): archivo is ProyectoArchivo => {
   const candidato = archivo as ProyectoArchivo;
   return (
     typeof candidato.version === 'number' &&
-    candidato.version === FORMATO_ACTUAL &&
+    Number.isInteger(candidato.version) &&
+    candidato.version >= 0 &&
+    // Versiones anteriores se aceptan: `migrarArchivo` las lleva al formato actual.
+    candidato.version <= FORMATO_ACTUAL &&
     typeof candidato.project === 'object' &&
     candidato.project !== null &&
     typeof candidato.audioReferences === 'object' &&

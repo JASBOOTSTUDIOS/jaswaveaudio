@@ -1,6 +1,9 @@
 import type { ProjectState } from '../types/proyecto';
 import type { AudioReference, ProyectoArchivo } from './ciclo-vida';
-import { proyectoParaGuardar, archivoValido, validarExtensionRuta, validarIntegridadProyecto, reconstruirRouting, verificarReferenciasAudio, FORMATO_ACTUAL } from './ciclo-vida';
+import { proyectoParaGuardar, archivoValido, validarExtensionRuta, reconstruirRouting, verificarReferenciasAudio } from './ciclo-vida';
+import { migrarArchivo } from './migraciones-archivo';
+import type { MigracionArchivo } from './migraciones-archivo';
+import { validarProyectoArchivo } from '../schemas/proyecto';
 
 export interface FileService {
   guardar(ruta: string, contenido: string): Promise<void>;
@@ -71,54 +74,153 @@ export const guardarProyecto = async (proyecto: ProjectState, ruta: string, file
   }
 };
 
-export const cargarProyecto = async (ruta: string, fileService: FileService): Promise<ProjectState> => {
-  validarExtensionRuta(ruta);
+/** Categoría del fallo de carga (permite decidir si tiene sentido usar el `.bak`). */
+export type CodigoErrorCarga = 'lectura' | 'json' | 'version' | 'estructura';
+
+export class ErrorCargaProyecto extends Error {
+  readonly codigo: CodigoErrorCarga;
+  /** Existe `${ruta}.bak` junto al archivo dañado. */
+  readonly hayRespaldo: boolean;
+
+  constructor(mensaje: string, codigo: CodigoErrorCarga, hayRespaldo = false) {
+    super(mensaje);
+    this.name = 'ErrorCargaProyecto';
+    this.codigo = codigo;
+    this.hayRespaldo = hayRespaldo;
+  }
+}
+
+export interface OpcionesCargaProyecto {
+  /** Registro de migraciones de formato (inyectable para tests). */
+  migraciones?: readonly MigracionArchivo[];
+}
+
+/** Ruta de la copia de seguridad que deja la escritura atómica del guardado. */
+export const rutaRespaldo = (ruta: string): string => `${ruta}.bak`;
+
+const MENSAJE_JSON_DANADO = 'El archivo no es un proyecto JasWave válido (JSON dañado)';
+
+const existeSeguro = async (fileService: FileService, ruta: string): Promise<boolean> => {
+  try {
+    return await fileService.existe(ruta);
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Lee, migra y valida un archivo. `rutaLectura` puede ser el `.bak`;
+ * `rutaProyecto` es la ruta `.jaswave` que quedará asociada al proyecto.
+ */
+const cargarDesde = async (
+  rutaLectura: string,
+  rutaProyecto: string,
+  fileService: FileService,
+  opciones: OpcionesCargaProyecto,
+  avisarRespaldo: boolean,
+): Promise<ProjectState> => {
+  const sufijoRespaldo = async (): Promise<{ texto: string; hay: boolean }> => {
+    if (!avisarRespaldo) return { texto: '', hay: false };
+    const hay = await existeSeguro(fileService, rutaRespaldo(rutaProyecto));
+    return {
+      hay,
+      texto: hay ? `. Existe una copia de seguridad (${rutaRespaldo(rutaProyecto)}) que puede recuperarse` : '',
+    };
+  };
 
   let contenido: string;
   try {
-    contenido = await fileService.leer(ruta);
+    contenido = await fileService.leer(rutaLectura);
   } catch (e) {
-    throw new Error(`No se pudo leer el archivo .jaswave: ${e instanceof Error ? e.message : 'error desconocido'}`);
+    throw new ErrorCargaProyecto(`No se pudo leer el archivo .jaswave: ${e instanceof Error ? e.message : 'error desconocido'}`, 'lectura');
   }
 
-  let archivo: unknown;
+  let crudo: unknown;
   try {
-    archivo = JSON.parse(contenido);
+    crudo = JSON.parse(contenido);
   } catch {
-    throw new Error('Archivo .jaswave corrupto: JSON inválido');
+    const r = await sufijoRespaldo();
+    throw new ErrorCargaProyecto(`${MENSAJE_JSON_DANADO}${r.texto}`, 'json', r.hay);
   }
 
-  const tieneVersionIncompatible = (archivo: unknown): boolean => {
-    if (!archivo || typeof archivo !== 'object') return false;
-    const candidato = archivo as Record<string, unknown>;
-    return typeof candidato.version === 'number' && candidato.version !== FORMATO_ACTUAL;
-  };
-
-  if (!archivoValido(archivo)) {
-    if (tieneVersionIncompatible(archivo)) {
-      const version = (archivo as Record<string, unknown>).version as number;
-      throw new Error(`Versión de formato no soportada: ${version}. Se esperaba ${FORMATO_ACTUAL}`);
-    }
-    throw new Error('Archivo .jaswave inválido: estructura incorrecta');
-  }
-
+  let migrado: unknown;
   try {
-    const proyecto = validarIntegridadProyecto(archivo.project);
-    const proyectoReconstruido = reconstruirRouting(proyecto);
-
-    if (archivo.audioReferences && Object.keys(archivo.audioReferences).length > 0) {
-      const faltantes = await verificarReferenciasAudio(archivo.audioReferences, fileService);
-      if (faltantes.length > 0) {
-        console.warn(`Referencias de audio no encontradas: ${faltantes.join(', ')}`);
-      }
-    }
-
-    return { ...proyectoReconstruido, ruta, modificado: false };
+    migrado = migrarArchivo(crudo, opciones.migraciones).archivo;
   } catch (e) {
-    if (e instanceof Error && e.message.includes('corrupto')) {
-      throw e;
+    const mensaje = e instanceof Error ? e.message : 'error desconocido';
+    const codigo: CodigoErrorCarga = mensaje.startsWith('Versión de formato') ? 'version' : 'estructura';
+    const r = codigo === 'estructura' ? await sufijoRespaldo() : { texto: '', hay: false };
+    throw new ErrorCargaProyecto(`${mensaje}${r.texto}`, codigo, r.hay);
+  }
+
+  if (!archivoValido(migrado)) {
+    const r = await sufijoRespaldo();
+    throw new ErrorCargaProyecto(`Archivo .jaswave inválido: estructura incorrecta${r.texto}`, 'estructura', r.hay);
+  }
+
+  const validacion = validarProyectoArchivo(migrado);
+  if (!validacion.ok) {
+    const r = await sufijoRespaldo();
+    throw new ErrorCargaProyecto(`${validacion.error}${r.texto}`, 'estructura', r.hay);
+  }
+
+  const archivo = validacion.datos as unknown as ProyectoArchivo;
+  const proyectoReconstruido = reconstruirRouting(archivo.project);
+
+  if (archivo.audioReferences && Object.keys(archivo.audioReferences).length > 0) {
+    const faltantes = await verificarReferenciasAudio(archivo.audioReferences, fileService);
+    if (faltantes.length > 0) {
+      console.warn(`Referencias de audio no encontradas: ${faltantes.join(', ')}`);
     }
-    throw new Error(`Error al validar el proyecto cargado: ${e instanceof Error ? e.message : 'desconocido'}`);
+  }
+
+  return { ...proyectoReconstruido, ruta: rutaProyecto, modificado: false };
+};
+
+/**
+ * Carga un `.jaswave`: parse → migraciones de formato → validación de esquema →
+ * reconstrucción de routing. Los errores son `ErrorCargaProyecto` con mensaje
+ * en español; si el archivo está dañado y existe `.bak`, el mensaje lo indica.
+ */
+export const cargarProyecto = async (ruta: string, fileService: FileService, opciones: OpcionesCargaProyecto = {}): Promise<ProjectState> => {
+  validarExtensionRuta(ruta);
+  return cargarDesde(ruta, ruta, fileService, opciones, true);
+};
+
+export interface ResultadoCargaConRespaldo {
+  proyecto: ProjectState;
+  usadoRespaldo: boolean;
+  /** Mensaje del fallo del archivo principal cuando se usó el respaldo. */
+  errorOriginal?: string;
+}
+
+const CODIGOS_RECUPERABLES: ReadonlySet<CodigoErrorCarga> = new Set(['json', 'estructura']);
+
+/**
+ * Igual que `cargarProyecto`, pero si el archivo principal está dañado (JSON o
+ * estructura) y existe `${ruta}.bak`, carga automáticamente la copia de seguridad.
+ * Una versión futura NO se recupera del respaldo (hay que actualizar JasWave).
+ */
+export const cargarProyectoConRespaldo = async (
+  ruta: string,
+  fileService: FileService,
+  opciones: OpcionesCargaProyecto = {},
+): Promise<ResultadoCargaConRespaldo> => {
+  validarExtensionRuta(ruta);
+  try {
+    return { proyecto: await cargarDesde(ruta, ruta, fileService, opciones, false), usadoRespaldo: false };
+  } catch (e) {
+    if (!(e instanceof ErrorCargaProyecto) || !CODIGOS_RECUPERABLES.has(e.codigo)) throw e;
+    const bak = rutaRespaldo(ruta);
+    if (!(await existeSeguro(fileService, bak))) throw e;
+    try {
+      const proyecto = await cargarDesde(bak, ruta, fileService, opciones, false);
+      // Hay que volver a guardar para reparar el archivo principal.
+      return { proyecto: { ...proyecto, modificado: true }, usadoRespaldo: true, errorOriginal: e.message };
+    } catch (eBak) {
+      const detalle = eBak instanceof Error ? eBak.message : 'error desconocido';
+      throw new ErrorCargaProyecto(`${e.message}. La copia de seguridad (${bak}) tampoco se pudo cargar: ${detalle}`, e.codigo, true);
+    }
   }
 };
 

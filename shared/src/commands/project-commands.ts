@@ -19,10 +19,11 @@ import type { CommandDefinition, StateTransition, ValidationResult } from '../ty
 import type { DAWState } from '../types/state';
 import type { ProjectState } from '../types/proyecto';
 import type { FileService } from '../project/persistencia';
-import { NombresEventos } from '../constants/nombres-eventos';
+import type { EventoDominio } from '../events/evento-dominio';
+import { NombresEventos, EventosProyecto } from '../constants/nombres-eventos';
 import { proyectoNuevo, nombreAlGuardar } from '../project/ciclo-vida';
 import { crearValidadorConflictos } from '../state/validacion-conflictos';
-import { guardarProyecto, cargarProyecto } from '../project/persistencia';
+import { guardarProyecto, cargarProyectoConRespaldo, rutaRespaldo } from '../project/persistencia';
 
 export type ProjectNewPayload = {
   nombre?: string;
@@ -178,25 +179,45 @@ export function crearComandoProjectLoad(): CommandDefinition<ProjectLoadPayload>
         throw new Error('FileService no configurado. Llama a configurarFileService() antes de ejecutar project.load');
       }
 
-      const proyecto = await cargarProyecto(ruta, fileService);
+      // Si el archivo está dañado y existe `${ruta}.bak`, se recupera la copia.
+      const { proyecto, usadoRespaldo, errorOriginal } = await cargarProyectoConRespaldo(ruta, fileService);
       const proyectoConRuta: ProjectState = {
         ...proyecto,
         ruta,
-        modificado: false,
+        // Recuperado de respaldo: hay que volver a guardar para reparar el archivo principal.
+        modificado: usadoRespaldo,
       };
+
+      const marcaTiempo = Date.now();
+      const events: EventoDominio[] = [
+        {
+          nombre: NombresEventos.cargado,
+          version: 1,
+          marcaTiempo,
+          fuente: 'project-commands',
+          payload: { projectId: proyecto.id, ruta },
+        },
+      ];
+      if (usadoRespaldo) {
+        events.push({
+          nombre: EventosProyecto.recuperadoDeRespaldo,
+          version: 1,
+          marcaTiempo,
+          fuente: 'project-commands',
+          payload: {
+            projectId: proyecto.id,
+            ruta,
+            rutaRespaldo: rutaRespaldo(ruta),
+            motivo: errorOriginal ?? '',
+            mensaje: `El archivo del proyecto estaba dañado; se cargó la copia de seguridad (${rutaRespaldo(ruta)}). Guarda el proyecto para repararlo.`,
+          },
+        });
+      }
 
       return {
         state: { ...estado, project: proyectoConRuta },
-        events: [
-          {
-             nombre: NombresEventos.cargado,
-            version: 1,
-            marcaTiempo: Date.now(),
-            fuente: 'project-commands',
-            payload: { projectId: proyecto.id, ruta },
-          },
-        ],
-        result: { ruta },
+        events,
+        result: { ruta, usadoRespaldo },
       };
     },
   };

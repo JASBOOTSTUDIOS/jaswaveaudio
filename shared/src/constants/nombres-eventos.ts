@@ -28,6 +28,8 @@ export const EventosProyecto = {
   cerrado: 'proyecto.cerrado',
   modificado: 'proyecto.modificado',
   nombreCambiado: 'proyecto.nombreCambiado',
+  /** El archivo principal estaba dañado y se cargó la copia `.bak`. */
+  recuperadoDeRespaldo: 'proyecto.recuperadoDeRespaldo',
 } as const;
 
 export const EventosTransporte = {
