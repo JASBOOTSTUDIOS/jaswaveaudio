@@ -74,3 +74,16 @@ export type {
   EmergencyStop,
   ToolPermissionOverride,
 } from './permissions';
+export {
+  computeStateRevision,
+  getStateRevision,
+  withUpdatedStateRevision,
+} from './state-revision'
+export {
+  BPM_MIN,
+  BPM_MAX,
+  BPM_DEFAULT,
+  isValidBpm,
+  parseBpmInput,
+  safeProjectBpm,
+} from './bpm';

@@ -1,4 +1,5 @@
-import { Construction, Library, Gauge, GitBranch, Piano, SlidersHorizontal } from 'lucide-react'
+import { Construction, Library, GitBranch, Piano, SlidersHorizontal } from 'lucide-react'
+import { DawTerminalPanel } from '@/components/daw-terminal-panel'
 import { ArrangeView } from '@/components/arrange-view'
 import { Mixer } from '@/components/mixer'
 import { MixAnalyzerPanel } from '@/components/mix-analyzer-panel'
@@ -7,10 +8,12 @@ import { AgentDocsPanel } from '@/components/agent-docs-panel'
 import { DocsExplorerPanel } from '@/components/docs-explorer-panel'
 import { TrackDetailPanel } from '@/components/track-detail-panel'
 import { PianoRollToolPanel } from '@/components/piano-roll'
+import { MidiClipMdPanel } from '@/components/midi-clip-md-panel'
 import { ScoreEditorToolPanel } from '@/components/score-editor-panel'
 import { InstrumentsPanel } from '@/components/instruments-panel'
 import { LibraryPanel } from '@/components/library-panel'
 import { FxChainPanel } from '@/components/fx-chain-panel'
+import { AutomationLanesPanel } from '@/components/automation-lanes-panel'
 import { PluginEditorPanel } from '@/components/plugin-editor-panel'
 import { MidiMapPanel } from '@/components/midi-map-panel'
 import { SettingsPanel } from '@/components/project-settings-dialog'
@@ -48,12 +51,18 @@ export function ToolHost({ toolId }: { toolId: ToolId }) {
       return <TrackDetailPanel trackId={selectedTrackId} />
     case 'piano-roll':
       return <PianoRollToolPanel />
+    case 'midi-md':
+      return <MidiClipMdPanel />
     case 'score-editor':
       return <ScoreEditorToolPanel />
+    case 'terminal':
+      return <DawTerminalPanel />
     case 'instruments':
       return <InstrumentsPanel />
     case 'fx-chain':
       return <FxChainPanel />
+    case 'automation':
+      return <AutomationLanesPanel />
     case 'plugin-editor':
       return <PluginEditorPanel />
     case 'midi-map':

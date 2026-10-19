@@ -53,3 +53,5 @@ interface ToolDefinition {
 - Mitigación: obligar schema en todas las herramientas, linter
 - Herramientas peligrosas expuestas sin restricción
 - Mitigación: Sistema de Permisos por defecto restrictivo
+
+El prompt del agente y el catálogo de acciones del coproducer se alinean en ADR-0015 (Tool Registry como fuente de verdad; `AgentWorkPlan` para ops complejas).

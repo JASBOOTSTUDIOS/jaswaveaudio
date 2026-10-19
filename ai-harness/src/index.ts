@@ -3,11 +3,63 @@
  * Sin dependencias de Electron/React; el cliente (jas-wave) aporta persistencia y executor.
  *
  * Estructura:
- *   plan/  — evaluación plan.md ↔ DAW
- *   loop/  — harness de reparación + cola de jobs
- *   agent/ — modos y política de acciones
- *   ask/   — contexto de solo lectura (consultas)
+ *   context/ prompting/ recovery/ planning/ quality/ execution/ compatibility/
  */
+
+export type { AgentTurnContext, AgentTrackSummary } from './context/agent-context'
+export { composeAgentTurnContext, formatAgentContextForPrompt } from './context/compose-agent-context'
+export { composeAgentPrompt, type ComposeAgentPromptInput } from './prompting/compose-agent-prompt'
+export { agentBasePrompt } from './prompting/base-prompt'
+export { agentMusicPolicyPrompt } from './prompting/music-policy'
+
+export { parseActionsFromText, stripActionsBlock } from './recovery/legacy-actions-parser'
+export {
+  deterministicFallbacksFromUserIntent,
+  isCreativeGenerationRequest,
+} from './recovery/deterministic-fallbacks'
+export {
+  legacyActionsToToolCalls,
+  toolCallsToLegacyActions,
+  filterUnknownTools,
+  normalizeToolArgs,
+  type AgentToolCall,
+} from './compatibility/legacy-actions-adapter'
+
+export {
+  shouldUseWorkPlan,
+  buildWorkPlanFromActions,
+  projectStateFingerprint,
+  type AgentWorkPlan,
+  type AgentWorkPhase,
+  type PlannedAction,
+} from './planning/agent-work-plan'
+export { runAgentWorkPlan, type AgentWorkPlanRunResult, type AgentWorkPlanEventName } from './execution/plan-runner'
+
+export {
+  AGENT_LOOP_LIMITS,
+  AGENT_LOOP_MAX_TOOLS_PER_ITERATION,
+  type AgentRunStatus,
+  type AgentDecision,
+  type AgentObservation,
+  type AgentLoopToolCall,
+  type AgentLoopToolResult,
+  type AgentRunResult,
+  type AgentExecutionLimits,
+} from './loop/agent-run-types'
+export { runAgentLoop, type AgentLoopDeps } from './loop/agent-loop'
+export { parseAgentDecisionFromText } from './recovery/parse-agent-decision'
+export {
+  observeAgentContext,
+  inferObserveIntent,
+  syntheticReadResult,
+  type ObservationRequest,
+} from './context/agent-observer'
+export { validateAgentToolCalls, isLoopReadTool, isSyntheticReadTool } from './loop/validate-tool-calls'
+
+export type { QualityGate, QualityGateResult, QualityVerdict, QualityFinding } from './quality/types'
+export { evaluateMidiQuality } from './quality/midi-quality-gate'
+export { evaluateArrangementQuality } from './quality/arrangement-quality-gate'
+export { evaluateRenderQuality } from './quality/render-quality-gate'
 
 export type { HarnessActionResult, HarnessDawAction } from './types/actions'
 export type {
@@ -36,6 +88,16 @@ export {
   parsePlanTasks,
   planMarkdownFromProjectPlan,
 } from './plan/eval'
+
+export {
+  clipCoversSection,
+  formatSectionGapLine,
+  listSectionGaps,
+  listSectionSpans,
+  parseBeatsRangeFromTask,
+  type SectionGap,
+  type SectionSpan,
+} from './plan/section-coverage'
 
 export { planHasOpenTasks } from './plan/tasks'
 
@@ -90,11 +152,22 @@ export {
 export {
   type HarnessJobContext,
   type HarnessUntilPlanDeps,
+  HARNESS_MAX_OUTER_LOOPS,
   createHarnessJobContextStore,
   peekHarnessJobContext,
   runHarnessUntilPlanComplete,
   stashHarnessJobContext,
 } from './loop/until-plan'
+
+export {
+  inspectProduction,
+  formatNextGapInstruction,
+  type ProductionAuditContext,
+  type ProductionAuditReport,
+  type ProductionIssue,
+  type ProductionListenEvidence,
+  type ProductionPluginGuide,
+} from './loop/production-audit'
 
 export {
   AGENT_MODE_META,
@@ -104,7 +177,11 @@ export {
   wantsFullProject,
   isSongRefineIntent,
   isTempoOnlyRefine,
+  isProjectWipeIntent,
+  isGenreRewriteIntent,
   inferBpmFromTempoIntent,
+  parseExplicitBpm,
+  parseExplicitTimeSignature,
   isProjectAuditIntent,
   isStyleGapIntent,
   isStyleApplyIntent,
@@ -131,6 +208,7 @@ export {
 export {
   REASONING_PHASE_META,
   APP_VOCAB_GLOSSARY,
+  COUNCIL_VOICES,
   buildFinalTurnUserMessage,
   formatPhaseTitle,
   reasoningSeedUserMessage,
@@ -140,10 +218,12 @@ export {
 export {
   parseReadBlockFromText,
   runAbbreviatedReasoning,
+  runCouncilReviewReasoning,
   runReasoningLoop,
   stripReadBlock,
   sanitizeInnerThought,
   REASONING_REPAIR_PHASES,
+  REASONING_POST_APPLY_PHASES,
   type ReasoningChatTurn,
   type ReasoningStep,
   type RunReasoningLoopOpts,
@@ -155,8 +235,13 @@ export {
   actionRiskLevel,
   batchNeedsDestructiveConfirm,
   ensureMusicBuildForFullProject,
+  musicBuildHintsFromUserText,
+  isSoloMusicBuildPending,
   forcePreviewAplicar,
   isDestructiveAction,
+  isDestructiveToolName,
+  limitToOneDestructiveAction,
+  limitToOneMutatingAction,
   isDocsWriteAction,
   isMutatingAction,
   isPreviewOnlyAction,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, ChevronRight, Loader2, Square, ListChecks } from 'lucide-react'
+import { Check, ChevronRight, Loader2, Square } from 'lucide-react'
 import { useDAW } from '@/src/context/daw-context'
 import { appendAiDawAudit } from '@/src/lib/ai-daw-audit-store'
 import { patchMessage } from '@/src/lib/ai-chat-store'
@@ -22,9 +22,9 @@ type Props = {
 
 function statusIcon(st: AgentChecklistItem['status']) {
   if (st === 'done') return <Check className="size-3 text-emerald-400" />
-  if (st === 'running') return <Loader2 className="size-3 animate-spin text-accent-amber" />
-  if (st === 'ready') return <ChevronRight className="size-3 text-accent-amber" />
-  if (st === 'failed') return <Square className="size-3 text-destructive" />
+  if (st === 'running') return <Loader2 className="size-3 animate-spin text-muted-foreground/70" />
+  if (st === 'ready') return <ChevronRight className="size-3 text-muted-foreground/70" />
+  if (st === 'failed') return <Square className="size-3 text-destructive/80" />
   return <span className="size-3 rounded-full border border-muted-foreground/40" />
 }
 
@@ -119,7 +119,7 @@ export function AgentChecklistCard({
         },
       })
       onChange?.(norm)
-      setHint('Revisa la propuesta abajo y pulsa «Aplicar seleccionadas».')
+      setHint('Revisa la propuesta abajo: puedes aplicar cada cambio por separado o todas juntas.')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setHint(msg)
@@ -151,69 +151,86 @@ export function AgentChecklistCard({
 
   const current = list.items[list.currentIndex]
   const doneCount = list.items.filter((i) => i.status === 'done' || i.status === 'skipped').length
+  const [open, setOpen] = useState(list.status === 'active')
 
   return (
-    <div className="mt-2 rounded-md border border-violet-800/40 bg-violet-950/25 px-2.5 py-2">
-      <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-violet-300/90">
-        <ListChecks className="size-3" />
-        Plan de ejecución ({doneCount}/{list.items.length})
-        {list.status === 'done' ? (
-          <span className="ml-auto text-emerald-400 normal-case">Completado</span>
-        ) : list.status === 'stopped' ? (
-          <span className="ml-auto text-destructive normal-case">Detenido</span>
-        ) : null}
-      </div>
-      <ul className="mb-2 space-y-1">
-        {list.items.map((it, i) => (
-          <li
-            key={it.id}
-            className={cn(
-              'flex items-start gap-2 rounded px-1.5 py-1 text-[11px]',
-              i === list.currentIndex && list.status === 'active'
-                ? 'bg-accent-amber/10 text-foreground'
-                : 'text-muted-foreground',
-            )}
-          >
-            <span className="mt-0.5 shrink-0">{statusIcon(it.status)}</span>
-            <span className="min-w-0 flex-1">
-              <span className={it.status === 'done' ? 'line-through opacity-70' : ''}>{it.label}</span>
-              {i === list.currentIndex && list.status === 'active' && it.actions.length ? (
-                <ul className="mt-1 space-y-0.5 border-l border-border/50 pl-2 text-[10px] text-muted-foreground">
-                  {it.actions.map((a, ai) => (
-                    <li key={`${a.type}-${ai}`}>{describeActionForUser(a).label}</li>
-                  ))}
-                </ul>
-              ) : null}
-              {it.detail && i === list.currentIndex ? (
-                <div className="mt-0.5 text-[10px] text-accent-amber/90">{it.detail}</div>
-              ) : null}
-              {it.error ? <div className="text-[10px] text-destructive/90">{it.error}</div> : null}
-            </span>
-          </li>
-        ))}
-      </ul>
-      {list.status === 'active' && current ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void proposeCurrent()}
-            className="inline-flex items-center gap-1 rounded-md bg-accent-amber px-2.5 py-1 text-[11px] font-medium text-background hover:opacity-90 disabled:opacity-50"
-          >
-            {busy ? <Loader2 className="size-3 animate-spin" /> : <ChevronRight className="size-3" />}
-            Continuar — preparar este paso
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={skipCurrent}
-            className="rounded-md px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50"
-          >
-            Saltar
-          </button>
+    <div className="mt-1.5 w-full min-w-0">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full min-w-0 items-center gap-1 py-0.5 text-left text-[0.85em] text-muted-foreground/70 hover:text-muted-foreground"
+      >
+        <ChevronRight
+          className={cn('size-3.5 shrink-0 transition-transform duration-150', open && 'rotate-90')}
+        />
+        <span className="min-w-0 truncate">
+          Plan · {doneCount}/{list.items.length}
+          {list.status === 'done' ? ' · listo' : list.status === 'stopped' ? ' · detenido' : ''}
+        </span>
+      </button>
+      {open ? (
+        <div className="w-full min-w-0 space-y-0.5 overflow-x-hidden pl-4">
+          <ul className="space-y-0.5">
+            {list.items.map((it, i) => {
+              const active = i === list.currentIndex && list.status === 'active'
+              return (
+                <li key={it.id} className="flex w-full min-w-0 items-start gap-1.5 py-0.5 text-[0.85em]">
+                  <span className="mt-0.5 shrink-0">{statusIcon(it.status)}</span>
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={cn(
+                        it.status === 'done' && 'text-muted-foreground/60 line-through',
+                        active ? 'text-foreground' : 'text-muted-foreground',
+                      )}
+                    >
+                      {it.label}
+                    </span>
+                    {active && it.actions.length ? (
+                      <ul className="mt-0.5 space-y-0.5 text-[0.95em] text-muted-foreground/70">
+                        {it.actions.map((a, ai) => (
+                          <li key={`${a.type}-${ai}`} className="truncate">
+                            {describeActionForUser(a).label}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {it.error ? (
+                      <div className="mt-0.5 text-destructive/80">
+                        {/ReferenceError|TypeError|is not defined/i.test(it.error)
+                          ? 'Fallo interno. Reintenta Continuar.'
+                          : it.error}
+                      </div>
+                    ) : null}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+          {list.status === 'active' && current ? (
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void proposeCurrent()}
+                className="inline-flex items-center gap-1 text-[0.85em] text-foreground/80 hover:text-foreground disabled:opacity-50"
+              >
+                {busy ? <Loader2 className="size-3 animate-spin" /> : <ChevronRight className="size-3" />}
+                Continuar
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={skipCurrent}
+                className="text-[0.85em] text-muted-foreground/70 hover:text-foreground disabled:opacity-50"
+              >
+                Saltar
+              </button>
+            </div>
+          ) : null}
+          {hint ? <p className="text-[0.8em] text-muted-foreground/70">{hint}</p> : null}
         </div>
       ) : null}
-      {hint ? <p className="mt-1.5 line-clamp-2 text-[10px] text-muted-foreground">{hint}</p> : null}
     </div>
   )
 }

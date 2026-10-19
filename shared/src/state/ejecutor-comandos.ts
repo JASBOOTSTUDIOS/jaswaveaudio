@@ -13,6 +13,7 @@ import type { AuditLog } from '../state/registro-auditoria';
 import type { Command } from '../types/command';
 import { crearPipelineValidacion } from './pipeline-validacion';
 import { validarEstado } from './validador';
+import { withUpdatedStateRevision } from './state-revision';
 
 export interface CommandExecutorOptions {
   busEventos: BusEventos;
@@ -135,7 +136,7 @@ export class CommandExecutor {
 
     try {
       const stateTransition = await (definicion.handler(this.estado, payload as never) as Promise<StateTransition<T>> | StateTransition<T>);
-      this.estado = stateTransition.state;
+      this.estado = withUpdatedStateRevision(stateTransition.state);
       events = stateTransition.events ?? [];
       result = stateTransition.result as T | undefined;
       if (stateTransition.inversePayload !== undefined) {
@@ -224,7 +225,7 @@ export class CommandExecutor {
         ? command.deshacerTransicion(this.estado)
         : { state: command.deshacer(this.estado) as DAWState, events: [] as EventoDominio[], result: undefined };
       const transition = await this.resolverTransicion(raw as StateTransition);
-      this.estado = transition.state;
+      this.estado = withUpdatedStateRevision(transition.state);
       this.pila.undo();
       const events = transition.events ?? [];
       this.emitirEventos(events);
@@ -257,7 +258,7 @@ export class CommandExecutor {
         ? command.rehacerTransicion(this.estado)
         : { state: command.rehacer(this.estado) as DAWState, events: [] as EventoDominio[], result: undefined };
       const transition = await this.resolverTransicion(raw as StateTransition);
-      this.estado = transition.state;
+      this.estado = withUpdatedStateRevision(transition.state);
       this.pila.redo();
       const events = transition.events ?? [];
       this.emitirEventos(events);

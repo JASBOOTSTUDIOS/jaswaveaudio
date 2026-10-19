@@ -24,23 +24,26 @@ export function adaptiveGridForZoom(pixelsPerBeat: number, beatsPerBar = 4): Gri
 
   lines.push({ kind: 'bar', spacingBeats: bar });
 
-  if (pixelsPerBeat >= 8) {
+  if (pixelsPerBeat >= 6) {
     lines.push({ kind: 'beat', spacingBeats: 1 });
   }
-  if (pixelsPerBeat >= 24) {
+  if (pixelsPerBeat >= 16) {
     lines.push({ kind: 'subdivision', spacingBeats: 0.5, subdivision: '1/8' });
   }
-  if (pixelsPerBeat >= 48) {
+  if (pixelsPerBeat >= 32) {
     lines.push({ kind: 'subdivision', spacingBeats: 0.25, subdivision: '1/16' });
   }
-  if (pixelsPerBeat >= 96) {
+  if (pixelsPerBeat >= 64) {
     lines.push({ kind: 'micro', spacingBeats: 0.125, subdivision: '1/32' });
   }
-  if (pixelsPerBeat >= 192) {
+  if (pixelsPerBeat >= 128) {
     lines.push({ kind: 'micro', spacingBeats: SUBDIVISION_BEATS['1/64'], subdivision: '1/64' });
   }
-  if (pixelsPerBeat >= 384) {
+  if (pixelsPerBeat >= 256) {
     lines.push({ kind: 'micro', spacingBeats: SUBDIVISION_BEATS['1/128'], subdivision: '1/128' });
+  }
+  if (pixelsPerBeat >= 512) {
+    lines.push({ kind: 'micro', spacingBeats: 1 / 256 });
   }
 
   return lines;

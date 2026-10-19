@@ -5,7 +5,9 @@
 
 import type { AgentMode } from './modes'
 import {
+  isGenreRewriteIntent,
   isProjectAuditIntent,
+  isProjectWipeIntent,
   isSongRefineIntent,
   isStyleGapIntent,
   isTempoOnlyRefine,
@@ -41,11 +43,11 @@ export type ModelIntentBrief = {
  */
 const DEPTH_PHASES: Record<number, ReasoningPhase[]> = {
   2: ['normalize', 'commit'],
-  3: ['normalize', 'research1', 'commit'],
-  4: ['normalize', 'frame', 'research1', 'commit'],
-  5: ['normalize', 'frame', 'research1', 'synthesize', 'commit'],
-  6: ['normalize', 'frame', 'research1', 'critique', 'synthesize', 'commit'],
-  7: ['normalize', 'frame', 'research1', 'critique', 'research2', 'synthesize', 'commit'],
+  3: ['normalize', 'verify', 'commit'],
+  4: ['normalize', 'frame', 'verify', 'commit'],
+  5: ['normalize', 'frame', 'research1', 'verify', 'commit'],
+  6: ['normalize', 'frame', 'research1', 'critique', 'verify', 'commit'],
+  7: ['normalize', 'frame', 'research1', 'critique', 'synthesize', 'verify', 'commit'],
   8: ['normalize', 'frame', 'explore', 'research1', 'critique', 'synthesize', 'verify', 'commit'],
   9: [
     'normalize',
@@ -98,7 +100,7 @@ function isClarificationOrTrackPick(text: string): boolean {
 function isAffirmativeShort(text: string): boolean {
   const t = text.trim()
   if (!t || t.length > 80) return false
-  return /^(s[ií]|ok|vale|dale|hazlo|cr[eé]alo|aplica(lo)?|construir|construye|adelante|go|yes|do it)[\s!.]*$/i.test(
+  return /^(s[ií]|ok|vale|dale|hazlo|cr[eé]alo|aplica(lo)?|construir|construye|adelante|go|yes|do it|contin[uú]a)[\s!.]*$/i.test(
     t,
   )
 }
@@ -160,6 +162,17 @@ export function estimateReasoningDepth(userText: string, mode: AgentMode): Reaso
   if (isSimpleTransportOrTrackToggle(text) || isSimpleBpmOnly(text)) {
     return { depth: 2, phases: phasesForDepth(2), reason: 'acción simple (transporte/BPM/mute)' }
   }
+  // "borra todo" / "limpia el proyecto" → corto; no 10 capas de bachata
+  if (isProjectWipeIntent(text) && !isGenreRewriteIntent(text)) {
+    return { depth: 3, phases: phasesForDepth(3), reason: 'vaciar clips / wipe' }
+  }
+  if (isGenreRewriteIntent(text) || (wantsFullProject(text) && /limpia|borra|arma|bachata|arregla/i.test(text))) {
+    return {
+      depth: 4,
+      phases: phasesForDepth(4),
+      reason: 'rewrite/limpia+arma → musicBuild (sin overthink)',
+    }
+  }
   if (isShortAsk(text, mode)) {
     return { depth: 3, phases: phasesForDepth(3), reason: 'consulta corta' }
   }
@@ -193,12 +206,12 @@ export function estimateReasoningDepth(userText: string, mode: AgentMode): Reaso
     }
   }
   if (wantsFullProject(text) || mode === 'create' || mode === 'think') {
-    return { depth: 7, phases: phasesForDepth(7), reason: 'creación / plan estándar' }
+    return { depth: 9, phases: phasesForDepth(9), reason: 'creación / plan — consejo profundo' }
   }
   if (mode === 'plan') {
-    return { depth: 6, phases: phasesForDepth(6), reason: 'planificación' }
+    return { depth: 7, phases: phasesForDepth(7), reason: 'planificación' }
   }
-  return { depth: 5, phases: phasesForDepth(5), reason: 'complejidad media' }
+  return { depth: 6, phases: phasesForDepth(6), reason: 'complejidad media' }
 }
 
 export function planReasoningPhases(

@@ -464,7 +464,7 @@ export const ACTION_CATALOG: readonly ActionDefinition[] = [
   {
     id: 'ai.askSelection',
     name: 'Preguntar a Jas sobre selección',
-    description: 'Ancla las notas MIDI seleccionadas al chat (Ctrl+L)',
+    description: 'Ancla notas MIDI o un fragmento de plan.md al chat (Ctrl+L)',
     category: 'AI',
     context: 'global',
     risk: 'read',
@@ -502,6 +502,16 @@ export const ACTION_CATALOG: readonly ActionDefinition[] = [
     risk: 'write',
     aliases: ['ventana.midiMap', 'ventana.controlMidi'],
     defaultShortcuts: ['Ctrl+Shift+M'],
+  },
+  {
+    id: 'window.terminal',
+    name: 'Terminal',
+    description: 'Abre la Terminal del DAW (CLI y ejecución de la IA)',
+    category: 'Window',
+    context: 'global',
+    risk: 'read',
+    aliases: ['ventana.terminal'],
+    defaultShortcuts: ['Ctrl+`'],
   },
   {
     id: 'window.toggleLeft',

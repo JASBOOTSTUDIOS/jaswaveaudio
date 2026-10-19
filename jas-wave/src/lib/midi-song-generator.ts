@@ -108,7 +108,7 @@ function moodFromText(text: string): MusicMood {
   const t = text.toLowerCase()
   if (/triste|sad|melanc|llor|dolor|nostalg|oscuro\s+triste/.test(t)) return 'sad'
   if (/alegre|happy|feliz|joy|solar|bright|upbeat/.test(t)) return 'happy'
-  if (/[eé]pico|epic|heroic|cinem[aá]tic|trailer|grand/.test(t)) return 'epic'
+  if (/[eé]pico|epic|heroic|cinem[aá]tic|trailer|grand|cre[cs]end/.test(t)) return 'epic'
   if (/ambient|espacial|space|pad|atmosf|chill|lounge/.test(t)) return 'ambient'
   if (/oscuro|dark|g[oó]tico|mister|terror|horror/.test(t)) return 'dark'
   if (/rom[aá]ntic|amor|love|ballad|suave\s+amor/.test(t)) return 'romantic'
@@ -242,6 +242,8 @@ export function inferClipNameFromText(text: string, keyLabel: string): string {
   const quoted = t.match(/[«"']([^«"']{2,40})[»"']/)
   if (quoted) return quoted[1]!.trim()
   const hint = inferInstrumentHint(t)
+  if (hint === 'drums') return `Batería`
+  if (hint === 'bass') return `Bajo · ${keyLabel}`
   if (hint === 'guitar') return `Guitarra · ${keyLabel}`
   if (hint === 'piano') return `Piano · ${keyLabel}`
   if (/triste/i.test(t)) return `Melodía triste · ${keyLabel}`
@@ -250,6 +252,18 @@ export function inferClipNameFromText(text: string, keyLabel: string): string {
   if (/ambient/i.test(t)) return `Ambient · ${keyLabel}`
   if (/melod/i.test(t)) return `Melodía · ${keyLabel}`
   return `MIDI · ${keyLabel}`
+}
+
+/** Nombre de pista (no del clip) al crear MIDI en un proyecto vacío. */
+export function inferTrackNameFromText(text: string): string {
+  const hint = inferInstrumentHint(text)
+  if (hint === 'drums') return 'Batería'
+  if (hint === 'bass') return 'Bajo'
+  if (hint === 'guitar') return 'Guitarra'
+  if (hint === 'piano') return 'Keys'
+  if (hint === 'pad') return 'Pad'
+  if (hint === 'strings') return 'Cuerdas'
+  return 'MIDI'
 }
 
 function defaultProgression(scale: 'major' | 'minor', mood: MusicMood): number[] {
@@ -410,8 +424,12 @@ export function parseMidiBriefFromText(text: string, bpmFallback = 120): MidiBri
   const bpmHit =
     lower.match(/\b(\d{2,3})\s*bpm\b/) ||
     lower.match(/\bbpm\s*(?:a|de|=|:)?\s*(\d{2,3})\b/) ||
-    lower.match(/\btempo\s*(?:a|de|=|:)?\s*(\d{2,3})\b/)
-  const bpm = bpmHit ? Math.max(20, Math.min(400, Number(bpmHit[1]))) : bpmFallback
+    lower.match(/\btempo\s*(?:sea|a|de|=|:)?\s*(\d{2,3})\b/) ||
+    lower.match(/\btiempo\s*(?:sea|a|de|=|:)?\s*(\d{2,3})\b/) ||
+    lower.match(/\b(\d{2,3})\s*4\s*\/\s*4\b/)
+  const parsed = bpmHit ? Number(bpmHit[1]) : NaN
+  const bpm =
+    Number.isFinite(parsed) && parsed >= 40 && parsed <= 240 ? Math.round(parsed) : bpmFallback
 
   return {
     keyRoot: key.root,
@@ -531,6 +549,8 @@ export function composeMidiFromBrief(
       const ride = 51
       const tomLo = 45
       const tomHi = 47
+      const tomMid = 48
+      const tomHeavy = brief.mood === 'epic' || dens > 0.55
       if (bar === 0 || (sec === 'chorus' && bar % 8 === 0)) push(crash, start, 1.2, base + 14)
       // Kick patterns by section
       push(kick, start, 0.35, base + 18)
@@ -555,11 +575,17 @@ export function composeMidiFromBrief(
           base - 12 + (s === 0 ? 10 : 0) + Math.floor((rng() - 0.5) * 14),
         )
       }
-      // Fills every 4 / 8 bars
-      if (bar % 8 === 7 || (sec === 'build' && bar % 2 === 1)) {
-        push(tomLo, start + 2.5, 0.2, base + 4)
-        push(tomHi, start + 3, 0.2, base + 8)
+      // Fills: más toms y más fuertes conforme sube la densidad (crescendo)
+      if (bar % 8 === 7 || (sec === 'build' && bar % 2 === 1) || (tomHeavy && bar % 4 === 3)) {
+        const vel = base + 4 + Math.round(dens * 18)
+        push(tomHi, start + 2, 0.18, vel)
+        push(tomMid, start + 2.5, 0.18, vel + 2)
+        push(tomLo, start + 3, 0.22, vel + 4)
         push(snare, start + 3.5, 0.25, base + 18)
+      }
+      if (tomHeavy && dens > 0.7) {
+        push(tomHi, start + 0.5, 0.16, base + Math.round(dens * 10))
+        push(tomLo, start + 1.5, 0.2, base + 6)
       }
       if (bar % 8 === 7) push(ride, start + 3.75, 0.35, base)
       return

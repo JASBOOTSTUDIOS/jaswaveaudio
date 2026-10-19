@@ -3,10 +3,12 @@ import type { HarnessDawAction } from '../types/actions'
 import {
   parseReadBlockFromText,
   runAbbreviatedReasoning,
+  runCouncilReviewReasoning,
   runReasoningLoop,
   stripReadBlock,
   sanitizeInnerThought,
   REASONING_REPAIR_PHASES,
+  REASONING_POST_APPLY_PHASES,
 } from '../agent/reasoning-loop'
 import {
   estimateReasoningDepth,
@@ -34,13 +36,13 @@ Fin.`
     expect(parseReadBlockFromText('sin bloque')).toEqual([])
   })
 
-  it('limita a 4 acciones por bloque', () => {
+  it('limita a 6 acciones por bloque', () => {
     const many = Array.from({ length: 6 }, (_, i) => ({
       type: 'doc.list',
       payload: { n: i },
     }))
     const text = `<<<READ ${JSON.stringify(many)} READ>>>`
-    expect(parseReadBlockFromText(text)).toHaveLength(4)
+    expect(parseReadBlockFromText(text)).toHaveLength(6)
   })
 
   it('stripReadBlock elimina el bloque', () => {
@@ -125,7 +127,7 @@ INTENT>>>`,
 
     expect(result.depth).toBe(3)
     expect(result.canonicalPrompt).toMatch(/crea un pad/)
-    expect(result.steps.map((s) => s.phase)).toEqual(['normalize', 'research1', 'commit'])
+    expect(result.steps.map((s) => s.phase)).toEqual(['normalize', 'verify', 'commit'])
     expect(result.steps).toHaveLength(3)
     expect(result.steps[0]!.title).toMatch(/1\/3/)
     expect(result.finalUserMessage).toContain('construye un pad suave')
@@ -225,6 +227,20 @@ INTENT>>>`,
       onStep: (s) => phases.push(s.phase),
     })
     expect(phases).toEqual(REASONING_REPAIR_PHASES)
+  })
+
+  it('runCouncilReviewReasoning usa capas post-Aplicar (Kael QA)', async () => {
+    const phases: string[] = []
+    await runCouncilReviewReasoning({
+      userText: 'bachata 3 min',
+      mode: 'create',
+      projectContext: 'ctx',
+      applyOutcome: 'Aplicar OK\nmusicBuild aplicado',
+      chat: async () => ({ success: true, content: '**Kael:** OK verificado.' }),
+      runReadTools: async () => '',
+      onStep: (s) => phases.push(s.phase),
+    })
+    expect(phases).toEqual(REASONING_POST_APPLY_PHASES)
   })
 })
 

@@ -27,6 +27,8 @@
 | **Arrange** | Timeline principal |
 | **Mixer** | Faders, sends, medidores |
 | **Piano roll** | Edición de notas MIDI |
+| **Partitura** | Editor de partitura |
+| **Terminal** | CLI del DAW (varias sesiones; `ayuda`) |
 | **Medidores** | Espectro, LUFS, listen tras bounce |
 | **Enrutamiento** | Buses / routing |
 | **Inspector** | Detalle de la pista seleccionada |
@@ -38,7 +40,7 @@ Puedes mostrar/ocultar **panel izquierdo**, **derecho** e **inferior** desde el 
 
 - **Archivo** — nuevo, abrir, guardar, exportar bounce, cerrar
 - **Editar** — deshacer/rehacer, cortar/copiar/pegar, duplicar
-- **Ver** — zoom, paneles, paleta de comandos
+- **Ver** — zoom, paneles, paleta de comandos, Terminal
 - **Transporte** — play, stop, grabar, bucle, metrónomo
 - **Acciones** — ajustes, MIDI Learn, atajos
 
@@ -53,4 +55,4 @@ Puedes mostrar/ocultar **panel izquierdo**, **derecho** e **inferior** desde el 
 - Usa **Piano roll** solo con un clip MIDI seleccionado.
 - Deja el **Asistente Jas** a un lado; no hace falta maximizarlo siempre.
 
-Siguiente: [03 · Proyectos](./03-proyectos.md).
+Siguiente: [03 · Proyectos](./03-proyectos.md). Más detalle de la CLI: [13 · Terminal](./13-terminal.md).

@@ -95,6 +95,16 @@ public:
   }
   void process(float* outL, float* outR, int frames) { process(nullptr, nullptr, outL, outR, frames); }
 
+  bool hasSidechainInput() const {
+    return vst3_ && vst3_->hasSidechainInput();
+  }
+  void setSidechainInput(const float* l, const float* r, int frames) {
+    if (vst3_) vst3_->setSidechainInput(l, r, frames);
+  }
+  void clearSidechainInput() {
+    if (vst3_) vst3_->clearSidechainInput();
+  }
+
   bool openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h, std::string& err) {
     return vst2_ ? vst2_->openEditor(parentHwnd, x, y, w, h, err)
                  : vst3_->openEditor(parentHwnd, x, y, w, h, err);

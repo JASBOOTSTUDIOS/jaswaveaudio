@@ -20,6 +20,7 @@ type Props = {
   tienda: TiendaDAW
   onRequestDelete: (trackId: string) => void
   onImportAudio?: (trackId: string) => void
+  onShowTakeLanes?: (trackId: string) => void
   trackIndex: number
   trackCount: number
 }
@@ -160,6 +161,7 @@ export function TrackContextMenu({
   tienda,
   onRequestDelete,
   onImportAudio,
+  onShowTakeLanes,
   trackIndex,
   trackCount,
 }: Props) {
@@ -295,8 +297,19 @@ export function TrackContextMenu({
           })
         }
       />
+      <MenuItem
+        label="Abrir automatización"
+        onClick={() =>
+          run(() => {
+            requestOpenTool('automation')
+          })
+        }
+      />
       {onImportAudio ? (
         <MenuItem label="Importar audio…" onClick={() => run(() => onImportAudio(track.id))} />
+      ) : null}
+      {onShowTakeLanes && track.tipo === 'audio' ? (
+        <MenuItem label="Tomas / Comp…" onClick={() => run(() => onShowTakeLanes(track.id))} />
       ) : null}
       <Sep />
       <div className="px-3 py-1 text-[10px] text-muted-foreground">Color</div>

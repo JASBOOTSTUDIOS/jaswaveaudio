@@ -14,6 +14,16 @@ import {
 
 let mainWindow: typeof BrowserWindow | null = null
 
+// Evitar que Chromium frise timers/RAF en la ventana principal cuando el foco
+// está en un panel undock (playhead sync / metrónomo UI).
+try {
+  app.commandLine.appendSwitch('disable-background-timer-throttling')
+  app.commandLine.appendSwitch('disable-renderer-backgrounding')
+  app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
+} catch {
+  /* ignore */
+}
+
 /** Icono de app (ventana / taskbar). */
 function resolveAppIconPath(): string | undefined {
   const fileName = 'jaswave-icono-con-frecuencia.png'
@@ -107,9 +117,37 @@ function buildAppMenu() {
         { label: 'Panel derecho', click: () => sendMenuAction('ventana.panelDerecho') },
         { label: 'Panel inferior', click: () => sendMenuAction('ventana.panelInferior') },
         { type: 'separator' },
+        {
+          label: 'Herramientas',
+          submenu: [
+            { label: 'Asistente Jas', click: () => sendMenuAction('ventana.tool.coproducer') },
+            { label: 'Explorador', click: () => sendMenuAction('ventana.tool.docs-explorer') },
+            { label: 'Docs', click: () => sendMenuAction('ventana.tool.docs') },
+            { label: 'Biblioteca', click: () => sendMenuAction('ventana.tool.library') },
+            { label: 'Instrumentos', click: () => sendMenuAction('ventana.tool.instruments') },
+            { label: 'MIDI · MD', click: () => sendMenuAction('ventana.tool.midi-md') },
+            { type: 'separator' },
+            { label: 'Arrange', click: () => sendMenuAction('ventana.tool.arrange') },
+            { label: 'Mixer', click: () => sendMenuAction('ventana.tool.mixer') },
+            { label: 'Piano roll', click: () => sendMenuAction('ventana.tool.piano-roll') },
+            { label: 'Partitura', click: () => sendMenuAction('ventana.tool.score-editor') },
+            { label: 'Terminal', click: () => sendMenuAction('ventana.tool.terminal') },
+            { type: 'separator' },
+            { label: 'Inspector', click: () => sendMenuAction('ventana.tool.track-detail') },
+            { label: 'FX Chain', click: () => sendMenuAction('ventana.tool.fx-chain') },
+            { label: 'Automatización', click: () => sendMenuAction('ventana.tool.automation') },
+            { label: 'Editor de plugin', click: () => sendMenuAction('ventana.tool.plugin-editor') },
+            { label: 'MIDI Learn', click: () => sendMenuAction('ventana.tool.midi-map') },
+            { label: 'Medidores', click: () => sendMenuAction('ventana.tool.meters') },
+            { label: 'Ruteo', click: () => sendMenuAction('ventana.tool.routing') },
+            { label: 'Configuración', click: () => sendMenuAction('ventana.tool.settings') },
+          ],
+        },
+        { type: 'separator' },
         { label: 'Paleta de comandos', accelerator: 'CmdOrCtrl+Shift+P', click: () => sendMenuAction('ventana.paletaComandos') },
         { label: 'Atajos de teclado…', click: () => sendMenuAction('ventana.atajos') },
         { label: 'Control MIDI / MIDI Learn', accelerator: 'CmdOrCtrl+Shift+M', click: () => sendMenuAction('ventana.midiMap') },
+        { label: 'Terminal', accelerator: 'CmdOrCtrl+`', click: () => sendMenuAction('ventana.terminal') },
       ],
     },
     {
@@ -170,10 +208,17 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // Playhead sync a undock: no throttlear timers/RAF en background.
+      backgroundThrottling: false,
     },
   })
 
   disablePageZoom(mainWindow)
+  try {
+    mainWindow.webContents.setBackgroundThrottling(false)
+  } catch {
+    /* ignore */
+  }
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
@@ -578,10 +623,16 @@ ipcMain.handle('tool-window-open', async (_event: IpcMainInvokeEvent, toolId: st
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      backgroundThrottling: false,
     },
   })
 
   disablePageZoom(win)
+  try {
+    win.webContents.setBackgroundThrottling(false)
+  } catch {
+    /* ignore */
+  }
 
   toolWindows.set(toolId, win)
   win.once('ready-to-show', () => {
@@ -752,26 +803,9 @@ ipcMain.handle('plugin-host-send', async (e: IpcMainInvokeEvent, cmd: unknown) =
   return sendPluginHostCommand(record)
 })
 ipcMain.on('plugin-host-pcm', (e: IpcMainInvokeEvent, data: unknown) => {
-  if (senderIsSatellite(e.sender)) return
-  if (!data) return
-  if (Buffer.isBuffer(data)) {
-    pushPluginHostPcm(data)
-    return
-  }
-  if (data instanceof Uint8Array || ArrayBuffer.isView(data)) {
-    const view = data as ArrayBufferView
-    pushPluginHostPcm(Buffer.from(view.buffer, view.byteOffset, view.byteLength))
-    return
-  }
-  if (data instanceof ArrayBuffer) {
-    pushPluginHostPcm(Buffer.from(data))
-    return
-  }
-  // Clone IPC a veces entrega { type:'Buffer', data:number[] }
-  const rec = data as { type?: string; data?: number[] }
-  if (rec?.type === 'Buffer' && Array.isArray(rec.data)) {
-    pushPluginHostPcm(Buffer.from(rec.data))
-  }
+  // Legacy JWST pipe retirado — live/bounce usan clip_player nativo.
+  void e
+  void data
 })
 ipcMain.handle('plugin-host-stop', () => {
   stopPluginHost()

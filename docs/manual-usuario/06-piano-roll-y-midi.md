@@ -7,6 +7,30 @@
 
 Si no hay clip, verás un shell vacío: crea notas o pide al Asistente un clip.
 
+## Timeline (paridad con el Arrange)
+
+La regla y el grid del piano roll usan la misma profundidad de encaje y la misma semántica de gestos temporales:
+
+| Gesto | Efecto |
+|--------|--------|
+| Rueda (o Ctrl+rueda) | Zoom horizontal **anclado al playhead** |
+| Shift+rueda | Pan horizontal |
+| Ctrl+Shift+rueda | Zoom vertical (altura de teclas) |
+| `+` / `−` | Zoom H anclado al playhead |
+| Arrastrar en la regla | Seek (playhead); tooltip `compás.beat` |
+| Clic vacío (herramienta seleccionar) | Seek en esa posición |
+| Magnet (barra de transporte del piano) | Imán del seek (`ui.playheadSnap`) |
+| `S` | Imán de **notas** (snap del proyecto) |
+| `1–8` / `0` | Profundidad de encaje (mismo selector que el Arrange) |
+| ← / → | Con notas seleccionadas: mover notas · sin selección: pan |
+| Alt+← / → | Pan ~1 compás (sin selección) |
+| Alt+Ctrl+arrastrar vacío | Crear nota con duración del arrastre (como clip MIDI en Arrange) |
+| Alt+arrastrar vacío | Crear nota con duración |
+| Ctrl+arrastrar nota | Duplicar y colocar la copia (estilo Reaper); Ctrl+clic sin mover = toggle selección |
+| Clic derecho en nota | Borrar nota (si está en una selección múltiple, borra toda la selección) |
+
+La rejilla muestra como máximo el trío **S · S/2 · S/4** según el zoom (nunca más fino que S/4).
+
 ## Herramientas
 
 | Acción | Atajos habituales |
@@ -18,11 +42,13 @@ Si no hay clip, verás un shell vacío: crea notas o pide al Asistente un clip.
 | Velocidad | `G` |
 | Expresión / CC | `F` |
 
-También: transponer (↑↓), mover en tiempo (←→), copiar/pegar, Alt-drag para precisión.
+También: transponer (↑↓), mover en tiempo (←→ con selección), copiar/pegar, Alt-drag para precisión.
 
 ## Snap musical
 
-Negra, corchea, semicorchea… — alinea dibujo y movimientos al grid.
+Negra, corchea, semicorchea… — alinea dibujo y movimientos al grid. El selector de profundidad es el mismo que en el Arrange.
+
+**Magnet** (transporte) afecta solo al seek/playhead; **S** / toolbar Imán afecta el snap de notas y clips.
 
 ## Audición
 
@@ -50,5 +76,50 @@ Pide al Asistente: “añade sustain (CC64) en el piano del estribillo”.
 - Escribe o genera a **velocidades variadas** (no todo a 100).
 - Cuantiza con groove suave si suena robótico.
 - Un clip por sección facilita editar y que la IA no pise todo el arreglo.
+
+## MIDI · MD (clip como archivo editable)
+
+Cada clip MIDI puede vivir como un Markdown en Docs del proyecto: `clip-{id}.md`.  
+**Piano roll** y **MIDI · MD** son **tabs independientes** (acoplables / movibles / undock). No van lado a lado en un solo panel.
+
+### Sync en vivo
+
+1. Clic derecho en un clip MIDI → **Abrir MIDI · MD**, o el botón **MIDI · MD** en la toolbar del piano roll.
+2. Se abre el tab **MIDI · MD** y se vincula el clip (`Sync ON`).
+3. Editas notas en el **piano roll** → el `.md` se actualiza solo.
+4. Editas la tabla en **MIDI · MD** → las notas del clip (y el piano roll) se actualizan si el parse es válido.
+5. Puedes dejar cada tab en zonas distintas o independizar una ventana.
+
+Si el `.md` está mal formado, verás un banner de error y **no** se pisa el MIDI.
+
+### Contrato del archivo
+
+1 archivo = 1 clip. Tiempo en **beats**. Pitch = número MIDI 0–127.
+
+```markdown
+---
+clipId: abc123
+trackId: pista-piano
+nombre: Intro Piano
+inicio: 0
+duracion: 16
+bpm: 120
+compas: 4/4
+trackName: Piano
+---
+
+# Clip MIDI · Intro Piano
+
+## Notas
+
+| id | pitch | name | inicio | duracion | velocidad | canal | mute | articulation | releaseVelocity | probability | source |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| n_a1 | 60 | C4 | 0 | 1 | 96 | 0 |  |  |  |  |  |
+```
+
+- Frontmatter obligatorio: `clipId`, `trackId`, `nombre`, `inicio`, `duracion`.
+- En la tabla, manda `pitch` (la columna `name` es solo lectura).
+- Sección `## Expresión` opcional (CC / pitch bend).
+- No es un `.mid` binario ni un manifiesto multi-pista.
 
 Siguiente: [07 · VST e instrumentos](./07-vst-e-instrumentos.md).

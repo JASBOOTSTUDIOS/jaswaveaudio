@@ -3,7 +3,7 @@
 export const JASWAVE_MIX_MAGIC = 0x4a575354
 export const JASWAVE_MIX_DAW_BUS = 0xffff
 
-/** Header 8 bytes + interleaved f32le stereo. Devuelve bytes listos para IPC. */
+/** @deprecated Legacy JWST pipe — bounce usa clip_player nativo. */
 export function encodeStemPacket(trackIndex: number, interleaved: Float32Array): Uint8Array {
   const frames = interleaved.length >> 1
   const u8 = new Uint8Array(8 + interleaved.byteLength)
@@ -17,7 +17,7 @@ export function encodeStemPacket(trackIndex: number, interleaved: Float32Array):
 
 export type GraphSend = { destStem: number; amount: number; preFader?: boolean }
 
-export type GraphSidechain = { srcStem: number; amount: number }
+export type GraphSidechain = { srcStem: number; amount: number; destSlotId?: string }
 
 /**
  * encoding Reaper graph:
@@ -51,7 +51,9 @@ export function encodeTrackGraph(params: {
       t.sidechains && t.sidechains.length > 0
         ? `$${t.sidechains
             .filter((s) => s.amount > 0 && Number.isFinite(s.srcStem))
-            .map((s) => `${s.srcStem}:${s.amount}`)
+            .map((s) =>
+              s.destSlotId ? `${s.srcStem}:${s.amount}@${s.destSlotId}` : `${s.srcStem}:${s.amount}`,
+            )
             .join('+')}`
         : ''
     return `${t.stemIndex}~${t.gain}~${t.pan}~${t.muted ? '1' : '0'}|${slots}${sends}${sidechains}`

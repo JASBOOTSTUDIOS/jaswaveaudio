@@ -489,6 +489,10 @@ struct RtTrackChain {
 /** Post-fader por pista (pass 1) + acumulado por stem (sends). */
 static float gPostL[kMaxGraphTracks][8192]{};
 static float gPostR[kMaxGraphTracks][8192]{};
+static float gPrevPostL[kMaxGraphTracks][8192]{};
+static float gPrevPostR[kMaxGraphTracks][8192]{};
+static float gScMixL[8192]{};
+static float gScMixR[8192]{};
 static float gPreL[kMaxGraphTracks][8192]{};
 static float gPreR[kMaxGraphTracks][8192]{};
 static float gStemAccL[kMaxGraphTracks][8192]{};
@@ -793,6 +797,30 @@ static void applyPdc(float* l, float* r, int frames, float* dL, float* dR, uint3
 static double currentSampleRate();
 static uint32_t currentBlockSize();
 
+static void mixSidechainForTrack(uint8_t destT, int idx, uint8_t trackN, int frames) {
+  std::fill(gScMixL, gScMixL + frames, 0.f);
+  std::fill(gScMixR, gScMixR + frames, 0.f);
+  const RtTrackChain& tr = gRtTracks[idx][destT];
+  if (tr.sidechainCount == 0 || frames <= 0) return;
+  uint16_t stemToChain[kMaxGraphTracks];
+  for (uint8_t i = 0; i < kMaxGraphTracks; ++i) stemToChain[i] = 0xFFFF;
+  for (uint8_t ti = 0; ti < trackN && ti < kMaxGraphTracks; ++ti) {
+    stemToChain[gRtTracks[idx][ti].stemIndex] = ti;
+  }
+  for (uint8_t sc = 0; sc < tr.sidechainCount; ++sc) {
+    const RtSidechain& side = tr.sidechains[sc];
+    const uint16_t srcT =
+        side.srcStem < kMaxGraphTracks ? stemToChain[side.srcStem] : 0xFFFF;
+    if (srcT == 0xFFFF || srcT >= trackN) continue;
+    const float* sl = (srcT < destT) ? gPostL[srcT] : gPrevPostL[srcT];
+    const float* sr = (srcT < destT) ? gPostR[srcT] : gPrevPostR[srcT];
+    for (int i = 0; i < frames; ++i) {
+      gScMixL[i] += sl[i] * side.amount;
+      gScMixR[i] += sr[i] * side.amount;
+    }
+  }
+}
+
 static void renderMix(float* interleaved, uint32_t frameCount) {
   if (!gOfflineRunning) applyLiveMidiFromWinmm();
   const int frames = static_cast<int>(std::min<uint32_t>(frameCount, 8192));
@@ -815,19 +843,9 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
     }
     for (uint8_t t = 0; t < trackN && t < kMaxGraphTracks; ++t) {
       const RtTrackChain& tr = gRtTracks[idx][t];
-      // Live: solo clip_player (no pull_stem del pipe Chromium → evita mezcla fantasma).
-      // Offline bounce: sumar stems dry empujados vía push_stem (JWST) + clips nativos.
+      // Motor único: clip_player nativo (live y offline).
       std::memset(gStemInterleaved, 0, static_cast<size_t>(frames) * 2 * sizeof(float));
       jaswave::clip_render_stem(tr.stemIndex, gStemInterleaved, static_cast<uint32_t>(frames));
-      if (gOfflineRunning) {
-        float pulled[8192 * 2];
-        const uint32_t n = static_cast<uint32_t>(frames);
-        jaswave_mix_bus_pull_stem(tr.stemIndex, pulled, n);
-        for (uint32_t i = 0; i < n; ++i) {
-          gStemInterleaved[i * 2] += pulled[i * 2];
-          gStemInterleaved[i * 2 + 1] += pulled[i * 2 + 1];
-        }
-      }
       for (int i = 0; i < frames; ++i) {
         gChainL[i] = gStemInterleaved[i * 2];
         gChainR[i] = gStemInterleaved[i * 2 + 1];
@@ -845,6 +863,12 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
             gChainR[i] += gFxR[i];
           }
         } else {
+          if (slot->hasSidechainInput() && tr.sidechainCount > 0) {
+            mixSidechainForTrack(t, idx, trackN, frames);
+            slot->setSidechainInput(gScMixL, gScMixR, frames);
+          } else {
+            slot->clearSidechainInput();
+          }
           slot->process(gChainL, gChainR, gFxL, gFxR, frames);
           std::memcpy(gChainL, gFxL, static_cast<size_t>(frames) * sizeof(float));
           std::memcpy(gChainR, gFxR, static_cast<size_t>(frames) * sizeof(float));
@@ -926,6 +950,10 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
       slot->process(gMixL, gMixR, gFxL, gFxR, frames);
       std::memcpy(gMixL, gFxL, static_cast<size_t>(frames) * sizeof(float));
       std::memcpy(gMixR, gFxR, static_cast<size_t>(frames) * sizeof(float));
+    }
+    for (uint8_t t = 0; t < trackN && t < kMaxGraphTracks; ++t) {
+      std::memcpy(gPrevPostL[t], gPostL[t], static_cast<size_t>(frames) * sizeof(float));
+      std::memcpy(gPrevPostR[t], gPostR[t], static_cast<size_t>(frames) * sizeof(float));
     }
   } else {
     // Legacy: suma paralela de todos los slots
@@ -2212,6 +2240,9 @@ static void handleLine(const std::string& line) {
     const double bits = getNumberField(line, "bitDepth", 16);
     gOfflineBits = bits >= 24 ? 24u : 16u;
     gOfflineRunning = true;
+    jaswave::transport_clock_seek_samples(0);
+    jaswave::transport_clock_set_playing(true);
+    jaswave::clip_stop_all_scheduled();
     jaswave_audio_set_renderer(nullptr);
     jaswave_mix_bus_set_offline(true);
     jaswave_mix_bus_reset();
@@ -2238,38 +2269,6 @@ static void handleLine(const std::string& line) {
       replyOk("\"progress\":1,\"doneFrames\":" + std::to_string(gOfflineDone));
       return;
     }
-    // Stems inline (bounce con contenido real): decodificar y empujar directo.
-    {
-      const auto spos = line.find("\"stems\"");
-      if (spos != std::string::npos) {
-        const size_t arrStart = line.find('[', spos);
-        const size_t arrEnd = line.find(']', arrStart == std::string::npos ? 0 : arrStart);
-        if (arrStart != std::string::npos && arrEnd != std::string::npos) {
-          static std::vector<uint8_t> bytes;
-          static std::vector<float> pcm;
-          size_t p = arrStart + 1;
-          while (p < arrEnd) {
-            const size_t objStart = line.find('{', p);
-            if (objStart == std::string::npos || objStart > arrEnd) break;
-            const size_t objEnd = line.find('}', objStart);
-            if (objEnd == std::string::npos || objEnd > arrEnd) break;
-            const std::string obj = line.substr(objStart, objEnd - objStart + 1);
-            const double tiNum = getNumberField(obj, "trackIndex", -1);
-            if (tiNum >= 0 && tiNum < JASWAVE_MIX_MAX_TRACKS) {
-              const std::string b64 = getStringField(obj, "b64");
-              if (!b64.empty() && decodeBase64(b64, bytes)) {
-                const size_t nSamples = bytes.size() / 4;
-                pcm.resize(nSamples);
-                if (nSamples > 0) std::memcpy(pcm.data(), bytes.data(), nSamples * sizeof(float));
-                jaswave_mix_bus_push_stem(static_cast<uint16_t>(tiNum), pcm.data(),
-                                          static_cast<uint32_t>(nSamples / 2));
-              }
-            }
-            p = objEnd + 1;
-          }
-        }
-      }
-    }
     std::vector<float> block(static_cast<size_t>(frames) * 2u, 0.f);
     renderMix(block.data(), frames);
     gOfflinePcm.insert(gOfflinePcm.end(), block.begin(), block.end());
@@ -2286,6 +2285,7 @@ static void handleLine(const std::string& line) {
     std::lock_guard<std::mutex> lock(gOfflineMu);
     gOfflineRunning = false;
     gOfflinePcm.clear();
+    jaswave::transport_clock_set_playing(false);
     jaswave_mix_bus_set_offline(false);
     jaswave_audio_set_renderer(renderMix);
     replyOk("\"cancelled\":true");
@@ -2300,6 +2300,7 @@ static void handleLine(const std::string& line) {
     if (gOfflineCancel.load()) {
       gOfflineRunning = false;
       gOfflinePcm.clear();
+      jaswave::transport_clock_set_playing(false);
       jaswave_mix_bus_set_offline(false);
       jaswave_audio_set_renderer(renderMix);
       replyOk("\"cancelled\":true");
@@ -2383,6 +2384,7 @@ static void handleLine(const std::string& line) {
     const std::string path = gOfflineOutPath;
     gOfflineRunning = false;
     gOfflinePcm.clear();
+    jaswave::transport_clock_set_playing(false);
     jaswave_mix_bus_set_offline(false);
     jaswave_audio_set_renderer(renderMix);
     replyOk("\"path\":\"" + jsonEscape(path) + "\",\"frames\":" + std::to_string(frames) +

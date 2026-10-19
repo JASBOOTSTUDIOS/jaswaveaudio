@@ -225,6 +225,10 @@ struct Vst3Slot::Impl {
   std::vector<float> silentInR;
   std::vector<float> outBusL;
   std::vector<float> outBusR;
+  int32_t sidechainBusIndex{-1};
+  std::vector<float> sidechainL;
+  std::vector<float> sidechainR;
+  bool sidechainActive{false};
 
 #ifdef _WIN32
   EmbedState embed;
@@ -330,6 +334,12 @@ bool Vst3Slot::prepare(double sampleRate, int32_t blockSize, std::string& err) {
   for (int32 i = 0; i < numInBuses; ++i) {
     // Instrumentos: entradas de audio en silencio; activar para HostProcessData.
     impl_->component->activateBus(kAudio, kInput, i, true);
+    BusInfo busInfo{};
+    if (impl_->component->getBusInfo(kAudio, kInput, i, busInfo) == kResultOk) {
+      if (busInfo.busType == kAux && impl_->sidechainBusIndex < 0) {
+        impl_->sidechainBusIndex = i;
+      }
+    }
   }
 
   if (!impl_->processData.prepare(*impl_->component, blockSize, kSample32)) {
@@ -352,6 +362,8 @@ bool Vst3Slot::prepare(double sampleRate, int32_t blockSize, std::string& err) {
 
   impl_->silentInL.assign(static_cast<size_t>(blockSize), 0.f);
   impl_->silentInR.assign(static_cast<size_t>(blockSize), 0.f);
+  impl_->sidechainBusIndex = -1;
+  impl_->sidechainActive = false;
   impl_->outBusL.assign(static_cast<size_t>(blockSize), 0.f);
   impl_->outBusR.assign(static_cast<size_t>(blockSize), 0.f);
 
@@ -667,6 +679,17 @@ void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* o
       auto& in = impl_->processData.inputs[0];
       if (in.numChannels >= 1) impl_->processData.setChannelBuffer(kInput, 0, 0, impl_->silentInL.data());
       if (in.numChannels >= 2) impl_->processData.setChannelBuffer(kInput, 0, 1, impl_->silentInR.data());
+      if (impl_->sidechainBusIndex >= 0 &&
+          static_cast<size_t>(impl_->sidechainBusIndex) < impl_->processData.numInputs &&
+          impl_->sidechainActive) {
+        const int scBus = impl_->sidechainBusIndex;
+        if (impl_->processData.inputs[scBus].numChannels >= 1) {
+          impl_->processData.setChannelBuffer(kInput, scBus, 0, impl_->sidechainL.data());
+        }
+        if (impl_->processData.inputs[scBus].numChannels >= 2) {
+          impl_->processData.setChannelBuffer(kInput, scBus, 1, impl_->sidechainR.data());
+        }
+      }
     }
     if (impl_->processData.numOutputs > 0 && impl_->processData.outputs) {
       auto& out = impl_->processData.outputs[0];
@@ -946,4 +969,23 @@ bool Vst3Slot::setStateChunk(const uint8_t* data, size_t nbytes, std::string& er
     impl_->controller->setState(&ctrl);
   }
   return true;
+}
+
+bool Vst3Slot::hasSidechainInput() const {
+  return impl_ && impl_->sidechainBusIndex >= 0;
+}
+
+void Vst3Slot::setSidechainInput(const float* l, const float* r, int frames) {
+  if (!impl_ || impl_->sidechainBusIndex < 0 || frames <= 0) return;
+  impl_->sidechainL.assign(static_cast<size_t>(frames), 0.f);
+  impl_->sidechainR.assign(static_cast<size_t>(frames), 0.f);
+  if (l) std::memcpy(impl_->sidechainL.data(), l, static_cast<size_t>(frames) * sizeof(float));
+  if (r) std::memcpy(impl_->sidechainR.data(), r, static_cast<size_t>(frames) * sizeof(float));
+  else if (l) std::memcpy(impl_->sidechainR.data(), l, static_cast<size_t>(frames) * sizeof(float));
+  impl_->sidechainActive = true;
+}
+
+void Vst3Slot::clearSidechainInput() {
+  if (!impl_) return;
+  impl_->sidechainActive = false;
 }

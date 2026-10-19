@@ -19,6 +19,8 @@ import { dawClipboard, type ClipboardClip } from '../src/lib/daw-clipboard'
 import { requestOpenTool } from '../src/workspace/types'
 import { bumpUiZoom, bumpDocsTextZoom, isDocsZoomTarget, setDocsTextZoom } from '../src/lib/docs-editor-store'
 import { bumpChatTextZoom, isChatZoomTarget, setChatTextZoom } from '../src/lib/chat-ui-store'
+import { captureActiveDocTextSelection } from '../src/lib/ai-selection-context'
+import { resolveSnapDivision } from '../src/lib/timeline-snap'
 
 /**
  * Sistema unificado: ActionSystem → Command System.
@@ -192,8 +194,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         const s = st()
         const zoom = s.ui?.zoomHorizontal ?? 1
         const snapOn = s.project?.timeline?.snap ?? true
-        const snap = s.project?.timeline?.snapValor ?? 1
-        const beats = snapOn ? Math.max(0.0625, snap) : 1
+        const bpb = s.project?.timeSignature?.numerador ?? 4
+        const division = resolveSnapDivision(s.project?.timeline?.snapValor ?? 1, bpb)
+        const beats = snapOn && division > 0 ? division : 1
         const deltaPx = -Math.max(4, Math.round(5 * zoom * beats))
         window.dispatchEvent(new CustomEvent('jaswave-scroll-timeline', { detail: { deltaPx } }))
       },
@@ -201,8 +204,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         const s = st()
         const zoom = s.ui?.zoomHorizontal ?? 1
         const snapOn = s.project?.timeline?.snap ?? true
-        const snap = s.project?.timeline?.snapValor ?? 1
-        const beats = snapOn ? Math.max(0.0625, snap) : 1
+        const bpb = s.project?.timeSignature?.numerador ?? 4
+        const division = resolveSnapDivision(s.project?.timeline?.snapValor ?? 1, bpb)
+        const beats = snapOn && division > 0 ? division : 1
         const deltaPx = Math.max(4, Math.round(5 * zoom * beats))
         window.dispatchEvent(new CustomEvent('jaswave-scroll-timeline', { detail: { deltaPx } }))
       },
@@ -513,6 +517,10 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       'window.midiMap': () => {
         requestOpenTool('midi-map')
       },
+      'window.terminal': () => {
+        requestOpenTool('terminal', { zone: 'bottom' })
+        window.dispatchEvent(new Event('jaswave-focus-terminal'))
+      },
       'window.toggleLeft': () => {
         window.dispatchEvent(new CustomEvent('jaswave-toggle-zone', { detail: { zone: 'left' } }))
       },
@@ -526,6 +534,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         window.dispatchEvent(new CustomEvent('open-project-settings'))
       },
       'ai.askSelection': () => {
+        captureActiveDocTextSelection()
         window.dispatchEvent(new CustomEvent('jaswave-ask-ai-selection'))
       },
     }
@@ -559,7 +568,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         const ae = document.activeElement
         if (ae && shouldIgnoreGlobalShortcuts(ae) && !(st().selection.idsClips.length > 0)) return
       } else if (shouldIgnoreGlobalShortcuts()) {
-        return
+        if (resolved !== 'window.terminal') return
       }
       system.actions.execute(resolved)
     }
@@ -583,7 +592,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         const ae = document.activeElement
         if (ae && shouldIgnoreGlobalShortcuts(ae) && !(st().selection.idsClips.length > 0)) return
       } else if (shouldIgnoreGlobalShortcuts()) {
-        return
+        if (resolved !== 'window.terminal') return
       }
       system.actions.execute(resolved)
     })
@@ -612,7 +621,24 @@ export function useShortcutDispatcher(): DespachadorTeclado {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (paletaAbiertaRef.current && e.key !== 'Escape') return
-      if (shouldIgnoreGlobalShortcuts(e.target)) return
+      if (shouldIgnoreGlobalShortcuts(e.target)) {
+        const terminalChord =
+          (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key === '`'
+        const askSel =
+          (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l'
+        if (terminalChord) {
+          e.preventDefault()
+          system.actions.execute('window.terminal')
+          return
+        }
+        if (askSel) {
+          e.preventDefault()
+          captureActiveDocTextSelection()
+          system.actions.execute('ai.askSelection')
+          return
+        }
+        return
+      }
       system.handleKeyboardEvent(e)
     }
     window.addEventListener('keydown', handler)

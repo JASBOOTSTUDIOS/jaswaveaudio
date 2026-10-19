@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Piano, Crosshair, Timer } from 'lucide-react'
+import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Piano, Crosshair, Timer, Magnet } from 'lucide-react'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { DAWState } from '../../shared/src'
+import { safeProjectBpm } from '../../shared/src'
 import { TransportPositionReadout } from './transport-position-readout'
 import { midiController } from '@/src/lib/midi-controller'
 import { useLiveBufferMeter } from '@/hooks/use-live-buffer-meter'
@@ -386,6 +387,8 @@ export function TransportBar() {
   const isMetronome = Boolean(transport.metronomo?.activo)
   const isPunch = Boolean(transport.punch?.activo)
   const isCountIn = Boolean(transport.countIn?.activo)
+  const isComping = transport.modoGrabacion === 'comping'
+  const playheadSnap = useDAWState((s: DAWState) => s.ui?.playheadSnap !== false)
   // Solo bloquear Play si falta host/audio. La carga de VSTs muestra progreso pero no congela la UI.
   const blocked =
     !isPlaying &&
@@ -396,9 +399,16 @@ export function TransportBar() {
       !projectReady.hostOk ||
       !projectReady.deviceArmed)
 
-  const bpm = project.bpm?.valor ?? 120
+  const bpm = safeProjectBpm({ project } as DAWState)
   const numerador = project.timeSignature?.numerador ?? 4
   const denominador = project.timeSignature?.denominador ?? 4
+
+  // Recovery: si el estado quedó con NaN (bug histórico), restaurar BPM finito.
+  useEffect(() => {
+    const raw = project.bpm?.valor
+    if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 20 && raw <= 300) return
+    void tienda.executor.execute('project.setBpm', { bpm: 120 }).catch(() => {})
+  }, [project.bpm?.valor, tienda])
 
   const projectName = project.nombre || 'Proyecto sin nombre'
 
@@ -417,6 +427,12 @@ export function TransportBar() {
     await tienda.executor.execute('transport.toggleRecord', {})
   }
 
+  const toggleCompMode = async () => {
+    await tienda.executor.execute('transport.setRecordMode', {
+      modo: isComping ? 'normal' : 'comping',
+    })
+  }
+
   const toggleLooping = async () => {
     await tienda.executor.execute('transport.toggleLoop', {})
   }
@@ -431,6 +447,13 @@ export function TransportBar() {
 
   const toggleCountIn = async () => {
     await tienda.executor.execute('transport.toggleCountIn', {})
+  }
+
+  const togglePlayheadSnap = () => {
+    tienda.establecerEstado((s) => ({
+      ...s,
+      ui: { ...s.ui, playheadSnap: !(s.ui?.playheadSnap !== false) },
+    }))
   }
 
   const setBpm = async (bpm: number) => {
@@ -492,6 +515,20 @@ export function TransportBar() {
         </button>
         <button
           type="button"
+          onClick={toggleCompMode}
+          aria-label="Modo comping"
+          aria-pressed={isComping}
+          title="Comping: cada pasada añade una toma"
+          className={`flex h-9 items-center justify-center rounded-md px-2 text-[10px] font-semibold transition-colors ${
+            isComping
+              ? 'bg-accent-amber/25 text-accent-amber'
+              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+          }`}
+        >
+          COMP
+        </button>
+        <button
+          type="button"
           onClick={toggleLooping}
           aria-label="Repetir"
           aria-pressed={isLooping}
@@ -538,6 +575,24 @@ export function TransportBar() {
           }`}
         >
           <Timer className="size-4" />
+        </button>
+        <button
+          type="button"
+          onClick={togglePlayheadSnap}
+          aria-label="Precisión del playhead"
+          aria-pressed={playheadSnap}
+          title={
+            playheadSnap
+              ? 'Imán ON: playhead y clips anclados a la profundidad del selector de encaje'
+              : 'Imán OFF: seek y clips libres (sin anclar a la rejilla)'
+          }
+          className={`flex size-9 items-center justify-center rounded-md transition-colors ${
+            playheadSnap
+              ? 'bg-accent-amber/20 text-accent-amber'
+              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+          }`}
+        >
+          <Magnet className="size-4" />
         </button>
       </div>
 

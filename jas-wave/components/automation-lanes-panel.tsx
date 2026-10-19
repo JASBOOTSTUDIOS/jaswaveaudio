@@ -82,8 +82,9 @@ export function AutomationLanesPanel() {
 
   if (!track) {
     return (
-      <div className="border-t border-border p-2 text-[10px] text-muted-foreground">
-        Selecciona una pista para editar automatización.
+      <div className="flex h-full flex-col bg-panel p-4 text-[12px] text-muted-foreground">
+        <p className="font-medium text-foreground">Automatización</p>
+        <p className="mt-2">Selecciona una pista en el arrange para editar curvas de volumen y paneo.</p>
       </div>
     )
   }
@@ -102,9 +103,9 @@ export function AutomationLanesPanel() {
   }
 
   return (
-    <div className="border-t border-border p-2 text-[10px]">
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <p className="font-medium text-foreground">Automatización · {track.nombre}</p>
+    <div className="flex h-full min-h-0 flex-col overflow-auto bg-panel p-3 text-[11px]">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-[13px] font-semibold text-foreground">Automatización · {track.nombre}</p>
         <button
           type="button"
           onClick={toggleWrite}

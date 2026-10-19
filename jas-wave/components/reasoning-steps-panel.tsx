@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Brain } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ChevronRight } from 'lucide-react'
 import { ChatMarkdown, sanitizeAssistantMarkdown } from './chat-markdown'
 import type { StoredChatMessage } from '@/src/lib/ai-chat-store'
 import { cn } from '@/lib/utils'
@@ -9,7 +9,7 @@ type Step = NonNullable<StoredChatMessage['reasoningSteps']>[number]
 type Props = {
   steps: NonNullable<StoredChatMessage['reasoningSteps']>
   /** Expandido mientras el turno está en curso */
-  defaultOpen?: boolean
+  live?: boolean
 }
 
 function isEmptyStep(step: Step): boolean {
@@ -21,91 +21,84 @@ function isEmptyStep(step: Step): boolean {
   return false
 }
 
-export function ReasoningStepsPanel({ steps, defaultOpen = false }: Props) {
+function thoughtLabel(steps: Step[], live: boolean): string {
+  if (live) return 'Consejo dialogando…'
+  const stamps = steps
+    .flatMap((s) => [s.startedAt, s.endedAt])
+    .filter((n): n is number => typeof n === 'number' && n > 0)
+  if (stamps.length >= 2) {
+    const sec = Math.max(1, Math.round((Math.max(...stamps) - Math.min(...stamps)) / 1000))
+    if (sec < 3) return 'Consejo breve'
+    return `Consejo · ${sec}s`
+  }
+  return 'Consejo de modelos'
+}
+
+export function ReasoningStepsPanel({ steps, live = false }: Props) {
   const useful = steps.filter((s) => !isEmptyStep(s))
-  const skipped = steps.length - useful.length
-  const [open, setOpen] = useState(defaultOpen)
+  const [open, setOpen] = useState(live)
   const [stepOpen, setStepOpen] = useState<Record<number, boolean>>(() => {
     const init: Record<number, boolean> = {}
     useful.forEach((s, i) => {
-      init[i] = defaultOpen ? true : !s.collapsed
+      init[i] = live ? i === useful.length - 1 : false
     })
     return init
   })
 
+  useEffect(() => {
+    setOpen(live)
+  }, [live])
+
   if (!steps.length) return null
 
+  const label = thoughtLabel(steps, live)
+
   return (
-    <div
-      data-chat-selectable
-      className="mb-2 select-text rounded-md border border-violet-900/40 bg-violet-950/20"
-    >
-      <div
-        role="button"
-        tabIndex={0}
+    <div data-chat-selectable className="mb-2 w-full min-w-0 select-text">
+      <button
+        type="button"
+        aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            setOpen((o) => !o)
-          }
-        }}
-        className="flex w-full cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-left text-[10px] font-medium uppercase tracking-wide text-violet-300/90 hover:text-violet-200"
+        className="flex w-full min-w-0 items-center gap-1 py-0.5 text-left text-[0.85em] text-muted-foreground/70 hover:text-muted-foreground"
       >
-        <Brain className="size-3 shrink-0 select-none" />
-        Pensamiento interno
-        {useful.length
-          ? ` · ${useful.length} nota${useful.length === 1 ? '' : 's'}`
-          : ' · (sin notas útiles)'}
-        {skipped > 0 ? (
-          <span className="font-normal normal-case text-violet-400/70"> · {skipped} omitido(s)</span>
-        ) : null}
-        <span className="ml-auto select-none text-[9px]">{open ? '▾' : '▸'}</span>
-      </div>
+        <ChevronRight
+          className={cn(
+            'size-3.5 shrink-0 transition-transform duration-150',
+            open && 'rotate-90',
+          )}
+        />
+        <span className="min-w-0 truncate">{label}</span>
+      </button>
       {open ? (
-        <div className="max-h-48 space-y-1 overflow-y-auto border-t border-violet-900/30 px-2 py-1.5 select-text">
-          <p className="px-1 pb-1 text-[10px] leading-snug text-violet-300/60">
-            Borrador interno del asistente — la respuesta útil está debajo, en lenguaje de productor.
-          </p>
+        <div className="mt-1 w-full min-w-0 space-y-0.5 overflow-x-hidden pl-4">
           {useful.length === 0 ? (
-            <p className="px-1 text-[11px] text-muted-foreground">
-              Este turno no dejó notas internas legibles (fallos de red o capas vacías).
+            <p className="text-[0.85em] leading-relaxed text-muted-foreground/60">
+              Este turno no dejó notas internas legibles.
             </p>
           ) : (
             useful.map((step, i) => (
-              <div
-                key={`${step.phase}-${i}`}
-                data-chat-selectable
-                className="select-text rounded border border-violet-900/20 bg-black/20"
-              >
-                <div
-                  role="button"
-                  tabIndex={0}
+              <div key={`${step.phase}-${i}`} data-chat-selectable className="w-full min-w-0 select-text">
+                <button
+                  type="button"
+                  aria-expanded={Boolean(stepOpen[i])}
                   onClick={() => setStepOpen((prev) => ({ ...prev, [i]: !prev[i] }))}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      setStepOpen((prev) => ({ ...prev, [i]: !prev[i] }))
-                    }
-                  }}
-                  className="flex w-full cursor-pointer items-center gap-1 px-2 py-1 text-left text-[10px] font-medium text-violet-200/90"
+                  className="flex w-full min-w-0 items-center gap-1 py-0.5 text-left text-[0.85em] text-muted-foreground/80 hover:text-foreground"
                 >
-                  <span className="truncate">{step.title}</span>
+                  <ChevronRight
+                    className={cn(
+                      'size-3 shrink-0 transition-transform duration-150',
+                      stepOpen[i] && 'rotate-90',
+                    )}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{step.title}</span>
                   {step.toolsUsed?.length ? (
-                    <span className="shrink-0 select-none rounded bg-violet-900/50 px-1 text-[8px] text-violet-300">
-                      {step.toolsUsed.map((t) => (typeof t === 'string' ? t : t.type)).join(', ')}
+                    <span className="min-w-0 max-w-[40%] shrink-0 truncate text-[0.8em] text-muted-foreground/50">
+                      {step.toolsUsed.join(', ')}
                     </span>
                   ) : null}
-                  <span className="ml-auto select-none text-[8px] text-muted-foreground">
-                    {stepOpen[i] ? '▾' : '▸'}
-                  </span>
-                </div>
+                </button>
                 {stepOpen[i] ? (
-                  <div
-                    className={cn(
-                      'select-text border-t border-violet-900/15 px-2 py-1.5 text-[11px] text-muted-foreground',
-                    )}
-                  >
+                  <div className="w-full min-w-0 overflow-x-hidden break-words py-1 pl-4 text-[0.85em] leading-relaxed text-muted-foreground">
                     <ChatMarkdown text={step.content} />
                   </div>
                 ) : null}

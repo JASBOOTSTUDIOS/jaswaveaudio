@@ -107,8 +107,16 @@ export function PianoRollCanvasNotes({
       className="absolute left-0 top-0 z-10 touch-none"
       style={{ width, height }}
       onPointerDown={(e) => {
-        // Click derecho: dejar burbujear al grid para marquee de selección.
-        if (e.button === 2) return
+        // Clic derecho sobre nota: borrar (el padre decide). Vacío: burbujear para marquee.
+        if (e.button === 2) {
+          if (!onHit) return
+          const hit = hitTest(e.clientX, e.clientY, e.currentTarget)
+          if (!hit) return
+          e.stopPropagation()
+          e.preventDefault()
+          onHit(hit, e.nativeEvent)
+          return
+        }
         if (e.button !== 0 || !onHit) return
         const hit = hitTest(e.clientX, e.clientY, e.currentTarget)
         if (!hit) return

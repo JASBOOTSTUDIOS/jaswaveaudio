@@ -16,7 +16,7 @@ import { FaderControl, KnobControl, LevelMeterBarHorizontal } from './ui/control
 import { ChannelFxBank } from '@/components/channel-fx-bank'
 import { TrackMidiInput } from '@/components/track-midi-input'
 import { TrackAudioInput } from '@/components/track-audio-input'
-import { getSelectedTrackId } from '@/src/lib/selection-helpers'
+import { getSelectedTrackId, selectTrackPayload } from '@/src/lib/selection-helpers'
 import { midiInputOf } from '@/src/lib/midi-track-io'
 import { audioInputOf } from '@/src/lib/audio-track-io'
 import { audioEngine } from '@/lib/audio-engine'
@@ -27,7 +27,14 @@ import {
 } from '@/src/lib/plugin/native-mix-meters'
 import { extractHostPluginPath } from '@/src/lib/plugin/plugin-info-adapter'
 import { isBuiltinInstrument } from '@/src/lib/plugin/track-vst-runtime'
-import { AutomationLanesPanel, maybeWriteAutomationPoint } from '@/components/automation-lanes-panel'
+import { maybeWriteAutomationPoint } from '@/components/automation-lanes-panel'
+
+/** El VU del motor usa curva peak^0.6; invertir para lectura en dBFS. */
+function meterLevelToDbLabel(meter: number): string {
+  if (meter < 0.0005) return '−∞'
+  const linear = Math.min(1, Math.pow(meter, 1 / 0.6))
+  return `${formatearDb(linealADb(linear))} dB`
+}
 
 type MixerRow = {
   id: string
@@ -275,7 +282,7 @@ export function Mixer() {
       </div>
 
       {/* Tiras de canal */}
-      <div className="flex min-h-0 flex-1 overflow-auto">
+      <div className="flex min-h-0 flex-1 overflow-x-auto overflow-y-hidden bg-panel">
         {trackList.map((track, trackIndex) => (
           <div
             key={track.id}
@@ -299,11 +306,16 @@ export function Mixer() {
               if (!id || id === track.id) return
               moveTrackToIndex(id, trackIndex)
             }}
-            className={`flex shrink-0 flex-col border-r border-border px-2 py-2 ${collapsed ? 'w-[52px]' : 'w-[124px]'} ${
-              selectedTrackId === track.id ? 'bg-accent-amber/10' : ''
+            className={`flex shrink-0 cursor-pointer flex-col border-r border-border px-2 py-2 ${collapsed ? 'w-[52px]' : 'w-[124px]'} ${
+              selectedTrackId === track.id
+                ? 'bg-accent-amber/20 ring-1 ring-inset ring-accent-amber/50'
+                : 'hover:bg-panel-raised/40'
             } ${dragOverTrackId === track.id && dragTrackId !== track.id ? 'ring-1 ring-inset ring-accent-amber' : ''} ${
               dragTrackId === track.id ? 'opacity-60' : ''
             }`}
+            onClick={() => {
+              void tienda.executor.execute('selection.set', selectTrackPayload(track.id))
+            }}
           >
             {/* Nombre */}
             <div className="mb-1.5 flex items-center justify-center gap-0.5">
@@ -483,6 +495,12 @@ export function Mixer() {
           <p className="mb-1.5 truncate text-center text-[11px] font-medium text-foreground" title={masterTrack.name}>
             {masterTrack.name}
           </p>
+          <div
+            className="mb-1 h-1.5 overflow-hidden rounded-full bg-panel-raised"
+            title="Nivel Master (post-fader)"
+          >
+            <LevelMeterBarHorizontal level={meters.master ?? 0} alwaysShowRail />
+          </div>
           <div className="mb-1">
             <ChannelFxBank
               trackId="master"
@@ -492,13 +510,13 @@ export function Mixer() {
           </div>
 
           <div className="mb-1 flex items-center justify-center gap-1">
-            <TrackButton label={`Silenciar Master`} active={master.muted} onClick={() => {
-              void tienda.executor.execute('master.update', { datos: { muted: !master.muted } })
+            <TrackButton label={`Silenciar Master`} active={Boolean(master?.muted)} onClick={() => {
+              void tienda.executor.execute('master.update', { datos: { muted: !master?.muted } })
             }}>
               M
             </TrackButton>
-            <TrackButton label={`Solo Master`} active={master.solo} onClick={() => {
-              void tienda.executor.execute('master.update', { datos: { solo: !master.solo } })
+            <TrackButton label={`Solo Master`} active={Boolean(master?.solo)} onClick={() => {
+              void tienda.executor.execute('master.update', { datos: { solo: !master?.solo } })
             }}>
               S
             </TrackButton>
@@ -509,26 +527,54 @@ export function Mixer() {
           }} />
 
           <div className="mt-2 flex-1">
-            <FaderControl db={masterTrack.db} color={masterTrack.color} meter={meters.master ?? 0} onChange={(db) => {
-              const volumen = db > DB_INFERIOR ? dbALineal(db) : 0
-              void tienda.executor.execute('master.update', { datos: { volumen } })
-            }} />
+            <FaderControl
+              db={masterTrack.db}
+              color={masterTrack.color}
+              meter={meters.master ?? 0}
+              showScale
+              onChange={(db) => {
+                const volumen = db > DB_INFERIOR ? dbALineal(db) : 0
+                void tienda.executor.execute('master.update', { datos: { volumen } })
+              }}
+            />
           </div>
 
-          <p className="mt-1 text-center font-mono text-[10px] tabular-nums text-muted-foreground">
+          <p
+            className="mt-1 text-center font-mono text-[10px] tabular-nums text-foreground"
+            title="Ganancia del fader Master"
+          >
             {formatearDb(masterTrack.db)}
+            <span className="text-muted-foreground"> dB</span>
+          </p>
+          <p
+            className="text-center font-mono text-[9px] tabular-nums text-muted-foreground"
+            title="Pico de nivel (medidor)"
+          >
+            pk {meterLevelToDbLabel(meters.master ?? 0)}
           </p>
 
           <div
             className="mt-1 h-1 w-full rounded-full transition-opacity"
             style={{
               backgroundColor: masterTrack.color,
-              opacity: master.muted ? 0.25 : 1,
+              opacity: master?.muted ? 0.25 : 1,
             }}
           />
         </div>
+
+        {/* Espacio en blanco: doble clic → nueva pista */}
+        <div
+          className="min-w-[96px] flex-1 cursor-pointer self-stretch"
+          title="Doble clic: nueva pista"
+          onDoubleClick={() => {
+            const count = tracks.length + 1
+            void tienda.executor.execute('track.create', {
+              nombre: `MIDI ${count}`,
+              tipo: 'midi',
+            })
+          }}
+        />
       </div>
-      {!collapsed ? <AutomationLanesPanel /> : null}
     </section>
   )
 }

@@ -12,10 +12,13 @@ export type ToolId =
   | 'routing'
   | 'instruments'
   | 'fx-chain'
+  | 'automation'
   | 'plugin-editor'
   | 'midi-map'
   | 'piano-roll'
+  | 'midi-md'
   | 'score-editor'
+  | 'terminal'
   | 'settings'
 
 export interface ToolDefinitionUI {
@@ -105,6 +108,13 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     defaultZone: 'right',
     singleton: true,
   },
+  automation: {
+    id: 'automation',
+    title: 'Automatización',
+    description: 'Curvas vol/pan y write-on-play de la pista activa',
+    defaultZone: 'right',
+    singleton: true,
+  },
   'plugin-editor': {
     id: 'plugin-editor',
     title: 'Editor de plugin',
@@ -126,10 +136,24 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     defaultZone: 'bottom',
     singleton: true,
   },
+  'midi-md': {
+    id: 'midi-md',
+    title: 'MIDI · MD',
+    description: 'Clip MIDI como .md con sync en vivo al piano roll',
+    defaultZone: 'left',
+    singleton: true,
+  },
   'score-editor': {
     id: 'score-editor',
     title: 'Partitura',
     description: 'Editor de partitura sincronizado con el clip MIDI',
+    defaultZone: 'bottom',
+    singleton: true,
+  },
+  terminal: {
+    id: 'terminal',
+    title: 'Terminal',
+    description: 'CLI del DAW y log de lo que ejecuta la IA',
     defaultZone: 'bottom',
     singleton: true,
   },
@@ -147,14 +171,16 @@ export type WorkspaceLayout = {
   activeTab: Record<DockZone, ToolId | null>
   undocked: ToolId[]
   zoneVisible: Record<DockZone, boolean>
+  /** Herramientas cerradas (no aparecen como tabs hasta reabrirlas). */
+  closed: ToolId[]
 }
 
 export const DEFAULT_WORKSPACE: WorkspaceLayout = {
   zones: {
-    left: ['coproducer', 'docs-explorer', 'docs', 'library', 'instruments'],
+    left: ['coproducer', 'docs-explorer', 'instruments'],
     center: ['arrange'],
-    right: ['track-detail', 'fx-chain', 'plugin-editor', 'midi-map', 'meters', 'routing', 'settings'],
-    bottom: ['mixer', 'piano-roll', 'score-editor'],
+    right: ['track-detail', 'plugin-editor', 'settings'],
+    bottom: ['mixer', 'piano-roll'],
   },
   activeTab: {
     left: 'coproducer',
@@ -169,12 +195,26 @@ export const DEFAULT_WORKSPACE: WorkspaceLayout = {
     right: true,
     bottom: true,
   },
+  closed: [
+    'docs',
+    'library',
+    'midi-md',
+    'fx-chain',
+    'automation',
+    'midi-map',
+    'meters',
+    'routing',
+    'score-editor',
+    'terminal',
+  ],
 }
 
 const STORAGE_KEY = 'jaswave.workspace.v1'
 
-/** Garantiza que todas las herramientas del catálogo estén en alguna zona. */
+/** Garantiza catálogo coherente: closed no se reinyecta; el resto se coloca. */
 function ensureCatalogTools(layout: WorkspaceLayout): WorkspaceLayout {
+  const closed = [...(layout.closed ?? [])].filter((id) => id in TOOL_CATALOG)
+  const closedSet = new Set(closed)
   const placed = new Set<ToolId>([
     ...layout.zones.left,
     ...layout.zones.center,
@@ -193,21 +233,36 @@ function ensureCatalogTools(layout: WorkspaceLayout): WorkspaceLayout {
     undocked: [...layout.undocked],
     activeTab: { ...layout.activeTab },
     zoneVisible: { ...layout.zoneVisible },
+    closed,
   }
+  // Quitar de zonas/undocked lo que esté cerrado
+  for (const zone of ['left', 'center', 'right', 'bottom'] as DockZone[]) {
+    next.zones[zone] = next.zones[zone].filter((id) => id in TOOL_CATALOG && !closedSet.has(id))
+  }
+  next.undocked = next.undocked.filter((id) => id in TOOL_CATALOG && !closedSet.has(id))
+
   for (const id of Object.keys(TOOL_CATALOG) as ToolId[]) {
-    if (placed.has(id)) continue
+    if (closedSet.has(id)) continue
+    if (
+      next.zones.left.includes(id) ||
+      next.zones.center.includes(id) ||
+      next.zones.right.includes(id) ||
+      next.zones.bottom.includes(id) ||
+      next.undocked.includes(id)
+    ) {
+      continue
+    }
+    // No estaba colocado ni cerrado → zona por defecto (herramientas nuevas)
     const zone = TOOL_CATALOG[id].defaultZone
     next.zones[zone] = [...next.zones[zone], id]
   }
-  // Filtrar ids obsoletos que ya no están en el catálogo
+
   for (const zone of ['left', 'center', 'right', 'bottom'] as DockZone[]) {
-    next.zones[zone] = next.zones[zone].filter((id) => id in TOOL_CATALOG)
     const active = next.activeTab[zone]
-    if (active && !(active in TOOL_CATALOG)) {
+    if (active && !next.zones[zone].includes(active)) {
       next.activeTab[zone] = next.zones[zone][0] ?? null
     }
   }
-  next.undocked = next.undocked.filter((id) => id in TOOL_CATALOG)
   return next
 }
 
@@ -223,6 +278,7 @@ export function loadWorkspace(): WorkspaceLayout {
       activeTab: { ...DEFAULT_WORKSPACE.activeTab, ...parsed.activeTab },
       zoneVisible: { ...DEFAULT_WORKSPACE.zoneVisible, ...parsed.zoneVisible },
       undocked: parsed.undocked ?? [],
+      closed: parsed.closed ?? [],
     })
   } catch {
     return structuredClone(DEFAULT_WORKSPACE)
@@ -242,6 +298,15 @@ export function requestOpenTool(toolId: ToolId, options?: { zone?: DockZone }): 
   window.dispatchEvent(
     new CustomEvent('jaswave-open-tool', {
       detail: { toolId, zone: options?.zone },
+    }),
+  )
+}
+
+/** Alterna mostrar/ocultar una herramienta (tab). */
+export function requestToggleTool(toolId: ToolId): void {
+  window.dispatchEvent(
+    new CustomEvent('jaswave-toggle-tool', {
+      detail: { toolId },
     }),
   )
 }

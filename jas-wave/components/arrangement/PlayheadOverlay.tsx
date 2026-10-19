@@ -1,14 +1,21 @@
-import { useEffect, useRef } from 'react'
-
 /**
  * Playhead HF: un RAF estable; callbacks vía refs para no reiniciar el loop
  * cuando React recrea beatToPixel / getSeconds.
+ *
+ * mode:
+ * - content: X = beatToPixel(beat) dentro de un ancestro que scrollea
+ * - viewport: X = beat*ppb - getScrollX() (regla / overlay unificado)
  */
+import { useEffect, useRef } from 'react'
+
 export function PlayheadOverlay({
   contentLeftPx,
   getSeconds,
   bpm,
   beatToPixel,
+  getScrollX,
+  pixelsPerBeat,
+  mode = 'content',
   showTooltip,
   tooltipLabel,
   onPointerDown,
@@ -17,6 +24,10 @@ export function PlayheadOverlay({
   getSeconds?: () => number
   bpm?: number
   beatToPixel?: (beat: number) => number
+  /** Lectura viva del scroll (p.ej. lanesScrollRef.current.scrollLeft). */
+  getScrollX?: () => number
+  pixelsPerBeat?: number
+  mode?: 'content' | 'viewport'
   showTooltip?: boolean
   tooltipLabel?: string
   onPointerDown?: (e: React.PointerEvent) => void
@@ -25,15 +36,32 @@ export function PlayheadOverlay({
   const getSecondsRef = useRef(getSeconds)
   const bpmRef = useRef(bpm)
   const beatToPixelRef = useRef(beatToPixel)
+  const getScrollXRef = useRef(getScrollX)
+  const ppbRef = useRef(pixelsPerBeat)
+  const modeRef = useRef(mode)
   getSecondsRef.current = getSeconds
   bpmRef.current = bpm
   beatToPixelRef.current = beatToPixel
+  getScrollXRef.current = getScrollX
+  ppbRef.current = pixelsPerBeat
+  modeRef.current = mode
 
   useEffect(() => {
     const el = lineRef.current
     if (!el) return
 
-    if (!getSecondsRef.current || bpmRef.current == null || !beatToPixelRef.current) {
+    const resolveX = (beat: number): number | null => {
+      if (modeRef.current === 'viewport') {
+        const ppb = ppbRef.current
+        if (ppb == null || !(ppb > 0)) return null
+        const sx = getScrollXRef.current?.() ?? 0
+        return beat * ppb - sx
+      }
+      const btp = beatToPixelRef.current
+      return btp ? btp(beat) : null
+    }
+
+    if (!getSecondsRef.current || bpmRef.current == null) {
       if (contentLeftPx != null) {
         el.style.transform = `translate3d(${contentLeftPx}px, 0, 0)`
       }
@@ -45,11 +73,10 @@ export function PlayheadOverlay({
     const tick = () => {
       const gs = getSecondsRef.current
       const b = bpmRef.current
-      const btp = beatToPixelRef.current
-      if (gs && b != null && btp) {
+      if (gs && b != null) {
         const beat = Math.max(0, (gs() * b) / 60)
-        const x = btp(beat)
-        if (Math.abs(x - lastX) >= 0.25) {
+        const x = resolveX(beat)
+        if (x != null && Math.abs(x - lastX) >= 0.25) {
           lastX = x
           el.style.transform = `translate3d(${x}px, 0, 0)`
         }
@@ -58,13 +85,17 @@ export function PlayheadOverlay({
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [contentLeftPx, Boolean(getSeconds)])
+  }, [contentLeftPx, Boolean(getSeconds), mode])
 
+  const initialBeat =
+    getSeconds && bpm != null ? Math.max(0, (getSeconds() * bpm) / 60) : 0
   const initial =
     contentLeftPx ??
-    (getSeconds && bpm != null && beatToPixel
-      ? beatToPixel(Math.max(0, (getSeconds() * bpm) / 60))
-      : 0)
+    (mode === 'viewport' && pixelsPerBeat != null
+      ? initialBeat * pixelsPerBeat - (getScrollX?.() ?? 0)
+      : beatToPixel
+        ? beatToPixel(initialBeat)
+        : 0)
 
   return (
     <div

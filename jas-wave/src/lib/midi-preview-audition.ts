@@ -382,6 +382,7 @@ export async function playMidiPreviewAudition(opts: {
   startBeat?: number
   endBeat?: number
   trackId?: string | null
+  trackNombre?: string | null
   candidateTrackIds?: string[]
   pluginId?: string | null
   pluginNombre?: string | null
