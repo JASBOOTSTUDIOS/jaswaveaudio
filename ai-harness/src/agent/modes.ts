@@ -163,7 +163,7 @@ export function isProjectWipeIntent(text: string): boolean {
 export function isGenreRewriteIntent(text: string): boolean {
   const t = text.toLowerCase()
   const genre =
-    /\b(bachata|reggaet[oó]n|salsa|cumbia|merengue|trap|hip.?hop|edm|techno|house|rock|pop|jazz|r&b|rnb|worship|gospel|prince\s*royce)\b/i.test(
+    /\b(bachata|reggaet[oó]n|salsa|cumbia|merengue|trap|hip.?hop|edm|techno|house|rock|pop|jazz|r&b|rnb|worship|gospel)\b/i.test(
       t,
     )
   const rewrite =
@@ -249,13 +249,39 @@ export function isProjectAuditIntent(text: string): boolean {
   return false
 }
 
-/** Referencia de estilo / artista (worship, Averly, Hillsong…). */
+/**
+ * Referencia de estilo / artista / género, de forma genérica («estilo X», «como X», «tipo X»,
+ * «suena a X»). Sin listas de artistas: el nombre lo aporta el usuario.
+ */
 export function hasStyleReference(text: string): boolean {
   return (
-    /\b(estilo|como|tipo|worship|aver+y|averill|morillo|hillsong|elevation|maverick|bethel|planetshakers)\b/i.test(
-      text,
-    ) || /\b(artista|referenci[ao]|sound\s+like)\b/i.test(text)
+    /\b(estilo|como|tipo)\b/i.test(text) ||
+    /\b(artista|referenci[ao]|sound\s+like|suen[ae]\s+(a|como)|sonar\s+(a|como))\b/i.test(text) ||
+    GENRE_WORD_RE.test(text)
   )
+}
+
+/** Géneros conocidos (lista neutral; ninguno tiene trato especial por defecto). */
+const GENRE_WORD_RE =
+  /\b(bachata|reggaet[oó]n|salsa|cumbia|merengue|trap|hip.?hop|edm|techno|house|rock|pop|jazz|r&b|rnb|worship|gospel|funk|blues|metal|ambient|lo.?fi|balada|ballad)\b/i
+
+/**
+ * Extrae la referencia de estilo del texto del usuario («estilo X», «como X», «tipo X»…).
+ * Devuelve null si el usuario no nombró ninguna.
+ */
+export function extractStyleReference(text: string): string | null {
+  const m =
+    text.match(/\bal\s+estilo\s+(?:de\s+)?([^,.;:!?\n]+)/i) ||
+    text.match(/\bestilo\s+(?:de\s+)?([^,.;:!?\n]+)/i) ||
+    text.match(/\bsuen[ae]\s+(?:a|como)\s+([^,.;:!?\n]+)/i) ||
+    text.match(/\bcomo\s+([^,.;:!?\n]+)/i) ||
+    text.match(/\btipo\s+([^,.;:!?\n]+)/i) ||
+    text.match(/\bsound\s+like\s+([^,.;:!?\n]+)/i)
+  const raw = m?.[1]?.trim()
+  if (!raw) return null
+  // Recorta colas de instrucción típicas («…, investiga en internet»)
+  const cut = raw.replace(/\s+\b(investiga|busca|y\s+dime|dime|en\s+internet)\b.*$/i, '').trim()
+  return (cut || raw).slice(0, 64)
 }
 
 /**
@@ -292,7 +318,7 @@ export function isStyleGapIntent(text: string): boolean {
     return false
   }
   const wantsGap =
-    /\b(qu[eé]\s+(le\s+)?falta|c[oó]mo\s+(hacerlo|dejarlo|ponerlo)|para\s+que\s+(est[eé]|suene|quede)|como\s+[aá]ver|tipo\s+[aá]ver|suene\s+(a|como)|referenci)/i.test(
+    /\b(qu[eé]\s+(le\s+)?falta|c[oó]mo\s+(hacerlo|dejarlo|ponerlo)|para\s+que\s+(est[eé]|suene|quede)|suene\s+(a|como)|referenci)/i.test(
       t,
     )
   return (isProjectAuditIntent(text) || wantsGap) && hasStyleReference(text)
@@ -363,7 +389,7 @@ export function modePromptBlock(mode: AgentMode): string {
       'Puedes usar herramientas read-only durante el razonamiento interno (midi.notes.get, midi.getClipSummary, doc.read).',
       'Criterio de productor: mira BPM, compás, inicio/duración de cada clip en beats, densidad de notas, solapes/duplicados, notas fuera del clip, vacíos, y si el timing rítmico cuadra con el grid.',
       'Si pide «analiza / qué arreglar / qué le falta»: lista problemas o gaps concretos con pista/clip/beats (datos del contexto), prioridad, y qué harías — sin inventar una canción nueva ni melodiar desde cero.',
-      'Si pide comparar con un artista/estilo (worship, Averill/Averly Morillo, etc.): usa <<<READ web.search>>> en razonamiento; responde gap analysis (qué tiene YA la pista vs qué falta), NO un plan de producción de varios días ni musicBuild.',
+      'Si pide comparar con un artista/estilo/género de referencia: usa <<<READ web.search>>> en razonamiento; responde gap analysis (qué tiene YA la pista vs qué falta), NO un plan de producción de varios días ni musicBuild.',
       'Si pide investigar en internet: OBLIGATORIO web.search antes de concluir.',
       'Respuesta clara en español; cita datos reales (pistas, BPM, clips, tiempos) y hallazgos web si aplica.',
       'PROHIBIDO spamear ¡¡¡, «¡Entendido!» vacío, o cronogramas «Fase 1 (1-2 días)».',

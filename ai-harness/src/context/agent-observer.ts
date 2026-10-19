@@ -3,6 +3,7 @@ import { getStateRevision } from '@jaswave/shared'
 import { getSelectedClipId, getSelectedTrackId } from '../ask/selection'
 import { composeAgentTurnContext, formatAgentContextForPrompt } from './compose-agent-context'
 import type { AgentLoopToolResult, AgentObservation, AgentObserveIntent } from '../loop/agent-run-types'
+import { wrapUntrustedToolResult } from '../agent/untrusted'
 
 export type ObservationRequest = {
   state: DAWState
@@ -32,12 +33,15 @@ function formatResults(results: AgentLoopToolResult[]): string {
     const data = r.data != null ? ` data=${JSON.stringify(r.data).slice(0, 400)}` : ''
     return `- ${r.tool} [${r.status}]${err}${data}`
   })
+  // Los datos devueltos por herramientas son NO confiables (pueden venir de la web).
+  const block = wrapUntrustedToolResult('agent.loop', lines.join('\n'), 8_000)
   if (failed.length) {
-    lines.unshift(
+    return [
       `⚠ ${failed.length} tool(s) FALLARON — debes corregirlas (otro tool-call) o type:fail. PROHIBIDO type:complete.`,
-    )
+      block,
+    ].join('\n')
   }
-  return lines.join('\n')
+  return block
 }
 
 export function observeAgentContext(req: ObservationRequest): AgentObservation {

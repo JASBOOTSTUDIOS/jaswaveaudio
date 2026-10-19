@@ -1,8 +1,10 @@
 import type { DAWState } from '@jaswave/shared'
 import {
   AGENT_READ_ONLY_ACTIONS,
+  agentActionClassOfType,
   isDestructiveAction,
   isMutatingAction,
+  isSystemAction,
 } from '../agent/action-policy'
 import type { AgentLoopToolCall } from '../loop/agent-run-types'
 import { trackIdExists } from '../context/agent-observer'
@@ -80,6 +82,11 @@ export function validateAgentToolCalls(
     }
     if (!known.has(c.tool) && !isSyntheticReadTool(c.tool)) {
       rejected.push({ ...c, reason: `Herramienta no registrada: ${c.tool}` })
+      continue
+    }
+
+    if (!isSyntheticReadTool(c.tool) && !agentActionClassOfType(c.tool)) {
+      rejected.push({ ...c, reason: `Herramienta sin clase de riesgo (bloqueada): ${c.tool}` })
       continue
     }
 
@@ -164,6 +171,10 @@ export function validateAgentToolCalls(
     const normalized = { ...c, arguments: args }
     const fakeAction = { type: c.tool, payload: args }
     if (opts.requireConfirmationForDangerous && isDestructiveAction(fakeAction)) {
+      needsConfirmation = true
+    }
+    // Sistema (disco, dispositivo, proyecto nuevo, bounce): confirmación SIEMPRE.
+    if (isSystemAction(fakeAction)) {
       needsConfirmation = true
     }
     if (opts.requireConfirmationForWrites && isMutatingAction(fakeAction)) {

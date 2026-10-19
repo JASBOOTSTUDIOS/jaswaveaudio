@@ -114,15 +114,16 @@ describe('ai-action-policy', () => {
     assert.ok(part.destructive.length >= 2)
   })
 
-  it('FULL_AUTONOMY no pide confirmación en destructivas', () => {
+  it('FULL_AUTONOMY no pide confirmación en writes, pero SÍ en destructivas/sistema/sin clase', () => {
     permissionManager.setUserConfig(
       { level: 'FULL_AUTONOMY', overrides: [], allowUnsafeTools: false },
       'user',
     )
-    assert.equal(
-      needsPermissionConfirm({ type: 'track.delete', payload: { trackId: 'a' } }),
-      false,
-    )
+    assert.equal(needsPermissionConfirm({ type: 'track.toggleMute', payload: { trackId: 'a' } }), false)
+    assert.equal(needsPermissionConfirm({ type: 'track.delete', payload: { trackId: 'a' } }), true)
+    assert.equal(needsPermissionConfirm({ type: 'project.new', payload: {} }), true)
+    assert.equal(needsPermissionConfirm({ type: 'render.start', payload: {} }), true)
+    assert.equal(needsPermissionConfirm({ type: 'nope.unknown', payload: {} }), true)
     permissionManager.setUserConfig(
       { level: 'CONFIRM', overrides: [], allowUnsafeTools: false },
       'user',

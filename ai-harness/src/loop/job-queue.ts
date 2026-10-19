@@ -27,6 +27,13 @@ export type AgentJobQueueStore = {
   abort: AbortController | null
   listeners: Set<() => void>
   resolvePlanMarkdown?: PlanMarkdownResolver
+  /**
+   * Época: se incrementa en cada cancelación. Un runner abortado que termina tarde
+   * compara su época y no pisa el estado del job nuevo.
+   */
+  epoch: number
+  /** true mientras un drain está activo (drain exclusivo: nunca dos a la vez). */
+  draining: boolean
 }
 
 export function createAgentJobQueueStore(): AgentJobQueueStore {
@@ -36,11 +43,19 @@ export function createAgentJobQueueStore(): AgentJobQueueStore {
     runner: null,
     abort: null,
     listeners: new Set(),
+    epoch: 0,
+    draining: false,
   }
 }
 
 function emit(store: AgentJobQueueStore): void {
-  for (const l of store.listeners) l()
+  for (const l of [...store.listeners]) {
+    try {
+      l()
+    } catch {
+      /* un listener roto no debe tumbar la cola */
+    }
+  }
 }
 
 export function subscribeAgentJobs(store: AgentJobQueueStore, fn: () => void): () => void {
@@ -75,7 +90,10 @@ export function enqueueAgentJob(store: AgentJobQueueStore, kind: AgentJobKind, p
 }
 
 export function cancelAgentJobs(store: AgentJobQueueStore): void {
+  store.epoch += 1
   store.abort?.abort()
+  store.abort = null
+  for (const j of store.queue) j.status = 'cancelled'
   store.queue = []
   if (store.running) store.running.status = 'cancelled'
   store.running = null
@@ -92,24 +110,46 @@ export function planHasPendingTasks(
 }
 
 export async function drainAgentJobQueue(store: AgentJobQueueStore): Promise<void> {
-  if (store.running || !store.runner) return
-  const next = store.queue.shift()
-  if (!next) return
-  store.running = next
-  next.status = 'running'
-  store.abort = new AbortController()
-  emit(store)
+  // Drain exclusivo: si ya hay uno activo (o un job corriendo), ese drain recogerá la cola.
+  if (store.draining || store.running || !store.runner) return
+  store.draining = true
   try {
-    await store.runner(next, store.abort.signal)
-    next.status = 'done'
-  } catch (e) {
-    next.status = 'failed'
-    next.error = e instanceof Error ? e.message : String(e)
+    for (;;) {
+      if (store.running || !store.runner) return
+      const next = store.queue.shift()
+      if (!next) return
+      const epoch = store.epoch
+      const controller = new AbortController()
+      store.running = next
+      store.abort = controller
+      next.status = 'running'
+      emit(store)
+      try {
+        await store.runner(next, controller.signal)
+        if (next.status === 'running') next.status = controller.signal.aborted ? 'cancelled' : 'done'
+      } catch (e) {
+        if (next.status === 'running') {
+          if (controller.signal.aborted) {
+            next.status = 'cancelled'
+          } else {
+            next.status = 'failed'
+            next.error = e instanceof Error ? e.message : String(e)
+          }
+        }
+      } finally {
+        // Solo limpiar si seguimos siendo el job vigente (no hubo cancel + job nuevo).
+        if (store.epoch === epoch && store.running === next) {
+          store.running = null
+          store.abort = null
+        } else if (store.running === next) {
+          store.running = null
+        }
+        emit(store)
+      }
+    }
   } finally {
-    store.running = null
-    store.abort = null
-    emit(store)
-    if (store.queue.length) void drainAgentJobQueue(store)
+    store.draining = false
+    if (store.queue.length && !store.running) void drainAgentJobQueue(store)
   }
 }
 

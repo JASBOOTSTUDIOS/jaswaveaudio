@@ -89,7 +89,7 @@ function inferIntroEndBeats(text: string, clipDur: number): number {
     const n = Number(bars[1])
     if (n >= 2 && n <= 32) return Math.min(clipDur, n * 4)
   }
-  // Default worship: intro 8 compases
+  // Por defecto: intro de 8 compases
   return Math.min(clipDur, 32)
 }
 
@@ -205,8 +205,8 @@ export function buildMidiClipEditActions(
     /\b(pads?|agrega(r)?\s+.*pad|a[nñ]ade(r)?\s+.*pad|otros\s+pads?|m[aá]s\s+pads?|capas?\s+ambient)\b/i.test(
       lower,
     )
-  const wantsWorshipFeel =
-    /\b(worship|aver+y|averill|morillo|ghost|estilo)\b/i.test(lower)
+  // Pedido de feel/estilo genérico (la referencia concreta la aporta el usuario).
+  const wantsStyleFeel = /\b(ghost|estilo|feel|groove|sensaci[oó]n)\b/i.test(lower)
 
   if (drum && drumClip) {
     const dur = Math.max(0, Number(drumClip.duracion ?? 0))
@@ -261,7 +261,7 @@ export function buildMidiClipEditActions(
           })
         }
       }
-    } else if (wantsSoft || wantsWorshipFeel) {
+    } else if (wantsSoft || wantsStyleFeel) {
       const softened = softenVelocities(existing, wantsSoft ? 0.7 : 0.85)
       // Reducir densificación leve: quitar algunos hats cerrados en offbeats si hay demasiados
       const thinned =

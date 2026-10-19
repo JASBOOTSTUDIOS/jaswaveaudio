@@ -153,7 +153,7 @@ export function MixAnalyzerPanel() {
     try {
       const results = await executeDawActions(tienda, [
         { type: 'audio.ensureBest', payload: { preferName: 'UMC' } },
-      ])
+      ], { source: 'user_build' })
       setMsg(results[0]?.message || 'Audio actualizado')
     } catch (err) {
       setMsg(err instanceof Error ? err.message : String(err))

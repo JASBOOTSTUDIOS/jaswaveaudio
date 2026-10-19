@@ -4,6 +4,12 @@ import { parseAgentDecisionFromText } from '../recovery/parse-agent-decision'
 import { isLoopReadTool, validateAgentToolCalls } from './validate-tool-calls'
 import { isProjectWipeIntent, wantsFullProject } from '../agent/modes'
 import type { DAWState } from '@jaswave/shared'
+import {
+  formatAgentBudgetStopFor,
+  resolveAgentBudgetTracker,
+  type AgentBudget,
+  type AgentBudgetTracker,
+} from '../agent/budget'
 
 export type AgentLoopDeps = {
   userText: string
@@ -22,6 +28,8 @@ export type AgentLoopDeps = {
   resume?: AgentLoopResume
   /** Compromiso del razonamiento previo (no repetir capas 1/N). */
   priorBrief?: string
+  /** Presupuesto compartido del turno (o límites parciales). Sin valor → defaults. */
+  budget?: AgentBudgetTracker | Partial<AgentBudget>
 }
 
 function emit(deps: AgentLoopDeps, name: AgentRunEventName, payload: Record<string, unknown>): void {
@@ -127,6 +135,7 @@ export async function runAgentLoop(deps: AgentLoopDeps): Promise<AgentRunResult>
       : {}),
     ...deps.limits,
   }
+  const tracker = resolveAgentBudgetTracker(deps.budget)
   const decisions: AgentDecision[] = [...(deps.resume?.decisions ?? [])]
   let results: AgentLoopToolResult[] = [...(deps.resume?.results ?? [])]
   let iterations = deps.resume?.iterations ?? 0
@@ -180,11 +189,21 @@ export async function runAgentLoop(deps: AgentLoopDeps): Promise<AgentRunResult>
 
     setStatus(deps, 'planning')
     const openFails = unresolvedFailures(results)
-    let raw = await deps.chat(
-      formatObservationPrompt(observation, deps.userText, iterations, deps.priorBrief, openFails),
-      observation,
-      iterations,
-    )
+    const prompt = formatObservationPrompt(observation, deps.userText, iterations, deps.priorBrief, openFails)
+    const budgetStop = tracker.tryCharge(prompt.length + observation.text.length)
+    if (budgetStop) {
+      setStatus(deps, 'failed')
+      emit(deps, EventosIAExt.runCompletado as AgentRunEventName, { ok: false, budget: budgetStop })
+      return {
+        status: 'failed',
+        summary: formatAgentBudgetStopFor(tracker, budgetStop),
+        iterations,
+        results,
+        decisions,
+        lastObservation: observation,
+      }
+    }
+    let raw = await deps.chat(prompt, observation, iterations)
     if (deps.abort?.aborted) {
       setStatus(deps, 'cancelled')
       emit(deps, EventosIAExt.runCancelado as AgentRunEventName, { iterations })
@@ -192,14 +211,12 @@ export async function runAgentLoop(deps: AgentLoopDeps): Promise<AgentRunResult>
     }
 
     let decision = parseAgentDecisionFromText(raw)
-    if (!decision && parseRetries < 1) {
+    if (!decision && parseRetries < 1 && !tracker.exceeded()) {
       parseRetries += 1
       setStatus(deps, 'planning')
-      raw = await deps.chat(
-        formatRepairPrompt(deps.userText, deps.priorBrief, raw),
-        observation,
-        iterations,
-      )
+      const repairPrompt = formatRepairPrompt(deps.userText, deps.priorBrief, raw)
+      tracker.tryCharge(repairPrompt.length + observation.text.length)
+      raw = await deps.chat(repairPrompt, observation, iterations)
       if (deps.abort?.aborted) {
         setStatus(deps, 'cancelled')
         emit(deps, EventosIAExt.runCancelado as AgentRunEventName, { iterations })

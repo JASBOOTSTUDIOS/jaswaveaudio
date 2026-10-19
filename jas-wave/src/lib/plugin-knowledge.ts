@@ -264,7 +264,7 @@ const GENRE_ROLES: Record<string, InstrumentRole[]> = {
 
 export function inferGenreRoles(text: string): InstrumentRole[] {
   const t = text.toLowerCase()
-  if (/worship|alabanza|adoraci[oó]n|hillsong|bethel|elevation/.test(t)) return GENRE_ROLES.worship!
+  if (/worship|alabanza|adoraci[oó]n/.test(t)) return GENRE_ROLES.worship!
   if (/gospel/.test(t)) return GENRE_ROLES.gospel!
   if (/metal|djent/.test(t)) return GENRE_ROLES.metal!
   if (/rock|indie/.test(t)) return GENRE_ROLES.rock!
@@ -272,7 +272,7 @@ export function inferGenreRoles(text: string): InstrumentRole[] {
   if (/trap/.test(t)) return GENRE_ROLES.trap!
   if (/hip\s*hop|rap/.test(t)) return GENRE_ROLES.hiphop!
   if (/jazz/.test(t)) return GENRE_ROLES.jazz!
-  if (/bachata|prince\s*royce|merengue/.test(t)) return GENRE_ROLES.bachata!
+  if (/bachata|merengue/.test(t)) return GENRE_ROLES.bachata!
   if (/latin|salsa|cumbia|reggaet/.test(t)) return GENRE_ROLES.latin!
   if (/orquest|cinem|film|trailer/.test(t)) return GENRE_ROLES.orchestral!
   if (/balad|ballad|piano suave/.test(t)) return GENRE_ROLES.ballad!

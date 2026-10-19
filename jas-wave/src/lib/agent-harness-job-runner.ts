@@ -7,6 +7,8 @@ import {
   peekHarnessJobContext,
   runHarnessUntilPlanComplete as runHarnessUntilPlanCompleteCore,
   stashHarnessJobContext as stashHarnessJobContextCore,
+  type AgentBudget,
+  type AgentBudgetTracker,
   type HarnessJobContext,
   type PlanEvaluation,
 } from '@jaswave/ai-harness'
@@ -30,6 +32,8 @@ export type HarnessJobRunnerDeps = {
   buildSystemPrompt: (state: DAWState, userText: string) => string
   onProgress?: (phase: string) => void
   afterHarnessTurn?: (results: ActionResult[], raw?: string) => PlanEvaluation | null
+  /** Presupuesto del job (defaults del harness si se omite). */
+  budget?: AgentBudgetTracker | Partial<AgentBudget>
 }
 
 const jobCtxStore = createHarnessJobContextStore()
@@ -72,6 +76,7 @@ export async function runHarnessUntilPlanComplete(
       afterHarnessTurn: deps.afterHarnessTurn,
       planHasPending: () => planHasPendingTasks(projectId),
       shouldContinue: (evaluation) => shouldContinueHarness(projectId, evaluation),
+      budget: deps.budget,
     },
     signal,
     jobCtx,

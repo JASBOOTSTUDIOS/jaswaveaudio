@@ -2,7 +2,13 @@
  * Puente jas-wave ↔ bucle de razonamiento profundo (@jaswave/ai-harness).
  */
 
-import type { AgentMode, ReasoningChatTurn, ReasoningStep } from '@jaswave/ai-harness'
+import type {
+  AgentBudget,
+  AgentBudgetTracker,
+  AgentMode,
+  ReasoningChatTurn,
+  ReasoningStep,
+} from '@jaswave/ai-harness'
 import {
   isReadOnlyAction,
   runCouncilReviewReasoning,
@@ -44,6 +50,8 @@ export async function runAgentReasoningForTurn(opts: {
   chatFn?: (messages: ReasoningChatTurn[]) => Promise<{ success: boolean; content?: string }>
   /** Pausa entre fases LLM (ms) — gateways cloud (Kilo Code) necesitan más espacio. */
   paceBetweenPhasesMs?: number
+  /** Presupuesto compartido del turno (defaults si se omite). */
+  budget?: AgentBudgetTracker | Partial<AgentBudget>
 }): Promise<{
   steps: StoredReasoningStep[]
   finalUserMessage: string
@@ -94,6 +102,7 @@ export async function runAgentReasoningForTurn(opts: {
     runReadTools,
     abort: opts.abort,
     paceBetweenPhasesMs: opts.paceBetweenPhasesMs,
+    budget: opts.budget,
     onDepthPlan: ({ depth, reason, source, canonicalPrompt }) => {
       if (depth <= 0) {
         opts.onPhaseLabel?.('Traduciendo pedido…')
@@ -152,6 +161,8 @@ export async function runCouncilReviewForTurn(opts: {
   abort?: AbortSignal
   chatFn?: (messages: ReasoningChatTurn[]) => Promise<{ success: boolean; content?: string }>
   paceBetweenPhasesMs?: number
+  /** Presupuesto compartido del turno (defaults si se omite). */
+  budget?: AgentBudgetTracker | Partial<AgentBudget>
 }): Promise<{
   steps: StoredReasoningStep[]
   finalUserMessage: string
@@ -195,6 +206,7 @@ export async function runCouncilReviewForTurn(opts: {
     runReadTools,
     abort: opts.abort,
     paceBetweenPhasesMs: opts.paceBetweenPhasesMs,
+    budget: opts.budget,
     onDepthPlan: ({ depth }) => {
       opts.onPhaseLabel?.(
         depth >= 4

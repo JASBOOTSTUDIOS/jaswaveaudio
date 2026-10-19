@@ -207,56 +207,44 @@ export function extractStyleProfile(clip: MidiClip, opts: ExtractStyleOpts): Sty
   return profile
 }
 
-/** Seed Firmthm / Mesías (worship coro denso) — sin MIDI. */
-export function seedMesiasWorshipDrumProfile(): StyleProfile {
-  const kickGrid16 = emptyGrid()
-  // 1, 1&, 2&, 3, 3&, 4& → steps 0, 2, 6, 8, 10, 14
-  for (const s of [0, 2, 6, 8, 10, 14]) kickGrid16[s] = 1
-  const snareGrid16 = emptyGrid()
-  snareGrid16[4] = 1
-  snareGrid16[12] = 1
-  const now = Date.now()
-  const stats: StyleKitStats = {
-    kick: 48,
-    snare: 24,
-    snareGhost: 16,
-    hatClosed: 56,
-    hatOpen: 8,
-    crash: 4,
-    ride: 0,
-    tom: 4,
-    other: 0,
-    total: 160,
-    avgVel: 88,
-    kickGrid16,
-    snareGrid16,
+/**
+ * Construye un StyleProfile desde un preset JSON (p. ej. presets/*.example.json).
+ * Los presets son OPCIONALES: nada los instala por defecto; el usuario decide añadirlos.
+ * Valida lo mínimo para no meter basura en el catálogo.
+ */
+export function styleProfileFromPreset(raw: unknown, now: number = Date.now()): StyleProfile {
+  if (!raw || typeof raw !== 'object') throw new Error('Preset de estilo inválido')
+  const r = raw as Partial<StyleProfile> & Record<string, unknown>
+  const id = String(r.id ?? '').trim()
+  const nombre = String(r.nombre ?? '').trim()
+  if (!id || !nombre) throw new Error('Preset de estilo sin id/nombre')
+  const stats = r.stats as StyleKitStats | undefined
+  if (!stats || !Array.isArray(stats.kickGrid16) || !Array.isArray(stats.snareGrid16)) {
+    throw new Error(`Preset «${nombre}» sin stats válidas`)
   }
+  const bpm = Number(r.bpm)
   const profile: StyleProfile = {
-    id: 'style-seed-mesias-firmthm-drums',
-    nombre: 'Mesías / Firmthm — coro drums',
-    rol: 'drums',
-    tags: ['worship', 'averly', 'mesias', 'firmthm', 'full', 'drums'],
-    bpm: 72,
-    feel: 'full',
-    groove: {
-      id: 'mesias-chorus',
-      nombre: 'Mesías coro',
-      stepBeats: 0.25,
-      steps: Array.from({ length: 16 }, (_, i) => ({
-        timing: 0,
-        velocity: [0, 4, 8, 12].includes(i) ? 6 : i % 2 === 0 ? 2 : -4,
-      })),
+    id,
+    nombre,
+    rol: inferStyleRole(undefined, typeof r.rol === 'string' ? r.rol : undefined),
+    tags: Array.isArray(r.tags) ? r.tags.map(String) : [],
+    bpm: Number.isFinite(bpm) && bpm >= 20 && bpm <= 300 ? bpm : 120,
+    feel: (r.feel as StyleFeel) ?? 'full',
+    groove: r.groove as StyleProfile['groove'],
+    stats: {
+      ...stats,
+      kickGrid16: [...stats.kickGrid16].slice(0, 16),
+      snareGrid16: [...stats.snareGrid16].slice(0, 16),
     },
-    stats,
-    motifContour: {
+    motifContour: (r.motifContour as StyleProfile['motifContour']) ?? {
       intervals: [],
       rhythm16: [],
-      pitchMin: 36,
-      pitchMax: 49,
-      notesPerBar: 18,
+      pitchMin: 0,
+      pitchMax: 127,
+      notesPerBar: 0,
     },
-    sectionHints: ['dense', 'dense', 'dense', 'dense'],
-    source: { clipName: 'seed' },
+    sectionHints: Array.isArray(r.sectionHints) ? (r.sectionHints as StyleProfile['sectionHints']) : [],
+    source: (r.source as StyleProfile['source']) ?? { clipName: 'preset' },
     summaryText: '',
     scope: 'global',
     createdAt: now,

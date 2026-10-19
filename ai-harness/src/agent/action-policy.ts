@@ -5,40 +5,231 @@
 import type { HarnessDawAction } from '../types/actions'
 import { modeBlocksMutation, wantsFullProject, type AgentMode } from './modes'
 
-export const AGENT_READ_ONLY_ACTIONS = new Set([
-  'plugin.lookup',
-  'plugin.probe',
-  'library.preset.list',
-  'library.preset.search',
-  'style.profile.list',
-  'style.profile.search',
-  'doc.evaluate',
-  'doc.read',
-  'doc.list',
-  'analysis.loudness',
-  'analysis.compareTarget',
-  'analysis.spectrum',
-  'analysis.stereo',
-  'analysis.fullReport',
-  'analysis.timing',
-  'analysis.buffer',
-  'analysis.fxBlame',
-  'render.getStatus',
-  'track.getFxChain',
-  'web.search',
-  'library.preset.listGlobal',
-  'library.preset.searchGlobal',
-  'midi.notes.get',
-  'midi.getNotes',
-  'midi.getClipSummary',
-  'midi.clip.md.read',
-  'midi.notes.compare',
-  'selection.get',
-  'project.getSummary',
-  'track.list',
-])
+/**
+ * Clase de riesgo de cada acción que el agente puede emitir (fail closed):
+ * - read: solo lectura (se ejecuta sin confirmación, también en research del razonamiento).
+ * - write: muta el proyecto de forma deshacible (undo) — confirmación según autonomía.
+ * - destructive: borra contenido — SIEMPRE requiere confirmación del usuario.
+ * - system: efectos fuera del proyecto (disco, dispositivo de audio, proyecto nuevo, bounce,
+ *   importaciones) — SIEMPRE requiere confirmación del usuario.
+ * Un tipo que no esté aquí no tiene clase → se bloquea y se registra.
+ */
+export type AgentActionClass = 'read' | 'write' | 'destructive' | 'system'
 
-export const AGENT_DOCS_WRITE_ACTIONS = new Set(['doc.create', 'doc.write', 'doc.append'])
+export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = Object.freeze({
+  // ── Lectura ─────────────────────────────────────────────
+  'plugin.lookup': 'read',
+  'plugin.probe': 'read',
+  'plugin.listParameters': 'read',
+  'plugin.searchParameters': 'read',
+  'plugin.getParameter': 'read',
+  'library.preset.list': 'read',
+  'library.preset.search': 'read',
+  'library.preset.listGlobal': 'read',
+  'library.preset.searchGlobal': 'read',
+  'style.profile.list': 'read',
+  'style.profile.search': 'read',
+  'doc.evaluate': 'read',
+  'doc.read': 'read',
+  'doc.list': 'read',
+  'analysis.loudness': 'read',
+  'analysis.compareTarget': 'read',
+  'analysis.spectrum': 'read',
+  'analysis.stereo': 'read',
+  'analysis.fullReport': 'read',
+  'analysis.timing': 'read',
+  'analysis.buffer': 'read',
+  'analysis.fxBlame': 'read',
+  'render.getStatus': 'read',
+  'track.getFxChain': 'read',
+  'web.search': 'read',
+  'midi.notes.get': 'read',
+  'midi.getNotes': 'read',
+  'midi.getClipSummary': 'read',
+  'midi.clip.md.read': 'read',
+  'midi.notes.compare': 'read',
+  'selection.get': 'read',
+  'project.getSummary': 'read',
+  'track.list': 'read',
+  'audio.listDevices': 'read',
+  'audio.getDevice': 'read',
+
+  // ── Escritura (deshacible) ──────────────────────────────
+  'doc.create': 'write',
+  'doc.write': 'write',
+  'doc.append': 'write',
+  'project.setBpm': 'write',
+  'project.setTimeSignature': 'write',
+  'project.update': 'write',
+  'ui.setZoom': 'write',
+  'track.create': 'write',
+  'track.move': 'write',
+  'track.update': 'write',
+  'track.toggleMute': 'write',
+  'track.toggleSolo': 'write',
+  'track.toggleArm': 'write',
+  'track.freeze': 'write',
+  'track.unfreeze': 'write',
+  'transport.toggle': 'write',
+  'transport.stop': 'write',
+  'transport.toggleLoop': 'write',
+  'transport.toggleMetronome': 'write',
+  'transport.toggleRecord': 'write',
+  'transport.togglePunch': 'write',
+  'transport.toggleCountIn': 'write',
+  'transport.seek': 'write',
+  'transport.setRecordMode': 'write',
+  'master.update': 'write',
+  'clip.create': 'write',
+  'clip.split': 'write',
+  'clip.merge': 'write',
+  'clip.resize': 'write',
+  'clip.move': 'write',
+  'midi.clip.splitIntoSections': 'write',
+  'midi.notes.set': 'write',
+  'midi.notes.patch': 'write',
+  'midi.clip.create': 'write',
+  'midi.transpose': 'write',
+  'midi.quantize': 'write',
+  'midi.humanize': 'write',
+  'midi.setVelocity': 'write',
+  'midi.createNotes': 'write',
+  'midi.notes.dedupe': 'write',
+  'midi.clip.md.upsert': 'write',
+  'midi.clip.md.apply': 'write',
+  'midi.makeStaccato': 'write',
+  'midi.makeLegato': 'write',
+  'midi.repeatPattern': 'write',
+  'midi.reverse': 'write',
+  'midi.invert': 'write',
+  'midi.timeStretch': 'write',
+  'midi.constrainScale': 'write',
+  'midi.generatePattern': 'write',
+  'midi.applyGroove': 'write',
+  'midi.setCC': 'write',
+  'midi.setPitchBend': 'write',
+  'plugin.insert': 'write',
+  'plugin.move': 'write',
+  'plugin.bypass': 'write',
+  'plugin.duplicate': 'write',
+  'plugin.replace': 'write',
+  'plugin.setParameter': 'write',
+  'plugin.snapshotState': 'write',
+  'fxChain.copy': 'write',
+  'fxChain.paste': 'write',
+  'fxChain.loadPreset': 'write',
+  'fxChain.savePreset': 'write',
+  'automation.setCurve': 'write',
+  'automation.writePoint': 'write',
+  'bus.create': 'write',
+  'send.set': 'write',
+  'sidechain.connect': 'write',
+  'take.folder.ensure': 'write',
+  'take.add': 'write',
+  'take.rename': 'write',
+  'take.preview': 'write',
+  'comp.segment.set': 'write',
+  'reference.toggleAB': 'write',
+  'library.preset.save': 'write',
+  'library.preset.saveGlobal': 'write',
+  'library.preset.promote': 'write',
+  'library.preset.apply': 'write',
+  'library.preset.audition': 'write',
+  'library.preset.saveFxChainGlobal': 'write',
+  'style.profile.saveFromClip': 'write',
+  'style.profile.apply': 'write',
+  'audio.armNative': 'write',
+  'daw.musicBuild': 'write',
+  'daw.composeProject': 'write',
+  'daw.generateMidiSong': 'write',
+  'daw.masterPass': 'write',
+
+  // ── Destructivas (borran contenido) ─────────────────────
+  'track.delete': 'destructive',
+  'clip.delete': 'destructive',
+  'plugin.remove': 'destructive',
+  'midi.deleteNotes': 'destructive',
+  'daw.wipeProject': 'destructive',
+  'automation.clear': 'destructive',
+  'take.delete': 'destructive',
+  'comp.segment.clear': 'destructive',
+
+  // ── Sistema (fuera del proyecto / disco / dispositivo) ──
+  'project.new': 'system',
+  'project.save': 'system',
+  'project.saveAs': 'system',
+  'audio.setDevice': 'system',
+  'audio.ensureBest': 'system',
+  'audio.clearQuarantine': 'system',
+  'audio.import': 'system',
+  'reference.import': 'system',
+  'render.start': 'system',
+  'render.cancel': 'system',
+  'score.exportClip': 'system',
+  'score.exportProject': 'system',
+})
+
+/** Claves de payload que indican una ruta de disco (plugin.insert con path → system). */
+const PATH_PAYLOAD_KEYS = ['path', 'ruta', 'filePath', 'pluginPath', 'vstPath', 'dllPath']
+
+function payloadHasPath(p: Record<string, unknown>): boolean {
+  for (const k of PATH_PAYLOAD_KEYS) {
+    if (typeof p[k] === 'string' && String(p[k]).trim()) return true
+  }
+  const plugin = p.plugin
+  if (plugin && typeof plugin === 'object') {
+    const pl = plugin as Record<string, unknown>
+    for (const k of PATH_PAYLOAD_KEYS) {
+      if (typeof pl[k] === 'string' && String(pl[k]).trim()) return true
+    }
+  }
+  return false
+}
+
+/** Clase estática (por tipo) — undefined = sin clasificar (fail closed). */
+export function agentActionClassOfType(type: string): AgentActionClass | undefined {
+  return Object.prototype.hasOwnProperty.call(AGENT_ACTION_CLASSES, type)
+    ? AGENT_ACTION_CLASSES[type]
+    : undefined
+}
+
+/** Clase efectiva teniendo en cuenta el payload (notas vacías, rutas de disco…). */
+export function agentActionClass(action: AgentAction): AgentActionClass | undefined {
+  const base = agentActionClassOfType(action.type)
+  if (!base) return undefined
+  const p = payloadOfAction(action)
+  if (action.type === 'plugin.insert' && payloadHasPath(p)) return 'system'
+  if (action.type === 'midi.notes.set') {
+    const notas = p.notas ?? p.notes
+    if (Array.isArray(notas) && notas.length === 0) return 'destructive'
+  }
+  return base
+}
+
+export function isClassifiedAction(action: AgentAction): boolean {
+  return agentActionClassOfType(action.type) !== undefined
+}
+
+/** Destructivas y de sistema: siempre requieren confirmación explícita del usuario. */
+export function actionAlwaysNeedsConfirm(action: AgentAction): boolean {
+  const c = agentActionClass(action)
+  return c === 'destructive' || c === 'system' || c === undefined
+}
+
+/** Tipos sin clasificar dentro de una lista (para tests / auditoría). */
+export function unclassifiedActionTypes(types: Iterable<string>): string[] {
+  const out: string[] = []
+  for (const t of types) if (!agentActionClassOfType(t)) out.push(t)
+  return out
+}
+
+export const AGENT_READ_ONLY_ACTIONS: ReadonlySet<string> = new Set(
+  Object.entries(AGENT_ACTION_CLASSES)
+    .filter(([, c]) => c === 'read')
+    .map(([t]) => t),
+)
+
+export const AGENT_DOCS_WRITE_ACTIONS: ReadonlySet<string> = new Set(['doc.create', 'doc.write', 'doc.append'])
 
 export type AgentAction = HarnessDawAction
 
@@ -89,25 +280,16 @@ export function isMutatingAction(action: AgentAction): boolean {
 }
 
 export function isDestructiveAction(action: AgentAction): boolean {
-  const t = action.type
-  if (t === 'track.delete' || t === 'clip.delete' || t === 'plugin.remove') return true
-  if (t === 'daw.wipeProject') return true
-  if (t === 'midi.deleteNotes') return true
-  if (t === 'midi.notes.set') {
-    const notas = payloadOfAction(action).notas
-    if (Array.isArray(notas) && notas.length === 0) return true
-  }
-  return false
+  return agentActionClass(action) === 'destructive'
+}
+
+/** Acción con efectos fuera del proyecto (disco, dispositivo, proyecto nuevo, bounce…). */
+export function isSystemAction(action: AgentAction): boolean {
+  return agentActionClass(action) === 'system'
 }
 
 export function isDestructiveToolName(tool: string): boolean {
-  return (
-    tool === 'track.delete' ||
-    tool === 'clip.delete' ||
-    tool === 'plugin.remove' ||
-    tool === 'midi.deleteNotes' ||
-    tool === 'daw.wipeProject'
-  )
+  return agentActionClassOfType(tool) === 'destructive'
 }
 
 /**
@@ -182,11 +364,16 @@ export function batchNeedsDestructiveConfirm(actions: AgentAction[], userText = 
   return deletes.length >= 2 || actions.some(isDestructiveAction)
 }
 
+/**
+ * Riesgo para permisos/UI. Destructivas, de sistema y sin clasificar → 'dangerous'.
+ */
 export function actionRiskLevel(action: AgentAction): 'read' | 'write' | 'dangerous' {
+  const cls = agentActionClass(action)
+  if (cls === undefined) return 'dangerous'
+  if (cls === 'destructive' || cls === 'system') return 'dangerous'
   if (isReadOnlyAction(action) || isDocsWriteAction(action) || isPreviewOnlyAction(action)) {
     return 'read'
   }
-  if (isDestructiveAction(action)) return 'dangerous'
   return 'write'
 }
 
@@ -285,7 +472,7 @@ export function musicBuildHintsFromUserText(userText: string): Record<string, un
     if (mins[2] != null) out.minutos = Number(mins[1]) + Number(mins[2]) / 60
     else out.minutos = Number(String(mins[1]).replace(',', '.'))
   }
-  if (/\bbachata\b/.test(t) || /\bprince\s*royce\b/.test(t)) {
+  if (/\bbachata\b/.test(t)) {
     out.genero = 'bachata'
     // Bachata real ~118–130. 60–80 es half-time (error frecuente del LLM).
     if (out.bpm == null || Number(out.bpm) < 100 || Number(out.bpm) > 160) out.bpm = 125
@@ -316,7 +503,10 @@ export function isSoloMusicBuildPending(actions: AgentAction[]): boolean {
 export type ActionPartition = {
   readonly: AgentAction[]
   mutating: AgentAction[]
+  /** Requieren confirmación del usuario (destructivas, sistema, permisos, lote «borra todo»). */
   destructive: AgentAction[]
+  /** Sin clase de riesgo conocida: no se ejecutan nunca (fail closed). */
+  blocked: AgentAction[]
 }
 
 export function partitionActions(
@@ -327,19 +517,58 @@ export function partitionActions(
   const readonly: AgentAction[] = []
   const mutating: AgentAction[] = []
   const destructive: AgentAction[] = []
+  const blocked: AgentAction[] = []
   const forceConfirm = batchNeedsDestructiveConfirm(actions, userText)
 
   for (const a of actions) {
+    if (!isClassifiedAction(a)) {
+      blocked.push(a)
+      continue
+    }
     if (isReadOnlyAction(a) || isPreviewOnlyAction(a)) {
       readonly.push(a)
       continue
     }
-    const needsConfirm = forceConfirm || isDestructiveAction(a) || needsPermissionConfirm(a)
+    const needsConfirm =
+      forceConfirm || actionAlwaysNeedsConfirm(a) || needsPermissionConfirm(a)
     if (needsConfirm) {
       destructive.push(a)
       continue
     }
     mutating.push(a)
   }
-  return { readonly, mutating, destructive }
+  return { readonly, mutating, destructive, blocked }
+}
+
+export type AgentActionGateDecision =
+  | { allow: true; cls: AgentActionClass }
+  | { allow: false; cls: AgentActionClass | undefined; reason: 'unclassified' | 'needs-confirmation'; message: string }
+
+/**
+ * Puerta de ejecución (defensa en profundidad, justo antes de ejecutar):
+ * - sin clase → bloqueada siempre;
+ * - destructiva/sistema propuesta por la IA (sin confirmación explícita del usuario) → bloqueada.
+ */
+export function gateAgentActionExecution(
+  action: AgentAction,
+  opts: { userConfirmed: boolean },
+): AgentActionGateDecision {
+  const cls = agentActionClass(action)
+  if (cls === undefined) {
+    return {
+      allow: false,
+      cls,
+      reason: 'unclassified',
+      message: `Bloqueada: ${action.type} no tiene clase de riesgo conocida (fail closed).`,
+    }
+  }
+  if ((cls === 'destructive' || cls === 'system') && !opts.userConfirmed) {
+    return {
+      allow: false,
+      cls,
+      reason: 'needs-confirmation',
+      message: `Requiere confirmación del usuario: ${action.type} (${cls === 'system' ? 'sistema' : 'destructiva'}). Propónlo en la tarjeta de confirmación.`,
+    }
+  }
+  return { allow: true, cls }
 }

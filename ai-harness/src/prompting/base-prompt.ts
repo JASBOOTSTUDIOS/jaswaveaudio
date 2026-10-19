@@ -2,6 +2,8 @@
  * Identidad y protocolo del agente (sin catálogo de tools ni política musical).
  */
 
+import { UNTRUSTED_TOOL_DATA_RULE } from '../agent/untrusted'
+
 export function agentBasePrompt(): string {
   return [
     '## Rol: consejo JasWave (Nexus/Lyra/Volt/Iris proponen; Kael verifica)',
@@ -31,5 +33,8 @@ export function agentBasePrompt(): string {
     'plan.md: actualízalo en operaciones complejas; no en chitchat.',
     'Si el usuario dice hazlo/continua/aplica: ACTIONS ya.',
     'Si faltan datos críticos en pedido nuevo: <<<CLARIFY>>> (≥3 options).',
+    '',
+    'Borrados y acciones de sistema (proyecto nuevo, guardar, dispositivo de audio, bounce, importar/exportar) SIEMPRE pasan por confirmación del usuario.',
+    UNTRUSTED_TOOL_DATA_RULE,
   ].join('\n')
 }

@@ -6,11 +6,17 @@
 import { getStateRevision, toolRegistry } from '@jaswave/shared'
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import {
+  gateAgentActionExecution,
   isSyntheticReadTool,
   syntheticReadResult,
 } from '@jaswave/ai-harness'
 import type { AgentLoopToolCall, AgentLoopToolResult } from '@jaswave/ai-harness'
-import { executeDawActions, type DawAction, type ExecuteDawOptions } from './ai-daw-agent'
+import {
+  executeDawActions,
+  sourceIsUserConfirmed,
+  type DawAction,
+  type ExecuteDawOptions,
+} from './ai-daw-agent'
 
 export type RunRegisteredToolOpts = ExecuteDawOptions & {
   /** Si la revisión no coincide, no mutar. */
@@ -72,6 +78,24 @@ export async function runRegisteredTool(
       return { callId: call.id, tool: call.tool, status: 'success', data: syn.data, stateRevision: fp0 }
     }
     return { callId: call.id, tool: call.tool, status: 'error', error: syn.error, stateRevision: fp0 }
+  }
+
+  // Política fail-closed antes de cualquier handler (registry o switch legacy).
+  const gate = gateAgentActionExecution(
+    { type: call.tool, payload: args },
+    { userConfirmed: opts.userConfirmed === true || sourceIsUserConfirmed(opts.source) },
+  )
+  if (!gate.allow) {
+    return {
+      callId: call.id,
+      tool: call.tool,
+      status: 'rejected',
+      error: {
+        code: gate.reason === 'unclassified' ? 'UNCLASSIFIED' : 'CONFIRMATION_REQUIRED',
+        message: gate.message,
+      },
+      stateRevision: fp0,
+    }
   }
 
   toolRegistry.setContext(tienda.executor, tienda.permisos)
@@ -156,6 +180,7 @@ export async function runRegisteredTool(
     messageId: opts.messageId,
     skipWorkPlan: true,
     respectModeGate: false,
+    userConfirmed: opts.userConfirmed,
   })
   const r = results[0]
   return {
