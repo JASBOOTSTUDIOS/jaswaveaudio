@@ -72,6 +72,15 @@ export interface EmergencyStop {
 }
 
 const DEFAULT_LEVEL: AutonomyLevel = 'CONFIRM';
+
+/** Orden de autonomía (mayor = más poder para la IA). */
+const RANGO_NIVEL: Record<AutonomyLevel, number> = {
+  READ_ONLY: 0,
+  SUGGEST: 1,
+  CONFIRM: 2,
+  AUTO_EXECUTE_SAFE: 3,
+  FULL_AUTONOMY: 4,
+};
 const MAX_LOG_ENTRIES = 1000;
 
 const MATRIZ_PERMISOS: Record<AutonomyLevel, Record<RiskLevel, { allowed: boolean; requiresConfirmation: boolean }>> = {
@@ -97,7 +106,11 @@ export interface PermissionManager {
   setScope(scope: AutonomyScope): void;
   getScope(): AutonomyScope;
   createEmergencyStop(): EmergencyStop;
-  requestLevelChange(level: AutonomyLevel): boolean;
+  /**
+   * Cambio de nivel de autonomía. El usuario puede fijar cualquier nivel;
+   * la IA/scripts solo pueden reducirlo (nunca escalar ni revertir un emergency stop).
+   */
+  requestLevelChange(level: AutonomyLevel, source?: 'user' | 'ai' | 'script'): boolean;
 }
 
 export function crearPermissionManager(opciones: PermissionManagerOptions = {}): PermissionManager {
@@ -146,7 +159,7 @@ export function crearPermissionManager(opciones: PermissionManagerOptions = {}):
 
   return {
     getUserConfig(): UserPermissionConfig {
-      return config;
+      return { ...config, overrides: config.overrides.map((o) => ({ ...o })) };
     },
 
     setUserConfig(next: UserPermissionConfig, source?: 'user' | 'ai' | 'script'): void {
@@ -161,7 +174,7 @@ export function crearPermissionManager(opciones: PermissionManagerOptions = {}):
         });
         return;
       }
-      config = next;
+      config = { ...next, overrides: [...next.overrides] };
     },
 
     check(tool: ToolDefinition, source: 'user' | 'ai' | 'script'): PermissionCheckResult {
@@ -210,6 +223,9 @@ export function crearPermissionManager(opciones: PermissionManagerOptions = {}):
       }
 
       const requiresConfirmation = tool.confirmationRequired || policy.requiresConfirmation;
+      if (policy.allowed && requiresConfirmation) {
+        pendingConfirmations.set(tool.type, { tool, source });
+      }
       addLog({
         timestamp: Date.now(),
         toolName: tool.type,
@@ -231,6 +247,15 @@ export function crearPermissionManager(opciones: PermissionManagerOptions = {}):
       const pending = pendingConfirmations.get(toolName);
       if (pending) {
         pendingConfirmations.delete(toolName);
+        addLog({
+          timestamp: Date.now(),
+          toolName,
+          userLevel: getEffectiveLevel(),
+          allowed: approved,
+          requiredConfirmation: true,
+          userConfirmed: approved,
+          source: pending.source,
+        });
         emit('permissions.confirmation.resolved', { toolName, approved });
       }
     },
@@ -247,7 +272,7 @@ export function crearPermissionManager(opciones: PermissionManagerOptions = {}):
     },
 
     getScope(): AutonomyScope {
-      return scope;
+      return { ...scope, appliesTo: [...scope.appliesTo] };
     },
 
     createEmergencyStop(): EmergencyStop {
@@ -267,18 +292,29 @@ export function crearPermissionManager(opciones: PermissionManagerOptions = {}):
       };
     },
 
-    requestLevelChange(level: AutonomyLevel): boolean {
-      const allowed = getEffectiveLevel() === 'READ_ONLY';
+    requestLevelChange(level: AutonomyLevel, source: 'user' | 'ai' | 'script' = 'ai'): boolean {
+      const actual = getEffectiveLevel();
+      const valido = level in RANGO_NIVEL;
+      const allowed = valido && (source === 'user' || RANGO_NIVEL[level] <= RANGO_NIVEL[actual]);
       addLog({
         timestamp: Date.now(),
         toolName: 'permissions.setLevel',
-        userLevel: config.level,
+        userLevel: actual,
         allowed,
         requiredConfirmation: !allowed,
-        source: 'ai',
+        source,
       });
       if (allowed) {
         config.level = level;
+        if (source === 'user') {
+          // Decisión explícita del usuario: reemplaza scopes temporales y emergency stop.
+          scope.level = level;
+          scope.expiresAt = undefined;
+          scopeExplicitlySet = false;
+        } else if (scopeExplicitlySet) {
+          scope.level = level;
+        }
+        emit('permissions.level.changed', { level, source });
       }
       return allowed;
     },

@@ -38,6 +38,8 @@ import type { ToolDefinition } from '../types/command';
 export interface TiendaDAWOpciones {
   estadoInicial?: DAWState;
   maximoListeners?: number;
+  /** Gestor de permisos compartido con la UI (por defecto, uno propio). */
+  permisos?: PermissionManager;
 }
 
 export interface TiendaDAWListener {
@@ -68,7 +70,7 @@ export interface TiendaDAW {
 }
 
 export function crearTiendaDAW(opciones?: TiendaDAWOpciones): TiendaDAW {
-  const { estadoInicial, maximoListeners = 100 } = opciones ?? {};
+  const { estadoInicial, maximoListeners = 100, permisos: permisosInyectados } = opciones ?? {};
   const estadoInicialResolved = estadoInicial ?? (() => {
     throw new Error('TiendaDAW requiere estadoInicial o usar crearEstadoInicial() de shared/src/state/estado-inicial.ts');
   })();
@@ -87,7 +89,7 @@ export function crearTiendaDAW(opciones?: TiendaDAWOpciones): TiendaDAW {
 
   registrarComandosBuiltin(registro);
 
-  const permisos = crearPermissionManager({ busEventos: bus });
+  const permisos = permisosInyectados ?? crearPermissionManager({ busEventos: bus });
   const memoria = crearMemoryManager();
   const gestorContexto = crearGestorContexto();
 

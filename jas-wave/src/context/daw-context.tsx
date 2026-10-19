@@ -19,6 +19,7 @@ import {
   registrarAnalysisTools,
 } from '../../../shared/src'
 import { configurarFileService } from '../../../shared/src/commands/project-commands'
+import { permissionManager } from '../../../shared/src/state/permissions'
 import { FileServiceElectron } from '@/src/lib/file-service'
 import { registerAgentCatalogOnRegistry } from '@/src/lib/agent-action-catalog'
 import {
@@ -42,6 +43,8 @@ function getSharedStore() {
     sharedStore = crearTiendaDAW({
       estadoInicial: estado,
       maximoListeners: 100,
+      // Misma instancia que ajustes y ai-action-policy: el nivel elegido por el usuario aplica al agente.
+      permisos: permissionManager,
     })
 
     try {

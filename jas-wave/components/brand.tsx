@@ -1,9 +1,9 @@
 import { cn } from '@/lib/utils'
 
 /** Marca completa (IA / representación). */
-export const JASWAVE_LOGO_SRC = `${import.meta.env.BASE_URL}jaswavelogo.png`
+export const JASWAVE_LOGO_SRC = './jaswavelogo.png'
 /** Icono de aplicación (ventana, rail, título). */
-export const JASWAVE_APP_ICON_SRC = `${import.meta.env.BASE_URL}jaswave-icono-con-frecuencia.png`
+export const JASWAVE_APP_ICON_SRC = './jaswave-icono-con-frecuencia.png'
 
 export function JasWaveLogo({
   className,
