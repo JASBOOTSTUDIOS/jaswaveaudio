@@ -180,3 +180,94 @@ export function parseAgentDecisionFromText(text: string): AgentDecision | null {
 
   return null
 }
+
+/** Herramientas de control del bucle nativo (no tocan el DAW). */
+export const AGENT_CONTROL_TOOLS = {
+  complete: 'agent.complete',
+  askUser: 'agent.askUser',
+  fail: 'agent.fail',
+} as const
+
+export const AGENT_CONTROL_TOOL_NAMES: ReadonlySet<string> = new Set(Object.values(AGENT_CONTROL_TOOLS))
+
+/** JSON Schemas de las herramientas de control (se añaden a las tools del rol en modo nativo). */
+export const AGENT_CONTROL_TOOL_SCHEMAS: ReadonlyArray<{
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}> = [
+  {
+    name: AGENT_CONTROL_TOOLS.complete,
+    description: 'Termina el turno cuando el pedido está cumplido y verificado. Incluye un resumen para el usuario.',
+    parameters: {
+      type: 'object',
+      properties: { summary: { type: 'string', description: 'Resumen final para el usuario' } },
+      required: ['summary'],
+    },
+  },
+  {
+    name: AGENT_CONTROL_TOOLS.askUser,
+    description: 'Pide una aclaración REAL al usuario (solo si no puedes seguir sin ella).',
+    parameters: {
+      type: 'object',
+      properties: { message: { type: 'string', description: 'Pregunta concreta' } },
+      required: ['message'],
+    },
+  },
+  {
+    name: AGENT_CONTROL_TOOLS.fail,
+    description: 'Abandona el turno por un error irrecuperable, explicando el motivo.',
+    parameters: {
+      type: 'object',
+      properties: { reason: { type: 'string' } },
+      required: ['reason'],
+    },
+  },
+]
+
+export type NativeToolCallLike = { id?: string; name: string; arguments?: Record<string, unknown> }
+
+/**
+ * Decisión a partir de tool calls nativas (A2). Las de control mandan si no hay herramientas DAW;
+ * si las hay, se ejecutan primero (el control se ignora en esa iteración).
+ */
+export function agentDecisionFromToolCalls(calls: NativeToolCallLike[], text = ''): AgentDecision | null {
+  if (!calls.length) return null
+  const work = calls.filter((c) => !AGENT_CONTROL_TOOL_NAMES.has(c.name))
+  if (work.length) {
+    return {
+      type: 'tool-calls',
+      calls: work.map((c, i) => ({
+        id: c.id && c.id.length ? c.id : `c${i + 1}`,
+        tool: c.name,
+        arguments: c.arguments ?? {},
+      })),
+    }
+  }
+  const ctl = calls[0]!
+  const args = ctl.arguments ?? {}
+  if (ctl.name === AGENT_CONTROL_TOOLS.complete) {
+    return { type: 'complete', summary: String(args.summary ?? '').trim() || text.trim() }
+  }
+  if (ctl.name === AGENT_CONTROL_TOOLS.askUser) {
+    return { type: 'request-user-input', message: String(args.message ?? '').trim() || text.trim() || 'Necesito una aclaración.' }
+  }
+  return { type: 'fail', reason: String(args.reason ?? '').trim() || text.trim() || 'Fallo del agente' }
+}
+
+/**
+ * Decisión unificada de una respuesta de chat: tool calls nativas → decisión; si no hay,
+ * marcadores en el texto; y en modo nativo un texto sin marcadores es la respuesta final.
+ */
+export function agentDecisionFromChatResponse(
+  res: { content?: string; toolCalls?: NativeToolCallLike[] },
+  opts: { native: boolean },
+): AgentDecision | null {
+  const text = res.content ?? ''
+  const fromTools = agentDecisionFromToolCalls(res.toolCalls ?? [], text)
+  if (fromTools) return fromTools
+  const fromText = parseAgentDecisionFromText(text)
+  if (fromText) return fromText
+  if (opts.native && text.trim()) return { type: 'complete', summary: text.trim() }
+  return null
+}

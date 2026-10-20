@@ -27,7 +27,7 @@ jas-wave/src/lib/agent-engine-host.ts   # implementa EngineHost: tienda, execute
 needs-user (confirmación/aclaración/aprobación de plan) | budget | turn.done | turn.failed`.
 
 ## Tareas
-- [ ] Crear `ai-harness/src/engine/*` con tipos e interfaz `EngineHost`; tests con un host falso en memoria.
+- [x] Crear `ai-harness/src/engine/*` con tipos e interfaz `EngineHost`; tests con un host falso en memoria.
 - [ ] `chat.ts`: siempre construye el system prompt (base + modo + rol + contexto DAW + plan actual + reglas de datos no
       confiables), usa fallback de modelos y carga el presupuesto; todos los consumidores (reasoning, loop, harness, QA, review,
       tras Aplicar) pasan por aquí.
@@ -39,7 +39,7 @@ needs-user (confirmación/aclaración/aprobación de plan) | budget | turn.done 
       (aprobación de plan, confirmación destructiva, aclaración) responden vía `engine.answer(runId, …)`.
 - [ ] `pending-actions-card.tsx` deja de crear su propio chat; usa `engine.answer`.
 - [ ] Presupuesto único por turno (`ai-harness/src/agent/budget.ts`) incluyendo reintentos y fallbacks (contar cada intento HTTP).
-- [ ] Tests: engine con host falso — turno ask, turno create con plan aprobado, cancelación, reanudación desde run persistido.
+- [x] Tests: engine con host falso — turno ask, turno create con plan aprobado, cancelación, reanudación desde run persistido.
 
 ## Archivos
 Nuevos en `ai-harness/src/engine/`, `jas-wave/src/lib/agent-engine-host.ts`; modificar `components/coproducer-panel.tsx`,
@@ -55,4 +55,20 @@ Nuevos en `ai-harness/src/engine/`, `jas-wave/src/lib/agent-engine-host.ts`; mod
 `npm run verify`; e2e existentes en verde; nuevo test de engine en `ai-harness/src/test/engine.test.ts`.
 
 ## Notas de traspaso
-_(vacío)_
+<!-- NOTAS-A1 -->
+**Rama:** `ws/a1-a2-engine` (Claude, 2026-10-20).
+
+### Hecho
+- `ai-harness/src/engine/`: `engine-types.ts` (EngineHost, TurnInput, EngineEvent, EngineNeed/Answer, TurnProgram), `run-state.ts`
+  (EngineRun serializable + bitácora + parse/serialize), `chat.ts` (`engineChat`: system prompt obligatorio + rol + plan + regla
+  untrusted; presupuesto por intento vía `beforeAttempt` y `httpAttempts`; tools nativas con caída a marcadores),
+  `turn-context.ts`, `turn-engine.ts` (`createTurnEngine`: runTurn/answer/resume/pause/cancel/subscribe), `tool-loop.ts`
+  (programa por defecto: bucle nativo con guardas de modo), `mode-capabilities.ts` (tabla A3 básica), `mock-script.ts`.
+- `budget.ts`: `createAgentBudgetTracker(partial, now, initialUsage)` y `recordExtraCalls`.
+- `parse-agent-decision.ts`: `agentDecisionFromToolCalls`, `agentDecisionFromChatResponse`, tools de control `agent.complete|askUser|fail`.
+- `agent-loop.ts`: `chat` puede devolver `{ text, decision }` (decisión nativa).
+- Tests: `ai-harness/src/test/engine.test.ts` + fixtures `src/test/fixtures/engine-*.json`.
+
+### Pendiente / siguiente
+- Host jas-wave (`src/lib/agent-engine-host.ts`), programa legacy (orquestación del panel), IPC de runs, panel como vista.
+
