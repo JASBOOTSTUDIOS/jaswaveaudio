@@ -1,4 +1,4 @@
-# Estado de los workstreams
+ en curso | Claude (subagente) · 2026-10-20 |en curso | Claude (subagente) · 2026-10-20 |en curso | Claude (subagente) · 2026-10-20 |en curso | Claude (subagente) · 2026-10-20 |en curso | Claude (subagente) · 2026-10-20 |# Estado de los workstreams
 
 Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md`).
 
