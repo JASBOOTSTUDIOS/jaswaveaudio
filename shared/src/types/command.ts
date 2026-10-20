@@ -189,8 +189,28 @@ export interface CommandDefinition<T = unknown> {
   inverseType?: string;
   /** Si true, al ejecutarse con éxito vacía las pilas de undo/redo (p. ej. project.load). */
   limpiaHistorialUndo?: boolean;
+  /**
+   * Participación en undo cuando no hay `inverseType`:
+   *   - `'instantanea'`: el executor guarda una instantánea parcial (campos del
+   *     proyecto/pistas/transporte que cambiaron) y la restaura al deshacer.
+   *   - `'ninguno'`: estado invisible (snapshot de plugins, guardar): no crea
+   *     entrada de undo ni invalida el redo.
+   * Por defecto, un comando sin inverso que cambia el proyecto invalida el redo.
+   */
+  historialUndo?: 'instantanea' | 'ninguno';
   handler: (state: import('../types/state').DAWState, payload: T) => StateTransition<T> | Promise<StateTransition<T>>;
   validate?: (state: import('../types/state').DAWState, payload: T) => ValidationResult;
+}
+
+/**
+ * Opciones de `executor.execute` / `executor.batch`.
+ * Coalescencia: comandos consecutivos con el mismo `coalesceKey` y `gestureId`
+ * (p. ej. todos los pointermove de un arrastre de fader) se fusionan en una sola
+ * entrada de undo cuyo inverso restaura el estado previo al primer comando.
+ */
+export interface OpcionesEjecucion {
+  coalesceKey?: string;
+  gestureId?: string;
 }
 
 export interface CommandHistoryEntry {

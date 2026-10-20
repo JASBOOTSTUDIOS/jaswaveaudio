@@ -25,8 +25,9 @@ const MAX_PROBLEMAS_MENSAJE = 5;
 
 const texto = z.string();
 const textoNoVacio = z.string().min(1, 'no puede estar vacío');
-const numero = z.number();
-const numeroPositivo = z.number().positive('debe ser mayor que 0');
+// `finite`: Infinity se serializa como null en JSON y el archivo dejaría de abrir.
+const numero = z.number().finite('debe ser un número finito');
+const numeroPositivo = z.number().finite('debe ser un número finito').positive('debe ser mayor que 0');
 const arrayOpcional = <T extends z.ZodTypeAny>(item: T) => z.array(item).optional();
 
 /** Clip (audio o MIDI): identidad, tipo y tiempos numéricos. */
@@ -198,3 +199,58 @@ export const validarProyectoArchivo = (valor: unknown): ResultadoValidacion<Proy
 /** Valida solo el `ProjectState` (p. ej. snapshot de sesión en IndexedDB). */
 export const validarProyecto = (valor: unknown): ResultadoValidacion<ProyectoValidado> =>
   validarCon(esquemaProyecto, valor, 'project', 'El proyecto guardado está corrupto');
+
+// ── Validación incremental (executor) ───────────────────────────────────────
+
+/** Proyecto sin bajar a las pistas (se validan aparte, solo las que cambian). */
+const esquemaProyectoCabecera = esquemaProyecto.extend({ tracks: z.array(z.unknown()) });
+/** Pista sin bajar a los clips (se validan aparte, solo los que cambian). */
+const esquemaTrackCabecera = esquemaTrack.extend({ clips: z.array(z.unknown()).optional() });
+
+const TITULO_CAMBIO_INVALIDO = 'El cambio dejaría el proyecto inválido';
+
+type Objeto = Record<string, unknown>;
+const esObjeto = (v: unknown): v is Objeto => typeof v === 'object' && v !== null;
+
+/**
+ * Valida el proyecto resultante de un comando revisando solo lo que cambió
+ * respecto a `antes` (comparación por referencia, estado inmutable): la cabecera
+ * del proyecto, las pistas nuevas o modificadas y, dentro de ellas, los clips
+ * nuevos o modificados. Equivale a `validarProyecto(despues)` cuando `antes` era
+ * válido, pero cuesta O(pistas + clips tocados) y no O(notas del proyecto).
+ */
+export const validarCambiosProyecto = (antes: unknown, despues: unknown): ResultadoValidacion<unknown> => {
+  if (antes === despues) return { ok: true, datos: despues };
+  if (!esObjeto(antes) || !esObjeto(despues)) {
+    return validarCon(esquemaProyecto, despues, 'project', TITULO_CAMBIO_INVALIDO);
+  }
+  const problemas: string[] = [];
+  const cabecera = esquemaProyectoCabecera.safeParse(despues);
+  if (!cabecera.success) problemas.push(...formatearProblemas(cabecera.error, 'project'));
+
+  const tracksAntes = Array.isArray(antes.tracks) ? (antes.tracks as unknown[]) : [];
+  const tracksDespues = Array.isArray(despues.tracks) ? (despues.tracks as unknown[]) : null;
+  if (tracksDespues && tracksDespues !== tracksAntes) {
+    const refsAntes = new Set(tracksAntes);
+    const porId = new Map<unknown, Objeto>();
+    for (const t of tracksAntes) if (esObjeto(t)) porId.set(t.id, t);
+    tracksDespues.forEach((t, i) => {
+      if (refsAntes.has(t)) return;
+      const prefijo = `project.tracks[${i}]`;
+      const r = esquemaTrackCabecera.safeParse(t);
+      if (!r.success) problemas.push(...formatearProblemas(r.error, prefijo));
+      if (!esObjeto(t) || !Array.isArray(t.clips)) return;
+      const previo = porId.get(t.id);
+      if (previo && previo.clips === t.clips) return;
+      const refsClips = new Set(previo && Array.isArray(previo.clips) ? (previo.clips as unknown[]) : []);
+      (t.clips as unknown[]).forEach((c, j) => {
+        if (refsClips.has(c)) return;
+        const rc = esquemaClip.safeParse(c);
+        if (!rc.success) problemas.push(...formatearProblemas(rc.error, `${prefijo}.clips[${j}]`));
+      });
+    });
+  }
+
+  if (problemas.length === 0) return { ok: true, datos: despues };
+  return { ok: false, problemas, error: `${TITULO_CAMBIO_INVALIDO}: ${resumirProblemas(problemas)}` };
+};

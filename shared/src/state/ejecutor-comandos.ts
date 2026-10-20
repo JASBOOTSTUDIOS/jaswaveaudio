@@ -11,10 +11,16 @@
  *     se emiten/registran si todo el batch tiene éxito.
  *   - simulateBatch puro: sin bus, auditoría, historial, undo ni listeners.
  *   - Historial y auditoría acotados (ring buffer + payloads grandes resumidos).
+ *   - Coalescencia: comandos del mismo gesto (`coalesceKey` + `gestureId`) se
+ *     fusionan en una sola entrada de undo (un arrastre de fader = 1 undo).
+ *   - Undo por instantánea parcial para comandos sin inverso
+ *     (`historialUndo: 'instantanea'`); `'ninguno'` no toca la pila.
+ *   - El estado resultante se valida con el esquema del proyecto (solo las
+ *     partes que el comando tocó): un comando nunca deja el proyecto inválido.
  */
 
 import type { DAWState } from '../types/state';
-import type { CommandDefinition, CommandResult, TransactionResult, CommandError, CommandPayload, CommandHistoryEntry, StateTransition, ActionRequest, ValidatorPipeline } from '../types/command';
+import type { CommandDefinition, CommandResult, TransactionResult, CommandError, CommandPayload, CommandHistoryEntry, StateTransition, ActionRequest, ValidatorPipeline, OpcionesEjecucion } from '../types/command';
 import type { EventoDominio, MetaEmit } from '../events/evento-dominio';
 import type { BusEventos } from '../events/event-bus';
 import type { PilaDeshacerRehacer } from '../state/pila-deshacer-rehacer';
@@ -22,7 +28,8 @@ import type { CommandRegistry } from '../state/registro-comandos';
 import type { AuditLog } from '../state/registro-auditoria';
 import type { Command } from '../types/command';
 import { crearPipelineValidacion } from './pipeline-validacion';
-import { validarEstado } from './validador';
+import { validarCambiosProyecto } from '../schemas/proyecto';
+import { capturarInstantaneaParcial, aplicarInstantaneaParcial, type InstantaneaParcial } from './instantanea-parcial';
 import { withUpdatedStateRevision } from './state-revision';
 import { computeSemanticDiff, type SemanticStateDiff } from './diff-estado';
 import { agregarAcotado, MAX_ENTRADAS_REGISTRO, resumirPayloadParaRegistro } from './resumen-payload';
@@ -65,6 +72,13 @@ type PasoError = {
 
 type Paso = PasoOk | PasoError;
 
+/** Metadatos de la entrada de undo en el tope de la pila que admite fusionarse. */
+type MetaCoalescencia = { coalesceKey: string; gestureId: string; entradas: Command[] };
+
+function puedeCoalescer(opciones?: OpcionesEjecucion): opciones is Required<OpcionesEjecucion> {
+  return Boolean(opciones?.coalesceKey && opciones?.gestureId);
+}
+
 function transicionDesdeComando(command: Command, estado: DAWState, direccion: 'deshacer' | 'rehacer'): StateTransition | Promise<StateTransition> {
   if (direccion === 'deshacer') {
     return command.deshacerTransicion
@@ -88,6 +102,7 @@ export class CommandExecutor {
   /** Cola serial: cada operación espera a la anterior. */
   private cola: Promise<void> = Promise.resolve();
   private listenersCambio = new Set<ListenerCambioEstado>();
+  private metaCoalescencia = new WeakMap<Command, MetaCoalescencia>();
 
   constructor(opciones: CommandExecutorOptions) {
     this.estado = opciones.estadoInicial;
@@ -246,8 +261,39 @@ export class CommandExecutor {
     };
   }
 
+  /** Entrada de undo que restaura una instantánea parcial (comandos sin inverso). */
+  private crearEntradaInstantanea(definicion: CommandDefinition, inst: InstantaneaParcial): Command {
+    const transicion = (estado: unknown, lado: 'antes' | 'despues'): StateTransition => ({
+      state: aplicarInstantaneaParcial(estado as DAWState, inst, lado),
+      events: [
+        {
+          nombre: 'proyecto.modificado',
+          version: 1,
+          marcaTiempo: Date.now(),
+          fuente: 'undo',
+          payload: { comando: definicion.type, direccion: lado === 'antes' ? 'deshacer' : 'rehacer' },
+        },
+      ],
+      result: undefined,
+    });
+    return {
+      id: crypto.randomUUID(),
+      nombre: definicion.type,
+      descripcion: definicion.description,
+      categoria: 'usuario',
+      ejecutar: (estado: unknown) => transicion(estado, 'despues').state,
+      deshacer: (estado: unknown) => transicion(estado, 'antes').state,
+      rehacer: (estado: unknown) => transicion(estado, 'despues').state,
+      deshacerTransicion: (estado: unknown) => transicion(estado, 'antes'),
+      rehacerTransicion: (estado: unknown) => transicion(estado, 'despues'),
+      inverso: null,
+      irreversible: false,
+      fechaCreacion: Date.now(),
+    };
+  }
+
   /** Entrada de undo compuesta: deshace en orden inverso, rehace en orden. */
-  private crearEntradaCompuesta(entradas: Command[]): Command {
+  private crearEntradaCompuesta(entradas: Command[], nombre = 'batch'): Command {
     const aplicar = async (estado: unknown, direccion: 'deshacer' | 'rehacer'): Promise<StateTransition> => {
       const orden = direccion === 'deshacer' ? [...entradas].reverse() : entradas;
       let actual = estado as DAWState;
@@ -269,7 +315,7 @@ export class CommandExecutor {
     };
     return {
       id: crypto.randomUUID(),
-      nombre: 'batch',
+      nombre,
       descripcion: `Batch de ${entradas.length} comandos (${entradas.map((e) => e.nombre).join(', ')})`,
       categoria: 'usuario',
       ejecutar: (estado: unknown) => aplicarSync(estado, 'rehacer'),
@@ -281,6 +327,31 @@ export class CommandExecutor {
       irreversible: false,
       fechaCreacion: Date.now(),
     };
+  }
+
+  /**
+   * Empuja una entrada de undo. Si `opciones` trae `coalesceKey` + `gestureId` y el
+   * tope de la pila es del mismo gesto, ambas se fusionan en una sola entrada
+   * (deshacer vuelve al estado previo al primer comando del gesto).
+   */
+  private empujarEntrada(entrada: Command, opciones?: OpcionesEjecucion): void {
+    if (!puedeCoalescer(opciones)) {
+      this.pila.push(entrada);
+      return;
+    }
+    const pendientes = this.pila.getUndoStack();
+    const tope = pendientes[pendientes.length - 1];
+    const meta = tope ? this.metaCoalescencia.get(tope) : undefined;
+    if (tope && meta && meta.coalesceKey === opciones.coalesceKey && meta.gestureId === opciones.gestureId) {
+      this.pila.popUndoSinRedo();
+      const entradas = [...meta.entradas, entrada];
+      const fusionada = this.crearEntradaCompuesta(entradas, meta.entradas[0]?.nombre ?? entrada.nombre);
+      this.metaCoalescencia.set(fusionada, { ...meta, entradas });
+      this.pila.push(fusionada);
+      return;
+    }
+    this.metaCoalescencia.set(entrada, { coalesceKey: opciones.coalesceKey, gestureId: opciones.gestureId, entradas: [entrada] });
+    this.pila.push(entrada);
   }
 
   /**
@@ -332,11 +403,6 @@ export class CommandExecutor {
       }
     }
 
-    const estadoValidacion = validarEstado(estadoBase);
-    for (const advertencia of estadoValidacion.advertencias) {
-      emisiones.push({ nombre: 'estado.advertencia', payload: { campo: advertencia.campo, mensaje: advertencia.mensaje, entidadId: advertencia.entidadId } });
-    }
-
     let transition: StateTransition;
     try {
       transition = await (definicion.handler(estadoBase, payload as never) as Promise<StateTransition> | StateTransition);
@@ -348,12 +414,28 @@ export class CommandExecutor {
       };
     }
 
+    // El estado resultante debe seguir cumpliendo el esquema del proyecto (lo que
+    // se guarda y se vuelve a abrir). Solo se validan las partes que cambiaron.
+    if (transition.state.project !== estadoBase.project) {
+      const validacion = validarCambiosProyecto(estadoBase.project, transition.state.project);
+      if (!validacion.ok) {
+        return { ok: false, error: { code: 'VALIDATION_FAILED', message: validacion.error }, emisiones };
+      }
+    }
+
     const estado = withUpdatedStateRevision(transition.state);
     const inverseType = transition.inverseType ?? definicion.inverseType;
     const inverseDef = inverseType ? this.registro.get(inverseType) : undefined;
     const payloadInverse = transition.inversePayload !== undefined ? transition.inversePayload : payload;
     const payloadRedo = transition.redoPayload !== undefined ? transition.redoPayload : payload;
-    const entradaUndo = inverseDef ? this.crearEntradaUndo(definicion, inverseDef, payloadRedo, payloadInverse) : null;
+    let entradaUndo: Command | null = null;
+    if (inverseDef) {
+      entradaUndo = this.crearEntradaUndo(definicion, inverseDef, payloadRedo, payloadInverse);
+    } else if (definicion.historialUndo === 'instantanea') {
+      const inst = capturarInstantaneaParcial(estadoBase, transition.state);
+      if (inst) entradaUndo = this.crearEntradaInstantanea(definicion, inst);
+    }
+    const invisible = definicion.historialUndo === 'ninguno';
 
     return {
       ok: true,
@@ -362,18 +444,34 @@ export class CommandExecutor {
       result: transition.result,
       entradaUndo,
       emisiones,
-      limpiaRedo: !inverseDef && transition.state.project !== estadoBase.project,
+      limpiaRedo: !entradaUndo && !invisible && transition.state.project !== estadoBase.project,
       limpiaPila: definicion.limpiaHistorialUndo === true,
     };
   }
 
   // ── API pública ─────────────────────────────────────────────────────────
 
-  execute<T = unknown>(type: string, payload: unknown, source: CommandHistoryEntry['source'] = 'user', userId?: string): Promise<CommandResult<T>> {
-    return this.enCola(() => this.ejecutarAhora<T>(type, payload, source, userId));
+  /**
+   * Ejecuta un comando. `opciones.coalesceKey` + `opciones.gestureId` fusionan en
+   * una sola entrada de undo los comandos consecutivos del mismo gesto.
+   */
+  execute<T = unknown>(
+    type: string,
+    payload: unknown,
+    source: CommandHistoryEntry['source'] = 'user',
+    userId?: string,
+    opciones?: OpcionesEjecucion,
+  ): Promise<CommandResult<T>> {
+    return this.enCola(() => this.ejecutarAhora<T>(type, payload, source, userId, opciones));
   }
 
-  private async ejecutarAhora<T>(type: string, payload: unknown, source: CommandHistoryEntry['source'], userId?: string): Promise<CommandResult<T>> {
+  private async ejecutarAhora<T>(
+    type: string,
+    payload: unknown,
+    source: CommandHistoryEntry['source'],
+    userId?: string,
+    opciones?: OpcionesEjecucion,
+  ): Promise<CommandResult<T>> {
     const entryId = crypto.randomUUID();
     const timestamp = Date.now();
     const effectiveUserId = this.resolverUsuario(source, userId);
@@ -391,7 +489,7 @@ export class CommandExecutor {
     if (paso.limpiaPila) {
       this.limpiarPilaUndo();
     } else if (paso.entradaUndo) {
-      this.pila.push(paso.entradaUndo);
+      this.empujarEntrada(paso.entradaUndo, opciones);
     } else if (paso.limpiaRedo) {
       this.pila.limpiarRedo();
     }
@@ -459,11 +557,21 @@ export class CommandExecutor {
    * ni estado, ni eventos, ni historial, ni undo (solo un `comando.fallido` y una
    * entrada de auditoría del fallo). En éxito deja una única entrada de undo.
    */
-  batch(commands: CommandPayload[], source: CommandHistoryEntry['source'] = 'user', userId?: string): Promise<TransactionResult> {
-    return this.enCola(() => this.batchAhora(commands, source, userId));
+  batch(
+    commands: CommandPayload[],
+    source: CommandHistoryEntry['source'] = 'user',
+    userId?: string,
+    opciones?: OpcionesEjecucion,
+  ): Promise<TransactionResult> {
+    return this.enCola(() => this.batchAhora(commands, source, userId, opciones));
   }
 
-  private async batchAhora(commands: CommandPayload[], source: CommandHistoryEntry['source'], userId?: string): Promise<TransactionResult> {
+  private async batchAhora(
+    commands: CommandPayload[],
+    source: CommandHistoryEntry['source'],
+    userId?: string,
+    opciones?: OpcionesEjecucion,
+  ): Promise<TransactionResult> {
     const effectiveUserId = this.resolverUsuario(source, userId);
     const resultados: CommandResult[] = [];
     const pasos: { cmd: CommandPayload; paso: PasoOk; id: string; timestamp: number }[] = [];
@@ -509,9 +617,9 @@ export class CommandExecutor {
     const posteriores = pasos.slice(desde);
     const entradas = posteriores.map((p) => p.paso.entradaUndo).filter((e): e is Command => e !== null);
     if (entradas.length === 1) {
-      this.pila.push(entradas[0]!);
+      this.empujarEntrada(entradas[0]!, opciones);
     } else if (entradas.length > 1) {
-      this.pila.push(this.crearEntradaCompuesta(entradas));
+      this.empujarEntrada(this.crearEntradaCompuesta(entradas), opciones);
     } else if (posteriores.some((p) => p.paso.limpiaRedo)) {
       this.pila.limpiarRedo();
     }
