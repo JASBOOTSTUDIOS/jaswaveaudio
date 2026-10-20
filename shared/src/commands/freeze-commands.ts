@@ -52,6 +52,7 @@ export function parseFrozenComment(comentario: string | undefined): {
 export function crearComandoTrackFreeze(): CommandDefinition<any> {
   return {
     type: 'track.freeze',
+    historialUndo: 'instantanea',
     description: 'Marca pista como frozen (bypass plugins; el bounce de stem lo hace el cliente)',
     risk: 'write',
     schema: {
@@ -97,6 +98,7 @@ export function crearComandoTrackFreeze(): CommandDefinition<any> {
 export function crearComandoTrackUnfreeze(): CommandDefinition<any> {
   return {
     type: 'track.unfreeze',
+    historialUndo: 'instantanea',
     description: 'Quita frozen y restaura bypass previo de plugins',
     risk: 'write',
     schema: {

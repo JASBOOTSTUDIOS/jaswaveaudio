@@ -27,6 +27,7 @@ export type MasterUpdatePayload = {
 export function crearComandoMasterUpdate(): CommandDefinition<MasterUpdatePayload> {
   return {
     type: 'master.update',
+    historialUndo: 'instantanea',
     description: 'Actualiza propiedades del canal master (volumen, paneo, mute, solo)',
     risk: 'write',
     schema: {
@@ -75,6 +76,7 @@ export type SetTimeSignaturePayload = {
 export function crearComandoSetTimeSignature(): CommandDefinition<SetTimeSignaturePayload> {
   return {
     type: 'project.setTimeSignature',
+    historialUndo: 'instantanea',
     description: 'Establece la firma de tiempo del proyecto',
     risk: 'write',
     schema: {
@@ -309,6 +311,7 @@ export type MarkerCreatePayload = {
 export function crearComandoMarkerCreate(): CommandDefinition<MarkerCreatePayload> {
   return {
     type: 'marker.create',
+    historialUndo: 'instantanea',
     description: 'Crea un marcador en la línea de tiempo',
     risk: 'write',
     schema: {
@@ -333,6 +336,8 @@ export function crearComandoMarkerCreate(): CommandDefinition<MarkerCreatePayloa
       const proyecto: ProjectState = {
         ...estado.project,
         marcadores: [...(estado.project.marcadores ?? []), marcador],
+        modificado: true,
+        fechaModificacion: Date.now(),
       };
       return {
         state: { ...estado, project: proyecto },
@@ -368,6 +373,7 @@ export type ProjectUpdatePayload = {
 export function crearComandoProjectUpdate(): CommandDefinition<ProjectUpdatePayload> {
   return {
     type: 'project.update',
+    historialUndo: 'instantanea',
     description: 'Actualiza propiedades del proyecto (nombre, BPM, time signature, configuración)',
     risk: 'write',
     schema: {

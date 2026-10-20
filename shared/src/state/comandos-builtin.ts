@@ -86,6 +86,8 @@ import {
   crearComandoPluginDuplicate,
   crearComandoPluginReplace,
   crearComandoPluginSetParameter,
+  crearComandoTrackSnapshotPluginState,
+  crearComandoMasterSnapshotPluginState,
   crearComandoFxChainCopy,
   crearComandoFxChainPaste,
   crearComandoFxChainPasteUndo,
@@ -239,6 +241,8 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoPluginDuplicate(), registry);
   registrar(crearComandoPluginReplace(), registry);
   registrar(crearComandoPluginSetParameter(), registry);
+  registrar(crearComandoTrackSnapshotPluginState(), registry);
+  registrar(crearComandoMasterSnapshotPluginState(), registry);
   registrar(crearComandoFxChainCopy(), registry);
   registrar(crearComandoFxChainPaste(), registry);
   registrar(crearComandoFxChainPasteUndo(), registry);

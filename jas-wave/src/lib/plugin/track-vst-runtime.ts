@@ -4,6 +4,7 @@
  */
 
 import type { PluginInfo } from '../../../../shared/src/types/entidades'
+import { snapshotPluginSinCambios } from '../../../../shared/src/commands/plugin-commands'
 import {
   extractHostPluginPath,
   guessIsInstrument,
@@ -942,10 +943,10 @@ export async function snapshotTrackPluginIntoProject(
     if (!pl || !extractHostPluginPath(pl.descripcion, pl.id)) return { ok: false, hasChunk: false }
     const snap = await readLivePluginSnapshot(slotId, pl)
     if (!snap) return { ok: false, hasChunk: false }
-    const nextPlugins = (mNow?.plugins ?? []).map((p) => (p.id === pluginId ? { ...p, ...snap } : p))
-    await tienda.executor.execute('project.update', {
-      datos: { master: { ...mNow, plugins: nextPlugins } },
-    })
+    // Snapshot invisible: sin undo ni "modificado", y solo si el estado cambió.
+    if (!snapshotPluginSinCambios(pl, snap)) {
+      await tienda.executor.execute('master.snapshotPluginState', { pluginInstanceId: pluginId, ...snap })
+    }
     return { ok: true, hasChunk: Boolean(snap.estadoPluginBase64) }
   }
   const live = tienda.obtenerEstado().project.tracks.find((x) => x.id === trackId)
@@ -953,11 +954,9 @@ export async function snapshotTrackPluginIntoProject(
   if (!pl || !extractHostPluginPath(pl.descripcion, pl.id)) return { ok: false, hasChunk: false }
   const snap = await readLivePluginSnapshot(slotId, pl)
   if (!snap) return { ok: false, hasChunk: false }
-  const nextPlugins = (live?.plugins ?? []).map((p) => (p.id === pluginId ? { ...p, ...snap } : p))
-  await tienda.executor.execute('track.update', {
-    trackId,
-    datos: { plugins: nextPlugins },
-  })
+  if (!snapshotPluginSinCambios(pl, snap)) {
+    await tienda.executor.execute('track.snapshotPluginState', { trackId, pluginInstanceId: pluginId, ...snap })
+  }
   return { ok: true, hasChunk: Boolean(snap.estadoPluginBase64) }
 }
 

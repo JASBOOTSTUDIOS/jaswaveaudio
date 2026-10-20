@@ -43,6 +43,7 @@ export function sampleTrackAutomation(
 export function crearComandoAutomationSetCurve(): CommandDefinition<any> {
   return {
     type: 'automation.setCurve',
+    historialUndo: 'instantanea',
     description: 'Define curva de automatización (volumen|paneo|paramId) en una pista',
     risk: 'write',
     schema: {
@@ -117,6 +118,7 @@ export function crearComandoAutomationSetCurve(): CommandDefinition<any> {
 export function crearComandoAutomationClear(): CommandDefinition<any> {
   return {
     type: 'automation.clear',
+    historialUndo: 'instantanea',
     description: 'Elimina automatización de un parámetro (o todas) en una pista',
     risk: 'write',
     schema: {
@@ -152,6 +154,7 @@ export function crearComandoAutomationClear(): CommandDefinition<any> {
 export function crearComandoAutomationWritePoint(): CommandDefinition<any> {
   return {
     type: 'automation.writePoint',
+    historialUndo: 'instantanea',
     description: 'Escribe un punto de automatización (merge en la curva existente)',
     risk: 'write',
     schema: {

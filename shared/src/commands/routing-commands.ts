@@ -56,6 +56,7 @@ function ensureRouting(estado: DAWState): RoutingMatrix {
 export function crearComandoBusCreate(): CommandDefinition<any> {
   return {
     type: 'bus.create',
+    historialUndo: 'instantanea',
     description: 'Crea un bus/aux FX en la matriz de routing (+ pista tipo bus)',
     risk: 'write',
     schema: {
@@ -215,6 +216,7 @@ export function crearComandoBusCreate(): CommandDefinition<any> {
 export function crearComandoSendSet(): CommandDefinition<any> {
   return {
     type: 'send.set',
+    historialUndo: 'instantanea',
     description: 'Crea o actualiza un envío pista→bus',
     risk: 'write',
     schema: {
@@ -292,6 +294,7 @@ export function crearComandoSendSet(): CommandDefinition<any> {
 export function crearComandoSidechainConnect(): CommandDefinition<any> {
   return {
     type: 'sidechain.connect',
+    historialUndo: 'instantanea',
     description: 'Conecta sidechain origen→destino (estado; host según plugin)',
     risk: 'write',
     schema: {

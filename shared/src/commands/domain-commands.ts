@@ -127,6 +127,8 @@ export type ClipCreatePayload = {
   sourceId?: string;
   /** Picos estéreo empaquetados [minL,maxL,minR,maxR,...] */
   waveform?: number[];
+  /** Offset dentro de la fuente de audio (beats); copiar/pegar/duplicar lo conservan. */
+  clipInicio?: number;
   /** Id del clip creado (solo en result del handler). */
   clipId?: string;
   /** Id a usar para el clip (redo determinista). */
@@ -1027,6 +1029,7 @@ export function crearComandoClipCreate(): CommandDefinition<ClipCreatePayload> {
         color: { type: 'string' },
         sourceId: { type: 'string' },
         waveform: { type: 'array', items: { type: 'number' } },
+        clipInicio: { type: 'number', minimum: 0 },
         id: { type: 'string' },
       },
       required: ['pistaId'],
@@ -1042,6 +1045,10 @@ export function crearComandoClipCreate(): CommandDefinition<ClipCreatePayload> {
       if ((pista.clips as { id: string }[]).some((c) => c.id === clipIdNuevo)) {
         throw new Error(`Ya existe un clip con id ${clipIdNuevo}`);
       }
+      const clipInicio =
+        typeof payload.clipInicio === 'number' && Number.isFinite(payload.clipInicio) && payload.clipInicio > 0
+          ? payload.clipInicio
+          : 0;
       const clip: AudioClip = {
         id: clipIdNuevo,
         trackId: payload.pistaId,
@@ -1051,7 +1058,7 @@ export function crearComandoClipCreate(): CommandDefinition<ClipCreatePayload> {
         color: payload.color || '#22c55e',
         seleccionado: false,
         tipo: 'audio',
-        clipInicio: 0,
+        clipInicio,
         fadeIn: { id: generarId(), clipId: '', tipo: 'in', duracion: 0, curva: 'lineal' },
         fadeOut: { id: generarId(), clipId: '', tipo: 'out', duracion: 0, curva: 'lineal' },
         warp: false,
@@ -1061,7 +1068,8 @@ export function crearComandoClipCreate(): CommandDefinition<ClipCreatePayload> {
         source: {
           // ruta se usa como clave del buffer de audio en el engine
           ruta: payload.sourceId || '',
-          duracion: payload.duracion ?? 2,
+          // La fuente cubre al menos el offset más la parte visible del clip.
+          duracion: (payload.duracion ?? 2) + clipInicio,
           sampleRate: 44100,
           canales: 2,
           bitDepth: 24,
@@ -2484,7 +2492,7 @@ export function crearComandoMidiClipSplitIntoSections(): CommandDefinition<MidiC
 export function crearComandoTransportToggle(): CommandDefinition<TransportTogglePayload> {
   return {
     type: 'transport.toggle',
-    inverseType: 'transport.toggle',
+    historialUndo: 'ninguno',
     description: 'Alterna reproducción / pausa',
     risk: 'write',
     schema: { type: 'object', additionalProperties: false },
@@ -2515,6 +2523,7 @@ export function crearComandoTransportToggle(): CommandDefinition<TransportToggle
 export function crearComandoTransportStop(): CommandDefinition<TransportStopPayload> {
   return {
     type: 'transport.stop',
+    historialUndo: 'ninguno',
     description: 'Detiene la reproducción y vuelve al inicio',
     risk: 'write',
     schema: { type: 'object', additionalProperties: false },
@@ -2547,7 +2556,7 @@ export function crearComandoTransportStop(): CommandDefinition<TransportStopPayl
 export function crearComandoTransportSeek(): CommandDefinition<TransportSeekPayload> {
   return {
     type: 'transport.seek',
-    inverseType: 'transport.seek',
+    historialUndo: 'ninguno',
     description: 'Busca a una posición en segundos',
     risk: 'write',
     schema: {
@@ -2560,7 +2569,6 @@ export function crearComandoTransportSeek(): CommandDefinition<TransportSeekPayl
     },
     handler: (estado: DAWState, payload: TransportSeekPayload): StateTransition<TransportSeekPayload> => {
       const bpm = estado.project.bpm?.valor ?? 120
-      const segundosAnteriores = estado.transport.posicion?.segundos ?? 0;
       const transport: TransportState = {
         ...estado.transport,
         posicion: posicionDesdeSegundos(payload.segundos, bpm),
@@ -2570,7 +2578,6 @@ export function crearComandoTransportSeek(): CommandDefinition<TransportSeekPayl
         state: { ...estado, transport },
         events: [],
         result: payload,
-        inversePayload: { segundos: segundosAnteriores },
       };
     },
   };
@@ -2579,7 +2586,7 @@ export function crearComandoTransportSeek(): CommandDefinition<TransportSeekPayl
 export function crearComandoTransportToggleLoop(): CommandDefinition<TransportToggleLoopPayload> {
   return {
     type: 'transport.toggleLoop',
-    inverseType: 'transport.toggleLoop',
+    historialUndo: 'ninguno',
     description: 'Alterna el bucle de transporte',
     risk: 'write',
     schema: { type: 'object', additionalProperties: false },
@@ -2601,7 +2608,7 @@ export function crearComandoTransportToggleLoop(): CommandDefinition<TransportTo
 export function crearComandoTransportToggleMetronome(): CommandDefinition<TransportToggleMetronomePayload> {
   return {
     type: 'transport.toggleMetronome',
-    inverseType: 'transport.toggleMetronome',
+    historialUndo: 'ninguno',
     description: 'Alterna el metrónomo',
     risk: 'write',
     schema: { type: 'object', additionalProperties: false },
@@ -2623,7 +2630,7 @@ export function crearComandoTransportToggleMetronome(): CommandDefinition<Transp
 export function crearComandoTransportToggleRecord(): CommandDefinition<TransportToggleRecordPayload> {
   return {
     type: 'transport.toggleRecord',
-    inverseType: 'transport.toggleRecord',
+    historialUndo: 'ninguno',
     description: 'Alterna el estado de grabación',
     risk: 'dangerous',
     schema: { type: 'object', additionalProperties: false },
@@ -2647,7 +2654,7 @@ export type TransportTogglePunchPayload = Record<string, never>;
 export function crearComandoTransportTogglePunch(): CommandDefinition<TransportTogglePunchPayload> {
   return {
     type: 'transport.togglePunch',
-    inverseType: 'transport.togglePunch',
+    historialUndo: 'ninguno',
     description: 'Activa/desactiva punch in/out (ventana de grabación)',
     risk: 'write',
     schema: { type: 'object', additionalProperties: false },
@@ -2694,7 +2701,7 @@ export type TransportToggleCountInPayload = Record<string, never>;
 export function crearComandoTransportToggleCountIn(): CommandDefinition<TransportToggleCountInPayload> {
   return {
     type: 'transport.toggleCountIn',
-    inverseType: 'transport.toggleCountIn',
+    historialUndo: 'ninguno',
     description: 'Activa/desactiva count-in (pre-roll) antes de grabar',
     risk: 'write',
     schema: { type: 'object', additionalProperties: false },

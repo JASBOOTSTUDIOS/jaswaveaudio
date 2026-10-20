@@ -890,3 +890,111 @@ export function parseAutomationParamKey(
   if (i <= 0) return null
   return { pluginInstanceId: rest.slice(0, i), parameterId: rest.slice(i + 1) }
 }
+
+// ── Snapshot de estado de plugins (autosave) ───────────────────
+
+/** Campos que el autosave lee del host y escribe en el proyecto. */
+export type PluginSnapshotEstado = {
+  parametros?: ParametroPluginOpciones[]
+  estadoPluginBase64?: string
+  estado?: PluginInfo['estado']
+}
+
+export type TrackSnapshotPluginStatePayload = PluginSnapshotEstado & {
+  trackId: string
+  pluginInstanceId: string
+}
+
+export type MasterSnapshotPluginStatePayload = PluginSnapshotEstado & {
+  pluginInstanceId: string
+}
+
+function mismosParametros(a: ParametroPluginOpciones[] | undefined, b: ParametroPluginOpciones[] | undefined): boolean {
+  const pa = a ?? []
+  const pb = b ?? []
+  if (pa.length !== pb.length) return false
+  for (let i = 0; i < pa.length; i++) {
+    if (pa[i]!.id !== pb[i]!.id || pa[i]!.valor !== pb[i]!.valor) return false
+  }
+  return true
+}
+
+/**
+ * true si el snapshot no cambia nada del plugin (mismo blob, mismos valores de
+ * parámetros y mismo estado). El autosave lo usa para no ejecutar comandos vacíos.
+ */
+export function snapshotPluginSinCambios(previo: PluginInfo, snap: PluginSnapshotEstado): boolean {
+  if (snap.estadoPluginBase64 !== undefined && snap.estadoPluginBase64 !== previo.estadoPluginBase64) return false
+  if (snap.estado !== undefined && snap.estado !== previo.estado) return false
+  if (snap.parametros !== undefined && !mismosParametros(previo.parametros, snap.parametros)) return false
+  return true
+}
+
+/**
+ * Escribe el estado capturado del host en el plugin sin tocar `modificado`
+ * (el estado del plugin no es una edición del usuario: el usuario ya editó
+ * el plugin en su ventana y ese cambio no es deshacible desde el DAW).
+ */
+function aplicarSnapshotPlugin(estado: DAWState, trackId: string, payload: TrackSnapshotPluginStatePayload): StateTransition<TrackSnapshotPluginStatePayload> {
+  const host = resolveChainHost(estado, trackId)
+  const idx = host.plugins.findIndex((p) => p.id === payload.pluginInstanceId)
+  if (idx < 0) throw new Error(`Plugin no encontrado: ${payload.pluginInstanceId}`)
+  const previo = host.plugins[idx]!
+  if (snapshotPluginSinCambios(previo, payload)) {
+    return { state: estado, events: [], result: { ...payload, cambiado: false } as never }
+  }
+  const siguiente: PluginInfo = {
+    ...previo,
+    ...(payload.parametros !== undefined ? { parametros: payload.parametros } : {}),
+    ...(payload.estadoPluginBase64 !== undefined ? { estadoPluginBase64: payload.estadoPluginBase64 } : {}),
+    ...(payload.estado !== undefined ? { estado: payload.estado } : {}),
+  }
+  const plugins = host.plugins.map((p, i) => (i === idx ? siguiente : p))
+  const project: ProjectState = isMasterFxId(trackId)
+    ? { ...estado.project, master: { ...estado.project.master, plugins } }
+    : {
+        ...estado.project,
+        tracks: estado.project.tracks.map((t) => (t.id === trackId ? ({ ...t, plugins } as Track) : t)),
+      }
+  return { state: { ...estado, project }, events: [], result: { ...payload, cambiado: true } as never }
+}
+
+const SCHEMA_SNAPSHOT_PROPS = {
+  pluginInstanceId: { type: 'string' },
+  parametros: { type: 'array' },
+  estadoPluginBase64: { type: 'string' },
+  estado: { type: 'string', enum: ['cargado', 'error', 'pendiente'] },
+}
+
+export function crearComandoTrackSnapshotPluginState(): CommandDefinition<TrackSnapshotPluginStatePayload> {
+  return {
+    type: 'track.snapshotPluginState',
+    historialUndo: 'ninguno',
+    description: 'Guarda en el proyecto el estado de un plugin leído del host (autosave; sin undo ni "modificado")',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: { trackId: { type: 'string' }, ...SCHEMA_SNAPSHOT_PROPS },
+      required: ['trackId', 'pluginInstanceId'],
+      additionalProperties: false,
+    },
+    handler: (estado, payload) => aplicarSnapshotPlugin(estado, payload.trackId, payload),
+  }
+}
+
+export function crearComandoMasterSnapshotPluginState(): CommandDefinition<MasterSnapshotPluginStatePayload> {
+  return {
+    type: 'master.snapshotPluginState',
+    historialUndo: 'ninguno',
+    description: 'Guarda en el proyecto el estado de un plugin del master leído del host (autosave; sin undo ni "modificado")',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: SCHEMA_SNAPSHOT_PROPS,
+      required: ['pluginInstanceId'],
+      additionalProperties: false,
+    },
+    handler: (estado, payload) =>
+      aplicarSnapshotPlugin(estado, MASTER_FX_TRACK_ID, { ...payload, trackId: MASTER_FX_TRACK_ID }) as never,
+  }
+}

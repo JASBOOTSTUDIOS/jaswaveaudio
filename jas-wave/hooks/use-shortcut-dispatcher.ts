@@ -14,8 +14,9 @@ import {
   guardarProyectoIO,
   nuevoProyectoIO,
 } from '../src/lib/project-io'
-import { executeOrNotify, redoOrNotify, undoOrNotify } from '../src/lib/execute-or-toast'
+import { batchOrNotify, executeOrNotify, redoOrNotify, undoOrNotify } from '../src/lib/execute-or-toast'
 import { dawClipboard, type ClipboardClip } from '../src/lib/daw-clipboard'
+import { loteBorrarClips, loteDuplicarClips, lotePegarClips } from '../src/lib/clip-edit-commands'
 import { requestOpenTool } from '../src/workspace/types'
 import { bumpUiZoom, bumpDocsTextZoom, isDocsZoomTarget, setDocsTextZoom } from '../src/lib/docs-editor-store'
 import { bumpChatTextZoom, isChatZoomTarget, setChatTextZoom } from '../src/lib/chat-ui-store'
@@ -122,59 +123,27 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       const playheadBeats =
         state.transport.posicion?.beats ??
         ((state.transport.posicion?.segundos ?? 0) * (state.project.bpm?.valor ?? 120)) / 60
-      const baseInicio = Math.min(...clips.map((c) => c.inicio))
+      // Un pegado = un lote = un undo; conserva clipInicio de los clips de audio.
+      const lote = lotePegarClips(clips, targetTrackId, playheadBeats)
       void (async () => {
-        let ok = 0
-        let lastClipId: string | undefined
-        for (const clip of clips) {
-          const offset = clip.inicio - baseInicio
-          const inicio = playheadBeats + offset
-          const isMidi =
-            clip.tipo === 'midi' || (Array.isArray(clip.notas) && clip.notas.length > 0)
-          const result = isMidi
-            ? await executeOrNotify(tienda, 'midi.clip.create', {
-                pistaId: targetTrackId,
-                nombre: clip.nombre,
-                inicio,
-                duracion: clip.duracion,
-                color: clip.color,
-                notas: (clip.notas ?? []).map((n) => ({
-                  pitch: n.pitch,
-                  inicio: n.inicio,
-                  duracion: n.duracion,
-                  velocidad: n.velocidad,
-                  canal: n.canal,
-                })),
-              })
-            : await executeOrNotify(tienda, 'clip.create', {
-                pistaId: targetTrackId,
-                nombre: clip.nombre,
-                inicio,
-                duracion: clip.duracion,
-                color: clip.color,
-                sourceId: clip.sourceId,
-                waveform: clip.waveform,
-              })
-          if (result.success) {
-            ok += 1
-            const created = result.state?.project?.tracks
-              ?.find((t: { id: string }) => t.id === targetTrackId)
-              ?.clips?.slice(-1)[0] as { id?: string } | undefined
-            if (created?.id) lastClipId = created.id
-          }
+        const r = await batchOrNotify(tienda, lote.comandos, 'editing.paste')
+        if (!r.success) return
+        const lastClipId = lote.idsCreados[lote.idsCreados.length - 1]
+        if (lastClipId) {
+          void executeOrNotify(tienda, 'selection.set', {
+            idsClips: [lastClipId],
+            idsPistas: [targetTrackId],
+            tipo: 'clip',
+            idPrincipal: targetTrackId,
+          })
         }
-        if (ok > 0) {
-          if (lastClipId) {
-            void executeOrNotify(tienda, 'selection.set', {
-              idsClips: [lastClipId],
-              idsPistas: [targetTrackId],
-              tipo: 'clip',
-              idPrincipal: targetTrackId,
-            })
-          }
-          tienda.busEventos.emit('portapapeles.pegado', { cantidad: ok })
-        }
+        tienda.busEventos.emit('portapapeles.pegado', { cantidad: lote.idsCreados.length })
       })()
+    }
+
+    const deleteSelectedClips = (tipo: string) => {
+      const { selection, project } = st()
+      void batchOrNotify(tienda, loteBorrarClips(project, selection.idsClips), tipo)
     }
 
     const handlers: Record<string, () => void> = {
@@ -275,14 +244,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         }
         dawClipboard.setClips(clips)
         tienda.busEventos.emit('portapapeles.copiado', { cantidad: clips.length })
-        const { selection, project } = st()
-        for (const clipId of selection.idsClips) {
-          for (const track of project.tracks) {
-            if (track.clips.some((c: { id: string }) => c.id === clipId)) {
-              void executeOrNotify(tienda, 'clip.delete', { pistaId: track.id, clipId })
-            }
-          }
-        }
+        deleteSelectedClips('editing.cut')
       },
       'editing.paste': () => {
         pasteClipboardClips()
@@ -290,48 +252,11 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       'editing.duplicate': () => {
         const clips = collectSelectedClips()
         if (clips.length === 0) return
-        // Duplicar: pegar justo después del original en la misma pista
-        for (const clip of clips) {
-          const inicio = clip.inicio + clip.duracion
-          const isMidi =
-            clip.tipo === 'midi' || (Array.isArray(clip.notas) && (clip.notas?.length ?? 0) > 0)
-          if (isMidi) {
-            void executeOrNotify(tienda, 'midi.clip.create', {
-              pistaId: clip.pistaOrigenId,
-              nombre: `${clip.nombre} (Copia)`,
-              inicio,
-              duracion: clip.duracion,
-              color: clip.color,
-              notas: (clip.notas ?? []).map((n) => ({
-                pitch: n.pitch,
-                inicio: n.inicio,
-                duracion: n.duracion,
-                velocidad: n.velocidad,
-                canal: n.canal,
-              })),
-            })
-          } else {
-            void executeOrNotify(tienda, 'clip.create', {
-              pistaId: clip.pistaOrigenId,
-              nombre: `${clip.nombre} (Copia)`,
-              inicio,
-              duracion: clip.duracion,
-              color: clip.color,
-              sourceId: clip.sourceId,
-              waveform: clip.waveform,
-            })
-          }
-        }
+        // Duplicar: justo después del original en la misma pista, un solo undo.
+        void batchOrNotify(tienda, loteDuplicarClips(clips).comandos, 'editing.duplicate')
       },
       'editing.delete': () => {
-        const { selection, project } = st()
-        for (const clipId of selection.idsClips) {
-          for (const track of project.tracks) {
-            if (track.clips.some((c: { id: string }) => c.id === clipId)) {
-              void executeOrNotify(tienda, 'clip.delete', { pistaId: track.id, clipId })
-            }
-          }
-        }
+        deleteSelectedClips('editing.delete')
       },
       'editing.selectAll': () => {
         const { project } = st()

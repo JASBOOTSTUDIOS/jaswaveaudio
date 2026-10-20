@@ -7,6 +7,8 @@ import type { Clip, MidiClip, Track } from '@jaswave/shared'
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { requestOpenTool } from '@/src/workspace/types'
 import { dawClipboard, type ClipboardClip } from '@/src/lib/daw-clipboard'
+import { loteBorrarClips, lotePegarClips } from '@/src/lib/clip-edit-commands'
+import { batchOrNotify } from '@/src/lib/execute-or-toast'
 import { exportClipScorePdfDialog } from '@/src/lib/midi-score-export'
 import { styleSaveFromClip } from '@/src/lib/styles/ops'
 import { openMidiClipMdPanel } from '@/src/lib/open-midi-clip-md'
@@ -131,7 +133,7 @@ async function duplicateClip(tienda: TiendaDAW, trackId: string, clip: Clip): Pr
     })
     return
   }
-  const audio = clip as Clip & { source?: { ruta?: string }; sourceId?: string; waveform?: number[] }
+  const audio = clip as Clip & { source?: { ruta?: string }; sourceId?: string; waveform?: number[]; clipInicio?: number }
   await tienda.executor.execute('clip.create', {
     pistaId: trackId,
     nombre: `${clip.nombre || 'Clip'} (Copia)`,
@@ -140,6 +142,7 @@ async function duplicateClip(tienda: TiendaDAW, trackId: string, clip: Clip): Pr
     color: clip.color,
     sourceId: audio.sourceId || audio.source?.ruta,
     waveform: audio.waveform,
+    ...(audio.clipInicio && audio.clipInicio > 0 ? { clipInicio: audio.clipInicio } : {}),
   })
 }
 
@@ -308,9 +311,7 @@ export function ClipContextMenu({ menu, onClose, tienda }: Props) {
           run(async () => {
             dawClipboard.setClips(menuClips.map((c) => toClipboardClip(track.id, c)))
             tienda.busEventos.emit('portapapeles.copiado', { cantidad: menuClips.length })
-            for (const c of menuClips) {
-              await tienda.executor.execute('clip.delete', { pistaId: track.id, clipId: c.id })
-            }
+            await batchOrNotify(tienda, loteBorrarClips(tienda.obtenerEstado().project, menuClips.map((c) => c.id)), 'editing.cut')
           })
         }
       />
@@ -323,35 +324,7 @@ export function ClipContextMenu({ menu, onClose, tienda }: Props) {
             const clips = dawClipboard.getClips()
             if (clips.length === 0) return
             const pasteAt = clip.inicio + clip.duracion
-            for (const c of clips) {
-              const inicio = pasteAt
-              if (c.tipo === 'midi' || (c.notas?.length ?? 0) > 0) {
-                await tienda.executor.execute('midi.clip.create', {
-                  pistaId: track.id,
-                  nombre: c.nombre,
-                  inicio,
-                  duracion: c.duracion,
-                  color: c.color,
-                  notas: (c.notas ?? []).map((n) => ({
-                    pitch: n.pitch,
-                    inicio: n.inicio,
-                    duracion: n.duracion,
-                    velocidad: n.velocidad,
-                    canal: n.canal,
-                  })),
-                })
-              } else {
-                await tienda.executor.execute('clip.create', {
-                  pistaId: track.id,
-                  nombre: c.nombre,
-                  inicio,
-                  duracion: c.duracion,
-                  color: c.color,
-                  sourceId: c.sourceId,
-                  waveform: c.waveform,
-                })
-              }
-            }
+            await batchOrNotify(tienda, lotePegarClips(clips, track.id, pasteAt).comandos, 'editing.paste')
           })
         }
       />
@@ -445,9 +418,7 @@ export function ClipContextMenu({ menu, onClose, tienda }: Props) {
         shortcut="Del"
         onClick={() =>
           run(async () => {
-            for (const c of menuClips) {
-              await tienda.executor.execute('clip.delete', { pistaId: track.id, clipId: c.id })
-            }
+            await batchOrNotify(tienda, loteBorrarClips(tienda.obtenerEstado().project, menuClips.map((c) => c.id)), 'editing.delete')
           })
         }
       />

@@ -729,6 +729,7 @@ export function ArrangementView() {
               sourceId?: string
               source?: { ruta?: string }
               waveform?: number[]
+              clipInicio?: number
             }
             const destTrackId = drag.previewTrackId
             const isMidi =
@@ -758,6 +759,7 @@ export function ArrangementView() {
                   color: c.color,
                   sourceId: c.sourceId || c.source?.ruta,
                   waveform: c.waveform,
+                  ...(c.clipInicio && c.clipInicio > 0 ? { clipInicio: c.clipInicio } : {}),
                 })
               }
             })()

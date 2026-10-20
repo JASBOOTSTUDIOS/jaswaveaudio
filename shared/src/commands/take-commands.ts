@@ -165,6 +165,7 @@ export function crearComandoTakeAdd(): CommandDefinition<any> {
 export function crearComandoTakeDelete(): CommandDefinition<any> {
   return {
     type: 'take.delete',
+    historialUndo: 'instantanea',
     description: 'Elimina una toma y sus segmentos de comp',
     risk: 'dangerous',
     schema: {
@@ -196,6 +197,7 @@ export function crearComandoTakeDelete(): CommandDefinition<any> {
 export function crearComandoTakeRename(): CommandDefinition<any> {
   return {
     type: 'take.rename',
+    historialUndo: 'instantanea',
     description: 'Renombra una toma',
     risk: 'write',
     schema: {
@@ -255,6 +257,7 @@ export function crearComandoTakePreview(): CommandDefinition<any> {
 export function crearComandoCompSegmentSet(): CommandDefinition<any> {
   return {
     type: 'comp.segment.set',
+    historialUndo: 'instantanea',
     description: 'Define o reemplaza un segmento en la matriz de comp',
     risk: 'write',
     schema: {
@@ -313,6 +316,7 @@ export function crearComandoCompSegmentSet(): CommandDefinition<any> {
 export function crearComandoCompSegmentClear(): CommandDefinition<any> {
   return {
     type: 'comp.segment.clear',
+    historialUndo: 'instantanea',
     description: 'Quita un segmento del comp',
     risk: 'write',
     schema: {
@@ -342,6 +346,7 @@ export function crearComandoCompSegmentClear(): CommandDefinition<any> {
 export function crearComandoTransportSetRecordMode(): CommandDefinition<any> {
   return {
     type: 'transport.setRecordMode',
+    historialUndo: 'ninguno',
     description: 'Cambia modo de grabación (normal, comping, punch, …)',
     risk: 'write',
     schema: {
