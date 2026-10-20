@@ -1,3 +1,4 @@
+import { esNotaMidiValida } from '../../shared/src/project/reparar-notas'
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Piano, MessageSquareQuote } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
@@ -285,6 +286,8 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         const out: LocalNote[] = []
         for (const n of clip.notas ?? []) {
           if (!n?.id || seen.has(n.id)) continue
+          // Notas corruptas (NaN de versiones anteriores) romperían todo el layout con anchos NaN.
+          if (!esNotaMidiValida(n)) continue
           seen.add(n.id)
           out.push({
             id: n.id,
@@ -557,7 +560,8 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
 
   const clipDurationBeats = useMemo(() => {
     const fromNotes = notes.reduce((m, n) => Math.max(m, n.inicio + n.duracion), 4)
-    return Math.max(clip?.duracion ?? 4, fromNotes, 4)
+    const clipDur = Number.isFinite(clip?.duracion) ? (clip?.duracion as number) : 4
+    return Math.max(clipDur, Number.isFinite(fromNotes) ? fromNotes : 4, 4)
   }, [notes, clip?.duracion])
 
   /** Timeline extendida más allá del clip para ver rejilla y playhead de la canción. */

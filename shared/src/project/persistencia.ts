@@ -2,6 +2,7 @@ import type { ProjectState } from '../types/proyecto';
 import type { AudioReference, ProyectoArchivo } from './ciclo-vida';
 import { proyectoParaGuardar, archivoValido, validarExtensionRuta, reconstruirRouting, verificarReferenciasAudio } from './ciclo-vida';
 import { migrarArchivo } from './migraciones-archivo';
+import { repararNotasMidi } from './reparar-notas';
 import type { MigracionArchivo } from './migraciones-archivo';
 import { validarProyectoArchivo } from '../schemas/proyecto';
 
@@ -158,6 +159,17 @@ const cargarDesde = async (
     throw new ErrorCargaProyecto(`Archivo .jaswave inválido: estructura incorrecta${r.texto}`, 'estructura', r.hay);
   }
 
+  // Notas MIDI corruptas (NaN → null en JSON) se descartan en vez de impedir abrir el proyecto.
+  let notasEliminadas = 0;
+  {
+    const m = migrado as { project?: unknown };
+    if (m && typeof m === 'object' && m.project) {
+      const r = repararNotasMidi(m.project);
+      notasEliminadas = r.eliminadas;
+      if (r.eliminadas > 0) migrado = { ...m, project: r.proyecto };
+    }
+  }
+
   const validacion = validarProyectoArchivo(migrado);
   if (!validacion.ok) {
     const r = await sufijoRespaldo();
@@ -174,7 +186,11 @@ const cargarDesde = async (
     }
   }
 
-  return { ...proyectoReconstruido, ruta: rutaProyecto, modificado: false };
+  if (notasEliminadas > 0) {
+    console.warn(`Proyecto reparado: ${notasEliminadas} nota(s) MIDI inválidas descartadas`);
+  }
+  // modificado=true si hubo reparación: el siguiente guardado escribe el archivo corregido.
+  return { ...proyectoReconstruido, ruta: rutaProyecto, modificado: notasEliminadas > 0 };
 };
 
 /**

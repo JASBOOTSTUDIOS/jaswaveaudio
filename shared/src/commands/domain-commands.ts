@@ -14,6 +14,7 @@
  *   Expone definiciones de comandos listas para registrar en el registry.
  */
 
+import { esNotaMidiValida } from '../project/reparar-notas';
 import type { CommandDefinition, StateTransition, ValidationResult, ValidationError } from '../types/command';
 import type { DAWState } from '../types/state';
 import type { ProjectState } from '../types/proyecto';
@@ -279,6 +280,11 @@ export type MidiSetPitchBendPayload = {
   puntos: { tiempo: number; valor: number }[];
 };
 
+/** Payload de nota utilizable: pitch/inicio/duracion numéricos y finitos (evita NaN en el proyecto). */
+function notaPayloadValida(n: MidiNotePayload | undefined): n is MidiNotePayload {
+  return esNotaMidiValida(n);
+}
+
 function mapMidiNotePayload(n: MidiNotePayload): MidiNote {
   return {
     id: n.id && n.id.length > 0 ? n.id : generarId(),
@@ -312,7 +318,8 @@ function applyMidiNotesToClip(
   if (existing.tipo !== 'midi') throw new Error('El clip no es MIDI');
 
   const prevNotas = existing.notas ?? [];
-  const notas = transform(prevNotas, existing);
+  // Cualquier operación MIDI (humanize, quantize, timeStretch…) que produzca NaN no llega al proyecto.
+  const notas = transform(prevNotas, existing).filter(esNotaMidiValida);
   let duracion = existing.duracion;
   if (notas.length > 0) {
     const end = notas.reduce((max, n) => Math.max(max, n.inicio + n.duracion), 0);
@@ -1107,7 +1114,7 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
       }
 
       const ids = crearGeneradorIds(payload.idsGenerados);
-      const notas: MidiNote[] = (payload.notas ?? []).map((n) => ({
+      const notas: MidiNote[] = (payload.notas ?? []).filter(notaPayloadValida).map((n) => ({
         id: ids.siguiente(),
         pitch: Math.max(0, Math.min(127, Math.round(n.pitch))),
         velocidad: Math.max(1, Math.min(127, Math.round(n.velocidad ?? 80))),
@@ -1217,7 +1224,7 @@ export function crearComandoMidiNotesSet(): CommandDefinition<MidiNotesSetPayloa
       const existing = clips[index];
       if (existing.tipo !== 'midi') throw new Error('El clip no es MIDI');
 
-      const notas: MidiNote[] = (payload.notas ?? []).map(mapMidiNotePayload);
+      const notas: MidiNote[] = (payload.notas ?? []).filter(notaPayloadValida).map(mapMidiNotePayload);
 
       let duracion = payload.duracion ?? existing.duracion;
       if (notas.length > 0) {
@@ -1423,7 +1430,7 @@ export function crearComandoMidiCreateNotes(): CommandDefinition<MidiCreateNotes
       applyMidiNotesToClip(estado, payload.pistaId, payload.clipId, (notas) =>
         appendNotes(
           notas,
-          (payload.notas ?? []).map((n) => ({ ...mapMidiNotePayload(n), source: n.source ?? 'drawn' })),
+          (payload.notas ?? []).filter(notaPayloadValida).map((n) => ({ ...mapMidiNotePayload(n), source: n.source ?? 'drawn' })),
         ),
       ) as StateTransition<MidiCreateNotesPayload>,
   };

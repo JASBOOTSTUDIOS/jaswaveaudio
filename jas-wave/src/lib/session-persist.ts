@@ -6,6 +6,7 @@
 import type { DAWState } from '../../../shared/src/types/state'
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { validarProyecto } from '../../../shared/src/schemas/proyecto'
+import { repararNotasMidi } from '../../../shared/src/project/reparar-notas'
 import { audioEngine } from '@/lib/audio-engine'
 import { markProjectBuffersNotNeeded, reportProjectBuffersSettled } from '@/src/lib/project-ready'
 import { migrateSoftPadPluginsInProject } from '@/src/lib/plugin/migrate-softpad-to-roles'
@@ -339,7 +340,12 @@ export function validarProyectoSesion(project: unknown): string | null {
  * @returns true si se aplicó la sesión.
  */
 export function applySessionProject(tienda: TiendaDAW, snap: SessionMeta | SessionSnapshot): boolean {
-  const project = snap?.project
+  // Notas MIDI corruptas de versiones anteriores (NaN) se descartan antes de validar.
+  const reparado = repararNotasMidi(snap?.project)
+  if (reparado.eliminadas > 0) {
+    window.electron?.logError?.('session', `Sesión reparada: ${reparado.eliminadas} nota(s) MIDI inválidas descartadas`)
+  }
+  const project = reparado.proyecto
   const error = validarProyectoSesion(project)
   if (error) {
     const msg = `Sesión guardada descartada (proyecto corrupto): ${error}`
