@@ -31,6 +31,12 @@ jaswave-ia/
 └── docs/                # Arquitectura, ADRs (docs/decisiones), manual
 ```
 
+## Planes de trabajo en curso
+
+Los planes ejecutables de la fase actual están en [`docs/plans/`](docs/plans/README.md).
+Antes de implementar: lee [`docs/plans/PROTOCOL.md`](docs/plans/PROTOCOL.md), toma un workstream pendiente de
+[`docs/plans/STATUS.md`](docs/plans/STATUS.md) y deja **Notas de traspaso** al pausar para que otro agente pueda continuar.
+
 ## Verificación
 
 Desde la raíz (Node según `.nvmrc`):
