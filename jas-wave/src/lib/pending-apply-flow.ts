@@ -2,7 +2,7 @@
  * Flujo Aplicar de la tarjeta pendiente: ejecuta, consejo dialoga, reanaliza y propone el siguiente paso.
  */
 
-import type { ReasoningChatTurn } from '@jaswave/ai-harness'
+import type { AgentBudgetTracker, ReasoningChatTurn } from '@jaswave/ai-harness'
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import {
   executeDawActions,
@@ -40,7 +40,7 @@ export async function runApplyPendingFlow(opts: {
   agentMode: string
   actions: DawAction[]
   indices: number[]
-  chat: (body: string) => Promise<string>
+  chat: (body: string) => Promise<string | import('@jaswave/ai-harness').AgentLoopChatReply>
   userTextHint?: string
   /** Chat multi-turno para el diálogo del consejo post-Aplicar. */
   councilChat?: (messages: ReasoningChatTurn[]) => Promise<{ success: boolean; content?: string }>
@@ -48,6 +48,8 @@ export async function runApplyPendingFlow(opts: {
   onCouncilPhase?: (label: string) => void
   abort?: AbortSignal
   paceBetweenPhasesMs?: number
+  /** Presupuesto del turno del motor (A1): consejo + loop reanudado lo comparten. */
+  budget?: AgentBudgetTracker
 }): Promise<ApplyPendingFlowResult> {
   const { tienda, conversationId, messageId, agentMode, actions, indices, chat } = opts
   const toIdx = indices
@@ -118,6 +120,7 @@ export async function runApplyPendingFlow(opts: {
         onPhaseLabel: opts.onCouncilPhase,
         abort: opts.abort,
         paceBetweenPhasesMs: opts.paceBetweenPhasesMs,
+        budget: opts.budget,
       })
       reasoningSteps = review.steps
       councilBrief = review.decisionBrief || review.finalUserMessage || ''
@@ -134,6 +137,8 @@ export async function runApplyPendingFlow(opts: {
       conversationId,
       messageId,
       priorBrief: continueBrief(ok, line, councilBrief),
+      abort: opts.abort,
+      budget: opts.budget,
     })
     loopSummary = [loopSummary, loop.summary].filter(Boolean).join('\n')
     if (loop.status === 'waiting-for-confirmation' && loop.pendingCalls?.length) {
@@ -166,6 +171,7 @@ export async function runApplyPendingFlow(opts: {
       agentMode: (agentMode as AgentMode) || 'create',
       chat,
       abort: opts.abort,
+      budget: opts.budget,
       beforeResume: opts.councilChat
         ? async ({ ok: applyOk, applyResults }) => {
             const applyLine = [
@@ -187,6 +193,7 @@ export async function runApplyPendingFlow(opts: {
               onPhaseLabel: opts.onCouncilPhase,
               abort: opts.abort,
               paceBetweenPhasesMs: opts.paceBetweenPhasesMs,
+              budget: opts.budget,
             })
             reasoningSteps = review.steps
             councilBrief = review.decisionBrief || review.finalUserMessage || ''

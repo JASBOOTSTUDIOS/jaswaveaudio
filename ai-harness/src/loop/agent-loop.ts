@@ -11,9 +11,25 @@ import {
   type AgentBudgetTracker,
 } from '../agent/budget'
 
+/** Respuesta de chat con decisión nativa (tool calls) ya resuelta. */
+export type AgentLoopChatReply = { text: string; decision?: AgentDecision | null }
+
+function replyText(r: string | AgentLoopChatReply): string {
+  return typeof r === 'string' ? r : r.text
+}
+
+function replyDecision(r: string | AgentLoopChatReply): AgentDecision | null {
+  if (typeof r !== 'string' && r.decision) return r.decision
+  return parseAgentDecisionFromText(replyText(r))
+}
+
 export type AgentLoopDeps = {
   userText: string
-  chat: (prompt: string, observation: AgentObservation, iteration: number) => Promise<string>
+  /**
+   * Chat del loop. Puede devolver texto (marcadores) o una respuesta ya decidida por
+   * tool-calling nativo (A2): `{ text, decision }`.
+   */
+  chat: (prompt: string, observation: AgentObservation, iteration: number) => Promise<string | AgentLoopChatReply>
   observe: (lastResults: AgentLoopToolResult[]) => AgentObservation | Promise<AgentObservation>
   executeCalls: (calls: AgentLoopToolCall[]) => Promise<AgentLoopToolResult[]>
   getState: () => DAWState
@@ -203,26 +219,28 @@ export async function runAgentLoop(deps: AgentLoopDeps): Promise<AgentRunResult>
         lastObservation: observation,
       }
     }
-    let raw = await deps.chat(prompt, observation, iterations)
+    let reply = await deps.chat(prompt, observation, iterations)
+    let raw = replyText(reply)
     if (deps.abort?.aborted) {
       setStatus(deps, 'cancelled')
       emit(deps, EventosIAExt.runCancelado as AgentRunEventName, { iterations })
       return { status: 'cancelled', summary: 'Cancelado', iterations, results, decisions, lastObservation: observation }
     }
 
-    let decision = parseAgentDecisionFromText(raw)
+    let decision = replyDecision(reply)
     if (!decision && parseRetries < 1 && !tracker.exceeded()) {
       parseRetries += 1
       setStatus(deps, 'planning')
       const repairPrompt = formatRepairPrompt(deps.userText, deps.priorBrief, raw)
       tracker.tryCharge(repairPrompt.length + observation.text.length)
-      raw = await deps.chat(repairPrompt, observation, iterations)
+      reply = await deps.chat(repairPrompt, observation, iterations)
+      raw = replyText(reply)
       if (deps.abort?.aborted) {
         setStatus(deps, 'cancelled')
         emit(deps, EventosIAExt.runCancelado as AgentRunEventName, { iterations })
         return { status: 'cancelled', summary: 'Cancelado', iterations, results, decisions, lastObservation: observation }
       }
-      decision = parseAgentDecisionFromText(raw)
+      decision = replyDecision(reply)
     }
     if (!decision) {
       setStatus(deps, 'failed')

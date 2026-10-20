@@ -45,6 +45,18 @@ export type AgentBudgetTracker = {
   usage(): AgentBudgetUsage
   /** Caracteres de entrada que aún caben (para compactar antes de enviar). */
   remainingInputChars(): number
+  /**
+   * Contabiliza intentos HTTP extra ya realizados (reintentos del gateway) sin bloquear:
+   * cada intento real cuenta como llamada al modelo.
+   */
+  recordExtraCalls?(n: number): void
+}
+
+/** Consumo previo para reanudar un turno persistido sin regalar presupuesto. */
+export type AgentBudgetInitialUsage = {
+  modelCalls?: number
+  inputChars?: number
+  elapsedMs?: number
 }
 
 export class AgentBudgetExceededError extends Error {
@@ -78,11 +90,12 @@ export function resolveAgentBudget(partial?: Partial<AgentBudget> | null): Agent
 export function createAgentBudgetTracker(
   partial?: Partial<AgentBudget> | null,
   now: () => number = Date.now,
+  initial?: AgentBudgetInitialUsage | null,
 ): AgentBudgetTracker {
   const budget = Object.freeze(resolveAgentBudget(partial))
-  const startedAt = now()
-  let modelCalls = 0
-  let inputChars = 0
+  const startedAt = now() - Math.max(0, Math.floor(Number(initial?.elapsedMs) || 0))
+  let modelCalls = Math.max(0, Math.floor(Number(initial?.modelCalls) || 0))
+  let inputChars = Math.max(0, Math.floor(Number(initial?.inputChars) || 0))
 
   const usage = (): AgentBudgetUsage => ({
     modelCalls,
@@ -118,6 +131,36 @@ export function createAgentBudgetTracker(
     },
     usage,
     remainingInputChars: () => Math.max(0, budget.maxInputChars - inputChars),
+    recordExtraCalls(n: number) {
+      const k = Math.max(0, Math.floor(Number(n) || 0))
+      modelCalls += k
+    },
+  }
+}
+
+/**
+ * Vista de solo-guarda de un tracker: `tryCharge` comprueba pero NO carga.
+ * La usan las capas antiguas (razonamiento, agent loop, harness) cuando el chat real ya pasa por
+ * el motor (A1), que carga cada intento HTTP una sola vez: así no se cuenta doble.
+ */
+export function createBudgetGuard(tracker: AgentBudgetTracker): AgentBudgetTracker {
+  const check = (chars: number): AgentBudgetStopReason | null => {
+    const pre = tracker.exceeded()
+    if (pre) return pre
+    const c = Math.max(0, Math.floor(Number(chars) || 0))
+    return c > tracker.remainingInputChars() ? 'input-chars' : null
+  }
+  return {
+    budget: tracker.budget,
+    exceeded: () => tracker.exceeded(),
+    tryCharge: check,
+    charge(chars: number) {
+      const r = check(chars)
+      if (r) throw new AgentBudgetExceededError(r, tracker.usage(), tracker.budget)
+    },
+    usage: () => tracker.usage(),
+    remainingInputChars: () => tracker.remainingInputChars(),
+    recordExtraCalls: () => undefined,
   }
 }
 

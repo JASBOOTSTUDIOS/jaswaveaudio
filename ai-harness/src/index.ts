@@ -46,8 +46,16 @@ export {
   type AgentRunResult,
   type AgentExecutionLimits,
 } from './loop/agent-run-types'
-export { runAgentLoop, type AgentLoopDeps } from './loop/agent-loop'
-export { parseAgentDecisionFromText } from './recovery/parse-agent-decision'
+export { runAgentLoop, type AgentLoopDeps, type AgentLoopChatReply } from './loop/agent-loop'
+export {
+  parseAgentDecisionFromText,
+  agentDecisionFromToolCalls,
+  agentDecisionFromChatResponse,
+  AGENT_CONTROL_TOOLS,
+  AGENT_CONTROL_TOOL_NAMES,
+  AGENT_CONTROL_TOOL_SCHEMAS,
+  type NativeToolCallLike,
+} from './recovery/parse-agent-decision'
 export {
   observeAgentContext,
   inferObserveIntent,
@@ -306,6 +314,7 @@ export {
   DEFAULT_AGENT_BUDGET,
   AgentBudgetExceededError,
   createAgentBudgetTracker,
+  createBudgetGuard,
   formatAgentBudgetStop,
   formatAgentBudgetStopFor,
   isAgentBudgetExceededError,
@@ -315,6 +324,7 @@ export {
   type AgentBudgetStopReason,
   type AgentBudgetTracker,
   type AgentBudgetUsage,
+  type AgentBudgetInitialUsage,
 } from './agent/budget'
 
 export {
@@ -340,3 +350,5 @@ export {
   resolvePianoRollClip,
   selectTrackPayload,
 } from './ask/selection'
+
+export * from './engine'

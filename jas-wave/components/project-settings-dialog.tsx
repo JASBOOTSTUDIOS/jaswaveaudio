@@ -1980,7 +1980,7 @@ function AiTab() {
                 onChange={(e) => resetDraft(e.target.value as AiProviderKind)}
                 className={`w-full ${inputClass}`}
               >
-                {(Object.keys(PROVIDER_PRESETS) as AiProviderKind[]).map((k) => (
+                {(Object.keys(PROVIDER_PRESETS) as AiProviderKind[]).filter((k) => k !== 'mock').map((k) => (
                   <option key={k} value={k}>
                     {PROVIDER_PRESETS[k].label}
                   </option>

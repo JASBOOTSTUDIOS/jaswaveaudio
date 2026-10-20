@@ -1,0 +1,18 @@
+{
+  "name": "ask: lee el proyecto, intenta mutar (rechazado) y responde",
+  "responses": [
+    {
+      "when": { "purpose": "agent", "afterToolResult": false },
+      "content": "Voy a mirar las pistas.",
+      "toolCalls": [
+        { "name": "track.list", "arguments": {} },
+        { "name": "project.setBpm", "arguments": { "bpm": 90 } }
+      ]
+    },
+    {
+      "when": { "purpose": "agent", "afterToolResult": true },
+      "content": "",
+      "toolCalls": [{ "name": "agent.complete", "arguments": { "summary": "Hay 1 pista (Bajo) a 120 BPM." } }]
+    }
+  ]
+}

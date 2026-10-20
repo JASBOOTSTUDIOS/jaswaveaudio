@@ -1,0 +1,16 @@
+{
+  "name": "e2e: turno completo del coproductor con proveedor mock (tool call nativa → Aplicar → completar)",
+  "responses": [
+    {
+      "when": { "purpose": "agent", "hasTools": true, "afterToolResult": false, "anyIncludes": "97" },
+      "content": "Ajusto el tempo a 97 BPM.",
+      "toolCalls": [{ "name": "project.setBpm", "arguments": { "bpm": 97 } }]
+    },
+    {
+      "when": { "purpose": "agent" },
+      "content": "<<<DECISION {\"type\":\"complete\",\"summary\":\"Tempo del proyecto en 97 BPM (mock).\"} DECISION>>>",
+      "repeat": true
+    }
+  ],
+  "fallback": { "content": "Entendido: el usuario quiere el tempo a 97 BPM. Lo ajusto con project.setBpm." }
+}

@@ -12,9 +12,7 @@ por el agent bridge HTTP y comprueba la UI por CDP.
 | `04-save-reopen` | Guardar en carpeta temporal (ruta concedida por el bridge), `.bak` en el segundo guardado, `project.load` restaura pista/clip/BPM |
 | `05-export` | `render.start` a WAV (pista de audio con un seno generado); WAV válido y > 200 KB. Se salta si no hay plugin host |
 | `06-crash` | Error no capturado + rechazo de promesa → `logs/jaswave.log`, app viva; crash del proceso renderer → `render-process-gone` en el log y main vivo |
-| `07-piano-roll-focus` | Atajos con foco (U5): Delete en el piano roll no borra el clip del arrange; Enter detiene sin re-alternar; rueda de BPM solo con foco o Alt |
-| `08-close-guard` | Cambios sin guardar (U1): cerrar o `project.new` de la IA preguntan; Cancelar mantiene la app; No guardar la cierra |
-| `09-undo-validacion` | Undo limpio (U2) y validación (U3): un arrastre de fader = un Ctrl+Z; Ctrl+Z en reproducción no para el transporte; BPM vacío/0/texto se revierte |
+| `07-agent-mock` | Turno completo del agente por la UI con el proveedor mock (`JASWAVE_AI_MOCK=fixtures/agent-mock-tempo.json`): pedido → tool call nativa → tarjeta Aplicar → «Todas» → BPM aplicado y run `completed` en `userData/agent-runs` |
 
 ## Cómo ejecutar
 
@@ -47,6 +45,7 @@ Playwright, solo `chromium.connectOverCDP` contra el propio Electron.
 | `JASWAVE_E2E_EXE` | Ruta alternativa al ejecutable empaquetado |
 | `JASWAVE_E2E_KEEP_TMP=1` | No borrar la carpeta temporal (`%TEMP%/jaswave-e2e-*`: `userData/`, `work/`) |
 | `JASWAVE_E2E_ALLOW_SILENT=1` | `05-export` no falla si el WAV exportado es silencio (solo diagnóstico) |
+| `JASWAVE_AI_MOCK` | Ruta a un guion JSON del proveedor mock (formato en `ai-harness/src/engine/mock-script.ts`): todas las peticiones de chat se responden desde el guion, sin red. También sirve para la CLI con la app abierta |
 | `CI` | 1 reintento, `forbidOnly` y reporte HTML en `jas-wave/playwright-report/` |
 
 El lanzador fija por su cuenta `JASWAVE_AGENT_BRIDGE` (`0`/`1`), `JASWAVE_AGENT_PORT`

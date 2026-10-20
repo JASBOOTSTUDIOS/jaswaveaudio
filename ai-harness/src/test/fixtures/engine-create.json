@@ -1,0 +1,22 @@
+{
+  "name": "create: propone pista + tempo, borra una pista y termina",
+  "responses": [
+    {
+      "when": { "purpose": "agent", "afterToolResult": false },
+      "content": "Creo la pista de pad y ajusto el tempo.",
+      "toolCalls": [
+        { "name": "track.create", "arguments": { "nombre": "Pad", "tipo": "midi" } },
+        { "name": "project.setBpm", "arguments": { "bpm": 96 } }
+      ]
+    },
+    {
+      "when": { "purpose": "agent", "afterToolResult": true },
+      "content": "Pista creada. Elimino la pista vacía.",
+      "toolCalls": [{ "name": "track.delete", "arguments": { "trackId": "vacia_01" } }]
+    },
+    {
+      "when": { "purpose": "agent", "afterToolResult": true },
+      "content": "Listo: pad creado, tempo 96 y pista vacía eliminada."
+    }
+  ]
+}

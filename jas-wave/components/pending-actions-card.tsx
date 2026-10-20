@@ -2,13 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
 import { useDAW } from '@/src/context/daw-context'
 import { type DawAction } from '@/src/lib/ai-daw-agent'
-import {
-  loadAiSettings,
-  getActiveProvider,
-  toAiChatPayload,
-  aiChatWithFallback,
-  providerReasoningPaceMs,
-} from '@/src/lib/ai-settings'
+import type { ApplyPendingFlowResult } from '@/src/lib/pending-apply-flow'
+import type { StoredReasoningStep } from '@/src/lib/agent-reasoning-bridge'
 import { actionRiskLevel } from '@/src/lib/ai-action-policy'
 import { appendAiDawAudit } from '@/src/lib/ai-daw-audit-store'
 import { getConversation, patchMessage, type StoredChatMessage } from '@/src/lib/ai-chat-store'
@@ -289,62 +284,42 @@ export function PendingActionsCard({
         const undoDepthAtStart = msg?.undoDepthAtStart ?? snapshotUndoDepth(tienda)
         const userTextHint =
           [...(conv?.messages ?? [])].reverse().find((m) => m.role === 'user')?.content || ''
-        let cfg = loadAiSettings()
-        let provider = getActiveProvider(cfg)
-        const chatFn = async (body: string) => {
-          if (!window.electron?.aiChat) return ''
-          cfg = loadAiSettings()
-          provider = getActiveProvider(cfg)
-          const r = await window.electron.aiChat(
-            toAiChatPayload(provider, [{ role: 'user', content: body }], {
-              temperature: cfg.temperature,
-              maxTokens: Math.min(cfg.maxTokens, 8192),
-            }),
-          )
-          return r.success && r.content ? r.content : ''
-        }
-        const councilChat = async (
-          reasonMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-        ) => {
-          if (!window.electron?.aiChat) return { success: false as const }
-          cfg = loadAiSettings()
-          const r = await aiChatWithFallback(
-            (req) => window.electron!.aiChat!(req),
-            reasonMessages,
-            {
-              temperature: Math.min(0.9, Math.max(cfg.temperature, 0.55)),
-              maxTokens: Math.max(cfg.maxTokens, 16384),
-              settings: cfg,
-            },
-          )
-          return { success: Boolean(r.success && r.content), content: r.content }
-        }
-        const { runApplyPendingFlow } = await import('@/src/lib/pending-apply-flow')
-        const out = await runApplyPendingFlow({
-          tienda,
+        // Aplicar pasa por el motor (A1): system prompt + fallback + presupuesto, y el run
+        // en espera se retoma aunque se haya recargado la ventana.
+        const { answerPendingActions } = await import('@/src/lib/agent-engine-host')
+        const handle = await answerPendingActions(tienda, {
           conversationId,
           messageId,
           agentMode,
           actions,
           indices: toIdx,
-          chat: chatFn,
           userTextHint,
-          councilChat,
-          paceBetweenPhasesMs: providerReasoningPaceMs(provider.kind),
-          onCouncilPhase: (label) => {
+        })
+        for await (const e of handle) {
+          if (e.type === 'phase' && e.phase === 'council' && e.label) {
+            const label = e.label
             setSummary((prev) => {
               const base = prev?.split('\n')[0] ?? ''
               return [base, `💬 ${label}`].filter(Boolean).join('\n')
             })
             onDone?.()
-          },
-          onCouncilStep: (steps) => {
+          } else if (e.type === 'agent.message' && (e.data as { kind?: string } | undefined)?.kind === 'council-steps') {
+            const steps = (e.data as { steps?: StoredReasoningStep[] }).steps ?? []
             patchMessage(conversationId, messageId, {
               reasoningSteps: steps.map((s) => ({ ...s, collapsed: false })),
             })
             onDone?.()
-          },
-        })
+          }
+        }
+        const turn = await handle.result
+        const out: ApplyPendingFlowResult = (turn.outcome as ApplyPendingFlowResult | undefined) ?? {
+          ok: false,
+          line: turn.summary || 'No se pudo aplicar.',
+          loopSummary: '',
+          councilBrief: '',
+          reasoningSteps: [],
+          nextPending: [],
+        }
         const line = [out.line, out.loopSummary].filter(Boolean).join('\n')
         const reasoningPatch = out.reasoningSteps.length
           ? { reasoningSteps: out.reasoningSteps.map((s) => ({ ...s, collapsed: false })) }

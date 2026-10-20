@@ -18,6 +18,12 @@ export type AgentActionClass = 'read' | 'write' | 'destructive' | 'system'
 
 export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = Object.freeze({
   // ── Lectura ─────────────────────────────────────────────
+  // Herramientas de respaldo (A1): solo CALCULAN propuestas a partir del estado; no mutan.
+  'fallback.userIntent': 'read',
+  'fallback.styleEnhance': 'read',
+  'fallback.midiClipEdit': 'read',
+  'fallback.sectionSplit': 'read',
+  'fallback.midiAuditFix': 'read',
   'plugin.lookup': 'read',
   'plugin.probe': 'read',
   'plugin.listParameters': 'read',

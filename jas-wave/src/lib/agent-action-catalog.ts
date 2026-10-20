@@ -374,6 +374,37 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     description: 'Limpia VST aislados tras crash del host y restaura ASIO + mix',
     examplePayload: {},
   },
+  // Herramientas de respaldo (A1, agent-fallback-tools.ts): solo calculan propuestas.
+  {
+    type: 'fallback.userIntent',
+    kind: 'agent',
+    description: 'Respaldo determinista: propone acciones a partir del pedido (tempo, musicBuild, edición MIDI). No muta.',
+    examplePayload: { text: 'canción pop 100 bpm', mode: 'create' },
+  },
+  {
+    type: 'fallback.styleEnhance',
+    kind: 'agent',
+    description: 'Propone realce de groove/estilo de la batería según el pedido (ghost notes, hats, fills). No muta.',
+    examplePayload: { text: 'más groove con ghost notes' },
+  },
+  {
+    type: 'fallback.midiClipEdit',
+    kind: 'agent',
+    description: 'Propone ediciones MIDI de clips según el pedido (suavizar, intro, pads). No muta.',
+    examplePayload: { text: 'suaviza la intro' },
+  },
+  {
+    type: 'fallback.sectionSplit',
+    kind: 'agent',
+    description: 'Propone partir clips MIDI largos en secciones. No muta.',
+    examplePayload: {},
+  },
+  {
+    type: 'fallback.midiAuditFix',
+    kind: 'agent',
+    description: 'Propone quitar notas MIDI duplicadas detectadas por la auditoría. No muta.',
+    examplePayload: {},
+  },
 ]
 
 /** Tipos que executeDawActions entiende (unión útil para list/filter). */

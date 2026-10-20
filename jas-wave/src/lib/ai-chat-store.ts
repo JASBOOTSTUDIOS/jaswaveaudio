@@ -9,6 +9,8 @@ export type StoredChatMessage = {
   role: ChatRole
   content: string
   createdAt: number
+  /** Run del motor de agente (A1) que produjo este mensaje (userData/agent-runs/<id>.json). */
+  engineRunId?: string
   actionsSummary?: string
   pendingActions?: {
     status: 'pending' | 'applied' | 'discarded'

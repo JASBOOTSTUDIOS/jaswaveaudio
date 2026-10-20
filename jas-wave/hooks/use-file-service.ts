@@ -63,6 +63,18 @@ declare global {
         baseUrl?: string
       }>
       aiChatCancel?: (requestId: string) => Promise<boolean>
+      /** Chat con streaming (deltas por evento); resuelve con el resultado final. */
+      aiChatStream?: (
+        payload: AiChatRequest,
+        onEvent: (e: { type: 'delta' | 'done' | string; text?: string; success?: boolean }) => void,
+      ) => Promise<AiChatResult>
+      /** Runs del motor de agente persistidos en userData/agent-runs. */
+      agentRunSave?: (runId: string, json: string) => Promise<{ ok: boolean; error?: string }>
+      agentRunLoad?: (runId: string) => Promise<string | null>
+      agentRunList?: (limit?: number) => Promise<
+        Array<{ id: string; conversationId: string; messageId?: string; status: string; mode?: string; updatedAt: number; userText: string }>
+      >
+      agentRunDelete?: (runId: string) => Promise<boolean>
       aiCredSet?: (providerId: string, apiKey: string) => Promise<{ ok: boolean; error?: string }>
       aiCredStatus?: (providerIds: string[]) => Promise<Record<string, boolean>>
       agentBridgeGetEnabled?: () => Promise<boolean>
