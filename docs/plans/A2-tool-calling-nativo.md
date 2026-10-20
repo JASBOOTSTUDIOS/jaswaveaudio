@@ -23,8 +23,8 @@ con JSON Schemas reales, y tener un proveedor `mock` determinista para probar tu
       `wrapUntrustedToolResult` (`ai-harness/src/agent/untrusted.ts`).
 - [x] Proveedor `mock` (`kind:'mock'`) en gateway y en `ai-settings`: reproduce guiones JSON (`ai-harness/src/test/fixtures/*.json`)
       con respuestas y toolCalls por turno; activable por `JASWAVE_AI_MOCK=<archivo>` para e2e/CLI.
-- [ ] Tests: serialización de tools por proveedor (snapshots), parsing de respuestas con toolCalls, fallback a marcadores,
-      turno completo con mock.
+- [x] Tests: serialización de tools por proveedor (snapshots), parsing de respuestas con toolCalls, fallback a marcadores,
+      turno completo con mock (`ai-harness/src/test/engine.test.ts` + e2e `jas-wave/e2e/07-agent-mock.spec.ts`).
 
 ## Archivos
 `jas-wave/electron/ai-gateway.ts`, `electron/main.ts` (IPC stream), `electron/preload.ts`, `src/lib/ai-settings.ts`,
@@ -60,7 +60,8 @@ con JSON Schemas reales, y tener un proveedor `mock` determinista para probar tu
 - Host jas-wave: `aiChatWithFallback` con `tools`/`meta`/streaming (`agent.delta` → burbuja viva del panel).
 
 ### Pendiente
-- e2e con mock (`JASWAVE_AI_MOCK`).
+- e2e `07-agent-mock` escrito (commit `1b24c21`) pero sin ejecutar en esta sesión (requiere el ejecutable empaquetado;
+  ver `jas-wave/e2e/README.md`).
 - En el legacy los resultados de herramientas siguen llegando al modelo como texto de observación (no mensajes `tool`); A5 debe
   pasar al bucle `tool-loop`.
 
