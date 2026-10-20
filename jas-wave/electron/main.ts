@@ -3,7 +3,8 @@ const path = require('path')
 const fs = require('fs/promises')
 const fsSync = require('fs')
 import type { IpcMainInvokeEvent } from 'electron'
-import { aiChat, aiHealth, cancelAiChat, legacyChatArgsToRequest, type AiChatRequest, type AiHealthRequest } from './ai-gateway'
+import { aiChat, aiChatStream, aiHealth, cancelAiChat, legacyChatArgsToRequest, type AiChatRequest, type AiHealthRequest } from './ai-gateway'
+import { createAgentRunStore } from './agent-runs'
 import { lookupPluginOnWeb } from './plugin-lookup'
 import { searchWeb } from './web-search'
 import {
@@ -687,6 +688,33 @@ ipcMain.handle('ai-health', async (_event: IpcMainInvokeEvent, payload?: unknown
     baseUrl: baseUrl || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434',
   })
 })
+
+/** Chat con streaming: deltas por 'ai-chat-stream-event' al mismo renderer; resuelve con el resultado final. */
+ipcMain.handle('ai-chat-stream', async (event: IpcMainInvokeEvent, payload: unknown) => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !('messages' in payload) || !('kind' in payload)) {
+    return { success: false, error: 'Petición de streaming inválida', errorCode: 'bad_request' }
+  }
+  const req = withStoredApiKey(payload as AiChatRequest)
+  const requestId = typeof req.requestId === 'string' ? req.requestId : ''
+  const sender = event.sender
+  const send = (msg: Record<string, unknown>) => {
+    if (!sender.isDestroyed()) sender.send('ai-chat-stream-event', { requestId, ...msg })
+  }
+  const result = await aiChatStream(req, (text) => send({ type: 'delta', text }))
+  send({ type: 'done', success: result.success })
+  return result
+})
+
+// ── Runs del motor de agente (userData/agent-runs/<id>.json) ────────────────
+const agentRuns = createAgentRunStore({
+  dir: () => path.join(app.getPath('userData'), 'agent-runs'),
+  assertWrite: (p) => assertPath(p, 'write'),
+  assertRead: (p) => assertPath(p, 'read'),
+})
+ipcMain.handle('agent-run-save', (_event: IpcMainInvokeEvent, runId: unknown, json: unknown) => agentRuns.save(runId, json))
+ipcMain.handle('agent-run-load', (_event: IpcMainInvokeEvent, runId: unknown) => agentRuns.load(runId))
+ipcMain.handle('agent-run-list', (_event: IpcMainInvokeEvent, limit: unknown) => agentRuns.list(limit))
+ipcMain.handle('agent-run-delete', (_event: IpcMainInvokeEvent, runId: unknown) => agentRuns.remove(runId))
 
 ipcMain.handle('ai-chat-cancel', (_event: IpcMainInvokeEvent, requestId: unknown) =>
   typeof requestId === 'string' ? cancelAiChat(requestId) : false,

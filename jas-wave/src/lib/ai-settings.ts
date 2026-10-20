@@ -14,6 +14,8 @@ export type AiProviderKind =
   | 'openrouter'
   | 'kilocode'
   | 'openai-compatible'
+  /** Proveedor determinista por guion (tests/e2e/CLI; ver JASWAVE_AI_MOCK). */
+  | 'mock'
 
 /** Cómo hablar con el endpoint (para proveedores no registrados). */
 export type AiApiStyle = 'openai' | 'anthropic' | 'gemini' | 'ollama'
@@ -34,6 +36,8 @@ export type AiProviderCustom = {
   extraHeaders?: Record<string, string>
   /** Si el endpoint exige API key aunque el kind base no lo haga. */
   needsApiKey?: boolean
+  /** Fuerza (true) o desactiva (false) el tool-calling nativo; sin valor → detección por proveedor. */
+  supportsTools?: boolean
 }
 
 export type AiProviderProfile = {
@@ -83,9 +87,22 @@ export type CatalogModelEntry = {
   healthy: boolean
 }
 
+/** Herramienta con JSON Schema (nombre canónico con puntos). */
+export type AiToolSchema = { name: string; description: string; parameters: Record<string, unknown> }
+export type AiToolCall = { id: string; name: string; arguments: Record<string, unknown> }
+
+/** Mensaje hacia el gateway (incluye tool calls y resultados para tool-calling nativo). */
+export type AiWireMessage = {
+  role: string
+  content: string
+  toolCalls?: AiToolCall[]
+  toolCallId?: string
+  name?: string
+}
+
 /** Payload unificado hacia Electron. */
 export type AiChatRequest = {
-  messages: Array<{ role: string; content: string }>
+  messages: AiWireMessage[]
   kind: AiProviderKind
   model: string
   baseUrl: string
@@ -97,6 +114,10 @@ export type AiChatRequest = {
   temperature?: number
   maxTokens?: number
   custom?: AiProviderCustom
+  tools?: AiToolSchema[]
+  toolChoice?: 'auto' | 'none' | 'required'
+  /** Propósito/rol del chat (el mock lo usa para elegir respuesta). */
+  meta?: { purpose?: string; role?: string; runId?: string }
 }
 
 export type AiHealthRequest = {
@@ -134,6 +155,11 @@ export type AiChatResult = {
   error?: string
   errorCode?: AiErrorCode
   hint?: string
+  toolCalls?: AiToolCall[]
+  /** El modelo no soporta tools nativas: reintentar con marcadores. */
+  toolsUnsupported?: boolean
+  /** Intentos HTTP del gateway (reintentos incluidos). */
+  httpAttempts?: number
 }
 
 export type AiHealthResult = {
@@ -220,6 +246,14 @@ export const PROVIDER_PRESETS: Record<
     hint: 'Proveedor no listado: LM Studio, vLLM, Together, Azure, gateway propio… Define URL, modelo, key y paths.',
     suggestedModels: ['local-model'],
   },
+  mock: {
+    label: 'Mock (guion de pruebas)',
+    defaultBaseUrl: 'http://mock.local',
+    defaultModel: 'mock',
+    needsApiKey: false,
+    hint: 'Respuestas deterministas desde el guion JSON de JASWAVE_AI_MOCK (tests, e2e y CLI).',
+    suggestedModels: ['mock'],
+  },
 }
 
 export const DEFAULT_CUSTOM_OPENAI: AiProviderCustom = {
@@ -300,7 +334,14 @@ export function providerLabel(provider: AiProviderProfile): string {
 export function toAiChatPayload(
   provider: AiProviderProfile,
   messages: AiChatRequest['messages'],
-  opts: { temperature: number; maxTokens: number; model?: string },
+  opts: {
+    temperature: number
+    maxTokens: number
+    model?: string
+    tools?: AiToolSchema[]
+    toolChoice?: AiChatRequest['toolChoice']
+    meta?: AiChatRequest['meta']
+  },
 ): AiChatRequest {
   return {
     messages,
@@ -312,6 +353,8 @@ export function toAiChatPayload(
     temperature: opts.temperature,
     maxTokens: opts.maxTokens,
     custom: provider.custom,
+    ...(opts.tools?.length ? { tools: opts.tools, toolChoice: opts.toolChoice ?? 'auto' } : {}),
+    ...(opts.meta ? { meta: opts.meta } : {}),
   }
 }
 
@@ -451,7 +494,7 @@ const RETRYABLE_CODES = new Set<AiErrorCode>([
 ])
 
 export function isRetryableAiFailure(result: AiChatResult): boolean {
-  if (result.success && result.content?.trim()) return false
+  if (result.success && (result.content?.trim() || result.toolCalls?.length)) return false
   if (result.success && !result.content?.trim()) return true
   const code = result.errorCode
   if (!code) return true
@@ -482,6 +525,17 @@ export async function aiChatWithFallback(
     settings?: AiSettings
     abort?: AbortSignal
     onAttempt?: (info: { label: string; index: number; total: number }) => void
+    /**
+     * Antes de cada intento (incluidos los fallbacks): false = no intentar (presupuesto agotado).
+     * El motor (A1) carga aquí cada intento HTTP al presupuesto del turno.
+     */
+    beforeAttempt?: (info: { label: string; index: number; total: number }) => boolean
+    tools?: AiToolSchema[]
+    toolChoice?: AiChatRequest['toolChoice']
+    meta?: AiChatRequest['meta']
+    /** Streaming de texto: usa `streamChat` (IPC ai-chat-stream) en vez de `chat`. */
+    onDelta?: (text: string) => void
+    streamChat?: (req: AiChatRequest, onDelta: (text: string) => void) => Promise<AiChatResult>
   },
 ): Promise<AiChatWithFallbackResult> {
   const settings = opts.settings ?? loadAiSettings()
@@ -507,17 +561,31 @@ export async function aiChatWithFallback(
     error: 'Sin intentos',
     errorCode: 'unknown',
   }
+  let httpAttempts = 0
 
   for (let i = 0; i < chain.length; i++) {
     if (opts.abort?.aborted) {
-      return { success: false, error: 'Abortado', errorCode: 'unknown', attempts: i }
+      return { success: false, error: 'Abortado', errorCode: 'cancelled', attempts: i, httpAttempts }
     }
     const attempt = chain[i]!
-    opts.onAttempt?.({ label: attempt.label, index: i, total: chain.length })
+    const info = { label: attempt.label, index: i, total: chain.length }
+    if (opts.beforeAttempt && !opts.beforeAttempt(info)) {
+      return {
+        ...last,
+        success: false,
+        error: last.success ? 'Presupuesto agotado' : last.error || 'Presupuesto agotado',
+        attempts: i,
+        httpAttempts,
+      }
+    }
+    opts.onAttempt?.(info)
     const req = toAiChatPayload(attempt.provider, messages, {
       temperature: opts.temperature,
       maxTokens: opts.maxTokens,
       model: attempt.model,
+      tools: opts.tools,
+      toolChoice: opts.toolChoice,
+      meta: opts.meta,
     })
     req.requestId = `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     const cancelInMain = () => {
@@ -525,7 +593,8 @@ export async function aiChatWithFallback(
     }
     opts.abort?.addEventListener('abort', cancelInMain, { once: true })
     try {
-      last = await chat(req)
+      last =
+        opts.onDelta && opts.streamChat ? await opts.streamChat(req, opts.onDelta) : await chat(req)
     } catch (e) {
       last = {
         success: false,
@@ -535,7 +604,10 @@ export async function aiChatWithFallback(
       }
     }
     opts.abort?.removeEventListener('abort', cancelInMain)
-    if (last.success && last.content?.trim()) {
+    httpAttempts += Math.max(1, Number(last.httpAttempts) || 1)
+    const ok = last.success && (Boolean(last.content?.trim()) || Boolean(last.toolCalls?.length))
+    if (ok || last.toolsUnsupported) {
+      // toolsUnsupported: el llamador reintenta con marcadores en el MISMO modelo.
       return {
         ...last,
         usedProviderId: attempt.provider.id,
@@ -544,10 +616,11 @@ export async function aiChatWithFallback(
         fallbackUsed: i > 0,
         model: attempt.model,
         provider: attempt.provider.kind,
+        httpAttempts,
       }
     }
     if (!isRetryableAiFailure(last)) {
-      return { ...last, usedProviderId: attempt.provider.id, usedModel: attempt.model, attempts: i + 1 }
+      return { ...last, usedProviderId: attempt.provider.id, usedModel: attempt.model, attempts: i + 1, httpAttempts }
     }
     // Siguiente del catálogo
   }
@@ -556,6 +629,7 @@ export async function aiChatWithFallback(
     ...last,
     attempts: chain.length,
     fallbackUsed: chain.length > 1,
+    httpAttempts,
     error: last.error || 'Ningún modelo del catálogo respondió.',
     hint:
       last.hint ||

@@ -47,6 +47,19 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.invoke('ai-chat', payload, model, baseUrl, temperature),
   aiHealth: (payload?: unknown) => ipcRenderer.invoke('ai-health', payload),
   aiChatCancel: (requestId: string) => ipcRenderer.invoke('ai-chat-cancel', requestId),
+  /** Chat con streaming: onEvent recibe {type:'delta',text} / {type:'done'}; resuelve con el resultado. */
+  aiChatStream: (payload: { requestId?: string }, onEvent: (e: { type: string; text?: string; success?: boolean }) => void) => {
+    const requestId = String(payload?.requestId ?? '')
+    const handler = (_event: unknown, e: { requestId?: string; type: string; text?: string; success?: boolean }) => {
+      if (e && e.requestId === requestId) onEvent({ type: e.type, text: e.text, success: e.success })
+    }
+    ipcRenderer.on('ai-chat-stream-event', handler)
+    return ipcRenderer.invoke('ai-chat-stream', payload).finally(() => ipcRenderer.removeListener('ai-chat-stream-event', handler))
+  },
+  agentRunSave: (runId: string, json: string) => ipcRenderer.invoke('agent-run-save', runId, json),
+  agentRunLoad: (runId: string) => ipcRenderer.invoke('agent-run-load', runId),
+  agentRunList: (limit?: number) => ipcRenderer.invoke('agent-run-list', limit),
+  agentRunDelete: (runId: string) => ipcRenderer.invoke('agent-run-delete', runId),
   /** Guarda (o borra con '') la API key de un perfil; queda cifrada en main. */
   aiCredSet: (providerId: string, apiKey: string) => ipcRenderer.invoke('ai-cred-set', providerId, apiKey),
   aiCredStatus: (providerIds: string[]) => ipcRenderer.invoke('ai-cred-status', providerIds),
