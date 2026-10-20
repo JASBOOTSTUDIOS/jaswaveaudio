@@ -1,4 +1,4 @@
- en curso | Claude (subagente) · 2026-10-20 |en curso | Claude (subagente) · 2026-10-20 |en curso | Claude (subagente) · 2026-10-20 |en curso | Claude (subagente) · 2026-10-20 |en curso | Claude (subagente) · 2026-10-20 |# Estado de los workstreams
+# Estado de los workstreams
 
 Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md`).
 
@@ -17,7 +17,7 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | A4 | Plan estructurado editable | A1 | pendiente | | |
 | A5 | Ejecución hasta terminar | A3, A4 | pendiente | | |
 | A6 | Equipo multi-agente | A5, A9(plan/bitácora) | pendiente | | |
-| A7a | Medición DSP correcta | — | pendiente | | |
+| A7a | Medición DSP correcta | — | hecho | Claude (subagente) · 2026-10-20 | ver rama `ws/a7a-dsp` |
 | A7b | Análisis por pista | A7a | pendiente | | |
 | A7c | Actuar con valores reales | — | pendiente | | |
 | A7d | FX propios JasWave | A7c | pendiente | | |
