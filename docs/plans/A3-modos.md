@@ -21,17 +21,17 @@
 Destructivas/sistema siempre confirman (todos los modos que mutan).
 
 ## Tareas
-- [ ] `resolveMode(selected, text)` devuelve el modo seleccionado tal cual + `suggestion?` (heurística) que la UI muestra como chip
+- [x] `resolveMode(selected, text)` devuelve el modo seleccionado tal cual + `suggestion?` (heurística) que la UI muestra como chip
       "¿Cambiar a Crear?". Eliminar el override de `detectAgentMode` (mantener función para la sugerencia).
-- [ ] Engine (A1): tabla de capacidades por modo (`ai-harness/src/engine/mode-capabilities.ts`) → herramientas permitidas (A2
+- [x] Engine (A1): tabla de capacidades por modo (`ai-harness/src/engine/mode-capabilities.ts`) → herramientas permitidas (A2
       `toolsForRole`), si puede mutar, si requiere plan aprobado, flujo de fin de turno.
-- [ ] Reescribir `modePromptBlock` (`modes.ts:383-481`) por modo sin contradicciones; quitar exigencias de "un paso por turno" y de
+- [x] Reescribir `modePromptBlock` (`modes.ts:383-481`) por modo sin contradicciones; quitar exigencias de "un paso por turno" y de
       "¿te gustó?" (ver A5).
-- [ ] Picker: descripción de cada modo (tooltip con la tabla), atajo para alternar, indicador visible del modo activo en el
+- [x] Picker: descripción de cada modo (tooltip con la tabla), atajo para alternar, indicador visible del modo activo en el
       timeline del turno.
-- [ ] Guardas reales: en ask/think/plan el engine rechaza cualquier tool call mutante (excepto `plan.*` en plan) con error
+- [x] Guardas reales: en ask/think/plan el engine rechaza cualquier tool call mutante (excepto `plan.*` en plan) con error
       explicativo al modelo (no `forceApply`).
-- [ ] Tests: cada modo con proveedor mock — ask no muta aunque el modelo lo intente; plan solo escribe plan; create pide aprobación
+- [x] Tests: cada modo con proveedor mock — ask no muta aunque el modelo lo intente; plan solo escribe plan; create pide aprobación
       una vez y luego no vuelve a pedir para escrituras normales; auto no pide aprobación; destructivas confirman en create/auto.
 
 ## Archivos
@@ -46,4 +46,16 @@ Destructivas/sistema siempre confirman (todos los modos que mutan).
 `npm run verify`; e2e con mock por modo.
 
 ## Notas de traspaso
-_(vacío)_
+- `detectAgentMode(text, forced)` **no se tocó** (sus tests de `modes-refine`/`reasoning-loop` siguen vigentes); el override ya no
+  se aplica en la app porque los call sites usan `workingMode(selected, text)` (nuevo): en `auto` decide el texto, en el resto manda
+  el selector. Call sites migrados: `jas-wave/src/lib/ai-daw-agent.ts` (`buildAgentSystemPrompt`, `fallbackActionsFromUserIntent`)
+  y `agent-legacy-turn.ts` (líneas ~583 y ~1860, `resolvedMode`).
+- `modePromptBlock` reescrito: `think` ya no escribe plan.md (entrega propuesta); `plan` pide el formato estructurado de A4
+  (`## Pasos` + criterios); `create`/`auto` ya no exigen la pregunta «¿te gustó?» ni «un paso por turno» (la eliminación del
+  CLARIFY forzado de Kael en `base-prompt.ts` + `agent-legacy-turn.ts:954` queda para A5).
+- `mode-capabilities.ts` ahora expone `allowedClasses`, `isPlanWriteTool(name, args?)` (plan.* o doc.write/append sobre plan.md),
+  `visibleInMode` (lista de tools por modo) y `gateToolForMode` recibe `args` para decidir si un doc.write es de plan.
+- UI: atajo **Ctrl+Shift+M** alterna modos (`nextAgentMode` en `src/lib/ai-modes.ts`); chip de sugerencia `data-testid="mode-suggestion"`
+  sobre el input; chip de modo del turno en la barra de fase `data-testid="turn-mode-chip"`.
+- El flujo legacy de la app (ACTIONS + tarjeta Aplicar) sigue intacto; el bucle paso a paso sin clicos intermedios llega con A5
+  en el programa nativo del motor.

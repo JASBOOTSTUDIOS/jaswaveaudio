@@ -32,7 +32,7 @@ import {
   type AskAiSelectionDetail,
 } from '@/src/lib/ai-selection-context'
 import { formatClarificationAnswersForPrompt, type ClarificationQuestion } from '@/src/lib/ai-clarify'
-import { loadAgentMode, saveAgentMode, type AgentMode } from '@/src/lib/ai-modes'
+import { agentModeLabel, loadAgentMode, nextAgentMode, resolveMode, saveAgentMode, type AgentMode } from '@/src/lib/ai-modes'
 import { endCoproducerSession, startCoproducerSession } from '@/src/lib/agent-context-bridge'
 import { ensureToolRegistryContext } from '@/src/lib/agent-tool-bridge'
 import { cancelAgentJobs } from '@/src/lib/agent-job-queue'
@@ -158,6 +158,8 @@ export function CoProducerPanel() {
   const [mentionStart, setMentionStart] = useState(0)
   const [mentionIndex, setMentionIndex] = useState(0)
   const [agentMode, setAgentMode] = useState<AgentMode>(() => loadAgentMode())
+  /** Modo con el que corre (o corrió) el turno activo: indicador en el timeline. */
+  const [activeTurnMode, setActiveTurnMode] = useState<AgentMode | null>(null)
   const [harnessPhase, setHarnessPhase] = useState('')
   const [copiedMsgId, setCopiedMsgId] = useState('')
   const [copiedAll, setCopiedAll] = useState(false)
@@ -207,6 +209,17 @@ export function CoProducerPanel() {
       if (!inPanel) return
       const key = e.key
       const code = e.code
+      // Ctrl+Shift+M: alterna el modo del coproducer (A3).
+      if (e.shiftKey && (key === 'M' || code === 'KeyM')) {
+        e.preventDefault()
+        e.stopPropagation()
+        setAgentMode((m) => {
+          const next = nextAgentMode(m)
+          saveAgentMode(next)
+          return next
+        })
+        return
+      }
       const zoomIn =
         key === '=' || key === '+' || code === 'NumpadAdd' || code === 'Equal'
       const zoomOut = key === '-' || key === '_' || code === 'NumpadSubtract' || code === 'Minus'
@@ -612,6 +625,7 @@ export function CoProducerPanel() {
 
   const runEngineTurn = async (opts: { text: string; citedIds?: string[]; citedMessageIds?: string[]; kind?: string }) => {
     setHarnessPhase('Trabajando en el DAW…')
+    setActiveTurnMode(agentMode)
     const { handle, assistantMsgId } = startCoproducerTurn(dawStore, {
       conversationId: conversation.id,
       projectId,
@@ -655,6 +669,9 @@ export function CoProducerPanel() {
   handleSendRef.current = (t?: string) => {
     void handleSendMessage(t)
   }
+
+  /** A3: si el texto suena a otro modo, la UI sugiere cambiar (el selector sigue mandando). */
+  const modeSuggestion = inputMessage.trim() ? resolveMode(agentMode, inputMessage).suggestion : undefined
 
   const statusBadge =
     aiStatus === 'online' ? (
@@ -825,6 +842,13 @@ export function CoProducerPanel() {
       {isGenerating && harnessPhase ? (
         <div className="flex items-center gap-2 border-b border-border bg-accent-amber/10 px-3 py-1.5 text-[11px] text-accent-amber">
           <Loader2 className="size-3 shrink-0 animate-spin" />
+          <span
+            className="shrink-0 rounded bg-accent-amber/20 px-1.5 py-0.5 text-[10px] font-medium"
+            title="Modo del turno en curso"
+            data-testid="turn-mode-chip"
+          >
+            {agentModeLabel(activeTurnMode ?? agentMode)}
+          </span>
           <span className="min-w-0 flex-1 truncate">{harnessPhase}</span>
           <button
             type="button"
@@ -1232,6 +1256,26 @@ export function CoProducerPanel() {
                 }}
               >
                 <X className="size-3.5" />
+              </button>
+            </div>
+          ) : null}
+          {modeSuggestion && !isGenerating ? (
+            <div
+              className="flex items-center gap-2 rounded-md bg-panel-raised px-2 py-1 text-[11px] text-muted-foreground ring-1 ring-border"
+              data-testid="mode-suggestion"
+            >
+              <span className="min-w-0 flex-1 truncate">
+                Este pedido suena a modo «{agentModeLabel(modeSuggestion)}».
+              </span>
+              <button
+                type="button"
+                className="shrink-0 text-accent-amber hover:underline"
+                onClick={() => {
+                  setAgentMode(modeSuggestion)
+                  saveAgentMode(modeSuggestion)
+                }}
+              >
+                Cambiar a {agentModeLabel(modeSuggestion)}
               </button>
             </div>
           ) : null}

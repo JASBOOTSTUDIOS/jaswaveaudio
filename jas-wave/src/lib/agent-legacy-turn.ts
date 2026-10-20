@@ -86,7 +86,6 @@ import {
   resolveTrackHint,
 } from './track-resolve'
 import {
-  detectAgentMode,
   inferBpmFromTempoIntent,
   isProjectAuditIntent,
   isSongRefineIntent,
@@ -98,6 +97,7 @@ import {
   wantsFullProject,
   isGenreRewriteIntent,
   isProjectWipeIntent,
+  workingMode,
   type AgentMode,
 } from './ai-modes'
 import { buildAssembledAgentContext } from './agent-context-bridge'
@@ -580,7 +580,7 @@ async function runCoproducerTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<T
       const turnMeta: { undo?: number; diff?: string } = {}
       let skipAiTurn = false
       let trackContextExtra = ''
-      const resolvedMode = detectAgentMode(workText, agentMode)
+      const resolvedMode = workingMode(agentMode, workText)
       const styleGapIntent = isStyleGapIntent(workText)
       const styleApplyIntent = isStyleApplyIntent(workText)
       const midiClipEditIntent = isMidiClipEditIntent(workText)
@@ -1857,7 +1857,7 @@ async function runQuickTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<TurnPr
       const state = dawStore.obtenerEstado()
       if (/crea|midi|piano|proyecto|plan/i.test(userText)) {
         const forced = await runFallbackTool(ctx, FALLBACK_TOOLS.userIntent, { text: userText, mode: agentMode })
-        const resolvedMode = detectAgentMode(userText, agentMode)
+        const resolvedMode = workingMode(agentMode, userText)
         const out = await processActionsForMode({
           tienda: dawStore,
           actions: forced,

@@ -18,7 +18,7 @@ import type {
   TurnProgram,
   TurnProgramOutcome,
 } from './engine-types'
-import { gateToolForMode } from './mode-capabilities'
+import { gateToolForMode, visibleInMode } from './mode-capabilities'
 import type { TurnContext } from './turn-context'
 
 export const TOOL_LOOP_PROGRAM_ID = 'tool-loop'
@@ -45,13 +45,12 @@ function stableArgsKey(name: string, args: Record<string, unknown>): string {
   return `${name}:${JSON.stringify(sort(args))}`
 }
 
-/** Herramientas visibles para el modo (A3): en modos sin mutación solo lecturas (+ plan.* en plan). */
+/** Herramientas visibles para el modo (A3): en modos sin mutación solo lecturas (+ plan en plan). */
 export function toolsForModeFromHost(ctx: TurnContext): EngineToolSchema[] {
   const listed = ctx.host.listTools?.({ mode: ctx.run.mode, role: ctx.run.role }) ?? []
   const visible = listed.filter((t) => {
     const cls = ctx.classify({ id: 't', name: t.name, arguments: {} })
-    const gate = gateToolForMode(ctx.capabilities, t.name, cls, { planApproved: true })
-    return gate.allow
+    return visibleInMode(ctx.capabilities, t.name, cls)
   })
   return [...visible, ...AGENT_CONTROL_TOOL_SCHEMAS.map((s) => ({ ...s }))]
 }
@@ -80,7 +79,10 @@ async function processCalls(ctx: TurnContext, calls: EngineToolCall[], maxPerIte
     }
     seen.add(key)
     const cls = ctx.classify(c)
-    const gate = gateToolForMode(ctx.capabilities, c.name, cls, { planApproved: run.planApproved === true })
+    const gate = gateToolForMode(ctx.capabilities, c.name, cls, {
+      planApproved: run.planApproved === true,
+      args: c.arguments,
+    })
     if (!gate.allow) {
       ctx.emit({ type: 'tool.call', role: run.role, call: c })
       ctx.emit({

@@ -380,6 +380,34 @@ export function modeBlocksMutation(mode: AgentMode): boolean {
   return mode === 'ask' || mode === 'plan' || mode === 'think'
 }
 
+/** Modo elegido por el usuario + sugerencia (si el texto pide otra cosa). El selector manda. */
+export type ModeResolution = {
+  mode: AgentMode
+  suggestion?: Exclude<AgentMode, 'auto'>
+}
+
+/**
+ * El modo elegido NUNCA cambia sin acción del usuario (A3). `detectAgentMode` solo se usa
+ * como sugerencia (chip «¿Cambiar a …?» en la UI); `auto` se resuelve al modo efectivo.
+ */
+export function resolveMode(selected: AgentMode, text: string): ModeResolution {
+  if (selected !== 'auto') {
+    const suggestion = detectAgentMode(text, 'auto')
+    return suggestion !== selected && suggestion !== 'auto' ? { mode: selected, suggestion } : { mode: selected }
+  }
+  return { mode: selected }
+}
+
+/** Modo efectivo de trabajo: en `auto` lo decide el texto; en el resto manda el selector. */
+export function workingMode(selected: AgentMode, text: string): AgentMode {
+  return selected === 'auto' ? detectAgentMode(text, 'auto') : selected
+}
+
+/** Para la UI: etiqueta de un modo concreto (`auto` → «Auto»). */
+export function agentModeLabel(mode: AgentMode): string {
+  return mode === 'auto' ? 'Auto' : AGENT_MODE_META[mode].label
+}
+
 export function modePromptBlock(mode: AgentMode): string {
   if (mode === 'ask') {
     return [
@@ -395,65 +423,65 @@ export function modePromptBlock(mode: AgentMode): string {
       'PROHIBIDO spamear ¡¡¡, «¡Entendido!» vacío, o cronogramas «Fase 1 (1-2 días)».',
     ].join('\n')
   }
-  if (mode === 'plan') {
-    return [
-      '## Modo: PLAN',
-      'NO mutes el DAW (no crees/borres pistas, clips ni plugins).',
-      'Si faltan datos críticos: emite <<<CLARIFY[{"id","question","options":["…","…","…"],"allowCustom":true,"multi":false}]CLARIFY>>>.',
-      'TÚ inventas question y options para ESTE pedido (no plantillas fijas). ≥3 options por pregunta. NUNCA listas 1.2.3 en prosa.',
-      'Si ya hay suficiente, cierra el plan.',
-      'OBLIGATORIO: escribe el plan en plan.md con este bloque (markdown completo, detallado):',
-      '<<<DOC plan.md',
-      '# Plan: …',
-      '## Intención',
-      '### Qué se busca',
-      '…',
-      '### Forma',
-      '…',
-      '### Pistas previstas',
-      '…',
-      '### Último pedido',
-      '…',
-      '## Por implementar',
-      '- [ ] Crear pista MIDI «…» (rol · VST …)',
-      '- [ ] Escribir MIDI de «…» por sección (notas no vacías)',
-      '## En curso',
-      '## Implementado',
-      '## Evaluación',
-      '## Notas del usuario',
-      'DOC>>>',
-      'También emite <<<PLAN {json} PLAN>>> con nombre, bpm, tonalidad, minutos, pensamiento, pistas[].',
-      'Puedes usar doc.write { slug:"plan.md", content }. ACTIONS de DAW solo como borrador (aplicar:false); el usuario pulsará Aplicar.',
-    ].join('\n')
-  }
   if (mode === 'think') {
     return [
       '## Modo: PENSAMIENTO PROFUNDO',
+      'Entrega un diagnóstico profundo y una propuesta de arreglo. NO escribes plan.md y NO mutas el DAW.',
       'Eres ingeniero de sonido y arreglista senior. El arreglo y las notas las defines TÚ (cualquier género).',
-      '- Declara genero, tonalidad, BPM, secciones con degrees+density, y pistas con rol/articulación/VST.',
-      '- Planifica MIDI nota-a-nota por pista/clip (no generador procedural) en turnos posteriores.',
-      '- Contraste armónico entre secciones; evita ser muy basico salvo que el género/usuario lo pida.',
+      '- Declara género, tonalidad, BPM, secciones con grados+densidad, y pistas con rol/articulación/VST.',
+      '- Propón MIDI nota-a-nota por pista/clip (no generador procedural) en turnos posteriores.',
+      '- Contraste armónico entre secciones; evita ser muy básico salvo que el género/usuario lo pida.',
       'Si faltan datos críticos: <<<CLARIFY … CLARIFY>>> con question+options (≥3) que TÚ inventas para este arreglo. Nunca cuestionario en prosa.',
-      'NO mutes el DAW. OBLIGATORIO: plan.md + <<<PLAN … PLAN>>>.',
-      'Vista previa: daw.musicBuild { aplicar:false, prompt, genero, progresion, secciones, pistas }.',
+      'Vista previa permitida: daw.musicBuild { aplicar:false, prompt, genero, progresion, secciones, pistas }.',
       'plugin.lookup / library.preset.search / plugin.probe permitidos. Prefiere presetId sobre setParameter. NO digas que ya aplicaste cambios.',
+      'Entrega la propuesta en tu respuesta; si el usuario la aprueba, dile que pase a modo Plan (para escribirla) o Crear (para ejecutarla).',
     ].join('\n')
   }
+  if (mode === 'plan') {
+    return [
+      '## Modo: PLAN',
+      'Escribe o actualiza el plan estructurado en plan.md. NO mutes el DAW (no crees/borres pistas, clips ni plugins).',
+      'Si faltan datos críticos: emite <<<CLARIFY[{"id","question","options":["…","…","…"],"allowCustom":true,"multi":false}]CLARIFY>>>.',
+      'TÚ inventas question y options para ESTE pedido (no plantillas fijas). ≥3 options por pregunta. NUNCA listas 1.2.3 en prosa.',
+      'OBLIGATORIO: escribe el plan en plan.md con este formato estructurado (pasos concretos con criterios medibles):',
+      '<<<DOC plan.md',
+      '# Plan: <objetivo corto>',
+      '> Objetivo: <pedido normalizado> · Modo: create · Estado: borrador (YYYY-MM-DD) · Revisión: 1',
+      '',
+      '## Pasos',
+      '- [ ] S1 · estructura · @coproductor — Crear pista MIDI «Batería»',
+      '  - criterio: la pista existe y suena con ≥1.5 notas/beat',
+      '  - herramientas: track.create, daw.musicBuild',
+      '- [ ] S2 · midi · @coproductor — Escribir MIDI de «Batería» por sección',
+      '  - criterio: cada clip tiene notas dentro de su rango y sin huecos de más de 8 beats',
+      '',
+      '## Notas del usuario',
+      'DOC>>>',
+      'Cada paso lleva estado: [ ] pendiente · [~] en curso · [x] hecho · [-] omitido · [!] bloqueado. Ids S<n> estables.',
+      'El usuario edita el plan (sus Notas del usuario no se pisan) y lo aprueba; luego el modo Crear (o Auto) ejecuta los pasos hasta terminarlo.',
+      'Puedes usar doc.write { slug:"plan.md", content }. ACTIONS de DAW solo como borrador (aplicar:false); el usuario las decidirá.',
+    ].join('\n')
+  }
+  const autoNote =
+    mode === 'auto'
+      ? 'En Auto el plan aprobado se da por bueno solo; el usuario puede pausar o editar el plan en cualquier momento.'
+      : ''
   return [
     '## Modo: CREACIÓN — EJECUTAR acciones reales en el DAW',
-    'OBLIGATORIO emitir <<<ACTIONS>>> en CADA respuesta de este modo. Si no emites ACTIONS, no se hace nada.',
-    'Si el usuario dijo hazlo / créalo / continua / aplica: PROHIBIDO otro informe de gaps, PROHIBIDO CLARIFY, PROHIBIDO solo diagnosticar. Emite ACTIONS ahora.',
+    ...(autoNote ? [autoNote] : []),
+    'Si NO hay plan aprobado en plan.md: primero escribe el plan estructurado (formato del modo Plan: «## Pasos» con criterios medibles) y pide aprobación.',
+    'Si el usuario dijo hazlo / créalo / continúa / aplica con plan ya aprobado: PROHIBIDO otro informe de gaps, PROHIBIDO CLARIFY sin motivo real, PROHIBIDO solo diagnosticar. Ejecuta ahora.',
     '',
-    '### Densidad MIDI mínima (si fallas esto, el harness lo rechaza)',
+    '### Densidad MIDI mínima (si fallas esto, el QA lo rechaza)',
     '- Batería: ≥1.5 notas/beat (kick+snare+HH o toms). PROHIBIDO solo kick cada 4 beats.',
     '- Bajo: ≥0.5 notas/beat, legato. PROHIBIDO 4 notas en 32 beats.',
     '- Pad: cambios de voicing cada 4–8 beats. PROHIBIDO un acorde estático de 32 beats.',
     '- Piano/Keys: ≥0.4 notas/beat con voicings reales, no 6 notas placeholder.',
     '',
-    '### Flujo por turno:',
-    '1. Actualiza plan.md (<<<DOC plan.md>>>): intención + checklist `- [ ]`.',
-    '2. Emite <<<ACTIONS>>> con las acciones concretas de las tareas pendientes del plan.',
-    '3. El usuario pulsa Aplicar UNA vez (todas juntas). No digas "listo" hasta que confirme.',
+    '### Flujo:',
+    '1. Sin plan aprobado: escribe plan.md (<<<DOC plan.md>>) con «## Pasos» y criterios; el usuario aprueba UNA vez.',
+    '2. Con plan aprobado: ejecuta las acciones de los pasos pendientes hasta terminar el plan (varias por iteración si el presupuesto lo permite).',
+    '3. Actualiza plan.md: marca cada paso terminado [x] con su evidencia y deja [!] los bloqueados con el motivo.',
     '',
     '### Canción nueva (flujo completo, UNO A UNO):',
     'Paso A: SOLO daw.musicBuild { aplicar:true, midiSource:"ai", bpm, minutos, genero, prompt } — NO setBpm aparte.',
@@ -466,8 +494,6 @@ export function modePromptBlock(mode: AgentMode): string {
     '### Limpia / borra todo:',
     'USA daw.wipeProject { aplicar:true } — borra TODAS las pistas con IDs reales en un paso.',
     'PROHIBIDO clip.delete sin clipId. PROHIBIDO inventar IDs. PROHIBIDO 10+ deletes sueltos.',
-    'Tras Aplicar wipe vacío: complete breve OK.',
-    'Tras canción/arreglo exitoso: Kael pregunta si le gustó (no complete silencioso).',
     '',
     'PREFERIDO canción: UNA sola acción daw.musicBuild { aplicar:true, midiSource:"procedural", bpm, prompt }.',
     'PROHIBIDO emitir 15–25× clip.delete / track.toggleMute / midi.clip.create SIN pistaId+clipId+notas reales.',
@@ -475,7 +501,7 @@ export function modePromptBlock(mode: AgentMode): string {
     '',
     'Si faltan 1–3 datos críticos SOLO en pedidos nuevos ambiguos: <<<CLARIFY>>> con question+options[] (≥3).',
     'PROHIBIDO cuestionarios en markdown ni pedir al usuario que escriba opciones.',
-    'Tras MIDI de todas las pistas: mezcla, sends, master. Entrega con listen OK.',
-    'VSTs: plugin.probe → library.preset.search/apply. Actualiza plan.md marcando [x] lo completado.',
+    'Tras MIDI de todas las pistas: mezcla, sends, master. Entrega con un resumen breve de lo hecho (sin pregunta de satisfacción).',
+    'VSTs: plugin.probe → library.preset.search/apply.',
   ].join('\n')
 }

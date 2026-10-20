@@ -183,9 +183,12 @@ export {
 
 export {
   AGENT_MODE_META,
+  agentModeLabel,
   detectAgentMode,
   modeBlocksMutation,
   modePromptBlock,
+  resolveMode,
+  workingMode,
   wantsFullProject,
   isSongRefineIntent,
   isTempoOnlyRefine,
@@ -203,6 +206,7 @@ export {
   extractStyleReference,
   wantsWebResearch,
   type AgentMode,
+  type ModeResolution,
 } from './agent/modes'
 
 export {
