@@ -119,14 +119,15 @@ test('render.start escribe un WAV no trivial', async () => {
   // ~5 s de audio: incluso 16 bit mono a 22 kHz supera 200 KB.
   expect(info.size).toBeGreaterThan(200_000)
   expect(info.dataBytes).toBeGreaterThan(200_000)
-  // ¿Suena? Hoy el bounce de una pista de audio importada por la CLI sale en silencio
-  // (-70 LUFS, ver informe WS-11). Se anota siempre; con JASWAVE_E2E_STRICT_AUDIO=1 es un fallo.
+  // ¿Suena? (regresión: el bounce de pistas de audio salía en silencio)
+  // Antes el bounce de pistas de audio salía en silencio (grafo vacío por la codificación del último track).
+  // Ahora es obligatorio; JASWAVE_E2E_ALLOW_SILENT=1 lo relaja (diagnóstico).
   const silent = info.nonZeroRatio < 0.3
   test.info().annotations.push({
     type: silent ? 'warning' : 'info',
     description: `bounce ${silent ? 'SILENCIOSO' : 'con señal'}: bytes no nulos ${(info.nonZeroRatio * 100).toFixed(1)}% · ${String(r.message).slice(0, 160)}`,
   })
-  if (process.env.JASWAVE_E2E_STRICT_AUDIO === '1') {
+  if (process.env.JASWAVE_E2E_ALLOW_SILENT !== '1') {
     expect(info.nonZeroRatio, 'proporción de bytes no nulos en data').toBeGreaterThan(0.3)
   }
 })

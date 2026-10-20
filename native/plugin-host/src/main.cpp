@@ -1650,7 +1650,8 @@ static void handleLine(const std::string& line) {
         p = comma + 1;
       }
     };
-    size_t masterSep = enc.find("||");
+    // rfind: un track final sin slots termina en "|" y find("||") cortaba dentro de ese track.
+    size_t masterSep = enc.rfind("||");
     std::string tracksPart = masterSep == std::string::npos ? enc : enc.substr(0, masterSep);
     std::string masterPart = masterSep == std::string::npos ? "" : enc.substr(masterSep + 2);
     size_t p = 0;

@@ -75,6 +75,15 @@ describe('encodeStemPacket', () => {
 })
 
 describe('encodeTrackGraph', () => {
+  it('último track sin slots (pista de audio) no se funde con el separador del master', () => {
+    const enc = encodeTrackGraph({
+      tracks: [{ stemIndex: 0, gain: 1, pan: 0, muted: false, slots: [] }],
+      master: [],
+    })
+    assert.equal(enc, '0~1~0~0|;||')
+    assert.equal(enc.slice(0, enc.indexOf('||')), '0~1~0~0|;')
+  })
+
   it('serializa idx~gain~pan~muted y roles i/e', () => {
     const enc = encodeTrackGraph({
       tracks: [

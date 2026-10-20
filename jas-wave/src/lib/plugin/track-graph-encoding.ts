@@ -61,5 +61,9 @@ export function encodeTrackGraph(params: {
   const master = params.master
     .map((s) => `${s.slotId}:${s.instrument ? 'i' : 'e'}:${s.bypass ? '1' : '0'}`)
     .join(',')
-  return `${trackParts.join(';')}||${master}`
+  const body = trackParts.join(';')
+  // Si el último track no tiene slots (p. ej. pista de audio) termina en "|" y, pegado a "||",
+  // el host partía en ese "||" y descartaba el track (grafo vacío → audio en silencio).
+  // Un ";" vacío separa sin cambiar el formato (el host ignora segmentos sin "|").
+  return `${body}${body.endsWith('|') ? ';' : ''}||${master}`
 }

@@ -223,12 +223,6 @@ async function runNativeBounceUnsafe(
     )
   }
 
-  await prepareNativeClipsForBounce(bounceContent, dawState, {
-    startSec,
-    durationSec: duration,
-    sampleRate: sr,
-  })
-
   // Stems dry para export opcional (fallback Web Audio solo si exportStems).
   const webStems =
     job.exportStems
@@ -267,6 +261,13 @@ async function runNativeBounceUnsafe(
   })
 
   try {
+    // Clips de audio DESPUÉS de renderOfflineStart: el host hace clip_stop_all_scheduled()
+    // al iniciar el bounce, así que programarlos antes dejaba las pistas de audio en silencio.
+    await prepareNativeClipsForBounce(bounceContent, dawState, {
+      startSec,
+      durationSec: duration,
+      sampleRate: sr,
+    })
     // Las colas MIDI por slot drenan solo cuando renderMix procesa bloques:
     // con el renderer offline activo ningún bloque se consume en vivo.
     scheduleVstEvents(bounceContent, sr, startSec)

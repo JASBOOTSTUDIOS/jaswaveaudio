@@ -86,6 +86,7 @@ export async function prepareNativeClipsForBounce(
 ): Promise<number> {
   hostClipStopAll()
   let scheduled = 0
+  const fallidos: string[] = []
 
   for (const bt of content.tracks) {
     if (bt.audioClips.length === 0) continue
@@ -98,7 +99,10 @@ export async function prepareNativeClipsForBounce(
 
       const id = clipIdFor(bt, clip.inicioSec, clip.sourceKey)
       const loaded = await loadClipPcm(id, clip.sourceKey, track, clip.inicioSec, opts.sampleRate)
-      if (!loaded) continue
+      if (!loaded) {
+        fallidos.push(clip.sourceKey)
+        continue
+      }
 
       let consumed = 0
       let delaySec = 0
@@ -130,6 +134,10 @@ export async function prepareNativeClipsForBounce(
     }
   }
 
+  if (fallidos.length) {
+    // Un clip que no carga en el host sale en silencio en el bounce: dejar rastro diagnosticable.
+    window.electron?.logError?.('bounce', `${fallidos.length} clip(s) de audio no cargaron en el host: ${fallidos.slice(0, 5).join(', ')}`)
+  }
   return scheduled
 }
 

@@ -5,6 +5,7 @@
  * Device de audio: WASAPI / Exclusive / DirectSound / WinMM / ASIO (seleccionable).
  */
 
+import { logLine } from './logger'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -466,7 +467,18 @@ function resolveNativeBinary(): string | null {
       ? ['jaswave-plugin-host.exe', 'jaswave-plugin-host']
       : ['jaswave-plugin-host']
 
+  // App empaquetada: SOLO el host incluido en resources (nunca binarios de un árbol de desarrollo
+  // cercano, que pueden estar desactualizados o no ser de confianza).
+  if (app.isPackaged) {
+    for (const name of names) {
+      const p = path.join(process.resourcesPath, 'plugin-host', name)
+      if (fs.existsSync(p)) return p
+    }
+    return null
+  }
+
   const relativeDirs = [
+    path.join('native', 'plugin-host', 'build-release', 'Release'),
     path.join('native', 'plugin-host', 'build-vs', 'Release'),
     path.join('native', 'plugin-host', 'build-vst3', 'Release'),
     path.join('native', 'plugin-host', 'build-vst3', 'Debug'),
@@ -695,7 +707,10 @@ function parseHostLogLine(raw: string) {
       }
       continue
     }
-    if (t) console.error('[plugin-host]', t)
+    if (!t) continue
+    console.error('[plugin-host]', t)
+    // Bounce offline y fallos del host: al log persistente (la consola no siempre se captura).
+    if (/offline|render|error|fail|crash/i.test(t)) logLine('info', 'plugin-host', t)
   }
 }
 
@@ -725,6 +740,7 @@ function wireChild(proc: ChildProcessWithoutNullStreams) {
     backend = 'none'
     closeMixPipe()
     lastError = `Plugin Host Process salió (code=${code}, signal=${signal})`
+    logLine('warn', 'plugin-host', lastError, lastLoadPluginPath ? `último load: ${lastLoadPluginPath}` : '')
     // Si un load reciente tumba el host (p.ej. 4Front Bass), aislar el plugin.
     if (lastLoadPluginPath && Date.now() - lastLoadPluginAt < 20_000) {
       const key = pluginKey(lastLoadPluginPath)
@@ -1003,6 +1019,7 @@ function shouldReapplySavedPrefs(saved: AudioDevicePrefs): boolean {
 }
 
 async function respawnNativeHost(): Promise<boolean> {
+  logLine('info', 'plugin-host', 'respawn', new Error('origen').stack?.split('\n').slice(2, 5).join(' <- ') ?? '')
   const bin = resolveNativeBinary()
   if (!bin) return false
   failAllRpc('Plugin Host Process reiniciado.')
@@ -1261,6 +1278,7 @@ async function applyAudioDeviceOrFallback(
 }
 
 async function tryStart(kind: 'native' | 'node'): Promise<boolean> {
+  logLine('info', 'plugin-host', `start ${kind}`, new Error('origen').stack?.split('\n').slice(2, 5).join(' <- ') ?? '')
   stopPluginHost()
   if (kind === 'native') killOrphanPluginHosts()
 

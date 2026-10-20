@@ -43,7 +43,7 @@ Playwright, solo `chromium.connectOverCDP` contra el propio Electron.
 | `JASWAVE_E2E_TARGET` | `packaged` (por defecto) o `dev` |
 | `JASWAVE_E2E_EXE` | Ruta alternativa al ejecutable empaquetado |
 | `JASWAVE_E2E_KEEP_TMP=1` | No borrar la carpeta temporal (`%TEMP%/jaswave-e2e-*`: `userData/`, `work/`) |
-| `JASWAVE_E2E_STRICT_AUDIO=1` | `05-export` falla si el WAV exportado es silencio (hoy solo lo anota) |
+| `JASWAVE_E2E_ALLOW_SILENT=1` | `05-export` no falla si el WAV exportado es silencio (solo diagnóstico) |
 | `CI` | 1 reintento, `forbidOnly` y reporte HTML en `jas-wave/playwright-report/` |
 
 El lanzador fija por su cuenta `JASWAVE_AGENT_BRIDGE` (`0`/`1`), `JASWAVE_AGENT_PORT`
