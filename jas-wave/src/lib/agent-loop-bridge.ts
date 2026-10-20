@@ -6,6 +6,7 @@ import {
   observeAgentContext,
   runAgentLoop,
   isProjectWipeIntent,
+  parsePlan,
   type AgentBudget,
   type AgentBudgetTracker,
   type AgentLoopChatReply,
@@ -16,6 +17,7 @@ import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { KNOWN_AGENT_ACTION_TYPES } from './agent-action-catalog'
 import type { AgentMode } from './ai-modes'
 import { runRegisteredTools } from './agent-tool-runner'
+import { getAgentDoc, PLAN_SLUG } from './agent-docs'
 import {
   clearActiveAgentRun,
   saveAgentRunFromResult,
@@ -43,8 +45,20 @@ export type CoproducerAgentLoopInput = {
   budget?: AgentBudgetTracker | Partial<AgentBudget>
 }
 
+/** A5: con plan.md estructurado aprobado no se pausa en la primera escritura. */
+function hayPlanAprobado(tienda: TiendaDAW): boolean {
+  try {
+    const pid = tienda.obtenerEstado().project?.id || 'default'
+    const md = getAgentDoc(pid, PLAN_SLUG)?.content
+    return parsePlan(md)?.estadoPlan === 'aprobado'
+  } catch {
+    return false
+  }
+}
+
 export async function runCoproducerAgentLoop(input: CoproducerAgentLoopInput): Promise<AgentRunResult> {
   const { tienda, userText } = input
+  const planAprobado = hayPlanAprobado(tienda)
   const resume = input.resumeRun
     ? {
         ...toResumePayload(input.resumeRun),
@@ -66,7 +80,7 @@ export async function runCoproducerAgentLoop(input: CoproducerAgentLoopInput): P
     userText,
     knownTools: KNOWN_AGENT_ACTION_TYPES,
     abort: input.abort,
-    requireConfirmationForWrites: !input.resumeRun,
+    requireConfirmationForWrites: !input.resumeRun && !planAprobado,
     // Tras el 1.er Aplicar: sigue uno a uno sin re-pedir confirm en cada paso
     requireConfirmationForDangerous: !(wipe && sessionStarted),
     priorBrief: input.priorBrief,
@@ -221,8 +235,7 @@ export async function applyPendingAgentRun(opts: {
           : [
               'Tras Aplicar con éxito: observa el DAW real (track.list + clips).',
               `Pistas usuario ahora: ${tracks}.`,
-              'Si el trabajo creativo quedó bien: Kael (QA) DEBE preguntar al usuario si le gustó',
-              '(request-user-input o CLARIFY kael_feedback). PROHIBIDO complete silencioso.',
+              'Si el trabajo creativo quedó bien: resumen breve con evidencia (pistas, clips). NO «¿te gustó?».',
               'Solo si hay huecos vacíos: UN midi.clip.create del primer hueco.',
               'PROHIBIDO otro daw.musicBuild si ya hay pistas.',
             ].join('\n')

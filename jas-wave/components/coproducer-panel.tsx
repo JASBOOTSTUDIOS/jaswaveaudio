@@ -43,7 +43,7 @@ import {
   startCoproducerTurn,
   type EngineEvent,
 } from '@/src/lib/agent-engine-host'
-import type { EngineRun, TurnHandle } from '@jaswave/ai-harness'
+import type { AgentBudget, AgentBudgetUsage, EngineRun, TurnHandle } from '@jaswave/ai-harness'
 import { PendingActionsCard } from '@/components/pending-actions-card'
 import { AgentChecklistCard } from '@/components/agent-checklist-card'
 import { ClarificationCard } from '@/components/clarification-card'
@@ -154,6 +154,8 @@ export function CoProducerPanel() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [aiStatus, setAiStatus] = useState<'unknown' | 'online' | 'offline' | 'misconfigured'>('unknown')
   const [statusDetail, setStatusDetail] = useState('')
+  /** A5: consumo del presupuesto del turno en curso (evento `budget` del motor). */
+  const [turnBudget, setTurnBudget] = useState<{ usage: AgentBudgetUsage; budget: AgentBudget } | null>(null)
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const [mentionStart, setMentionStart] = useState(0)
   const [mentionIndex, setMentionIndex] = useState(0)
@@ -589,6 +591,7 @@ export function CoProducerPanel() {
         setStreamText((prev) => (prev + e.text).slice(-12_000))
         return
       case 'budget':
+        setTurnBudget({ usage: e.usage, budget: e.budget })
         return
       default:
         break
@@ -616,6 +619,10 @@ export function CoProducerPanel() {
         setIsGenerating(false)
         setStreamText('')
         liveAssistantMsgIdRef.current = null
+        setTurnBudget(null)
+        // A5: un turno pausado queda ofertado para reanudar (banner de pausa).
+        const finalRun = getAgentEngine(dawStore).getRun(handle.runId)
+        if (finalRun?.status === 'paused') setInterruptedRun(finalRun)
       }
       const after = getConversation(convId)
       if (after) setConversation(after)
@@ -664,6 +671,19 @@ export function CoProducerPanel() {
     if (!run || isGenerating) return
     setInterruptedRun(null)
     void followTurn(getAgentEngine(dawStore).resume(run.id), run.conversationId, run.messageId)
+  }
+
+  /** A5: pausar/cancelar el turno activo (el motor ya lo soporta; la UI solo lo expone). */
+  const pauseActiveTurn = () => {
+    const runId = activeRunRef.current
+    if (!runId) return
+    if (getAgentEngine(dawStore).pause(runId)) setHarnessPhase('Turno en pausa…')
+  }
+
+  const cancelActiveTurn = () => {
+    const runId = activeRunRef.current
+    if (!runId) return
+    getAgentEngine(dawStore).cancel(runId)
   }
 
   handleSendRef.current = (t?: string) => {
@@ -830,8 +850,10 @@ export function CoProducerPanel() {
       ) : null}
       {interruptedRun && !isGenerating ? (
         <div className="flex items-center gap-2 border-b border-border bg-accent-amber/10 px-3 py-1.5 text-[11px] text-foreground" data-testid="engine-interrupted">
-          <span className="min-w-0 flex-1 truncate">Turno interrumpido: «{messagePreview(interruptedRun.userText, 40)}»</span>
-          <button type="button" className="shrink-0 text-accent-amber hover:underline" onClick={resumeInterrupted}>
+          <span className="min-w-0 flex-1 truncate">
+            {interruptedRun.status === 'paused' ? 'Turno en pausa' : 'Turno interrumpido'}: «{messagePreview(interruptedRun.userText, 40)}»
+          </span>
+          <button type="button" className="shrink-0 text-accent-amber hover:underline" onClick={resumeInterrupted} data-testid="turn-resume">
             Reanudar
           </button>
           <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" onClick={() => setInterruptedRun(null)}>
@@ -850,6 +872,34 @@ export function CoProducerPanel() {
             {agentModeLabel(activeTurnMode ?? agentMode)}
           </span>
           <span className="min-w-0 flex-1 truncate">{harnessPhase}</span>
+          {turnBudget ? (
+            <span
+              className="shrink-0 font-mono text-[10px] text-muted-foreground"
+              title="Consumo del presupuesto del turno (llamadas al modelo / minutos)"
+              data-testid="turn-budget"
+            >
+              {turnBudget.usage.modelCalls}/{turnBudget.budget.maxModelCalls} llamadas ·{' '}
+              {Math.round(turnBudget.usage.elapsedMs / 60_000)} min
+            </span>
+          ) : null}
+          <button
+            type="button"
+            className="shrink-0 text-[10px] text-muted-foreground hover:text-foreground"
+            onClick={pauseActiveTurn}
+            data-testid="turn-pause"
+            title="Pausar el turno (sigue desde donde va)"
+          >
+            Pausar
+          </button>
+          <button
+            type="button"
+            className="shrink-0 text-[10px] text-muted-foreground hover:text-destructive"
+            onClick={cancelActiveTurn}
+            data-testid="turn-cancel"
+            title="Cancelar el turno"
+          >
+            Cancelar
+          </button>
           <button
             type="button"
             className="shrink-0 text-[10px] text-muted-foreground hover:text-foreground"

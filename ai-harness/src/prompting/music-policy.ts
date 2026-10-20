@@ -8,7 +8,7 @@ export function agentMusicPolicyPrompt(): string {
     'CANCIÓN COMPLETA ("créame una canción de X minutos / bachata / …"):',
     '→ UN solo daw.musicBuild { aplicar:true, midiSource:"procedural", bpm, minutos, genero, prompt }.',
     '  Eso crea pistas + marcadores + clips MIDI con notas.',
-    '→ Tras success: Kael (QA) pregunta al usuario si le gustó (request-user-input / CLARIFY). NO complete silencioso.',
+    '→ Tras success: resumen breve con qué se creó (pistas, BPM, duración). NO «¿te gustó?».',
     '→ PROHIBIDO midiSource:"ai" en canción completa (deja el proyecto sin notas).',
     '→ PROHIBIDO project.setBpm aparte: el BPM va DENTRO de musicBuild.',
     '→ PROHIBIDO proponer 20 clip.delete / track.delete; para limpiar el proyecto: daw.wipeProject.',
