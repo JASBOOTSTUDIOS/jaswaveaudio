@@ -13,7 +13,7 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | U7 | Instancia única y ventanas | U1 | pendiente | | |
 | A1 | Motor de turnos headless | — | hecho | Claude (subagente, rama ws/a1-a2-engine) · 2026-10-20 | 6e525d1 |
 | A2 | Tool-calling nativo + proveedor mock | A1 | hecho | Claude (subagente, rama ws/a1-a2-engine) · 2026-10-20 | 1b24c21 |
-| A3 | Los 5 modos | A1 | pendiente | | |
+| A3 | Los 5 modos | A1 | en curso | Claude (agente raíz) · 2026-10-20 | |
 | A4 | Plan estructurado editable | A1 | pendiente | | |
 | A5 | Ejecución hasta terminar | A3, A4 | pendiente | | |
 | A6 | Equipo multi-agente | A5, A9(plan/bitácora) | pendiente | | |
