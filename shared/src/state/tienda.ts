@@ -31,6 +31,7 @@ import type { SessionScope } from '../events/event-bus';
 import { iniciarSesionContextoIA } from '../events/ciclo-vida-suscripciones';
 import { crearPermissionManager, type PermissionManager } from './permissions';
 import { crearPipelineValidacion } from './pipeline-validacion';
+import { crearReglasDominio } from './validacion-dominio';
 import { crearMemoryManager, type MemoryManager } from '../ai/memory-manager';
 import { crearGestorContexto, type ContextManagerConfig } from '../ai/context-manager';
 import type { AssembledContext, ImmediateContext, ProjectContext, RecentEvent, TurnoConversacion } from '../types/contexto';
@@ -91,6 +92,7 @@ export function crearTiendaDAW(opciones?: TiendaDAWOpciones): TiendaDAW {
     // La confirmación previa la gestiona la UI (tarjeta de acciones pendientes).
     pipelineValidacion: crearPipelineValidacion({
       registroComandos: registro,
+      reglasDominio: crearReglasDominio(),
       permissionValidator: {
         check: (tool, userLevel) => {
           if (userLevel !== 'ai') return { allowed: true, requiresConfirmation: false };

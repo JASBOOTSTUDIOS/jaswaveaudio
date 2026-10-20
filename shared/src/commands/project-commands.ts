@@ -180,7 +180,12 @@ export function crearComandoProjectLoad(): CommandDefinition<ProjectLoadPayload>
       }
 
       // Si el archivo está dañado y existe `${ruta}.bak`, se recupera la copia.
-      const { proyecto, usadoRespaldo, errorOriginal } = await cargarProyectoConRespaldo(ruta, fileService);
+      let notasMidiDescartadas = 0;
+      const { proyecto, usadoRespaldo, errorOriginal } = await cargarProyectoConRespaldo(ruta, fileService, {
+        onNotasMidiDescartadas: (cantidad) => {
+          notasMidiDescartadas += cantidad;
+        },
+      });
       const proyectoConRuta: ProjectState = {
         ...proyecto,
         ruta,
@@ -210,6 +215,18 @@ export function crearComandoProjectLoad(): CommandDefinition<ProjectLoadPayload>
             rutaRespaldo: rutaRespaldo(ruta),
             motivo: errorOriginal ?? '',
             mensaje: `El archivo del proyecto estaba dañado; se cargó la copia de seguridad (${rutaRespaldo(ruta)}). Guarda el proyecto para repararlo.`,
+          },
+        });
+      }
+      if (notasMidiDescartadas > 0) {
+        events.push({
+          nombre: 'validacion.advertencia',
+          version: 1,
+          marcaTiempo,
+          fuente: 'project-commands',
+          payload: {
+            code: 'MIDI_NOTES_REPAIRED',
+            message: `Se descartaron ${notasMidiDescartadas} nota(s) MIDI inválidas al abrir el proyecto`,
           },
         });
       }

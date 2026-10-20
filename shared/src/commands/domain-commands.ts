@@ -44,6 +44,7 @@ import { generateMidiPattern, type GeneratePatternKind } from '../midi/generator
 import { applyGroove } from '../midi/groove';
 import { ensureExpression, setCcLane, setPitchBendPoints } from '../midi/expression';
 import type { MidiClipExpression } from '../types/clips';
+import { nombreTrackUnico } from '../state/validacion-dominio';
 
 function posicionDesdeSegundos(segundos: number, bpm: number) {
   const s = Math.max(0, segundos)
@@ -571,7 +572,8 @@ export function crearComandoTrackCreate(): CommandDefinition<TrackCreatePayload>
       additionalProperties: false,
     },
     handler: (estado: DAWState, payload: TrackCreatePayload): StateTransition<TrackCreatePayload> => {
-      const nombre = (payload.nombre || `Pista ${(estado.project.tracks.length + 1)}`).trim();
+      const nombreSolicitado = (payload.nombre || `Pista ${(estado.project.tracks.length + 1)}`).trim();
+      const nombre = nombreTrackUnico(nombreSolicitado, estado.project.tracks);
       const tipo = payload.tipo || 'audio';
       const pista = crearPista(nombre, tipo, payload.color, payload.id);
       if (estado.project.tracks.some((t) => t.id === pista.id)) {
@@ -584,17 +586,31 @@ export function crearComandoTrackCreate(): CommandDefinition<TrackCreatePayload>
         fechaModificacion: Date.now(),
       };
 
+      const events: StateTransition<TrackCreatePayload>['events'] = [
+        {
+          nombre: EventosTrack.creada,
+          version: 1,
+          marcaTiempo: Date.now(),
+          fuente: 'domain-commands',
+          payload: { trackId: pista.id, nombre, tipo },
+        },
+      ];
+      if (nombre !== nombreSolicitado) {
+        events.push({
+          nombre: 'validacion.advertencia',
+          version: 1,
+          marcaTiempo: Date.now(),
+          fuente: 'domain-commands',
+          payload: {
+            code: 'TRACK_NAME_DUPLICATED',
+            message: `Ya existía una pista llamada "${nombreSolicitado}"; se creó como "${nombre}"`,
+          },
+        });
+      }
+
       return {
         state: { ...estado, project: proyecto },
-        events: [
-          {
-            nombre: EventosTrack.creada,
-            version: 1,
-            marcaTiempo: Date.now(),
-            fuente: 'domain-commands',
-            payload: { trackId: pista.id, nombre, tipo },
-          },
-        ],
+        events,
         // Compat: result conserva los campos del payload y añade trackId.
         result: { ...payload, trackId: pista.id },
         inversePayload: { trackId: pista.id },
@@ -747,12 +763,19 @@ export function crearComandoTrackUpdate(): CommandDefinition<TrackUpdatePayload>
         throw new Error(`Pista no encontrada: ${payload.trackId}`);
       }
 
+      const datos = { ...payload.datos } as Record<string, unknown>;
+      let nombreSolicitado: string | null = null;
+      if (typeof datos.nombre === 'string') {
+        nombreSolicitado = datos.nombre;
+        datos.nombre = nombreTrackUnico(nombreSolicitado, estado.project.tracks, payload.trackId);
+      }
+
       const datosAnteriores: Record<string, unknown> = {};
-      for (const clave of Object.keys(payload.datos)) {
+      for (const clave of Object.keys(datos)) {
         datosAnteriores[clave] = (pista as unknown as Record<string, unknown>)[clave];
       }
 
-      const pistaActualizada = { ...pista, ...payload.datos, fechaModificacion: Date.now() } as Track;
+      const pistaActualizada = { ...pista, ...datos, fechaModificacion: Date.now() } as Track;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => t.id === payload.trackId ? pistaActualizada : t),
@@ -760,17 +783,31 @@ export function crearComandoTrackUpdate(): CommandDefinition<TrackUpdatePayload>
         fechaModificacion: Date.now(),
       };
 
+      const events: StateTransition<TrackUpdatePayload>['events'] = [
+        {
+          nombre: EventosTrack.actualizada,
+          version: 1,
+          marcaTiempo: Date.now(),
+          fuente: 'domain-commands',
+          payload: { trackId: payload.trackId, cambios: datos as any },
+        },
+      ];
+      if (nombreSolicitado !== null && datos.nombre !== nombreSolicitado) {
+        events.push({
+          nombre: 'validacion.advertencia',
+          version: 1,
+          marcaTiempo: Date.now(),
+          fuente: 'domain-commands',
+          payload: {
+            code: 'TRACK_NAME_DUPLICATED',
+            message: `Ya existía una pista llamada "${nombreSolicitado}"; se renombró como "${String(datos.nombre)}"`,
+          },
+        });
+      }
+
       return {
         state: { ...estado, project: proyecto },
-        events: [
-          {
-            nombre: EventosTrack.actualizada,
-            version: 1,
-            marcaTiempo: Date.now(),
-            fuente: 'domain-commands',
-            payload: { trackId: payload.trackId, cambios: payload.datos as any },
-          },
-        ],
+        events,
         result: payload,
         inversePayload: { trackId: payload.trackId, datos: datosAnteriores },
       };

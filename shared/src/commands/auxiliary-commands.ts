@@ -80,8 +80,8 @@ export function crearComandoSetTimeSignature(): CommandDefinition<SetTimeSignatu
     schema: {
       type: 'object',
       properties: {
-        numerador: { type: 'number', minimum: 1, maximum: 32 },
-        denominador: { type: 'number', minimum: 1, maximum: 32 },
+        numerador: { type: 'number', minimum: 1, maximum: 32, multipleOf: 1 },
+        denominador: { type: 'number', enum: [1, 2, 4, 8, 16, 32] },
       },
       required: ['numerador', 'denominador'],
       additionalProperties: false,

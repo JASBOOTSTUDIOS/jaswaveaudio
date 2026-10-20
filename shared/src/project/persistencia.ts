@@ -57,6 +57,11 @@ export const guardarProyecto = async (proyecto: ProjectState, ruta: string, file
   }
 
   const payload = proyectoParaGuardar(proyecto);
+  // Nunca escribir (ni rotar el `.bak`) con un proyecto que no se podrá reabrir.
+  const validacion = validarProyectoArchivo(payload);
+  if (!validacion.ok) {
+    throw new Error(`No se guardó el proyecto: ${validacion.error}`);
+  }
   const json = JSON.stringify(payload);
   const tamanoEsperado = new TextEncoder().encode(json).length;
 
@@ -94,6 +99,8 @@ export class ErrorCargaProyecto extends Error {
 export interface OpcionesCargaProyecto {
   /** Registro de migraciones de formato (inyectable para tests). */
   migraciones?: readonly MigracionArchivo[];
+  /** Aviso de reparación: notas MIDI inválidas descartadas al cargar. */
+  onNotasMidiDescartadas?: (cantidad: number) => void;
 }
 
 /** Ruta de la copia de seguridad que deja la escritura atómica del guardado. */
@@ -188,6 +195,7 @@ const cargarDesde = async (
 
   if (notasEliminadas > 0) {
     console.warn(`Proyecto reparado: ${notasEliminadas} nota(s) MIDI inválidas descartadas`);
+    opciones.onNotasMidiDescartadas?.(notasEliminadas);
   }
   // modificado=true si hubo reparación: el siguiente guardado escribe el archivo corregido.
   return { ...proyectoReconstruido, ruta: rutaProyecto, modificado: notasEliminadas > 0 };
