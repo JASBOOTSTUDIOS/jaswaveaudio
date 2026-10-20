@@ -1319,8 +1319,15 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
         return
       }
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    // Captura en window: si el piano roll manejó la tecla (preventDefault),
+    // stopPropagation evita que llegue al dispatcher global en la fase de
+    // burbuja → nunca se ejecutan dos acciones para la misma tecla.
+    const onKeyHandled = (e: KeyboardEvent) => {
+      onKey(e)
+      if (e.defaultPrevented) e.stopPropagation()
+    }
+    window.addEventListener('keydown', onKeyHandled, true)
+    return () => window.removeEventListener('keydown', onKeyHandled, true)
   }, [
     deleteSelected,
     transposeSelected,

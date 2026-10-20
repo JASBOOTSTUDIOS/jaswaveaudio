@@ -36,6 +36,7 @@ import {
   durationById,
 } from '@/src/lib/score-note-durations'
 import { getProjectKey, getProjectKeyRegions } from '../../shared/src/music/project-key'
+import { shouldIgnoreGlobalShortcuts } from '../../shared/src'
 import { ScoreBarView, ScoreSheetCanvas, SCORE_BAR_HEIGHT } from '@/components/score-sheet-view'
 import { SHEET_BAR_SLOT_WIDTH } from '@/src/lib/midi-score-render'
 
@@ -187,6 +188,7 @@ function ScoreEditor({ trackId, clipId }: { trackId: string; clipId: string }) {
   const snapGrid = durationById(durationId).snap
   const [extraBars, setExtraBars] = useState(0)
   const draggingRef = useRef(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
 
   const drums = useMemo(
     () => /bater|drum/i.test(trackName) || isDrumishNotes(notes as MidiNote[]),
@@ -249,19 +251,32 @@ function ScoreEditor({ trackId, clipId }: { trackId: string; clipId: string }) {
   )
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedIds.size === 0) return
-        e.preventDefault()
-        const next = notes.filter((n) => !selectedIds.has(n.id))
-        setNotes(next)
-        setSelectedIds(new Set())
-        setDirty(true)
-        void persist(next)
+    const isScoreContext = (): boolean => {
+      try {
+        if (getUndockUrlFocus().toolId === 'score-editor') return true
+      } catch {
+        /* ignore */
       }
+      const root = rootRef.current
+      if (!root) return false
+      const ae = document.activeElement
+      return ae instanceof Node && root.contains(ae)
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+      if (shouldIgnoreGlobalShortcuts(e.target)) return
+      if (!isScoreContext()) return
+      if (selectedIds.size === 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      const next = notes.filter((n) => !selectedIds.has(n.id))
+      setNotes(next)
+      setSelectedIds(new Set())
+      setDirty(true)
+      void persist(next)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [notes, selectedIds, persist])
 
   const handleExport = () => {
@@ -294,7 +309,14 @@ function ScoreEditor({ trackId, clipId }: { trackId: string; clipId: string }) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-panel">
+    <div
+      ref={rootRef}
+      tabIndex={0}
+      className="flex h-full min-h-0 flex-col bg-panel outline-none"
+      onPointerDownCapture={() => {
+        rootRef.current?.focus({ preventScroll: true })
+      }}
+    >
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-[12px] font-semibold text-foreground">

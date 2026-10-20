@@ -116,9 +116,11 @@ function EditableStat({
   const valueRef = useRef(value)
   const stepRef = useRef(step)
   const onCommitRef = useRef(onCommit)
+  const editingRef = useRef(editing)
   valueRef.current = value
   stepRef.current = step
   onCommitRef.current = onCommit
+  editingRef.current = editing
 
   useEffect(() => {
     if (editing) {
@@ -132,6 +134,12 @@ function EditableStat({
     const el = rootRef.current
     if (!el) return
     const handler = (e: WheelEvent) => {
+      // Solo la rueda con el control enfocado o con Alt altera el valor;
+      // si no, la rueda debe hacer scroll normal de la interfaz.
+      if (editingRef.current) return
+      const ae = document.activeElement
+      const enfocado = ae === el || (ae instanceof Node && el.contains(ae))
+      if (!e.altKey && !enfocado) return
       e.preventDefault()
       const fine = e.shiftKey ? 0.1 : 1
       const delta = e.deltaY < 0 ? stepRef.current * fine : -stepRef.current * fine
@@ -153,7 +161,8 @@ function EditableStat({
   return (
     <div
       ref={rootRef}
-      className="flex flex-col items-center leading-none cursor-pointer select-none"
+      tabIndex={0}
+      className="flex flex-col items-center leading-none cursor-pointer select-none rounded outline-none focus-visible:ring-1 focus-visible:ring-accent-amber/60"
       onDoubleClick={() => { setDraft(String(value)); setEditing(true) }}
     >
       {editing ? (
@@ -231,6 +240,11 @@ function TimeSigEditor({
     const el = wheelTargetRef.current
     if (!el) return
     const handler = (e: WheelEvent) => {
+      // Solo la rueda con el control enfocado o con Alt altera el compás;
+      // si no, la rueda debe hacer scroll normal de la interfaz.
+      const ae = document.activeElement
+      const enfocado = ae === el || (ae instanceof Node && el.contains(ae))
+      if (!e.altKey && !enfocado) return
       e.preventDefault()
       const idx = COMPASES_COMUNES.findIndex(
         ([n, d]) => n === numeradorRef.current && d === denominadorRef.current,
@@ -286,7 +300,8 @@ function TimeSigEditor({
       ) : (
         <div
           ref={wheelTargetRef}
-          className="flex flex-col items-center"
+          tabIndex={0}
+          className="flex flex-col items-center rounded outline-none focus-visible:ring-1 focus-visible:ring-accent-amber/60"
           onClick={() => setShowPicker(!showPicker)}
           onDoubleClick={() => { setNumDraft(String(numerador)); setDenDraft(String(denominador)); setEditing(true) }}
         >
