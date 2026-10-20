@@ -17,6 +17,8 @@ import {
 import { batchOrNotify, executeOrNotify, redoOrNotify, undoOrNotify } from '../src/lib/execute-or-toast'
 import { dawClipboard, type ClipboardClip } from '../src/lib/daw-clipboard'
 import { loteBorrarClips, loteDuplicarClips, lotePegarClips } from '../src/lib/clip-edit-commands'
+import { solicitarBorrarPista } from '../src/lib/track-delete-request'
+
 import { requestOpenTool } from '../src/workspace/types'
 import { bumpUiZoom, bumpDocsTextZoom, isDocsZoomTarget, setDocsTextZoom } from '../src/lib/docs-editor-store'
 import { bumpChatTextZoom, isChatZoomTarget, setChatTextZoom } from '../src/lib/chat-ui-store'
@@ -294,10 +296,13 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         void executeOrNotify(tienda, 'track.create', { nombre: `MIDI ${count}`, tipo: 'midi' })
       },
       'track.delete': () => {
-        const { selection } = st()
-        if (selection.idPrincipal) {
-          void executeOrNotify(tienda, 'track.delete', { trackId: selection.idPrincipal })
-        }
+        const { selection, project } = st()
+        const trackId = selection.idPrincipal
+        if (!trackId || !project.tracks.some((t: { id: string }) => t.id === trackId)) return
+        // Mismo diálogo de confirmación que el menú contextual de pista.
+        solicitarBorrarPista(trackId, (id) => {
+          void executeOrNotify(tienda, 'track.delete', { trackId: id })
+        })
       },
       'track.mute': () => {
         const { selection, project } = st()

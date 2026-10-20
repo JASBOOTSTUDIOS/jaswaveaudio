@@ -8,6 +8,9 @@ import { midiController } from '@/src/lib/midi-controller'
 import { useLiveBufferMeter } from '@/hooks/use-live-buffer-meter'
 import { useProjectReady } from '@/src/context/project-ready-context'
 import { waitUntilProjectReady } from '@/src/lib/project-ready'
+import { NumericField } from '@/components/ui/numeric-field'
+import { TimeSignatureField } from '@/components/ui/time-signature-field'
+import { crearVentanaGesto, opcionesGesto } from '@/src/lib/gesture-id'
 
 /** Blanco=vacío → amarillo=medio → rojo=lleno (fill / highFill). */
 function bufferFillColor(level: number): string {
@@ -94,7 +97,16 @@ function BufferFillMeter({ playing }: { playing: boolean }) {
   )
 }
 
+/** Toast de entrada rechazada (el editor se cierra y el valor se revierte). */
+function useAvisoEntradaInvalida(): (mensaje: string) => void {
+  const tienda = useDAW()
+  return (mensaje: string) => {
+    tienda.busEventos.emit('validacion.advertencia', { code: 'INVALID_INPUT', message: mensaje })
+  }
+}
+
 function EditableStat({
+
   value,
   label,
   onCommit,
@@ -104,15 +116,16 @@ function EditableStat({
 }: {
   value: number
   label: string
-  onCommit: (v: number) => void
+  /** `gestureId`: los giros de rueda seguidos (≤600 ms) comparten gesto → un solo undo. */
+  onCommit: (v: number, gestureId?: string) => void
   min: number
   max: number
   step?: number
 }) {
   const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(String(value))
-  const inputRef = useRef<HTMLInputElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
+  const gestoRueda = useRef(crearVentanaGesto(600)).current
+  const avisarInvalido = useAvisoEntradaInvalida()
   const valueRef = useRef(value)
   const stepRef = useRef(step)
   const onCommitRef = useRef(onCommit)
@@ -121,13 +134,6 @@ function EditableStat({
   stepRef.current = step
   onCommitRef.current = onCommit
   editingRef.current = editing
-
-  useEffect(() => {
-    if (editing) {
-      inputRef.current?.focus()
-      inputRef.current?.select()
-    }
-  }, [editing])
 
   // Listener nativo: React onWheel es passive y no permite preventDefault.
   useEffect(() => {
@@ -144,38 +150,37 @@ function EditableStat({
       const fine = e.shiftKey ? 0.1 : 1
       const delta = e.deltaY < 0 ? stepRef.current * fine : -stepRef.current * fine
       const next = Math.round((valueRef.current + delta) * 100) / 100
-      onCommitRef.current(Math.max(min, Math.min(max, next)))
+      const clamped = Math.max(min, Math.min(max, next))
+      if (clamped !== valueRef.current) onCommitRef.current(clamped, gestoRueda())
     }
     el.addEventListener('wheel', handler, { passive: false })
     return () => el.removeEventListener('wheel', handler)
-  }, [min, max])
-
-  const commit = () => {
-    const num = Number(draft)
-    if (!isNaN(num)) {
-      onCommit(Math.max(min, Math.min(max, num)))
-    }
-    setEditing(false)
-  }
+  }, [min, max, gestoRueda])
 
   return (
     <div
       ref={rootRef}
       tabIndex={0}
+      data-testid={`stat-${label.toLowerCase()}`}
       className="flex flex-col items-center leading-none cursor-pointer select-none rounded outline-none focus-visible:ring-1 focus-visible:ring-accent-amber/60"
-      onDoubleClick={() => { setDraft(String(value)); setEditing(true) }}
+      onDoubleClick={() => setEditing(true)}
     >
       {editing ? (
-        <input
-          ref={inputRef}
-          type="number"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
-          className="w-14 bg-background text-center font-mono text-[15px] font-semibold text-foreground ring-1 ring-accent-amber rounded px-1 outline-none"
+        // Vacío / NaN revierte (antes confirmaba el mínimo); Esc cancela.
+        <NumericField
+          value={value}
           min={min}
           max={max}
+          step={step}
+          autoFocus
+          aria-label={label}
+          data-testid={`stat-${label.toLowerCase()}-input`}
+          onCommit={(v) => onCommit(v)}
+          onEnter={() => setEditing(false)}
+          onCancel={() => setEditing(false)}
+          onInvalid={(m) => avisarInvalido(`${label}: ${m}. Se mantiene ${value}.`)}
+          commitOnBlur
+          className="w-14 bg-background text-center font-mono text-[15px] font-semibold text-foreground ring-1 ring-accent-amber rounded px-1 outline-none"
         />
       ) : (
         <span className="font-mono text-[15px] font-semibold text-foreground hover:text-accent-amber transition-colors">
@@ -201,14 +206,14 @@ function TimeSigEditor({
 }: {
   numerador: number
   denominador: number
-  onCommit: (n: number, d: number) => void
+  /** `gestureId`: giros de rueda seguidos comparten gesto → un solo undo. */
+  onCommit: (n: number, d: number, gestureId?: string) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
-  const [numDraft, setNumDraft] = useState(String(numerador))
-  const [denDraft, setDenDraft] = useState(String(denominador))
-  const numRef = useRef<HTMLInputElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
+  const gestoRueda = useRef(crearVentanaGesto(600)).current
+  const avisarInvalido = useAvisoEntradaInvalida()
   const wheelTargetRef = useRef<HTMLDivElement>(null)
   const numeradorRef = useRef(numerador)
   const denominadorRef = useRef(denominador)
@@ -216,13 +221,6 @@ function TimeSigEditor({
   numeradorRef.current = numerador
   denominadorRef.current = denominador
   onCommitRef.current = onCommit
-
-  useEffect(() => {
-    if (editing) {
-      numRef.current?.focus()
-      numRef.current?.select()
-    }
-  }, [editing])
 
   useEffect(() => {
     if (!showPicker) return
@@ -253,57 +251,39 @@ function TimeSigEditor({
         ? (idx + 1) % COMPASES_COMUNES.length
         : (idx - 1 + COMPASES_COMUNES.length) % COMPASES_COMUNES.length
       const [n, d] = COMPASES_COMUNES[next]
-      onCommitRef.current(n, d)
+      onCommitRef.current(n, d, gestoRueda())
     }
     el.addEventListener('wheel', handler, { passive: false })
     return () => el.removeEventListener('wheel', handler)
-  }, [editing])
+  }, [editing, gestoRueda])
 
-  const commit = () => {
-    const n = Number(numDraft)
-    const d = Number(denDraft)
-    if (!isNaN(n) && !isNaN(d) && n > 0 && d > 0) {
-      onCommit(n, d)
-    }
-    setEditing(false)
+  const empezarEdicion = () => {
+    setShowPicker(false)
+    setEditing(true)
   }
 
   return (
     <div className="relative flex flex-col items-center leading-none cursor-pointer select-none" ref={pickerRef}>
       {editing ? (
-        <div className="flex items-center gap-0.5"
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          <input
-            ref={numRef}
-            type="number"
-            value={numDraft}
-            onChange={(e) => setNumDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
-            className="w-7 bg-background text-center font-mono text-[15px] font-semibold text-foreground ring-1 ring-accent-amber rounded px-1 outline-none"
-            min={1}
-            max={12}
-          />
-          <span className="font-mono text-[15px] font-semibold text-muted-foreground">/</span>
-          <input
-            type="number"
-            value={denDraft}
-            onChange={(e) => setDenDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
-            className="w-7 bg-background text-center font-mono text-[15px] font-semibold text-foreground ring-1 ring-accent-amber rounded px-1 outline-none"
-            min={1}
-            max={32}
-          />
-        </div>
+        <TimeSignatureField
+          numerador={numerador}
+          denominador={denominador}
+          autoFocus
+          onCommit={(n, d) => onCommit(n, d)}
+          onDone={() => setEditing(false)}
+          onInvalid={avisarInvalido}
+          className="flex items-center gap-0.5"
+          separatorClassName="font-mono text-[15px] font-semibold text-muted-foreground"
+          inputClassName="w-7 bg-background text-center font-mono text-[15px] font-semibold text-foreground ring-1 ring-accent-amber rounded px-1 outline-none"
+        />
       ) : (
         <div
           ref={wheelTargetRef}
           tabIndex={0}
+          data-testid="timesig"
           className="flex flex-col items-center rounded outline-none focus-visible:ring-1 focus-visible:ring-accent-amber/60"
           onClick={() => setShowPicker(!showPicker)}
-          onDoubleClick={() => { setNumDraft(String(numerador)); setDenDraft(String(denominador)); setEditing(true) }}
+          onDoubleClick={empezarEdicion}
         >
           <div className="flex items-baseline gap-0.5">
             <span className="font-mono text-[15px] font-semibold text-foreground hover:text-accent-amber transition-colors">
@@ -348,7 +328,7 @@ function TimeSigEditor({
           <div className="mt-2 flex items-center gap-1 border-t border-border pt-1.5 px-1">
             <button
               type="button"
-              onClick={() => { setShowPicker(false); setNumDraft(String(numerador)); setDenDraft(String(denominador)); setEditing(true) }}
+              onClick={empezarEdicion}
               className="flex-1 rounded bg-panel-raised px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
             >
               Personalizar...
@@ -471,8 +451,8 @@ export function TransportBar() {
     }))
   }
 
-  const setBpm = async (bpm: number) => {
-    await tienda.executor.execute('project.setBpm', { bpm })
+  const setBpm = async (bpm: number, gestureId?: string) => {
+    await tienda.executor.execute('project.setBpm', { bpm }, 'user', undefined, opcionesGesto('project.bpm', gestureId))
   }
 
   return (
@@ -620,9 +600,16 @@ export function TransportBar() {
       <div className="ml-auto flex items-center gap-5">
         <MidiActivityBadge />
         <EditableStat value={bpm} label="BPM" onCommit={setBpm} min={20} max={300} />
-        <TimeSigEditor numerador={numerador} denominador={denominador} onCommit={(n, d) => {
-          void tienda.executor.execute('project.setTimeSignature', { numerador: n, denominador: d })
+        <TimeSigEditor numerador={numerador} denominador={denominador} onCommit={(n, d, gestureId) => {
+          void tienda.executor.execute(
+            'project.setTimeSignature',
+            { numerador: n, denominador: d },
+            'user',
+            undefined,
+            opcionesGesto('project.timeSignature', gestureId),
+          )
         }} />
+
         <button
           type="button"
           onClick={toggleMetronome}

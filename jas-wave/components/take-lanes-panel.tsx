@@ -7,6 +7,7 @@ import { useDAW, useDAWState } from '@/src/context/daw-context'
 import type { CompSegment, Take } from '../../shared/src/types/entidades'
 import { segundosABeats } from '@/lib/audio-conversions'
 import { flattenCompToClip } from '@/src/lib/comp-flatten'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 
 type Props = {
   pistaId: string
@@ -21,6 +22,7 @@ export function TakeLanesPanel({ pistaId, onClose }: Props) {
   const folder = useDAWState((s) => s.project?.takeFolders?.find((f) => f.pistaId === pistaId))
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
+  const [tomaABorrar, setTomaABorrar] = useState<{ id: string; nombre: string } | null>(null)
 
   const compSegments = folder?.segments ?? []
   const takes = folder?.takes ?? []
@@ -153,14 +155,31 @@ export function TakeLanesPanel({ pistaId, onClose }: Props) {
           <button
             type="button"
             className="shrink-0 text-[10px] text-red-400"
-            onClick={() => void tienda.executor.execute('take.delete', { takeId: take.id })}
+            title="Borrar toma"
+            aria-label={`Borrar ${take.nombre || `Take ${i + 1}`}`}
+            onClick={() => setTomaABorrar({ id: take.id, nombre: take.nombre || `Take ${i + 1}` })}
           >
             ×
           </button>
         </div>
       ))}
 
+      <ConfirmDialog
+        open={tomaABorrar !== null}
+        onClose={() => setTomaABorrar(null)}
+        onConfirm={() => {
+          const t = tomaABorrar
+          setTomaABorrar(null)
+          if (t) void tienda.executor.execute('take.delete', { takeId: t.id })
+        }}
+        title="Borrar toma"
+        message={`¿Borrar «${tomaABorrar?.nombre ?? ''}» y sus segmentos de comp? Puedes deshacerlo con Ctrl+Z.`}
+        confirmLabel="Borrar"
+        variant="danger"
+      />
+
       {!takes.length && (
+
         <p className="text-zinc-500">Graba en modo Comp para añadir tomas.</p>
       )}
     </div>

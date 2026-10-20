@@ -22,6 +22,9 @@ import {
   panADisplay,
 } from '@/lib/audio-conversions'
 import { FaderControl, KnobControl } from './ui/controls'
+import { NumericField } from './ui/numeric-field'
+import { opcionesGesto } from '@/src/lib/gesture-id'
+import type { OpcionesEjecucion } from '../../shared/src/types/command'
 import { ConfirmDialog } from './ui/confirm-dialog'
 import { requestOpenTool } from '@/src/workspace/types'
 import { audioEngine } from '@/lib/audio-engine'
@@ -121,8 +124,8 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
   const isMidi = track.tipo === 'midi' || track.tipo === 'instrumento'
   const plugins = track.plugins ?? []
 
-  const updateTrack = (datos: Record<string, unknown>) => {
-    void tienda.executor.execute('track.update', { trackId: track.id, datos })
+  const updateTrack = (datos: Record<string, unknown>, opciones?: OpcionesEjecucion) => {
+    void tienda.executor.execute('track.update', { trackId: track.id, datos }, 'user', undefined, opciones)
   }
 
   const updateClip = (patch: Partial<Clip>) => {
@@ -132,12 +135,13 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
     updateTrack({ clips })
   }
 
-  const handleVolumeChange = (newDb: number) => {
-    updateTrack({ volumen: dbALineal(newDb) })
+  // Un arrastre del fader/knob del inspector = una sola entrada de undo.
+  const handleVolumeChange = (newDb: number, gestureId?: string) => {
+    updateTrack({ volumen: dbALineal(newDb) }, opcionesGesto(`inspector.volumen:${track.id}`, gestureId))
   }
 
-  const handlePanChange = (newPan: number) => {
-    updateTrack({ paneo: newPan / 100 })
+  const handlePanChange = (newPan: number, gestureId?: string) => {
+    updateTrack({ paneo: newPan / 100 }, opcionesGesto(`inspector.paneo:${track.id}`, gestureId))
   }
 
   const tabs: { id: InspectorTab; label: string; show?: boolean }[] = [
@@ -568,16 +572,18 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                   Inicio (beats)
                 </span>
-                <input
-                  type="number"
+                {/* Confirma con Enter/blur; vacío o texto revierte (antes movía el clip a NaN). */}
+                <NumericField
                   step={0.25}
-                  className="rounded-md border border-border bg-background px-2 py-1.5 text-[12px] outline-none focus:ring-1 focus:ring-accent-amber"
+                  min={0}
+                  aria-label="Inicio del clip (beats)"
+                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[12px] outline-none focus:ring-1 focus:ring-accent-amber"
                   value={selectedClip.inicio}
-                  onChange={(e) =>
+                  onCommit={(inicio) =>
                     void tienda.executor.execute('clip.move', {
                       clipId: selectedClip.id,
                       pistaId: track.id,
-                      inicio: Number(e.target.value),
+                      inicio,
                     })
                   }
                 />
@@ -586,17 +592,17 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                   Duración
                 </span>
-                <input
-                  type="number"
+                <NumericField
                   step={0.25}
                   min={0.25}
-                  className="rounded-md border border-border bg-background px-2 py-1.5 text-[12px] outline-none focus:ring-1 focus:ring-accent-amber"
+                  aria-label="Duración del clip (beats)"
+                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[12px] outline-none focus:ring-1 focus:ring-accent-amber"
                   value={selectedClip.duracion}
-                  onChange={(e) =>
+                  onCommit={(duracion) =>
                     void tienda.executor.execute('clip.resize', {
                       clipId: selectedClip.id,
                       pistaId: track.id,
-                      duracion: Number(e.target.value),
+                      duracion,
                     })
                   }
                 />

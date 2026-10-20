@@ -288,6 +288,24 @@ function notaPayloadValida(n: MidiNotePayload | undefined): n is MidiNotePayload
   return esNotaMidiValida(n);
 }
 
+/** Aviso visible (toast) cuando un comando descarta notas MIDI inválidas del payload. */
+function avisoNotasDescartadas(recibidas: number, validas: number): StateTransition['events'] {
+  const descartadas = recibidas - validas;
+  if (descartadas <= 0) return [];
+  return [
+    {
+      nombre: 'validacion.advertencia',
+      version: 1,
+      marcaTiempo: Date.now(),
+      fuente: 'domain-commands',
+      payload: {
+        code: 'MIDI_NOTES_DISCARDED',
+        message: `Se descartaron ${descartadas} nota(s) MIDI inválidas (sin inicio, duración o tono válidos)`,
+      },
+    },
+  ];
+}
+
 function mapMidiNotePayload(n: MidiNotePayload): MidiNote {
   return {
     id: n.id && n.id.length > 0 ? n.id : generarId(),
@@ -1217,6 +1235,7 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
             fuente: 'domain-commands',
             payload: { clipId: clip.id, pistaId, tipo: 'midi', notas: notas.length },
           },
+          ...avisoNotasDescartadas(payload.notas?.length ?? 0, notas.length),
         ],
         result: { ...payload, pistaId, notas, clipId: clip.id } as MidiClipCreatePayload,
         inversePayload: { pistaId, clipId: clip.id },
@@ -1305,6 +1324,7 @@ export function crearComandoMidiNotesSet(): CommandDefinition<MidiNotesSetPayloa
             fuente: 'domain-commands',
             payload: { clipId: payload.clipId, pistaId: payload.pistaId, notas: notas.length },
           },
+          ...avisoNotasDescartadas(payload.notas?.length ?? 0, notas.length),
         ],
         result: payload,
         inversePayload: {
@@ -1471,13 +1491,17 @@ export function crearComandoMidiCreateNotes(): CommandDefinition<MidiCreateNotes
       required: ['pistaId', 'clipId', 'notas'],
       additionalProperties: false,
     },
-    handler: (estado, payload) =>
-      applyMidiNotesToClip(estado, payload.pistaId, payload.clipId, (notas) =>
+    handler: (estado, payload) => {
+      const validas = (payload.notas ?? []).filter(notaPayloadValida);
+      const t = applyMidiNotesToClip(estado, payload.pistaId, payload.clipId, (notas) =>
         appendNotes(
           notas,
-          (payload.notas ?? []).filter(notaPayloadValida).map((n) => ({ ...mapMidiNotePayload(n), source: n.source ?? 'drawn' })),
+          validas.map((n) => ({ ...mapMidiNotePayload(n), source: n.source ?? 'drawn' })),
         ),
-      ) as StateTransition<MidiCreateNotesPayload>,
+      ) as StateTransition<MidiCreateNotesPayload>;
+      return { ...t, events: [...t.events, ...avisoNotasDescartadas(payload.notas?.length ?? 0, validas.length)] };
+    },
+
   };
 }
 

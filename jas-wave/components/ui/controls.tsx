@@ -80,7 +80,8 @@ export function LevelMeterBarHorizontal({
 interface FaderProps {
   db: number
   color: string
-  onChange: (v: number) => void
+  /** `gestureId` agrupa un arrastre (o flechas seguidas) en una sola entrada de undo. */
+  onChange: (v: number, gestureId?: string) => void
   showScale?: boolean
   height?: string
   handleSize?: string
@@ -132,8 +133,8 @@ export function FaderControl({
         onPointerDown={drag.onPointerDown}
         onDoubleClick={drag.onDoubleClick}
         onKeyDown={(e) => {
-          if (e.key === 'ArrowUp') onChange(Math.min(DB_SUPERIOR, db + 1))
-          if (e.key === 'ArrowDown') onChange(Math.max(DB_INFERIOR, db - 1))
+          if (e.key === 'ArrowUp') drag.onKeyStep(db + 1)
+          if (e.key === 'ArrowDown') drag.onKeyStep(db - 1)
         }}
         className="relative w-4 cursor-ns-resize touch-none focus:outline-none"
       >
@@ -162,7 +163,8 @@ interface KnobProps {
   max?: number
   label?: string
   color: string
-  onChange: (v: number) => void
+  /** `gestureId` agrupa un arrastre (o flechas seguidas) en una sola entrada de undo. */
+  onChange: (v: number, gestureId?: string) => void
   size?: string
   formatValue?: (v: number) => string
 }
@@ -206,8 +208,9 @@ export function KnobControl({
         onDoubleClick={drag.onDoubleClick}
         onKeyDown={(e) => {
           const step = (max - min) / 100
-          if (e.key === 'ArrowUp' || e.key === 'ArrowRight') onChange(Math.min(max, value + step * 2))
-          if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') onChange(Math.max(min, value - step * 2))
+          if (e.key === 'ArrowUp' || e.key === 'ArrowRight') drag.onKeyStep(value + step * 2)
+          if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') drag.onKeyStep(value - step * 2)
+
         }}
         className={`relative ${size} cursor-pointer touch-none rounded-full bg-panel-raised ring-1 ring-border transition-shadow hover:ring-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-amber`}
         title={label ? `${label}: ${displayValue}` : displayValue}

@@ -406,6 +406,13 @@ export function applySessionProject(tienda: TiendaDAW, snap: SessionMeta | Sessi
     },
     selection: snap.selection ?? s.selection,
   }))
+  if (reparado.eliminadas > 0) {
+    // Aviso visible (toast): la reparación no debe ser silenciosa.
+    tienda.busEventos.emit('validacion.advertencia', {
+      code: 'MIDI_NOTES_REPAIRED',
+      message: `Se descartaron ${reparado.eliminadas} nota(s) MIDI inválidas al restaurar la sesión`,
+    })
+  }
   return true
 }
 

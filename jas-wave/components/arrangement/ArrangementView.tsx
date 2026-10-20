@@ -9,6 +9,7 @@ import { linealADb, panADisplay } from '@/lib/audio-conversions'
 import { ConfirmDialog } from '../ui/confirm-dialog'
 import { StereoWaveform } from '../stereo-waveform'
 import { executeOrNotify } from '@/src/lib/execute-or-toast'
+import { registrarConfirmacionBorrarPista } from '@/src/lib/track-delete-request'
 import { requestOpenTool } from '@/src/workspace/types'
 import { TrackButton } from './TrackButton'
 import { TimelineRuler } from './TimelineRuler'
@@ -286,6 +287,9 @@ export function ArrangementView() {
   const handleDeleteTrack = (trackId: string) => {
     setDeleteConfirmTrack(trackId)
   }
+
+  // Ctrl+Delete (atajo global) reutiliza este mismo diálogo.
+  useEffect(() => registrarConfirmacionBorrarPista((trackId) => setDeleteConfirmTrack(trackId)), [])
 
   const confirmDeleteTrack = async () => {
     if (deleteConfirmTrack) {
@@ -1219,7 +1223,8 @@ export function ArrangementView() {
         onClose={() => setDeleteConfirmTrack(null)}
         onConfirm={confirmDeleteTrack}
         title="Eliminar pista"
-        message="¿Estás seguro de que deseas eliminar esta pista? Esta acción no se puede deshacer."
+        message="¿Estás seguro de que deseas eliminar esta pista? Puedes deshacerlo con Ctrl+Z."
+
         confirmLabel="Eliminar"
         variant="danger"
       />

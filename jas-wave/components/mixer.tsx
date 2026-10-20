@@ -28,6 +28,9 @@ import {
 import { extractHostPluginPath } from '@/src/lib/plugin/plugin-info-adapter'
 import { isBuiltinInstrument } from '@/src/lib/plugin/track-vst-runtime'
 import { maybeWriteAutomationPoint } from '@/components/automation-lanes-panel'
+import { crearVentanaGesto, opcionesGesto } from '@/src/lib/gesture-id'
+import { batchOrNotify } from '@/src/lib/execute-or-toast'
+
 
 /** El VU del motor usa curva peak^0.6; invertir para lectura en dBFS. */
 function meterLevelToDbLabel(meter: number): string {
@@ -189,16 +192,23 @@ export function Mixer() {
 
   const playing = useDAWState((s: DAWState) => Boolean(s.transport?.reproduciendo))
 
-  const handleChangeDb = (id: string, db: number) => {
+  /** Arrastre del slider de envío: los cambios seguidos (≤600 ms) son un solo undo. */
+  const gestoEnvio = useMemo(() => crearVentanaGesto(600), [])
+
+  // Un arrastre de fader/knob = una entrada de undo (también los puntos de
+  // automatización escritos durante el gesto: misma clave de coalescencia).
+  const handleChangeDb = (id: string, db: number, gestureId?: string) => {
     const volumen = db > DB_INFERIOR ? dbALineal(db) : 0
-    void tienda.executor.execute('track.update', { trackId: id, datos: { volumen } })
-    maybeWriteAutomationPoint(tienda, id, 'volumen', volumen, playing)
+    const opciones = opcionesGesto(`mixer.volumen:${id}`, gestureId)
+    void tienda.executor.execute('track.update', { trackId: id, datos: { volumen } }, 'user', undefined, opciones)
+    maybeWriteAutomationPoint(tienda, id, 'volumen', volumen, playing, opciones)
   }
 
-  const handleChangePan = (id: string, pan: number) => {
+  const handleChangePan = (id: string, pan: number, gestureId?: string) => {
     const paneo = pan / 100
-    void tienda.executor.execute('track.update', { trackId: id, datos: { paneo } })
-    maybeWriteAutomationPoint(tienda, id, 'paneo', paneo, playing)
+    const opciones = opcionesGesto(`mixer.paneo:${id}`, gestureId)
+    void tienda.executor.execute('track.update', { trackId: id, datos: { paneo } }, 'user', undefined, opciones)
+    maybeWriteAutomationPoint(tienda, id, 'paneo', paneo, playing, opciones)
   }
 
   const trackList = useMemo(() => tracks.map(toMixerRow) as MixerRow[], [tracks])
@@ -223,23 +233,23 @@ export function Mixer() {
     const count = trackList.length
     if (count === 0) return
     const perTrackDb = -Math.max(3, Math.log2(count) * 3) // -3dB per doubling of tracks
-    for (const track of trackList) {
-      const volumen = dbALineal(Math.max(DB_INFERIOR, perTrackDb))
-      void tienda.executor.execute('track.update', { trackId: track.id, datos: { volumen } })
-    }
-    // Center all panning
-    for (const track of trackList) {
-      void tienda.executor.execute('track.update', { trackId: track.id, datos: { paneo: 0 } })
-    }
+    const volumen = dbALineal(Math.max(DB_INFERIOR, perTrackDb))
+    // Volumen repartido y paneo centrado: un solo lote = un undo.
+    void batchOrNotify(
+      tienda,
+      trackList.map((track) => ({ type: 'track.update', payload: { trackId: track.id, datos: { volumen, paneo: 0 } } })),
+      'mixer.autoMix',
+    )
   }, [trackList, tienda])
 
   const handleRandomize = useCallback(() => {
-    for (const track of trackList) {
+    const comandos = trackList.map((track) => {
       const randomDb = DB_INFERIOR + Math.random() * (DB_SUPERIOR - DB_INFERIOR)
       const volumen = randomDb > DB_INFERIOR ? dbALineal(randomDb) : 0
       const paneo = (Math.random() * 2 - 1) // -1 to 1
-      void tienda.executor.execute('track.update', { trackId: track.id, datos: { volumen, paneo } })
-    }
+      return { type: 'track.update', payload: { trackId: track.id, datos: { volumen, paneo } } }
+    })
+    void batchOrNotify(tienda, comandos, 'mixer.randomize')
   }, [trackList, tienda])
 
   return (
@@ -433,7 +443,7 @@ export function Mixer() {
             ) : null}
 
             {/* Knob de balance */}
-            <KnobControl value={track.pan} color={track.color} onChange={(pan) => handleChangePan(track.id, pan)} size="size-9" />
+            <KnobControl value={track.pan} color={track.color} onChange={(pan, gestureId) => handleChangePan(track.id, pan, gestureId)} size="size-9" />
 
             {/* Sends post-fader (MVP) */}
             {!collapsed && (routing?.buses?.length ?? 0) > 0 ? (
@@ -458,11 +468,13 @@ export function Mixer() {
                         className="h-1 w-full accent-accent-amber"
                         onChange={(e) => {
                           const v = Number(e.target.value) / 100
-                          void tienda.executor.execute('send.set', {
-                            trackId: track.id,
-                            busId: bus.id,
-                            amount: v,
-                          })
+                          void tienda.executor.execute(
+                            'send.set',
+                            { trackId: track.id, busId: bus.id, amount: v },
+                            'user',
+                            undefined,
+                            opcionesGesto(`mixer.send:${track.id}:${bus.id}`, gestoEnvio()),
+                          )
                         }}
                       />
                     </label>
@@ -473,7 +485,7 @@ export function Mixer() {
 
             {/* Fader */}
             <div className="mt-2 flex-1">
-              <FaderControl db={track.db} color={track.color} meter={meters[track.id] ?? 0} onChange={(db) => handleChangeDb(track.id, db)} showScale />
+              <FaderControl db={track.db} color={track.color} meter={meters[track.id] ?? 0} onChange={(db, gestureId) => handleChangeDb(track.id, db, gestureId)} showScale />
             </div>
 
             {/* Valor en dB */}
@@ -522,8 +534,8 @@ export function Mixer() {
             </TrackButton>
           </div>
 
-          <KnobControl value={masterTrack.pan} color={masterTrack.color} onChange={(pan) => {
-            void tienda.executor.execute('master.update', { datos: { paneo: pan / 100 } })
+          <KnobControl value={masterTrack.pan} color={masterTrack.color} onChange={(pan, gestureId) => {
+            void tienda.executor.execute('master.update', { datos: { paneo: pan / 100 } }, 'user', undefined, opcionesGesto('mixer.paneo:master', gestureId))
           }} />
 
           <div className="mt-2 flex-1">
@@ -532,10 +544,11 @@ export function Mixer() {
               color={masterTrack.color}
               meter={meters.master ?? 0}
               showScale
-              onChange={(db) => {
+              onChange={(db, gestureId) => {
                 const volumen = db > DB_INFERIOR ? dbALineal(db) : 0
-                void tienda.executor.execute('master.update', { datos: { volumen } })
+                void tienda.executor.execute('master.update', { datos: { volumen } }, 'user', undefined, opcionesGesto('mixer.volumen:master', gestureId))
               }}
+
             />
           </div>
 

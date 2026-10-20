@@ -37,6 +37,7 @@ import {
 import { snapSeekBeat, resolveSnapDivision, SNAP_BAR } from '@/src/lib/timeline-snap'
 import { scrollLeftKeepingBeat, nextPxPerBeat } from '@/src/lib/timeline-viewport'
 import { PlayheadOverlay } from '@/components/arrangement/PlayheadOverlay'
+import { NumericField } from '@/components/ui/numeric-field'
 
 type PianoRollProps = {
   trackId: string
@@ -1483,14 +1484,14 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                 <>
                   <label className="flex items-center gap-1">
                     Pitch
-                    <input
-                      type="number"
+                    <NumericField
+                      value={n.pitch}
+                      entero
                       min={LOWEST}
                       max={HIGHEST}
-                      value={n.pitch}
+                      aria-label="pitch"
                       className="h-5 w-12 rounded border border-border bg-background px-1"
-                      onChange={(e) => {
-                        const pitch = Math.max(LOWEST, Math.min(HIGHEST, Number(e.target.value) || n.pitch))
+                      onCommit={(pitch) => {
                         const next = notes.map((x) => (x.id === n.id ? { ...x, pitch } : x))
                         setNotes(next)
                         setDirty(true)
@@ -1501,14 +1502,13 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                   </label>
                   <label className="flex items-center gap-1">
                     Inicio
-                    <input
-                      type="number"
-                      step={0.01}
-                      min={0}
+                    <NumericField
                       value={Number(n.inicio.toFixed(3))}
+                      min={0}
+                      step={0.01}
+                      aria-label="inicio"
                       className="h-5 w-16 rounded border border-border bg-background px-1"
-                      onChange={(e) => {
-                        const inicio = Math.max(0, Number(e.target.value) || 0)
+                      onCommit={(inicio) => {
                         const next = notes.map((x) => (x.id === n.id ? { ...x, inicio } : x))
                         setNotes(next)
                         setDirty(true)
@@ -1518,14 +1518,13 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                   </label>
                   <label className="flex items-center gap-1">
                     Dur
-                    <input
-                      type="number"
-                      step={0.01}
-                      min={0.01}
+                    <NumericField
                       value={Number(n.duracion.toFixed(3))}
+                      min={0.01}
+                      step={0.01}
+                      aria-label="duracion"
                       className="h-5 w-16 rounded border border-border bg-background px-1"
-                      onChange={(e) => {
-                        const duracion = Math.max(0.01, Number(e.target.value) || snapDiv)
+                      onCommit={(duracion) => {
                         const next = notes.map((x) => (x.id === n.id ? { ...x, duracion } : x))
                         setNotes(next)
                         setDirty(true)
@@ -1535,14 +1534,14 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                   </label>
                   <label className="flex items-center gap-1">
                     Vel
-                    <input
-                      type="number"
+                    <NumericField
+                      value={n.velocidad}
+                      entero
                       min={1}
                       max={127}
-                      value={n.velocidad}
+                      aria-label="velocidad"
                       className="h-5 w-12 rounded border border-border bg-background px-1"
-                      onChange={(e) => {
-                        const velocidad = Math.max(1, Math.min(127, Number(e.target.value) || 1))
+                      onCommit={(velocidad) => {
                         const next = notes.map((x) => (x.id === n.id ? { ...x, velocidad } : x))
                         setNotes(next)
                         setDirty(true)
@@ -1553,14 +1552,14 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
                   </label>
                   <label className="flex items-center gap-1">
                     Ch
-                    <input
-                      type="number"
+                    <NumericField
+                      value={n.canal ?? 0}
+                      entero
                       min={0}
                       max={15}
-                      value={n.canal ?? 0}
+                      aria-label="canal"
                       className="h-5 w-10 rounded border border-border bg-background px-1"
-                      onChange={(e) => {
-                        const canal = Math.max(0, Math.min(15, Number(e.target.value) || 0))
+                      onCommit={(canal) => {
                         const next = notes.map((x) => (x.id === n.id ? { ...x, canal } : x))
                         setNotes(next)
                         setDirty(true)

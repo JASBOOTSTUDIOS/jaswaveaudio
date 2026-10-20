@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { FolderOpen, Music2, AudioLines, Settings2, Keyboard, ListOrdered, Shield, Bot, Piano, Plus, Trash2 } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
+import { NumericField } from '@/components/ui/numeric-field'
+import { TimeSignatureField } from '@/components/ui/time-signature-field'
 import type { DAWState } from '../../shared/src/types/state'
 import { ACCIONES_ATAJO, ATAJOS_POR_DEFECTO } from '../../shared/src'
 import type { AccionAtajo } from '../../shared/src'
@@ -262,6 +264,8 @@ function GeneralTab() {
   const [bpm, setBpm] = useState(120)
   const [numCompas, setNumCompas] = useState(4)
   const [denCompas, setDenCompas] = useState(4)
+  const avisarInvalido = (message: string) =>
+    tienda.busEventos.emit('validacion.advertencia', { code: 'INVALID_INPUT', message })
   const [keyEnabled, setKeyEnabled] = useState(false)
   const [keyRoot, setKeyRoot] = useState(60)
   const [keyMode, setKeyMode] = useState<ProjectKeyMode>('major')
@@ -300,15 +304,24 @@ function GeneralTab() {
     return { tonalidad, tonalidadRegiones: keyRegions }
   }, [keyEnabled, keyRoot, keyMode, keyRegions])
 
-  const guardar = () => {
-    void tienda.executor.execute('project.update', {
-      datos: {
-        nombre,
-        bpm: { valor: bpm, tipo: 'constante' },
-        timeSignature: { numerador: numCompas, denominador: denCompas },
-        ...buildKeyPayload(),
-      },
-    })
+  /** Solo se envía lo que cambió: un blur sin cambios no ensucia el undo ni `modificado`. */
+  const guardarNombre = () => {
+    const limpio = nombre.trim()
+    if (!limpio) {
+      setNombre(project?.nombre ?? '')
+      avisarInvalido('El nombre del proyecto no puede estar vacío')
+      return
+    }
+    if (limpio === project?.nombre) return
+    void tienda.executor.execute('project.update', { datos: { nombre: limpio } })
+  }
+
+  const guardarBpm = (valor: number) => {
+    void tienda.executor.execute('project.setBpm', { bpm: valor })
+  }
+
+  const guardarCompas = (numerador: number, denominador: number) => {
+    void tienda.executor.execute('project.setTimeSignature', { numerador, denominador })
   }
 
   const guardarTonalidad = () => {
@@ -361,45 +374,36 @@ function GeneralTab() {
           type="text"
           value={nombre}
           onChange={(e) => setNombre(e.target.value)}
-          onBlur={guardar}
+          onBlur={guardarNombre}
           className="rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
         />
       </Field>
       <div className="flex gap-4">
         <Field label="BPM">
-          <input
-            type="number"
+          {/* Vacío / 0 / texto revierte al BPM actual; fuera de rango se recorta a 20–300. */}
+          <NumericField
             value={bpm}
             min={20}
             max={300}
             step={0.1}
-            onChange={(e) => setBpm(Number(e.target.value))}
-            onBlur={guardar}
+            aria-label="BPM"
+            data-testid="settings-bpm"
+            onCommit={guardarBpm}
+            onInvalid={(m) => avisarInvalido(`BPM: ${m}`)}
             className="w-20 rounded-md border border-border bg-panel-raised px-2.5 py-1.5 text-[12px] font-mono text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
           />
         </Field>
         <Field label="Compás">
-          <div className="flex items-center gap-1">
-            <input
-              type="number"
-              value={numCompas}
-              min={1}
-              max={12}
-              onChange={(e) => setNumCompas(Number(e.target.value))}
-              onBlur={guardar}
-              className="w-14 rounded-md border border-border bg-panel-raised px-2 py-1.5 text-center text-[12px] font-mono text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
-            />
-            <span className="text-[12px] text-muted-foreground">/</span>
-            <input
-              type="number"
-              value={denCompas}
-              min={1}
-              max={32}
-              onChange={(e) => setDenCompas(Number(e.target.value))}
-              onBlur={guardar}
-              className="w-14 rounded-md border border-border bg-panel-raised px-2 py-1.5 text-center text-[12px] font-mono text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
-            />
-          </div>
+          {/* Se confirma al salir del grupo: se puede pasar con Tab al denominador. */}
+          <TimeSignatureField
+            numerador={numCompas}
+            denominador={denCompas}
+            onCommit={guardarCompas}
+            onInvalid={avisarInvalido}
+            testIdPrefix="settings-timesig"
+            separatorClassName="text-[12px] text-muted-foreground"
+            inputClassName="w-14 rounded-md border border-border bg-panel-raised px-2 py-1.5 text-center text-[12px] font-mono text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
+          />
         </Field>
       </div>
 

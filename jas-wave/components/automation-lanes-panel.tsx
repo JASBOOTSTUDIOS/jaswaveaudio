@@ -7,6 +7,8 @@ import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { DAWState } from '../../shared/src/types/state'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 import { audioEngine } from '@/lib/audio-engine'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import type { OpcionesEjecucion } from '../../shared/src/types/command'
 
 /** Armado global de escritura (mixer + arrange). */
 let writeArmed = false
@@ -19,23 +21,40 @@ export function setAutomationWriteArmed(next: boolean): void {
   writeArmed = next
 }
 
-/** Si Write está armado y hay play, graba el fader/pan en la curva. */
+/**
+ * Si Write está armado y hay play, graba el fader/pan en la curva. Con
+ * `opciones` (coalescencia del gesto del fader) los puntos escritos durante un
+ * arrastre se deshacen junto con el movimiento del fader.
+ */
 export function maybeWriteAutomationPoint(
-  tienda: { executor: { execute: (t: string, p: Record<string, unknown>) => unknown } },
+  tienda: {
+    executor: {
+      execute: (t: string, p: Record<string, unknown>, source?: 'user', userId?: string, opciones?: OpcionesEjecucion) => unknown
+    }
+  },
   trackId: string,
   parametro: 'volumen' | 'paneo',
   valor: number,
   playing: boolean,
+  opciones?: OpcionesEjecucion,
 ): void {
   if (!writeArmed || !playing) return
   const tiempo = audioEngine.getTimelineSeconds()
-  void tienda.executor.execute('automation.writePoint', {
-    trackId,
-    parametro,
-    tiempo,
-    valor,
-  })
+  void tienda.executor.execute(
+    'automation.writePoint',
+    {
+      trackId,
+      parametro,
+      tiempo,
+      valor,
+    },
+    'user',
+    undefined,
+    opciones,
+  )
 }
+
+type ConfirmacionPendiente = { titulo: string; mensaje: string; confirmar: string; accion: () => void }
 
 function LaneSpark({
   puntos,
@@ -72,6 +91,7 @@ export function AutomationLanesPanel() {
   const selectedId = useDAWState((s: DAWState) => getSelectedTrackId(s))
   const playing = useDAWState((s: DAWState) => Boolean(s.transport?.reproduciendo))
   const [armed, setArmed] = useState(() => isAutomationWriteArmed())
+  const [pendiente, setPendiente] = useState<ConfirmacionPendiente | null>(null)
   const track = tracks.find((t) => t.id === selectedId)
 
   const toggleWrite = () => {
@@ -91,7 +111,7 @@ export function AutomationLanesPanel() {
   const vol = track.automatizaciones?.find((a) => a.parametro === 'volumen')
   const pan = track.automatizaciones?.find((a) => a.parametro === 'paneo')
 
-  const setRamp = (parametro: 'volumen' | 'paneo', from: number, to: number, endSec: number) => {
+  const aplicarRampa = (parametro: 'volumen' | 'paneo', from: number, to: number, endSec: number) => {
     void tienda.executor.execute('automation.setCurve', {
       trackId: track.id,
       parametro,
@@ -102,8 +122,46 @@ export function AutomationLanesPanel() {
     })
   }
 
+  /** Un preset de rampa reemplaza la curva: si ya hay puntos, pedir confirmación. */
+  const setRamp = (parametro: 'volumen' | 'paneo', from: number, to: number, endSec: number) => {
+    const existente = parametro === 'volumen' ? vol : pan
+    const puntos = existente?.puntos?.length ?? 0
+    if (puntos === 0) {
+      aplicarRampa(parametro, from, to, endSec)
+      return
+    }
+    setPendiente({
+      titulo: 'Reemplazar curva',
+      mensaje: `La curva de ${parametro} ya tiene ${puntos} punto(s). El preset la reemplazará (puedes deshacerlo con Ctrl+Z).`,
+      confirmar: 'Reemplazar',
+      accion: () => aplicarRampa(parametro, from, to, endSec),
+    })
+  }
+
+  const pedirLimpiar = () => {
+    setPendiente({
+      titulo: 'Limpiar automatización',
+      mensaje: `Se borrarán todas las curvas de automatización de «${track.nombre}» (puedes deshacerlo con Ctrl+Z).`,
+      confirmar: 'Limpiar',
+      accion: () => void tienda.executor.execute('automation.clear', { trackId: track.id }),
+    })
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-auto bg-panel p-3 text-[11px]">
+      <ConfirmDialog
+        open={pendiente !== null}
+        onClose={() => setPendiente(null)}
+        onConfirm={() => {
+          const p = pendiente
+          setPendiente(null)
+          p?.accion()
+        }}
+        title={pendiente?.titulo ?? ''}
+        message={pendiente?.mensaje ?? ''}
+        confirmLabel={pendiente?.confirmar ?? 'Confirmar'}
+        variant="warning"
+      />
       <div className="mb-2 flex items-center justify-between gap-2">
         <p className="text-[13px] font-semibold text-foreground">Automatización · {track.nombre}</p>
         <button
@@ -159,7 +217,8 @@ export function AutomationLanesPanel() {
           <button
             type="button"
             className="rounded px-2 py-0.5 text-muted-foreground hover:bg-panel-raised"
-            onClick={() => void tienda.executor.execute('automation.clear', { trackId: track.id })}
+            onClick={pedirLimpiar}
+
           >
             Limpiar
           </button>
