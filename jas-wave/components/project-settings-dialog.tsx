@@ -380,11 +380,12 @@ function GeneralTab() {
       </Field>
       <div className="flex gap-4">
         <Field label="BPM">
-          {/* Vacío / 0 / texto revierte al BPM actual; fuera de rango se recorta a 20–300. */}
+          {/* Vacío, texto o fuera de 20–300 (p. ej. 0) revierte al BPM actual con aviso. */}
           <NumericField
             value={bpm}
             min={20}
             max={300}
+            recortar={false}
             step={0.1}
             aria-label="BPM"
             data-testid="settings-bpm"

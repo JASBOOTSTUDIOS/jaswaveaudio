@@ -166,11 +166,12 @@ function EditableStat({
       onDoubleClick={() => setEditing(true)}
     >
       {editing ? (
-        // Vacío / NaN revierte (antes confirmaba el mínimo); Esc cancela.
+        // Vacío, NaN o fuera de rango (p. ej. 0) revierte con aviso; Esc cancela.
         <NumericField
           value={value}
           min={min}
           max={max}
+          recortar={false}
           step={step}
           autoFocus
           aria-label={label}

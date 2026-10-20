@@ -484,7 +484,7 @@ export function Mixer() {
             ) : null}
 
             {/* Fader */}
-            <div className="mt-2 flex-1">
+            <div className="mt-2 flex-1" data-testid={`mixer-fader-${track.id}`}>
               <FaderControl db={track.db} color={track.color} meter={meters[track.id] ?? 0} onChange={(db, gestureId) => handleChangeDb(track.id, db, gestureId)} showScale />
             </div>
 

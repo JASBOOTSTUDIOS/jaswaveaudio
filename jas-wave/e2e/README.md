@@ -12,6 +12,9 @@ por el agent bridge HTTP y comprueba la UI por CDP.
 | `04-save-reopen` | Guardar en carpeta temporal (ruta concedida por el bridge), `.bak` en el segundo guardado, `project.load` restaura pista/clip/BPM |
 | `05-export` | `render.start` a WAV (pista de audio con un seno generado); WAV válido y > 200 KB. Se salta si no hay plugin host |
 | `06-crash` | Error no capturado + rechazo de promesa → `logs/jaswave.log`, app viva; crash del proceso renderer → `render-process-gone` en el log y main vivo |
+| `07-piano-roll-focus` | Atajos con foco (U5): Delete en el piano roll no borra el clip del arrange; Enter detiene sin re-alternar; rueda de BPM solo con foco o Alt |
+| `08-close-guard` | Cambios sin guardar (U1): cerrar o `project.new` de la IA preguntan; Cancelar mantiene la app; No guardar la cierra |
+| `09-undo-validacion` | Undo limpio (U2) y validación (U3): un arrastre de fader = un Ctrl+Z; Ctrl+Z en reproducción no para el transporte; BPM vacío/0/texto se revierte |
 
 ## Cómo ejecutar
 
