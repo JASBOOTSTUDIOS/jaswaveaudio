@@ -19,6 +19,16 @@ import type {
   TurnProgramOutcome,
 } from './engine-types'
 import { gateToolForMode, visibleInMode } from './mode-capabilities'
+import {
+  aprobarPlan,
+  diffPlans,
+  isStructuredPlan,
+  parsePlan,
+  planHash,
+  serializePlan,
+  type PlanDiff,
+  type PlanEstructurado,
+} from '../plan/structured-plan'
 import type { TurnContext } from './turn-context'
 
 export const TOOL_LOOP_PROGRAM_ID = 'tool-loop'
@@ -56,6 +66,32 @@ export function toolsForModeFromHost(ctx: TurnContext): EngineToolSchema[] {
 }
 
 type ProcessOutcome = { need?: EngineNeed }
+
+/**
+ * A4: relee plan.md antes de cada iteración. Si el hash cambió (edición del
+ * usuario a mitad de turno) emite `plan.updated` con el diff y el plan nuevo
+ * manda; si el plan estructurado está aprobado, el turno puede mutar sin pedir
+ * aprobación de nuevo.
+ */
+async function syncPlanState(ctx: TurnContext): Promise<PlanEstructurado | null> {
+  const md = await ctx.readPlan()
+  if (!md || !isStructuredPlan(md)) return null
+  const plan = parsePlan(md)
+  if (!plan) return null
+  if (plan.estadoPlan === 'aprobado') ctx.run.planApproved = true
+  const hash = planHash(md)
+  const prevHash = typeof ctx.run.data?.planHash === 'string' ? ctx.run.data.planHash : null
+  if (prevHash === hash) return plan
+  let diff: PlanDiff | undefined
+  const prevMd = typeof ctx.run.data?.planMd === 'string' ? ctx.run.data.planMd : null
+  if (prevMd && isStructuredPlan(prevMd)) {
+    const before = parsePlan(prevMd)
+    if (before) diff = diffPlans(before, plan)
+  }
+  ctx.run.data = { ...(ctx.run.data ?? {}), planHash: hash, planMd: md }
+  ctx.emit({ type: 'plan.updated', plan: md, diff })
+  return plan
+}
 
 /** Gating + ejecución de las llamadas de una iteración. Añade los mensajes `tool`. */
 async function processCalls(ctx: TurnContext, calls: EngineToolCall[], maxPerIteration: number): Promise<ProcessOutcome> {
@@ -140,6 +176,7 @@ async function loop(ctx: TurnContext, opts: Required<ToolLoopOptions>): Promise<
   const { run } = ctx
   while (run.iterations < opts.maxIterations) {
     ctx.throwIfAborted()
+    await syncPlanState(ctx)
     const iteration = run.iterations
     ctx.phase(`Agente · iteración ${iteration + 1}`, 'agent.iteration')
     const res = await ctx.chat({
@@ -217,9 +254,19 @@ export function createToolLoopProgram(options: ToolLoopOptions = {}): TurnProgra
       }
       if (need.kind === 'approve-plan') {
         run.planApproved = true
-        if (answer.plan?.trim()) {
-          await ctx.host.writeDoc?.('plan.md', answer.plan)
-          ctx.emit({ type: 'plan.updated', plan: answer.plan })
+        // A4: la aprobación queda registrada en plan.md (borrador → aprobado,
+        // revisión + 1); las Notas del usuario se conservan.
+        const incoming = answer.plan?.trim() ? answer.plan : await ctx.readPlan()
+        if (incoming && isStructuredPlan(incoming)) {
+          const parsed = parsePlan(incoming)
+          const aprobado = parsed ? (parsed.estadoPlan === 'aprobado' ? parsed : aprobarPlan(parsed)) : null
+          const md = aprobado ? serializePlan(aprobado) : incoming
+          await ctx.host.writeDoc?.('plan.md', md)
+          run.data = { ...(run.data ?? {}), planHash: planHash(md), planMd: md }
+          ctx.emit({ type: 'plan.updated', plan: md })
+        } else if (incoming) {
+          await ctx.host.writeDoc?.('plan.md', incoming)
+          ctx.emit({ type: 'plan.updated', plan: incoming })
         }
         const out = await processCalls(ctx, calls, opts.maxCallsPerIteration)
         if (out.need) return { status: 'needs-user', need: out.need, summary: out.need.message }

@@ -405,7 +405,21 @@ function mergeDoneBody(body: string, doneItems: string[]): string {
   return trimmed || '_Aún no hay ítems implementados._'
 }
 
-export function evaluatePlanAgainstDaw(md: string, state: DAWState, ctx?: PlanEvalContext): PlanEvaluation {
+export type PlanEvalOptions = {
+  /**
+   * Si es true, devuelve el markdown del plan con «Por implementar»/«Implementado»
+   * reescritos a partir del DAW. Por defecto es false: la evaluación es solo
+   * una ayuda de QA y el estado del plan lo deciden los agentes con evidencia (A4).
+   */
+  rewrite?: boolean
+}
+
+export function evaluatePlanAgainstDaw(
+  md: string,
+  state: DAWState,
+  ctx?: PlanEvalContext,
+  opts?: PlanEvalOptions,
+): PlanEvaluation {
   const tasks = parsePlanTasks(md)
   const unique = new Map<string, PlanTask>()
   for (const t of tasks) {
@@ -479,10 +493,12 @@ export function evaluatePlanAgainstDaw(md: string, state: DAWState, ctx?: PlanEv
     .join('\n')
 
   let next = md
-  const doneNorm = new Set(doneItems.map((t) => norm(t)))
-  next = setMarkdownSection(next, 'Por implementar', rewritePendingBody(getMarkdownSection(md, 'Por implementar'), doneNorm))
-  next = setMarkdownSection(next, 'Implementado', mergeDoneBody(getMarkdownSection(md, 'Implementado'), doneItems))
-  next = setMarkdownSection(next, 'Evaluación', evalBody)
+  if (opts?.rewrite) {
+    const doneNorm = new Set(doneItems.map((t) => norm(t)))
+    next = setMarkdownSection(next, 'Por implementar', rewritePendingBody(getMarkdownSection(md, 'Por implementar'), doneNorm))
+    next = setMarkdownSection(next, 'Implementado', mergeDoneBody(getMarkdownSection(md, 'Implementado'), doneItems))
+    next = setMarkdownSection(next, 'Evaluación', evalBody)
+  }
 
   return {
     planned: planned.length,

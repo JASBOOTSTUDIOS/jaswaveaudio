@@ -88,7 +88,7 @@ describe('plan eval estructurado', () => {
     expect(md).toMatch(/- \[ \] Escribir MIDI por sección en «Bajo»/)
   })
 
-  it('evaluatePlanAgainstDaw conserva prosa y marca [x]', () => {
+  it('evaluatePlanAgainstDaw con rewrite conserva prosa y marca [x]', () => {
     const md = `# Plan
 
 ## Por implementar
@@ -99,10 +99,24 @@ Ritmo: 120 BPM, 4/4.
 ## Implementado
 `
     const st = stateWithTrack({ nombre: 'Bajo', notes: 8 })
-    const ev = evaluatePlanAgainstDaw(md, st)
+    const ev = evaluatePlanAgainstDaw(md, st, undefined, { rewrite: true })
     expect(ev.checks[0]!.ok).toBe(true)
     expect(ev.markdown).toMatch(/Ritmo: 120 BPM/)
     expect(ev.markdown).toMatch(/- \[x\] Pista «Bajo»/)
+  })
+
+  it('evaluatePlanAgainstDaw por defecto no reescribe el plan (ayuda de QA)', () => {
+    const md = `# Plan
+
+## Por implementar
+- [ ] Pista «Bajo»
+
+## Implementado
+`
+    const st = stateWithTrack({ nombre: 'Bajo', notes: 8 })
+    const ev = evaluatePlanAgainstDaw(md, st)
+    expect(ev.checks[0]!.ok).toBe(true)
+    expect(ev.markdown).toBe(md)
   })
 
   it('evaluatePlanAgainstDaw incluye checks', () => {

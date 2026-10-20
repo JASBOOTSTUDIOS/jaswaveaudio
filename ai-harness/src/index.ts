@@ -98,6 +98,24 @@ export {
 } from './plan/eval'
 
 export {
+  aprobarPlan,
+  diffPlans,
+  hayPasosPendientes,
+  isStructuredPlan,
+  marcarPaso,
+  parsePlan,
+  planHash,
+  serializePlan,
+  siguientePasoPendiente,
+  PLAN_NOTAS_HEADING,
+  PLAN_PASOS_HEADING,
+  type PlanDiff,
+  type PlanEstructurado,
+  type PlanPaso,
+  type PlanStepEstado,
+} from './plan/structured-plan'
+
+export {
   clipCoversSection,
   formatSectionGapLine,
   listSectionGaps,

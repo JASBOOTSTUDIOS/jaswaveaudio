@@ -117,7 +117,7 @@ import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import type { DAWState } from '../../../shared/src/types/state'
 import { applyMarkdownDocsFromModel, bindAgentDocsDisk, parseDocBlocksFromText } from './agent-docs'
 import { extractDocEditsFromResults, mergeDocEdits, type ChatDocEdit } from './chat-doc-edits'
-import { absorbUserRequestIntoPlan, ensurePlanFromCompose, syncPlanAfterDawChange, type PlanEvaluation } from './agent-plan-eval'
+import { ensurePlanFromCompose, syncPlanAfterDawChange, type PlanEvaluation } from './agent-plan-eval'
 import {
   buildHarnessReviewMessage,
   formatHarnessProgress,
@@ -560,7 +560,6 @@ async function runCoproducerTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<T
   try {
       const state = dawStore.obtenerEstado()
       bindAgentDocsDisk(projectId, state.project?.ruta)
-      absorbUserRequestIntoPlan(projectId, userText)
       // Consultas locales muy cortas solo si el proveedor no está online
       const preferLocal = aiStatus !== 'online' || !window.electron?.aiChat
       const local = preferLocal ? answerLocalReadQuery(state, userText) : null
