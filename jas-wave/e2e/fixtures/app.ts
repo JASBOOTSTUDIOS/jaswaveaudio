@@ -29,6 +29,8 @@ export type LaunchOptions = {
   bridge?: boolean
   /** Etiqueta para la carpeta temporal / logs. */
   label?: string
+  /** Variables de entorno extra para el proceso (p. ej. JASWAVE_AI_MOCK). */
+  env?: Record<string, string>
 }
 
 export type JasWaveApp = {
@@ -159,6 +161,8 @@ export async function launchJasWave(opts: LaunchOptions = {}): Promise<JasWaveAp
   env.JASWAVE_AGENT_PORT = String(bridgePort)
   if (opts.bridge) env.JASWAVE_AGENT_TOKEN = bridgeToken
   else delete env.JASWAVE_AGENT_TOKEN
+  delete env.JASWAVE_AI_MOCK
+  Object.assign(env, opts.env ?? {})
 
   let output = ''
   const proc = spawn(exe, [...args, `--remote-debugging-port=${cdpPort}`, `--user-data-dir=${userDataDir}`], {
