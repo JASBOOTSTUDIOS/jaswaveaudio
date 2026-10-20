@@ -19,7 +19,7 @@ con JSON Schemas reales, y tener un proveedor `mock` determinista para probar tu
       (IPC con eventos `delta`/`done`, cancelable con `requestId` existente).
 - [x] Capacidades por proveedor/modelo (`supportsTools`); si no soporta o falla con error de herramientas → fallback automático al
       protocolo `<<<DECISION>>>` (mismo `AgentDecision`).
-- [ ] Engine (A1) usa tool-calling nativo cuando está disponible; resultados de herramientas como mensajes `tool` envueltos con
+- [x] Engine (A1) usa tool-calling nativo cuando está disponible; resultados de herramientas como mensajes `tool` envueltos con
       `wrapUntrustedToolResult` (`ai-harness/src/agent/untrusted.ts`).
 - [x] Proveedor `mock` (`kind:'mock'`) en gateway y en `ai-settings`: reproduce guiones JSON (`ai-harness/src/test/fixtures/*.json`)
       con respuestas y toolCalls por turno; activable por `JASWAVE_AI_MOCK=<archivo>` para e2e/CLI.
@@ -54,6 +54,13 @@ con JSON Schemas reales, y tener un proveedor `mock` determinista para probar tu
   `onDelta`/`streamChat`, suma de `httpAttempts`; `toolsUnsupported` no salta al siguiente modelo (el motor reintenta con marcadores).
 - Tests: `electron/ai-tools.test.ts` (snapshots por proveedor), `ai-stream.test.ts`, `ai-mock.test.ts`, `shared/src/test/tool-schemas.test.ts`.
 
+- Motor: `tool-loop` envía `listTools` (JSON Schema, recortadas a 120 por prioridad de familia: `capToolSchemas`) + tools de control
+  `agent.complete|askUser|fail`; resultados como mensajes `tool` envueltos con `wrapUntrustedToolResult`. El agent loop legacy
+  también recibe tools nativas (`toLoopReply`: tool calls nativas → decisión; si no, marcadores).
+- Host jas-wave: `aiChatWithFallback` con `tools`/`meta`/streaming (`agent.delta` → burbuja viva del panel).
+
 ### Pendiente
-- Engine (A1) usando tool-calling nativo vía host jas-wave; e2e con mock.
+- e2e con mock (`JASWAVE_AI_MOCK`).
+- En el legacy los resultados de herramientas siguen llegando al modelo como texto de observación (no mensajes `tool`); A5 debe
+  pasar al bucle `tool-loop`.
 

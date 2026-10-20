@@ -124,3 +124,25 @@ export function toolsForRole(
     return roleAllowsTool(opts.role, t.name, cls) && modeAllowsToolClass(opts.mode, t.name, cls)
   })
 }
+
+/** Prioridad de familias cuando hay que recortar (OpenAI admite ≤128 tools por petición). */
+export const TOOL_FAMILY_PRIORITY: readonly string[] = [
+  'track.', 'clip.', 'midi.', 'project.', 'daw.', 'plugin.', 'master.', 'analysis.', 'audit.', 'plan.',
+  'send.', 'bus.', 'sidechain.', 'automation.', 'fxChain.', 'fallback.', 'style.', 'reference.',
+  'library.', 'doc.', 'render.', 'selection.', 'session.', 'run.', 'audio.', 'take.', 'comp.', 'transport.', 'ui.',
+]
+
+/** Recorta a max herramientas conservando las familias prioritarias (estable dentro de cada familia). */
+export function capToolSchemas(tools: ToolJsonSchema[], max = 120, priority: readonly string[] = TOOL_FAMILY_PRIORITY): ToolJsonSchema[] {
+  if (tools.length <= max) return tools
+  const rank = (name: string) => {
+    const i = priority.findIndex((p) => name.startsWith(p))
+    return i < 0 ? priority.length : i
+  }
+  return tools
+    .map((t, i) => ({ t, i, r: rank(t.name) }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .slice(0, max)
+    .sort((a, b) => a.i - b.i)
+    .map((x) => x.t)
+}

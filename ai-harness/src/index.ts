@@ -314,6 +314,7 @@ export {
   DEFAULT_AGENT_BUDGET,
   AgentBudgetExceededError,
   createAgentBudgetTracker,
+  createBudgetGuard,
   formatAgentBudgetStop,
   formatAgentBudgetStopFor,
   isAgentBudgetExceededError,

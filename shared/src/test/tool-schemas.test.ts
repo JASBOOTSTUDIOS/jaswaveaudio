@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildToolSchemas,
+  capToolSchemas,
   jsonSchemaFromExample,
   normalizeToolParameters,
   toolsForRole,
@@ -51,6 +52,12 @@ describe('tool-schemas', () => {
     expect(names('qa', 'create')).toEqual(['track.list'])
     expect(names('mezcla', 'auto')).toEqual(['master.update', 'plugin.setParameter', 'track.list'])
     expect(names('director', 'create')).toEqual(['plan.updateStep', 'track.list'])
+  })
+
+  it('capToolSchemas conserva las familias prioritarias y el orden original', () => {
+    const tools = buildToolSchemas(['ui.zoom', 'track.create', 'transport.play', 'midi.notes.set', 'clip.move'].map((name) => ({ name })))
+    expect(capToolSchemas(tools, 3).map((t) => t.name)).toEqual(['clip.move', 'midi.notes.set', 'track.create'])
+    expect(capToolSchemas(tools, 10)).toBe(tools)
   })
 
   it('los comandos registrados producen schemas válidos de nivel raíz objeto', () => {

@@ -138,6 +138,32 @@ export function createAgentBudgetTracker(
   }
 }
 
+/**
+ * Vista de solo-guarda de un tracker: `tryCharge` comprueba pero NO carga.
+ * La usan las capas antiguas (razonamiento, agent loop, harness) cuando el chat real ya pasa por
+ * el motor (A1), que carga cada intento HTTP una sola vez: así no se cuenta doble.
+ */
+export function createBudgetGuard(tracker: AgentBudgetTracker): AgentBudgetTracker {
+  const check = (chars: number): AgentBudgetStopReason | null => {
+    const pre = tracker.exceeded()
+    if (pre) return pre
+    const c = Math.max(0, Math.floor(Number(chars) || 0))
+    return c > tracker.remainingInputChars() ? 'input-chars' : null
+  }
+  return {
+    budget: tracker.budget,
+    exceeded: () => tracker.exceeded(),
+    tryCharge: check,
+    charge(chars: number) {
+      const r = check(chars)
+      if (r) throw new AgentBudgetExceededError(r, tracker.usage(), tracker.budget)
+    },
+    usage: () => tracker.usage(),
+    remainingInputChars: () => tracker.remainingInputChars(),
+    recordExtraCalls: () => undefined,
+  }
+}
+
 /** Acepta un tracker compartido o un presupuesto parcial (crea uno nuevo con defaults). */
 export function resolveAgentBudgetTracker(
   b?: AgentBudgetTracker | Partial<AgentBudget> | null,

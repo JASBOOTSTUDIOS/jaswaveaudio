@@ -36,6 +36,8 @@ export {
   jsonSchemaFromExample,
   normalizeToolParameters,
   toolsForRole,
+  capToolSchemas,
+  TOOL_FAMILY_PRIORITY,
   roleAllowsTool,
   modeAllowsToolClass,
   ROLE_WRITE_PREFIXES,

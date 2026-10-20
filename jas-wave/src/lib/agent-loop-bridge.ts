@@ -8,6 +8,7 @@ import {
   isProjectWipeIntent,
   type AgentBudget,
   type AgentBudgetTracker,
+  type AgentLoopChatReply,
   type AgentRunResult,
 } from '@jaswave/ai-harness'
 import { EventosIAExt, getStateRevision } from '../../../shared/src'
@@ -28,7 +29,8 @@ import { toolCallsToLegacyActions, type AgentLoopToolCall } from '@jaswave/ai-ha
 export type CoproducerAgentLoopInput = {
   tienda: TiendaDAW
   userText: string
-  chat: (systemAndUser: string) => Promise<string>
+  /** Texto con marcadores o respuesta nativa ya decidida (A2). */
+  chat: (systemAndUser: string) => Promise<string | AgentLoopChatReply>
   abort?: AbortSignal
   agentMode: AgentMode
   conversationId: string
@@ -123,7 +125,8 @@ export async function runCoproducerAgentLoop(input: CoproducerAgentLoopInput): P
  */
 export async function applyPendingAgentRun(opts: {
   tienda: TiendaDAW
-  chat: (systemAndUser: string) => Promise<string>
+  /** Texto con marcadores o respuesta nativa ya decidida (A2). */
+  chat: (systemAndUser: string) => Promise<string | AgentLoopChatReply>
   abort?: AbortSignal
   agentMode: AgentMode
   /** Presupuesto del turno (defaults si se omite). */

@@ -70,7 +70,7 @@ export function mockWhenMatches(when: MockWhen | undefined, req: MockRequestView
   if (when.systemIncludes && !includesCI(system, when.systemIncludes)) return false
   if (when.anyIncludes && !req.messages.some((m) => includesCI(m.content, when.anyIncludes!))) return false
   if (when.afterToolResult !== undefined) {
-    const isTool = last?.role === 'tool' || includesCI(last?.content, 'Resultados de herramientas')
+    const isTool = last?.role === 'tool' || String(last?.content ?? '').startsWith('Resultados de herramientas:')
     if (isTool !== when.afterToolResult) return false
   }
   return true

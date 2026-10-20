@@ -25,6 +25,11 @@ export function getActiveAgentRun(): PersistedAgentRun | null {
   return current
 }
 
+/** Restaura un run legacy persistido con el run del motor (tras recargar la ventana). */
+export function restoreActiveAgentRun(run: PersistedAgentRun | null): void {
+  current = run ? { ...run } : null
+}
+
 export function clearActiveAgentRun(): void {
   current = null
 }
