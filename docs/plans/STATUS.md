@@ -18,11 +18,11 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | A5 | Ejecución hasta terminar | A3, A4 | hecho | Claude (agente raíz) · 2026-10-20 | 71afd92 |
 | A6 | Equipo multi-agente | A5, A9(plan/bitácora) | pendiente | | |
 | A7a | Medición DSP correcta | — | hecho | Claude (subagente) · 2026-10-20 | 73cdb04 (merge) |
-| A7b | Análisis por pista | A7a | pendiente | | |
+| A7b | Análisis por pista | A7a | en curso | Claude (subagente) · 2026-10-20 | |
 | A7c | Actuar con valores reales | — | pendiente | | |
 | A7d | FX propios JasWave | A7c | pendiente | | |
 | A7e | masterPass y mezcla por medición | A7b, A7c | pendiente | | |
 | A8 | CLI con turnos completos | A1, A5 | pendiente | | |
-| A9 | Auditoría y progreso | A4 (plan), A1 (bitácora) | pendiente | | |
+| A9 | Auditoría y progreso | A4 (plan), A1 (bitácora) | en curso | Claude (subagente) · 2026-10-20 | |
 
 Estados: `pendiente` · `en curso` · `bloqueado (motivo)` · `hecho`.
