@@ -38,6 +38,8 @@ export type TurnContext = {
   classify(call: EngineToolCall): AgentActionClass | undefined
   log(entry: Omit<EngineRunLogEntry, 'at'>): void
   readPlan(): Promise<string | null>
+  /** Guarda un snapshot del host (A5) para `engine.undoTurn`/`engine.undoStep`. */
+  captureSnapshot(kind: 'turn' | 'step', stepId?: string): Promise<void>
   persist(): Promise<void>
   setData(patch: Record<string, unknown>): void
   newId(prefix: string): string
@@ -54,6 +56,8 @@ export function createTurnContext(opts: {
   persist: () => Promise<void>
   newId: (prefix: string) => string
   history?: TurnInput['history']
+  /** A5: el motor guarda aquí el snapshot del host (undo por turno/paso). */
+  rememberSnapshot?: (kind: 'turn' | 'step', snapshot: unknown, stepId?: string) => void
 }): TurnContext {
   const { run, host, signal, budget } = opts
   const protocol: { current: 'native' | 'markers' } = { current: run.protocol ?? 'native' }
@@ -194,6 +198,15 @@ export function createTurnContext(opts: {
     classify,
     log,
     readPlan,
+    async captureSnapshot(kind, stepId) {
+      if (!host.captureSnapshot) return
+      try {
+        const snap = await host.captureSnapshot({ runId: run.id, kind, stepId })
+        opts.rememberSnapshot?.(kind, snap, stepId)
+      } catch (e) {
+        log({ kind: 'note', message: `snapshot ${kind} no disponible: ${e instanceof Error ? e.message : String(e)}` })
+      }
+    },
     persist: opts.persist,
     setData(patch) {
       run.data = { ...(run.data ?? {}), ...patch }

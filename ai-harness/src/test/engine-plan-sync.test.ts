@@ -30,10 +30,9 @@ const SCRIPT = parseMockScript({
       content: 'Creo la pista Pad.',
       toolCalls: [{ name: 'track.create', arguments: { nombre: 'Pad' } }],
     },
-    {
-      when: { purpose: 'agent', afterToolResult: true },
-      content: 'Listo: pista Pad creada.',
-    },
+    // A5: tras aprobar, el motor ejecuta el paso S1 y esta prosa lo cierra (QA asume ok).
+    { content: 'Listo: pista Pad creada.' },
+    { content: 'Escribo el MIDI del pad.' },
   ],
 })
 
@@ -104,13 +103,16 @@ describe('engine · plan estructurado (A4)', () => {
     expect(writes).toHaveLength(0)
 
     const second = await collect(engine.answer(first.result.runId, { approved: true }))
+    // A5: al aprobar, el motor ejecuta el paso S1 (QA asume ok sin host.auditStep) y cierra el turno.
     expect(second.result.status).toBe('completed')
     const trasAprobar = parsePlan(getPlan())!
     expect(trasAprobar.estadoPlan).toBe('aprobado')
     expect(trasAprobar.revision).toBe(2)
     expect(trasAprobar.notasUsuario).toContain('Que suene cálido.')
-    expect(trasAprobar.pasos[0]!.estado).toBe('pendiente')
+    expect(trasAprobar.pasos[0]!.estado).toBe('hecho')
     expect(second.events.some((e) => e.type === 'plan.updated' && e.plan?.includes('Estado: aprobado'))).toBe(true)
+    expect(second.events.some((e) => e.type === 'step.started' && e.stepId === 'S1')).toBe(true)
+    expect(second.events.some((e) => e.type === 'step.done' && e.stepId === 'S1' && e.status === 'done')).toBe(true)
   })
 
   it('si el usuario edita plan.md a mitad de turno se emite plan.updated con el diff', async () => {
@@ -149,5 +151,8 @@ describe('engine · plan estructurado (A4)', () => {
     // La aprobación del usuario en el archivo también manda: sin need.
     expect(r.events.some((e) => e.type === 'needs-user')).toBe(false)
     expect(r.result.run.planApproved).toBe(true)
+    // A5: el paso añadido a mitad de turno también se ejecuta (S1 y S2 terminados).
+    expect(r.events.some((e) => e.type === 'step.done' && e.stepId === 'S1' && e.status === 'done')).toBe(true)
+    expect(r.events.some((e) => e.type === 'step.done' && e.stepId === 'S2' && e.status === 'done')).toBe(true)
   })
 })

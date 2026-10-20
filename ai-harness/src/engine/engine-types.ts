@@ -126,6 +126,36 @@ export type EngineToolExecContext = {
 
 export type EngineLogLevel = 'debug' | 'info' | 'warn' | 'error'
 
+/** Veredicto de QA de un paso del plan (A5). Sin `host.auditStep` el motor asume ok. */
+export type EngineStepAudit = {
+  ok: boolean
+  issues?: string[]
+  evidencia?: string[]
+}
+
+/** Petición de QA al terminar un paso (A5): el host puede inspeccionar el DAW. */
+export type EngineAuditStepRequest = {
+  runId: string
+  step: {
+    id: string
+    fase: string
+    agente: string
+    titulo: string
+    criterios: string[]
+    estado: string
+  }
+}
+
+/** Veredicto de QA del proyecto al cerrar un turno con plan (A5). */
+export type EngineProjectAudit = { ok: boolean; issues?: string[] }
+
+/** Snapshot para deshacer turno/paso (A5): el host serializa el estado que sabe restaurar. */
+export type EngineSnapshotRequest = {
+  runId: string
+  kind: 'turn' | 'step'
+  stepId?: string
+}
+
 export type EngineSystemPromptRequest = {
   mode: EngineMode
   role: EngineAgentRole
@@ -154,6 +184,16 @@ export interface EngineHost {
   persistRun?(run: EngineRun): Promise<void>
   loadRun?(runId: string): Promise<EngineRun | null>
   newId?(prefix: string): string
+  /**
+   * QA de un paso del plan antes de marcarlo hecho (A5). El host revisa el DAW real
+   * contra los criterios; sin implementación el motor asume `ok: true`.
+   */
+  auditStep?(req: EngineAuditStepRequest): EngineStepAudit | Promise<EngineStepAudit>
+  /** QA del proyecto al cerrar un turno con plan (A5). Sin implementación → sin avisos. */
+  auditProject?(req: { runId: string }): EngineProjectAudit | Promise<EngineProjectAudit>
+  /** Snapshot del estado que el host sabe restaurar (A5, undo por paso/turno). */
+  captureSnapshot?(req: EngineSnapshotRequest): unknown | Promise<unknown>
+  restoreSnapshot?(snapshot: unknown): void | Promise<void>
   /** Estrategia del turno. Sin programa → bucle nativo de herramientas (tool-loop). */
   program?: TurnProgram
   /** Presupuesto por defecto de cada turno. */

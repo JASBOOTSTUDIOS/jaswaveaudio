@@ -5,7 +5,9 @@
  * resultados como mensajes `tool` no confiables → repetir hasta `agent.complete`/texto final,
  * una pregunta real al usuario, una confirmación destructiva/sistema o el presupuesto.
  *
- * A5 lo ampliará con pasos del plan, QA por paso y batch con un undo por iteración.
+ * A5: en create/auto con un plan estructurado aprobado, el turno orquesta los pasos
+ * (`orchestrate`): por paso — sembrar instrucción, bucle propio, QA vía `host.auditStep`,
+ * `[x]` con evidencia o reintento/bloqueo — hasta terminar el plan; al final `auditProject`.
  */
 
 import { agentDecisionFromChatResponse, AGENT_CONTROL_TOOL_SCHEMAS } from '../recovery/parse-agent-decision'
@@ -13,6 +15,7 @@ import { toolResultMessage } from './chat'
 import type {
   EngineAnswer,
   EngineNeed,
+  EngineStepAudit,
   EngineToolCall,
   EngineToolSchema,
   TurnProgram,
@@ -23,19 +26,28 @@ import {
   aprobarPlan,
   diffPlans,
   isStructuredPlan,
+  marcarPaso,
   parsePlan,
   planHash,
   serializePlan,
   type PlanDiff,
   type PlanEstructurado,
+  type PlanPaso,
 } from '../plan/structured-plan'
 import type { TurnContext } from './turn-context'
 
 export const TOOL_LOOP_PROGRAM_ID = 'tool-loop'
 
 export const TOOL_LOOP_DEFAULTS = {
-  maxIterations: 24,
+  /** Iteraciones máximas de todo el turno (incluye todos los pasos del plan). */
+  maxIterations: 60,
   maxCallsPerIteration: 8,
+} as const
+
+/** A5: tope de iteraciones y reintentos de QA por paso; el resto del turno sigue vivo. */
+export const STEP_LOOP_DEFAULTS = {
+  maxStepIterations: 12,
+  maxQaRetries: 1,
 } as const
 
 export type ToolLoopOptions = Partial<typeof TOOL_LOOP_DEFAULTS>
@@ -172,9 +184,16 @@ async function processCalls(ctx: TurnContext, calls: EngineToolCall[], maxPerIte
   return {}
 }
 
-async function loop(ctx: TurnContext, opts: Required<ToolLoopOptions>): Promise<TurnProgramOutcome> {
+/** Modo interno del bucle: en un paso, `agent.complete`/prosa terminan el paso sin cerrar el turno. */
+type LoopMode = { stopOnComplete: boolean }
+
+async function loop(ctx: TurnContext, opts: Required<ToolLoopOptions>, mode?: LoopMode): Promise<TurnProgramOutcome> {
   const { run } = ctx
-  while (run.iterations < opts.maxIterations) {
+  const stepMode = mode?.stopOnComplete === true
+  // En paso, el bucle tiene tope propio: no gasta las iteraciones de los demás pasos.
+  const limit = stepMode ? Math.min(opts.maxIterations, run.iterations + STEP_LOOP_DEFAULTS.maxStepIterations) : opts.maxIterations
+  const stepData = (extra: Record<string, unknown>) => (stepMode ? { ...extra, stepMarker: true } : extra)
+  while (run.iterations < limit) {
     ctx.throwIfAborted()
     await syncPlanState(ctx)
     const iteration = run.iterations
@@ -196,7 +215,7 @@ async function loop(ctx: TurnContext, opts: Required<ToolLoopOptions>): Promise<
     }
     if (decision.type === 'tool-calls' || decision.type === 'request-confirmation') {
       const calls: EngineToolCall[] = decision.calls.map((c, n) => ({
-        id: `call_${iteration}_${n}`,
+        id: `${run.id}:${iteration}:${n}`,
         name: c.tool,
         arguments: c.arguments ?? {},
       }))
@@ -211,6 +230,8 @@ async function loop(ctx: TurnContext, opts: Required<ToolLoopOptions>): Promise<
     run.messages.push({ role: 'assistant', content: text || ('summary' in decision ? decision.summary : '') })
     if (decision.type === 'complete') {
       const summary = decision.summary || text || 'Hecho.'
+      // En paso NO se cierra el turno: el orquestador hace QA y sigue con el siguiente.
+      if (stepMode) return { status: 'completed', summary, data: stepData({ stepComplete: true }) }
       ctx.message(summary, { final: true })
       return { status: 'completed', summary }
     }
@@ -221,11 +242,193 @@ async function loop(ctx: TurnContext, opts: Required<ToolLoopOptions>): Promise<
         need: { id: ctx.newId('need'), kind: 'clarify', message: decision.message },
       }
     }
-    if (decision.type === 'fail') return { status: 'failed', error: decision.reason }
+    if (decision.type === 'fail') {
+      // En paso, el «fail» del modelo marca el paso para QA/bloqueo; el turno no muere.
+      return { status: 'failed', error: decision.reason, data: stepData({ stepFailure: decision.reason }) }
+    }
     // replan: el modelo pide replantear; se le devuelve el control con la razón.
     run.messages.push({ role: 'user', content: `Replantea el siguiente paso: ${decision.reason}` })
   }
-  return { status: 'failed', error: `Límite de ${opts.maxIterations} iteraciones del agente` }
+  return {
+    status: 'failed',
+    error: `Límite de ${limit} iteraciones del agente`,
+    data: stepData({ stepFailure: 'límite de iteraciones del paso' }),
+  }
+}
+
+// ── A5 · orquestación de pasos del plan (create/auto + plan aprobado) ──────────
+
+function stepMarkerOf(data: unknown): { stepComplete?: boolean; stepFailure?: unknown } | null {
+  if (!data || typeof data !== 'object') return null
+  const d = data as { stepMarker?: boolean }
+  return d.stepMarker === true ? (data as { stepComplete?: boolean; stepFailure?: unknown }) : null
+}
+
+/** Escribe plan.md canónico y actualiza hash/diff del run (fuente de verdad A4). */
+async function writePlan(ctx: TurnContext, plan: PlanEstructurado): Promise<void> {
+  const md = serializePlan(plan)
+  await ctx.host.writeDoc?.('plan.md', md)
+  if (ctx.run.input.planOverride) ctx.run.input.planOverride = md
+  ctx.run.data = { ...(ctx.run.data ?? {}), planHash: planHash(md), planMd: md }
+  ctx.emit({ type: 'plan.updated', plan: md })
+}
+
+function upsertRunStep(ctx: TurnContext, paso: PlanPaso, status: 'running' | 'done' | 'blocked', evidence?: string[]): void {
+  const existing = ctx.run.steps.find((s) => s.id === paso.id)
+  if (existing) {
+    existing.status = status
+    if (evidence?.length) existing.evidence = [...(existing.evidence ?? []), ...evidence]
+    return
+  }
+  ctx.run.steps.push({ id: paso.id, title: paso.titulo, role: ctx.run.role, status, evidence })
+}
+
+/** Instrucción sembrada en el hilo para que el modelo trabaje un solo paso. */
+function instructionDePaso(paso: PlanPaso, extra?: string): string {
+  return [
+    `Trabaja AHORA el paso ${paso.id} del plan (fase ${paso.fase || 'general'}, agente @${paso.agente}): ${paso.titulo}.`,
+    paso.criterios.length ? `Criterios de aceptación:\n${paso.criterios.map((c) => `- ${c}`).join('\n')}` : '',
+    paso.herramientas.length ? `Herramientas sugeridas: ${paso.herramientas.join(', ')}.` : '',
+    extra ?? '',
+    'Cuando el paso esté TERMINADO y verificado, termínalo con agent.complete (resumen corto de lo hecho). No empieces pasos siguientes todavía.',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+/** QA del paso vía host; sin `auditStep` → ok (los tests y el CLI no lo implementan). */
+async function auditPaso(ctx: TurnContext, paso: PlanPaso): Promise<EngineStepAudit> {
+  if (!ctx.host.auditStep) return { ok: true }
+  try {
+    return await ctx.host.auditStep({
+      runId: ctx.run.id,
+      step: {
+        id: paso.id,
+        fase: paso.fase,
+        agente: paso.agente,
+        titulo: paso.titulo,
+        criterios: [...paso.criterios],
+        estado: paso.estado,
+      },
+    })
+  } catch (e) {
+    return { ok: false, issues: [`QA interno del host falló: ${e instanceof Error ? e.message : String(e)}`] }
+  }
+}
+
+/** Cierre del turno con plan: QA del proyecto + resumen de pasos (sin «¿te gustó?»). */
+async function finishTurn(ctx: TurnContext, hechos: number, bloqueados: PlanPaso[]): Promise<TurnProgramOutcome> {
+  let avisos: string[] = []
+  if (ctx.host.auditProject) {
+    try {
+      avisos = (await ctx.host.auditProject({ runId: ctx.run.id })).issues ?? []
+    } catch (e) {
+      avisos = [`QA del proyecto falló: ${e instanceof Error ? e.message : String(e)}`]
+    }
+  }
+  const resumen = [
+    `Plan completado: ${hechos} paso(s) terminados`,
+    bloqueados.length ? `Bloqueados: ${bloqueados.map((p) => `${p.id} (${p.titulo})`).join(', ')}` : '',
+    avisos.length ? `Avisos: ${avisos.join('; ')}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  ctx.message(resumen, { final: true })
+  return { status: 'completed', summary: resumen }
+}
+
+/**
+ * A5: ejecuta el plan aprobado paso a paso hasta terminar. Un paso falla → reintenta
+ * (`maxQaRetries`) → `[!]` bloqueado y SIGUE con el siguiente; el presupuesto/error real
+ * del turno sí corta todo. El `agent.complete` del modelo cierra el paso, no el turno.
+ */
+async function orchestrate(ctx: TurnContext, opts: Required<ToolLoopOptions>): Promise<TurnProgramOutcome> {
+  const first = await syncPlanState(ctx)
+  if (!first || first.estadoPlan !== 'aprobado') return loop(ctx, opts)
+  const tienePend = (p: PlanPaso) => p.estado === 'pendiente' || p.estado === 'en-curso'
+  if (!first.pasos.some(tienePend)) return loop(ctx, opts)
+
+  const stepRetries = new Map<string, number>()
+  /** Pasos ya resueltos en este turno: aunque el archivo vuelva a mostrarlos, no se repiten. */
+  const resueltos = new Set<string>()
+  let hechos = 0
+  let snapshotTurno = false
+  const bloqueados: PlanPaso[] = []
+
+  for (;;) {
+    ctx.throwIfAborted()
+    await syncPlanState(ctx)
+    const md = await ctx.readPlan()
+    const plan = md && isStructuredPlan(md) ? parsePlan(md) : null
+    if (!plan || plan.estadoPlan !== 'aprobado') {
+      // El usuario volvió el plan a borrador a mitad de turno: ya no se muta sin aprobación.
+      return hechos || bloqueados.length ? finishTurn(ctx, hechos, bloqueados) : loop(ctx, opts)
+    }
+    const pend = plan.pasos.find((p) => tienePend(p) && !resueltos.has(p.id))
+    if (!pend) return finishTurn(ctx, hechos, bloqueados)
+
+    // Snapshot A5 por paso (y por turno la primera vez) para engine.undoStep/undoTurn.
+    if (!snapshotTurno) {
+      await ctx.captureSnapshot('turn')
+      snapshotTurno = true
+    }
+    await ctx.captureSnapshot('step', pend.id)
+    await writePlan(ctx, marcarPaso(plan, pend.id, 'en-curso'))
+    upsertRunStep(ctx, pend, 'running')
+    ctx.emit({ type: 'step.started', stepId: pend.id, title: pend.titulo, role: ctx.run.role })
+    ctx.log({ kind: 'note', stepId: pend.id, message: `paso ${pend.id} en curso: ${pend.titulo}` })
+    ctx.run.messages.push({ role: 'user', content: instructionDePaso(pend) })
+    await ctx.persist()
+
+    const out = await loop(ctx, opts, { stopOnComplete: true })
+    if (out.status === 'needs-user') return out
+    const marker = stepMarkerOf(out.data)
+    if (out.status === 'failed' && !marker) return out // presupuesto/error real del turno
+
+    const verdict = await auditPaso(ctx, pend)
+    const md2 = await ctx.readPlan()
+    const plan2 = (md2 && isStructuredPlan(md2) ? parsePlan(md2) : null) ?? plan
+    if (verdict.ok) {
+      await writePlan(ctx, marcarPaso(plan2, pend.id, 'hecho', { evidencia: verdict.evidencia }))
+      upsertRunStep(ctx, pend, 'done', verdict.evidencia)
+      ctx.emit({ type: 'step.done', stepId: pend.id, status: 'done', evidence: verdict.evidencia })
+      ctx.log({ kind: 'note', stepId: pend.id, message: `paso ${pend.id} hecho`, status: 'done' })
+      resueltos.add(pend.id)
+      hechos += 1
+      await ctx.persist()
+      continue
+    }
+    const intentos = (stepRetries.get(pend.id) ?? 0) + 1
+    stepRetries.set(pend.id, intentos)
+    if (intentos <= STEP_LOOP_DEFAULTS.maxQaRetries) {
+      const issues = (verdict.issues ?? ['sin criterios de aceptación cumplidos']).join('\n- ')
+      ctx.run.messages.push({
+        role: 'user',
+        content: `QA del paso ${pend.id} NO pasó:\n- ${issues}\nCorrige SOLO lo necesario y vuelve a terminar el paso con agent.complete.`,
+      })
+      ctx.log({ kind: 'note', stepId: pend.id, message: `QA del paso ${pend.id} falló; reintento ${intentos}`, status: 'retry' })
+      continue
+    }
+    await writePlan(
+      ctx,
+      marcarPaso(plan2, pend.id, 'bloqueado', {
+        motivoBloqueo: (verdict.issues ?? ['QA no pasó']).join('; '),
+        evidencia: verdict.evidencia,
+      }),
+    )
+    upsertRunStep(ctx, pend, 'blocked', verdict.evidencia)
+    ctx.emit({ type: 'step.done', stepId: pend.id, status: 'blocked', evidence: verdict.evidencia })
+    ctx.log({ kind: 'note', stepId: pend.id, message: `paso ${pend.id} bloqueado`, status: 'blocked' })
+    bloqueados.push(pend)
+    resueltos.add(pend.id)
+    await ctx.persist()
+  }
+}
+
+/** Entrada del programa: create/auto con plan aprobado → orquesta pasos; resto → bucle libre. */
+async function turnEntry(ctx: TurnContext, opts: Required<ToolLoopOptions>): Promise<TurnProgramOutcome> {
+  if (ctx.run.mode !== 'create' && ctx.run.mode !== 'auto') return loop(ctx, opts)
+  return orchestrate(ctx, opts)
 }
 
 export function createToolLoopProgram(options: ToolLoopOptions = {}): TurnProgram {
@@ -237,20 +440,20 @@ export function createToolLoopProgram(options: ToolLoopOptions = {}): TurnProgra
         for (const h of ctx.input.history ?? []) ctx.run.messages.push({ role: h.role, content: h.content })
         ctx.run.messages.push({ role: 'user', content: ctx.run.userText })
       }
-      return loop(ctx, opts)
+      return turnEntry(ctx, opts)
     },
     async answer(ctx, need: EngineNeed, answer: EngineAnswer) {
       const { run } = ctx
       if (need.kind === 'clarify' || need.kind === 'apply') {
         run.messages.push({ role: 'user', content: answer.text?.trim() || (answer.approved ? 'Sí, continúa.' : 'No.') })
-        return loop(ctx, opts)
+        return turnEntry(ctx, opts)
       }
       const calls = run.pendingCalls?.length ? run.pendingCalls : need.calls
       run.pendingCalls = undefined
       if (!answer.approved) {
         for (const c of calls) run.messages.push(toolResultMessage(c, { status: 'rejected', error: { message: 'El usuario rechazó esta acción.' } }))
         if (answer.text?.trim()) run.messages.push({ role: 'user', content: answer.text.trim() })
-        return loop(ctx, opts)
+        return turnEntry(ctx, opts)
       }
       if (need.kind === 'approve-plan') {
         run.planApproved = true
@@ -262,6 +465,7 @@ export function createToolLoopProgram(options: ToolLoopOptions = {}): TurnProgra
           const aprobado = parsed ? (parsed.estadoPlan === 'aprobado' ? parsed : aprobarPlan(parsed)) : null
           const md = aprobado ? serializePlan(aprobado) : incoming
           await ctx.host.writeDoc?.('plan.md', md)
+          if (run.input.planOverride) run.input.planOverride = md
           run.data = { ...(run.data ?? {}), planHash: planHash(md), planMd: md }
           ctx.emit({ type: 'plan.updated', plan: md })
         } else if (incoming) {
@@ -270,12 +474,12 @@ export function createToolLoopProgram(options: ToolLoopOptions = {}): TurnProgra
         }
         const out = await processCalls(ctx, calls, opts.maxCallsPerIteration)
         if (out.need) return { status: 'needs-user', need: out.need, summary: out.need.message }
-        return loop(ctx, opts)
+        return turnEntry(ctx, opts)
       }
       // confirm: el usuario aprobó destructivas/sistema explícitamente.
       const results = await ctx.executeTools(calls, { userConfirmed: true })
       for (const [i, r] of results.entries()) run.messages.push(toolResultMessage(calls[i]!, r))
-      return loop(ctx, opts)
+      return turnEntry(ctx, opts)
     },
     async resume(ctx) {
       const { run } = ctx
@@ -290,7 +494,7 @@ export function createToolLoopProgram(options: ToolLoopOptions = {}): TurnProgra
         }
       }
       if (!run.messages.length) return this.run(ctx)
-      return loop(ctx, opts)
+      return turnEntry(ctx, opts)
     },
   }
 }
