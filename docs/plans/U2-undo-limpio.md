@@ -54,4 +54,15 @@ puede deshacer o pide confirmación.
 `npm run verify`; e2e: mover fader y Ctrl+Z restaura; Play + Ctrl+Z no para la reproducción.
 
 ## Notas de traspaso
-_(vacío)_
+- **Estado real (revisión del coordinador, 2026-10-20): PARCIAL.** Solo está la infraestructura del executor (commit `35e489d`):
+  - `shared/src/state/ejecutor-comandos.ts`: coalescencia por `coalesceKey` + `gestureId` (opciones de `execute`), modos
+    `historialUndo: 'instantanea' | 'ninguno'` en `CommandDefinition` (`shared/src/types/command.ts`) y validación del
+    estado resultante con el esquema.
+  - `shared/src/state/instantanea-parcial.ts`: undo genérico por diff (project/tracks/transport) para comandos sin inverso.
+- **Falta** (ninguna casilla está hecha todavía; ningún comando usa aún `historialUndo`):
+  - Marcar comandos: `historialUndo: 'instantanea'` en project.update, project.setTimeSignature, master.update, automation.*,
+    take.delete, comp.segment.*, marker.create, bus.create, send.set, sidechain.connect, track.freeze/unfreeze;
+    `historialUndo: 'ninguno'` (y sin tocar `modificado`) en transport.* y en el snapshot de plugins del autosave.
+  - Comando `track.snapshotPluginState` / master y su uso en `src/lib/plugin/track-vst-runtime.ts` / `src/lib/session-persist.ts`.
+  - Cablear `gestureId` en `hooks/use-drag-value.ts`, `components/mixer.tsx`, knobs y rueda de BPM (`transport-bar.tsx`).
+  - Confirmaciones UI, `clipInicio` en copiar/pegar/duplicar, batch en cortar/borrar múltiple, tests.

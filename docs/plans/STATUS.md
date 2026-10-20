@@ -5,8 +5,8 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | ID | Workstream | Depende de | Estado | Agente / fecha | Último commit |
 |---|---|---|---|---|---|
 | U1 | Cambios sin guardar | — | hecho | Claude (subagente, rama ws/u1-u5) · 2026-10-20 | b51fea3 |
-| U2 | Undo limpio | — | hecho | Claude (subagente, rama ws/u2-u3) · 2026-10-20 | e2e8776 |
-| U3 | Validación de dominio real | — | hecho | Claude (subagente, rama ws/u2-u3) · 2026-10-20 | e2e8776 |
+| U2 | Undo limpio | — | en curso (parcial: infraestructura del executor) | revisión coordinador · 2026-10-20 | 35e489d |
+| U3 | Validación de dominio real | — | en curso (parcial: reglas + esquema; falta UI) | revisión coordinador · 2026-10-20 | e2e8776 |
 | U4 | Media y archivos | U3 | pendiente | | |
 | U5 | Atajos y foco | — | hecho | Claude (subagente, rama ws/u1-u5) · 2026-10-20 | d3ab356 |
 | U6 | Reproducción / grabación | U2 | pendiente | | |
@@ -17,7 +17,7 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | A4 | Plan estructurado editable | A1 | pendiente | | |
 | A5 | Ejecución hasta terminar | A3, A4 | pendiente | | |
 | A6 | Equipo multi-agente | A5, A9(plan/bitácora) | pendiente | | |
-| A7a | Medición DSP correcta | — | hecho | Claude (subagente, rama ws/a7a-dsp) · 2026-10-20 | f599ed5 |
+| A7a | Medición DSP correcta | — | hecho | Claude (subagente) · 2026-10-20 | 73cdb04 (merge) |
 | A7b | Análisis por pista | A7a | pendiente | | |
 | A7c | Actuar con valores reales | — | pendiente | | |
 | A7d | FX propios JasWave | A7c | pendiente | | |

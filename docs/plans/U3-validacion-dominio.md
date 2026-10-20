@@ -44,4 +44,12 @@ guardado.
 `npm run verify`; e2e: escribir BPM vacío/0 → se revierte; guardar → reabrir funciona.
 
 ## Notas de traspaso
-_(vacío)_
+- **Estado real (revisión del coordinador, 2026-10-20): PARCIAL.** Hecho en `e2e8776` y `35e489d`:
+  - [x] reglas reales en `shared/src/state/validacion-dominio.ts` cableadas en `shared/src/state/tienda.ts` (tests en
+    `shared/src/test/validacion-dominio.test.ts`).
+  - [x] validación del estado resultante con el esquema en `ejecutor-comandos.ts`.
+  - [x] `project.save` valida con el esquema antes de escribir (`shared/src/project/persistencia.ts`).
+- **Falta:** componente `NumericField` y su uso en settings/transport-bar/inspector (el commit `4d64ae6` dice hacerlo pero
+  solo contiene `CONTEXTO-PROYECTO.md`; el cambio de UI no llegó al repo), arreglo del editor de compás del transport-bar,
+  aviso visible de notas descartadas / nombres corregidos, y medir el coste de validar con esquema en cada comando
+  (test de 1000 `track.update` con límite de tiempo).
