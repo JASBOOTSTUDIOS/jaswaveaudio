@@ -10,6 +10,7 @@ import {
   compareLoudnessTarget,
   type LoudnessTargetName,
   LOUDNESS_TARGETS,
+  LOUDNESS_TARGET_NAMES,
 } from '../audio/loudness-bs1770'
 import type { EventoDominio } from '../events/evento-dominio'
 import type { AudioListenReport, MixAnalysisReport } from '../audio/mix-analysis'
@@ -81,12 +82,12 @@ export function crearComandoAnalysisLoudness(): CommandDefinition<any> {
 export function crearComandoAnalysisCompareTarget(): CommandDefinition<any> {
   return {
     type: 'analysis.compareTarget',
-    description: 'Compara loudness integrado vs target streaming/club/cd',
+    description: 'Compara loudness integrado vs target de plataforma (spotify, apple, youtube, amazon, club, broadcast, cd, streaming)',
     risk: 'read',
     schema: {
       type: 'object',
       properties: {
-        target: { type: 'string', enum: ['streaming', 'club', 'cd'] },
+        target: { type: 'string', enum: LOUDNESS_TARGET_NAMES as unknown as string[] },
         jobId: { type: 'string' },
       },
       additionalProperties: false,
@@ -103,7 +104,7 @@ export function crearComandoAnalysisCompareTarget(): CommandDefinition<any> {
       if (integrated == null || !Number.isFinite(integrated)) {
         throw new Error('Sin medición: ejecuta un bounce (render.start) primero')
       }
-      const cmp = compareLoudnessTarget(integrated, target)
+      const cmp = compareLoudnessTarget(integrated, target, job?.analysis?.truePeakDb)
       const listen = job?.listenReport
       return {
         state: estado,
@@ -140,7 +141,12 @@ export function crearComandoAnalysisSpectrum(): CommandDefinition<any> {
       return {
         state: _estado,
         events: [],
-        result: { jobId: job.id, bands: job.analysis.spectrumBands },
+        result: {
+          jobId: job.id,
+          bands: job.analysis.spectrumBands,
+          // Agregados sub/low/lowmid/mid/highmid/high (opcionales en renders antiguos).
+          agregados: job.analysis.bandasAgregadas,
+        },
       }
     },
   }
@@ -171,6 +177,24 @@ export function crearComandoAnalysisStereo(): CommandDefinition<any> {
           clipping: job.analysis.clipping,
           clippingSamples: job.analysis.clippingSamples,
           crestFactorDb: job.analysis.crestFactorDb,
+          // Métricas nuevas (opcionales: renders antiguos no las tienen).
+          rmsDb: job.analysis.rmsDb,
+          plrDb: job.analysis.plrDb,
+          psrDb: job.analysis.psrDb,
+          balanceDb: job.analysis.estereo?.balanceDb,
+          ancho: job.analysis.estereo?.ancho,
+          energiaMidDb: job.analysis.estereo?.energiaMidDb,
+          energiaSideDb: job.analysis.estereo?.energiaSideDb,
+          perdidaMonoDb: job.analysis.estereo?.perdidaMonoDb,
+          correlacionPorBanda: job.analysis.estereo?.porBanda?.map((b) => ({
+            banda: b.label,
+            correlacion: b.correlacion,
+            ancho: b.ancho,
+            perdidaMonoDb: b.perdidaMonoDb,
+          })),
+          onsets: job.analysis.transientes?.onsets,
+          densidadOnsetsPorSeg: job.analysis.transientes?.densidadPorSeg,
+          ataqueMedioMs: job.analysis.transientes?.ataqueMedioMs,
         },
       }
     },
@@ -182,15 +206,15 @@ export function crearComandoAnalysisFullReport(): CommandDefinition<any> {
     type: 'analysis.fullReport',
     description: 'Informe completo / AudioListenReport del último bounce',
     risk: 'read',
-    schema: {
-      type: 'object',
-      properties: {
-        jobId: { type: 'string' },
-        target: { type: 'string', enum: ['streaming', 'club', 'cd'] },
-        maxTruePeakDb: { type: 'number' },
+      schema: {
+        type: 'object',
+        properties: {
+          jobId: { type: 'string' },
+          target: { type: 'string', enum: LOUDNESS_TARGET_NAMES as unknown as string[] },
+          maxTruePeakDb: { type: 'number' },
+        },
+        additionalProperties: false,
       },
-      additionalProperties: false,
-    },
     handler: (_estado, payload): StateTransition<AudioListenReport & { jobId: string }> => {
       const job =
         (payload.jobId ? renderJobGet(payload.jobId) : undefined) ?? latestJobWithAnalysis()

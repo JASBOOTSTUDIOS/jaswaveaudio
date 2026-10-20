@@ -39,3 +39,7 @@ export * from './actions';
 export * from './midi';
 export * from './audio/mix-analysis';
 export * from './audio/loudness-bs1770';
+export * from './audio/spectrum';
+export * from './audio/stereo';
+export * from './audio/transients';
+export * from './audio/true-peak';
