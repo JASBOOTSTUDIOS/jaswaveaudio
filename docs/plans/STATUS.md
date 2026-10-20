@@ -11,8 +11,8 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | U5 | Atajos y foco | — | en curso | Claude (subagente, rama ws/u1-u5) · 2026-10-20 | |
 | U6 | Reproducción / grabación | U2 | pendiente | | |
 | U7 | Instancia única y ventanas | U1 | pendiente | | |
-| A1 | Motor de turnos headless | — | pendiente | | |
-| A2 | Tool-calling nativo + proveedor mock | A1 | pendiente | | |
+| A1 | Motor de turnos headless | — | en curso | Claude (subagente, rama ws/a1-a2-engine) · 2026-10-20 | |
+| A2 | Tool-calling nativo + proveedor mock | A1 | en curso | Claude (subagente, rama ws/a1-a2-engine) · 2026-10-20 | |
 | A3 | Los 5 modos | A1 | pendiente | | |
 | A4 | Plan estructurado editable | A1 | pendiente | | |
 | A5 | Ejecución hasta terminar | A3, A4 | pendiente | | |
