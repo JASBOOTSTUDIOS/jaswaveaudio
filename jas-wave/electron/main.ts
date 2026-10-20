@@ -362,9 +362,66 @@ function createWindow() {
   void loadRenderer(mainWindow)
   if (devServerUrl()) mainWindow.webContents.openDevTools()
 
+  closeGuard.reset()
+  mainWindow.on('close', (e: { preventDefault: () => void }) => {
+    if (!mainWindow || closeGuard.allowed) return
+    const wc = mainWindow.webContents
+    // Renderer caído o destruido: no hay a quién preguntar.
+    if (wc.isDestroyed() || wc.isCrashed()) {
+      closeGuard.allowed = true
+      return
+    }
+    e.preventDefault()
+    closeGuard.request()
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
+    closeGuard.reset()
+    // Los paneles desacoplados no sobreviven a la ventana principal.
+    for (const win of toolWindows.values()) {
+      if (!win.isDestroyed()) win.destroy()
+    }
+    toolWindows.clear()
   })
+}
+
+// ── Cierre con cambios sin guardar (U1) ─────────────────────────────────────
+// main nunca cierra la ventana principal sin preguntar al renderer: este decide si hay
+// cambios sin guardar y responde app-close-confirmed / app-close-canceled. Si el renderer
+// no acusa recibo (colgado, sin listener) en CLOSE_ACK_TIMEOUT_MS, main cierra igualmente.
+const CLOSE_ACK_TIMEOUT_MS = 5000
+const closeGuard = {
+  allowed: false,
+  ackTimer: null as ReturnType<typeof setTimeout> | null,
+  clearTimer() {
+    if (this.ackTimer) clearTimeout(this.ackTimer)
+    this.ackTimer = null
+  },
+  reset() {
+    this.allowed = false
+    this.clearTimer()
+  },
+  request() {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    this.clearTimer()
+    this.ackTimer = setTimeout(() => {
+      this.ackTimer = null
+      logLine('warn', 'main', `El renderer no respondió al cierre en ${CLOSE_ACK_TIMEOUT_MS} ms; se cierra sin confirmar`)
+      this.forceClose()
+    }, CLOSE_ACK_TIMEOUT_MS)
+    mainWindow.webContents.send('app-close-requested')
+  },
+  forceClose() {
+    this.clearTimer()
+    this.allowed = true
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close()
+  },
+}
+
+/** Solo la ventana principal puede confirmar o cancelar su propio cierre. */
+function isMainWindowSender(e: IpcMainInvokeEvent): boolean {
+  return !!mainWindow && !mainWindow.isDestroyed() && e.sender === mainWindow.webContents
 }
 
 app.whenReady().then(() => {
@@ -390,7 +447,14 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', (e: { preventDefault: () => void }) => {
+  // Salir (menú/Alt+F4 vía app.quit): pasar antes por la confirmación de la ventana.
+  // Al confirmarse, la ventana se cierra y window-all-closed vuelve a llamar a app.quit().
+  if (mainWindow && !mainWindow.isDestroyed() && !closeGuard.allowed) {
+    e.preventDefault()
+    mainWindow.close()
+    return
+  }
   stopAgentBridge()
   try {
     require('./plugin-host-bridge').stopPluginHost()
@@ -462,7 +526,22 @@ ipcMain.handle('window-maximize', () => {
 })
 
 ipcMain.handle('window-close', () => {
+  // Pasa por el guard de 'close' (confirmación de cambios sin guardar).
   if (mainWindow) mainWindow.close()
+})
+
+ipcMain.on('app-close-ack', (e: IpcMainInvokeEvent) => {
+  if (isMainWindowSender(e)) closeGuard.clearTimer()
+})
+ipcMain.handle('app-close-confirmed', (e: IpcMainInvokeEvent) => {
+  if (!isMainWindowSender(e)) return false
+  closeGuard.forceClose()
+  return true
+})
+ipcMain.handle('app-close-canceled', (e: IpcMainInvokeEvent) => {
+  if (!isMainWindowSender(e)) return false
+  closeGuard.clearTimer()
+  return true
 })
 
 ipcMain.handle('window-is-maximized', () => {

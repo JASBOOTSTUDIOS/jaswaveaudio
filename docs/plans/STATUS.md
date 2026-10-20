@@ -4,11 +4,11 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 
 | ID | Workstream | Depende de | Estado | Agente / fecha | Último commit |
 |---|---|---|---|---|---|
-| U1 | Cambios sin guardar | — | en curso | Claude (subagente, rama ws/u1-u5) · 2026-10-20 | |
+| U1 | Cambios sin guardar | — | hecho | Claude (subagente, rama ws/u1-u5) · 2026-10-20 | b51fea3 |
 | U2 | Undo limpio | — | en curso | Claude (subagente, rama ws/u2-u3) · 2026-10-20 | |
 | U3 | Validación de dominio real | — | en curso | Claude (subagente, rama ws/u2-u3) · 2026-10-20 | |
 | U4 | Media y archivos | U3 | pendiente | | |
-| U5 | Atajos y foco | — | en curso | Claude (subagente, rama ws/u1-u5) · 2026-10-20 | |
+| U5 | Atajos y foco | — | hecho | Claude (subagente, rama ws/u1-u5) · 2026-10-20 | d3ab356 |
 | U6 | Reproducción / grabación | U2 | pendiente | | |
 | U7 | Instancia única y ventanas | U1 | pendiente | | |
 | A1 | Motor de turnos headless | — | en curso | Claude (subagente, rama ws/a1-a2-engine) · 2026-10-20 | |

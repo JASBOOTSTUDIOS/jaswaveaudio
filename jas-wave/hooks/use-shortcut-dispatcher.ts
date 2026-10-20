@@ -241,7 +241,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       },
       'project.close': () => {
         void cerrarProyectoIO(tienda).then((r) => {
-          if (!r.success) {
+          if (!r.success && !r.canceled) {
             tienda.busEventos.emit('comando.fallido', { type: 'project.close', error: String(r.error ?? 'Error') })
           }
         })
@@ -620,6 +620,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Un componente con foco (piano roll, editor de partitura, diálogo) ya
+      // manejó la tecla: no ejecutar además un atajo global (nunca dos acciones).
+      if (e.defaultPrevented) return
       if (paletaAbiertaRef.current && e.key !== 'Escape') return
       if (shouldIgnoreGlobalShortcuts(e.target)) {
         const terminalChord =

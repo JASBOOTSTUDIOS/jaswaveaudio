@@ -6,6 +6,13 @@ import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { crearEstadoInicial } from '../../../shared/src'
 import { esNombreSinTitulo, nombreAlGuardar } from '../../../shared/src/project/ciclo-vida'
 import { clearSessionSnapshot, saveSessionNow } from './session-persist'
+import {
+  conGuardadoUnico,
+  confirmarDescartarCambios,
+  type MotivoConfirmacion,
+  type OrigenConfirmacion,
+  type ResultadoConfirmacion,
+} from './project-guards'
 
 export type ResultadoIO = {
   success: boolean
@@ -13,6 +20,8 @@ export type ResultadoIO = {
   path?: string
   canceled?: boolean
   requiereConfirmacion?: boolean
+  /** El usuario canceló porque había cambios sin guardar (o falló el guardado previo). */
+  cambiosSinGuardar?: boolean
 }
 
 function mensajeError(error: ResultadoIO['error']): string | undefined {
@@ -38,7 +47,15 @@ async function persistirRutaYGuardar(tienda: TiendaDAW, ruta: string): Promise<R
   return { success: result.success, error: result.error, path: ruta }
 }
 
-export async function guardarProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
+/**
+ * Guardar (menú, atajo, barra, IA y CLI). Una segunda llamada mientras se guarda
+ * espera la misma promesa: un solo diálogo y un solo guardado.
+ */
+export function guardarProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
+  return conGuardadoUnico(() => guardarProyectoImpl(tienda))
+}
+
+async function guardarProyectoImpl(tienda: TiendaDAW): Promise<ResultadoIO> {
   try {
     const { snapshotLoadedPluginsIntoProject } = await import('./plugin/track-vst-runtime')
     await snapshotLoadedPluginsIntoProject(tienda)
@@ -62,7 +79,11 @@ export async function guardarProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO>
   return { success: result.success, error: result.error, path: state.project.ruta }
 }
 
-export async function guardarProyectoComoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
+export function guardarProyectoComoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
+  return conGuardadoUnico(() => guardarProyectoComoImpl(tienda))
+}
+
+async function guardarProyectoComoImpl(tienda: TiendaDAW): Promise<ResultadoIO> {
   if (!window.electron?.dialogSave) return { success: false, error: 'No dialog available' }
   try {
     const { snapshotLoadedPluginsIntoProject } = await import('./plugin/track-vst-runtime')
@@ -76,8 +97,35 @@ export async function guardarProyectoComoIO(tienda: TiendaDAW): Promise<Resultad
   return persistirRutaYGuardar(tienda, rutaNormalizada(dialog.filePath))
 }
 
+/**
+ * Si hay cambios sin guardar, pregunta Guardar / No guardar / Cancelar (diálogo de la app).
+ * La usan nuevo, abrir, cerrar, salir y las acciones de IA/CLI: nunca se descarta en silencio.
+ */
+export async function confirmarCambiosIO(
+  tienda: TiendaDAW,
+  motivo: MotivoConfirmacion,
+  origen: OrigenConfirmacion = 'usuario',
+): Promise<ResultadoConfirmacion> {
+  const r = await confirmarDescartarCambios(tienda, { motivo, origen, guardar: () => guardarProyectoIO(tienda) })
+  if (r.error && r.eleccion === 'guardar' && r.error !== 'Guardado cancelado') {
+    tienda.busEventos.emit('comando.fallido', { type: 'project.save', error: r.error })
+  }
+  return r
+}
+
+function canceladoPorCambios(r: ResultadoConfirmacion): ResultadoIO {
+  return {
+    success: false,
+    canceled: true,
+    cambiosSinGuardar: true,
+    error: r.error ?? 'Cancelado: hay cambios sin guardar',
+  }
+}
+
 export async function abrirProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
   if (!window.electron?.projectOpenDialog) return { success: false, error: 'Not in Electron' }
+  const confirmado = await confirmarCambiosIO(tienda, 'abrir')
+  if (!confirmado.continuar) return canceladoPorCambios(confirmado)
   const result = await window.electron.projectOpenDialog()
   if (result.canceled) return { success: false, canceled: true, error: 'Canceled' }
   if (!result.success || !result.path) {
@@ -120,14 +168,13 @@ export async function cargarProyectoDesdeRutaIO(tienda: TiendaDAW, ruta: string)
   return { success: true, path: ruta }
 }
 
-export async function nuevoProyectoIO(tienda: TiendaDAW, nombre = 'Sin título'): Promise<ResultadoIO> {
-  const actual = tienda.obtenerEstado()
-  if (actual.project?.modificado) {
-    const closeAttempt = await tienda.executor.execute('project.close', {})
-    if (closeAttempt.success && (closeAttempt.result as { requiereConfirmacion?: boolean })?.requiereConfirmacion) {
-      return { success: false, requiereConfirmacion: true, error: 'Hay cambios sin guardar' }
-    }
-  }
+export async function nuevoProyectoIO(
+  tienda: TiendaDAW,
+  nombre = 'Sin título',
+  origen: OrigenConfirmacion = 'usuario',
+): Promise<ResultadoIO> {
+  const confirmado = await confirmarCambiosIO(tienda, 'nuevo', origen)
+  if (!confirmado.continuar) return canceladoPorCambios(confirmado)
 
   const result = await tienda.executor.execute('project.new', { nombre })
   if (!result.success) {
@@ -145,6 +192,11 @@ export async function nuevoProyectoIO(tienda: TiendaDAW, nombre = 'Sin título')
 }
 
 export async function cerrarProyectoIO(tienda: TiendaDAW, opts?: { forzar?: boolean }): Promise<ResultadoIO> {
+  if (!opts?.forzar) {
+    const confirmado = await confirmarCambiosIO(tienda, 'cerrar')
+    if (!confirmado.continuar) return canceladoPorCambios(confirmado)
+    opts = { forzar: true }
+  }
   const result = await tienda.executor.execute('project.close', {
     ...(opts?.forzar ? { forzar: true } : {}),
   })

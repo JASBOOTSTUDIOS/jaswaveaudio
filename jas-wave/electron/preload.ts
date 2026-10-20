@@ -24,6 +24,20 @@ contextBridge.exposeInMainWorld('electron', {
   windowMaximize: () => ipcRenderer.invoke('window-maximize'),
   windowClose: () => ipcRenderer.invoke('window-close'),
   windowIsMaximized: () => ipcRenderer.invoke('window-is-maximized'),
+  /**
+   * main pide permiso para cerrar la ventana (cambios sin guardar). Al recibirlo se acusa
+   * recibo de inmediato; si nadie escucha, main cierra solo tras su timeout.
+   */
+  onAppCloseRequested: (callback: () => void) => {
+    const handler = () => {
+      ipcRenderer.send('app-close-ack')
+      callback()
+    }
+    ipcRenderer.on('app-close-requested', handler)
+    return () => ipcRenderer.removeListener('app-close-requested', handler)
+  },
+  confirmAppClose: () => ipcRenderer.invoke('app-close-confirmed'),
+  cancelAppClose: () => ipcRenderer.invoke('app-close-canceled'),
   onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => {
     const handler = (_event: unknown, isMaximized: boolean) => callback(isMaximized)
     ipcRenderer.on('window-maximized-changed', handler)
