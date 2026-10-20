@@ -1,31 +1,61 @@
 /**
- * Análisis de mezcla post-bounce: loudness + true-peak + espectro + correlación.
+ * Análisis de mezcla post-bounce: loudness BS.1770 + true-peak + crest/PLR + espectro Welch en
+ * 1/3 de octava + estéreo por banda + transientes.
  */
 
 import {
+  calcularSubBloques,
+  comoArrayNumerico,
   compareLoudnessTarget,
-  measureLoudnessBs1770,
+  dbDesdeLineal,
+  loudnessDesdeSubBloques,
+  LOUDNESS_PLATFORM_TARGETS,
   type LoudnessResult,
   type LoudnessTargetName,
+  type SubBloquesNivel,
 } from './loudness-bs1770'
+import { medirTruePeak } from './true-peak'
+import { densidadesWelch, espectroDesdeDensidades, type BandEnergy, type BandaEstereo } from './spectrum'
+import { medirEstereo, type MedicionEstereo } from './stereo'
+import { medirTransientes, type MedicionTransientes } from './transients'
 
-export type BandEnergy = {
-  hzCenter: number
-  label: string
-  db: number
+export type VentanasDinamica = {
+  /** Duración de cada ventana (s). */
+  pasoSeg: number
+  /** RMS por ventana (dBFS, todas las muestras de todos los canales). */
+  rmsDb: number[]
+  /** Crest factor por ventana (pico − RMS, dB). */
+  crestDb: number[]
+  /** Estadísticas de crest sobre ventanas no silenciosas (RMS > −70 dBFS). */
+  crestMinDb: number
+  crestMedianaDb: number
+  crestMaxDb: number
 }
 
 export type MixAnalysisReport = {
   loudness: LoudnessResult
+  /** Crest factor real: pico de muestra − RMS global (dB). */
   crestFactorDb: number
   clippingSamples: number
   clipping: boolean
   stereoCorrelation: number
+  /** 31 bandas de 1/3 de octava (potencia en dB, Welch sobre toda la señal). */
   spectrumBands: BandEnergy[]
   truePeakDb: number
   peakDb: number
   sampleRate: number
   frames: number
+  /** RMS global (dBFS, media cuadrática de todas las muestras). */
+  rmsDb?: number
+  /** Peak-to-loudness ratio: true-peak (dBTP) − integrated (LUFS). */
+  plrDb?: number
+  /** Peak-to-short-term ratio: true-peak − short-term máximo. */
+  psrDb?: number
+  dinamicaVentanas?: VentanasDinamica
+  /** Bandas agregadas (sub/low/lowmid/mid/highmid/high). */
+  bandasAgregadas?: BandEnergy[]
+  estereo?: MedicionEstereo
+  transientes?: MedicionTransientes
 }
 
 export type AudioListenReport = MixAnalysisReport & {
@@ -35,142 +65,74 @@ export type AudioListenReport = MixAnalysisReport & {
   targetDeltaDb?: number
   suggestion?: string
   summary: string
-}
-
-const BAND_EDGES = [20, 60, 120, 250, 500, 1000, 2000, 4000, 8000, 16000, 22000]
-const BAND_LABELS = ['sub', 'bass', 'low', 'lowMid', 'mid', 'highMid', 'pres', 'brill', 'air', 'top']
-
-function dbFromLin(x: number): number {
-  if (x <= 1e-12) return -120
-  return 20 * Math.log10(x)
+  /** Avisos que no bloquean (ok no depende de ellos). */
+  advertencias?: string[]
+  targetLufs?: number
+  targetTruePeakDb?: number
 }
 
 /** Correlación estéreo (−1..1). Mono ≈ 1; invertido ≈ −1. */
 export function measureStereoCorrelation(l: ArrayLike<number>, r: ArrayLike<number>): number {
-  const n = Math.min(l.length, r.length)
-  if (n < 2) return 1
-  let sumL = 0
-  let sumR = 0
-  for (let i = 0; i < n; i++) {
-    sumL += Number(l[i] ?? 0)
-    sumR += Number(r[i] ?? 0)
-  }
-  const meanL = sumL / n
-  const meanR = sumR / n
-  let num = 0
-  let denL = 0
-  let denR = 0
-  for (let i = 0; i < n; i++) {
-    const a = Number(l[i] ?? 0) - meanL
-    const b = Number(r[i] ?? 0) - meanR
-    num += a * b
-    denL += a * a
-    denR += b * b
-  }
-  const den = Math.sqrt(denL * denR)
-  if (den < 1e-12) return 1
-  return Math.max(-1, Math.min(1, num / den))
+  return medirEstereo(l, r).correlacion
 }
 
 function countClipping(channels: ArrayLike<number>[], thresh = 0.999): number {
   let n = 0
   for (const ch of channels) {
     for (let i = 0; i < ch.length; i++) {
-      if (Math.abs(Number(ch[i] ?? 0)) >= thresh) n++
+      const v = ch[i] as number
+      if (v >= thresh || v <= -thresh) n++
     }
   }
   return n
 }
 
-/** DFT por bandas (energía media en ventanas) — compacto para IA. */
+/** Espectro Welch en 1/3 de octava (31 bandas). Con dos canales promedia la potencia de L y R. */
 export function measureSpectrumBands(
   channels: ArrayLike<number>[],
   sampleRate: number,
 ): BandEnergy[] {
-  const nCh = Math.max(1, channels.length)
-  const frames = channels[0]?.length ?? 0
-  if (frames < 64) {
-    return BAND_LABELS.map((label, i) => ({
-      hzCenter: (BAND_EDGES[i]! + BAND_EDGES[i + 1]!) / 2,
-      label,
-      db: -120,
-    }))
-  }
-  // Mezcla a mono
-  const mono = new Float32Array(frames)
-  for (let i = 0; i < frames; i++) {
-    let s = 0
-    for (let c = 0; c < nCh; c++) s += Number(channels[c]![i] ?? 0)
-    mono[i] = s / nCh
-  }
-  // FFT radix-2 truncada
-  let N = 1
-  while (N < Math.min(frames, 4096)) N <<= 1
-  N = Math.min(N, 4096)
-  const re = new Float32Array(N)
-  const im = new Float32Array(N)
-  const off = Math.max(0, Math.floor((frames - N) / 2))
-  for (let i = 0; i < N; i++) {
-    const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (N - 1))
-    re[i] = mono[off + i]! * w
-  }
-  fftInPlace(re, im)
-  const bandEnergy = new Float64Array(BAND_LABELS.length)
-  const bandCount = new Int32Array(BAND_LABELS.length)
-  for (let k = 1; k < N / 2; k++) {
-    const hz = (k * sampleRate) / N
-    const mag2 = re[k]! * re[k]! + im[k]! * im[k]!
-    for (let b = 0; b < BAND_LABELS.length; b++) {
-      if (hz >= BAND_EDGES[b]! && hz < BAND_EDGES[b + 1]!) {
-        bandEnergy[b]! += mag2
-        bandCount[b]!++
-        break
-      }
-    }
-  }
-  return BAND_LABELS.map((label, i) => {
-    const avg = bandCount[i]! > 0 ? bandEnergy[i]! / bandCount[i]! : 0
-    return {
-      hzCenter: (BAND_EDGES[i]! + BAND_EDGES[i + 1]!) / 2,
-      label,
-      db: dbFromLin(Math.sqrt(avg) / Math.max(1, N / 4)),
-    }
-  })
+  const canales = channels.map(comoArrayNumerico)
+  const l = canales[0] ?? new Float32Array(0)
+  const r = canales[1] ?? l
+  return espectroDesdeDensidades(densidadesWelch(l, r, sampleRate), sampleRate).tercios
 }
 
-function fftInPlace(re: Float32Array, im: Float32Array): void {
-  const n = re.length
-  let j = 0
-  for (let i = 1; i < n; i++) {
-    let bit = n >> 1
-    for (; j & bit; bit >>= 1) j ^= bit
-    j ^= bit
-    if (i < j) {
-      ;[re[i], re[j]] = [re[j]!, re[i]!]
-      ;[im[i], im[j]] = [im[j]!, im[i]!]
+const VENTANA_DINAMICA_SUBBLOQUES = 10 // 1 s
+
+function redondear2(x: number): number {
+  return Math.round(x * 100) / 100
+}
+
+function dinamicaPorVentanas(sub: SubBloquesNivel, nCh: number): VentanasDinamica {
+  const porVentana = VENTANA_DINAMICA_SUBBLOQUES
+  const nVent = Math.floor(sub.energiaCruda.length / porVentana)
+  const rmsDb: number[] = []
+  const crestDb: number[] = []
+  const validos: number[] = []
+  const muestras = sub.muestrasSubBloque * porVentana * Math.max(1, nCh)
+  for (let v = 0; v < nVent; v++) {
+    let e = 0
+    let pico = 0
+    for (let j = v * porVentana; j < (v + 1) * porVentana; j++) {
+      e += sub.energiaCruda[j]!
+      if (sub.picoSubBloque[j]! > pico) pico = sub.picoSubBloque[j]!
     }
+    const rms = Math.sqrt(e / muestras)
+    const r = dbDesdeLineal(rms)
+    const c = rms > 1e-9 ? dbDesdeLineal(pico) - r : 0
+    rmsDb.push(redondear2(r))
+    crestDb.push(redondear2(c))
+    if (r > -70) validos.push(c)
   }
-  for (let len = 2; len <= n; len <<= 1) {
-    const ang = (-2 * Math.PI) / len
-    const wlenRe = Math.cos(ang)
-    const wlenIm = Math.sin(ang)
-    for (let i = 0; i < n; i += len) {
-      let wRe = 1
-      let wIm = 0
-      for (let k = 0; k < len / 2; k++) {
-        const uRe = re[i + k]!
-        const uIm = im[i + k]!
-        const vRe = re[i + k + len / 2]! * wRe - im[i + k + len / 2]! * wIm
-        const vIm = re[i + k + len / 2]! * wIm + im[i + k + len / 2]! * wRe
-        re[i + k] = uRe + vRe
-        im[i + k] = uIm + vIm
-        re[i + k + len / 2] = uRe - vRe
-        im[i + k + len / 2] = uIm - vIm
-        const nextWRe = wRe * wlenRe - wIm * wlenIm
-        wIm = wRe * wlenIm + wIm * wlenRe
-        wRe = nextWRe
-      }
-    }
+  validos.sort((a, b) => a - b)
+  return {
+    pasoSeg: (sub.muestrasSubBloque * porVentana) / Math.max(1, sub.sampleRate),
+    rmsDb,
+    crestDb,
+    crestMinDb: validos.length ? redondear2(validos[0]!) : 0,
+    crestMedianaDb: validos.length ? redondear2(validos[Math.floor(validos.length / 2)]!) : 0,
+    crestMaxDb: validos.length ? redondear2(validos[validos.length - 1]!) : 0,
   }
 }
 
@@ -178,24 +140,47 @@ export function measureMixAnalysis(
   channels: ArrayLike<number>[],
   sampleRate: number,
 ): MixAnalysisReport {
-  const loudness = measureLoudnessBs1770(channels, sampleRate)
   const frames = channels[0]?.length ?? 0
-  const l = channels[0] ?? new Float32Array(0)
-  const r = channels[1] ?? l
-  const clippingSamples = countClipping(channels)
-  const crestFactorDb = dbFromLin(loudness.peak) - (loudness.integrated + 0.691) // rough vs LUFS
+  const canales = channels.map(comoArrayNumerico)
+  const nCh = canales.length
+  const sub = calcularSubBloques(canales, sampleRate)
+  const truePeak = frames > 0 ? medirTruePeak(canales, sub.picoMuestras) : 0
+  const loudness = loudnessDesdeSubBloques(sub, truePeak)
+  const l = canales[0] ?? new Float32Array(0)
+  const r = canales[1] ?? l
+  const clippingSamples = countClipping(canales)
+  const muestrasTotales = frames * Math.max(1, nCh)
+  const rms = muestrasTotales > 0 ? Math.sqrt(sub.energiaCrudaTotal / muestrasTotales) : 0
+  const rmsDb = dbDesdeLineal(rms)
+  const peakDb = dbDesdeLineal(loudness.peak)
+  const truePeakDb = dbDesdeLineal(loudness.truePeak)
+  const crestFactorDb = rms > 1e-9 ? peakDb - rmsDb : 0
+  const espectro = espectroDesdeDensidades(densidadesWelch(l, r, sampleRate), sampleRate)
+  const estereo: MedicionEstereo = { ...medirEstereo(l, r), porBanda: espectro.estereoPorBanda }
+  const stMax = loudness.shortTermMax ?? loudness.shortTerm
   return {
     loudness,
     crestFactorDb,
     clippingSamples,
     clipping: clippingSamples > 0,
-    stereoCorrelation: measureStereoCorrelation(l, r),
-    spectrumBands: measureSpectrumBands(channels, sampleRate),
-    truePeakDb: dbFromLin(loudness.truePeak),
-    peakDb: dbFromLin(loudness.peak),
+    stereoCorrelation: estereo.correlacion,
+    spectrumBands: espectro.tercios,
+    truePeakDb,
+    peakDb,
     sampleRate,
     frames,
+    rmsDb,
+    plrDb: loudness.integrated > -70 ? truePeakDb - loudness.integrated : undefined,
+    psrDb: stMax > -70 ? truePeakDb - stMax : undefined,
+    dinamicaVentanas: dinamicaPorVentanas(sub, nCh),
+    bandasAgregadas: espectro.agregadas,
+    estereo,
+    transientes: medirTransientes(canales, sampleRate),
   }
+}
+
+function bandaEstereo(analysis: MixAnalysisReport, label: string): BandaEstereo | undefined {
+  return analysis.estereo?.porBanda?.find((b) => b.label === label)
 }
 
 export function buildAudioListenReport(
@@ -203,7 +188,9 @@ export function buildAudioListenReport(
   opts?: { target?: LoudnessTargetName; maxTruePeakDb?: number },
 ): AudioListenReport {
   const issues: string[] = []
-  const maxTp = opts?.maxTruePeakDb ?? -1
+  const advertencias: string[] = []
+  const objetivo = opts?.target ? LOUDNESS_PLATFORM_TARGETS[opts.target] : undefined
+  const maxTp = opts?.maxTruePeakDb ?? objetivo?.truePeakDb ?? -1
   if (analysis.clipping) issues.push(`Clipping: ${analysis.clippingSamples} samples`)
   if (analysis.truePeakDb > maxTp) {
     issues.push(`True-peak ${analysis.truePeakDb.toFixed(1)} dBTP > ceiling ${maxTp} dBTP`)
@@ -211,13 +198,30 @@ export function buildAudioListenReport(
   if (analysis.stereoCorrelation < -0.3) {
     issues.push(`Correlación estéreo baja (${analysis.stereoCorrelation.toFixed(2)})`)
   }
-  if (analysis.stereoCorrelation > 0.98 && analysis.spectrumBands[0]) {
-    /* mono-ish OK for some masters — no issue */
+  // Graves en contrafase: se cancelan al sumar a mono (club, móviles).
+  for (const label of ['sub', 'low']) {
+    const b = bandaEstereo(analysis, label)
+    const nivel = analysis.bandasAgregadas?.find((x) => x.label === label)?.db ?? -140
+    if (b && nivel > -60 && b.correlacion < 0) {
+      issues.push(
+        `Banda ${label} en contrafase (corr ${b.correlacion.toFixed(2)}, pérdida mono ${b.perdidaMonoDb.toFixed(1)} dB)`,
+      )
+    }
+  }
+  if (analysis.estereo && analysis.estereo.perdidaMonoDb > 3 && analysis.stereoCorrelation >= -0.3) {
+    advertencias.push(`Compatibilidad mono: pierde ${analysis.estereo.perdidaMonoDb.toFixed(1)} dB al sumar`)
+  }
+  if (analysis.plrDb != null && analysis.plrDb < 6) {
+    advertencias.push(`PLR ${analysis.plrDb.toFixed(1)} dB: master muy comprimido/limitado`)
+  }
+  const lra = analysis.loudness.loudnessRange ?? analysis.loudness.rangoDinamico
+  if (analysis.loudness.integrated > -70 && lra > 15) {
+    advertencias.push(`LRA ${lra.toFixed(1)} LU: dinámica muy amplia para streaming`)
   }
   let targetDeltaDb: number | undefined
   let suggestion: string | undefined
   if (opts?.target) {
-    const cmp = compareLoudnessTarget(analysis.loudness.integrated, opts.target)
+    const cmp = compareLoudnessTarget(analysis.loudness.integrated, opts.target, analysis.truePeakDb)
     targetDeltaDb = cmp.deltaDb
     suggestion = cmp.suggestion
     if (Math.abs(cmp.deltaDb) > 1.5) {
@@ -225,13 +229,17 @@ export function buildAudioListenReport(
     }
   }
   const ok = issues.length === 0
-  const topBands = [...analysis.spectrumBands]
+  const bandasResumen = analysis.bandasAgregadas?.length ? analysis.bandasAgregadas : analysis.spectrumBands
+  const topBands = [...bandasResumen]
     .sort((a, b) => b.db - a.db)
     .slice(0, 3)
     .map((b) => `${b.label} ${b.db.toFixed(0)}dB`)
     .join(', ')
+  const extras = [`LRA ${lra.toFixed(1)} LU`, analysis.plrDb != null ? `PLR ${analysis.plrDb.toFixed(1)} dB` : '']
+    .filter(Boolean)
+    .join(' · ')
   const summary = ok
-    ? `OK · ${analysis.loudness.integrated.toFixed(1)} LUFS · TP ${analysis.truePeakDb.toFixed(1)} dBTP · corr ${analysis.stereoCorrelation.toFixed(2)} · bandas ${topBands}`
+    ? `OK · ${analysis.loudness.integrated.toFixed(1)} LUFS · TP ${analysis.truePeakDb.toFixed(1)} dBTP · ${extras} · corr ${analysis.stereoCorrelation.toFixed(2)} · bandas ${topBands}`
     : `Problemas: ${issues.join('; ')} · ${analysis.loudness.integrated.toFixed(1)} LUFS`
   return {
     ...analysis,
@@ -241,7 +249,20 @@ export function buildAudioListenReport(
     targetDeltaDb,
     suggestion,
     summary,
+    advertencias,
+    ...(objetivo ? { targetLufs: objetivo.lufs, targetTruePeakDb: objetivo.truePeakDb } : {}),
   }
+}
+
+/**
+ * Copia compacta del informe (p. ej. para enviar a la IA): sin series temporales ni listas largas.
+ */
+export function compactarInformeAudio<T extends MixAnalysisReport>(informe: T): T {
+  const { serieMomentary: _m, serieShortTerm: _s, ...loudness } = informe.loudness
+  const out: T = { ...informe, loudness }
+  if (informe.dinamicaVentanas) out.dinamicaVentanas = { ...informe.dinamicaVentanas, rmsDb: [], crestDb: [] }
+  if (informe.transientes) out.transientes = { ...informe.transientes, tiemposSeg: [] }
+  return out
 }
 
 /** Aplica ganancia lineal a canales (normalización). */
