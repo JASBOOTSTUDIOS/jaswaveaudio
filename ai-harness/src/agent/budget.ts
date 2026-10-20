@@ -16,10 +16,14 @@ export type AgentBudget = {
   maxWallMs: number
 }
 
+/**
+ * A5: turnos «hasta terminar» con pasos y QA: el tope pasa a ~200 llamadas / 2M de
+ * caracteres / 60 min. Los tests y el CLI suelen pasar presupuestos explícitos.
+ */
 export const DEFAULT_AGENT_BUDGET: Readonly<AgentBudget> = Object.freeze({
-  maxModelCalls: 40,
-  maxInputChars: 600_000,
-  maxWallMs: 10 * 60_000,
+  maxModelCalls: 200,
+  maxInputChars: 2_000_000,
+  maxWallMs: 60 * 60_000,
 })
 
 export type AgentBudgetStopReason = 'model-calls' | 'input-chars' | 'wall-time'

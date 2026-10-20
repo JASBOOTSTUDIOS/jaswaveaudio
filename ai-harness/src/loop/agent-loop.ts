@@ -100,11 +100,8 @@ function formatObservationPrompt(
     'Alternativa: <<<ACTIONS [{"type":"daw.musicBuild","payload":{…}}] ACTIONS>>>',
     'Tipos: tool-calls | request-confirmation | request-user-input | replan | complete | fail.',
     'Máx. 4 calls por iteración. Si falta trackId: selection.get / track.list ANTES de mutar.',
-    'Solo complete si TODOS los resultados relevantes son success, el pedido está cumplido,',
-    'Y (si hubo mutación creativa: musicBuild/clips/mezcla) ya pediste feedback de Kael con request-user-input o CLARIFY.',
-    'Tras éxito creativo, preferí:',
-    '<<<DECISION {"type":"request-user-input","message":"Kael (QA): Revisé el resultado en el DAW. ¿Te gustó? ¿Ajustamos algo?"} DECISION>>>',
-    'Excepción wipe/transporte trivial: complete OK.',
+    'Solo complete si TODOS los resultados relevantes son success y el pedido está cumplido.',
+    'Tras éxito creativo resume qué cambió (pistas, BPM, clips). NO preguntes «¿te gustó?».',
   ]
     .filter(Boolean)
     .join('\n')

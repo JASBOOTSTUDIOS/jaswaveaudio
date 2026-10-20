@@ -27,31 +27,56 @@ fin: audit.project (+ audit.mix si hubo mezcla/master) → resumen final (opcion
 ```
 
 ## Tareas
-- [ ] Engine implementa el bucle; eliminar la pausa en primera escritura cuando el plan está aprobado (create/auto).
-- [ ] Varias mutaciones por iteración ejecutadas como `executor.batch` (un undo por iteración) respetando política y orden.
-- [ ] `maxToolCallsPerIteration`: ejecutar hasta el límite y devolver al modelo "N llamadas pendientes no ejecutadas: reenvíalas".
-- [ ] Ids de llamada únicos por turno (`${runId}:${iter}:${n}`) y deduplicación por hash de (tool, args) dentro de la iteración.
-- [ ] Presupuestos configurables (Ajustes → IA): por turno (llamadas, tokens/caracteres, tiempo) y por paso; mostrar consumo en la UI.
-      Valores por defecto razonables para trabajos largos (p. ej. 200 llamadas / 60 min por turno, 30 llamadas por paso).
-- [ ] Paradas solo por: completado, needs-user (destructiva/sistema, aclaración real), presupuesto, error irrecuperable, pausa/cancelación.
-      Botones en el timeline: Pausar / Reanudar / Cancelar.
-- [ ] Quitar la pregunta de satisfacción a mitad de turno (prompts y CLARIFY forzados en el panel); opcional al final.
-- [ ] Transacción de turno y de paso: snapshot de estado al inicio (estructura y mezcla) + `executor` registra los ids de undo del
-      turno; "Deshacer turno" / "Deshacer paso" restauran por snapshot (sustituye `agent-turn-undo.ts`).
-- [ ] Tests (mock): turno de 6 pasos termina sin intervención; paso que falla QA reintenta y luego se bloquea sin detener el resto;
-      destructiva pide confirmación y continúa tras aprobar; pausa/reanudación; deshacer turno restaura.
+- [x] Engine implementa el bucle (`orchestrate` en `tool-loop.ts`: por paso — `[~]`, instrucción sembrada, loop propio
+      `stopOnComplete`, QA `host.auditStep`, `[x]`+evidencia o reintento (1) → `[!]` y sigue; final `auditProject` + resumen);
+      sin pausa en primera escritura cuando el plan está aprobado (`agent-loop-bridge.ts`: `requireConfirmationForWrites`
+      ahora es `!resumeRun && !planAprobado` vía `hayPlanAprobado`).
+- [ ] **Diferido a A8**: varias mutaciones por iteración como `executor.batch` (un undo por iteración). Hoy
+      `runRegisteredTools` ejecuta llamada a llamada; cambiarlo toca confirmación/auditoría por tool. El batch existe
+      (`ejecutor-comandos.ts`) y queda listo para enchufar.
+- [x] `maxToolCallsPerIteration`: el rechazo ya devuelve «No ejecutada: límite de N; reenvíala en la siguiente»
+      (preexistente en `processCalls`; se conserva en el step-loop).
+- [x] Ids de llamada únicos por turno (`${runId}:${iter}:${n}`) y deduplicación por hash de (tool, args) por iteración.
+- [x] Presupuestos: default subido a 200 llamadas / 2M caracteres / 60 min (`DEFAULT_AGENT_BUDGET`); consumo visible en la
+      UI (`data-testid="turn-budget"` en el panel, sobre el evento `budget`); tope por paso = `STEP_LOOP_DEFAULTS
+      .maxStepIterations` (12 iteraciones/paso; un paso agotado va a QA en vez de matar el turno).
+      **Pendiente (Ajustes → IA)**: hacerlos configurables en la UI de Ajustes.
+- [x] Paradas solo por: completado, needs-user (destructiva/sistema, aclaración real), presupuesto, error, pausa/cancel.
+      Botones en la timeline: `turn-pause` / `turn-cancel` / `turn-resume` (banner «Turno en pausa»).
+- [x] Quitar la pregunta de satisfacción: prompts (`base-prompt`, `music-policy`, `agent-loop`, `reasoning-prompts`),
+      legacy (`agent-legacy-turn`), bridge y `pending-apply-flow`. El cierre es un resumen con evidencia.
+- [x] Transacción de turno/paso: `engine.undoTurn`/`engine.undoStep` (snapshots LIFO en memoria) + hooks del host
+      (`captureSnapshot`/`restoreSnapshot` = profundidad de `executor` vía `revertUndoToDepth` en `agent-engine-host.ts`).
+      **No sustituye** a `agent-turn-undo.ts` (sigue para certify/otros flujos).
+- [x] Tests (mock) en `engine-step-loop.test.ts`: 6 pasos sin intervención; QA falla → reintento y `[x]` con evidencia;
+      QA falla siempre → `[!]` y sigue; destructiva a mitad de paso pide confirm y continúa; undo LIFO (step, step, turn);
+      presupuesto agotado ⇒ `reason: budget`; borrador no orquesta. (Pausa/reanudar ya cubiertos en `engine.test.ts`.)
 
 ## Archivos
-`ai-harness/src/engine/turn-engine.ts`, `ai-harness/src/loop/{agent-loop,validate-tool-calls,parse-agent-decision}.ts`,
-`ai-harness/src/agent/{base-prompt,modes,budget}.ts`, `jas-wave/src/lib/{agent-tool-runner,agent-turn-undo}.ts`,
-`shared/src/state/ejecutor-comandos.ts` (snapshot/restore de turno), componentes de timeline.
+`ai-harness/src/engine/{tool-loop,turn-engine,turn-context,engine-types}.ts`, `ai-harness/src/agent/budget.ts`,
+prompts (`base-prompt`, `music-policy`, `reasoning-prompts`, `loop/agent-loop`), `jas-wave/src/lib/{agent-loop-bridge,
+agent-legacy-turn,agent-engine-host,pending-apply-flow}.ts`, `jas-wave/components/coproducer-panel.tsx`.
 
 ## Criterios de aceptación
-- Un pedido "mezcla y masteriza para Spotify" con plan aprobado se completa sin clics intermedios (solo confirmaciones de sistema).
-- Deshacer turno deja el proyecto como antes del turno.
+- [x] Un pedido con plan aprobado se completa sin clics intermedios (motor; solo confirmaciones destructivas/sistema).
+      La app corre todavía el programa legacy (`createLegacyTurnProgram`): el orquestador de pasos se activa en el app al
+      enrutar el host al tool-loop (A8). Verificado con mocks en `engine-step-loop.test.ts`.
+- [x] Deshacer turno/paso restaura por snapshot (API del motor + hooks del host; botón de UI → A8).
 
 ## Verificación
-`npm run verify`; e2e con mock; CLI `agent` (A8).
+`npm run verify` (ai-harness 196 tests, jas-wave 326 tests, lint 0 errores); e2e/CLI → A8.
 
 ## Notas de traspaso
-_(vacío)_
+- **A8 (enhebrado en la app)**: `createJasWaveEngineHost` todavía registra `program: createLegacyTurnProgram` → la app
+  ejecuta el legacy; el orquestador A5 vive en el tool-loop (tests/CLI). Para activarlo: retirar/condicionar `program` y
+  dejar que `turnEntry` (create/auto + plan aprobado) mande; mapear `startCoproducerTurn` a `engine.runTurn`. El host ya
+  tiene `auditStep`/`auditProject` (heurística mínima: pistas tras «crear pista») y snapshots por undo-depth: al enrutar,
+  enchufarlos de verdad y añadir botones «Deshacer turno/paso» (llaman `engine.undoTurn`/`undoStep`).
+- **Batch por iteración**: `runRegisteredTools` → `executor.batch` con un undo; respetar `userConfirmed` por tool y el
+  orden de la política; el `undoId` de `EngineToolResult` ya existe para exponerlo.
+- **Ajustes → IA**: presets de presupuesto (llamadas/caracteres/minutos) en la UI; el motor ya acepta `input.budget`.
+- **A6**: `orchestrate` usa `paso.agente` solo como etiqueta/instrucción; el routing real de agentes queda pendiente.
+- **QA real por paso**: el `auditStep` del host es una heurística; sustituirlo por evaluación de criterios contra el DAW
+  (y `audit.mix` si hubo mezcla/master, como sugiere el bucle objetivo).
+- Detalle: en `engine-plan-sync.test.ts` el guion mock ya no usa `afterToolResult:true` porque el paso siembra una
+  instrucción de usuario que rompe ese matcher (el player consume respuestas en orden).

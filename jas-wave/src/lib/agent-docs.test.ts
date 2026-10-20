@@ -10,10 +10,8 @@ import {
   ensurePlanTemplate,
   normalizePlanCheckboxes,
   formatDocsForPrompt,
-  DEFAULT_PLAN_MD,
 } from './agent-docs'
 import {
-  applyUserRequestToPlanMd,
   evaluatePlanAgainstDaw,
   planMarkdownFromProjectPlan,
 } from './agent-plan-eval'
@@ -61,26 +59,6 @@ describe('agent-docs', () => {
   it('normalizePlanCheckboxes convierte viñetas sueltas', () => {
     const md = normalizePlanCheckboxes('# Plan\n\n## Por implementar\n- Pista «Bajo»\n\n## En curso\n')
     assert.match(getMarkdownSection(md, 'Por implementar'), /- \[ \] Pista «Bajo»/)
-  })
-
-  it('applyUserRequestToPlanMd anota el pedido y añade una tarea', () => {
-    const next = applyUserRequestToPlanMd(DEFAULT_PLAN_MD, 'Crea un bajo funk a 100 BPM')
-    assert.ok(next)
-    assert.match(getMarkdownSection(next!, 'Intención'), /Último pedido/)
-    assert.match(getMarkdownSection(next!, 'Intención'), /bajo funk/)
-    assert.match(getMarkdownSection(next!, 'Por implementar'), /- \[ \] Crea un bajo funk/)
-    assert.equal(applyUserRequestToPlanMd(DEFAULT_PLAN_MD, 'hola'), null)
-    assert.equal(applyUserRequestToPlanMd(DEFAULT_PLAN_MD, 'hazlo'), null)
-    assert.equal(applyUserRequestToPlanMd(DEFAULT_PLAN_MD, 'qué pistas hay?'), null)
-    assert.equal(
-      applyUserRequestToPlanMd(
-        DEFAULT_PLAN_MD,
-        'Implementa SOLO la sección «Qué se busca» del plan. No reescribas las demás secciones ni Notas del usuario.',
-      ),
-      null,
-    )
-    assert.equal(applyUserRequestToPlanMd(DEFAULT_PLAN_MD, 'actualiza el plan a lo que te dije.'), null)
-    assert.equal(applyUserRequestToPlanMd(DEFAULT_PLAN_MD, 'continua.'), null)
   })
 
   it('plan.md no se exige en cada mensaje', () => {
@@ -135,7 +113,7 @@ describe('agent-plan-eval', () => {
         ],
       },
     } as unknown as DAWState
-    const ev = evaluatePlanAgainstDaw(plan, state)
+    const ev = evaluatePlanAgainstDaw(plan, state, undefined, { rewrite: true })
     assert.equal(ev.missing.length, 1)
     assert.equal(ev.done, 1)
     assert.match(getMarkdownSection(ev.markdown, 'Implementado'), /Crear pista|Bajo/)

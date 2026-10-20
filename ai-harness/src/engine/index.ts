@@ -20,6 +20,7 @@ export {
   toolsForModeFromHost,
   TOOL_LOOP_DEFAULTS,
   TOOL_LOOP_PROGRAM_ID,
+  STEP_LOOP_DEFAULTS,
   type ToolLoopOptions,
 } from './tool-loop'
 export { createTurnEngine, drainTurn, type TurnEngine, type CreateTurnEngineOptions } from './turn-engine'

@@ -47,6 +47,7 @@ import { computeFallbackActions, isFallbackTool } from './agent-fallback-tools'
 import { appendMessage, getConversation, patchMessage } from './ai-chat-store'
 import type { AgentMode } from './ai-modes'
 import { createLegacyTurnProgram, finishAgentTurn, type LegacyTurnContext } from './agent-legacy-turn'
+import { revertUndoToDepth } from './agent-turn-undo'
 
 /** Runs en memoria cuando no hay Electron (vite web:dev, tests). */
 const memoryRuns = new Map<string, string>()
@@ -180,6 +181,31 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
     // El motor solo escribe docs con contenido aprobado/editado por el usuario (plan aprobado).
     writeDoc: (slug, content) => {
       writeAgentDoc(projectId(), slug, content, { origin: 'user' })
+    },
+
+    // ── A5 · QA por paso y undo por snapshot (profundidad del executor) ──────────
+    auditStep: ({ step }) => {
+      const st = tienda.obtenerEstado()
+      const tracks = st.project?.tracks?.length ?? 0
+      const issues: string[] = []
+      if (/crear pista/i.test(step.titulo) && tracks === 0) {
+        issues.push(`El proyecto no tiene pistas tras «${step.titulo}».`)
+      }
+      return {
+        ok: issues.length === 0,
+        issues,
+        evidencia: issues.length ? [] : [`${tracks} pista(s) en el proyecto tras el paso.`],
+      }
+    },
+    auditProject: () => {
+      const tracks = tienda.obtenerEstado().project?.tracks?.length ?? 0
+      return tracks > 0 ? { ok: true } : { ok: false, issues: ['El proyecto quedó sin pistas.'] }
+    },
+    // Snapshot = profundidad de undo del executor; restore revierte hasta ahí (LIFO).
+    captureSnapshot: ({ kind, stepId }) => ({ depth: tienda.executor.getUndoDepth(), kind, stepId }),
+    restoreSnapshot: (snapshot) => {
+      const s = snapshot as { depth?: unknown } | null
+      if (typeof s?.depth === 'number') void revertUndoToDepth(tienda, s.depth)
     },
 
     log(level, message, data) {

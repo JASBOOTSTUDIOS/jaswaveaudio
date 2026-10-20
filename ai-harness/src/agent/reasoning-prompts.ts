@@ -133,7 +133,7 @@ export const REASONING_PHASE_META: Record<
     maxTokensHint: 16384,
     speakers: `${COUNCIL_VOICES.nexus} + ${COUNCIL_VOICES.kael}`,
     voice:
-      'Nexus lista ACTIONS. Kael confirma el veredicto y deja lista la pregunta final al usuario («¿te gustó?») para DESPUÉS de ejecutar.',
+      'Nexus lista ACTIONS. Kael confirma el veredicto y deja escrita la evidencia a reportar DESPUÉS de ejecutar (sin «¿te gustó?»).',
   },
 }
 
@@ -177,13 +177,13 @@ const INNER_VOICE_RULES = [
   `- ${COUNCIL_VOICES.nexus}: orquestador / productor ejecutivo — traduce pedidos, prioriza, cierra ACTIONS.`,
   `- ${COUNCIL_VOICES.lyra}: arreglista / creatividad musical — groove, armonía, feel, género.`,
   `- ${COUNCIL_VOICES.volt}: ingeniero DAW JasWave — IDs, tools, clips, BPM, qué se puede ejecutar.`,
-  `- ${COUNCIL_VOICES.kael}: VERIFICADOR QA — revisa el trabajo de los demás, bloquea planes incorrectos, y SOLO él pregunta al usuario si le gustó el resultado al final.`,
+  `- ${COUNCIL_VOICES.kael}: VERIFICADOR QA — revisa el trabajo de los demás y bloquea planes incorrectos.`,
   `- ${COUNCIL_VOICES.iris}: analista de estilo/datos — web, timeline MIDI, gaps, hechos medibles.`,
   '',
   'Flujo de calidad (mejora el rendimiento real del trabajo):',
   '1) Nexus/Lyra/Volt/Iris proponen.',
   '2) Kael audita (critique/verify): si algo falla, obligan a corregir ANTES de ejecutar.',
-  '3) Tras ejecutar con éxito en el DAW: Kael pregunta al usuario si le gustó (CLARIFY / request-user-input). Nadie más lo hace.',
+  '3) Tras ejecutar con éxito en el DAW: resumen breve con evidencia. NO preguntar «¿te gustó?».',
   '',
   'Reglas del diálogo:',
   '- Hablan ENTRE ELLOS («¿y si…?», «Kael, ¿pasas el checklist?»). No le hablan al usuario en capas internas.',
@@ -435,7 +435,7 @@ export function promptForPhase(
         '  "ok": true,',
         '  "issues": [],',
         '  "successCriteria": ["…"],',
-        '  "askUserAfter": "¿Te gustó el resultado? ¿Cambiarías algo del groove/mezcla/estructura?"',
+        '  "askUserAfter": ""',
         '}',
         'VERDICT>>>',
         'Si ok=false: listan issues y el consejo debe corregir (no fingir éxito).',
@@ -444,9 +444,8 @@ export function promptForPhase(
     case 'commit':
       lines.push(
         'Nexus resume ACTIONS concretas. Kael confirma que el VERDICT ok=true sigue vigente.',
-        'Kael deja escrita la pregunta post-ejecución (para el turno final al usuario), p. ej.:',
-        '«Cuando el DAW tenga el cambio aplicado, preguntaré: ¿te gustó el resultado?»',
-        'PROHIBIDO que Nexus/Lyra hagan esa pregunta ahora (aún no se ejecutó).',
+        'Kael deja escrita la evidencia a reportar tras ejecutar (p. ej.: pistas creadas, BPM, clips).',
+        'NO preguntar «¿te gustó?» al usuario.',
         styleGap
           ? [
               '- ESCRIBEN 5–12 bullets: qué hay / qué falta vs estilo (pista, beats, rasgo).',
@@ -541,21 +540,20 @@ export function buildFinalTurnUserMessage(opts: {
           ].join('\n')
         : [
             '1–2 frases de lo que vas a hacer / hiciste (productor).',
-            'Si este turno EJECUTA mutaciones creativas: tras ACTIONS, Kael debe pedir feedback',
-            '(CLARIFY o request-user-input: ¿te gustó el resultado?).',
+            'Si este turno EJECUTA mutaciones creativas: tras ACTIONS, resumen breve con evidencia.',
+            'NO preguntar «¿te gustó?».',
           ].join('\n'),
     !audit && !styleGap && createish && refine
       ? [
           'REFINAR → <<<ACTIONS>>> UNA mutación.',
-          'Después del éxito (siguiente ciclo): Kael pide feedback.',
+          'Después del éxito (siguiente ciclo): resumen breve con evidencia (sin «¿te gustó?»).',
         ].join('\n')
       : !audit && !styleGap && createish
         ? [
             'A) Datos críticos faltantes → <<<CLARIFY>>> (options ≥3).',
             'B) Suficiente → UNA tool (musicBuild procedural / wipe).',
-            'C) Cuando ya esté aplicado en el DAW → Kael:',
-            '<<<CLARIFY[{"id":"kael_feedback","question":"Kael (QA): ¿Te gustó el resultado?","options":["Sí, quedó bien","Casi — quiero ajustes","No — hay que rehacer","Cuéntame qué cambiar…"],"allowCustom":true}]CLARIFY>>>',
-            'PROHIBIDO complete silencioso tras canción/arreglo.',
+            'C) Cuando ya esté aplicado en el DAW → resumen breve con qué cambió (pistas, BPM, clips).',
+            'PROHIBIDO «¿te gustó?» / CLARIFY de feedback y PROHIBIDO complete vacío tras canción/arreglo.',
           ].join('\n')
         : !audit && !styleGap
           ? 'Según modo: <<<PLAN>>> / <<<DOC>>> / <<<CLARIFY>>> o ACTIONS.'

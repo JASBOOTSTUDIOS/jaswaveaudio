@@ -33,7 +33,7 @@ import {
   searchParameters,
   summarizeParametersForAi,
 } from './plugin/plugin-parameter-intel'
-import { detectAgentMode, modePromptBlock, type AgentMode } from './ai-modes'
+import { modePromptBlock, workingMode, type AgentMode } from './ai-modes'
 import {
   isMidiClipEditIntent,
   buildMidiClipEditActions,
@@ -166,7 +166,8 @@ export function buildAgentSystemPrompt(
   chatMessages: MentionableMessage[] = [],
 ): string {
   const mentions = userText ? resolveAtMentions(userText, state, chatMessages) : []
-  const resolvedMode = detectAgentMode(userText, mode)
+  // A3: el modo elegido manda; en «auto» lo decide el texto.
+  const resolvedMode = workingMode(mode, userText)
   const catalog = filterCatalogForAi(pluginRegistry.list())
   const instruments = catalog.filter((d) => d.isInstrument).slice(0, 80)
   const effects = catalog.filter((d) => d.isEffect && !d.isInstrument).slice(0, 40)
@@ -214,7 +215,7 @@ export function fallbackActionsFromUserIntent(
   state?: DAWState,
   mode: AgentMode = 'auto',
 ): DawAction[] {
-  const resolved = detectAgentMode(userText, mode)
+  const resolved = workingMode(mode, userText)
   const actions: DawAction[] = [
     ...deterministicFallbacksFromUserIntent({
       userText,

@@ -98,7 +98,7 @@ export async function runApplyPendingFlow(opts: {
       'Analiza el estado REAL del proyecto (track.list) y continúa o pide feedback.',
       wipeIntent
         ? 'Si quedan pistas: daw.wipeProject. Si quedó vacío: complete.'
-        : 'Si el trabajo creativo está listo: Kael (QA) pregunta si le gustó (request-user-input / CLARIFY). PROHIBIDO complete silencioso.',
+        : 'Si el trabajo creativo está listo: resumen breve con evidencia (pistas, clips). NO «¿te gustó?».',
       council?.trim()
         ? `## Acuerdo del consejo (post-Aplicar)\n${council.trim()}`
         : '',

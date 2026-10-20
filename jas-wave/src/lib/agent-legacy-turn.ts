@@ -86,7 +86,6 @@ import {
   resolveTrackHint,
 } from './track-resolve'
 import {
-  detectAgentMode,
   inferBpmFromTempoIntent,
   isProjectAuditIntent,
   isSongRefineIntent,
@@ -98,6 +97,7 @@ import {
   wantsFullProject,
   isGenreRewriteIntent,
   isProjectWipeIntent,
+  workingMode,
   type AgentMode,
 } from './ai-modes'
 import { buildAssembledAgentContext } from './agent-context-bridge'
@@ -117,7 +117,7 @@ import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import type { DAWState } from '../../../shared/src/types/state'
 import { applyMarkdownDocsFromModel, bindAgentDocsDisk, parseDocBlocksFromText } from './agent-docs'
 import { extractDocEditsFromResults, mergeDocEdits, type ChatDocEdit } from './chat-doc-edits'
-import { absorbUserRequestIntoPlan, ensurePlanFromCompose, syncPlanAfterDawChange, type PlanEvaluation } from './agent-plan-eval'
+import { ensurePlanFromCompose, syncPlanAfterDawChange, type PlanEvaluation } from './agent-plan-eval'
 import {
   buildHarnessReviewMessage,
   formatHarnessProgress,
@@ -560,7 +560,6 @@ async function runCoproducerTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<T
   try {
       const state = dawStore.obtenerEstado()
       bindAgentDocsDisk(projectId, state.project?.ruta)
-      absorbUserRequestIntoPlan(projectId, userText)
       // Consultas locales muy cortas solo si el proveedor no está online
       const preferLocal = aiStatus !== 'online' || !window.electron?.aiChat
       const local = preferLocal ? answerLocalReadQuery(state, userText) : null
@@ -580,7 +579,7 @@ async function runCoproducerTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<T
       const turnMeta: { undo?: number; diff?: string } = {}
       let skipAiTurn = false
       let trackContextExtra = ''
-      const resolvedMode = detectAgentMode(workText, agentMode)
+      const resolvedMode = workingMode(agentMode, workText)
       const styleGapIntent = isStyleGapIntent(workText)
       const styleApplyIntent = isStyleApplyIntent(workText)
       const midiClipEditIntent = isMidiClipEditIntent(workText)
@@ -942,27 +941,11 @@ async function runCoproducerTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<T
                       0,
                     ) ?? 0
                   if (ranMutations && tracksN > 0) {
+                    // A5: resumen con evidencia; NO pregunta «¿te gustó?» (el usuario pide ajustes si quiere).
                     accumulated =
                       clipsN > 0
-                        ? `Kael (QA): Revisé el arrangement — ${tracksN} pistas, ${clipsN} clips. Reproduce y dime qué tal.`
-                        : `Kael (QA): Estructura lista (${tracksN} pistas). ¿Te encaja o ajustamos?`
-                    clarifications = {
-                      status: 'pending',
-                      questions: [
-                        {
-                          id: 'kael_feedback',
-                          question: 'Kael (QA): ¿Te gustó el resultado?',
-                          options: [
-                            'Sí, quedó bien',
-                            'Casi — quiero ajustes',
-                            'No — hay que rehacer',
-                            'Cuéntame qué cambiar…',
-                          ],
-                          allowCustom: true,
-                          multi: false,
-                        },
-                      ],
-                    }
+                        ? `Kael (QA): Revisé el arrangement — ${tracksN} pistas, ${clipsN} clips. Si quieres ajustes, dime qué cambiar.`
+                        : `Kael (QA): Estructura lista (${tracksN} pistas).`
                     result = { success: true, content: accumulated }
                   } else {
                     pendingActions = undefined
@@ -1857,7 +1840,7 @@ async function runQuickTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<TurnPr
       const state = dawStore.obtenerEstado()
       if (/crea|midi|piano|proyecto|plan/i.test(userText)) {
         const forced = await runFallbackTool(ctx, FALLBACK_TOOLS.userIntent, { text: userText, mode: agentMode })
-        const resolvedMode = detectAgentMode(userText, agentMode)
+        const resolvedMode = workingMode(agentMode, userText)
         const out = await processActionsForMode({
           tienda: dawStore,
           actions: forced,

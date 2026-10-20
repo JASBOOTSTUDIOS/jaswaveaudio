@@ -3,8 +3,8 @@
  * Sin explorador embebido (usar panel «Explorador»). Zoom tipográfico Ctrl± con foco.
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Eye, FileText, Hammer, Loader2, MessageSquareQuote, PlayCircle, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { Check, Eye, FileText, ListChecks, MessageSquareQuote, PlayCircle, Plus, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { DocMarkdown } from '@/components/chat-markdown'
 import {
@@ -18,8 +18,16 @@ import {
   type AgentDoc,
 } from '@/src/lib/agent-docs'
 import { syncPlanAfterDawChange } from '@/src/lib/agent-plan-eval'
-import { executeDawActions, formatActionResultsForUser } from '@/src/lib/ai-daw-agent'
-import type { ProjectPlanData } from '@/src/lib/project-plan'
+import {
+  agregarPaso,
+  alternarPasoHecho,
+  aprobarPlanMd,
+  leerPlan,
+  mensajeDeEjecucionDePaso,
+  omitirPaso,
+  resumenPasos,
+  reanudarPaso,
+} from '@/src/lib/agent-plan-steps'
 import {
   buildDocTextAnchor,
   captureActiveDocTextSelection,
@@ -67,8 +75,8 @@ export function AgentDocsPanel() {
   const activeDoc = activeTab ? docs.find((d) => d.slug === activeTab.slug) : null
   const [draft, setDraft] = useState(activeDoc?.content ?? '')
   const [evalMsg, setEvalMsg] = useState('')
-  const [execBusy, setExecBusy] = useState(false)
-  const [execMsg, setExecMsg] = useState('')
+  const [planView, setPlanView] = useState<'pasos' | 'markdown'>('pasos')
+  const [newStep, setNewStep] = useState('')
   const userDirty = useRef(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const previewHostRef = useRef<HTMLDivElement>(null)
@@ -188,59 +196,22 @@ export function AgentDocsPanel() {
     setEvalMsg(ev?.summary || 'Nada que evaluar aún. Añade tareas `- [ ]` en el plan.')
   }, [flushDraft, projectId, tienda])
 
-  const onExecutePlan = useCallback(async () => {
-    if (activeTab?.slug !== PLAN_SLUG) return
-    flushDraft()
-    const content = draft || activeDoc?.content || ''
-    setExecBusy(true)
-    setExecMsg('')
-    try {
-      const intent = getMarkdownSection(content, 'Intención').trim()
-      const todoBody = getMarkdownSection(content, 'Por implementar')
-      const tracks: ProjectPlanData['tracks'] = []
-      for (const line of todoBody.split('\n')) {
-        const m = /^\s*[-*]\s*\[[ xX]?\]\s*Pista\s*«([^»]+)»\s*\(([^)]*)\)/i.exec(line)
-        if (!m) continue
-        const nombre = m[1]!.trim()
-        const meta = m[2] || ''
-        const rol = meta.split(/[·|,]/)[0]?.trim() || 'keys'
-        const vst = /VST\s+([^·|,]+)/i.exec(meta)?.[1]?.trim()
-        tracks.push({ nombre, rol, tipo: 'midi', pluginNombre: vst })
-      }
-      const bpmHit = /(\d{2,3})\s*BPM/i.exec(intent) || /(\d{2,3})\s*BPM/i.exec(content)
-      const bpm = bpmHit ? Number(bpmHit[1]) : tienda.obtenerEstado().project.bpm?.valor ?? 120
-      const nombre =
-        /^#\s*Plan:\s*(.+)$/im.exec(content)?.[1]?.trim() ||
-        tienda.obtenerEstado().project.nombre ||
-        'Proyecto'
-      const actions =
-        tracks.length > 0
-          ? [
-              {
-                type: 'daw.composeProject',
-                payload: { aplicar: true, nombre, bpm, pensamiento: intent || undefined, pistas: tracks },
-              },
-            ]
-          : [
-              {
-                type: 'daw.musicBuild',
-                payload: { aplicar: true, prompt: content.slice(0, 6000), nombre, bpm },
-              },
-            ]
-      const results = await executeDawActions(tienda, actions, {
-        agentMode: 'create',
-        forceApply: true,
-        respectModeGate: false,
-        source: 'user_build',
-      })
-      setExecMsg(formatActionResultsForUser(results) || 'Plan ejecutado.')
-      syncPlanAfterDawChange(projectId, tienda.obtenerEstado())
-    } catch (err) {
-      setExecMsg(err instanceof Error ? err.message : 'Error al ejecutar el plan')
-    } finally {
-      setExecBusy(false)
-    }
-  }, [activeDoc, activeTab, draft, flushDraft, projectId, tienda])
+  /** Escribe el plan resultante de una operación de la vista de pasos. */
+  const applyPlanMd = useCallback(
+    (next: string | null) => {
+      if (!next || activeTab?.slug !== PLAN_SLUG) return
+      flushDraft()
+      writeAgentDoc(projectId, PLAN_SLUG, next, { origin: 'user', preserveUserNotes: false })
+      userDirty.current = false
+      setDraft(next)
+    },
+    [flushDraft, projectId, activeTab?.slug],
+  )
+
+  const planActual = useMemo(() => {
+    if (activeTab?.slug !== PLAN_SLUG || activeTab.mode !== 'edit') return null
+    return leerPlan(draft || activeDoc?.content || '')
+  }, [activeTab?.slug, activeTab?.mode, draft, activeDoc?.content])
 
   const zoom = editor.textZoom
   const fontPx = Math.round(11 * zoom)
@@ -348,16 +319,19 @@ export function AgentDocsPanel() {
           >
             <ZoomIn className="size-3.5" />
           </button>
-          {activeTab?.slug === PLAN_SLUG ? (
+          {activeTab?.slug === PLAN_SLUG && planActual ? (
             <button
               type="button"
-              title="Ejecutar plan"
-              disabled={execBusy}
-              onClick={() => void onExecutePlan()}
-              className="ml-1 inline-flex items-center gap-1 rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50"
+              title={planView === 'pasos' ? 'Editar el plan en Markdown' : 'Vista de pasos del plan'}
+              onClick={() => {
+                flushDraft()
+                setPlanView((v) => (v === 'pasos' ? 'markdown' : 'pasos'))
+              }}
+              data-testid="plan-view-toggle"
+              className="ml-1 inline-flex items-center gap-1 rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:text-foreground"
             >
-              {execBusy ? <Loader2 className="size-3 animate-spin" /> : <Hammer className="size-3" />}
-              Ejecutar
+              {planView === 'pasos' ? <Eye className="size-3" /> : <ListChecks className="size-3" />}
+              {planView === 'pasos' ? 'Markdown' : 'Pasos'}
             </button>
           ) : null}
           <button
@@ -430,9 +404,9 @@ export function AgentDocsPanel() {
         ) : null}
       </div>
 
-      {execMsg || evalMsg ? (
-        <div className="border-b border-border/60 px-2 py-1 text-[10px] text-muted-foreground">
-          {execMsg || evalMsg}
+      {evalMsg ? (
+        <div className="border-b border-border/60 px-2 py-1 text-[10px] text-muted-foreground" data-testid="plan-eval-msg">
+          {evalMsg}
         </div>
       ) : null}
 
@@ -460,7 +434,190 @@ export function AgentDocsPanel() {
                 </button>
               </div>
             ) : null}
-            <textarea
+            {planActual && planView === 'pasos' ? (
+              <div className="flex h-full min-h-0 flex-col" data-testid="plan-steps-view">
+                <div className="flex shrink-0 items-center gap-2 border-b border-border px-2 py-1.5">
+                  <span
+                    data-testid="plan-estado"
+                    className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                      planActual.estadoPlan === 'aprobado'
+                        ? 'bg-emerald-500/15 text-emerald-400'
+                        : 'bg-amber-500/15 text-amber-400'
+                    }`}
+                  >
+                    {planActual.estadoPlan === 'aprobado' ? 'Aprobado' : 'Borrador'} · Rev {planActual.revision}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground" data-testid="plan-resumen">
+                    {resumenPasos(planActual)}
+                  </span>
+                  {planActual.estadoPlan === 'borrador' ? (
+                    <button
+                      type="button"
+                      data-testid="plan-approve"
+                      title="Aprobar el plan para que la IA pueda ejecutarlo"
+                      onClick={() => applyPlanMd(aprobarPlanMd(draft || activeDoc?.content || ''))}
+                      className="rounded bg-accent-amber px-2 py-0.5 text-[10px] font-semibold text-background hover:opacity-90"
+                    >
+                      Aprobar plan
+                    </button>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400" data-testid="plan-approved-badge">
+                      <Check className="size-3" />
+                      Listo para ejecutar
+                    </span>
+                  )}
+                </div>
+                <ol className="min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
+                  {planActual.pasos.map((p) => {
+                    const hecha = p.estado === 'hecho'
+                    return (
+                      <li
+                        key={p.id}
+                        data-testid={`plan-step-${p.id}`}
+                        className="mb-1.5 rounded border border-border/60 bg-background/30 px-1.5 py-1"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            data-testid={`plan-step-${p.id}-toggle`}
+                            title={hecha ? 'Volver a pendiente' : 'Marcar hecho'}
+                            aria-pressed={hecha}
+                            onClick={() => applyPlanMd(alternarPasoHecho(draft || activeDoc?.content || '', p.id))}
+                            className={`flex size-3.5 shrink-0 items-center justify-center rounded-sm border ${
+                              hecha ? 'border-emerald-400 bg-emerald-400/20 text-emerald-400' : 'border-border text-transparent hover:text-muted-foreground'
+                            }`}
+                          >
+                            <Check className="size-2.5" />
+                          </button>
+                          <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{p.id}</span>
+                          <span className={`min-w-0 flex-1 truncate text-[11px] ${hecha ? 'text-muted-foreground line-through' : 'text-foreground'}`} title={p.titulo}>
+                            {p.titulo}
+                          </span>
+                          <span className="shrink-0 text-[9px] text-muted-foreground">@{p.agente}{p.fase ? ` · ${p.fase}` : ''}</span>
+                          {p.estado !== 'pendiente' && p.estado !== 'hecho' ? (
+                            <span
+                              data-testid={`plan-step-${p.id}-estado`}
+                              className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold ${
+                                p.estado === 'bloqueado'
+                                  ? 'bg-red-500/15 text-red-400'
+                                  : p.estado === 'omitido'
+                                    ? 'bg-panel-raised text-muted-foreground'
+                                    : 'bg-sky-500/15 text-sky-400'
+                              }`}
+                            >
+                              {p.estado === 'bloqueado' ? 'Bloqueado' : p.estado === 'omitido' ? 'Omitido' : 'En curso'}
+                            </span>
+                          ) : null}
+                        </div>
+                        {p.criterios.length ? (
+                          <ul className="mt-1 pl-5 text-[10px] text-muted-foreground">
+                            {p.criterios.map((c, i) => (
+                              <li key={i} className="list-disc">criterio: {c}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        {p.herramientas.length ? (
+                          <div className="mt-1 flex flex-wrap gap-1 pl-5">
+                            {p.herramientas.map((h, i) => (
+                              <span key={i} className="rounded bg-panel-raised px-1 font-mono text-[9px] text-muted-foreground">
+                                {h}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                        {p.evidencia.length ? (
+                          <ul className="mt-1 pl-5 text-[10px] text-emerald-400/90" data-testid={`plan-step-${p.id}-evidencia`}>
+                            {p.evidencia.map((e, i) => (
+                              <li key={i} className="list-disc">evidencia: {e}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        {p.motivoBloqueo ? (
+                          <div className="mt-1 pl-5 text-[10px] text-red-400/90">bloqueado: {p.motivoBloqueo}</div>
+                        ) : null}
+                        <div className="mt-1 flex items-center gap-1 pl-5">
+                          <button
+                            type="button"
+                            data-testid={`plan-step-${p.id}-ejecutar`}
+                            title="Pedir a la IA que ejecute solo este paso"
+                            onClick={() =>
+                              askAboutText(`${p.id} — ${p.titulo}`, mensajeDeEjecucionDePaso(p))
+                            }
+                            className="rounded bg-panel-raised px-1.5 py-0.5 text-[9px] text-muted-foreground hover:text-foreground"
+                          >
+                            Ejecutar
+                          </button>
+                          {hecha || p.estado === 'omitido' || p.estado === 'bloqueado' ? (
+                            <button
+                              type="button"
+                              data-testid={`plan-step-${p.id}-reanudar`}
+                              title="Volver a pendiente"
+                              onClick={() => applyPlanMd(reanudarPaso(draft || activeDoc?.content || '', p.id))}
+                              className="rounded bg-panel-raised px-1.5 py-0.5 text-[9px] text-muted-foreground hover:text-foreground"
+                            >
+                              Reanudar
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              data-testid={`plan-step-${p.id}-hecho`}
+                              title="Marcar hecho con evidencia manual"
+                              onClick={() => applyPlanMd(alternarPasoHecho(draft || activeDoc?.content || '', p.id))}
+                              className="rounded bg-panel-raised px-1.5 py-0.5 text-[9px] text-muted-foreground hover:text-foreground"
+                            >
+                              Hecho
+                            </button>
+                          )}
+                          {p.estado !== 'omitido' ? (
+                            <button
+                              type="button"
+                              data-testid={`plan-step-${p.id}-omitir`}
+                              title="Omitir este paso"
+                              onClick={() => applyPlanMd(omitirPaso(draft || activeDoc?.content || '', p.id))}
+                              className="rounded bg-panel-raised px-1.5 py-0.5 text-[9px] text-muted-foreground hover:text-foreground"
+                            >
+                              Omitir
+                            </button>
+                          ) : null}
+                        </div>
+                      </li>
+                    )
+                  })}
+                  {!planActual.pasos.length ? (
+                    <li className="py-4 text-center text-[11px] text-muted-foreground">
+                      Sin pasos. Añade el primero abajo o pide al agente que planifique.
+                    </li>
+                  ) : null}
+                </ol>
+                <form
+                  className="flex shrink-0 items-center gap-1 border-t border-border px-2 py-1"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    applyPlanMd(agregarPaso(draft || activeDoc?.content || '', newStep))
+                    setNewStep('')
+                  }}
+                >
+                  <input
+                    data-testid="plan-add-input"
+                    value={newStep}
+                    onChange={(e) => setNewStep(e.target.value)}
+                    placeholder="Añadir paso…"
+                    aria-label="Añadir paso al plan"
+                    className="min-w-0 flex-1 rounded bg-background/40 px-1.5 py-0.5 text-[11px] text-foreground outline-none placeholder:text-muted-foreground"
+                  />
+                  <button
+                    type="submit"
+                    data-testid="plan-add-btn"
+                    title="Añadir paso pendiente"
+                    disabled={!newStep.trim()}
+                    className="rounded bg-panel-raised px-1.5 py-0.5 text-muted-foreground hover:text-foreground disabled:opacity-40"
+                  >
+                    <Plus className="size-3" />
+                  </button>
+                </form>
+              </div>
+            ) : (
+              <textarea
               value={draft}
               data-doc-slug={activeTab.slug}
               onChange={(e) => {
@@ -476,7 +633,8 @@ export function AgentDocsPanel() {
               style={{ fontSize: fontPx }}
               className="h-full w-full resize-none bg-background/40 px-2 py-1.5 font-mono leading-relaxed text-foreground outline-none"
               aria-label={`Editar ${activeTab.slug}`}
-            />
+              />
+            )}
           </div>
         ) : (
           <div

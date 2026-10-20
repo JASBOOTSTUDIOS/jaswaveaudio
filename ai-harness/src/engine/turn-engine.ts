@@ -33,6 +33,13 @@ export type TurnEngine = {
   resume(runId: string): TurnHandle
   cancel(runId: string): boolean
   pause(runId: string): boolean
+  /**
+   * A5: deshace el último snapshot del turno (capturado al empezar a ejecutar el plan)
+   * vía `host.restoreSnapshot`. false si no hay snapshot o el host no restaura.
+   */
+  undoTurn(runId: string): Promise<boolean>
+  /** A5: deshace el último paso capturado (LIFO). false si no hay pasos que deshacer. */
+  undoStep(runId: string): Promise<boolean>
   getRun(runId: string): EngineRun | undefined
   /** Carga un run de memoria o del almacén del host. */
   loadRun(runId: string): Promise<EngineRun | null>
@@ -85,6 +92,8 @@ export function createTurnEngine(host: EngineHost, options: CreateTurnEngineOpti
   const runs = new Map<string, EngineRun>()
   const active = new Map<string, { controller: AbortController; pauseRequested: boolean }>()
   const listeners = new Set<(e: EngineEvent) => void>()
+  /** Snapshots A5 en memoria (no se persisten): el host decide qué serializar. */
+  const snapshots = new Map<string, { turn?: unknown; steps: Array<{ id: string; snap: unknown }> }>()
   let seq = 0
 
   const newId = (prefix: string): string => {
@@ -164,6 +173,15 @@ export function createTurnEngine(host: EngineHost, options: CreateTurnEngineOpti
         persist: () => persist(run),
         newId,
         history,
+        rememberSnapshot: (kind, snap, stepId) => {
+          let entry = snapshots.get(run.id)
+          if (!entry) {
+            entry = { steps: [] }
+            snapshots.set(run.id, entry)
+          }
+          if (kind === 'turn') entry.turn = snap
+          else entry.steps.push({ id: stepId ?? `paso-${entry.steps.length + 1}`, snap })
+        },
       })
       const pendingNeed = run.pending
       run.status = 'running'
@@ -323,6 +341,22 @@ export function createTurnEngine(host: EngineHost, options: CreateTurnEngineOpti
       if (!a) return false
       a.pauseRequested = true
       a.controller.abort()
+      return true
+    },
+    async undoTurn(runId) {
+      const entry = snapshots.get(runId)
+      if (!entry?.turn || !host.restoreSnapshot) return false
+      await host.restoreSnapshot(entry.turn)
+      entry.turn = undefined
+      entry.steps = []
+      return true
+    },
+    async undoStep(runId) {
+      const entry = snapshots.get(runId)
+      if (!entry || !entry.steps.length || !host.restoreSnapshot) return false
+      const last = entry.steps[entry.steps.length - 1]!
+      await host.restoreSnapshot(last.snap)
+      entry.steps.pop()
       return true
     },
     getRun: (runId) => runs.get(runId),
