@@ -34,23 +34,28 @@ con pasos, responsables, criterios medibles y estado; el motor lo relee antes de
 Marcas: `[ ]` pendiente, `[~]` en curso, `[x]` hecho, `[-]` omitido, `[!]` bloqueado. Ids `S<n>` estables.
 
 ## Tareas
-- [ ] `ai-harness/src/plan/structured-plan.ts`: `parsePlan(md)` → `{meta, steps[{id, fase, agente, titulo, estado, criterios[],
-      herramientas[], evidencia[], notas}], notasUsuario}`; `serializePlan(plan)` con round-trip estable (tests de propiedad);
-      tolera ediciones a mano (líneas sin id → id nuevo; agente desconocido → `@director`).
-- [ ] `planHash` y `diffPlans(a,b)` (pasos añadidos/eliminados/reordenados/editados) para detectar ediciones del usuario.
-- [ ] Engine: antes de cada paso relee `plan.md`; si el hash cambió y hay ediciones del usuario → re-sincroniza (respeta omitidos,
-      nuevos pasos, reordenamientos, criterios editados) y emite `plan.updated` con el diff.
-- [ ] Aprobación: estado `borrador → aprobado` (tarjeta "Aprobar plan / Editar / Descartar"); create sin plan aprobado → planifica y
-      pide aprobación; auto → aprueba solo. Cambios de alcance propuestos por el agente → `plan.proposeChange` (diff) con aprobación;
-      ajustes menores (añadir verificación, dividir paso) se aplican y registran.
-- [ ] Eliminar `absorbUserRequestIntoPlan`; el Director (A6) crea/actualiza el plan desde el pedido.
-- [ ] `evaluatePlanAgainstDaw` pasa a ser una ayuda de QA (no reescribe el plan); el estado lo deciden los agentes con evidencia
-      (A9 `audit.step`).
-- [ ] Editor (`agent-docs-panel.tsx`): vista de pasos (lista con estado, agente, criterios editables, reordenar arrastrando,
-      omitir/reactivar, "Ejecutar desde aquí", "Ejecutar solo este paso") + pestaña Markdown crudo; ambos editan el mismo archivo.
-      Quitar el "Ejecutar" por regex.
-- [ ] Unificar: checklist y work-plan internos se expresan como pasos del plan (o se eliminan si quedan redundantes).
-- [ ] Tests: parse/serialize, diff, re-sincronización tras edición del usuario a mitad de turno (mock), aprobación.
+- [x] `ai-harness/src/plan/structured-plan.ts`: `parsePlan(md)` → `PlanEstructurado{titulo,objetivo,modo,estadoPlan,fecha,revision,pasos[{id,fase,agente,titulo,estado,criterios[],herramientas[],evidencia[],motivoBloqueo?}],notasUsuario}`;
+      `serializePlan(plan)` con round-trip estable; tolera ediciones a mano (líneas sin id → id nuevo; sin agente → `director`;
+      acepta `# Plan:` y `# Plan ·`; `[!]` con motivo inline o en sublínea `- bloqueado:`). Tests: 16 en `structured-plan.test.ts`.
+- [x] `planHash` y `diffPlans(a,b)` (añadidos/eliminados/editados/reordenados) + `marcarPaso`, `aprobarPlan`, `siguientePasoPendiente`, `hayPasosPendientes`.
+- [x] Engine: el tool-loop relee `plan.md` antes de **cada iteración** (`syncPlanState` en `tool-loop.ts`); si el hash cambió
+      re-sincroniza (el archivo manda) y emite `plan.updated` con el diff; el plan aprobado en el archivo fija `run.planApproved`.
+      La relectura por paso fino llega con el step-loop de A5.
+- [x] Aprobación: borrador → aprobado queda registrada **en plan.md** (rev +1, notas intactas) al responder `approve-plan`;
+      create sin plan aprobado pide aprobación; auto → `planApproved` siempre. `plan.proposeChange` queda para A6 (alcance).
+- [x] Eliminar `absorbUserRequestIntoPlan` (+ `applyUserRequestToPlanMd` y helpers) y su llamada en `agent-legacy-turn.ts`.
+- [x] `evaluatePlanAgainstDaw` es ayuda de QA: por defecto **no** reescribe (`rewrite?: true` para el caso viejo);
+      `syncPlanAfterDawChange` ya no escribe el plan (solo devuelve la evaluación).
+- [x] Editor (`agent-docs-panel.tsx`): vista de pasos (`data-testid="plan-steps-view"`) con checkbox, estado, agente/fase,
+      criterios/evidencia/herramientas, botones por paso (Ejecutar → turno al agente con `mensajeDeEjecucionDePaso`, Hecho,
+      Reanudar, Omitir), añadir paso, badge borrador/aprobado + "Aprobar plan" y toggle "Pasos/Markdown". Quitado el
+      "Ejecutar" por regex (`daw.composeProject`/`musicBuild`). Lógica testable en `jas-wave/src/lib/agent-plan-steps.ts` (9 tests).
+- [ ] Unificar: checklist y work-plan internos se expresan como pasos del plan (o se eliminan si quedan redundantes). **Diferido a A6**
+      (decisión de producto sobre `ai-agent-checklist`/`agent-work-plan`; no bloquea A5).
+- [x] Tests: parse/serialize/diff/hash/aprobación (`structured-plan.test.ts`), helpers del editor (`agent-plan-steps.test.ts`),
+      sincronización del motor con edición a mitad de turno y aprobación en archivo (`engine-plan-sync.test.ts`).
+- Pendientes menores de UI (no bloqueantes): reordenar pasos arrastrando, "Ejecutar desde aquí", criterios editables inline
+  (hoy se editan en la pestaña Markdown).
 
 ## Archivos
 Nuevo `ai-harness/src/plan/structured-plan.ts`; `ai-harness/src/plan/eval.ts`, `jas-wave/src/lib/{agent-docs,agent-plan-eval,ai-agent-checklist}.ts`,
@@ -64,4 +69,23 @@ Nuevo `ai-harness/src/plan/structured-plan.ts`; `ai-harness/src/plan/eval.ts`, `
 `npm run verify`; e2e: aprobar plan, editar un criterio, el agente lo usa.
 
 ## Notas de traspaso
-_(vacío)_
+- **Formato canónico**: `serializePlan` emite `- [x] S1 · Fase · @agente — Título` + sublíneas `criterio:`/`herramientas:`
+  (`a, b`)/`evidencia:`/`bloqueado:`. Round-trip: `parse(serialize(p)) === p` (test idempotente). Las Notas del usuario
+  van **verbatim** al final; nada las reescribe. El plan viejo (Intención/Por implementar) sigue funcionando como docs
+  legado: `parsePlan` devuelve null y el motor lo ignora (solo ancla al prompt).
+- **Sincronización del motor** (`tool-loop.ts: syncPlanState`): se llama al inicio de cada iteración. Guarda `planHash` y
+  `planMd` en `run.data` para difear; `plan.estadoPlan==='aprobado'` ⇒ `run.planApproved=true` (create puede mutar sin
+  need). `engine-plan-sync.test.ts` cubre: aprobado ⇒ sin need; aprobación en respuesta ⇒ plan.md reescrito rev+1;
+  edición a mitad de turno ⇒ `plan.updated` con `diff.added`.
+- **A5 debe**: (1) construir el step-loop sobre `parsePlan`+`siguientePasoPendiente`+`marcarPaso` (ya exportados de
+  `@jaswave/ai-harness`); (2) tras cada paso marcar `[x]`/`[!]` **reescribiendo desde el plan re-leído** (merge por id
+  para no pisar ediciones del usuario entre pasos); (3) QA por paso con `EngineHost.auditStep` y `evidencia:` en el paso;
+  (4) el panel usa `agent-plan-steps.ts` — añadir helpers ahí en vez de lógica nueva en el componente.
+- **jas-wave lee ai-harness desde source** (`main: ./src/index.ts`): no hace falta build entre paquetes.
+- **Legacy**: `createLegacyTurnProgram` (la app) no usa el tool-loop; los cambios de A4 en el motor aplican a tests/CLI.
+  El legacy ya no absorbe pedidos ni reescribe plan con la evaluación (ambos desactuados en A4).
+- **checklist/work-plan sin unificar** (A6): `ai-agent-checklist.ts`, `agent-checklist-card.tsx`,
+  `planning/agent-work-plan.ts`, `execution/plan-runner.ts` siguen existiendo. Si A6 los elimina, quitar también
+  `onRunSection`/`onRunTask` del panel si quedan sin uso.
+- UI: los hooks de prueba clave del panel son `plan-steps-view`, `plan-estado`, `plan-approve`, `plan-view-toggle`,
+  `plan-step-{S1,toggle,ejecutar,hecho,reanudar,omitir,evidencia}`, `plan-add-input`, `plan-add-btn`.
