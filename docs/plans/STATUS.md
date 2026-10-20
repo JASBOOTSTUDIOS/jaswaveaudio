@@ -5,8 +5,8 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | ID | Workstream | Depende de | Estado | Agente / fecha | Último commit |
 |---|---|---|---|---|---|
 | U1 | Cambios sin guardar | — | hecho | Claude (subagente, rama ws/u1-u5) · 2026-10-20 | b51fea3 |
-| U2 | Undo limpio | — | en curso (parcial: infraestructura del executor) | revisión coordinador · 2026-10-20 | 35e489d |
-| U3 | Validación de dominio real | — | en curso (parcial: reglas + esquema; falta UI) | revisión coordinador · 2026-10-20 | e2e8776 |
+| U2 | Undo limpio | — | hecho | Claude (subagente, hardening/production) · 2026-10-20 | 1dc0d54 |
+| U3 | Validación de dominio real | — | hecho | Claude (subagente, hardening/production) · 2026-10-20 | 1dc0d54 |
 | U4 | Media y archivos | U3 | pendiente | | |
 | U5 | Atajos y foco | — | hecho | Claude (subagente, rama ws/u1-u5) · 2026-10-20 | d3ab356 |
 | U6 | Reproducción / grabación | U2 | pendiente | | |

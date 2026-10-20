@@ -24,20 +24,20 @@ puede deshacer o pide confirmación.
   `domain-commands.ts:983-996`); cortar/borrar múltiple = un `clip.delete` por clip (un undo cada uno).
 
 ## Tareas
-- [ ] Comando `track.snapshotPluginState` (y `master.snapshotPluginState`) **sin `inverseType` y sin tocar `modificado`**;
+- [x] Comando `track.snapshotPluginState` (y `master.snapshotPluginState`) **sin `inverseType` y sin tocar `modificado`**;
       `snapshotTrackPluginIntoProject` lo usa y solo si el estado cambió (comparar hash del blob). Master vía el nuevo comando.
-- [ ] Quitar `inverseType` de los comandos de transporte (`transport.*`, incluido `togglePunch/toggleCountIn`) y que no marquen
+- [x] Quitar `inverseType` de los comandos de transporte (`transport.*`, incluido `togglePunch/toggleCountIn`) y que no marquen
       `modificado` (salvo loop/metrónomo si se decide que son parte del proyecto: documentar la decisión).
-- [ ] Coalescencia en `shared/src/state/ejecutor-comandos.ts`: opción `{ coalesceKey, gestureId }` en `execute`; comandos con
+- [x] Coalescencia en `shared/src/state/ejecutor-comandos.ts`: opción `{ coalesceKey, gestureId }` en `execute`; comandos con
       la misma clave dentro del mismo gesto se fusionan en una sola entrada (inverso = estado previo al primer comando).
       `use-drag-value.ts`/`mixer.tsx`/knobs generan `gestureId` en pointerdown y lo cierran en pointerup; rueda de BPM con ventana
       de 600 ms.
-- [ ] Inversos (patrón `inversePayload` con el valor previo, o snapshot parcial) para la lista de comandos sin inverso.
-- [ ] Confirmaciones: "Limpiar automatización", presets de rampa sobre curva existente, borrar toma, Ctrl+Delete de pista
+- [x] Inversos (patrón `inversePayload` con el valor previo, o snapshot parcial) para la lista de comandos sin inverso.
+- [x] Confirmaciones: "Limpiar automatización", presets de rampa sobre curva existente, borrar toma, Ctrl+Delete de pista
       (reutilizar el diálogo del menú contextual).
-- [ ] `clip.create` acepta `clipInicio`; copiar/pegar/duplicar lo pasan; cortar y borrar múltiple usan `executor.batch`
+- [x] `clip.create` acepta `clipInicio`; copiar/pegar/duplicar lo pasan; cortar y borrar múltiple usan `executor.batch`
       (una entrada de undo).
-- [ ] Tests (vitest en `shared/src/test/`): autosave no altera pila ni `modificado`; transporte no entra a la pila; 50 updates
+- [x] Tests (vitest en `shared/src/test/`): autosave no altera pila ni `modificado`; transporte no entra a la pila; 50 updates
       de un gesto = 1 undo; cada inverso nuevo hace round-trip; batch de borrado = 1 undo; `clipInicio` preservado.
 
 ## Archivos
@@ -54,15 +54,27 @@ puede deshacer o pide confirmación.
 `npm run verify`; e2e: mover fader y Ctrl+Z restaura; Play + Ctrl+Z no para la reproducción.
 
 ## Notas de traspaso
-- **Estado real (revisión del coordinador, 2026-10-20): PARCIAL.** Solo está la infraestructura del executor (commit `35e489d`):
-  - `shared/src/state/ejecutor-comandos.ts`: coalescencia por `coalesceKey` + `gestureId` (opciones de `execute`), modos
-    `historialUndo: 'instantanea' | 'ninguno'` en `CommandDefinition` (`shared/src/types/command.ts`) y validación del
-    estado resultante con el esquema.
-  - `shared/src/state/instantanea-parcial.ts`: undo genérico por diff (project/tracks/transport) para comandos sin inverso.
-- **Falta** (ninguna casilla está hecha todavía; ningún comando usa aún `historialUndo`):
-  - Marcar comandos: `historialUndo: 'instantanea'` en project.update, project.setTimeSignature, master.update, automation.*,
-    take.delete, comp.segment.*, marker.create, bus.create, send.set, sidechain.connect, track.freeze/unfreeze;
-    `historialUndo: 'ninguno'` (y sin tocar `modificado`) en transport.* y en el snapshot de plugins del autosave.
-  - Comando `track.snapshotPluginState` / master y su uso en `src/lib/plugin/track-vst-runtime.ts` / `src/lib/session-persist.ts`.
-  - Cablear `gestureId` en `hooks/use-drag-value.ts`, `components/mixer.tsx`, knobs y rueda de BPM (`transport-bar.tsx`).
-  - Confirmaciones UI, `clipInicio` en copiar/pegar/duplicar, batch en cortar/borrar múltiple, tests.
+- **Estado: HECHO (2026-10-20, Claude subagente en `hardening/production`).** Commits `5777b14`, `b684aee`, `1dc0d54`
+  (sobre la infraestructura de `35e489d`).
+- Autosave: `track.snapshotPluginState` / `master.snapshotPluginState` (`shared/src/commands/plugin-commands.ts`) con
+  `historialUndo: 'ninguno'` y sin tocar `modificado`; `snapshotPluginSinCambios` evita ejecutar si el blob/parámetros no
+  cambiaron (`src/lib/plugin/track-vst-runtime.ts`). El master ya guarda el estado de sus plugins.
+- Transporte: todos los `transport.*` (incl. `stop`, `togglePunch`, `toggleCountIn`, `setRecordMode`) con
+  `historialUndo: 'ninguno'`. **Decisión:** loop/metrónomo/punch/count-in son estado de sesión: no entran en la pila ni
+  marcan `modificado` (se siguen guardando con el proyecto si cambian otras cosas).
+- `historialUndo: 'instantanea'` en project.update, project.setTimeSignature, master.update, automation.setCurve/clear/
+  writePoint, take.delete, take.rename, comp.segment.set/clear, marker.create (ahora marca `modificado`), bus.create,
+  send.set, sidechain.connect, track.freeze/unfreeze.
+- Gestos: `src/lib/gesture-id.ts` (`nuevoGestureId`, `crearVentanaGesto(600)`, `opcionesGesto`). `hooks/use-drag-value.ts`
+  da `gestureId` por arrastre y por flechas seguidas; `FaderControl`/`KnobControl` lo propagan; mixer (pistas, master,
+  envíos), inspector (`track-detail-panel.tsx`), rueda de BPM y de compás (`transport-bar.tsx`). Los puntos de
+  automatización escritos durante un arrastre usan la misma clave → se deshacen con el fader. Auto-mix/aleatorio = 1 batch.
+- Confirmaciones: `automation-lanes-panel.tsx` (Limpiar; preset sobre curva con puntos), `take-lanes-panel.tsx` (borrar
+  toma), Ctrl+Delete vía `src/lib/track-delete-request.ts` → mismo `ConfirmDialog` del `ArrangementView` (respaldo
+  `window.confirm`).
+- `clip.create` acepta `clipInicio` (≥0). Pegar/duplicar/cortar/borrar múltiple: `src/lib/clip-edit-commands.ts` +
+  `batchOrNotify` (`execute-or-toast.ts`) en `use-shortcut-dispatcher.ts` y `ClipContextMenu.tsx`; Ctrl+arrastrar duplicado
+  del arrange también conserva `clipInicio`.
+- Tests: `shared/src/test/undo-limpio.test.ts` (15), `jas-wave/src/lib/clip-edit-commands.test.ts`,
+  `src/lib/gesture-id.test.ts`; e2e `jas-wave/e2e/09-undo-validacion.spec.ts`.
+- Pendiente fuera de alcance: `take.add`/`take.folder.ensure` siguen sin undo (invalidan el redo); va con U6.

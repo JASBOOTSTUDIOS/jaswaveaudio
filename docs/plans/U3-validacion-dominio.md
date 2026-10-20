@@ -18,19 +18,19 @@ guardado.
 - Notas MIDI inválidas ya se descartan (`shared/src/project/reparar-notas.ts`), pero en silencio.
 
 ## Tareas
-- [ ] Reescribir `validacion-dominio.ts` con reglas sobre comandos reales: `track.create/update` (nombre no vacío ≤64, único por
+- [x] Reescribir `validacion-dominio.ts` con reglas sobre comandos reales: `track.create/update` (nombre no vacío ≤64, único por
       proyecto con sufijo automático si se repite; no cambiar `id`/`tipo`; volumen 0–1.5; pan −1..1), `project.setBpm/update`
       (BPM 20–300, usar `isValidBpm` si existe), `project.setTimeSignature/update` (numerador entero 1–32, denominador ∈ {1,2,4,8,16,32}),
       `clip.*` (inicio ≥0, duración >0, pista compatible con el tipo de clip), `master.update` (volumen 0–1.5).
-- [ ] Cablear `crearReglasDominio()` en `shared/src/state/tienda.ts` (pipeline).
-- [ ] `ejecutor-comandos.ts`: validar el **estado resultante** con `validarProyecto` (esquema zod) antes de confirmar; si falla,
+- [x] Cablear `crearReglasDominio()` en `shared/src/state/tienda.ts` (pipeline).
+- [x] `ejecutor-comandos.ts`: validar el **estado resultante** con `validarProyecto` (esquema zod) antes de confirmar; si falla,
       no aplicar y devolver `VALIDATION_FAILED` con el mensaje del esquema (incluir en batch: rollback del lote).
-- [ ] `project.save` / `guardarProyecto`: validar con el esquema antes de escribir (nunca escribir ni rotar `.bak` con datos inválidos).
-- [ ] UI: componente `components/ui/numeric-field.tsx` (parse, clamp, Enter/blur confirma, Esc/valor inválido revierte, muestra error)
+- [x] `project.save` / `guardarProyecto`: validar con el esquema antes de escribir (nunca escribir ni rotar `.bak` con datos inválidos).
+- [x] UI: componente `components/ui/numeric-field.tsx` (parse, clamp, Enter/blur confirma, Esc/valor inválido revierte, muestra error)
       usado en settings (BPM, compás, sample rate, buffer), transport-bar (arreglar editor de compás: confirmar al salir del
       **grupo**, no del numerador), inspector de pista/clip/nota.
-- [ ] Aviso visible (toast) cuando se descartan notas MIDI inválidas o se corrige un nombre duplicado.
-- [ ] Tests: cada regla; BPM 0 rechazado en comando y en settings; guardado con estado inválido rechazado sin tocar `.bak`.
+- [x] Aviso visible (toast) cuando se descartan notas MIDI inválidas o se corrige un nombre duplicado.
+- [x] Tests: cada regla; BPM 0 rechazado en comando y en settings; guardado con estado inválido rechazado sin tocar `.bak`.
 
 ## Archivos
 `shared/src/state/{validacion-dominio,tienda,ejecutor-comandos}.ts`, `shared/src/commands/{auxiliary,domain}-commands.ts`,
@@ -44,12 +44,23 @@ guardado.
 `npm run verify`; e2e: escribir BPM vacío/0 → se revierte; guardar → reabrir funciona.
 
 ## Notas de traspaso
-- **Estado real (revisión del coordinador, 2026-10-20): PARCIAL.** Hecho en `e2e8776` y `35e489d`:
-  - [x] reglas reales en `shared/src/state/validacion-dominio.ts` cableadas en `shared/src/state/tienda.ts` (tests en
-    `shared/src/test/validacion-dominio.test.ts`).
-  - [x] validación del estado resultante con el esquema en `ejecutor-comandos.ts`.
-  - [x] `project.save` valida con el esquema antes de escribir (`shared/src/project/persistencia.ts`).
-- **Falta:** componente `NumericField` y su uso en settings/transport-bar/inspector (el commit `4d64ae6` dice hacerlo pero
-  solo contiene `CONTEXTO-PROYECTO.md`; el cambio de UI no llegó al repo), arreglo del editor de compás del transport-bar,
-  aviso visible de notas descartadas / nombres corregidos, y medir el coste de validar con esquema en cada comando
-  (test de 1000 `track.update` con límite de tiempo).
+- **Estado: HECHO (2026-10-20, Claude subagente en `hardening/production`).** Reglas/esquema/guardado en `e2e8776` y
+  `35e489d`; UI, avisos y rendimiento en `b684aee`, `1dc0d54`.
+- `jas-wave/components/ui/numeric-field.tsx` (lógica pura en `src/lib/numeric-parse.ts`): parsea (acepta coma decimal),
+  recorta o rechaza fuera de rango (`recortar`), `entero`, `permitidos`; Enter/blur confirma, Esc/inválido revierte con
+  mensaje (`onInvalid` → toast cuando el editor se cierra). Nunca confirma vacío/NaN ni el mismo valor.
+- `components/ui/time-signature-field.tsx`: confirma al salir del **grupo** (Tab num→den no confirma). Usado en
+  `transport-bar.tsx` y `project-settings-dialog.tsx`.
+- Ajustes del proyecto: BPM → `project.setBpm`, compás → `project.setTimeSignature`, nombre → `project.update` solo si
+  cambió (antes cada blur reenviaba todo y ensuciaba undo). Sample rate / bit depth / buffer son `<select>` de valores
+  cerrados (no necesitan NumericField). BPM fuera de 20–300 (p. ej. 0) se rechaza, no se recorta.
+- Inspector: inicio/duración de clip (`track-detail-panel.tsx`, antes ejecutaba `clip.move` con NaN en cada tecla) y
+  pitch/inicio/dur/vel/canal de nota (`piano-roll.tsx`).
+- Avisos: `validacion.advertencia` `MIDI_NOTES_DISCARDED` en midi.clip.create / midi.notes.set / midi.notes.create
+  (`domain-commands.ts`), `MIDI_NOTES_REPAIRED` al restaurar sesión (`session-persist.ts`) y al abrir (ya existía),
+  `TRACK_NAME_DUPLICATED` (ya existía); `event-toasts.tsx` los muestra. `INVALID_INPUT` para entradas rechazadas.
+- Rendimiento: `shared/src/test/rendimiento-validacion.test.ts` — 1000 `track.update` sobre 32 pistas × 8 clips × 64 notas
+  con validación incremental (`validarCambiosProyecto`, solo subárboles tocados) ≈ 0,3 s (límite 4 s); el esquema completo
+  se usa al guardar/cargar. No hizo falta optimizar más.
+- Tests: `shared/src/test/avisos-visibles.test.ts`, `rendimiento-validacion.test.ts`, `jas-wave/src/lib/numeric-parse.test.ts`;
+  e2e `09-undo-validacion` (BPM vacío/0/texto se revierte).
