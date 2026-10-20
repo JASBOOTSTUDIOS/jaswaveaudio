@@ -29,6 +29,10 @@ declare global {
       windowMaximize: () => Promise<void>
       windowClose: () => Promise<void>
       windowIsMaximized: () => Promise<boolean>
+      /** Cierre de la ventana principal pendiente de confirmar (cambios sin guardar). */
+      onAppCloseRequested?: (callback: () => void) => () => void
+      confirmAppClose?: () => Promise<boolean>
+      cancelAppClose?: () => Promise<boolean>
       onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => () => void
       getAppVersion: () => Promise<string>
       logError?: (scope: string, message: string, stack?: string) => void
@@ -127,28 +131,18 @@ export function useFileService() {
   const tienda = useDAW()
   const loadingRef = useRef(false)
 
+  // Guardar / Guardar como: el guard único de project-io une llamadas concurrentes
+  // (barra, atajo, menú, IA): la segunda espera al mismo guardado.
   const save = useCallback(async () => {
-    if (loadingRef.current) return { success: false, error: 'Operation in progress' }
-    loadingRef.current = true
-    try {
-      const result = await guardarProyectoIO(tienda)
-      if (!result.success && !result.canceled) await notificarFallo(tienda, 'project.save', result.error)
-      return result
-    } finally {
-      loadingRef.current = false
-    }
+    const result = await guardarProyectoIO(tienda)
+    if (!result.success && !result.canceled) await notificarFallo(tienda, 'project.save', result.error)
+    return result
   }, [tienda])
 
   const saveAs = useCallback(async () => {
-    if (loadingRef.current) return { success: false, error: 'Operation in progress' }
-    loadingRef.current = true
-    try {
-      const result = await guardarProyectoComoIO(tienda)
-      if (!result.success && !result.canceled) await notificarFallo(tienda, 'project.saveAs', result.error)
-      return result
-    } finally {
-      loadingRef.current = false
-    }
+    const result = await guardarProyectoComoIO(tienda)
+    if (!result.success && !result.canceled) await notificarFallo(tienda, 'project.saveAs', result.error)
+    return result
   }, [tienda])
 
   const openDialog = useCallback(async () => {
@@ -168,7 +162,8 @@ export function useFileService() {
     loadingRef.current = true
     try {
       const result = await nuevoProyectoIO(tienda)
-      if (!result.success) await notificarFallo(tienda, 'project.new', result.error)
+      // Cancelar en el diálogo de cambios sin guardar no es un error.
+      if (!result.success && !result.canceled) await notificarFallo(tienda, 'project.new', result.error)
       return result
     } finally {
       loadingRef.current = false

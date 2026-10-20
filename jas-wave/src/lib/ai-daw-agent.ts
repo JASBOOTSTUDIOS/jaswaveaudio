@@ -539,6 +539,18 @@ function withCommandSource(base: TiendaDAW, source: CommandSource): TiendaDAW {
   })
 }
 
+/** Acción bloqueada por cambios sin guardar: el usuario canceló (o falló el guardado previo). */
+function resultadoNecesitaUsuario(type: string, error?: string): ActionResult {
+  return {
+    type,
+    success: false,
+    message: error
+      ? `No se continuó: ${error}. El proyecto tiene cambios sin guardar; pide al usuario que guarde o confirme.`
+      : 'El usuario canceló: el proyecto tiene cambios sin guardar. Pide al usuario que guarde o confirme antes de reintentar.',
+    data: { needsUser: true, motivo: 'cambios-sin-guardar' },
+  }
+}
+
 export async function executeDawActions(
   tiendaBase: TiendaDAW,
   actions: DawAction[],
@@ -3001,6 +3013,13 @@ export async function executeDawActions(
         }
         case 'project.new': {
           const nombre = String(p.nombre ?? 'Proyecto nuevo').trim() || 'Proyecto nuevo'
+          // Cambios sin guardar: el usuario decide en el diálogo; la IA nunca descarta en silencio.
+          const { confirmarCambiosIO } = await import('./project-io')
+          const conf = await confirmarCambiosIO(tienda, 'nuevo', 'ia')
+          if (!conf.continuar) {
+            results.push(resultadoNecesitaUsuario(action.type, conf.error))
+            break
+          }
           const r = await tienda.executor.execute('project.new', { nombre })
           results.push({
             type: action.type,
@@ -3050,7 +3069,12 @@ export async function executeDawActions(
             results.push({ type: action.type, success: false, message: 'Falta ruta del .jaswave' })
             break
           }
-          const { cargarProyectoDesdeRutaIO } = await import('./project-io')
+          const { cargarProyectoDesdeRutaIO, confirmarCambiosIO } = await import('./project-io')
+          const conf = await confirmarCambiosIO(tienda, 'abrir', 'ia')
+          if (!conf.continuar) {
+            results.push(resultadoNecesitaUsuario(action.type, conf.error))
+            break
+          }
           const r = await cargarProyectoDesdeRutaIO(tienda, ruta)
           results.push({
             type: action.type,

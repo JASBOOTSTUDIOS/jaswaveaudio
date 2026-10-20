@@ -187,6 +187,26 @@ let pendingForcePluginSnapshot = false
 let lastVstSnapshotAt = 0
 const VST_SNAPSHOT_MIN_MS = 12_000
 
+/**
+ * Cierre de la app confirmado: a partir de aquí los flush de sesión no hacen RPC al plugin
+ * host (puede estar parándose) y solo vuelcan el estado ya conocido a IndexedDB.
+ */
+let cierreApp = false
+export function marcarCierreApp(): void {
+  cierreApp = true
+}
+
+/** Flush final antes de cerrar: espera al guardado en curso y vuelca uno nuevo (sin RPC VST). */
+export async function flushSessionForClose(tienda: TiendaDAW): Promise<void> {
+  marcarCierreApp()
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  while (saving) await new Promise((r) => setTimeout(r, 25))
+  await saveSessionNow(tienda)
+}
+
 export async function saveSessionNow(
   tienda: TiendaDAW,
   opts?: { forcePluginSnapshot?: boolean },
@@ -202,7 +222,7 @@ export async function saveSessionNow(
     const force = pendingForcePluginSnapshot
     pendingForcePluginSnapshot = false
     const now = Date.now()
-    if (force || now - lastVstSnapshotAt >= VST_SNAPSHOT_MIN_MS) {
+    if (!cierreApp && (force || now - lastVstSnapshotAt >= VST_SNAPSHOT_MIN_MS)) {
       try {
         const { snapshotLoadedPluginsIntoProject } = await import('./plugin/track-vst-runtime')
         await snapshotLoadedPluginsIntoProject(tienda)

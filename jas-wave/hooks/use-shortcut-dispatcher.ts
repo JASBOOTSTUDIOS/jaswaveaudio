@@ -241,7 +241,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       },
       'project.close': () => {
         void cerrarProyectoIO(tienda).then((r) => {
-          if (!r.success) {
+          if (!r.success && !r.canceled) {
             tienda.busEventos.emit('comando.fallido', { type: 'project.close', error: String(r.error ?? 'Error') })
           }
         })
