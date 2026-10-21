@@ -17,6 +17,7 @@ import { AutomationLanesPanel } from '@/components/automation-lanes-panel'
 import { PluginEditorPanel } from '@/components/plugin-editor-panel'
 import { MidiMapPanel } from '@/components/midi-map-panel'
 import { SettingsPanel } from '@/components/project-settings-dialog'
+import { ProgressPanel } from '@/components/progress-panel'
 import { useDAWState } from '@/src/context/daw-context'
 import type { ToolId } from '@/src/workspace/types'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
@@ -79,6 +80,8 @@ function ToolContent({ toolId }: { toolId: ToolId }) {
       return <MidiMapPanel />
     case 'settings':
       return <SettingsPanel />
+    case 'progress':
+      return <ProgressPanel />
     case 'library':
       return <LibraryPanel />
     case 'meters':
