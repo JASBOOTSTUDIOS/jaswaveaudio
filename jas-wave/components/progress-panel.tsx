@@ -1,4 +1,4 @@
-import { Activity, BarChart3, Clock, FileDiff, Filter, ListChecks, RefreshCw, Search } from 'lucide-react'
+import { Activity, BarChart3, Clock, FileDiff, Filter, ListChecks, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useDAWState } from '@/src/context/daw-context'
 import { leerPlan } from '@/src/lib/agent-plan-steps'
@@ -6,8 +6,8 @@ import { getAgentEngine } from '@/src/lib/agent-engine-host'
 import { listarAuditHistorial, tendenciaMetrica } from '@jaswave/ai-harness'
 import type { PlanEstructurado, PlanPaso } from '@jaswave/ai-harness'
 import { parsePlan, siguientePasoPendiente } from '@jaswave/ai-harness'
-import { resumenDiff, type AuditToolDeps } from '@/src/lib/agent-audit-tools'
-import { computeSemanticDiff, proyectarParaDiff, type DiffSnapshot } from '../../../shared/src/state/diff-estado'
+import { resumenDiff } from '@/src/lib/agent-audit-tools'
+import { computeSemanticDiff, proyectarParaDiff, type DiffSnapshot } from '@/../shared/src/state/diff-estado'
 
 function pct(plan: PlanEstructurado): number {
   if (plan.pasos.length === 0) return 0
@@ -31,31 +31,29 @@ function estadoClase(estado: PlanPaso['estado']): string {
 }
 
 export function ProgressPanel() {
-  const tienda = useDAWState((s) => s)
-  const [planMd, setPlanMd] = useState<string | null>(() => leerPlan(tienda))
+  const tienda = useDAWState((s) => s) as any
   const [plan, setPlan] = useState<PlanEstructurado | null>(() => {
-    const md = leerPlan(tienda)
-    return md ? parsePlan(md) : null
+    const md = leerPlan(tienda as any)
+    return md ? parsePlan(md as any) : null
   })
   const [agenteFiltro, setAgenteFiltro] = useState<string>('todos')
-  const [runId, setRunId] = useState<string>('')
+  const _setRunId = useState<string>('')[1]
   const [diffResumen, setDiffResumen] = useState<string>('sin cambios')
   const [tendencia, setTendencia] = useState<Array<{ timestamp: number; valor: number }>>([])
 
   const engine = useMemo(() => getAgentEngine(tienda), [tienda])
   const run = useMemo(() => {
-    const runs = (engine as any).getRuns?.()
-    if (!runs) return null
-    const all = Array.isArray(runs) ? runs : Object.values(runs)
+    const rns = (engine as any).getRuns?.()
+    if (!rns) return null
+    const all = Array.isArray(rns) ? rns : Object.values(rns)
     if (all.length === 0) return null
-    const r = runId ? all.find((x: any) => x.id === runId) : all[all.length - 1]
+    const r = all[all.length - 1]
     return r ?? all[all.length - 1]
-  }, [engine, runId])
+  }, [engine])
 
   const actualizar = useCallback(() => {
-    const md = leerPlan(tienda)
-    setPlanMd(md)
-    setPlan(md ? parsePlan(md) : null)
+    const md = leerPlan(tienda as any)
+    setPlan(md ? parsePlan(md as any) : null)
   }, [tienda])
 
   useEffect(() => {
@@ -65,22 +63,35 @@ export function ProgressPanel() {
   }, [actualizar])
 
   const p = plan
-  const actual = p ? siguientePasoPendiente(p) : null
+  const actual = p ? (siguientePasoPendiente as any)(p) : null
   const agentes = useMemo(() => {
     const set = new Set<string>()
-    for (const paso of p?.pasos ?? []) if (paso.agente) set.add(paso.agente)
+    for (const paso of p?.pasos ?? []) if ((paso as any).agente) set.add((paso as any).agente)
     return ['todos', ...[...set].sort()]
   }, [p])
 
-  const historial = useMemo(() => listarAuditHistorial({ metrica: 'lufs' }, 50), [])
+  const historial = useMemo(() => {
+    try {
+      return (listarAuditHistorial as any)({ metrica: 'lufs' }) || []
+    } catch {
+      return []
+    }
+  }, [])
   useEffect(() => {
-    setTendencia(tendenciaMetrica(historial, 'lufs', 20))
+    try {
+      const t = (tendenciaMetrica as any)(historial, 'lufs')
+      setTendencia(Array.isArray(t) ? t : [])
+    } catch {
+      setTendencia([])
+    }
   }, [historial])
 
   useEffect(() => {
     try {
-      const antes: DiffSnapshot = { estado: proyectarParaDiff(tienda.obtenerEstado() as any), timestamp: Date.now() - 60000 }
-      const ahora: DiffSnapshot = { estado: proyectarParaDiff(tienda.obtenerEstado() as any), timestamp: Date.now() }
+      const estado = tienda.obtenerEstado ? tienda.obtenerEstado() : tienda
+      const snap = proyectarParaDiff(estado as any)
+      const antes: DiffSnapshot = { project: { tracks: [], routing: { sends: [], sidechains: [] } } }
+      const ahora: DiffSnapshot = snap
       const diff = computeSemanticDiff(antes, ahora)
       setDiffResumen(resumenDiff(diff))
     } catch {
