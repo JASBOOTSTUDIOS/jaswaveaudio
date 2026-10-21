@@ -238,7 +238,7 @@ export function parsePlan(md: string | null | undefined): PlanEstructurado | nul
 export function serializePlan(plan: PlanEstructurado): string {
     const pasos = plan.pasos.map((p) => {
       const mark = ESTADO_TO_MARK[p.estado] ?? ' '
-      const head = `- [${mark}] ${p.id} - ${p.fase || 'general'} - @${p.agente || 'director'} - ${p.titulo}`
+      const head = `- [${mark}] ${p.id} · ${p.fase || 'general'} · @${p.agente || 'director'} — ${p.titulo}`
       const sub: string[] = []
       for (const c of p.criterios) sub.push(`  - criterio: ${c}`)
       if (p.herramientas.length) sub.push(`  - herramientas: ${p.herramientas.join(', ')}`)
@@ -250,7 +250,7 @@ export function serializePlan(plan: PlanEstructurado): string {
   return [
     `# Plan · ${plan.titulo || 'Plan'}`,
     '',
-    `> Objetivo: ${plan.objetivo || '—'} · Modo: ${plan.modo || 'create'} · Estado: ${plan.estadoPlan} (${plan.fecha || hoy()}) · Revisión: ${plan.revision}`,
+    `> Objetivo: ${plan.objetivo || '-'} · Modo: ${plan.modo || 'create'} · Estado: ${plan.estadoPlan} (${plan.fecha || hoy()}) · Revisión: ${plan.revision}`,
     '',
     `## ${PLAN_PASOS_HEADING}`,
     pasos.length ? pasos.join('\n') : '_Sin pasos todavía._',
