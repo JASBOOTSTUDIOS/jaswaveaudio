@@ -17,7 +17,7 @@ import { AiCredentialStore } from './ai-credentials'
 import { initLogger, logLine } from './logger'
 import { writeFileAtomic } from './atomic-write'
 import { defaultVstRoots, isAudioFile, PathAccessError, PathGrants, type AccessKind, type GrantMode } from './path-grants'
-import { checkHostCommand } from './plugin-host-guard'
+import { checkHostCommand, setAnalysisRoot } from './plugin-host-guard'
 import { initAutoUpdater } from './updater'
 import {
   createGuardedIpc,
@@ -64,6 +64,8 @@ function readPersistedGrants(): Array<{ root: string; mode: GrantMode }> {
 
 function initPathGrants() {
   pathGrants.grant(app.getPath('userData'), 'readwrite')
+  // Renders de análisis (A7b): escritura libre solo bajo userData/analysis/.
+  setAnalysisRoot(path.join(app.getPath('userData'), 'analysis'))
   for (const root of defaultVstRoots(process.env)) pathGrants.grant(root, 'read')
   if (process.resourcesPath) pathGrants.grant(process.resourcesPath, 'read')
   for (const g of readPersistedGrants()) pathGrants.grant(g.root, g.mode)
