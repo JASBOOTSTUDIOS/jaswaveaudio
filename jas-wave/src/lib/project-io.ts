@@ -43,8 +43,23 @@ async function persistirRutaYGuardar(tienda: TiendaDAW, ruta: string): Promise<R
   const nombre = nombreAlGuardar(tienda.obtenerEstado().project.nombre, ruta)
   const upd = await tienda.executor.execute('project.update', { datos: { ruta, nombre } })
   if (!upd.success) return { success: false, error: upd.error }
+  await asentarMediaEnProyecto(tienda, ruta)
   const result = await tienda.executor.execute('project.save', { ruta })
   return { success: result.success, error: result.error, path: ruta }
+}
+
+/**
+ * Antes de guardar: mueve el media pendiente (`media/pending/`) al `media/` del
+ * proyecto y reapunta los clips. Así el archivo guardado ya guarda la ruta
+ * definitiva. Si algo falla, el proyecto se guarda igual.
+ */
+async function asentarMediaEnProyecto(tienda: TiendaDAW, ruta: string): Promise<void> {
+  try {
+    const { moverMediaPendienteAlProyecto } = await import('./project-media-flow')
+    await moverMediaPendienteAlProyecto(tienda, ruta)
+  } catch {
+    /* best-effort: el proyecto se guarda aunque el media no se asiente */
+  }
 }
 
 /**
@@ -75,6 +90,7 @@ async function guardarProyectoImpl(tienda: TiendaDAW): Promise<ResultadoIO> {
     return { success: false, error: 'Debe indicar una ruta de guardado' }
   }
 
+  await asentarMediaEnProyecto(tienda, state.project.ruta)
   const result = await tienda.executor.execute('project.save', {})
   return { success: result.success, error: result.error, path: state.project.ruta }
 }
@@ -92,9 +108,23 @@ async function guardarProyectoComoImpl(tienda: TiendaDAW): Promise<ResultadoIO> 
     /* ignore */
   }
   const state = tienda.obtenerEstado()
+  const rutaAnterior = state.project.ruta
   const dialog = await window.electron.dialogSave(nombreSugeridoDialogo(state.project.nombre))
   if (dialog.canceled || !dialog.filePath) return { success: false, error: 'Canceled', canceled: true }
-  return persistirRutaYGuardar(tienda, rutaNormalizada(dialog.filePath))
+  const ruta = rutaNormalizada(dialog.filePath)
+
+  // "Guardar como": el media del proyecto se copia a la carpeta destino.
+  // Las rutas relativas no cambian, solo los archivos.
+  if (rutaAnterior && rutaAnterior !== ruta) {
+    try {
+      const { copiarMediaEntreProyectos } = await import('./project-media-flow')
+      await copiarMediaEntreProyectos(rutaAnterior, ruta)
+    } catch {
+      /* best-effort: el proyecto se guarda aunque falle la copia del media */
+    }
+  }
+
+  return persistirRutaYGuardar(tienda, ruta)
 }
 
 /**
@@ -145,6 +175,7 @@ export async function cargarProyectoDesdeRutaIO(tienda: TiendaDAW, ruta: string)
   if (!loaded.success) {
     return { success: false, error: loaded.error ?? 'Error al cargar proyecto' }
   }
+  await avisarMediaFaltante(tienda, loaded.result, ruta)
   try {
     const { loadLibraryFromDisk } = await import('./library/preset-catalog')
     const project = tienda.obtenerEstado().project
@@ -166,6 +197,29 @@ export async function cargarProyectoDesdeRutaIO(tienda: TiendaDAW, ruta: string)
     /* migración best-effort */
   }
   return { success: true, path: ruta }
+}
+
+/**
+ * Si el proyecto se abrió con audio faltante, publica el aviso para el
+ * diálogo "Media faltante" (no bloquea la carga: el proyecto sigue abierto).
+ */
+async function avisarMediaFaltante(
+  tienda: TiendaDAW,
+  result: unknown,
+  ruta: string,
+): Promise<void> {
+  const mediaFaltante = (result as { mediaFaltante?: Array<{ id: string; rutaRelativa: string; formato?: string }> })
+    ?.mediaFaltante
+  if (!Array.isArray(mediaFaltante) || mediaFaltante.length === 0) return
+  try {
+    const { solicitarMediaFaltante } = await import('./media-faltante')
+    void solicitarMediaFaltante(
+      mediaFaltante.map((r) => ({ id: r.id, rutaRelativa: r.rutaRelativa, formato: r.formato })),
+      ruta,
+    )
+  } catch {
+    /* best-effort */
+  }
 }
 
 export async function nuevoProyectoIO(

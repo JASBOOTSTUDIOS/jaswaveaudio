@@ -41,7 +41,42 @@ export async function saveRecordingWav(
   const absPath = joinPath(dir, fileName)
   const result = await window.electron.fileSaveBinary(absPath, bytes)
   if (!result?.success) return null
-  return { absPath, sourceId: recordingRelativePath(fileName) }
+  // Dentro del proyecto → ruta relativa (`media/grabaciones/x.wav`).
+  // Fuera (userData) → ruta absoluta: el proyecto la guarda tal cual.
+  const sourceId = esMediaDelProyecto(dir, projectRuta) ? recordingRelativePath(fileName) : absPath
+  return { absPath, sourceId }
+}
+
+/** ¿La carpeta de grabaciones está dentro de la carpeta del proyecto? */
+export function esMediaDelProyecto(dir: string, projectRuta?: string | null): boolean {
+  if (!projectRuta) return false
+  const proyecto = projectRuta.replace(/[\\/]+$/, '')
+  const base = proyecto.replace(/\\/g, '/')
+  const objetivo = dir.replace(/\\/g, '/').replace(/\/+$/, '')
+  return objetivo.startsWith(`${base}/`)
+}
+
+/**
+ * Reintento: guarda la grabación en `userData/media/grabaciones/` cuando el
+ * proyecto no permite escribir (proyecto en solo lectura, disco lleno…).
+ * Devuelve la ruta ABSOLUTA: el proyecto guardará esa ruta tal cual.
+ */
+export async function saveRecordingWavFallback(
+  bytes: Uint8Array,
+  fileName: string,
+): Promise<{ absPath: string; sourceId: string } | null> {
+  const api = window.electron
+  if (!api?.userDataPath || !api.fileSaveBinary) return null
+  try {
+    const userData = await api.userDataPath()
+    const dir = joinPath(joinPath(userData, 'media'), 'grabaciones')
+    const absPath = joinPath(dir, fileName)
+    const result = await api.fileSaveBinary(absPath, bytes)
+    if (!result?.success) return null
+    return { absPath, sourceId: absPath }
+  } catch {
+    return null
+  }
 }
 
 export function recordingBasename(sourceId: string): string | null {

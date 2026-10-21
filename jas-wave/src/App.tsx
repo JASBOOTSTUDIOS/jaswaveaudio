@@ -18,6 +18,7 @@ import { TransportBar } from '@/components/transport-bar'
 import { EditToolbar } from '@/components/edit-toolbar'
 import { EventToasts } from '@/components/event-toasts'
 import { ProjectCloseDialog } from '@/components/project-close-dialog'
+import { MediaFaltanteDialog } from '@/components/media-faltante-dialog'
 import { AppCloseGuard } from '@/components/app-close-guard'
 import { DockZonePanel } from '@/components/workspace/ide-shell'
 import { ToolHost } from '@/components/workspace/tool-host'
@@ -311,6 +312,7 @@ function AppShell() {
       <EventToasts />
       <UpdateBanner />
       <ProjectCloseDialog />
+      <MediaFaltanteDialog />
       <AppCloseGuard />
       <ScoreExportMenuListener />
       <ScorePreviewDialog />
