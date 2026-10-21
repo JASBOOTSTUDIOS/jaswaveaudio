@@ -374,3 +374,5 @@ export {
 } from './ask/selection'
 
 export * from './engine'
+export * from './audit'
+export * from './plan/criteria'

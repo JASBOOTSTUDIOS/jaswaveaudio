@@ -35,6 +35,8 @@ export type PlanPaso = {
   criterios: string[]
   herramientas: string[]
   evidencia: string[]
+  /** Notas del agente sobre el paso (no son evidencia ni criterios). */
+  notas?: string[]
   motivoBloqueo?: string
 }
 
@@ -181,6 +183,7 @@ export function parsePlan(md: string | null | undefined): PlanEstructurado | nul
       criterios: [],
       herramientas: [],
       evidencia: [],
+      notas: [],
     }
     if (motivo) paso.motivoBloqueo = motivo
     // Sublíneas indentadas del paso.
@@ -209,6 +212,11 @@ export function parsePlan(md: string | null | undefined): PlanEstructurado | nul
         paso.motivoBloqueo = blo
         continue
       }
+      const nota = subField(nxt, 'nota')
+      if (nota !== null) {
+        paso.notas!.push(nota)
+        continue
+      }
     }
     pasos.push(paso)
   }
@@ -228,16 +236,17 @@ export function parsePlan(md: string | null | undefined): PlanEstructurado | nul
 
 /** Serializa a markdown canónico (round-trip estable con `parsePlan`). */
 export function serializePlan(plan: PlanEstructurado): string {
-  const pasos = plan.pasos.map((p) => {
-    const mark = ESTADO_TO_MARK[p.estado] ?? ' '
-    const head = `- [${mark}] ${p.id} · ${p.fase || 'general'} · @${p.agente || 'director'} — ${p.titulo}`
-    const sub: string[] = []
-    for (const c of p.criterios) sub.push(`  - criterio: ${c}`)
-    if (p.herramientas.length) sub.push(`  - herramientas: ${p.herramientas.join(', ')}`)
-    for (const e of p.evidencia) sub.push(`  - evidencia: ${e}`)
-    if (p.estado === 'bloqueado' && p.motivoBloqueo) sub.push(`  - bloqueado: ${p.motivoBloqueo}`)
-    return [head, ...sub].join('\n')
-  })
+    const pasos = plan.pasos.map((p) => {
+      const mark = ESTADO_TO_MARK[p.estado] ?? ' '
+      const head = `- [${mark}] ${p.id} - ${p.fase || 'general'} - @${p.agente || 'director'} - ${p.titulo}`
+      const sub: string[] = []
+      for (const c of p.criterios) sub.push(`  - criterio: ${c}`)
+      if (p.herramientas.length) sub.push(`  - herramientas: ${p.herramientas.join(', ')}`)
+      for (const e of p.evidencia) sub.push(`  - evidencia: ${e}`)
+      for (const n of p.notas ?? []) sub.push(`  - nota: ${n}`)
+      if (p.estado === 'bloqueado' && p.motivoBloqueo) sub.push(`  - bloqueado: ${p.motivoBloqueo}`)
+      return [head, ...sub].join('\n')
+    })
   return [
     `# Plan · ${plan.titulo || 'Plan'}`,
     '',
