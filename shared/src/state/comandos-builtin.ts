@@ -49,6 +49,7 @@ import {
   crearComandoClipRestore,
   crearComandoClipRestoreMany,
   crearComandoClipMove,
+  crearComandoClipSetSource,
   crearComandoClipResize,
   crearComandoClipSplit,
   crearComandoMidiClipSplitIntoSections,
@@ -206,6 +207,7 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoClipRestore(), registry);
   registrar(crearComandoClipRestoreMany(), registry);
   registrar(crearComandoClipMove(), registry);
+  registrar(crearComandoClipSetSource(), registry);
   registrar(crearComandoClipResize(), registry);
   registrar(crearComandoClipSplit(), registry);
   registrar(crearComandoMidiClipSplitIntoSections(), registry);

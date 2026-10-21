@@ -22,6 +22,7 @@ import type { FileService } from '../project/persistencia';
 import type { EventoDominio } from '../events/evento-dominio';
 import { NombresEventos, EventosProyecto } from '../constants/nombres-eventos';
 import { proyectoNuevo, nombreAlGuardar } from '../project/ciclo-vida';
+import type { AudioReference } from '../project/ciclo-vida';
 import { crearValidadorConflictos } from '../state/validacion-conflictos';
 import { guardarProyecto, cargarProyectoConRespaldo, rutaRespaldo } from '../project/persistencia';
 
@@ -181,9 +182,13 @@ export function crearComandoProjectLoad(): CommandDefinition<ProjectLoadPayload>
 
       // Si el archivo está dañado y existe `${ruta}.bak`, se recupera la copia.
       let notasMidiDescartadas = 0;
+      const mediaFaltante: AudioReference[] = [];
       const { proyecto, usadoRespaldo, errorOriginal } = await cargarProyectoConRespaldo(ruta, fileService, {
         onNotasMidiDescartadas: (cantidad) => {
           notasMidiDescartadas += cantidad;
+        },
+        onMediaFaltante: (faltantes) => {
+          mediaFaltante.push(...faltantes);
         },
       });
       const proyectoConRuta: ProjectState = {
@@ -230,11 +235,28 @@ export function crearComandoProjectLoad(): CommandDefinition<ProjectLoadPayload>
           },
         });
       }
+      if (mediaFaltante.length > 0) {
+        events.push({
+          nombre: 'validacion.advertencia',
+          version: 1,
+          marcaTiempo,
+          fuente: 'project-commands',
+          payload: {
+            code: 'MEDIA_FALTANTE',
+            message: `Faltan ${mediaFaltante.length} archivo(s) de media del proyecto`,
+            referencias: mediaFaltante.map((r) => ({
+              id: r.id,
+              rutaRelativa: r.rutaRelativa,
+              formato: r.formato,
+            })),
+          },
+        });
+      }
 
       return {
         state: { ...estado, project: proyectoConRuta },
         events,
-        result: { ruta, usadoRespaldo },
+        result: { ruta, usadoRespaldo, mediaFaltante },
       };
     },
   };

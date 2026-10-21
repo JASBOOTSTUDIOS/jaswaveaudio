@@ -394,6 +394,16 @@ export type ClipMovePayload = {
   pistaDestinoId?: string;
 };
 
+/** Reapunta el audio de un clip (reenlace de media faltante). */
+export type ClipSetSourcePayload = {
+  pistaId: string;
+  clipId: string;
+  /** Nueva clave de fuente: ruta relativa de media (`media/x.wav`) o id de buffer. */
+  sourceId: string;
+  /** Nombre visible opcional del clip. */
+  nombre?: string;
+};
+
 export type ClipResizePayload = {
   pistaId: string;
   clipId: string;
@@ -2167,6 +2177,76 @@ export function crearComandoClipMove(): CommandDefinition<ClipMovePayload> {
           clipId: payload.clipId,
           inicio: inicioAnterior,
           pistaDestinoId: payload.pistaId,
+        },
+      };
+    },
+  };
+}
+
+export function crearComandoClipSetSource(): CommandDefinition<ClipSetSourcePayload> {
+  return {
+    type: 'clip.setSource',
+    inverseType: 'clip.setSource',
+    description: 'Reapunta el audio de un clip (reenlace de media faltante)',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        pistaId: { type: 'string' },
+        clipId: { type: 'string' },
+        sourceId: { type: 'string' },
+        nombre: { type: 'string' },
+      },
+      required: ['pistaId', 'clipId', 'sourceId'],
+      additionalProperties: false,
+    },
+    handler: (estado: DAWState, payload: ClipSetSourcePayload): StateTransition<ClipSetSourcePayload> => {
+      const pista = estado.project.tracks.find(t => t.id === payload.pistaId);
+      if (!pista) {
+        throw new Error(`Pista no encontrada: ${payload.pistaId}`);
+      }
+      const clip = (pista.clips as any[]).find(c => c.id === payload.clipId);
+      if (!clip) {
+        throw new Error(`Clip no encontrado: ${payload.clipId}`);
+      }
+      if (typeof payload.sourceId !== 'string' || payload.sourceId.trim() === '') {
+        throw new Error('La nueva fuente del clip no puede estar vacía');
+      }
+
+      const sourceAnterior = clip.source?.ruta ?? '';
+      const nombreAnterior = clip.nombre ?? '';
+
+      const clipActualizado = {
+        ...clip,
+        nombre: payload.nombre ?? clip.nombre,
+        source: {
+          ...(clip.source ?? {}),
+          ruta: payload.sourceId,
+        },
+      };
+
+      const pistaActualizada = {
+        ...pista,
+        clips: (pista.clips as any[]).map(c => (c.id === payload.clipId ? clipActualizado : c)),
+        fechaModificacion: Date.now(),
+      } as Track;
+
+      const proyecto: ProjectState = {
+        ...estado.project,
+        tracks: estado.project.tracks.map(t => (t.id === payload.pistaId ? pistaActualizada : t)),
+        modificado: true,
+        fechaModificacion: Date.now(),
+      };
+
+      return {
+        state: { ...estado, project: proyecto },
+        events: [],
+        result: { ...payload },
+        inversePayload: {
+          pistaId: payload.pistaId,
+          clipId: payload.clipId,
+          sourceId: sourceAnterior,
+          nombre: nombreAnterior,
         },
       };
     },

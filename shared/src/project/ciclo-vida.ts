@@ -3,13 +3,66 @@ import type { BPM } from '../types/tiempo';
 import type { TimeSignature } from '../types/tiempo';
 import type { RoutingMatrix } from '../types/routing';
 
+/** Formatos de audio que JasWave puede referenciar desde el proyecto. */
+export type FormatoAudioReferencia = 'wav' | 'flac' | 'mp3' | 'ogg' | 'aif' | 'aiff' | 'm4a';
+
 export interface AudioReference {
   id: string;
   rutaRelativa: string;
-  formato: 'wav' | 'flac' | 'mp3' | 'ogg';
+  formato: FormatoAudioReferencia;
   sampleRate: number;
   canales: number;
   duracion: number;
+}
+
+/** Carpeta (relativa al proyecto) donde vive el media importado. */
+export const MEDIA_REL_DIR = 'media';
+/** Media aún sin proyecto: se mueve a `media/` en el primer guardado. */
+export const MEDIA_PENDING_REL_DIR = 'media/pending';
+/** Grabaciones dentro del proyecto. */
+export const MEDIA_RECORDINGS_REL_DIR = 'media/grabaciones';
+
+const FORMATOS_POR_EXTENSION: Record<string, FormatoAudioReferencia> = {
+  wav: 'wav',
+  wave: 'wav',
+  flac: 'flac',
+  mp3: 'mp3',
+  ogg: 'ogg',
+  oga: 'ogg',
+  opus: 'ogg',
+  aif: 'aif',
+  aiff: 'aiff',
+  m4a: 'm4a',
+  aac: 'm4a',
+};
+
+/** Normaliza separadores a `/` (las rutas relativas son portables). */
+export function normalizarRutaRelativa(ruta: string): string {
+  return ruta
+    .replace(/\\/g, '/')
+    .replace(/^\.\//, '')
+    .replace(/\/{2,}/g, '/');
+}
+
+/** Una ruta es "media del proyecto" si es relativa y vive bajo `media/`. */
+export function esRutaMediaRelativa(ruta: string | undefined | null): boolean {
+  if (!ruta) return false;
+  const n = normalizarRutaRelativa(ruta);
+  if (!n) return false;
+  if (n.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(n)) return false;
+  return n === MEDIA_REL_DIR || n.startsWith(`${MEDIA_REL_DIR}/`);
+}
+
+/** Formato deducido de la extensión del archivo (por defecto `wav`). */
+export function formatoAudioDesdeRuta(ruta: string): FormatoAudioReferencia {
+  const ext = ruta.replace(/\\/g, '/').split('.').pop()?.toLowerCase() ?? '';
+  return FORMATOS_POR_EXTENSION[ext] ?? 'wav';
+}
+
+/** Nombre de archivo a partir de una ruta relativa de media. */
+export function nombreArchivoMedia(rutaRelativa: string): string {
+  const n = normalizarRutaRelativa(rutaRelativa);
+  return n.split('/').pop() ?? n;
 }
 
 export interface ProyectoArchivo {
@@ -281,12 +334,41 @@ const validarExtensionRuta = (ruta: string) => {
   }
 };
 
-const audioReferencesDefecto = (): Record<string, AudioReference> => ({});
+/**
+ * Deriva las referencias de audio del proyecto: todo clip de audio cuya fuente
+ * es una ruta relativa bajo `media/` queda registrado en el archivo `.jaswave`.
+ * Sin esto, al abrir el proyecto en otra carpeta los clips quedan mudos.
+ */
+const derivarReferenciasAudio = (proyecto: ProjectState): Record<string, AudioReference> => {
+  const refs: Record<string, AudioReference> = {};
+  for (const pista of proyecto?.tracks ?? []) {
+    for (const clip of (pista?.clips ?? []) as Array<{
+      id?: string;
+      tipo?: string;
+      source?: { ruta?: string; sampleRate?: number; canales?: number; duracion?: number };
+    }>) {
+      if (!clip || clip.tipo !== 'audio') continue;
+      const ruta = clip.source?.ruta;
+      if (!ruta || !esRutaMediaRelativa(ruta)) continue;
+      const rutaRelativa = normalizarRutaRelativa(ruta);
+      const id = clip.id && clip.id.length > 0 ? clip.id : rutaRelativa;
+      refs[id] = {
+        id,
+        rutaRelativa,
+        formato: formatoAudioDesdeRuta(ruta),
+        sampleRate: clip.source?.sampleRate ?? proyecto?.sampleRate ?? 48000,
+        canales: clip.source?.canales ?? 2,
+        duracion: clip.source?.duracion ?? 0,
+      };
+    }
+  }
+  return refs;
+};
 
 const proyectoParaGuardar = (proyecto: ProjectState): ProyectoArchivo => ({
   version: FORMATO_ACTUAL,
   project: proyecto,
-  audioReferences: audioReferencesDefecto(),
+  audioReferences: derivarReferenciasAudio(proyecto),
 });
 
 const archivoValido = (archivo: unknown): archivo is ProyectoArchivo => {
@@ -381,25 +463,52 @@ const reconstruirRouting = (proyecto: ProjectState): ProjectState => {
 
 import type { FileService } from '../project/persistencia';
 
-const verificarReferenciasAudio = async (referencias: Record<string, AudioReference>, fileService?: Pick<FileService, 'existe'>): Promise<string[]> => {
-  const faltantes: string[] = [];
-  for (const [id, ref] of Object.entries(referencias)) {
-    if (!ref.rutaRelativa || ref.rutaRelativa.length === 0) {
-      faltantes.push(id);
+/** Une `dirBase` con una ruta relativa usando `/` (portable entre plataformas). */
+export function unirRuta(dirBase: string | undefined, rutaRelativa: string): string {
+  const rel = normalizarRutaRelativa(rutaRelativa);
+  if (!dirBase) return rel;
+  const base = dirBase.replace(/[/\\]+$/, '');
+  if (!base) return rel;
+  return `${base}/${rel}`;
+}
+
+/**
+ * Referencias cuyo archivo no está en disco. `dirBase` es la carpeta del proyecto:
+ * las rutas relativas (`media/...`) se resuelven contra ella (no contra el cwd).
+ */
+export const referenciasAudioFaltantes = async (
+  referencias: Record<string, AudioReference>,
+  fileService?: Pick<FileService, 'existe'>,
+  dirBase?: string,
+): Promise<AudioReference[]> => {
+  const faltantes: AudioReference[] = [];
+  for (const [id, ref] of Object.entries(referencias ?? {})) {
+    if (!ref?.rutaRelativa || ref.rutaRelativa.length === 0) {
+      faltantes.push(ref ?? { id, rutaRelativa: '', formato: 'wav', sampleRate: 48000, canales: 2, duracion: 0 });
       continue;
     }
-    if (fileService) {
-      try {
-        const existe = await fileService.existe(ref.rutaRelativa);
-        if (!existe) {
-          faltantes.push(id);
-        }
-      } catch {
-        faltantes.push(id);
-      }
+    if (!fileService) continue;
+    const ruta = esRutaMediaRelativa(ref.rutaRelativa)
+      ? unirRuta(dirBase, ref.rutaRelativa)
+      : ref.rutaRelativa;
+    try {
+      const existe = await fileService.existe(ruta);
+      if (!existe) faltantes.push(ref);
+    } catch {
+      faltantes.push(ref);
     }
   }
   return faltantes;
+};
+
+/** Ids de las referencias de audio cuyo archivo no está en disco. */
+const verificarReferenciasAudio = async (
+  referencias: Record<string, AudioReference>,
+  fileService?: Pick<FileService, 'existe'>,
+  dirBase?: string,
+): Promise<string[]> => {
+  const faltantes = await referenciasAudioFaltantes(referencias, fileService, dirBase);
+  return faltantes.map((r) => r.id);
 };
 
 export {
