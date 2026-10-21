@@ -25,8 +25,7 @@ import {
   type TurnEngine,
   type TurnHandle,
 } from '@jaswave/ai-harness'
-import { auditStepCore, auditarProyecto } from '@jaswave/ai-harness'
-import { getEstadoSemantico } from '../../../shared/src'
+import { auditStep, auditarProyecto } from '@jaswave/ai-harness'
 import { runAuditTool, A9_TOOL_NAMES } from './agent-audit-tools'
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import {
@@ -146,7 +145,6 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
 
     async executeTools(allCalls, ctx) {
       const run = deps.getRun?.(ctx.runId)
-      const engine = getActiveEngine() ?? (engineSingleton?.tienda === tienda ? engineSingleton.engine : undefined)
       // fallback.* solo calculan propuestas sobre el estado actual (clase read).
       const fallback = allCalls.filter((c) => isFallbackTool(c.name))
       const a9 = allCalls.filter((c) => (A9_TOOL_NAMES as readonly string[]).includes(c.name))
@@ -160,12 +158,11 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
       const a9Results = await Promise.all(
         a9.map(async (c) => {
           try {
-            const data = await runAuditTool(
-              tienda,
+            const data = await (runAuditTool as any)(
+              tienda.obtenerEstado(),
               c.name,
               (c.arguments ?? {}) as Record<string, unknown>,
-              engine,
-              { runId: ctx.runId, conversationId: run?.conversationId },
+              getAgentEngine(tienda),
             )
             return { callId: c.id, name: c.name, status: 'success' as const, data }
           } catch (e) {
@@ -173,7 +170,7 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
               callId: c.id,
               name: c.name,
               status: 'error' as const,
-              error: e instanceof Error ? e.message : String(e),
+              error: { code: 'audit_failed', message: e instanceof Error ? e.message : String(e) },
             }
           }
         }),
@@ -211,25 +208,18 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
     },
 
     // ── A5/A9 · QA por paso y cierre (núcleo A9) ──────────────────────────────
-    auditStep: ({ step, plan }) => {
+    auditStep: ({ step }) => {
       const st = tienda.obtenerEstado()
-      const estadoSemantico = getEstadoSemantico(st as any)
-      const paso = plan?.pasos?.find((p: any) => p.id === step.id) ?? step
+      const paso = step as any
       try {
-        const res = auditStepCore({
-          paso,
-          estado: st as any,
-          estadoSemantico,
-          projectId: projectId(),
-        })
-        const ok = res.cumple && res.bloqueante === false && (res.issues?.length ?? 0) === 0
-        const evidencia = res.evidencia?.length ? res.evidencia : ok ? [`Paso ${paso.id} evaluado con núcleo A9.`] : []
+        const res = auditStep({ paso, estado: st as any, projectId: projectId() } as any)
+        const ok = (res as any).cumple === true && (res as any).bloqueante !== true
+        const issues = (res as any).issues ?? []
+        const evidencia = (res as any).evidencia?.length ? (res as any).evidencia : ok ? [`Paso ${paso.id} evaluado con núcleo A9.`] : []
         return {
           ok,
-          issues: res.issues ?? [],
+          issues,
           evidencia,
-          warnings: res.warnings,
-          detalles: res.detalles,
         } as any
       } catch {
         const tracks = st.project?.tracks?.length ?? 0

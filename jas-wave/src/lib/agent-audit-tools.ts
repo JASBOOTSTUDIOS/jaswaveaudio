@@ -65,7 +65,7 @@ export const A9_WRITE_TOOLS: readonly string[] = [
   A9_TOOLS.planProposeChange,
 ]
 
-const EMPTY_OBJECT = { type: 'object', properties: {}, additionalProperties: false }
+const _EMPTY_OBJECT = { type: 'object', properties: {}, additionalProperties: false }
 
 /** JSON Schemas explícitos de las 13 herramientas de A9. */
 export const A9_TOOL_SCHEMAS: ToolJsonSchema[] = [
