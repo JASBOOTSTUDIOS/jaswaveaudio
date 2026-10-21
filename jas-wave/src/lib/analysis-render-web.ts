@@ -108,20 +108,24 @@ export function crearBackendAnalisisWeb(): BackendAnalisis {
       sampleRate: req.sampleRate,
     })
 
+    const pistasEstado = estado.project.tracks ?? []
+    const haySolo = pistasEstado.some((t) => t.soloActiva === true)
     const pistas = new Map<string, SegmentoPcm>()
     const segmentos: SegmentoPcm[] = []
     for (const track of content.tracks) {
       const pcm = stems.get(track.stemIndex)
       if (!pcm) continue
-      const info = (estado.project.tracks ?? []).find((t) => t.id === track.trackId)
-      const { gL, gR } = gananciaPaneo(
-        typeof info?.volumen === 'number' ? info.volumen : 0.8,
-        typeof info?.paneo === 'number' ? info.paneo : 0,
-        info?.silenciada === true,
-      )
-      const mezclado = aplicarPista(desintercalar(pcm, Math.floor(pcm.length / 2)), gL, gR)
-      pistas.set(track.trackId, mezclado)
-      segmentos.push(mezclado)
+      const info = pistasEstado.find((t) => t.id === track.trackId)
+      const vol = typeof info?.volumen === 'number' ? info.volumen : 0.8
+      const pan = typeof info?.paneo === 'number' ? info.paneo : 0
+      const base = desintercalar(pcm, Math.floor(pcm.length / 2))
+      // Por pista se mide lo que produce su fader/paneo aunque esté muteada:
+      // la medición es del canal (sirve para enmascaramiento y diagnóstico).
+      const { gL, gR } = gananciaPaneo(vol, pan, false)
+      pistas.set(track.trackId, aplicarPista(base, gL, gR))
+      // La suma/mezcla respeta mute y solo, igual que el playback.
+      const suenaEnMezcla = info?.silenciada !== true && (!haySolo || info?.soloActiva === true)
+      if (suenaEnMezcla) segmentos.push(aplicarPista(base, gL, gR))
     }
 
     const frames = Math.max(1, Math.round(duracion * req.sampleRate))

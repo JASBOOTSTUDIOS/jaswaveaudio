@@ -118,6 +118,24 @@ describe('servicio de análisis (A7b)', () => {
     assert.equal(llamadas.count, 2)
   })
 
+  it('mute o fader invalidan la caché aunque la revisión no cambie', async () => {
+    const estado = estadoConPistas()
+    const llamadas = { count: 0 }
+    const servicio = crearServicioAnalisis({
+      obtenerEstado: () => estado as never,
+      backend: backendFalso(llamadas),
+    })
+    const req = { revision: 'r1', rango: { inicioSeg: 0, finSeg: 2 } }
+    await servicio.proveedor(req)
+    // getStateRevision no cubre fader/mute: sin la huella de mezcla esto
+    // devolvería la medida anterior.
+    const estadoProyectado = estado as unknown as { project: { tracks: Array<Record<string, unknown>> } }
+    estadoProyectado.project.tracks[0]!.silenciada = true
+    await servicio.proveedor(req)
+    assert.equal(llamadas.count, 2)
+    assert.equal(servicio.tamanoCache(), 2)
+  })
+
   it('borra los temporales que deja el backend', async () => {
     const estado = estadoConPistas()
     const borrados: string[] = []

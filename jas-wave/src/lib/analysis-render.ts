@@ -7,8 +7,9 @@
  *   puedan diagnosticar el material en lugar de adivinar.
  *
  * Importancia:
- *   - El render es caro: se cachea por revisión del estado; si el proyecto no
- *     cambia, no se vuelve a renderizar ni a medir.
+ *   - El render es caro: se cachea por revisión del estado + huella de mezcla
+ *     (fader/mute/solo/bypass, que la revisión no cubre); si nada cambia, no se
+ *     vuelve a renderizar ni a medir.
  *   - El backend es inyectable: la app usa Web Audio (sin plugins) y en el
  *     futuro el host nativo; los tests usan un backend falso.
  *   - El servicio NO muta el proyecto: solo lee el estado.
@@ -95,6 +96,25 @@ export function desintercalar(pcm: Float32Array, frames: number): SegmentoPcm {
 }
 
 /**
+ * Huella de lo que cambia la mezcla pero NO la revisión del estado.
+ *
+ * `getStateRevision` solo mira bpm, clips, notas y listas de plugins: fader,
+ * paneo, mute, solo y bypass master no la mueven. Sin esta huella, la caché
+ * devolvería medidas de otra mezcla (p. ej. tras el A/B de referencia o tras
+ * silenciar una pista).
+ */
+function huellaMezcla(estado: DAWState): string {
+  const tracks = estado.project?.tracks ?? []
+  const bits: string[] = tracks.map(
+    (t) => `${t.id}:${t.volumen ?? 0}:${t.paneo ?? 0}:${t.silenciada ? 1 : 0}:${t.soloActiva ? 1 : 0}`,
+  )
+  const m = estado.project?.master
+  const plugins = (m?.plugins ?? []).map((p) => `${p.id}:${p.bypass ? 1 : 0}`).join(',')
+  bits.push(`m:${m?.volumen ?? 0}:${m?.muted ? 1 : 0}:${plugins}`)
+  return bits.join('|')
+}
+
+/**
  * Crea el servicio de análisis: mide con el DSP de A7a y cachea por revisión.
  */
 export function crearServicioAnalisis(opts: OpcionesServicioAnalisis): ServicioAnalisis {
@@ -109,6 +129,7 @@ export function crearServicioAnalisis(opts: OpcionesServicioAnalisis): ServicioA
   function clave(req: RequerimientoAnalisis, rango: RangoAnalisis): string {
     return [
       req.revision,
+      huellaMezcla(opts.obtenerEstado()),
       `${rango.inicioSeg.toFixed(3)}-${rango.finSeg.toFixed(3)}`,
       req.bypassMaster ? 'sin-master' : 'con-master',
       req.tap ?? 'post',
