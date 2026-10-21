@@ -20,6 +20,7 @@ export type ToolId =
   | 'score-editor'
   | 'terminal'
   | 'settings'
+  | 'progress'
 
 export interface ToolDefinitionUI {
   id: ToolId
@@ -160,7 +161,14 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
   settings: {
     id: 'settings',
     title: 'Configuración',
-    description: 'Proyecto, audio, IA, rutas y permisos',
+    description: 'Ajustes del DAW',
+    defaultZone: 'right',
+    singleton: true,
+  },
+  progress: {
+    id: 'progress',
+    title: 'Progreso',
+    description: 'Plan, bitácora, diffs y métricas (A9)',
     defaultZone: 'right',
     singleton: true,
   },
