@@ -42,4 +42,8 @@ Nuevos `ai-harness/src/plan/criteria.ts`, `ai-harness/src/engine/run-log.ts`; `a
 `npm run verify`; e2e con mock: turno de mezcla deja evidencia por paso y `audit.mix` final dentro de objetivo.
 
 ## Notas de traspaso
-_(vacío)_
+- Integrado catálogo/schemas/registry: 13 herramientas A9 en `agent-action-catalog.ts`, `agent-tool-schemas.ts`, `shared/src/ai/tool-schemas.ts`. QA limitado a lecturas (`ask/create` qa sin escrituras). `plan.updateStep` sigue regulado por motor.
+- Host: `executeTools` enruta `plan.*`/`run.*`/`audit.*`/`session.summary` a `runAuditTool` (estado/engine). `auditStep`/`auditProject` usan núcleo A9 con fallback. `getActiveEngine()` expuesto.
+- Panel "Progreso": plan con %/paso actual/bloqueos, bitácora filtrable por agente (`listarAuditHistorial`), `run.diff` (proyección + resumen), tendencia LUFS. Montado en `workspace/types.ts` + `tool-host.tsx`.
+- CLI `agent log|diff|audit` queda para A8. No se modifica CLI.
+- CRLF normalizado en archivos editados.

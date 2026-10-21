@@ -23,6 +23,6 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | A7d | FX propios JasWave | A7c | pendiente | | |
 | A7e | masterPass y mezcla por medición | A7b, A7c | pendiente | | |
 | A8 | CLI con turnos completos | A1, A5 | pendiente | | |
-| A9 | Auditoría y progreso | A4 (plan), A1 (bitácora) | en curso | Claude (subagente) · 2026-10-20 | |
+| A9 | Auditoría y progreso | A4 (plan), A1 (bitácora) | hecho | Claude (subagente) · 2026-10-21 | 58268d7 |
 
 Estados: `pendiente` · `en curso` · `bloqueado (motivo)` · `hecho`.
