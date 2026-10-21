@@ -1,7 +1,15 @@
 /**
  * Parser de criterios medibles para A9 - audit.step.
- * Interpreta criterios del plan como: "LUFS −14 ±1", "TP ≤ −1", "pista X −18 ±3 dBFS RMS",
- * "sin masking kick/bajo", etc.
+ *
+ * Interpreta criterios del plan como:
+ *   - "LUFS -14 ±1", "LUFS -14 +/- 1"
+ *   - "TP <= -1", "TP ≤ -1"
+ *   - "kick -18 ±3 dBFS RMS", "pista Bajo -18 +/-3 RMS"
+ *   - "sin masking kick/bajo"
+ *   - "PLR <= 12"
+ *
+ * Regla: el signo "-" pegado al número es parte del valor; separado por
+ * espacio se interpreta igualmente como signo (evita perder el negativo).
  */
 
 export type MeasurableMetric =
@@ -36,10 +44,33 @@ export type Criterion = NumericCriterion | BooleanCriterion
 
 export type ParsedCriteria = Criterion[]
 
-const OP_REGEX = /(≤|<=|<|>=|≥|>|==|=|±)/
+/** Números con signo, coma o punto decimal. */
+const NUM = '(-?\\d+(?:[.,]\\d+)?)'
 
-function normalizeNumber(s: string): number {
-  return parseFloat(s.replace(',', '.'))
+function normalizeNumber(raw: string): number {
+  const cleaned = raw.replace(/\s+/g, '').replace(',', '.')
+  const n = parseFloat(cleaned)
+  return Number.isFinite(n) ? n : 0
+}
+
+function toOperator(op: string): NumericCriterion['operator'] {
+  switch (op) {
+    case '<=':
+    case '≤':
+      return 'le'
+    case '<':
+      return 'lt'
+    case '>=':
+    case '≥':
+      return 'ge'
+    case '>':
+      return 'gt'
+    case '≈':
+    case '~':
+      return 'approx'
+    default:
+      return 'eq'
+  }
 }
 
 export function parseCriteria(criteriaText: string): ParsedCriteria {
@@ -50,58 +81,57 @@ export function parseCriteria(criteriaText: string): ParsedCriteria {
   const text = criteriaText.toLowerCase()
   const criteria: ParsedCriteria = []
 
-  // LUFS: "LUFS −14 ±1", "LUFS -14 ± 1", "LUFS -14 +/-1"
-  const lufsRegex = /lufs\s*[-−]?\s*(-?\d+(?:[.,]\d+)?)\s*(?:±|\+\/-)\s*(\d+(?:[.,]\d+)?)/gi
+  // LUFS: "LUFS -14 ±1", "LUFS -14 +/- 1", "LUFS ≈ -14"
+  const lufsRegex = new RegExp(`lufs\\s*(?:≈|~)?\\s*${NUM}\\s*(?:±|\\+/-)\\s*(\\d+(?:[.,]\\d+)?)`, 'gi')
   for (const m of text.matchAll(lufsRegex)) {
-    const target = normalizeNumber(m[1])
-    const tol = normalizeNumber(m[2])
     criteria.push({
       metric: 'lufs',
-      target,
-      tolerance: tol,
+      target: normalizeNumber(m[1]),
+      tolerance: normalizeNumber(m[2]),
       operator: 'approx',
       unit: 'LUFS',
     })
   }
 
-  // True Peak: "TP ≤ −1", "TP <= -1", "TP < -1"
-  const tpRegex = /tp\s*(≤|<=|<|>=|≥|>)\s*[-−]?\s*(-?\d+(?:[.,]\d+)?)/gi
+  // True Peak: "TP <= -1", "TP ≤ -1", "TP > -0.5"
+  const tpRegex = new RegExp(`\\btp\\s*(<=|<|>=|>|≤|≥)\\s*${NUM}`, 'gi')
   for (const m of text.matchAll(tpRegex)) {
-    const op = m[1]
-    const val = normalizeNumber(m[2])
     criteria.push({
       metric: 'tp',
-      target: val,
-      operator: op === '≤' || op === 'le' || op === '<=' ? 'le' : op === '<' ? 'lt' : op === '>=' || op === '≥' ? 'ge' : 'gt',
+      target: normalizeNumber(m[2]),
+      operator: toOperator(m[1]),
       unit: 'dBTP',
     })
   }
 
-  // RMS por pista: "pista X -18 ±3 dBFS RMS", "kick -18 ±3 RMS"
-  const rmsTrackRegex = /(pista\s+\w+|track\s+\w+|kick|snare|clap|hat|hihat|bass|bajo|sub|lead|pad|vox|voz|vocal)\s+[-−]?\s*(-?\d+(?:[.,]\d+)?)\s*(?:±|\+\/-)\s*(\d+(?:[.,]\d+)?)\s*(?:dBFS\s*)?rms/gi
+  // RMS por pista: "kick -18 ±3 dBFS RMS", "pista Bajo -18 +/-3 RMS"
+  const rmsTrackRegex = new RegExp(
+    `(pista\\s+[\\w\\u00C0-\\u024F]+|track\\s+[\\w\\u00C0-\\u024F]+|kick|snare|clap|hat|hihat|bass|bajo|sub|lead|pad|vox|voz|vocal|guitar|piano)\\s*${NUM}\\s*(?:±|\\+/-)\\s*(\\d+(?:[.,]\\d+)?)\\s*(?:dBFS\\s*)?rms`,
+    'gi',
+  )
   for (const m of text.matchAll(rmsTrackRegex)) {
-    const track = m[1].replace(/pista\s+/i, '').trim()
-    const target = normalizeNumber(m[2])
-    const tol = normalizeNumber(m[3])
+    const track = m[1].replace(/^pista\s+/i, '').replace(/^track\s+/i, '').trim()
     criteria.push({
       metric: 'rms',
-      target,
-      tolerance: tol,
+      target: normalizeNumber(m[2]),
+      tolerance: normalizeNumber(m[3]),
       operator: 'approx',
       unit: 'dBFS',
       track,
     })
   }
 
-  // RMS genérico con ±
-  const rmsRegex = /rms\s+[-−]?\s*(-?\d+(?:[.,]\d+)?)\s*(?:±|\+\/-)\s*(\d+(?:[.,]\d+)?)/gi
+  // RMS genérico: "RMS -18 ±3"
+  const rmsRegex = new RegExp(`\\brms\\s*${NUM}\\s*(?:±|\\+/-)\\s*(\\d+(?:[.,]\\d+)?)`, 'gi')
   for (const m of text.matchAll(rmsRegex)) {
-    // Evitar duplicados si ya matcheó track
-    const key = `rms-${m.index}`
-    if (!criteria.some((c) => c.metric === 'rms' && 'track' in c === false && Math.abs((c as any).target - normalizeNumber(m[1])) < 0.01)) {
+    const target = normalizeNumber(m[1])
+    const yaCubierto = criteria.some(
+      (c) => c.metric === 'rms' && Math.abs((c as NumericCriterion).target - target) < 0.01,
+    )
+    if (!yaCubierto) {
       criteria.push({
         metric: 'rms',
-        target: normalizeNumber(m[1]),
+        target,
         tolerance: normalizeNumber(m[2]),
         operator: 'approx',
         unit: 'dBFS',
@@ -109,7 +139,7 @@ export function parseCriteria(criteriaText: string): ParsedCriteria {
     }
   }
 
-  // Masking: "sin masking kick/bajo", "sin masking", "no masking"
+  // Masking: "sin masking kick/bajo", "no masking"
   const maskingRegex = /(sin|no)\s+masking(?:\s+([^,.;]+))?/gi
   for (const m of text.matchAll(maskingRegex)) {
     const desc = m[2] ? `sin masking ${m[2].trim()}` : 'sin masking'
@@ -120,13 +150,13 @@ export function parseCriteria(criteriaText: string): ParsedCriteria {
     })
   }
 
-  // PLR/Dynamic range
-  const plrRegex = /plr\s*(≤|<=|<)\s*(-?\d+(?:[.,]\d+)?)/gi
+  // PLR / rango dinámico
+  const plrRegex = new RegExp(`\\bplr\\s*(<=|<|>=|>|≤|≥)\\s*${NUM}`, 'gi')
   for (const m of text.matchAll(plrRegex)) {
     criteria.push({
       metric: 'plr',
       target: normalizeNumber(m[2]),
-      operator: m[1] === '<' || m[1] === '<=' || m[1] === '≤' ? 'le' : 'gt',
+      operator: toOperator(m[1]),
       unit: 'dB',
     })
   }
@@ -140,8 +170,8 @@ export function evaluateNumericCriterion(
 ): { cumple: boolean; diff: number; evidencia: string[] } {
   const tol = criterion.tolerance ?? 0
   const target = criterion.target
+  const diff = measured - target
   let cumple = false
-  let diff = measured - target
 
   switch (criterion.operator) {
     case 'approx':
@@ -165,8 +195,9 @@ export function evaluateNumericCriterion(
   }
 
   const unit = criterion.unit ? ` ${criterion.unit}` : ''
+  const rango = criterion.operator === 'approx' ? ` ±${tol}` : ''
   const evidencia = [
-    `${criterion.metric}${criterion.track ? ` (${criterion.track})` : ''}: medido=${measured.toFixed(2)}${unit}, target=${target.toFixed(2)}${unit}${tol ? ` ±${tol}` : ''}, diff=${diff.toFixed(2)}${unit}`,
+    `${criterion.metric}${criterion.track ? ` (${criterion.track})` : ''}: medido=${measured.toFixed(2)}${unit}, target=${target.toFixed(2)}${unit}${rango}, diff=${diff.toFixed(2)}${unit}`,
   ]
 
   return { cumple, diff, evidencia }
