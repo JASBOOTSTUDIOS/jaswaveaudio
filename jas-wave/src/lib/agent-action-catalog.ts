@@ -8,6 +8,7 @@ import type { ToolDefinitionExtended, ToolHandler, ToolRegistry } from '../../..
 import { toolRegistry } from '../../../shared/src/ai/tool-registry'
 import { registroComandos } from '../../../shared/src/state/registro-comandos'
 import { agentActionClassOfType } from '@jaswave/ai-harness'
+import { A9_TOOL_NAMES } from './agent-audit-tools'
 
 export type CatalogEntry = {
   type: string
@@ -405,6 +406,80 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     description: 'Propone quitar notas MIDI duplicadas detectadas por la auditoría. No muta.',
     examplePayload: {},
   },
+
+  // ── A9 · Auditoría y progreso ───────────────────────────────────────────────
+  {
+    type: 'plan.get',
+    kind: 'agent',
+    description: 'Plan estructurado (pasos, estados, criterios y evidencia)',
+  },
+  {
+    type: 'plan.status',
+    kind: 'agent',
+    description: '% completado, paso actual, bloqueos',
+  },
+  {
+    type: 'plan.updateStep',
+    kind: 'agent',
+    description: 'Actualiza un paso (marcar hecho exige audit.step + evidencia)',
+    examplePayload: { id: 'S1', estado: 'hecho', evidencia: ['LUFS -14.0'] },
+  },
+  {
+    type: 'plan.addStep',
+    kind: 'agent',
+    description: 'Añade un paso pendiente al plan',
+    examplePayload: { titulo: 'Ajustar balance', fase: 'Mezcla', agente: 'mezcla', criterios: ['LUFS -14 ±1'] },
+  },
+  {
+    type: 'plan.proposeChange',
+    kind: 'agent',
+    description: 'Propone replan (requiere aprobación)',
+    examplePayload: { motivo: 'Necesita más paso para EQ', pasos: [{ titulo: 'EQ guitarra' }] },
+  },
+  {
+    type: 'run.log',
+    kind: 'agent',
+    description: 'Bitácora del turno con agente/herramienta/estado/duración',
+  },
+  {
+    type: 'run.diff',
+    kind: 'agent',
+    description: 'Diff semántico (pistas, clips, notas, plugins, mezcla, ruteo)',
+    examplePayload: { desde: 'turno' },
+  },
+  {
+    type: 'audit.project',
+    kind: 'agent',
+    description: 'Auditoría del proyecto (estructural + bloqueantes)',
+    examplePayload: { incluirMix: true },
+  },
+  {
+    type: 'audit.mix',
+    kind: 'agent',
+    description: 'Auditoría de mezcla con tendencia vs medición anterior',
+  },
+  {
+    type: 'audit.step',
+    kind: 'agent',
+    description: 'Evalúa criterios de aceptación de un paso',
+    examplePayload: { stepId: 'S1' },
+  },
+  {
+    type: 'audit.history',
+    kind: 'agent',
+    description: 'Serie de mediciones y tendencia',
+    examplePayload: { metrica: 'lufs', limite: 50 },
+  },
+  {
+    type: 'audit.compareReference',
+    kind: 'agent',
+    description: 'Comparación contra pista de referencia',
+  },
+  {
+    type: 'session.summary',
+    kind: 'agent',
+    description: 'Resumen compacto para retomar sesión/turno',
+  },
 ]
 
 /** Tipos que executeDawActions entiende (unión útil para list/filter). */
@@ -509,6 +584,7 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'midi.notes.patch',
   'midi.getNotes',
   ...AGENT_ONLY_ACTIONS.map((a) => a.type),
+  ...A9_TOOL_NAMES,
 ]
 
 export function mergeActionCatalog(

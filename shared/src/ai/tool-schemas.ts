@@ -95,7 +95,7 @@ export const ROLE_WRITE_PREFIXES: Readonly<Record<ToolAgentRole, readonly string
   productor: ['track.', 'clip.', 'midi.', 'plugin.insert', 'plugin.replace', 'style.', 'daw.musicBuild', 'daw.composeProject', 'daw.generateMidiSong', 'project.setBpm', 'project.setTimeSignature', 'doc.'],
   mezcla: ['plugin.', 'fxChain.', 'send.', 'bus.', 'sidechain.', 'automation.', 'track.update', 'clip.gain', 'master.update', 'doc.'],
   mastering: ['master.', 'plugin.', 'fxChain.', 'daw.masterPass', 'reference.', 'doc.'],
-  qa: [],
+  qa: ['plan.updateStep'],
 })
 
 export function roleAllowsTool(role: ToolAgentRole, name: string, cls: ToolRiskClass | undefined): boolean {
@@ -128,8 +128,9 @@ export function toolsForRole(
 /** Prioridad de familias cuando hay que recortar (OpenAI admite ≤128 tools por petición). */
 export const TOOL_FAMILY_PRIORITY: readonly string[] = [
   'track.', 'clip.', 'midi.', 'project.', 'daw.', 'plugin.', 'master.', 'analysis.', 'audit.', 'plan.',
+  'session.', 'run.',
   'send.', 'bus.', 'sidechain.', 'automation.', 'fxChain.', 'fallback.', 'style.', 'reference.',
-  'library.', 'doc.', 'render.', 'selection.', 'session.', 'run.', 'audio.', 'take.', 'comp.', 'transport.', 'ui.',
+  'library.', 'doc.', 'render.', 'selection.', 'audio.', 'take.', 'comp.', 'transport.', 'ui.',
 ]
 
 /** Recorta a max herramientas conservando las familias prioritarias (estable dentro de cada familia). */
