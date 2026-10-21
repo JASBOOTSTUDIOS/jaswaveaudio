@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { crearEstadoInicial } from '../../../shared/src/state/estado-inicial'
+import { getStateRevision } from '../../../shared/src/state/state-revision'
 import { registrarProveedorAnalisis } from '../../../shared/src/audio/analysis-provider'
 import { crearComandoAnalysisDiagnose, crearComandoAnalysisMix } from '../../../shared/src/commands/analysis-commands'
 import {
@@ -27,18 +28,35 @@ function estadoConPistas(): ReturnType<typeof crearEstadoInicial> {
   }
 }
 
+/** Criterio de aceptación: 3 stems con LUFS distintos. */
+function estadoConTresPistas(): ReturnType<typeof crearEstadoInicial> {
+  const base = estadoConPistas()
+  const pistas = (base.project.tracks as unknown as Array<Record<string, unknown>>).concat({
+    id: 'sint',
+    nombre: 'Sint',
+    volumen: 1,
+    paneo: -0.3,
+  })
+  return { ...base, project: { ...base.project, tracks: pistas } as never }
+}
+
 /** Backend falso: 2 s de seno por pista a distinta frecuencia y nivel. */
-function backendFalso(llamadas: { count: number }): BackendAnalisis {
+const SENOS: Record<string, { freq: number; g: number }> = {
+  bajo: { freq: 60, g: 0.2 },
+  voz: { freq: 1000, g: 0.1 },
+}
+
+function backendFalso(
+  llamadas: { count: number },
+  senos: Record<string, { freq: number; g: number }> = SENOS,
+): BackendAnalisis {
   return async (req): Promise<ResultadoBackendAnalisis> => {
     llamadas.count++
     const frames = Math.max(1, Math.round((req.rango.finSeg - req.rango.inicioSeg) * req.sampleRate))
     const pistas = new Map<string, { l: Float32Array; r: Float32Array }>()
-    const freqs: Record<string, number> = { bajo: 60, voz: 1000 }
-    const gains: Record<string, number> = { bajo: 0.2, voz: 0.1 }
-    for (const [id, freq] of Object.entries(freqs)) {
+    for (const [id, { freq, g }] of Object.entries(senos)) {
       const l = new Float32Array(frames)
       const r = new Float32Array(frames)
-      const g = gains[id] ?? 0.1
       for (let i = 0; i < frames; i++) {
         const v = Math.sin((2 * Math.PI * freq * i) / req.sampleRate) * g
         l[i] = v
@@ -88,6 +106,39 @@ describe('servicio de análisis (A7b)', () => {
     const bajo = analisis.pistas.find((p) => p.trackId === 'bajo')!
     const voz = analisis.pistas.find((p) => p.trackId === 'voz')!
     assert.ok(bajo.integrated > voz.integrated, `bajo ${bajo.integrated} vs voz ${voz.integrated}`)
+    assert.equal(llamadas.count, 1)
+  })
+
+  it('3 stems con LUFS distintos y revisión inalterable (criterio de aceptación)', async () => {
+    const estado = estadoConTresPistas()
+    const llamadas = { count: 0 }
+    const servicio = crearServicioAnalisis({
+      obtenerEstado: () => estado as never,
+      backend: backendFalso(llamadas, {
+        bajo: { freq: 60, g: 0.2 },
+        voz: { freq: 1000, g: 0.1 },
+        sint: { freq: 440, g: 0.05 },
+      }),
+    })
+    const revision = getStateRevision(estado as never)
+    const req = { revision, rango: { inicioSeg: 0, finSeg: 2 } }
+
+    const a = await servicio.proveedor(req)
+    assert.equal(a.pistas.length, 3)
+    assert.deepEqual(a.pistas.map((p) => p.trackId), ['bajo', 'voz', 'sint'])
+    assert.deepEqual(a.metadatos.pistasSinAudio ?? [], [])
+    const lufs = a.pistas.map((p) => p.integrated)
+    assert.ok(
+      lufs[0]! > lufs[1]! && lufs[1]! > lufs[2]!,
+      `LUFS esperados decrecientes: ${lufs.join(', ')}`,
+    )
+    assert.equal(new Set(lufs.map((v) => v.toFixed(3))).size, 3)
+
+    // El render no muta el estado: la revisión sigue igual y todo lo demás se
+    // resuelve con la huella de mezcla.
+    assert.equal(getStateRevision(estado as never), revision)
+    const b = await servicio.proveedor(req)
+    assert.equal(b.metadatos.cache, true)
     assert.equal(llamadas.count, 1)
   })
 

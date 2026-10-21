@@ -83,7 +83,7 @@ export async function runMasterPass(
     const start = await tienda.executor.execute('render.start', {
       format: 'wav',
       startSec: 0,
-      endSec: Math.min(endSec, 120),
+      endSec,
       listenTarget: target,
       normalize: false,
     })
