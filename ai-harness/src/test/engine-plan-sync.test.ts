@@ -62,6 +62,8 @@ function planHost(initial: string, opts?: { readImpl?: EngineHost['readDoc'] }) 
         writes.push(content)
       }
     },
+    // A9: la QA del host es obligatoria para marcar un paso con criterios como hecho.
+    auditStep: (req) => ({ ok: true, evidencia: [`QA ${req.step.id}: criterio cumplido`] }),
   }
   return { host, writes, getPlan: () => plan }
 }
@@ -103,7 +105,7 @@ describe('engine · plan estructurado (A4)', () => {
     expect(writes).toHaveLength(0)
 
     const second = await collect(engine.answer(first.result.runId, { approved: true }))
-    // A5: al aprobar, el motor ejecuta el paso S1 (QA asume ok sin host.auditStep) y cierra el turno.
+    // A5 + A9: al aprobar, el motor ejecuta el paso S1 (QA del host con evidencia) y cierra el turno.
     expect(second.result.status).toBe('completed')
     const trasAprobar = parsePlan(getPlan())!
     expect(trasAprobar.estadoPlan).toBe('aprobado')

@@ -60,6 +60,19 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'audio.listDevices': 'read',
   'audio.getDevice': 'read',
 
+  // ── A9 · Auditoría y progreso ───────────────────────────
+  // Lecturas del estado del trabajo: plan, bitácora del turno, auditorías y resumen.
+  'plan.get': 'read',
+  'plan.status': 'read',
+  'run.log': 'read',
+  'run.diff': 'read',
+  'audit.project': 'read',
+  'audit.mix': 'read',
+  'audit.step': 'read',
+  'audit.history': 'read',
+  'audit.compareReference': 'read',
+  'session.summary': 'read',
+
   // ── Escritura (deshacible) ──────────────────────────────
   'doc.create': 'write',
   'doc.write': 'write',
@@ -149,6 +162,11 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'daw.composeProject': 'write',
   'daw.generateMidiSong': 'write',
   'daw.masterPass': 'write',
+
+  // ── A9 · Escritura sobre el plan (siempre vía Command System) ──
+  'plan.updateStep': 'write',
+  'plan.addStep': 'write',
+  'plan.proposeChange': 'write',
 
   // ── Destructivas (borran contenido) ─────────────────────
   'track.delete': 'destructive',

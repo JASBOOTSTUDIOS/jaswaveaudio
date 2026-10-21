@@ -4,6 +4,14 @@ export * from './engine-types'
 export * from './run-state'
 export * from './mode-capabilities'
 export {
+  gateStepAudit,
+  gateProjectAudit,
+  STEP_SIN_CRITERIOS_EVIDENCIA,
+  type StepGateInput,
+  type StepGateResult,
+  type ProjectGateResult,
+} from './audit-gate'
+export {
   engineChat,
   ensureSystemRules,
   toMarkerMessages,

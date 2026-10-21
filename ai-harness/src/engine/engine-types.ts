@@ -126,7 +126,11 @@ export type EngineToolExecContext = {
 
 export type EngineLogLevel = 'debug' | 'info' | 'warn' | 'error'
 
-/** Veredicto de QA de un paso del plan (A5). Sin `host.auditStep` el motor asume ok. */
+/**
+ * Veredicto de QA de un paso del plan (A5 + A9).
+ * Fail closed: sin `host.auditStep` (o sin evidencia) un paso con criterios no se
+ * puede marcar como hecho (ver `gateStepAudit`).
+ */
 export type EngineStepAudit = {
   ok: boolean
   issues?: string[]
@@ -146,8 +150,26 @@ export type EngineAuditStepRequest = {
   }
 }
 
-/** Veredicto de QA del proyecto al cerrar un turno con plan (A5). */
-export type EngineProjectAudit = { ok: boolean; issues?: string[] }
+/**
+ * Veredicto de QA del proyecto al cerrar un turno con plan (A5 + A9).
+ * `issues` son incidencias bloqueantes salvo que estén en `acceptedIssues`.
+ */
+export type EngineProjectAudit = {
+  ok: boolean
+  /** Incidencias que impiden cerrar el turno. */
+  issues?: string[]
+  /** Avisos informativos (no bloquean). */
+  warnings?: string[]
+  /** Incidencias aceptadas explícitamente por el usuario. */
+  acceptedIssues?: string[]
+  /** Auditoría de mezcla (si el turno tocó mezcla/master). */
+  mix?: {
+    ok: boolean
+    issues?: string[]
+    warnings?: string[]
+    evidencia?: string[]
+  }
+}
 
 /** Snapshot para deshacer turno/paso (A5): el host serializa el estado que sabe restaurar. */
 export type EngineSnapshotRequest = {
@@ -185,11 +207,15 @@ export interface EngineHost {
   loadRun?(runId: string): Promise<EngineRun | null>
   newId?(prefix: string): string
   /**
-   * QA de un paso del plan antes de marcarlo hecho (A5). El host revisa el DAW real
-   * contra los criterios; sin implementación el motor asume `ok: true`.
+   * QA de un paso del plan antes de marcarlo hecho (A5 + A9). El host revisa el DAW real
+   * contra los criterios; sin implementación el motor aplica el gate fail-closed
+   * (un paso con criterios queda bloqueado).
    */
   auditStep?(req: EngineAuditStepRequest): EngineStepAudit | Promise<EngineStepAudit>
-  /** QA del proyecto al cerrar un turno con plan (A5). Sin implementación → sin avisos. */
+  /**
+   * QA del proyecto al cerrar un turno con plan (A5 + A9). Sin implementación → sin
+   * avisos; con incidencias no aceptadas → el turno no cierra.
+   */
   auditProject?(req: { runId: string }): EngineProjectAudit | Promise<EngineProjectAudit>
   /** Snapshot del estado que el host sabe restaurar (A5, undo por paso/turno). */
   captureSnapshot?(req: EngineSnapshotRequest): unknown | Promise<unknown>

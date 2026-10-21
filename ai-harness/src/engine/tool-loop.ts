@@ -15,12 +15,14 @@ import { toolResultMessage } from './chat'
 import type {
   EngineAnswer,
   EngineNeed,
+  EngineProjectAudit,
   EngineStepAudit,
   EngineToolCall,
   EngineToolSchema,
   TurnProgram,
   TurnProgramOutcome,
 } from './engine-types'
+import { gateProjectAudit, gateStepAudit } from './audit-gate'
 import { gateToolForMode, visibleInMode } from './mode-capabilities'
 import {
   aprobarPlan,
@@ -296,9 +298,12 @@ function instructionDePaso(paso: PlanPaso, extra?: string): string {
     .join('\n')
 }
 
-/** QA del paso vía host; sin `auditStep` → ok (los tests y el CLI no lo implementan). */
+/** QA del paso vía host. Sin `auditStep` el gate decide (fail closed si hay criterios). */
 async function auditPaso(ctx: TurnContext, paso: PlanPaso): Promise<EngineStepAudit> {
-  if (!ctx.host.auditStep) return { ok: true }
+  if (!ctx.host.auditStep) {
+    const gate = gateStepAudit({ hayCriterios: paso.criterios.length > 0 })
+    return { ok: gate.ok, issues: gate.issues, evidencia: gate.evidencia }
+  }
   try {
     return await ctx.host.auditStep({
       runId: ctx.run.id,
@@ -316,20 +321,34 @@ async function auditPaso(ctx: TurnContext, paso: PlanPaso): Promise<EngineStepAu
   }
 }
 
-/** Cierre del turno con plan: QA del proyecto + resumen de pasos (sin «¿te gustó?»). */
+/**
+ * Cierre del turno con plan: QA del proyecto (A9, fail closed) + resumen de pasos.
+ * Sin `audit.project` limpio el turno NO se cierra: vuelve con estado fallido.
+ */
 async function finishTurn(ctx: TurnContext, hechos: number, bloqueados: PlanPaso[]): Promise<TurnProgramOutcome> {
-  let avisos: string[] = []
+  let auditoria: EngineProjectAudit | undefined
   if (ctx.host.auditProject) {
     try {
-      avisos = (await ctx.host.auditProject({ runId: ctx.run.id })).issues ?? []
+      auditoria = await ctx.host.auditProject({ runId: ctx.run.id })
     } catch (e) {
-      avisos = [`QA del proyecto falló: ${e instanceof Error ? e.message : String(e)}`]
+      auditoria = { ok: false, issues: [`QA del proyecto falló: ${e instanceof Error ? e.message : String(e)}`] }
     }
   }
-  const resumen = [
+  const gate = gateProjectAudit(auditoria)
+  const base = [
     `Plan completado: ${hechos} paso(s) terminados`,
     bloqueados.length ? `Bloqueados: ${bloqueados.map((p) => `${p.id} (${p.titulo})`).join(', ')}` : '',
-    avisos.length ? `Avisos: ${avisos.join('; ')}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  if (!gate.ok) {
+    const detalle = `QA del proyecto no pasó: ${gate.issues.join('; ')}`
+    ctx.log({ kind: 'error', message: detalle })
+    return { status: 'failed', error: `${base} · ${detalle}` }
+  }
+  const resumen = [
+    base,
+    gate.warnings.length ? `Avisos: ${gate.warnings.join('; ')}` : '',
   ]
     .filter(Boolean)
     .join(' · ')
@@ -386,12 +405,13 @@ async function orchestrate(ctx: TurnContext, opts: Required<ToolLoopOptions>): P
     if (out.status === 'failed' && !marker) return out // presupuesto/error real del turno
 
     const verdict = await auditPaso(ctx, pend)
+    const gate = gateStepAudit({ hayCriterios: pend.criterios.length > 0, verdict })
     const md2 = await ctx.readPlan()
     const plan2 = (md2 && isStructuredPlan(md2) ? parsePlan(md2) : null) ?? plan
-    if (verdict.ok) {
-      await writePlan(ctx, marcarPaso(plan2, pend.id, 'hecho', { evidencia: verdict.evidencia }))
-      upsertRunStep(ctx, pend, 'done', verdict.evidencia)
-      ctx.emit({ type: 'step.done', stepId: pend.id, status: 'done', evidence: verdict.evidencia })
+    if (gate.ok) {
+      await writePlan(ctx, marcarPaso(plan2, pend.id, 'hecho', { evidencia: gate.evidencia }))
+      upsertRunStep(ctx, pend, 'done', gate.evidencia)
+      ctx.emit({ type: 'step.done', stepId: pend.id, status: 'done', evidence: gate.evidencia })
       ctx.log({ kind: 'note', stepId: pend.id, message: `paso ${pend.id} hecho`, status: 'done' })
       resueltos.add(pend.id)
       hechos += 1
@@ -401,7 +421,7 @@ async function orchestrate(ctx: TurnContext, opts: Required<ToolLoopOptions>): P
     const intentos = (stepRetries.get(pend.id) ?? 0) + 1
     stepRetries.set(pend.id, intentos)
     if (intentos <= STEP_LOOP_DEFAULTS.maxQaRetries) {
-      const issues = (verdict.issues ?? ['sin criterios de aceptación cumplidos']).join('\n- ')
+      const issues = (gate.issues.length ? gate.issues : ['sin criterios de aceptación cumplidos']).join('\n- ')
       ctx.run.messages.push({
         role: 'user',
         content: `QA del paso ${pend.id} NO pasó:\n- ${issues}\nCorrige SOLO lo necesario y vuelve a terminar el paso con agent.complete.`,
@@ -412,12 +432,12 @@ async function orchestrate(ctx: TurnContext, opts: Required<ToolLoopOptions>): P
     await writePlan(
       ctx,
       marcarPaso(plan2, pend.id, 'bloqueado', {
-        motivoBloqueo: (verdict.issues ?? ['QA no pasó']).join('; '),
-        evidencia: verdict.evidencia,
+        motivoBloqueo: (gate.issues.length ? gate.issues : ['QA no pasó']).join('; '),
+        evidencia: gate.evidencia,
       }),
     )
-    upsertRunStep(ctx, pend, 'blocked', verdict.evidencia)
-    ctx.emit({ type: 'step.done', stepId: pend.id, status: 'blocked', evidence: verdict.evidencia })
+    upsertRunStep(ctx, pend, 'blocked', gate.evidencia)
+    ctx.emit({ type: 'step.done', stepId: pend.id, status: 'blocked', evidence: gate.evidencia })
     ctx.log({ kind: 'note', stepId: pend.id, message: `paso ${pend.id} bloqueado`, status: 'blocked' })
     bloqueados.push(pend)
     resueltos.add(pend.id)
