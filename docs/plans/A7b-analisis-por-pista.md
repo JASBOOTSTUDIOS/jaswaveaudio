@@ -59,8 +59,9 @@ Nuevos: `shared/src/audio/{diagnosis,analysis-provider}.ts`, `jas-wave/src/lib/{
 `fe0308d` servicio de análisis + backend Web Audio · `6c2f642` guard de rutas de análisis ·
 `fd58102` A/B con igualación de loudness · `3a9fb4d` bounce fiel + sin tope de 120 s.
 
-**Verificado 2026-10-21:** `jas-wave` → `npm run typecheck` ✓, `npx eslint .` 0 errores, `npm test` 347 ✓;
-`shared` → typecheck + 460 tests ✓; `ai-harness` → typecheck + 196 tests ✓. No se hizo `npm run build`.
+**Verificado 2026-10-21:** `jas-wave` → `npm run typecheck` ✓, `npm run lint` 0 errores, `npm test` 347 ✓,
+`npm run build` ✓; `shared` → typecheck + 460 tests ✓; `ai-harness` → typecheck + 196 tests ✓ (equivale a `npm run verify`
+en la raíz, menos el build).
 
 **Pendiente en C++ (no compilar en este entorno: falta `native/vst3sdk` y MSVC):**
 1. `renderOfflineStart{analysis:true, tapStems, tap, bypassMaster?, outDir}` en
