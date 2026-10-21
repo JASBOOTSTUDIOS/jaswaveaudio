@@ -43,7 +43,27 @@ declare global {
       fileReadBinary: (ruta: string) => Promise<Uint8Array>
       fileExists: (ruta: string) => Promise<boolean>
       fileSize: (ruta: string) => Promise<number>
+      fileListDir?: (dir: string) => Promise<{
+        success: boolean
+        error?: string
+        entries: Array<{ name: string; isDirectory: boolean; isFile: boolean }>
+      }>
       recordingsDir: (projectPath?: string) => Promise<string>
+      /** Ruta real de un archivo arrastrado desde el explorador (Electron). */
+      pathForFile?: (file: File) => string
+      /** Copia un archivo de audio al media del proyecto (o a media/pending/). */
+      mediaCopy?: (opts: { src: string; destDir: string; nombre?: string; mover?: boolean }) => Promise<{
+        ok: boolean
+        ruta?: string
+        nombre?: string
+        error?: string
+      }>
+      /** Busca archivos por nombre en una carpeta (reenlace de media faltante). */
+      mediaBuscar?: (opts: { carpeta: string; nombres: string[] }) => Promise<{
+        ok: boolean
+        encontrados?: Record<string, string>
+        error?: string
+      }>
       dialogSave: (defaultPath?: string) => Promise<{ canceled: boolean; filePath?: string }>
       dialogOpenDirectory: () => Promise<{ canceled: boolean; filePaths?: string[] }>
       projectOpenDialog: () => Promise<{ success: boolean; data?: unknown; path?: string; canceled?: boolean; error?: string }>

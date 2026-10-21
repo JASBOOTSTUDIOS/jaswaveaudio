@@ -17,6 +17,7 @@ import { AiCredentialStore } from './ai-credentials'
 import { initLogger, logLine } from './logger'
 import { writeFileAtomic } from './atomic-write'
 import { defaultVstRoots, isAudioFile, PathAccessError, PathGrants, type AccessKind, type GrantMode } from './path-grants'
+import { buscarArchivosPorNombre, copiarMediaArchivo, moverMediaArchivo } from './media-service'
 import { checkHostCommand } from './plugin-host-guard'
 import { initAutoUpdater } from './updater'
 import {
@@ -664,6 +665,40 @@ ipcMain.handle('recordings-dir', async (_event: IpcMainInvokeEvent, projectPath?
   await fs.mkdir(dir, { recursive: true })
   return dir
 })
+
+/** Copia un archivo de audio al media del proyecto (o a media/pending/). */
+ipcMain.handle(
+  'media-copy',
+  async (
+    _event: IpcMainInvokeEvent,
+    opts: { src?: string; destDir?: string; nombre?: string; mover?: boolean },
+  ) => {
+    try {
+      const src = assertBinaryRead(opts?.src)
+      const destDir = assertPath(opts?.destDir, 'write')
+      if (opts?.mover) return await moverMediaArchivo({ src, destDir, nombre: opts?.nombre })
+      return await copiarMediaArchivo({ src, destDir, nombre: opts?.nombre })
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+)
+
+/** Busca archivos por nombre en una carpeta (reenlace de media faltante). */
+ipcMain.handle(
+  'media-buscar',
+  async (_event: IpcMainInvokeEvent, opts: { carpeta?: string; nombres?: string[] }) => {
+    try {
+      const carpeta = assertPath(opts?.carpeta, 'read')
+      const nombres = Array.isArray(opts?.nombres)
+        ? opts.nombres.filter((n): n is string => typeof n === 'string').slice(0, 200)
+        : []
+      return { ok: true, encontrados: await buscarArchivosPorNombre(carpeta, nombres) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err), encontrados: {} }
+    }
+  },
+)
 
 ipcMain.handle('file-read', async (_event: IpcMainInvokeEvent, ruta: string) => {
   return fs.readFile(assertPath(ruta, 'read'), 'utf-8')

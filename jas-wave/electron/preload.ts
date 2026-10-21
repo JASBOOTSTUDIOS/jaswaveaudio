@@ -1,5 +1,5 @@
-// Preload en sandbox: solo 'electron' (contextBridge/ipcRenderer) y process.env.
-const { contextBridge, ipcRenderer } = require('electron')
+// Preload en sandbox: solo 'electron' (contextBridge/ipcRenderer/webUtils) y process.env.
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 contextBridge.exposeInMainWorld('electron', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
@@ -54,6 +54,19 @@ contextBridge.exposeInMainWorld('electron', {
   fileListDir: (dir: string) => ipcRenderer.invoke('file-list-dir', dir),
   fileSize: (ruta: string) => ipcRenderer.invoke('file-size', ruta),
   recordingsDir: (projectPath?: string) => ipcRenderer.invoke('recordings-dir', projectPath),
+  /** Ruta real de un archivo arrastrado desde el explorador. */
+  pathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ''
+    }
+  },
+  /** Copia un archivo de audio al media del proyecto; devuelve ruta absoluta y nombre final. */
+  mediaCopy: (opts: { src: string; destDir: string; nombre?: string; mover?: boolean }) =>
+    ipcRenderer.invoke('media-copy', opts),
+  /** Busca archivos por nombre en una carpeta (reenlace de media faltante). */
+  mediaBuscar: (opts: { carpeta: string; nombres: string[] }) => ipcRenderer.invoke('media-buscar', opts),
   dialogSave: (defaultPath?: string) => ipcRenderer.invoke('dialog-save', defaultPath),
   dialogOpenDirectory: () => ipcRenderer.invoke('dialog-open-directory'),
   projectOpenDialog: () => ipcRenderer.invoke('project-open-dialog'),
