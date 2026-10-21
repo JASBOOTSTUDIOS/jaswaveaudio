@@ -50,6 +50,10 @@ export type MetadatosRenderAnalisis = {
   duracionSeg: number
   /** true si el render vino de caché (no se re-renderizó). */
   cache?: boolean
+  /** true si el backend procesó plugins (VST). */
+  pluginsProcesados?: boolean
+  /** Pistas del proyecto sin audio medible en el rango (p. ej. MIDI sin instrumento). */
+  pistasSinAudio?: string[]
 }
 
 /** Resultado de un análisis: medidas por pista + master + suma. */
