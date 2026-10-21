@@ -105,6 +105,13 @@ import {
   crearComandoAnalysisSpectrum,
   crearComandoAnalysisStereo,
   crearComandoAnalysisFullReport,
+  crearComandoAnalysisTrack,
+  crearComandoAnalysisMix,
+  crearComandoAnalysisMasking,
+  crearComandoAnalysisDynamics,
+  crearComandoAnalysisSection,
+  crearComandoAnalysisReference,
+  crearComandoAnalysisDiagnose,
 } from '../commands/analysis-commands';
 import {
   crearComandoAutomationSetCurve,
@@ -256,6 +263,13 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoAnalysisSpectrum(), registry);
   registrar(crearComandoAnalysisStereo(), registry);
   registrar(crearComandoAnalysisFullReport(), registry);
+  registrar(crearComandoAnalysisTrack(), registry);
+  registrar(crearComandoAnalysisMix(), registry);
+  registrar(crearComandoAnalysisMasking(), registry);
+  registrar(crearComandoAnalysisDynamics(), registry);
+  registrar(crearComandoAnalysisSection(), registry);
+  registrar(crearComandoAnalysisReference(), registry);
+  registrar(crearComandoAnalysisDiagnose(), registry);
   registrar(crearComandoAutomationSetCurve(), registry);
   registrar(crearComandoAutomationClear(), registry);
   registrar(crearComandoAutomationWritePoint(), registry);

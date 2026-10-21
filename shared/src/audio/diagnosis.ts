@@ -20,6 +20,7 @@
 
 import type { BandEnergy } from './spectrum'
 import type { MixAnalysisReport } from './mix-analysis'
+import type { LoudnessResult } from './loudness-bs1770'
 
 export type SeveridadDiagnostico = 'info' | 'aviso' | 'critico'
 
@@ -72,6 +73,8 @@ export type MedidaPista = {
   bandas: BandEnergy[]
   /** Agregados (sub/low/lowmid/mid/highmid/high). */
   bandasAgregadas?: BandEnergy[]
+  /** Resultado BS.1770 completo (para herramientas que piden short-term/momentary). */
+  loudness?: LoudnessResult
 }
 
 /** Medidas de una mezcla completa (pistas + master + suma). */
@@ -169,6 +172,7 @@ export function medidaDesdeAnalisis(
       : undefined,
     bandas: analysis.spectrumBands,
     bandasAgregadas: analysis.bandasAgregadas,
+    loudness: loudness,
   }
 }
 
