@@ -1,5 +1,6 @@
 /**
  * Diff semántico de estado DAW (030-dry-run).
+ * A9: ampliado con clips/notes, plugins con parámetros (unidades), mezcla en dB, routing.
  */
 
 import type { DAWState } from '../types/state';
@@ -10,13 +11,27 @@ export type SemanticStateDiff = {
   tracksModified: string[];
   clipsAdded: number;
   clipsRemoved: number;
-  pluginsLoaded: string[];
-  pluginsUnloaded: string[];
-  volumeChanges: Array<{ trackId: string; before: number; after: number }>;
+  notesAdded: number;
+  notesRemoved: number;
+  pluginsLoaded: Array<{ trackId: string; trackName: string; pluginId: string; pluginName: string }>;
+  pluginsUnloaded: Array<{ trackId: string; trackName: string; pluginId: string; pluginName: string }>;
+  pluginParamChanges: Array<{
+    trackId: string;
+    trackName: string;
+    pluginId: string;
+    pluginName: string;
+    paramId: string;
+    before: number | string | boolean | null;
+    after: number | string | boolean | null;
+    unit?: string;
+  }>;
+  volumeChanges: Array<{ trackId: string; before: number; after: number; unit: 'dB' | 'linear' }>;
   panChanges: Array<{ trackId: string; before: number; after: number }>;
   muteChanges: Array<{ trackId: string; before: boolean; after: boolean }>;
+  soloChanges: Array<{ trackId: string; before: boolean; after: boolean }>;
   sendsAdded: number;
   sidechainsAdded: number;
+  routingChanges: string[];
 };
 
 export function emptySemanticDiff(): SemanticStateDiff {
