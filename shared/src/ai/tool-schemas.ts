@@ -95,7 +95,7 @@ export const ROLE_WRITE_PREFIXES: Readonly<Record<ToolAgentRole, readonly string
   productor: ['track.', 'clip.', 'midi.', 'plugin.insert', 'plugin.replace', 'style.', 'daw.musicBuild', 'daw.composeProject', 'daw.generateMidiSong', 'project.setBpm', 'project.setTimeSignature', 'doc.'],
   mezcla: ['plugin.', 'fxChain.', 'send.', 'bus.', 'sidechain.', 'automation.', 'track.update', 'clip.gain', 'master.update', 'doc.'],
   mastering: ['master.', 'plugin.', 'fxChain.', 'daw.masterPass', 'reference.', 'doc.'],
-  qa: ['plan.updateStep'],
+  qa: [],
 })
 
 export function roleAllowsTool(role: ToolAgentRole, name: string, cls: ToolRiskClass | undefined): boolean {
