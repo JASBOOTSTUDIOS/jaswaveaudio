@@ -25,6 +25,9 @@ import {
   type TurnEngine,
   type TurnHandle,
 } from '@jaswave/ai-harness'
+import { auditStepCore, auditarProyecto } from '@jaswave/ai-harness'
+import { getEstadoSemantico } from '../../../shared/src'
+import { runAuditTool, A9_TOOL_NAMES } from './agent-audit-tools'
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import {
   aiChatWithFallback,
@@ -143,16 +146,39 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
 
     async executeTools(allCalls, ctx) {
       const run = deps.getRun?.(ctx.runId)
+      const engine = getActiveEngine() ?? (engineSingleton?.tienda === tienda ? engineSingleton.engine : undefined)
       // fallback.* solo calculan propuestas sobre el estado actual (clase read).
       const fallback = allCalls.filter((c) => isFallbackTool(c.name))
-      const calls = allCalls.filter((c) => !isFallbackTool(c.name))
+      const a9 = allCalls.filter((c) => (A9_TOOL_NAMES as readonly string[]).includes(c.name))
+      const calls = allCalls.filter((c) => !isFallbackTool(c.name) && !(A9_TOOL_NAMES as readonly string[]).includes(c.name))
       const fbResults = fallback.map((c) => ({
         callId: c.id,
         name: c.name,
         status: 'success' as const,
         data: { actions: computeFallbackActions(c.name, tienda.obtenerEstado(), c.arguments) },
       }))
-      if (!calls.length) return fbResults
+      const a9Results = await Promise.all(
+        a9.map(async (c) => {
+          try {
+            const data = await runAuditTool(
+              tienda,
+              c.name,
+              (c.arguments ?? {}) as Record<string, unknown>,
+              engine,
+              { runId: ctx.runId, conversationId: run?.conversationId },
+            )
+            return { callId: c.id, name: c.name, status: 'success' as const, data }
+          } catch (e) {
+            return {
+              callId: c.id,
+              name: c.name,
+              status: 'error' as const,
+              error: e instanceof Error ? e.message : String(e),
+            }
+          }
+        }),
+      )
+      if (!calls.length) return [...fbResults, ...a9Results]
       const results = await runRegisteredTools(
         tienda,
         calls.map((c) => ({ id: c.id, tool: c.name, arguments: c.arguments })),
@@ -167,6 +193,7 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
       )
       return [
         ...fbResults,
+        ...a9Results,
         ...results.map((r) => ({
           callId: r.callId,
           name: r.tool,
@@ -183,23 +210,53 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
       writeAgentDoc(projectId(), slug, content, { origin: 'user' })
     },
 
-    // ── A5 · QA por paso y undo por snapshot (profundidad del executor) ──────────
-    auditStep: ({ step }) => {
+    // ── A5/A9 · QA por paso y cierre (núcleo A9) ──────────────────────────────
+    auditStep: ({ step, plan }) => {
       const st = tienda.obtenerEstado()
-      const tracks = st.project?.tracks?.length ?? 0
-      const issues: string[] = []
-      if (/crear pista/i.test(step.titulo) && tracks === 0) {
-        issues.push(`El proyecto no tiene pistas tras «${step.titulo}».`)
-      }
-      return {
-        ok: issues.length === 0,
-        issues,
-        evidencia: issues.length ? [] : [`${tracks} pista(s) en el proyecto tras el paso.`],
+      const estadoSemantico = getEstadoSemantico(st as any)
+      const paso = plan?.pasos?.find((p: any) => p.id === step.id) ?? step
+      try {
+        const res = auditStepCore({
+          paso,
+          estado: st as any,
+          estadoSemantico,
+          projectId: projectId(),
+        })
+        const ok = res.cumple && res.bloqueante === false && (res.issues?.length ?? 0) === 0
+        const evidencia = res.evidencia?.length ? res.evidencia : ok ? [`Paso ${paso.id} evaluado con núcleo A9.`] : []
+        return {
+          ok,
+          issues: res.issues ?? [],
+          evidencia,
+          warnings: res.warnings,
+          detalles: res.detalles,
+        } as any
+      } catch {
+        const tracks = st.project?.tracks?.length ?? 0
+        const issues: string[] = []
+        if (/crear pista/i.test(String(paso.titulo ?? '')) && tracks === 0) {
+          issues.push(`El proyecto no tiene pistas tras «${paso.titulo}».`)
+        }
+        return {
+          ok: issues.length === 0,
+          issues,
+          evidencia: issues.length ? [] : [`${tracks} pista(s) en el proyecto tras el paso.`],
+        }
       }
     },
     auditProject: () => {
-      const tracks = tienda.obtenerEstado().project?.tracks?.length ?? 0
-      return tracks > 0 ? { ok: true } : { ok: false, issues: ['El proyecto quedó sin pistas.'] }
+      const st = tienda.obtenerEstado()
+      try {
+        const res = auditarProyecto(st as any)
+        const bloqueantes = (res as any).issues?.filter((i: any) => i.bloqueante) ?? []
+        if (bloqueantes.length > 0) {
+          return { ok: false, issues: bloqueantes.map((i: any) => i.mensaje), details: res as any }
+        }
+        return { ok: true, warnings: (res as any).issues?.map((i: any) => i.mensaje) ?? [], details: res as any }
+      } catch {
+        const tracks = st.project?.tracks?.length ?? 0
+        return tracks > 0 ? { ok: true } : { ok: false, issues: ['El proyecto quedó sin pistas.'] }
+      }
     },
     // Snapshot = profundidad de undo del executor; restore revierte hasta ahí (LIFO).
     captureSnapshot: ({ kind, stepId }) => ({ depth: tienda.executor.getUndoDepth(), kind, stepId }),
@@ -244,6 +301,10 @@ export function getAgentEngine(tienda: TiendaDAW): TurnEngine {
   engine = createTurnEngine(host)
   engineSingleton = { tienda, engine }
   return engine
+}
+
+export function getActiveEngine(): TurnEngine | null {
+  return engineSingleton?.engine ?? null
 }
 
 function newMsgId(prefix: string): string {
