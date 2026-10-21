@@ -1707,10 +1707,20 @@ export function ArrangementView() {
                   }}
                   onDrop={async (e) => {
                     e.preventDefault()
-                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                      const file = e.dataTransfer.files[0]
-                      const dropBeat = clientXToBeat(e.clientX)
-                      await addClipFromFile(track.id, file, dropBeat)
+                    const files = Array.from(e.dataTransfer.files ?? [])
+                    if (files.length === 0) return
+                    const dropBeat = clientXToBeat(e.clientX)
+                    // Importación múltiple: cada archivo se copia al media del proyecto.
+                    for (const file of files) {
+                      try {
+                        await addClipFromFile(track.id, file, dropBeat)
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err)
+                        tienda.busEventos.emit('comando.fallido', {
+                          type: 'audio.import',
+                          error: `${file.name}: ${msg}`,
+                        })
+                      }
                     }
                   }}
                 >

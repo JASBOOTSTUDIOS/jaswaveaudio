@@ -33,7 +33,9 @@ import {
   makeRecordingFileName,
   recordingBasename,
   saveRecordingWav,
+  saveRecordingWavFallback,
 } from '@/src/lib/audio-recording-persist'
+import { cargarBytesMedia, copiarAudioAlProyecto, esRutaMediaRelativa, validarImportacionAudio } from '@/src/lib/project-media'
 import { scheduleCompPlayback } from '@/src/lib/comp-playback'
 import {
   ensureProjectVstInstruments,
@@ -960,13 +962,18 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         if (!esAudioClip(clip)) continue
         const sourceId = clip.source?.ruta
         if (!sourceId) continue
-        if (!recordingBasename(sourceId) && !/\.wav$/i.test(sourceId)) continue
+        // Grabaciones (.wav) y media relativa del proyecto (`media/...`).
+        const esMediaRelativa = esRutaMediaRelativa(sourceId)
+        if (!recordingBasename(sourceId) && !esMediaRelativa) continue
         needed += 1
         if (audioEngine.getAudioBuffer(sourceId)) continue
         if (hydratedSourcesRef.current.has(sourceId)) continue
         hydratedSourcesRef.current.add(sourceId)
         pending.push(
-          loadRecordingBytes(sourceId, projectRuta).then(async (bytes) => {
+          (esMediaRelativa
+            ? cargarBytesMedia(sourceId, projectRuta)
+            : loadRecordingBytes(sourceId, projectRuta)
+          ).then(async (bytes) => {
             if (!bytes) {
               hydratedSourcesRef.current.delete(sourceId)
               return
@@ -1158,8 +1165,26 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           const wav = encodeWavFromAudioBuffer(buffer)
           const fileName = makeRecordingFileName(trackIds[0] ?? 'pista')
           const saved = await saveRecordingWav(wav, fileName, projectRuta)
-          const sourceId = saved?.sourceId ?? memKey
-          if (saved && sourceId !== memKey) {
+          // Si no se pudo guardar en el proyecto: aviso visible + reintento en userData.
+          // Nunca se pierde la toma en silencio.
+          let sourceId = saved?.sourceId
+          if (!sourceId) {
+            const fallback = await saveRecordingWavFallback(wav, fileName)
+            if (!fallback) {
+              tienda.busEventos.emit('comando.fallido', {
+                type: 'audio.record',
+                error:
+                  'No se pudo guardar la grabación en disco: revisa los permisos de la carpeta del proyecto o el espacio en disco.',
+              })
+              continue
+            }
+            sourceId = fallback.sourceId
+            tienda.busEventos.emit('comando.fallido', {
+              type: 'audio.record',
+              error: `La grabación se guardó fuera del proyecto (${fallback.absPath}).`,
+            })
+          }
+          if (sourceId !== memKey) {
             audioEngine.setAudioBuffer(sourceId, buffer)
           }
           for (const trackId of trackIds) {
@@ -1305,25 +1330,47 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         importProgress.start(file.name)
         importProgress.setProgress(0.1, 'reading')
 
+        // Validación previa: extensión y tamaño (la duración se comprueba al decodificar).
+        const previa = validarImportacionAudio({ ruta: file.name, tamanoBytes: file.size })
+        if (previa.nivel === 'error') throw new Error(previa.mensaje ?? 'Archivo no importable')
+
         const bufferKey = `file-${trackId}-${Date.now()}`
         importProgress.setProgress(0.35, 'decoding')
         const { buffer, duration } = await audioEngine.decodeAudioFile(bufferKey, file)
         const durationBeats = secondsToBeats(duration, BPM)
+
+        const duracion = validarImportacionAudio({ ruta: file.name, duracionSec: duration })
+        if (duracion.nivel === 'error') throw new Error(duracion.mensaje ?? 'Archivo no importable')
+        if (duracion.nivel === 'aviso') {
+          tienda.busEventos.emit('comando.fallido', {
+            type: 'audio.import',
+            error: duracion.mensaje ?? 'El archivo es largo',
+          })
+        }
 
         importProgress.setProgress(0.7, 'peaks')
         const buckets = Math.min(4096, Math.max(512, Math.floor(duration * 80)))
         const peaks = extractStereoPeaks(buffer, buckets)
         const waveform = packStereoPeaks(peaks)
 
+        // Copia al media del proyecto: el clip guarda la ruta RELATIVA para que
+        // el proyecto siga funcionando en otra carpeta o en otro equipo.
+        importProgress.setProgress(0.85, 'copying')
+        const copia = await copiarAudioAlProyecto(file, projectRuta)
+
         importProgress.setProgress(0.9, 'creating')
-        await tienda.executor.execute('clip.create', {
+        const res = await tienda.executor.execute('clip.create', {
           pistaId: trackId,
           nombre: file.name.replace(/\.[^.]+$/, ''),
           inicio: startBeats,
           duracion: durationBeats,
-          sourceId: bufferKey,
+          sourceId: copia.rutaRelativa ?? bufferKey,
           waveform,
         })
+        if (!res.success) throw new Error(res.error?.message ?? 'No se pudo crear el clip')
+
+        // El motor indexa el audio por `sourceId`: se registra con la ruta relativa.
+        if (copia.rutaRelativa) audioEngine.setAudioBuffer(copia.rutaRelativa, buffer)
 
         importProgress.finish()
 
@@ -1337,7 +1384,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         throw err
       }
     },
-    [tienda, playing, positionMs, BPM, importProgress, triggerAudioPlayback, clips],
+    [tienda, playing, positionMs, BPM, importProgress, triggerAudioPlayback, clips, projectRuta],
   )
 
   const getPositionMs = useCallback(() => {
