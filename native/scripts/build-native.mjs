@@ -2,8 +2,9 @@
  * Compila los binarios nativos que se incluyen en el instalador (Release, x64):
  *   - native/plugin-host  → jaswave-plugin-host.exe + JasWavePiano.vst3 (piano-synth)
  *   - native/jaswave-roles-vst → JasWaveRoles.vst3
+ *   - native/jaswave-fx → JasWaveFx.vst3 (solo si VST3 SDK disponible; se salta si falta)
  *
- *   node native/scripts/build-native.mjs [--config Release] [--clean]
+ *   node native/scripts/build-native.mjs [--config Release] [--clean] [--no-fx]
  *
  * Generador: "Visual Studio 17 2022" (disponible en los runners windows-latest).
  * Se puede cambiar con JASWAVE_CMAKE_GENERATOR (p. ej. "Visual Studio 18 2026" o "Ninja").
@@ -23,6 +24,7 @@ const args = process.argv.slice(2)
 const cfgIdx = args.indexOf('--config')
 const config = cfgIdx >= 0 && args[cfgIdx + 1] ? args[cfgIdx + 1] : 'Release'
 const clean = args.includes('--clean')
+const buildFx = !args.includes('--no-fx')
 const generator = process.env.JASWAVE_CMAKE_GENERATOR || 'Visual Studio 17 2022'
 const isVs = /^Visual Studio/i.test(generator)
 const BUILD_DIR_NAME = 'build-release'
@@ -107,6 +109,15 @@ const hostBuild = configureAndBuild('plugin-host', [{ name: 'jaswave-plugin-host
 ])
 const rolesBuild = configureAndBuild('jaswave-roles-vst', [{ name: 'JasWaveRoles' }])
 
+let fxBuild = null
+if (buildFx) {
+  fxBuild = configureAndBuild('jaswave-fx', [{ name: 'JasWaveFx' }], [
+    '-DJASWAVE_VST3_SDK=ON',
+    '-DSMTG_ENABLE_VSTGUI_SUPPORT=OFF',
+    '-DSMTG_ENABLE_VST3_PLUGIN_EXAMPLES=OFF',
+  ])
+}
+
 // Multi-config (VS) deja el exe en <build>/<Config>/; single-config (Ninja) en <build>/.
 const exe = [path.join(hostBuild, config, 'jaswave-plugin-host.exe'), path.join(hostBuild, 'jaswave-plugin-host.exe')].find(
   (p) => fs.existsSync(p),
@@ -114,5 +125,8 @@ const exe = [path.join(hostBuild, config, 'jaswave-plugin-host.exe'), path.join(
 expectFile(exe ?? path.join(hostBuild, config, 'jaswave-plugin-host.exe'))
 expectFile(path.join(hostBuild, 'JasWavePiano.vst3', 'Contents', 'x86_64-win', 'JasWavePiano.vst3'))
 expectFile(path.join(rolesBuild, 'JasWaveRoles.vst3', 'Contents', 'x86_64-win', 'JasWaveRoles.vst3'))
+if (fxBuild) {
+  expectFile(path.join(fxBuild, 'JasWaveFx.vst3', 'Contents', 'x86_64-win', 'JasWaveFx.vst3'))
+}
 
 log('listo. Siguiente paso: npm run pack:win (stage:host copia los binarios a jas-wave/resources).')

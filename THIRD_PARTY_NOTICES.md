@@ -16,7 +16,7 @@ La sección npm se regenera con `npm run notices` en `jas-wave/`; el resto se ma
 |---|---|---|
 | Electron 33 | Runtime de la aplicación de escritorio | MIT |
 | Chromium y dependencias de Electron | Incluido en Electron | BSD-3-Clause y otras (ver `LICENSES.chromium.html`) |
-| Steinberg VST3 SDK v3.8.1_build_84 | `native/plugin-host`, `native/jaswave-roles-vst`, `native/piano-synth` | MIT |
+| Steinberg VST3 SDK v3.8.1_build_84 | `native/plugin-host`, `native/jaswave-roles-vst`, `native/jaswave-fx`, `native/piano-synth` | MIT |
 | miniaudio 0.11.22 | E/S de audio del plugin host (`native/plugin-host/vendor/miniaudio.h`) | Dominio público (Unlicense) o MIT-0 |
 | Cabecera VST 2.4 mínima | `native/plugin-host/vendor/vst2/aeffect.h` | Código propio de JASBOOTSTUDIOS (ver nota) |
 | Bravura (vía vexflow) | Fuente de notación musical de la partitura | SIL OFL 1.1 |
