@@ -18,6 +18,7 @@ import { TransportBar } from '@/components/transport-bar'
 import { EditToolbar } from '@/components/edit-toolbar'
 import { EventToasts } from '@/components/event-toasts'
 import { AudioDeviceBanner } from '@/components/audio-device-banner'
+import { PluginHostCrashLoopBanner } from '@/components/plugin-host-crash-loop-banner'
 import { ProjectCloseDialog } from '@/components/project-close-dialog'
 import { SaveConflictDialog } from '@/components/save-conflict-dialog'
 import { MediaFaltanteDialog } from '@/components/media-faltante-dialog'
@@ -315,6 +316,7 @@ function AppShell() {
       <EventToasts />
       <UpdateBanner />
       <AudioDeviceBanner />
+      <PluginHostCrashLoopBanner />
       <ProjectCloseDialog />
       <SaveConflictDialog />
       <MediaFaltanteDialog />

@@ -141,6 +141,10 @@ declare global {
       pluginHostSend: (cmd: unknown) => Promise<unknown>
       pluginHostMidi: (cmd: unknown) => void
       onPluginHostRestarted?: (callback: () => void) => () => void
+    /** U7: reinicia el motor de audio (limpia el contador de fallos). */
+    pluginHostReset?: () => Promise<{ ok: boolean; message?: string }>
+    /** U7: el motor entró en bucle de fallos. */
+    onPluginHostCrashLoop?: (callback: (info?: { activo?: boolean; mensaje?: string }) => void) => () => void
       onPluginHostExited?: (
         callback: (info?: { code?: number | null; signal?: string | null }) => void,
       ) => () => void

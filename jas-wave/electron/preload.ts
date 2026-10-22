@@ -139,12 +139,20 @@ contextBridge.exposeInMainWorld('electron', {
   nativeAudioGetMeterPeak: () => ipcRenderer.invoke('native-audio-meter'),
   pluginHostStatus: () => ipcRenderer.invoke('plugin-host-status'),
   pluginHostEnsure: () => ipcRenderer.invoke('plugin-host-ensure'),
+  /** U7: limpia el contador de fallos y reinicia el motor (sin cargar plugins). */
+  pluginHostReset: () => ipcRenderer.invoke('plugin-host-reset'),
   pluginHostSend: (cmd: unknown) => ipcRenderer.invoke('plugin-host-send', cmd),
   pluginHostMidi: (cmd: unknown) => ipcRenderer.send('plugin-host-midi', cmd),
   onPluginHostRestarted: (callback: () => void) => {
     const handler = () => callback()
     ipcRenderer.on('plugin-host-restarted', handler)
     return () => ipcRenderer.removeListener('plugin-host-restarted', handler)
+  },
+  /** U7: el motor entró en bucle de fallos (o se resolvió con "Reiniciar motor"). */
+  onPluginHostCrashLoop: (callback: (info?: { activo?: boolean; mensaje?: string }) => void) => {
+    const handler = (_: unknown, info: { activo?: boolean; mensaje?: string }) => callback(info)
+    ipcRenderer.on('plugin-host-crash-loop', handler)
+    return () => ipcRenderer.removeListener('plugin-host-crash-loop', handler)
   },
   onPluginHostExited: (callback: (info?: { code?: number | null; signal?: string | null }) => void) => {
     const handler = (_: unknown, info: { code?: number | null; signal?: string | null }) => callback(info)

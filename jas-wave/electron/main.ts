@@ -1085,6 +1085,7 @@ const {
   isEditorHostCommand,
   setPluginHostAudioDevice,
   subscribeNativeMidi,
+  resetPluginHost,
 } = require('./plugin-host-bridge')
 
 subscribeNativeMidi((msg: { id: string; data: number[] }) => {
@@ -1107,6 +1108,13 @@ ipcMain.handle('plugin-host-ensure', async (e: IpcMainInvokeEvent) => {
   const ok = await ensurePluginHostStarted()
   if (ok) await ensureMixPipeConnected()
   return { ok, ...getPluginHostStatus() }
+})
+// U7: "Reiniciar motor" tras un bucle de fallos: limpia el contador y reinicia.
+ipcMain.handle('plugin-host-reset', async (e: IpcMainInvokeEvent) => {
+  if (senderIsSatellite(e.sender)) {
+    return { ok: false, message: 'Solo la ventana principal puede reiniciar el motor de audio' }
+  }
+  return resetPluginHost()
 })
 ipcMain.on('plugin-host-midi', (e: IpcMainInvokeEvent, cmd: unknown) => {
   // Piano roll / teclado flotante (undock) también envían noteOn preview.
