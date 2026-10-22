@@ -31,8 +31,26 @@ type Pendiente = SolicitudMediaFaltante & {
 let pendiente: Pendiente | null = null
 let siguienteId = 1
 const oyentes = new Set<() => void>()
+/**
+ * Instantánea estable para `useSyncExternalStore`: debe conservar la identidad
+ * entre renders o React entra en bucle (error #185).
+ */
+let snapshot: SolicitudMediaFaltante | null = null
+
+function refrescarSnapshot(): void {
+  if (!pendiente) {
+    snapshot = null
+    return
+  }
+  snapshot = {
+    id: pendiente.id,
+    referencias: pendiente.referencias,
+    rutaProyecto: pendiente.rutaProyecto,
+  }
+}
 
 function notificar(): void {
+  refrescarSnapshot()
   for (const fn of [...oyentes]) {
     try {
       fn()
@@ -44,8 +62,7 @@ function notificar(): void {
 
 /** Solicitud visible para el diálogo (o null). */
 export function obtenerSolicitudMediaFaltante(): SolicitudMediaFaltante | null {
-  if (!pendiente) return null
-  return { id: pendiente.id, referencias: pendiente.referencias, rutaProyecto: pendiente.rutaProyecto }
+  return snapshot
 }
 
 export function suscribirSolicitudMediaFaltante(fn: () => void): () => void {
@@ -83,5 +100,6 @@ export function responderSolicitudMediaFaltante(respuesta: RespuestaMediaFaltant
 /** Solo tests: limpia el estado del módulo. */
 export function _reiniciarMediaFaltante(): void {
   pendiente = null
+  snapshot = null
   oyentes.clear()
 }

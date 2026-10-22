@@ -300,6 +300,8 @@ export function buildStateSummary(tienda: TiendaDAW) {
       inicio: c.inicio,
       duracion: c.duracion,
       notas: noteCount(c),
+      // Ruta del audio del clip (relativa dentro del proyecto, p. ej. media/intro.wav).
+      sourceRuta: (c as { source?: { ruta?: string } }).source?.ruta,
     })),
   }))
   return {
