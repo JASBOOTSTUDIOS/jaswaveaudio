@@ -683,6 +683,14 @@ function AudioTab() {
       setStatus('Elige un driver ASIO x64 de la lista (UMC, Yamaha, M-WAVE…). «Predeterminado» no abre ASIO.')
       return
     }
+    // U6: el dispositivo solo se cambia con el transporte detenido: evita cortes,
+    // clicks y perder la toma en curso.
+    const transporte = tienda.obtenerEstado().transport
+    if (transporte.reproduciendo || transporte.grabacion === 'grabando') {
+      await tienda.executor.execute('transport.stop', {})
+      const { esperarFinalizacionGrabacion } = await import('@/src/lib/recording-session')
+      await esperarFinalizacionGrabacion()
+    }
     setBusy(true)
     setStatus('Aplicando dispositivo…')
     try {
