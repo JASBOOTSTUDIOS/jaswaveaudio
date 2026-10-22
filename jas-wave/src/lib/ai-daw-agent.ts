@@ -744,6 +744,7 @@ export async function executeDawActions(
             type: action.type,
             success: r.success,
             message: r.success ? `Pista «${nombre}» (${tipo}) creada` : r.error?.message ?? 'Error pista',
+            data: r.result,
           })
           break
         }
@@ -3015,12 +3016,14 @@ export async function executeDawActions(
         case 'project.new': {
           const nombre = String(p.nombre ?? 'Proyecto nuevo').trim() || 'Proyecto nuevo'
           // Cambios sin guardar: el usuario decide en el diálogo; la IA nunca descarta en silencio.
-          const { confirmarCambiosIO } = await import('./project-io')
+          const { confirmarCambiosIO, detenerTransporteYFinalizarGrabacion } = await import('./project-io')
           const conf = await confirmarCambiosIO(tienda, 'nuevo', 'ia')
           if (!conf.continuar) {
             results.push(resultadoNecesitaUsuario(action.type, conf.error))
             break
           }
+          // El transporte se detiene (y la toma en curso se escribe) antes de cambiar de proyecto.
+          await detenerTransporteYFinalizarGrabacion(tienda)
           const r = await tienda.executor.execute('project.new', { nombre })
           results.push({
             type: action.type,
