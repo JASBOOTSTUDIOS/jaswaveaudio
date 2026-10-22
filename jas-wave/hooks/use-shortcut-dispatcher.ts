@@ -24,6 +24,7 @@ import { bumpUiZoom, bumpDocsTextZoom, isDocsZoomTarget, setDocsTextZoom } from 
 import { bumpChatTextZoom, isChatZoomTarget, setChatTextZoom } from '../src/lib/chat-ui-store'
 import { captureActiveDocTextSelection } from '../src/lib/ai-selection-context'
 import { resolveSnapDivision } from '../src/lib/timeline-snap'
+import { estaRenderLock } from '../src/lib/render-lock'
 
 /**
  * Sistema unificado: ActionSystem → Command System.
@@ -482,6 +483,8 @@ export function useShortcutDispatcher(): DespachadorTeclado {
     const onMenu = (ev: Event) => {
       const id = (ev as CustomEvent<{ id: string }>).detail?.id
       if (!id) return
+      // U6: con un render en curso la app está bloqueada (solo cancelar).
+      if (estaRenderLock()) return
       const resolved = system.actions.resolveId(id) ?? id
       // Copiar/pegar clips: no bloquear por selección de texto residual
       const isClipEdit =
@@ -509,6 +512,8 @@ export function useShortcutDispatcher(): DespachadorTeclado {
     }
     const unsubNative = api?.onMenuAction?.((id) => {
       const resolved = system.actions.resolveId(id) ?? id
+      // U6: con un render en curso la app está bloqueada (solo cancelar).
+      if (estaRenderLock()) return
       const isClipEdit =
         resolved === 'editing.copy' ||
         resolved === 'editing.cut' ||
@@ -553,6 +558,8 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       // Un componente con foco (piano roll, editor de partitura, diálogo) ya
       // manejó la tecla: no ejecutar además un atajo global (nunca dos acciones).
       if (e.defaultPrevented) return
+      // U6: con un render en curso la app está bloqueada (solo cancelar).
+      if (estaRenderLock()) return
       if (paletaAbiertaRef.current && e.key !== 'Escape') return
       if (shouldIgnoreGlobalShortcuts(e.target)) {
         const terminalChord =
