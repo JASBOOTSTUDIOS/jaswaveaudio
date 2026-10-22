@@ -19,6 +19,7 @@ import { writeFileAtomic } from './atomic-write'
 import { defaultVstRoots, isAudioFile, PathAccessError, PathGrants, type AccessKind, type GrantMode } from './path-grants'
 import { buscarArchivosPorNombre, copiarMediaArchivo, moverMediaArchivo, traducirErrorDisco } from './media-service'
 import { checkHostCommand } from './plugin-host-guard'
+import { esRutaProyecto, rutaProyectoDeArgv } from './instancia-unica'
 import { initAutoUpdater } from './updater'
 import {
   createGuardedIpc,
@@ -89,7 +90,7 @@ function assertBinaryRead(p: unknown): string {
 }
 
 function isProjectFile(p: string): boolean {
-  return /.jaswave$/i.test(p)
+  return esRutaProyecto(p)
 }
 
 // ── API keys de IA (cifradas; el renderer no puede leerlas) ─────────────────
@@ -380,11 +381,83 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null
     closeGuard.reset()
+    rendererListo = false
     // Los paneles desacoplados no sobreviven a la ventana principal.
     for (const win of toolWindows.values()) {
       if (!win.isDestroyed()) win.destroy()
     }
     toolWindows.clear()
+  })
+
+  mainWindow.webContents.once('did-finish-load', () => {
+    rendererListo = true
+    const pendiente = proyectoPendiente
+    if (!pendiente) return
+    proyectoPendiente = null
+    mainWindow?.webContents.send('open-project-requested', pendiente)
+  })
+}
+
+// ── Instancia única y apertura de proyectos (U7) ────────────────────────────
+// Solo puede haber una instancia de JasWave en marcha: dos instancias pelean por
+// el ASIO exclusivo, comparten la sesión (IndexedDB) y pueden guardar el mismo
+// `.jaswave` (último gana). La segunda instancia cede el foco y pide a la
+// principal que abra el proyecto recibido en los argumentos.
+
+/** Proyecto que aún no se ha podido entregar al renderer. */
+let proyectoPendiente: string | null = null
+/** El renderer de la ventana principal ya cargó (puede recibir mensajes). */
+let rendererListo = false
+
+/** Extrae la primera ruta `.jaswave` válida de los argumentos de la app. */
+function rutaProyectoDeArgvLocal(argv: string[]): string | null {
+  return rutaProyectoDeArgv(argv, (ruta) => {
+    try {
+      return fsSync.statSync(ruta).isFile()
+    } catch {
+      return false
+    }
+  })
+}
+
+/** Enfoca la ventana principal (la segunda instancia cede el foco). */
+function enfocarVentanaPrincipal() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+/** Pide al renderer que abra el proyecto (respeta la guarda de cambios sin guardar de U1). */
+function abrirProyectoEnVentana(ruta: string) {
+  const abs = path.resolve(ruta)
+  if (!isProjectFile(abs)) return
+  // El renderer necesita leer el archivo: se concede la carpeta.
+  grantUserPath(path.dirname(abs), 'readwrite')
+  if (mainWindow && !mainWindow.isDestroyed() && rendererListo) {
+    enfocarVentanaPrincipal()
+    mainWindow.webContents.send('open-project-requested', abs)
+    return
+  }
+  // Todavía no hay renderer listo: se entrega en cuanto cargue.
+  proyectoPendiente = abs
+}
+
+const instanciaUnica = app.requestSingleInstanceLock()
+if (!instanciaUnica) {
+  // Ya hay una JasWave en marcha: esta instancia se cierra (no crea ventana).
+  app.quit()
+} else {
+  app.on('second-instance', (_event: unknown, argv: string[]) => {
+    logLine('info', 'main', 'Segunda instancia detectada: se cede el foco a la principal')
+    enfocarVentanaPrincipal()
+    const ruta = rutaProyectoDeArgvLocal(argv)
+    if (ruta) abrirProyectoEnVentana(ruta)
+  })
+  // macOS: doble clic sobre un `.jaswave` (en Windows llega por argv).
+  app.on('open-file', (event: { preventDefault: () => void }, ruta: string) => {
+    event.preventDefault()
+    abrirProyectoEnVentana(ruta)
   })
 }
 
@@ -427,6 +500,7 @@ function isMainWindowSender(e: IpcMainInvokeEvent): boolean {
 }
 
 app.whenReady().then(() => {
+  if (!instanciaUnica) return
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.jaswave.app')
   }
@@ -436,6 +510,9 @@ app.whenReady().then(() => {
   initPathGrants()
   buildAppMenu()
   createWindow()
+  // Proyecto recibido en los argumentos al arrancar (asociación de archivos).
+  const rutaInicial = rutaProyectoDeArgvLocal(process.argv)
+  if (rutaInicial) abrirProyectoEnVentana(rutaInicial)
   initAutoUpdater({
     ipc: ipcMain,
     getWindow: () => mainWindow as unknown as import('electron').BrowserWindow | null,
@@ -771,17 +848,25 @@ ipcMain.handle('dialog-open-directory', async () => {
   return result
 })
 
-ipcMain.handle('project-open-dialog', async () => {
-  if (!mainWindow) return { success: false, canceled: true }
-  const result = await dialog.showOpenDialog(mainWindow, {
-    filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }],
-    properties: ['openFile'],
-  })
-  if (result.canceled || result.filePaths.length === 0) return { success: false, canceled: true }
-  grantUserPath(path.dirname(result.filePaths[0]), 'readwrite')
-  // Solo devolvemos la ruta; project.load + FileService leen el archivo
-  return { success: true, path: result.filePaths[0] }
-})
+    ipcMain.handle('project-open-dialog', async () => {
+      if (!mainWindow) return { success: false, canceled: true }
+      const result = await dialog.showOpenDialog(mainWindow, {
+        filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }],
+        properties: ['openFile'],
+      })
+      if (result.canceled || result.filePaths.length === 0) return { success: false, canceled: true }
+      grantUserPath(path.dirname(result.filePaths[0]), 'readwrite')
+      // Solo devolvemos la ruta; project.load + FileService leen el archivo
+      return { success: true, path: result.filePaths[0] }
+    })
+
+    // Proyecto que llegó antes de que el renderer estuviera listo (U7).
+    ipcMain.handle('project-take-pending', () => {
+      const pendiente = proyectoPendiente
+      proyectoPendiente = null
+      return pendiente
+    })
+
 
 ipcMain.handle('ai-chat', async (_event: IpcMainInvokeEvent, payload: unknown, model?: string, baseUrl?: string, temperature?: number) => {
   // Nuevo: objeto AiChatRequest. Legacy: (messages[], model, baseUrl, temperature)

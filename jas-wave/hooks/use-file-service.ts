@@ -34,6 +34,10 @@ declare global {
       confirmAppClose?: () => Promise<boolean>
       cancelAppClose?: () => Promise<boolean>
       onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => () => void
+      /** Main pide abrir un proyecto (segunda instancia o asociación de archivos, U7). */
+      onOpenProjectRequested?: (callback: (ruta: string) => void) => () => void
+      /** Proyecto que llegó antes de que el renderer estuviera listo (U7). */
+      projectTakePending?: () => Promise<string | null>
       getAppVersion: () => Promise<string>
       logError?: (scope: string, message: string, stack?: string) => void
       openLogsFolder?: () => Promise<string>

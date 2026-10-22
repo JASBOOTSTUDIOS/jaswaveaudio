@@ -21,6 +21,7 @@ import { AudioDeviceBanner } from '@/components/audio-device-banner'
 import { ProjectCloseDialog } from '@/components/project-close-dialog'
 import { MediaFaltanteDialog } from '@/components/media-faltante-dialog'
 import { AppCloseGuard } from '@/components/app-close-guard'
+import { OpenProjectRequest } from '@/components/open-project-request'
 import { DockZonePanel } from '@/components/workspace/ide-shell'
 import { ToolHost } from '@/components/workspace/tool-host'
 import {
@@ -316,6 +317,7 @@ function AppShell() {
       <ProjectCloseDialog />
       <MediaFaltanteDialog />
       <AppCloseGuard />
+      <OpenProjectRequest />
       <ScoreExportMenuListener />
       <ScorePreviewDialog />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} dispatcher={dispatcher} />

@@ -43,6 +43,17 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.on('window-maximized-changed', handler)
     return () => ipcRenderer.removeListener('window-maximized-changed', handler)
   },
+  /**
+   * main pide abrir un proyecto (segunda instancia o asociación de archivos).
+   * El renderer decide con la guarda de cambios sin guardar (U1).
+   */
+  onOpenProjectRequested: (callback: (ruta: string) => void) => {
+    const handler = (_event: unknown, ruta: string) => callback(ruta)
+    ipcRenderer.on('open-project-requested', handler)
+    return () => ipcRenderer.removeListener('open-project-requested', handler)
+  },
+  /** Proyecto que llegó antes de que el renderer estuviera listo (U7). */
+  projectTakePending: () => ipcRenderer.invoke('project-take-pending'),
   fileSave: (ruta: string, contenido: string) => ipcRenderer.invoke('file-save', ruta, contenido),
   fileSaveBinary: (ruta: string, data: Uint8Array) => ipcRenderer.invoke('file-save-binary', ruta, data),
   ffmpegConvert: (input: string, output: string, args?: string[]) =>
