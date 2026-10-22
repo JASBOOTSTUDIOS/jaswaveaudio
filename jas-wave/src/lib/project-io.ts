@@ -39,6 +39,24 @@ function nombreSugeridoDialogo(nombre: string | undefined): string | undefined {
   return `${nombre}.jaswave`
 }
 
+/**
+ * Detiene el transporte y espera a que la toma en curso esté escrita en disco.
+ * Sin esto, abrir o cerrar el proyecto durante una grabación pierde el audio.
+ */
+export async function detenerTransporteYFinalizarGrabacion(tienda: TiendaDAW): Promise<void> {
+  const estado = tienda.obtenerEstado()
+  const grabando = estado.transport?.grabacion === 'grabando'
+  if (grabando) {
+    // El provider es quien corta la captura y escribe el WAV.
+    await tienda.executor.execute('transport.toggleRecord', {})
+    const { esperarFinalizacionGrabacion } = await import('./recording-session')
+    await esperarFinalizacionGrabacion()
+  }
+  if (tienda.obtenerEstado().transport?.reproduciendo) {
+    await tienda.executor.execute('transport.stop', {})
+  }
+}
+
 async function persistirRutaYGuardar(tienda: TiendaDAW, ruta: string): Promise<ResultadoIO> {
   const nombre = nombreAlGuardar(tienda.obtenerEstado().project.nombre, ruta)
   const upd = await tienda.executor.execute('project.update', { datos: { ruta, nombre } })
@@ -170,6 +188,8 @@ export async function abrirProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
  * los pasos posteriores comunes (biblioteca, migraciones).
  */
 export async function cargarProyectoDesdeRutaIO(tienda: TiendaDAW, ruta: string): Promise<ResultadoIO> {
+  // La toma en curso se escribe antes de cambiar de proyecto (U6).
+  await detenerTransporteYFinalizarGrabacion(tienda)
   // Camino canónico: Command System + FileService
   const loaded = await tienda.executor.execute('project.load', { ruta })
   if (!loaded.success) {
@@ -230,6 +250,8 @@ export async function nuevoProyectoIO(
   const confirmado = await confirmarCambiosIO(tienda, 'nuevo', origen)
   if (!confirmado.continuar) return canceladoPorCambios(confirmado)
 
+  await detenerTransporteYFinalizarGrabacion(tienda)
+
   const result = await tienda.executor.execute('project.new', { nombre })
   if (!result.success) {
     if (!nombre.trim()) {
@@ -251,6 +273,7 @@ export async function cerrarProyectoIO(tienda: TiendaDAW, opts?: { forzar?: bool
     if (!confirmado.continuar) return canceladoPorCambios(confirmado)
     opts = { forzar: true }
   }
+  await detenerTransporteYFinalizarGrabacion(tienda)
   const result = await tienda.executor.execute('project.close', {
     ...(opts?.forzar ? { forzar: true } : {}),
   })
