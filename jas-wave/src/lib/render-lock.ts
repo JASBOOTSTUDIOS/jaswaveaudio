@@ -53,3 +53,37 @@ export function _reiniciarRenderLock(): void {
   bloqueado = false
   oyentes.clear()
 }
+
+/**
+ * Prefijos de comando que no se pueden ejecutar durante un bounce: cualquier
+ * cambio de la línea de tiempo, del grafo de audio o del transporte.
+ * Se permiten `render.*` (arrancar/cancelar el bounce), `analysis.*`, `ui.*`,
+ * `selection.*` y `atajos.*`.
+ */
+const PREFIJOS_BLOQUEADOS_DURANTE_RENDER = [
+  'automation.',
+  'bus.',
+  'clip.',
+  'fxChain.',
+  'marker.',
+  'midi.',
+  'plugin.',
+  'project.',
+  'send.',
+  'sidechain.',
+  'take.',
+  'track.',
+  'transport.',
+]
+
+/** Comandos de proyecto que sí se pueden ejecutar durante un bounce. */
+const COMANDOS_PROYECTO_PERMITIDOS = new Set(['project.save'])
+
+/** ¿Este comando edita la línea de tiempo, el audio o el transporte? */
+export function comandoBloqueadoDuranteRender(tipo: string): boolean {
+  if (!tipo) return false
+  if (tipo.startsWith('render.') || tipo.startsWith('analysis.')) return false
+  if (tipo.startsWith('ui.') || tipo.startsWith('selection.') || tipo.startsWith('atajos.')) return false
+  if (COMANDOS_PROYECTO_PERMITIDOS.has(tipo)) return false
+  return PREFIJOS_BLOQUEADOS_DURANTE_RENDER.some((p) => tipo.startsWith(p))
+}
