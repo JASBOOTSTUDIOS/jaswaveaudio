@@ -5,6 +5,7 @@
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { audioEngine } from '@/lib/audio-engine'
 import { extractStereoPeaks, packStereoPeaks } from '@/lib/stereo-peaks'
+import { copiarRutaAlProyecto } from '@/src/lib/project-media'
 
 function projectBpm(st: ReturnType<TiendaDAW['obtenerEstado']>): number {
   const bpmObj = st.project?.bpm as { valor?: number } | undefined
@@ -91,8 +92,25 @@ export async function importAudioToTrack(
   })
 
   if (!clipRes.success) throw new Error(clipRes.error?.message ?? 'clip.create falló')
+  const clipId = (clipRes.result as { clipId?: string })?.clipId
 
-  return { trackId, bufferKey, durationSec, clipId: (clipRes.result as { clipId?: string })?.clipId }
+  // Copia el archivo al media del proyecto y reapunta el clip a la ruta relativa:
+  // el proyecto sigue sonando al abrirlo en otra carpeta u otro equipo.
+  const proyecto = tienda.obtenerEstado().project
+  const copia = await copiarRutaAlProyecto(filePath, proyecto?.ruta)
+  if (copia.rutaRelativa && clipId) {
+    const set = await tienda.executor.execute('clip.setSource', {
+      pistaId: trackId,
+      clipId,
+      sourceId: copia.rutaRelativa,
+    })
+    if (set.success) {
+      audioEngine.setAudioBuffer(copia.rutaRelativa, buffer)
+      return { trackId, bufferKey: copia.rutaRelativa, durationSec, clipId }
+    }
+  }
+
+  return { trackId, bufferKey, durationSec, clipId }
 }
 
 type ReferenceAbState = {
