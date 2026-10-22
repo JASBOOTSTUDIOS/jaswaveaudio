@@ -120,8 +120,26 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
   {
     type: 'pista.limite',
     kind: 'agent',
-    description: 'Fija el techo (ceiling dBFS) y ganancia de entrada del limitador de una pista',
+    description: 'Fija el techo (ceiling dBTP) y ganancia de entrada del limitador JasWave de una pista',
     examplePayload: { trackId: '…', ceiling: -1, gainIn: 0 },
+  },
+  {
+    type: 'mix.eq',
+    kind: 'agent',
+    description: 'Inserta/usa el EQ JasWave de 8 bandas en una pista y fija parámetros reales (freq Hz, gain dB, q, tipo, on, output).',
+    examplePayload: { trackId: '…', banda: 1, freq: 3000, gain: -6, q: 1.4, output: 0 },
+  },
+  {
+    type: 'mix.compress',
+    kind: 'agent',
+    description: 'Inserta/usa el compresor JasWave en una pista y fija parámetros reales (threshold dB, ratio :1, attack/release ms, knee, makeup dB, mix %).',
+    examplePayload: { trackId: '…', threshold: -18, ratio: 4, attack: 10, release: 100, makeup: 3 },
+  },
+  {
+    type: 'mix.limit',
+    kind: 'agent',
+    description: 'Inserta/usa el limitador true-peak JasWave en una pista/master y fija ceiling dBTP, inputGain dB, release ms, lookahead ms.',
+    examplePayload: { trackId: 'master', ceiling: -1, gainIn: 6, release: 100, lookahead: 5 },
   },
   {
     type: 'master.normalizar',
@@ -637,6 +655,9 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'pista.compresor.editar',
   'pista.compresor.quitar',
   'pista.limite',
+  'mix.eq',
+  'mix.compress',
+  'mix.limit',
   'master.normalizar',
   'take.folder.ensure',
   'take.add',

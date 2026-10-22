@@ -111,6 +111,15 @@ export function resolveHostPluginPath(
       return ''
     }
   }
+  if (/jaswave\s*fx|jaswavefx/i.test(name)) {
+    try {
+      return (
+        (globalThis as unknown as { __jaswaveFxPath?: () => string }).__jaswaveFxPath?.() || ''
+      )
+    } catch {
+      return ''
+    }
+  }
   return ''
 }
 

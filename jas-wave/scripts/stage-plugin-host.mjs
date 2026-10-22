@@ -23,6 +23,7 @@ const strict = process.argv.includes('--strict') || (ciFlag !== '' && ciFlag !==
 
 const pluginHostDir = path.join(monorepo, 'native', 'plugin-host')
 const rolesDir = path.join(monorepo, 'native', 'jaswave-roles-vst')
+const fxDir = path.join(monorepo, 'native', 'jaswave-fx')
 const userVst3Dir = process.env.LOCALAPPDATA
   ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Common', 'VST3', 'JasWave')
   : null
@@ -46,6 +47,11 @@ const bundleCandidates = {
     path.join(rolesDir, 'build-release', 'JasWaveRoles.vst3'),
     path.join(rolesDir, 'build', 'JasWaveRoles.vst3'),
     ...(userVst3Dir ? [path.join(userVst3Dir, 'JasWaveRoles.vst3')] : []),
+  ],
+  'JasWaveFx.vst3': [
+    path.join(fxDir, 'build-release', 'JasWaveFx.vst3'),
+    path.join(fxDir, 'build', 'JasWaveFx.vst3'),
+    ...(userVst3Dir ? [path.join(userVst3Dir, 'JasWaveFx.vst3')] : []),
   ],
   'JasWavePiano.vst3': [
     path.join(pluginHostDir, 'build-release', 'JasWavePiano.vst3'),

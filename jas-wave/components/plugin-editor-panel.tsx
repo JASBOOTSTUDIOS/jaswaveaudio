@@ -28,6 +28,8 @@ import {
 import { requestOpenTool } from '@/src/workspace/types'
 import { JASWAVE_ROLES_NAME } from '@/src/lib/plugin/jaswave-roles'
 import { JasWaveRolesPanel } from '@/components/jaswave-roles-panel'
+import { isJasWaveFxPlugin } from '@/src/lib/plugin/bundled-plugins'
+import { JasWaveFxPanel } from '@/components/jaswave-fx-panel'
 
 function useEditorFocus() {
   return useSyncExternalStore(subscribePluginEditorFocus, getPluginEditorFocus, () => null)
@@ -324,6 +326,7 @@ export function PluginEditorPanel() {
 
   const isRoles =
     plugin.nombre.includes(JASWAVE_ROLES_NAME) || /jaswave\s*roles/i.test(plugin.nombre)
+  const isFx = isJasWaveFxPlugin(plugin)
 
   return (
     <div className="flex h-full flex-col bg-panel">
@@ -337,7 +340,7 @@ export function PluginEditorPanel() {
               : focus.trackId.startsWith('__')
                 ? 'Audición de vista previa'
                 : 'Editor de plugin'}
-            {isRoles ? ' · Roles VST3 (UI JasWave)' : ' · UI+audio misma instancia'}
+            {isRoles ? ' · Roles VST3 (UI JasWave)' : isFx ? ' · FX propio JasWave' : ' · UI+audio misma instancia'}
           </div>
         </div>
         <button
@@ -366,6 +369,8 @@ export function PluginEditorPanel() {
       <div className="min-h-0 flex-1 overflow-hidden">
         {isRoles ? (
           <JasWaveRolesPanel trackId={focus.trackId} plugin={plugin} initialRole={trackName ?? undefined} />
+        ) : isFx ? (
+          <JasWaveFxPanel trackId={focus.trackId} plugin={plugin} />
         ) : (
           <VstNativeEditor plugin={plugin} trackId={focus.trackId} />
         )}

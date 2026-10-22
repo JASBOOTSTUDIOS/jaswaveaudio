@@ -33,6 +33,7 @@ import {
   searchParameters,
   summarizeParametersForAi,
 } from './plugin/plugin-parameter-intel'
+import { applyMixOnTrack } from './plugin/jaswave-fx-mix'
 import { modePromptBlock, workingMode, type AgentMode } from './ai-modes'
 import {
   isMidiClipEditIntent,
@@ -2560,6 +2561,91 @@ export async function executeDawActions(
               ? `Parámetro ${String(p.parameterId)} → ${normalized.toFixed(3)}`
               : r.error?.message ?? 'Error plugin.setParameter',
             data: r.result,
+          })
+          break
+        }
+        case 'mix.eq': {
+          const stEq = tienda.obtenerEstado()
+          const trackId = String(
+            p.trackId ?? p.pistaId ?? getSelectedTrackId(stEq) ?? '',
+          ).trim()
+          if (!trackId) {
+            results.push({ type: action.type, success: false, message: 'Falta trackId (usa track.list / selection.get)' })
+            break
+          }
+          const banda = p.banda != null ? Number(p.banda) : 1
+          const values: Record<string | number, unknown> = {}
+          if (p.bypass != null) values['Bypass'] = p.bypass
+          if (p.freq != null) values[`Banda ${banda} Freq`] = p.freq
+          if (p.gain != null) values[`Banda ${banda} Gain`] = p.gain
+          if (p.q != null) values[`Banda ${banda} Q`] = p.q
+          if (p.type != null) values[`Banda ${banda} Tipo`] = p.type
+          if (p.on != null) values[`Banda ${banda} On`] = p.on
+          if (p.output != null) values['Output'] = p.output
+          const res = await applyMixOnTrack(tienda, trackId, 'eq', values)
+          results.push({
+            type: action.type,
+            success: res.slotId ? Object.values(res.applied).some(Boolean) : false,
+            message: res.slotId
+              ? `EQ JasWave en ${trackId} · aplicados ${Object.values(res.applied).filter(Boolean).length}/${Object.keys(values).length}${res.skipped.length ? ` · omitidos: ${res.skipped.join(', ')}` : ''}`
+              : 'No se pudo insertar/cargar JasWave EQ',
+            data: { trackId, slotId: res.slotId, applied: res.applied, skipped: res.skipped },
+          })
+          break
+        }
+        case 'mix.compress': {
+          const stC = tienda.obtenerEstado()
+          const trackId = String(
+            p.trackId ?? p.pistaId ?? getSelectedTrackId(stC) ?? '',
+          ).trim()
+          if (!trackId) {
+            results.push({ type: action.type, success: false, message: 'Falta trackId (usa track.list / selection.get)' })
+            break
+          }
+          const values: Record<string | number, unknown> = {}
+          if (p.bypass != null) values['Bypass'] = p.bypass
+          if (p.threshold != null) values['Threshold'] = p.threshold
+          if (p.ratio != null) values['Ratio'] = p.ratio
+          if (p.attack != null) values['Attack'] = p.attack
+          if (p.release != null) values['Release'] = p.release
+          if (p.knee != null) values['Knee'] = p.knee
+          if (p.makeup != null) values['Makeup'] = p.makeup
+          if (p.mix != null) values['Mix'] = p.mix
+          if (p.sidechainHp != null) values['Sidechain HP'] = p.sidechainHp
+          const res = await applyMixOnTrack(tienda, trackId, 'comp', values)
+          results.push({
+            type: action.type,
+            success: res.slotId ? Object.values(res.applied).some(Boolean) : false,
+            message: res.slotId
+              ? `Compresor JasWave en ${trackId} · aplicados ${Object.values(res.applied).filter(Boolean).length}/${Object.keys(values).length}${res.skipped.length ? ` · omitidos: ${res.skipped.join(', ')}` : ''}`
+              : 'No se pudo insertar/cargar JasWave Compresor',
+            data: { trackId, slotId: res.slotId, applied: res.applied, skipped: res.skipped },
+          })
+          break
+        }
+        case 'mix.limit': {
+          const stL = tienda.obtenerEstado()
+          const trackId = String(
+            p.trackId ?? p.pistaId ?? getSelectedTrackId(stL) ?? '',
+          ).trim()
+          if (!trackId) {
+            results.push({ type: action.type, success: false, message: 'Falta trackId (usa track.list / selection.get)' })
+            break
+          }
+          const values: Record<string | number, unknown> = {}
+          if (p.bypass != null) values['Bypass'] = p.bypass
+          if (p.ceiling != null) values['Ceiling'] = p.ceiling
+          if (p.gainIn != null) values['Input Gain'] = p.gainIn
+          if (p.release != null) values['Release'] = p.release
+          if (p.lookahead != null) values['Lookahead'] = p.lookahead
+          const res = await applyMixOnTrack(tienda, trackId, 'limiter', values)
+          results.push({
+            type: action.type,
+            success: res.slotId ? Object.values(res.applied).some(Boolean) : false,
+            message: res.slotId
+              ? `Limitador JasWave en ${trackId} · aplicados ${Object.values(res.applied).filter(Boolean).length}/${Object.keys(values).length}${res.skipped.length ? ` · omitidos: ${res.skipped.join(', ')}` : ''}`
+              : 'No se pudo insertar/cargar JasWave Limitador',
+            data: { trackId, slotId: res.slotId, applied: res.applied, skipped: res.skipped },
           })
           break
         }

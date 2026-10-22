@@ -18,22 +18,36 @@
 | JasWave De-esser | freq 3–12 kHz, threshold, rango, modo split/wide |
 
 ## Tareas
-- [ ] `native/jaswave-fx/` con CMake (mismo patrón que `jaswave-roles-vst`, opción `JASWAVE_INSTALL_USER_VST3`), DSP en C++17
+- [x] `native/jaswave-fx/` con CMake (mismo patrón que `jaswave-roles-vst`, opción `JASWAVE_INSTALL_USER_VST3`), DSP en C++17
       sin dependencias extra; tests unitarios de DSP (respuesta en frecuencia del EQ, curva estática del compresor, ceiling del
-      limitador con señal inter-sample).
-- [ ] Integrar en `native/scripts/build-native.mjs`, `stage-plugin-host.mjs`, `bundled-plugins.ts`, `electron-builder.cjs`
-      (`extraResources`), `THIRD_PARTY_NOTICES` (solo SDK VST3).
-- [ ] Perfiles semánticos exactos en `processor-profiles.json` (A7c) para los FX JasWave (ids, unidades, rangos).
-- [ ] Preferencia por defecto de la IA: `mix.eq/compress/limit` usan FX JasWave salvo que el usuario pida un plugin concreto.
-- [ ] UI: editores simples (o el genérico de parámetros) para los FX JasWave.
-- [ ] E2E: insertar EQ JasWave, `mix.eq` con corte de 6 dB a 300 Hz → `analysis.track` muestra la banda reducida ~6 dB.
+      limitador con señal inter-sample). **Nota:** no compila aquí (falta VST3 SDK y MSVC); se deja listo para build en CI/Windows.
+- [x] Integrar en `native/scripts/build-native.mjs` (`--no-fx`, `buildFx`, `expectFile` JasWaveFx.vst3), `stage-plugin-host.mjs`
+      (staging del bundle FX), `bundled-plugins.ts` (bundles, rutas, ids de parámetro, registro/descubrimiento), `THIRD_PARTY_NOTICES`
+      (SDK VST3). `electron-builder.cjs` ya cubre `resources/vst3/JasWave` (sin cambio).
+- [x] Perfiles semánticos exactos en `processor-profiles.json` para los 5 FX JasWave (ids, unidades, rangos, tags, read-only GR).
+- [x] Preferencia IA: `mix.eq/compress/limit` insertan/usan FX JasWave y traducen valores reales → normalizados vía perfiles.
+- [x] UI: `jaswave-fx-panel.tsx` (tabs EQ/Compresor/Limitador/Utility/De-esser, perillas por parámetro, insertar si falta) cableado
+      en `plugin-editor-panel.tsx` junto a `JasWaveRolesPanel`.
+- [ ] E2E: insertar EQ JasWave, `mix.eq` con corte 6 dB a 300 Hz → `analysis.track` muestra banda reducida ~6 dB. **Bloqueado:** no hay
+      app construida ni host de plugins disponible en este entorno.
 
 ## Archivos
-Nuevo `native/jaswave-fx/`; `native/scripts/build-native.mjs`, `jas-wave/scripts/stage-plugin-host.mjs`,
-`jas-wave/electron-builder.cjs`, `src/lib/plugin/{bundled-plugins,processor-profiles.json}`.
+Nuevo `native/jaswave-fx/`, `jas-wave/src/lib/plugin/{bundled-plugins,processor-profiles.json,jaswave-fx-mix.ts}`,
+`jas-wave/components/jaswave-fx-panel.tsx`; modificado `native/scripts/build-native.mjs`, `jas-wave/scripts/stage-plugin-host.mjs`,
+`jas-wave/src/lib/plugin/bundled-plugins.ts`, `jas-wave/src/lib/plugin/plugin-info-adapter.ts`, `jas-wave/src/lib/ai-daw-agent.ts`,
+`jas-wave/src/lib/agent-action-catalog.ts`, `jas-wave/components/plugin-editor-panel.tsx`, `THIRD_PARTY_NOTICES.md`.
 
 ## Verificación
-`npm run native:build`; tests DSP nativos (ctest); `npm run verify`; e2e.
+- `jas-wave`: `tsc` (typebuild+electron+e2e), `tsx --test` (456 pruebas, incl. 29 nuevas de FX), `eslint` — todo verde.
+- `ai-harness`: `tsc --noEmit` + vitest (229 pruebas) — verde tras añadir `mix.eq/compress/limit` a `AGENT_ACTION_CLASSES` (`write`).
+- `npm run native:build`: **falla pre-existente** sin VST3 SDK (no verificable aquí).
+- ctest DSP nativo y e2e: **no ejecutables** en este entorno.
 
 ## Notas de traspaso
-_(vacío)_
+- Los ids de parámetro fijos viven en `native/jaswave-fx/src/processor.h` (namespaces EqParam…/…Param; bypass=0, bandas base=1
+  stride=5, GR read-only id=40 para Comp/Limiter) y se espejan en `bundled-plugins.ts` (`JASWAVE_FX_*`) y `processor-profiles.json`.
+- El C++ de `native/jaswave-fx/` está escrito pero **no se compila aquí** (no hay VST3 SDK en `native/plugin-host/third_party/vst3sdk`
+  ni cl.exe/MSVC; solo cmake 4.1.2). Es C++17 sin dependencias extra, patrón igual a `jaswave-roles-vst`.
+- Al continuar en Windows con el SDK: `cmake -S native/jaswave-fx -B build -DJASWAVE_INSTALL_USER_VST3=ON`, luego `cmake --build build`
+  y `ctest`; el POST_BUILD empaqueta `JasWaveFx.vst3`.
+- Queda pendiente: E2E de A7d (requiere app construida + host de plugins).

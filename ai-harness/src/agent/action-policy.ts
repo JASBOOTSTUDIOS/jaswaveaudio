@@ -168,6 +168,10 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'take.preview': 'write',
   'comp.segment.set': 'write',
   'reference.toggleAB': 'write',
+  // A7d · FX propios JasWave (mezcla): inserta + setea parámetros del VST propio.
+  'mix.eq': 'write',
+  'mix.compress': 'write',
+  'mix.limit': 'write',
   'library.preset.save': 'write',
   'library.preset.saveGlobal': 'write',
   'library.preset.promote': 'write',
