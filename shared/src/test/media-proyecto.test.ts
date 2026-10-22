@@ -11,7 +11,7 @@ import { proyectoParaGuardar } from '../project/ciclo-vida';
 import { cargarProyecto, FileServiceMemoria, guardarProyecto } from '../project/persistencia';
 import { proyectoNuevo } from '../project/ciclo-vida';
 import { crearEstadoInicial } from '../state/estado-inicial';
-import { crearComandoClipCreate, crearComandoClipSetSource, crearComandoTrackCreate } from '../commands/domain-commands';
+import { crearComandoClipCreate, crearComandoClipMove, crearComandoClipSetSource, crearComandoTrackCreate } from '../commands/domain-commands';
 import type { AudioReference } from '../project/ciclo-vida';
 import type { DAWState } from '../types/state';
 import type { ProjectState } from '../types/proyecto';
@@ -181,5 +181,57 @@ describe('clip.setSource (reenlace de media)', () => {
     expect(() =>
       crearComandoClipSetSource().handler(estado, { pistaId, clipId: 'nope', sourceId: 'media/a.wav' }),
     ).toThrow(/Clip no encontrado/);
+  });
+});
+
+describe('clip.move (compatibilidad pista/clip)', () => {
+  function estadoConPistas() {
+    const base = crearEstadoInicial();
+    const conAudio = crearComandoTrackCreate().handler(base, {
+      nombre: 'Audio 1',
+      tipo: 'audio',
+    }) as { state: DAWState };
+    const conMidi = crearComandoTrackCreate().handler(conAudio.state, {
+      nombre: 'MIDI 1',
+      tipo: 'midi',
+    }) as { state: DAWState };
+    const pistas = conMidi.state.project.tracks;
+    const pistaAudio = pistas.find((t) => t.nombre === 'Audio 1')!;
+    const pistaMidi = pistas.find((t) => t.nombre === 'MIDI 1')!;
+    const clip = crearComandoClipCreate().handler(conMidi.state, {
+      pistaId: pistaAudio.id,
+      nombre: 'Intro',
+      sourceId: 'media/intro.wav',
+    }) as { state: DAWState; result?: { clipId?: string } };
+    return { estado: clip.state, pistaAudio, pistaMidi, clipId: clip.result!.clipId! };
+  }
+
+  it('no deja mover un clip de audio a una pista MIDI', () => {
+    const { estado, pistaAudio, pistaMidi, clipId } = estadoConPistas();
+    expect(() =>
+      crearComandoClipMove().handler(estado, {
+        pistaId: pistaAudio.id,
+        clipId,
+        inicio: 0,
+        pistaDestinoId: pistaMidi.id,
+      }),
+    ).toThrow(/clip de audio/i);
+  });
+
+  it('deja mover un clip de audio a otra pista de audio', () => {
+    const { estado, pistaAudio, clipId } = estadoConPistas();
+    const otra = crearComandoTrackCreate().handler(estado, {
+      nombre: 'Audio 2',
+      tipo: 'audio',
+    }) as { state: DAWState };
+    const destino = otra.state.project.tracks.find((t) => t.nombre === 'Audio 2')!;
+    const r = crearComandoClipMove().handler(otra.state, {
+      pistaId: pistaAudio.id,
+      clipId,
+      inicio: 2,
+      pistaDestinoId: destino.id,
+    }) as { state: DAWState };
+    const clips = r.state.project.tracks.find((t) => t.id === destino.id)?.clips as Array<{ id: string }>;
+    expect(clips.some((c) => c.id === clipId)).toBe(true);
   });
 });

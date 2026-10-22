@@ -2093,6 +2093,30 @@ export function crearComandoClipMerge(): CommandDefinition<ClipMergePayload> {
   };
 }
 
+/**
+ * Comprueba que un clip pueda vivir en la pista destino.
+ * Devuelve el mensaje de error o null si son compatibles.
+ */
+export function incompatibilidadPistaClip(
+  clip: { tipo?: string },
+  pista: { tipo?: string; nombre?: string },
+): string | null {
+  const tipoClip = clip?.tipo;
+  const tipoPista = pista?.tipo;
+  if (!tipoClip || !tipoPista) return null;
+  const nombre = pista.nombre ? `"${pista.nombre}"` : 'la pista destino';
+  if (tipoClip === 'audio' && tipoPista === 'midi') {
+    return `No se puede mover un clip de audio a la pista MIDI ${nombre}.`;
+  }
+  if (tipoClip === 'midi' && tipoPista === 'audio') {
+    return `No se puede mover un clip MIDI a la pista de audio ${nombre}.`;
+  }
+  if (tipoPista === 'carpeta' || tipoPista === 'bus' || tipoPista === 'vca' || tipoPista === 'master') {
+    return `No se pueden mover clips a ${nombre} (${tipoPista}).`;
+  }
+  return null;
+}
+
 export function crearComandoClipMove(): CommandDefinition<ClipMovePayload> {
   return {
     type: 'clip.move',
@@ -2130,6 +2154,13 @@ export function crearComandoClipMove(): CommandDefinition<ClipMovePayload> {
 
       if (!pistaDestino) {
         throw new Error(`Pista destino no encontrada: ${destinoId}`);
+      }
+
+      // Compatibilidad pista/clip: un clip de audio no puede vivir en una pista
+      // MIDI (ni al revés). Un clip de audio solo va a pistas de audio.
+      const incompatibilidad = incompatibilidadPistaClip(clipActual, pistaDestino);
+      if (incompatibilidad) {
+        throw new Error(incompatibilidad);
       }
 
       const inicioAnterior = clipActual.inicio;
