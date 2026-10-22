@@ -1636,7 +1636,6 @@ export function sendPluginHostCommand(
     const key = pluginKey(pluginPath)
     if (type === 'load' && pluginPath) {
       lastLoadPluginPath = pluginPath
-      lastLoadPluginAt = Date.now()
     }
     if (key && getQuarantine().has(key)) {
       return Promise.resolve({
@@ -1682,7 +1681,7 @@ export function sendPluginHostCommand(
         notifyHostRestarted()
       }
       return {
-        ok: false,
+        ok: false as const,
         code: 'PluginCrashedHost',
         message: quarantineMessage(pluginPath || 'plugin VST3'),
       }
