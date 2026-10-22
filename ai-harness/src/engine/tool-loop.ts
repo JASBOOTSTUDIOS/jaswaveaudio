@@ -13,6 +13,7 @@
 import { agentDecisionFromChatResponse, AGENT_CONTROL_TOOL_SCHEMAS } from '../recovery/parse-agent-decision'
 import { toolResultMessage } from './chat'
 import type {
+  EngineAgentRole,
   EngineAnswer,
   EngineNeed,
   EngineProjectAudit,
@@ -37,6 +38,7 @@ import {
   type PlanPaso,
 } from '../plan/structured-plan'
 import type { TurnContext } from './turn-context'
+import { createDirectorProgram, DIRECTOR_PROGRAM_ID } from './director-program'
 
 export const TOOL_LOOP_PROGRAM_ID = 'tool-loop'
 
@@ -87,7 +89,7 @@ type ProcessOutcome = { need?: EngineNeed }
  * manda; si el plan estructurado está aprobado, el turno puede mutar sin pedir
  * aprobación de nuevo.
  */
-async function syncPlanState(ctx: TurnContext): Promise<PlanEstructurado | null> {
+export async function syncPlanState(ctx: TurnContext): Promise<PlanEstructurado | null> {
   const md = await ctx.readPlan()
   if (!md || !isStructuredPlan(md)) return null
   const plan = parsePlan(md)
@@ -189,7 +191,7 @@ async function processCalls(ctx: TurnContext, calls: EngineToolCall[], maxPerIte
 /** Modo interno del bucle: en un paso, `agent.complete`/prosa terminan el paso sin cerrar el turno. */
 type LoopMode = { stopOnComplete: boolean }
 
-async function loop(ctx: TurnContext, opts: Required<ToolLoopOptions>, mode?: LoopMode): Promise<TurnProgramOutcome> {
+export async function loop(ctx: TurnContext, opts: Required<ToolLoopOptions>, mode?: LoopMode): Promise<TurnProgramOutcome> {
   const { run } = ctx
   const stepMode = mode?.stopOnComplete === true
   // En paso, el bucle tiene tope propio: no gasta las iteraciones de los demás pasos.
@@ -260,14 +262,14 @@ async function loop(ctx: TurnContext, opts: Required<ToolLoopOptions>, mode?: Lo
 
 // ── A5 · orquestación de pasos del plan (create/auto + plan aprobado) ──────────
 
-function stepMarkerOf(data: unknown): { stepComplete?: boolean; stepFailure?: unknown } | null {
+export function stepMarkerOf(data: unknown): { stepComplete?: boolean; stepFailure?: unknown } | null {
   if (!data || typeof data !== 'object') return null
   const d = data as { stepMarker?: boolean }
   return d.stepMarker === true ? (data as { stepComplete?: boolean; stepFailure?: unknown }) : null
 }
 
 /** Escribe plan.md canónico y actualiza hash/diff del run (fuente de verdad A4). */
-async function writePlan(ctx: TurnContext, plan: PlanEstructurado): Promise<void> {
+export async function writePlan(ctx: TurnContext, plan: PlanEstructurado): Promise<void> {
   const md = serializePlan(plan)
   await ctx.host.writeDoc?.('plan.md', md)
   if (ctx.run.input.planOverride) ctx.run.input.planOverride = md
@@ -275,7 +277,7 @@ async function writePlan(ctx: TurnContext, plan: PlanEstructurado): Promise<void
   ctx.emit({ type: 'plan.updated', plan: md })
 }
 
-function upsertRunStep(ctx: TurnContext, paso: PlanPaso, status: 'running' | 'done' | 'blocked', evidence?: string[]): void {
+export function upsertRunStep(ctx: TurnContext, paso: PlanPaso, status: 'running' | 'done' | 'blocked', evidence?: string[]): void {
   const existing = ctx.run.steps.find((s) => s.id === paso.id)
   if (existing) {
     existing.status = status
@@ -286,7 +288,7 @@ function upsertRunStep(ctx: TurnContext, paso: PlanPaso, status: 'running' | 'do
 }
 
 /** Instrucción sembrada en el hilo para que el modelo trabaje un solo paso. */
-function instructionDePaso(paso: PlanPaso, extra?: string): string {
+export function instructionDePaso(paso: PlanPaso, extra?: string): string {
   return [
     `Trabaja AHORA el paso ${paso.id} del plan (fase ${paso.fase || 'general'}, agente @${paso.agente}): ${paso.titulo}.`,
     paso.criterios.length ? `Criterios de aceptación:\n${paso.criterios.map((c) => `- ${c}`).join('\n')}` : '',
@@ -299,7 +301,7 @@ function instructionDePaso(paso: PlanPaso, extra?: string): string {
 }
 
 /** QA del paso vía host. Sin `auditStep` el gate decide (fail closed si hay criterios). */
-async function auditPaso(ctx: TurnContext, paso: PlanPaso): Promise<EngineStepAudit> {
+export async function auditPaso(ctx: TurnContext, paso: PlanPaso): Promise<EngineStepAudit> {
   if (!ctx.host.auditStep) {
     const gate = gateStepAudit({ hayCriterios: paso.criterios.length > 0 })
     return { ok: gate.ok, issues: gate.issues, evidencia: gate.evidencia }
@@ -325,7 +327,7 @@ async function auditPaso(ctx: TurnContext, paso: PlanPaso): Promise<EngineStepAu
  * Cierre del turno con plan: QA del proyecto (A9, fail closed) + resumen de pasos.
  * Sin `audit.project` limpio el turno NO se cierra: vuelve con estado fallido.
  */
-async function finishTurn(ctx: TurnContext, hechos: number, bloqueados: PlanPaso[]): Promise<TurnProgramOutcome> {
+export async function finishTurn(ctx: TurnContext, hechos: number, bloqueados: PlanPaso[]): Promise<TurnProgramOutcome> {
   let auditoria: EngineProjectAudit | undefined
   if (ctx.host.auditProject) {
     try {
@@ -445,8 +447,12 @@ async function orchestrate(ctx: TurnContext, opts: Required<ToolLoopOptions>): P
   }
 }
 
-/** Entrada del programa: create/auto con plan aprobado → orquesta pasos; resto → bucle libre. */
+/** Entrada del programa: rol director → programa multi-agente; create/auto con plan aprobado → orquesta pasos; resto → bucle libre. */
 async function turnEntry(ctx: TurnContext, opts: Required<ToolLoopOptions>): Promise<TurnProgramOutcome> {
+  if (ctx.run.role === DIRECTOR_PROGRAM_ID as EngineAgentRole) {
+    const program = createDirectorProgram(opts)
+    return program.run(ctx)
+  }
   if (ctx.run.mode !== 'create' && ctx.run.mode !== 'auto') return loop(ctx, opts)
   return orchestrate(ctx, opts)
 }

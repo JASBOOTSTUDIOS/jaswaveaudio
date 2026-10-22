@@ -31,6 +31,7 @@ export {
   STEP_LOOP_DEFAULTS,
   type ToolLoopOptions,
 } from './tool-loop'
+export { createDirectorProgram, DIRECTOR_PROGRAM_ID } from './director-program'
 export { createTurnEngine, drainTurn, type TurnEngine, type CreateTurnEngineOptions } from './turn-engine'
 export {
   createMockPlayer,
@@ -43,3 +44,4 @@ export {
   type MockToolCall,
   type MockWhen,
 } from './mock-script'
+export * from '../agents'

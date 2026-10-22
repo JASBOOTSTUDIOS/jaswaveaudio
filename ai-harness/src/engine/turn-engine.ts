@@ -23,6 +23,7 @@ import type {
 import { modeCapabilities } from './mode-capabilities'
 import { createEngineRun, isTerminalRunStatus, type EngineRun } from './run-state'
 import { createToolLoopProgram } from './tool-loop'
+import { createDirectorProgram, DIRECTOR_PROGRAM_ID } from './director-program'
 import { createTurnContext } from './turn-context'
 
 export type TurnEngine = {
@@ -83,8 +84,10 @@ function isAbortError(e: unknown): boolean {
 
 export function createTurnEngine(host: EngineHost, options: CreateTurnEngineOptions = {}): TurnEngine {
   const toolLoop = createToolLoopProgram()
+  const directorProgram = createDirectorProgram()
   const programs = new Map<string, TurnProgram>()
   programs.set(toolLoop.id, toolLoop)
+  programs.set(directorProgram.id, directorProgram)
   for (const p of options.programs ?? []) programs.set(p.id, p)
   if (host.program) programs.set(host.program.id, host.program)
   const defaultProgram = host.program ?? toolLoop
@@ -292,7 +295,7 @@ export function createTurnEngine(host: EngineHost, options: CreateTurnEngineOpti
           createEngineRun({
             id,
             input,
-            programId: defaultProgram.id,
+            programId: input.role === 'director' ? DIRECTOR_PROGRAM_ID : defaultProgram.id,
             budget: resolveAgentBudget({ ...host.budget, ...input.budget }),
             now: host.now(),
           }),

@@ -93,7 +93,7 @@ export const ROLE_WRITE_PREFIXES: Readonly<Record<ToolAgentRole, readonly string
   coproductor: '*',
   director: ['plan.', 'doc.'],
   productor: ['track.', 'clip.', 'midi.', 'plugin.insert', 'plugin.replace', 'style.', 'daw.musicBuild', 'daw.composeProject', 'daw.generateMidiSong', 'project.setBpm', 'project.setTimeSignature', 'doc.'],
-  mezcla: ['plugin.', 'fxChain.', 'send.', 'bus.', 'sidechain.', 'automation.', 'track.update', 'clip.gain', 'master.update', 'doc.'],
+  mezcla: ['plugin.', 'fxChain.', 'send.', 'bus.', 'sidechain.', 'automation.', 'track.update', 'track.ganancia', 'pista.pan', 'clip.gain', 'master.update', 'doc.'],
   mastering: ['master.', 'plugin.', 'fxChain.', 'daw.masterPass', 'reference.', 'doc.'],
   qa: [],
 })
