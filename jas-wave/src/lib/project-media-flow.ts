@@ -21,6 +21,7 @@ import {
   carpetaMediaProyecto,
   clipsConMediaPendiente,
   rutaRelativaMedia,
+  unirCarpeta,
 } from './project-media'
 
 export type ResultadoFlujoMedia = {
@@ -52,7 +53,7 @@ export async function moverMediaPendienteAlProyecto(
   for (const clip of pendientes) {
     const relativa = normalizarRutaRelativa(clip.ruta)
     const nombre = relativa.split('/').pop() ?? 'audio'
-    const rutaAbsoluta = `${origen}/${nombre}`
+    const rutaAbsoluta = unirCarpeta(origen, nombre)
     const res = await api.mediaCopy({ src: rutaAbsoluta, destDir: destino, nombre, mover: true })
     if (!res?.ok) continue
     const rutaRelativa = rutaRelativaMedia(res.nombre ?? nombre)
@@ -85,24 +86,26 @@ export async function copiarMediaEntreProyectos(
   if (!listar) return { ok: false, error: 'No se pudo listar la carpeta de media' }
 
   let copiados = 0
-  const visitar = async (dirRel: string): Promise<void> => {
-    const res = await listar(dirRel)
+  // `dirAbs` es la ruta absoluta de la carpeta; `rel` su equivalente relativo
+  // dentro del proyecto (empezando por `media/`).
+  const visitar = async (dirAbs: string, rel: string): Promise<void> => {
+    const res = await listar(dirAbs)
     if (!res?.success) return
     for (const entrada of res.entries ?? []) {
-      const rel = `${dirRel}/${entrada.name}`
+      const nombre = entrada.name
       if (entrada.isDirectory) {
-        await visitar(rel)
+        await visitar(unirCarpeta(dirAbs, nombre), `${rel}/${nombre}`)
         continue
       }
       if (!entrada.isFile) continue
-      const nombre = entrada.name
-      const abs = `${origen}${dirRel.slice(MEDIA_REL_DIR.length)}/${nombre}`
-      const destinoAbs = `${destino}${dirRel.slice(MEDIA_REL_DIR.length)}`
+      const abs = unirCarpeta(dirAbs, nombre)
+      const subRel = rel === MEDIA_REL_DIR ? '' : rel.slice(MEDIA_REL_DIR.length + 1)
+      const destinoAbs = subRel ? unirCarpeta(destino, subRel) : destino
       const copiado = await mediaCopy({ src: abs, destDir: destinoAbs, nombre })
       if (copiado?.ok) copiados++
     }
   }
-  await visitar(MEDIA_REL_DIR)
+  await visitar(origen, MEDIA_REL_DIR)
   return { ok: true, movidos: copiados }
 }
 

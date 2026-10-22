@@ -165,7 +165,8 @@ export type OpcionesImportarMedia = {
   nombre?: string
 }
 
-function unirCarpeta(base: string, rel: string): string {
+/** Une una carpeta base con una ruta relativa usando el separador del sistema. */
+export function unirCarpeta(base: string, rel: string): string {
   const limpio = base.replace(/[/\\]+$/, '')
   const sep = limpio.includes('\\') && !limpio.includes('/') ? '\\' : '/'
   return `${limpio}${sep}${rel.replace(/\\/g, sep)}`
@@ -306,6 +307,28 @@ export async function copiarAudioAlProyecto(
     carpetaProyecto,
     carpetaPendiente,
     nombre: file.name,
+  })
+  if (!res.ok) return { error: res.error }
+  return { rutaRelativa: res.rutaRelativa, rutaAbsoluta: res.ruta }
+}
+
+/**
+ * Copia un archivo (por ruta absoluta) al media del proyecto y devuelve la
+ * ruta relativa que se guarda en el clip. Sin proyecto va a `media/pending/`.
+ */
+export async function copiarRutaAlProyecto(
+  rutaAbsoluta: string,
+  rutaProyecto?: string | null,
+  nombre?: string,
+): Promise<{ rutaRelativa?: string; rutaAbsoluta?: string; error?: string }> {
+  if (!rutaAbsoluta) return { error: 'Ruta de archivo vacía' }
+  const carpetaProyecto = carpetaDeProyecto(rutaProyecto)
+  const carpetaPendiente = await carpetaMediaPendiente()
+  const res = await importMediaFile({
+    src: rutaAbsoluta,
+    carpetaProyecto,
+    carpetaPendiente,
+    nombre,
   })
   if (!res.ok) return { error: res.error }
   return { rutaRelativa: res.rutaRelativa, rutaAbsoluta: res.ruta }
