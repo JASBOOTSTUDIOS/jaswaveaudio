@@ -816,6 +816,18 @@ ipcMain.handle('file-size', async (_event: IpcMainInvokeEvent, ruta: string) => 
   return stat.size
 })
 
+/** Firma del archivo (mtime + tamaño) para detectar cambios externos (U7). */
+ipcMain.handle('file-stat', async (_event: IpcMainInvokeEvent, ruta: string) => {
+  if (!pathGrants.isBinaryReadAllowed(ruta)) return null
+  try {
+    const stat = await fs.stat(ruta)
+    if (!stat.isFile()) return null
+    return { mtimeMs: stat.mtimeMs, size: stat.size }
+  } catch {
+    return null
+  }
+})
+
 const SAVE_FILTERS: Record<string, { name: string; extensions: string[] }> = {
   pdf: { name: 'PDF', extensions: ['pdf'] },
   wav: { name: 'WAV', extensions: ['wav'] },

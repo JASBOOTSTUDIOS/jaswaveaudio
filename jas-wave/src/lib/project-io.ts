@@ -6,6 +6,8 @@ import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { crearEstadoInicial } from '../../../shared/src'
 import { esNombreSinTitulo, nombreAlGuardar } from '../../../shared/src/project/ciclo-vida'
 import { clearSessionSnapshot, saveSessionNow } from './session-persist'
+import { detectarConflictoProyecto, refrescarFirmaArchivo } from './project-conflict'
+import { solicitarDecisionConflicto } from './save-conflict'
 import {
   conGuardadoUnico,
   confirmarDescartarCambios,
@@ -63,6 +65,7 @@ async function persistirRutaYGuardar(tienda: TiendaDAW, ruta: string): Promise<R
   if (!upd.success) return { success: false, error: upd.error }
   await asentarMediaEnProyecto(tienda, ruta)
   const result = await tienda.executor.execute('project.save', { ruta })
+  if (result.success) await refrescarFirmaArchivo(ruta)
   return { success: result.success, error: result.error, path: ruta }
 }
 
@@ -109,7 +112,19 @@ async function guardarProyectoImpl(tienda: TiendaDAW): Promise<ResultadoIO> {
   }
 
   await asentarMediaEnProyecto(tienda, state.project.ruta)
+
+  // U7: si el archivo cambió fuera de JasWave, no se pisa sin preguntar.
+  const conflicto = await detectarConflictoProyecto(state.project.ruta)
+  if (conflicto) {
+    const eleccion = await solicitarDecisionConflicto(conflicto)
+    if (eleccion === 'cancelar') {
+      return { success: false, error: 'Guardado cancelado: el archivo cambió en disco', canceled: true }
+    }
+    if (eleccion === 'guardar-como') return guardarProyectoComoImpl(tienda)
+  }
+
   const result = await tienda.executor.execute('project.save', {})
+  if (result.success) await refrescarFirmaArchivo(state.project.ruta)
   return { success: result.success, error: result.error, path: state.project.ruta }
 }
 
@@ -196,6 +211,8 @@ export async function cargarProyectoDesdeRutaIO(tienda: TiendaDAW, ruta: string)
     return { success: false, error: loaded.error ?? 'Error al cargar proyecto' }
   }
   await avisarMediaFaltante(tienda, loaded.result, ruta)
+  // U7: la firma del archivo pasa a ser la conocida (para detectar cambios externos).
+  await refrescarFirmaArchivo(ruta)
   try {
     const { loadLibraryFromDisk } = await import('./library/preset-catalog')
     const project = tienda.obtenerEstado().project

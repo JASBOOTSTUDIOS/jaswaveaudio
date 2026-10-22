@@ -19,6 +19,7 @@ import { EditToolbar } from '@/components/edit-toolbar'
 import { EventToasts } from '@/components/event-toasts'
 import { AudioDeviceBanner } from '@/components/audio-device-banner'
 import { ProjectCloseDialog } from '@/components/project-close-dialog'
+import { SaveConflictDialog } from '@/components/save-conflict-dialog'
 import { MediaFaltanteDialog } from '@/components/media-faltante-dialog'
 import { AppCloseGuard } from '@/components/app-close-guard'
 import { OpenProjectRequest } from '@/components/open-project-request'
@@ -315,6 +316,7 @@ function AppShell() {
       <UpdateBanner />
       <AudioDeviceBanner />
       <ProjectCloseDialog />
+      <SaveConflictDialog />
       <MediaFaltanteDialog />
       <AppCloseGuard />
       <OpenProjectRequest />

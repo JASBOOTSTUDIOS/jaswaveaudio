@@ -64,6 +64,8 @@ contextBridge.exposeInMainWorld('electron', {
   fileExists: (ruta: string) => ipcRenderer.invoke('file-exists', ruta),
   fileListDir: (dir: string) => ipcRenderer.invoke('file-list-dir', dir),
   fileSize: (ruta: string) => ipcRenderer.invoke('file-size', ruta),
+  /** Firma del archivo (mtime + tamaño) para detectar cambios externos (U7). */
+  fileStat: (ruta: string) => ipcRenderer.invoke('file-stat', ruta),
   recordingsDir: (projectPath?: string) => ipcRenderer.invoke('recordings-dir', projectPath),
   /** Ruta real de un archivo arrastrado desde el explorador. */
   pathForFile: (file: File): string => {

@@ -47,6 +47,8 @@ declare global {
       fileReadBinary: (ruta: string) => Promise<Uint8Array>
       fileExists: (ruta: string) => Promise<boolean>
       fileSize: (ruta: string) => Promise<number>
+    /** Firma del archivo (mtime + tamaño) para detectar cambios externos (U7). */
+    fileStat?: (ruta: string) => Promise<{ mtimeMs: number; size: number } | null>
       fileListDir?: (dir: string) => Promise<{
         success: boolean
         error?: string
