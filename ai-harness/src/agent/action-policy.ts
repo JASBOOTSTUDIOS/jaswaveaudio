@@ -150,6 +150,18 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'bus.create': 'write',
   'send.set': 'write',
   'sidechain.connect': 'write',
+
+  // ── A7c · Actuación con valores reales (ganancia, EQ, compresor, límite, master) ──
+  'track.ganancia': 'write',
+  'pista.pan': 'write',
+  'pista.eq.agregar': 'write',
+  'pista.eq.editar': 'write',
+  'pista.eq.quitar': 'write',
+  'pista.compresor.agregar': 'write',
+  'pista.compresor.editar': 'write',
+  'pista.compresor.quitar': 'write',
+  'pista.limite': 'write',
+  'master.normalizar': 'write',
   'take.folder.ensure': 'write',
   'take.add': 'write',
   'take.rename': 'write',

@@ -19,7 +19,7 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | A6 | Equipo multi-agente | A5, A9(plan/bitácora) | pendiente | | |
 | A7a | Medición DSP correcta | — | hecho | Claude (subagente) · 2026-10-20 | 73cdb04 (merge) |
 | A7b | Análisis por pista | A7a | hecho | Claude (subagente) · 2026-10-21 | 3a9fb4d |
-| A7c | Actuar con valores reales | — | pendiente | | |
+| A7c | Actuar con valores reales | A7b, A9 | en curso | Claude · 2026-10-22 | |
 | A7d | FX propios JasWave | A7c | pendiente | | |
 | A7e | masterPass y mezcla por medición | A7b, A7c | pendiente | | |
 | A8 | CLI con turnos completos | A1, A5 | pendiente | | |

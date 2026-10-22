@@ -138,6 +138,18 @@ import {
   crearComandoCompSegmentClear,
   crearComandoTransportSetRecordMode,
 } from '../commands/take-commands';
+import {
+  crearComandoTrackGanancia,
+  crearComandoPistaPan,
+  crearComandoPistaEqAgregar,
+  crearComandoPistaEqEditar,
+  crearComandoPistaEqQuitar,
+  crearComandoPistaCompresorAgregar,
+  crearComandoPistaCompresorEditar,
+  crearComandoPistaCompresorQuitar,
+  crearComandoPistaLimite,
+  crearComandoMasterNormalizar,
+} from '../commands/actuacion-commands';
 
 /**
  * Crea un evento de dominio estandarizado para el bus.
@@ -288,6 +300,16 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoCompSegmentSet(), registry);
   registrar(crearComandoCompSegmentClear(), registry);
   registrar(crearComandoTransportSetRecordMode(), registry);
+  registrar(crearComandoTrackGanancia(), registry);
+  registrar(crearComandoPistaPan(), registry);
+  registrar(crearComandoPistaEqAgregar(), registry);
+  registrar(crearComandoPistaEqEditar(), registry);
+  registrar(crearComandoPistaEqQuitar(), registry);
+  registrar(crearComandoPistaCompresorAgregar(), registry);
+  registrar(crearComandoPistaCompresorEditar(), registry);
+  registrar(crearComandoPistaCompresorQuitar(), registry);
+  registrar(crearComandoPistaLimite(), registry);
+  registrar(crearComandoMasterNormalizar(), registry);
 }
 /**
  * Alias de `registrarComandosBuiltin` para registrar comandos de proyecto.
