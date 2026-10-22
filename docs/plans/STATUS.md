@@ -7,7 +7,7 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | U1 | Cambios sin guardar | — | hecho | Claude (subagente, rama ws/u1-u5) · 2026-10-20 | b51fea3 |
 | U2 | Undo limpio | — | hecho | Claude (subagente, hardening/production) · 2026-10-20 | 1dc0d54 |
 | U3 | Validación de dominio real | — | hecho | Claude (subagente, hardening/production) · 2026-10-20 | 1dc0d54 |
-| U4 | Media y archivos | U3 | en curso | opencode (rama ws/u4-u7) · 2026-10-21 | |
+| U4 | Media y archivos | U3 | hecho | opencode (rama ws/u4-u7) · 2026-10-21 | 1e689ff |
 | U5 | Atajos y foco | — | hecho | Claude (subagente, rama ws/u1-u5) · 2026-10-20 | d3ab356 |
 | U6 | Reproducción / grabación | U2 | en curso | opencode (rama ws/u4-u7) · 2026-10-21 | |
 | U7 | Instancia única y ventanas | U1 | en curso | opencode (rama ws/u4-u7) · 2026-10-21 | |
