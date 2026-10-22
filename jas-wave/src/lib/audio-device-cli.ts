@@ -88,6 +88,14 @@ export async function setAudioDevice(
       message: 'ASIO requiere deviceId (ej. driver UMC ASIO). Usa audio.listDevices.',
     }
   }
+  // U6: el dispositivo solo se cambia con el transporte detenido (evita cortes y
+  // perder la toma en curso).
+  const transporte = tienda.obtenerEstado().transport
+  if (transporte.reproduciendo || transporte.grabacion === 'grabando') {
+    await tienda.executor.execute('transport.stop', {})
+    const { esperarFinalizacionGrabacion } = await import('./recording-session')
+    await esperarFinalizacionGrabacion()
+  }
   await window.electron?.pluginHostEnsure?.()
   const raw = (await window.electron?.pluginHostSend?.({
     type: 'setAudioDevice',

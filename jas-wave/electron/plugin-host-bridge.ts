@@ -10,6 +10,14 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 import { app, BrowserWindow } from 'electron'
+import { parseAudioDeviceNotice, type AudioDeviceNotice } from './audio-device-notice'
+import { hayCrashLoop, limpiarSalidas, registrarSalidaInesperada } from './crash-loop'
+import {
+  evaluarCuarentena,
+  mensajeMotivoCuarentena,
+  VENTANA_PRIMER_BLOQUE_MS,
+  type CargaEnCurso,
+} from './quarantine'
 
 export type AudioDevicePrefs = {
   backend: string
@@ -111,7 +119,15 @@ let startPromise: Promise<boolean> | null = null
 let lastError: string | undefined
 /** Último `load` (para cuarentena si el host muere justo después). */
 let lastLoadPluginPath = ''
-let lastLoadPluginAt = 0
+/** U7: carga en vuelo (load/prepare) del proceso actual. */
+let cargaEnCursoActual: CargaEnCurso | null = null
+/** U7: plugin cargado en el proceso actual y su primer bloque. */
+let pluginCargadoEnProceso: string | null = null
+let pluginCargadoEn = 0
+let bloquePluginAbierto = false
+let bloquePluginTimer: ReturnType<typeof setTimeout> | null = null
+/** Ruta del plugin por slot (para resolver un `prepare` en vuelo). */
+const slotPluginPath = new Map<string, string>()
 let unexpectedExitTimes: number[] = []
 let autoRespawnTimer: ReturnType<typeof setTimeout> | null = null
 let mixSock: fs.WriteStream | null = null
@@ -678,6 +694,34 @@ function onChunk(chunk: Buffer) {
 type NativeMidiListener = (msg: { id: string; data: number[] }) => void
 const nativeMidiListeners = new Set<NativeMidiListener>()
 
+export type { AudioDeviceNotice } from './audio-device-notice'
+
+export function subscribeAudioDeviceNotice(cb: (notice: AudioDeviceNotice) => void): () => void {
+  audioDeviceNoticeListeners.add(cb)
+  return () => audioDeviceNoticeListeners.delete(cb)
+}
+
+const audioDeviceNoticeListeners = new Set<(notice: AudioDeviceNotice) => void>()
+
+/** Traduce un aviso del host nativo a un evento para la UI. */
+function notifyAudioDevice(notice: AudioDeviceNotice) {
+  logLine('warn', 'plugin-host', `audio device ${notice}`)
+  for (const l of audioDeviceNoticeListeners) {
+    try {
+      l(notice)
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('jaswave-audio-device-notice', { notice })
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 export function subscribeNativeMidi(cb: NativeMidiListener): () => void {
   nativeMidiListeners.add(cb)
   return () => nativeMidiListeners.delete(cb)
@@ -709,6 +753,12 @@ function parseHostLogLine(raw: string) {
     }
     if (!t) continue
     console.error('[plugin-host]', t)
+    // U6: el host avisa de reinicios y pérdidas del dispositivo de audio.
+    const notice = parseAudioDeviceNotice(t)
+    if (notice) {
+      notifyAudioDevice(notice)
+      continue
+    }
     // Bounce offline y fallos del host: al log persistente (la consola no siempre se captura).
     if (/offline|render|error|fail|crash/i.test(t)) logLine('info', 'plugin-host', t)
   }
@@ -741,17 +791,34 @@ function wireChild(proc: ChildProcessWithoutNullStreams) {
     closeMixPipe()
     lastError = `Plugin Host Process salió (code=${code}, signal=${signal})`
     logLine('warn', 'plugin-host', lastError, lastLoadPluginPath ? `último load: ${lastLoadPluginPath}` : '')
-    // Si un load reciente tumba el host (p.ej. 4Front Bass), aislar el plugin.
-    if (lastLoadPluginPath && Date.now() - lastLoadPluginAt < 20_000) {
-      const key = pluginKey(lastLoadPluginPath)
+    // U7: solo se aparta (cuarentena) el plugin si el host murió con su carga en
+    // curso o dentro de su primer bloque en este proceso. Antes bastaba con que
+    // el último load fuera reciente y el plugin acababa apartado sin ser culpable.
+    const decision = evaluarCuarentena({
+      ahora: Date.now(),
+      cargaEnCurso: cargaEnCursoActual,
+      pluginCargado: pluginCargadoEnProceso,
+      cargadoEn: pluginCargadoEn,
+      bloqueAbierto: bloquePluginAbierto,
+    })
+    if (decision) {
+      const key = pluginKey(decision.plugin)
       if (key && !getQuarantine().has(key)) {
         getQuarantine().add(key)
         saveQuarantine(getQuarantine())
-        console.error('[plugin-host] quarantine after host exit:', lastLoadPluginPath)
-        lastError = quarantineMessage(lastLoadPluginPath)
+        const motivo = mensajeMotivoCuarentena(decision.motivo)
+        console.error('[plugin-host] quarantine after host exit:', decision.plugin, motivo)
+        logLine('warn', 'plugin-host', `plugin en cuarentena: ${decision.plugin} (${motivo})`)
+        lastError = quarantineMessage(decision.plugin)
       }
-      lastLoadPluginPath = ''
+    } else {
+      logLine('info', 'plugin-host', 'sin cuarentena: la muerte del host no es atribuible a un plugin')
     }
+    cargaEnCursoActual = null
+    pluginCargadoEnProceso = null
+    pluginCargadoEn = 0
+    bloquePluginAbierto = false
+    lastLoadPluginPath = ''
     settlePending({
       ok: false,
       code: 'HostNotReady',
@@ -801,12 +868,13 @@ function writeHostStdin(line: string): boolean {
 /** Tras crash inesperado: reabrir host (sin matar Electron) + avisar UI. */
 function scheduleAutoRespawnAfterCrash() {
   const now = Date.now()
-  unexpectedExitTimes = unexpectedExitTimes.filter((t) => now - t < 60_000)
-  unexpectedExitTimes.push(now)
-  if (unexpectedExitTimes.length >= 4) {
+  unexpectedExitTimes = registrarSalidaInesperada(unexpectedExitTimes, now)
+  if (hayCrashLoop(unexpectedExitTimes)) {
     lastError =
       'Plugin Host entró en crash-loop (¿plugin incompatible?). Reinicia JasWave o quita el VST problemático.'
     console.error('[plugin-host]', lastError)
+    // U7: en vez de rendirse, la UI ofrece "Reiniciar motor" (plugin-host-reset).
+    notifyCrashLoop(true, lastError)
     return
   }
   if (autoRespawnTimer) clearTimeout(autoRespawnTimer)
@@ -1048,6 +1116,48 @@ function notifyHostRestarted() {
   } catch {
     /* ignore */
   }
+}
+
+/** U7: avisa a la UI del bucle de fallos del motor (o de que se ha resuelto). */
+function notifyCrashLoop(activo: boolean, mensaje?: string) {
+  try {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('plugin-host-crash-loop', { activo, mensaje })
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * U7: "Reiniciar motor" — limpia el contador de fallos y rearranca el host.
+ * No carga plugins: el ciclo de vida los recarga uno a uno al recibir el aviso
+ * de reinicio (y los que están en cuarentena siguen apartados).
+ */
+export async function resetPluginHost(): Promise<{ ok: boolean; message?: string }> {
+  unexpectedExitTimes = limpiarSalidas()
+  if (autoRespawnTimer) {
+    clearTimeout(autoRespawnTimer)
+    autoRespawnTimer = null
+  }
+  lastError = undefined
+  const ok = await ensurePluginHostStarted()
+  if (!ok) {
+    const message = lastError || 'No se pudo reiniciar el motor de audio'
+    logLine('warn', 'plugin-host', `reset falló: ${message}`)
+    notifyCrashLoop(true, message)
+    return { ok: false, message }
+  }
+  const saved = readAudioDevicePrefs()
+  applyMixPaceFromPrefs(saved)
+  await applyAudioDeviceOrFallback(saved ?? wasapiPrefs(), {
+    persist: false,
+    sessionFallbackOk: true,
+  })
+  logLine('info', 'plugin-host', 'motor de audio reiniciado a mano (contador de fallos limpio)')
+  notifyCrashLoop(false)
+  notifyHostRestarted()
+  return { ok: true }
 }
 
 export async function setPluginHostAudioDevice(
@@ -1512,12 +1622,20 @@ export function sendPluginHostCommand(
       pumpQueue()
     })
 
+  // U7: marcar la carga en vuelo (para saber a quién culpar si el host muere).
+  if (type === 'load' || type === 'prepare') {
+    const ruta =
+      type === 'load'
+        ? String(cmd.path || '')
+        : slotPluginPath.get(String(cmd.slotId ?? '')) || ''
+    if (ruta) cargaEnCursoActual = { tipo: type, ruta }
+  }
+
   if (type === 'load' || type === 'openEditor') {
     const pluginPath = String(cmd.path || '')
     const key = pluginKey(pluginPath)
     if (type === 'load' && pluginPath) {
       lastLoadPluginPath = pluginPath
-      lastLoadPluginAt = Date.now()
     }
     if (key && getQuarantine().has(key)) {
       return Promise.resolve({
@@ -1530,6 +1648,8 @@ export function sendPluginHostCommand(
       if (result.ok) {
         if (type === 'load') {
           lastLoadPluginPath = ''
+          // U7: el plugin entra en su primer bloque dentro de este proceso.
+          abrirPrimerBloquePlugin(pluginPath, result.slotId)
         }
         return result
       }
@@ -1561,12 +1681,33 @@ export function sendPluginHostCommand(
         notifyHostRestarted()
       }
       return {
-        ok: false,
+        ok: false as const,
         code: 'PluginCrashedHost',
         message: quarantineMessage(pluginPath || 'plugin VST3'),
       }
+    }).finally(() => {
+      if (cargaEnCursoActual?.tipo === 'load') cargaEnCursoActual = null
     })
   }
 
-  return enqueue()
+  return enqueue().finally(() => {
+    if (cargaEnCursoActual?.tipo === 'prepare') cargaEnCursoActual = null
+  })
+}
+
+/**
+ * U7: el plugin acaba de cargarse en este proceso → abre su "primer bloque".
+ * Si el host muere dentro de esa ventana, el plugin es el sospechoso.
+ */
+function abrirPrimerBloquePlugin(pluginPath: string, slotId?: string): void {
+  if (!pluginPath) return
+  pluginCargadoEnProceso = pluginPath
+  pluginCargadoEn = Date.now()
+  bloquePluginAbierto = true
+  if (slotId) slotPluginPath.set(slotId, pluginPath)
+  if (bloquePluginTimer) clearTimeout(bloquePluginTimer)
+  bloquePluginTimer = setTimeout(() => {
+    bloquePluginTimer = null
+    bloquePluginAbierto = false
+  }, VENTANA_PRIMER_BLOQUE_MS)
 }

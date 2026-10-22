@@ -1,6 +1,6 @@
 import type { ProjectState } from '../types/proyecto';
 import type { AudioReference, ProyectoArchivo } from './ciclo-vida';
-import { proyectoParaGuardar, archivoValido, validarExtensionRuta, reconstruirRouting, verificarReferenciasAudio } from './ciclo-vida';
+import { proyectoParaGuardar, archivoValido, validarExtensionRuta, reconstruirRouting, referenciasAudioFaltantes } from './ciclo-vida';
 import { migrarArchivo } from './migraciones-archivo';
 import { repararNotasMidi } from './reparar-notas';
 import type { MigracionArchivo } from './migraciones-archivo';
@@ -101,10 +101,24 @@ export interface OpcionesCargaProyecto {
   migraciones?: readonly MigracionArchivo[];
   /** Aviso de reparación: notas MIDI inválidas descartadas al cargar. */
   onNotasMidiDescartadas?: (cantidad: number) => void;
+  /**
+   * Media faltante: clips cuyo archivo no existe (resuelto contra la carpeta del
+   * proyecto). La app lo usa para abrir el diálogo "Media faltante".
+   */
+  onMediaFaltante?: (faltantes: AudioReference[]) => void;
 }
 
 /** Ruta de la copia de seguridad que deja la escritura atómica del guardado. */
 export const rutaRespaldo = (ruta: string): string => `${ruta}.bak`;
+
+/** Carpeta que contiene un archivo (sin `node:path`: `shared` es browser-safe). */
+export const carpetaDeRuta = (ruta: string): string => {
+  const n = ruta.replace(/\\/g, '/');
+  const i = n.lastIndexOf('/');
+  if (i < 0) return '';
+  if (i === 0) return '/';
+  return ruta.slice(0, ruta.length - (n.length - i));
+};
 
 const MENSAJE_JSON_DANADO = 'El archivo no es un proyecto JasWave válido (JSON dañado)';
 
@@ -187,9 +201,12 @@ const cargarDesde = async (
   const proyectoReconstruido = reconstruirRouting(archivo.project);
 
   if (archivo.audioReferences && Object.keys(archivo.audioReferences).length > 0) {
-    const faltantes = await verificarReferenciasAudio(archivo.audioReferences, fileService);
+    // Las rutas relativas (`media/...`) se resuelven contra la carpeta del proyecto,
+    // no contra el directorio de trabajo: si no, todo clip de audio parece faltar.
+    const dirBase = carpetaDeRuta(rutaProyecto);
+    const faltantes = await referenciasAudioFaltantes(archivo.audioReferences, fileService, dirBase);
     if (faltantes.length > 0) {
-      console.warn(`Referencias de audio no encontradas: ${faltantes.join(', ')}`);
+      opciones.onMediaFaltante?.(faltantes);
     }
   }
 

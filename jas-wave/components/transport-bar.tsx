@@ -11,6 +11,7 @@ import { waitUntilProjectReady } from '@/src/lib/project-ready'
 import { NumericField } from '@/components/ui/numeric-field'
 import { TimeSignatureField } from '@/components/ui/time-signature-field'
 import { crearVentanaGesto, opcionesGesto } from '@/src/lib/gesture-id'
+import { useRenderLock } from '@/src/lib/render-lock'
 
 /** Blanco=vacío → amarillo=medio → rojo=lleno (fill / highFill). */
 function bufferFillColor(level: number): string {
@@ -376,6 +377,7 @@ export function TransportBar() {
   const transport = useDAWState((s: DAWState) => s.transport)
   const project = useDAWState((s: DAWState) => s.project)
   const projectReady = useProjectReady()
+  const renderLock = useRenderLock()
 
   const isPlaying = Boolean(transport.reproduciendo)
   const isRecording = transport.grabacion === 'grabando'
@@ -470,12 +472,12 @@ export function TransportBar() {
         <button
           type="button"
           onClick={togglePlay}
-          disabled={blocked}
-          title={blocked ? projectReady.label : undefined}
+          disabled={blocked || renderLock}
+          title={renderLock ? 'Render en curso' : blocked ? projectReady.label : undefined}
           aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
           aria-pressed={isPlaying}
           className={`flex size-9 items-center justify-center rounded-md transition-colors ${
-            blocked
+            blocked || renderLock
               ? 'cursor-wait opacity-50 text-muted-foreground'
               : isPlaying
                 ? 'bg-track-fx/20 text-track-fx'
@@ -491,20 +493,28 @@ export function TransportBar() {
         <button
           type="button"
           onClick={stop}
+          disabled={renderLock}
+          title={renderLock ? 'Render en curso' : undefined}
           aria-label="Detener"
-          className="flex size-9 items-center justify-center rounded-md text-foreground hover:bg-panel-raised"
+          className={`flex size-9 items-center justify-center rounded-md text-foreground hover:bg-panel-raised ${
+            renderLock ? 'cursor-wait opacity-50 text-muted-foreground' : ''
+          }`}
         >
           <Square className="size-4" fill="currentColor" />
         </button>
         <button
           type="button"
           onClick={toggleRecording}
+          disabled={renderLock}
+          title={renderLock ? 'Render en curso' : undefined}
           aria-label="Grabar"
           aria-pressed={isRecording}
           className={`flex size-9 items-center justify-center rounded-md transition-colors ${
-            isRecording
-              ? 'bg-destructive/20 text-destructive animate-pulse'
-              : 'text-destructive hover:bg-panel-raised'
+            renderLock
+              ? 'cursor-wait opacity-50 text-muted-foreground'
+              : isRecording
+                ? 'bg-destructive/20 text-destructive animate-pulse'
+                : 'text-destructive hover:bg-panel-raised'
           }`}
         >
           <Circle className="size-4" fill="currentColor" />
@@ -512,13 +522,16 @@ export function TransportBar() {
         <button
           type="button"
           onClick={toggleCompMode}
+          disabled={renderLock}
           aria-label="Modo comping"
           aria-pressed={isComping}
           title="Comping: cada pasada añade una toma"
           className={`flex h-9 items-center justify-center rounded-md px-2 text-[10px] font-semibold transition-colors ${
-            isComping
-              ? 'bg-accent-amber/25 text-accent-amber'
-              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+            renderLock
+              ? 'cursor-wait opacity-50 text-muted-foreground'
+              : isComping
+                ? 'bg-accent-amber/25 text-accent-amber'
+                : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
           }`}
         >
           COMP
@@ -526,12 +539,15 @@ export function TransportBar() {
         <button
           type="button"
           onClick={toggleLooping}
+          disabled={renderLock}
           aria-label="Repetir"
           aria-pressed={isLooping}
           className={`flex size-9 items-center justify-center rounded-md transition-colors ${
-            isLooping
-              ? 'bg-accent-amber/20 text-accent-amber'
-              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+            renderLock
+              ? 'cursor-wait opacity-50 text-muted-foreground'
+              : isLooping
+                ? 'bg-accent-amber/20 text-accent-amber'
+                : 'text-foreground hover:bg-panel-raised'
           }`}
         >
           <Repeat className="size-4" />
@@ -539,17 +555,22 @@ export function TransportBar() {
         <button
           type="button"
           onClick={togglePunch}
+          disabled={renderLock}
           aria-label="Punch in/out"
           aria-pressed={isPunch}
           title={
-            isPunch
-              ? `Punch ${transport.punch?.inicio?.beats?.toFixed?.(1) ?? 0}–${transport.punch?.fin?.beats?.toFixed?.(1) ?? 0} beats`
-              : 'Punch in/out (ventana de grabación)'
+            renderLock
+              ? 'Render en curso'
+              : isPunch
+                ? `Punch ${transport.punch?.inicio?.beats?.toFixed?.(1) ?? 0}–${transport.punch?.fin?.beats?.toFixed?.(1) ?? 0} beats`
+                : 'Punch in/out (ventana de grabación)'
           }
           className={`flex size-9 items-center justify-center rounded-md transition-colors ${
-            isPunch
-              ? 'bg-destructive/20 text-destructive'
-              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+            renderLock
+              ? 'cursor-wait opacity-50 text-muted-foreground'
+              : isPunch
+                ? 'bg-destructive/20 text-destructive'
+                : 'text-muted-foreground hover:bg-panel-raised'
           }`}
         >
           <Crosshair className="size-4" />
@@ -557,17 +578,22 @@ export function TransportBar() {
         <button
           type="button"
           onClick={toggleCountIn}
+          disabled={renderLock}
           aria-label="Count-in"
           aria-pressed={isCountIn}
           title={
-            isCountIn
-              ? `Count-in ${transport.countIn?.compases ?? 1} compás(es)`
-              : 'Count-in (pre-roll antes de grabar)'
+            renderLock
+              ? 'Render en curso'
+              : isCountIn
+                ? `Count-in ${transport.countIn?.compases ?? 1} compás(es)`
+                : 'Count-in (pre-roll antes de grabar)'
           }
           className={`flex size-9 items-center justify-center rounded-md transition-colors ${
-            isCountIn
-              ? 'bg-accent-cyan/20 text-accent-cyan'
-              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+            renderLock
+              ? 'cursor-wait opacity-50 text-muted-foreground'
+              : isCountIn
+                ? 'bg-accent-cyan/20 text-accent-cyan'
+                : 'text-muted-foreground hover:bg-panel-raised'
           }`}
         >
           <Timer className="size-4" />

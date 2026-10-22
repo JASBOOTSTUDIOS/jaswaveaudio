@@ -19,6 +19,8 @@ import type { CommandDefinition, StateTransition, ValidationResult, ValidationEr
 import type { DAWState } from '../types/state';
 import type { ProjectState } from '../types/proyecto';
 import type { Track } from '../types/tracks';
+import type { RoutingMatrix } from '../types/routing';
+import type { Bus, ConexionDirecta, Envio, GrupoRuteo, Ruta, Sidechain } from '../types/routing';
 import type { AudioClip, MidiClip, MidiNote } from '../types/clips';
 import type { TransportState } from '../types/transport';
 import { NombresEventos, EventosTrack, EventosClip, EventosTransporte, EventosProyecto } from '../constants/nombres-eventos';
@@ -394,6 +396,16 @@ export type ClipMovePayload = {
   pistaDestinoId?: string;
 };
 
+/** Reapunta el audio de un clip (reenlace de media faltante). */
+export type ClipSetSourcePayload = {
+  pistaId: string;
+  clipId: string;
+  /** Nueva clave de fuente: ruta relativa de media (`media/x.wav`) o id de buffer. */
+  sourceId: string;
+  /** Nombre visible opcional del clip. */
+  nombre?: string;
+};
+
 export type ClipResizePayload = {
   pistaId: string;
   clipId: string;
@@ -716,6 +728,21 @@ export function crearComandoTrackMove(): CommandDefinition<TrackMovePayload> {
   };
 }
 
+/**
+ * Elementos de ruteo que se limpian al eliminar una pista.
+ * Se guardan en el payload inverso para que el undo los restaure.
+ */
+export type RuteoEliminado = {
+  sends?: Envio[];
+  sidechains?: Sidechain[];
+  rutas?: Ruta[];
+  conexionesDirectas?: ConexionDirecta[];
+  buses?: Bus[];
+  grupos?: GrupoRuteo[];
+  ordenTracks?: string[];
+  ordenBuses?: string[];
+};
+
 export function crearComandoTrackDelete(): CommandDefinition<TrackDeletePayload> {
   return {
     type: 'track.delete',
@@ -737,9 +764,21 @@ export function crearComandoTrackDelete(): CommandDefinition<TrackDeletePayload>
         throw new Error(`Pista no encontrada: ${payload.trackId}`);
       }
 
+      // No se borra una pista armada mientras se está grabando: se perdería la toma.
+      const grabando = estado.transport?.grabacion === 'grabando';
+      if (grabando && pista.armada) {
+        throw new Error(
+          `No se puede eliminar "${pista.nombre}" mientras está armada y grabando. Desarma la pista o detén la grabación.`,
+        );
+      }
+
+      // Limpieza de ruteo: envíos, sidechains, rutas y buses que apuntan a la pista.
+      const ruteo = limpiarRuteoDePista(estado.project.routing, payload.trackId);
+
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.filter(t => t.id !== payload.trackId),
+        routing: ruteo.routing ?? estado.project.routing,
         modificado: true,
         fechaModificacion: Date.now(),
       };
@@ -756,10 +795,103 @@ export function crearComandoTrackDelete(): CommandDefinition<TrackDeletePayload>
           },
         ],
         result: payload,
-        inversePayload: { track: pista, index },
+        inversePayload: { track: pista, index, ruteo: ruteo.eliminados },
       };
     },
   };
+}
+
+/**
+ * Quita del ruteo todo lo que apunta a la pista eliminada y devuelve lo
+ * retirado para poder restaurarlo al deshacer.
+ */
+export function limpiarRuteoDePista(
+  routing: RoutingMatrix | undefined,
+  trackId: string,
+): { routing: RoutingMatrix | undefined; eliminados: RuteoEliminado } {
+  if (!routing) return { routing, eliminados: {} };
+  const eliminados: RuteoEliminado = {};
+
+  const sends = routing.sends ?? [];
+  const sendsEliminados = sends.filter((s) => s.origenTrackId === trackId || s.destinoBusId === trackId);
+  if (sendsEliminados.length > 0) {
+    eliminados.sends = sendsEliminados;
+    routing = { ...routing, sends: sends.filter((s) => !sendsEliminados.includes(s)) };
+  }
+
+  const sidechains = routing.sidechains ?? [];
+  const sidechainsEliminados = sidechains.filter(
+    (s) => s.origenTrackId === trackId || s.destinoTrackId === trackId,
+  );
+  if (sidechainsEliminados.length > 0) {
+    eliminados.sidechains = sidechainsEliminados;
+    routing = { ...routing, sidechains: sidechains.filter((s) => !sidechainsEliminados.includes(s)) };
+  }
+
+  const rutas = routing.rutas ?? [];
+  const rutasEliminadas = rutas.filter((r) => r.origen === trackId || r.destino === trackId);
+  if (rutasEliminadas.length > 0) {
+    eliminados.rutas = rutasEliminadas;
+    routing = { ...routing, rutas: rutas.filter((r) => !rutasEliminadas.includes(r)) };
+  }
+
+  const conexiones = routing.conexionesDirectas ?? [];
+  const conexionesEliminadas = conexiones.filter((c) => c.origen === trackId || c.destino === trackId);
+  if (conexionesEliminadas.length > 0) {
+    eliminados.conexionesDirectas = conexionesEliminadas;
+    routing = { ...routing, conexionesDirectas: conexiones.filter((c) => !conexionesEliminadas.includes(c)) };
+  }
+
+  const buses = routing.buses ?? [];
+  const busesEliminados = buses.filter((b) => b.id === trackId);
+  if (busesEliminados.length > 0) {
+    eliminados.buses = busesEliminados;
+    routing = { ...routing, buses: buses.filter((b) => b.id !== trackId) };
+  }
+
+  const grupos = routing.grupos ?? [];
+  const gruposEliminados = grupos.filter((g) => g.busId === trackId);
+  if (gruposEliminados.length > 0) {
+    eliminados.grupos = gruposEliminados;
+    routing = { ...routing, grupos: grupos.filter((g) => g.busId !== trackId) };
+  }
+
+  if ((routing.ordenTracks ?? []).includes(trackId)) {
+    eliminados.ordenTracks = routing.ordenTracks.filter((id) => id !== trackId);
+    routing = { ...routing, ordenTracks: routing.ordenTracks.filter((id) => id !== trackId) };
+  }
+  if ((routing.ordenBuses ?? []).includes(trackId)) {
+    eliminados.ordenBuses = routing.ordenBuses.filter((id) => id !== trackId);
+    routing = { ...routing, ordenBuses: routing.ordenBuses.filter((id) => id !== trackId) };
+  }
+
+  return { routing, eliminados };
+}
+
+/** Devuelve al ruteo los elementos que `track.delete` había quitado. */
+export function restaurarRuteoDePista(
+  routing: RoutingMatrix | undefined,
+  eliminados: RuteoEliminado | undefined,
+): RoutingMatrix | undefined {
+  if (!routing || !eliminados) return routing;
+  let out = routing;
+  if (eliminados.sends?.length) out = { ...out, sends: [...(out.sends ?? []), ...eliminados.sends] };
+  if (eliminados.sidechains?.length) {
+    out = { ...out, sidechains: [...(out.sidechains ?? []), ...eliminados.sidechains] };
+  }
+  if (eliminados.rutas?.length) out = { ...out, rutas: [...(out.rutas ?? []), ...eliminados.rutas] };
+  if (eliminados.conexionesDirectas?.length) {
+    out = { ...out, conexionesDirectas: [...(out.conexionesDirectas ?? []), ...eliminados.conexionesDirectas] };
+  }
+  if (eliminados.buses?.length) out = { ...out, buses: [...(out.buses ?? []), ...eliminados.buses] };
+  if (eliminados.grupos?.length) out = { ...out, grupos: [...(out.grupos ?? []), ...eliminados.grupos] };
+  if (eliminados.ordenTracks?.length) {
+    out = { ...out, ordenTracks: [...(out.ordenTracks ?? []), ...eliminados.ordenTracks] };
+  }
+  if (eliminados.ordenBuses?.length) {
+    out = { ...out, ordenBuses: [...(out.ordenBuses ?? []), ...eliminados.ordenBuses] };
+  }
+  return out;
 }
 
 export function crearComandoTrackUpdate(): CommandDefinition<TrackUpdatePayload> {
@@ -2083,6 +2215,30 @@ export function crearComandoClipMerge(): CommandDefinition<ClipMergePayload> {
   };
 }
 
+/**
+ * Comprueba que un clip pueda vivir en la pista destino.
+ * Devuelve el mensaje de error o null si son compatibles.
+ */
+export function incompatibilidadPistaClip(
+  clip: { tipo?: string },
+  pista: { tipo?: string; nombre?: string },
+): string | null {
+  const tipoClip = clip?.tipo;
+  const tipoPista = pista?.tipo;
+  if (!tipoClip || !tipoPista) return null;
+  const nombre = pista.nombre ? `"${pista.nombre}"` : 'la pista destino';
+  if (tipoClip === 'audio' && tipoPista === 'midi') {
+    return `No se puede mover un clip de audio a la pista MIDI ${nombre}.`;
+  }
+  if (tipoClip === 'midi' && tipoPista === 'audio') {
+    return `No se puede mover un clip MIDI a la pista de audio ${nombre}.`;
+  }
+  if (tipoPista === 'carpeta' || tipoPista === 'bus' || tipoPista === 'vca' || tipoPista === 'master') {
+    return `No se pueden mover clips a ${nombre} (${tipoPista}).`;
+  }
+  return null;
+}
+
 export function crearComandoClipMove(): CommandDefinition<ClipMovePayload> {
   return {
     type: 'clip.move',
@@ -2120,6 +2276,13 @@ export function crearComandoClipMove(): CommandDefinition<ClipMovePayload> {
 
       if (!pistaDestino) {
         throw new Error(`Pista destino no encontrada: ${destinoId}`);
+      }
+
+      // Compatibilidad pista/clip: un clip de audio no puede vivir en una pista
+      // MIDI (ni al revés). Un clip de audio solo va a pistas de audio.
+      const incompatibilidad = incompatibilidadPistaClip(clipActual, pistaDestino);
+      if (incompatibilidad) {
+        throw new Error(incompatibilidad);
       }
 
       const inicioAnterior = clipActual.inicio;
@@ -2167,6 +2330,76 @@ export function crearComandoClipMove(): CommandDefinition<ClipMovePayload> {
           clipId: payload.clipId,
           inicio: inicioAnterior,
           pistaDestinoId: payload.pistaId,
+        },
+      };
+    },
+  };
+}
+
+export function crearComandoClipSetSource(): CommandDefinition<ClipSetSourcePayload> {
+  return {
+    type: 'clip.setSource',
+    inverseType: 'clip.setSource',
+    description: 'Reapunta el audio de un clip (reenlace de media faltante)',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        pistaId: { type: 'string' },
+        clipId: { type: 'string' },
+        sourceId: { type: 'string' },
+        nombre: { type: 'string' },
+      },
+      required: ['pistaId', 'clipId', 'sourceId'],
+      additionalProperties: false,
+    },
+    handler: (estado: DAWState, payload: ClipSetSourcePayload): StateTransition<ClipSetSourcePayload> => {
+      const pista = estado.project.tracks.find(t => t.id === payload.pistaId);
+      if (!pista) {
+        throw new Error(`Pista no encontrada: ${payload.pistaId}`);
+      }
+      const clip = (pista.clips as any[]).find(c => c.id === payload.clipId);
+      if (!clip) {
+        throw new Error(`Clip no encontrado: ${payload.clipId}`);
+      }
+      if (typeof payload.sourceId !== 'string' || payload.sourceId.trim() === '') {
+        throw new Error('La nueva fuente del clip no puede estar vacía');
+      }
+
+      const sourceAnterior = clip.source?.ruta ?? '';
+      const nombreAnterior = clip.nombre ?? '';
+
+      const clipActualizado = {
+        ...clip,
+        nombre: payload.nombre ?? clip.nombre,
+        source: {
+          ...(clip.source ?? {}),
+          ruta: payload.sourceId,
+        },
+      };
+
+      const pistaActualizada = {
+        ...pista,
+        clips: (pista.clips as any[]).map(c => (c.id === payload.clipId ? clipActualizado : c)),
+        fechaModificacion: Date.now(),
+      } as Track;
+
+      const proyecto: ProjectState = {
+        ...estado.project,
+        tracks: estado.project.tracks.map(t => (t.id === payload.pistaId ? pistaActualizada : t)),
+        modificado: true,
+        fechaModificacion: Date.now(),
+      };
+
+      return {
+        state: { ...estado, project: proyecto },
+        events: [],
+        result: { ...payload },
+        inversePayload: {
+          pistaId: payload.pistaId,
+          clipId: payload.clipId,
+          sourceId: sourceAnterior,
+          nombre: nombreAnterior,
         },
       };
     },
@@ -2794,6 +3027,8 @@ export function crearComandoProjectSetBpm(): CommandDefinition<ProjectSetBpmPayl
 export type TrackRestorePayload = {
   track: Track;
   index?: number;
+  /** Ruteo que `track.delete` limpió (se restaura al deshacer). */
+  ruteo?: RuteoEliminado;
 };
 
 export function crearComandoTrackRestore(): CommandDefinition<TrackRestorePayload> {
@@ -2807,6 +3042,7 @@ export function crearComandoTrackRestore(): CommandDefinition<TrackRestorePayloa
       properties: {
         track: { type: 'object' },
         index: { type: 'number' },
+        ruteo: { type: 'object' },
       },
       required: ['track'],
       additionalProperties: false,
@@ -2815,9 +3051,11 @@ export function crearComandoTrackRestore(): CommandDefinition<TrackRestorePayloa
       const tracks = [...estado.project.tracks];
       const index = Math.min(Math.max(payload.index ?? tracks.length, 0), tracks.length);
       tracks.splice(index, 0, payload.track);
+      const routing = restaurarRuteoDePista(estado.project.routing, payload.ruteo) ?? estado.project.routing;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks,
+        routing,
         modificado: true,
         fechaModificacion: Date.now(),
       };

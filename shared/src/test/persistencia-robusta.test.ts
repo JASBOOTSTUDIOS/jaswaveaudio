@@ -294,7 +294,7 @@ describe('project.load con respaldo', () => {
 
     const r = await executor.execute('project.load', { ruta: 'C:/tmp/cancion.jaswave' });
     expect(r.success).toBe(true);
-    expect(r.result).toEqual({ ruta: 'C:/tmp/cancion.jaswave', usadoRespaldo: true });
+    expect(r.result).toEqual({ ruta: 'C:/tmp/cancion.jaswave', usadoRespaldo: true, mediaFaltante: [] });
     expect(r.events.map((e) => e.nombre)).toContain(EventosProyecto.recuperadoDeRespaldo);
     const proyecto = executor.obtenerEstado().project;
     expect(proyecto.nombre).toBe('Cancion');

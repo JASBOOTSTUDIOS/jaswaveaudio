@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useDAW } from '@/src/context/daw-context'
 import { runNativeBounce, buildRuntimeBounceContent } from '@/src/lib/bounce-service'
+import { activarRenderLock, desactivarRenderLock, useRenderLock } from '@/src/lib/render-lock'
 import type { RenderJob } from '../../shared/src/types/render'
 
 type Props = {
@@ -14,6 +15,7 @@ type Props = {
 
 export function ExportBounceDialog({ open, onClose }: Props) {
   const tienda = useDAW()
+  const renderLock = useRenderLock()
   const [endSec, setEndSec] = useState(30)
   const [bitDepth, setBitDepth] = useState(24)
   const [format, setFormat] = useState<'wav' | 'flac' | 'mp3'>('wav')
@@ -88,6 +90,8 @@ export function ExportBounceDialog({ open, onClose }: Props) {
       const job = r.result as RenderJob
       startedId = job.id
       setJobId(job.id)
+      // U6: mientras se renderiza, la app queda bloqueada (solo cancelar).
+      activarRenderLock()
       const st = tienda.obtenerEstado()
       const content = buildRuntimeBounceContent(st, {
         startSec: 0,
@@ -123,6 +127,7 @@ export function ExportBounceDialog({ open, onClose }: Props) {
       }
     } finally {
       setBusy(false)
+      desactivarRenderLock()
     }
   }, [endSec, bitDepth, format, stems, normalize, listenTarget, tienda])
 
@@ -227,6 +232,11 @@ export function ExportBounceDialog({ open, onClose }: Props) {
         <div className="mt-3 h-2 overflow-hidden rounded bg-panel-raised">
           <div className="h-full bg-accent-amber transition-all" style={{ width: `${progress}%` }} />
         </div>
+        {renderLock && (
+          <p className="mt-2 text-xs text-accent-amber">
+            Render en curso: transporte y edición bloqueados. Usa “Cancelar” para detenerlo.
+          </p>
+        )}
         {message && <p className="mt-2 break-all text-xs text-muted-foreground">{message}</p>}
         <div className="mt-4 flex justify-end gap-2">
           <button

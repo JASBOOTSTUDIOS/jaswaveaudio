@@ -28,6 +28,7 @@ import {
   type HydrateProgress,
 } from '@/src/lib/session-persist'
 import { attachDiskAutosave } from '@/src/lib/disk-autosave'
+import { instalarGuardiaRenderLock } from '@/src/lib/render-lock-guard'
 import { JasWaveLogo } from '@/components/brand'
 import { isUndockWindow } from '@/lib/undock-window'
 
@@ -56,6 +57,13 @@ export function getSharedStore() {
       registerAgentCatalogOnRegistry(toolRegistry, undefined, sharedStore!.registroComandos)
     } catch {
       /* HMR */
+    }
+
+    // U6: durante un bounce no se puede editar (ratón, teclado, IA ni scripts).
+    try {
+      instalarGuardiaRenderLock(sharedStore)
+    } catch {
+      /* ignore */
     }
 
     if (typeof window !== 'undefined' && window.electron) {

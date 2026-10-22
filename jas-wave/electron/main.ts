@@ -17,7 +17,9 @@ import { AiCredentialStore } from './ai-credentials'
 import { initLogger, logLine } from './logger'
 import { writeFileAtomic } from './atomic-write'
 import { defaultVstRoots, isAudioFile, PathAccessError, PathGrants, type AccessKind, type GrantMode } from './path-grants'
+import { buscarArchivosPorNombre, copiarMediaArchivo, moverMediaArchivo, traducirErrorDisco } from './media-service'
 import { checkHostCommand } from './plugin-host-guard'
+import { esRutaProyecto, rutaProyectoDeArgv } from './instancia-unica'
 import { initAutoUpdater } from './updater'
 import {
   createGuardedIpc,
@@ -88,7 +90,7 @@ function assertBinaryRead(p: unknown): string {
 }
 
 function isProjectFile(p: string): boolean {
-  return /.jaswave$/i.test(p)
+  return esRutaProyecto(p)
 }
 
 // ── API keys de IA (cifradas; el renderer no puede leerlas) ─────────────────
@@ -379,11 +381,83 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null
     closeGuard.reset()
+    rendererListo = false
     // Los paneles desacoplados no sobreviven a la ventana principal.
     for (const win of toolWindows.values()) {
       if (!win.isDestroyed()) win.destroy()
     }
     toolWindows.clear()
+  })
+
+  mainWindow.webContents.once('did-finish-load', () => {
+    rendererListo = true
+    const pendiente = proyectoPendiente
+    if (!pendiente) return
+    proyectoPendiente = null
+    mainWindow?.webContents.send('open-project-requested', pendiente)
+  })
+}
+
+// ── Instancia única y apertura de proyectos (U7) ────────────────────────────
+// Solo puede haber una instancia de JasWave en marcha: dos instancias pelean por
+// el ASIO exclusivo, comparten la sesión (IndexedDB) y pueden guardar el mismo
+// `.jaswave` (último gana). La segunda instancia cede el foco y pide a la
+// principal que abra el proyecto recibido en los argumentos.
+
+/** Proyecto que aún no se ha podido entregar al renderer. */
+let proyectoPendiente: string | null = null
+/** El renderer de la ventana principal ya cargó (puede recibir mensajes). */
+let rendererListo = false
+
+/** Extrae la primera ruta `.jaswave` válida de los argumentos de la app. */
+function rutaProyectoDeArgvLocal(argv: string[]): string | null {
+  return rutaProyectoDeArgv(argv, (ruta) => {
+    try {
+      return fsSync.statSync(ruta).isFile()
+    } catch {
+      return false
+    }
+  })
+}
+
+/** Enfoca la ventana principal (la segunda instancia cede el foco). */
+function enfocarVentanaPrincipal() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+/** Pide al renderer que abra el proyecto (respeta la guarda de cambios sin guardar de U1). */
+function abrirProyectoEnVentana(ruta: string) {
+  const abs = path.resolve(ruta)
+  if (!isProjectFile(abs)) return
+  // El renderer necesita leer el archivo: se concede la carpeta.
+  grantUserPath(path.dirname(abs), 'readwrite')
+  if (mainWindow && !mainWindow.isDestroyed() && rendererListo) {
+    enfocarVentanaPrincipal()
+    mainWindow.webContents.send('open-project-requested', abs)
+    return
+  }
+  // Todavía no hay renderer listo: se entrega en cuanto cargue.
+  proyectoPendiente = abs
+}
+
+const instanciaUnica = app.requestSingleInstanceLock()
+if (!instanciaUnica) {
+  // Ya hay una JasWave en marcha: esta instancia se cierra (no crea ventana).
+  app.quit()
+} else {
+  app.on('second-instance', (_event: unknown, argv: string[]) => {
+    logLine('info', 'main', 'Segunda instancia detectada: se cede el foco a la principal')
+    enfocarVentanaPrincipal()
+    const ruta = rutaProyectoDeArgvLocal(argv)
+    if (ruta) abrirProyectoEnVentana(ruta)
+  })
+  // macOS: doble clic sobre un `.jaswave` (en Windows llega por argv).
+  app.on('open-file', (event: { preventDefault: () => void }, ruta: string) => {
+    event.preventDefault()
+    abrirProyectoEnVentana(ruta)
   })
 }
 
@@ -426,6 +500,7 @@ function isMainWindowSender(e: IpcMainInvokeEvent): boolean {
 }
 
 app.whenReady().then(() => {
+  if (!instanciaUnica) return
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.jaswave.app')
   }
@@ -435,6 +510,9 @@ app.whenReady().then(() => {
   initPathGrants()
   buildAppMenu()
   createWindow()
+  // Proyecto recibido en los argumentos al arrancar (asociación de archivos).
+  const rutaInicial = rutaProyectoDeArgvLocal(process.argv)
+  if (rutaInicial) abrirProyectoEnVentana(rutaInicial)
   initAutoUpdater({
     ipc: ipcMain,
     getWindow: () => mainWindow as unknown as import('electron').BrowserWindow | null,
@@ -556,7 +634,7 @@ ipcMain.handle('file-save', async (_event: IpcMainInvokeEvent, ruta: string, con
     await writeFileAtomic(ruta, String(contenido ?? ''), { backup: isProjectFile(ruta) })
     return { success: true }
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
+    return { success: false, error: traducirErrorDisco(err) }
   }
 })
 
@@ -567,7 +645,7 @@ ipcMain.handle('file-save-binary', async (_event: IpcMainInvokeEvent, ruta: stri
     await writeFileAtomic(ruta, buf)
     return { success: true }
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
+    return { success: false, error: traducirErrorDisco(err) }
   }
 })
 
@@ -665,6 +743,40 @@ ipcMain.handle('recordings-dir', async (_event: IpcMainInvokeEvent, projectPath?
   return dir
 })
 
+/** Copia un archivo de audio al media del proyecto (o a media/pending/). */
+ipcMain.handle(
+  'media-copy',
+  async (
+    _event: IpcMainInvokeEvent,
+    opts: { src?: string; destDir?: string; nombre?: string; mover?: boolean },
+  ) => {
+    try {
+      const src = assertBinaryRead(opts?.src)
+      const destDir = assertPath(opts?.destDir, 'write')
+      if (opts?.mover) return await moverMediaArchivo({ src, destDir, nombre: opts?.nombre })
+      return await copiarMediaArchivo({ src, destDir, nombre: opts?.nombre })
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+)
+
+/** Busca archivos por nombre en una carpeta (reenlace de media faltante). */
+ipcMain.handle(
+  'media-buscar',
+  async (_event: IpcMainInvokeEvent, opts: { carpeta?: string; nombres?: string[] }) => {
+    try {
+      const carpeta = assertPath(opts?.carpeta, 'read')
+      const nombres = Array.isArray(opts?.nombres)
+        ? opts.nombres.filter((n): n is string => typeof n === 'string').slice(0, 200)
+        : []
+      return { ok: true, encontrados: await buscarArchivosPorNombre(carpeta, nombres) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err), encontrados: {} }
+    }
+  },
+)
+
 ipcMain.handle('file-read', async (_event: IpcMainInvokeEvent, ruta: string) => {
   return fs.readFile(assertPath(ruta, 'read'), 'utf-8')
 })
@@ -704,6 +816,18 @@ ipcMain.handle('file-size', async (_event: IpcMainInvokeEvent, ruta: string) => 
   return stat.size
 })
 
+/** Firma del archivo (mtime + tamaño) para detectar cambios externos (U7). */
+ipcMain.handle('file-stat', async (_event: IpcMainInvokeEvent, ruta: string) => {
+  if (!pathGrants.isBinaryReadAllowed(ruta)) return null
+  try {
+    const stat = await fs.stat(ruta)
+    if (!stat.isFile()) return null
+    return { mtimeMs: stat.mtimeMs, size: stat.size }
+  } catch {
+    return null
+  }
+})
+
 const SAVE_FILTERS: Record<string, { name: string; extensions: string[] }> = {
   pdf: { name: 'PDF', extensions: ['pdf'] },
   wav: { name: 'WAV', extensions: ['wav'] },
@@ -736,17 +860,25 @@ ipcMain.handle('dialog-open-directory', async () => {
   return result
 })
 
-ipcMain.handle('project-open-dialog', async () => {
-  if (!mainWindow) return { success: false, canceled: true }
-  const result = await dialog.showOpenDialog(mainWindow, {
-    filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }],
-    properties: ['openFile'],
-  })
-  if (result.canceled || result.filePaths.length === 0) return { success: false, canceled: true }
-  grantUserPath(path.dirname(result.filePaths[0]), 'readwrite')
-  // Solo devolvemos la ruta; project.load + FileService leen el archivo
-  return { success: true, path: result.filePaths[0] }
-})
+    ipcMain.handle('project-open-dialog', async () => {
+      if (!mainWindow) return { success: false, canceled: true }
+      const result = await dialog.showOpenDialog(mainWindow, {
+        filters: [{ name: 'JasWave Project', extensions: ['jaswave'] }],
+        properties: ['openFile'],
+      })
+      if (result.canceled || result.filePaths.length === 0) return { success: false, canceled: true }
+      grantUserPath(path.dirname(result.filePaths[0]), 'readwrite')
+      // Solo devolvemos la ruta; project.load + FileService leen el archivo
+      return { success: true, path: result.filePaths[0] }
+    })
+
+    // Proyecto que llegó antes de que el renderer estuviera listo (U7).
+    ipcMain.handle('project-take-pending', () => {
+      const pendiente = proyectoPendiente
+      proyectoPendiente = null
+      return pendiente
+    })
+
 
 ipcMain.handle('ai-chat', async (_event: IpcMainInvokeEvent, payload: unknown, model?: string, baseUrl?: string, temperature?: number) => {
   // Nuevo: objeto AiChatRequest. Legacy: (messages[], model, baseUrl, temperature)
@@ -953,6 +1085,7 @@ const {
   isEditorHostCommand,
   setPluginHostAudioDevice,
   subscribeNativeMidi,
+  resetPluginHost,
 } = require('./plugin-host-bridge')
 
 subscribeNativeMidi((msg: { id: string; data: number[] }) => {
@@ -975,6 +1108,13 @@ ipcMain.handle('plugin-host-ensure', async (e: IpcMainInvokeEvent) => {
   const ok = await ensurePluginHostStarted()
   if (ok) await ensureMixPipeConnected()
   return { ok, ...getPluginHostStatus() }
+})
+// U7: "Reiniciar motor" tras un bucle de fallos: limpia el contador y reinicia.
+ipcMain.handle('plugin-host-reset', async (e: IpcMainInvokeEvent) => {
+  if (senderIsSatellite(e.sender)) {
+    return { ok: false, message: 'Solo la ventana principal puede reiniciar el motor de audio' }
+  }
+  return resetPluginHost()
 })
 ipcMain.on('plugin-host-midi', (e: IpcMainInvokeEvent, cmd: unknown) => {
   // Piano roll / teclado flotante (undock) también envían noteOn preview.

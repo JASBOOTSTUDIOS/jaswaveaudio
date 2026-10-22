@@ -42,6 +42,9 @@
 #include "native_metronome.h"
 #include "clip_player.h"
 #endif
+#ifdef _WIN32
+#include "asio_output.h"
+#endif
 
 static std::string jsonEscape(const std::string& s) {
   std::string o;
@@ -545,6 +548,96 @@ static uint32_t gOfflineDone{0};
 static std::atomic<bool> gOfflineCancel{false};
 static bool gOfflineRunning{false};
 static uint16_t gOfflineBits{16};
+// Streaming a disco (U6): el WAV se escribe bloque a bloque en vez de acumular
+// todo el render en RAM (los renders largos se comían la memoria del host).
+static std::atomic<bool> gOfflineActive{false};
+// Ventana de preparación: entre renderOfflineStart y el primer bloque la app
+// programa los clips del bounce (el host limpia lo programado al arrancar).
+static std::atomic<bool> gOfflineSetup{false};
+static FILE* gOfflineFile{nullptr};
+static uint32_t gOfflineSampleRate{48000};
+static uint32_t gOfflineFramesWritten{0};
+
+/** Escribe la cabecera WAV (44 bytes) con los tamaños reservados. */
+static bool writeOfflineWavHeader(FILE* f, uint32_t sampleRate, uint16_t bits, uint32_t frames) {
+  if (!f) return false;
+  const uint16_t numCh = 2;
+  const uint32_t byteRate = sampleRate * numCh * (bits / 8);
+  const uint16_t blockAlign = static_cast<uint16_t>(numCh * (bits / 8));
+  const uint32_t dataSize = frames * blockAlign;
+  auto w32 = [&](uint32_t v) {
+    unsigned char b[4] = {static_cast<unsigned char>(v & 255), static_cast<unsigned char>((v >> 8) & 255),
+                          static_cast<unsigned char>((v >> 16) & 255), static_cast<unsigned char>((v >> 24) & 255)};
+    std::fwrite(b, 1, 4, f);
+  };
+  auto w16 = [&](uint16_t v) {
+    unsigned char b[2] = {static_cast<unsigned char>(v & 255), static_cast<unsigned char>((v >> 8) & 255)};
+    std::fwrite(b, 1, 2, f);
+  };
+  std::fwrite("RIFF", 1, 4, f);
+  w32(36 + dataSize);
+  std::fwrite("WAVE", 1, 4, f);
+  std::fwrite("fmt ", 1, 4, f);
+  w32(16);
+  w16(1);
+  w16(numCh);
+  w32(sampleRate);
+  w32(byteRate);
+  w16(blockAlign);
+  w16(bits);
+  std::fwrite("data", 1, 4, f);
+  w32(dataSize);
+  std::fflush(f);
+  return std::ferror(f) == 0;
+}
+
+/** Escribe un bloque estéreo interlequeado a disco (con dithering TPDF). */
+static bool writeOfflinePcmBlock(FILE* f, const std::vector<float>& block, uint16_t bits) {
+  if (!f) return false;
+  auto randUnit = []() {
+    return static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
+  };
+  const float lsb = bits == 24 ? (1.f / 8388608.f) : (1.f / 32768.f);
+  for (size_t i = 0; i < block.size(); ++i) {
+    float x = block[i];
+    if (x < -1.f) x = -1.f;
+    if (x > 1.f) x = 1.f;
+    x += (randUnit() + randUnit() - 1.f) * lsb;
+    if (x < -1.f) x = -1.f;
+    if (x > 1.f) x = 1.f;
+    if (bits == 24) {
+      const int v = static_cast<int>(x * 8388607.f);
+      const unsigned char b3[3] = {static_cast<unsigned char>(v & 255),
+                                   static_cast<unsigned char>((v >> 8) & 255),
+                                   static_cast<unsigned char>((v >> 16) & 255)};
+      if (std::fwrite(b3, 1, 3, f) != 3) return false;
+    } else {
+      const int16_t s = x < 0 ? static_cast<int16_t>(x * 32768.f) : static_cast<int16_t>(x * 32767.f);
+      const uint16_t u = static_cast<uint16_t>(s);
+      const unsigned char b2[2] = {static_cast<unsigned char>(u & 255), static_cast<unsigned char>((u >> 8) & 255)};
+      if (std::fwrite(b2, 1, 2, f) != 2) return false;
+    }
+  }
+  return std::ferror(f) == 0;
+}
+
+/** Cierra el WAV de streaming y parchea los tamaños reales en la cabecera. */
+static bool finalizeOfflineWav(FILE* f, uint32_t sampleRate, uint16_t bits, uint32_t frames) {
+  if (!f) return false;
+  const uint16_t numCh = 2;
+  const uint16_t blockAlign = static_cast<uint16_t>(numCh * (bits / 8));
+  const uint32_t dataSize = frames * blockAlign;
+  auto patch32 = [&](long offset, uint32_t v) {
+    if (std::fseek(f, offset, SEEK_SET) != 0) return false;
+    unsigned char b[4] = {static_cast<unsigned char>(v & 255), static_cast<unsigned char>((v >> 8) & 255),
+                          static_cast<unsigned char>((v >> 16) & 255), static_cast<unsigned char>((v >> 24) & 255)};
+    return std::fwrite(b, 1, 4, f) == 4;
+  };
+  const bool ok = patch32(4, 36 + dataSize) && patch32(40, dataSize);
+  std::fflush(f);
+  std::fclose(f);
+  return ok;
+}
 
 static int b64Val(char c) {
   if (c >= 'A' && c <= 'Z') return c - 'A';
@@ -756,6 +849,35 @@ static void clearSlotPointersInGraph(HostedSlot* doomed) {
 static DWORD gMainThreadId = 0;
 static constexpr UINT WM_JASWAVE_JOB = WM_APP + 7;
 #endif
+
+#ifdef _WIN32
+/** Despierta el hilo principal (lo usa el driver ASIO y miniaudio). */
+void jaswave_host_wake_main_thread() {
+  if (gMainThreadId == 0) return;
+  PostThreadMessageW(gMainThreadId, WM_JASWAVE_JOB, 0, 0);
+}
+#endif
+
+/**
+ * U6: el driver ASIO puede pedir reinicio (reset / cambio de buffer / resync).
+ * Se reinicializa con el mismo dispositivo fuera del callback del driver.
+ */
+static void checkPendingAudioReset() {
+#ifdef _WIN32
+  if (!jaswave_asio_reset_pending()) return;
+  jaswave_asio_clear_reset_pending();
+  const auto st = jaswave_audio_status();
+  if (!st.running) return;
+  std::string err;
+  if (!jaswave_audio_start(st.cfg, err)) {
+    std::cerr << "[jaswave-plugin-host] device-lost: " << err << "\n";
+  } else {
+    std::cerr << "[jaswave-plugin-host] audio-device-reset aplicado\n";
+  }
+#else
+  (void)0;
+#endif
+}
 
 static void applyTrackGainPan(float* l, float* r, int frames, float gain, float pan, bool muted) {
   if (muted || gain <= 0.f) {
@@ -1626,6 +1748,11 @@ static void handleLine(const std::string& line) {
     return;
   }
   if (type == "setTrackGraph") {
+    // Durante un bounce el grafo no se toca: el render usa el grafo ya cargado.
+    if (gOfflineActive.load()) {
+      replyFail("RenderBusy", "Hay un bounce en curso: no se puede cambiar el grafo");
+      return;
+    }
 #if defined(JASWAVE_HAS_VST3_SDK)
     // encoding: "idx|slotId:i|e:0|1,...;idx|...||masterSlot:e:0,..."
     const std::string enc = getStringField(line, "encoding");
@@ -1844,6 +1971,11 @@ static void handleLine(const std::string& line) {
     return;
   }
   if (type == "setTransport") {
+    // Durante un bounce el transporte no se toca: el render comparte el reloj.
+    if (gOfflineActive.load()) {
+      replyFail("RenderBusy", "Hay un bounce en curso: no se puede mover el transporte");
+      return;
+    }
     const bool playing = getBoolField(line, "playing", false);
     const double tempo = getNumberField(line, "tempo", 0.0);
     const double ppq = getNumberField(line, "ppqPos", -1.0);
@@ -1945,6 +2077,12 @@ static void handleLine(const std::string& line) {
     return;
   }
   if (type == "clip.schedule") {
+    // Durante el bounce no se programan clips, salvo en la ventana de
+    // preparación (la app programa los clips del bounce tras arrancar el render).
+    if (gOfflineActive.load() && !gOfflineSetup.load()) {
+      replyFail("RenderBusy", "Hay un bounce en curso: no se pueden programar clips");
+      return;
+    }
     const std::string clipId = getStringField(line, "clipId");
     const uint16_t trackIndex = static_cast<uint16_t>(getNumberField(line, "trackIndex", 0));
     const int64_t startSample = static_cast<int64_t>(getNumberField(line, "startSample", 0));
@@ -2112,6 +2250,11 @@ static void handleLine(const std::string& line) {
     return;
   }
   if (type == "setAudioDevice") {
+    // Durante un bounce el dispositivo no se cambia: el render comparte el reloj.
+    if (gOfflineActive.load()) {
+      replyFail("RenderBusy", "Hay un bounce en curso: no se puede cambiar el dispositivo");
+      return;
+    }
     handleUiRpc(UiJob::Kind::SetDevice, line);
     return;
   }
@@ -2237,17 +2380,42 @@ static void handleLine(const std::string& line) {
     gOfflineDone = 0;
     gOfflineCancel.store(false);
     gOfflinePcm.clear();
-    if (gOfflineTotal > 0) gOfflinePcm.reserve(static_cast<size_t>(gOfflineTotal) * 2u);
     const double bits = getNumberField(line, "bitDepth", 16);
     gOfflineBits = bits >= 24 ? 24u : 16u;
+    const double sr = getNumberField(line, "sampleRate", currentSampleRate());
+    gOfflineSampleRate = sr >= 8000 ? static_cast<uint32_t>(sr) : static_cast<uint32_t>(currentSampleRate());
+    // Streaming a disco: se abre el WAV y se escribe la cabecera por adelantado.
+    // Los tamaños se parchean al terminar con los frames realmente escritos.
+    if (gOfflineFile) {
+      std::fclose(gOfflineFile);
+      gOfflineFile = nullptr;
+    }
+#ifdef _WIN32
+    if (fopen_s(&gOfflineFile, gOfflineOutPath.c_str(), "wb") != 0) gOfflineFile = nullptr;
+#else
+    gOfflineFile = std::fopen(gOfflineOutPath.c_str(), "wb");
+#endif
+    if (!gOfflineFile) {
+      replyFail("RenderWriteFailed", "No se pudo abrir outPath");
+      return;
+    }
+    gOfflineFramesWritten = 0;
+    if (!writeOfflineWavHeader(gOfflineFile, gOfflineSampleRate, gOfflineBits, gOfflineTotal)) {
+      std::fclose(gOfflineFile);
+      gOfflineFile = nullptr;
+      std::remove(gOfflineOutPath.c_str());
+      replyFail("RenderWriteFailed", "No se pudo escribir la cabecera WAV");
+      return;
+    }
     gOfflineRunning = true;
+    gOfflineActive.store(true);
+    gOfflineSetup.store(true);
     jaswave::transport_clock_seek_samples(0);
     jaswave::transport_clock_set_playing(true);
     jaswave::clip_stop_all_scheduled();
     jaswave_audio_set_renderer(nullptr);
     jaswave_mix_bus_set_offline(true);
     jaswave_mix_bus_reset();
-    const double sr = getNumberField(line, "sampleRate", currentSampleRate());
     if (sr >= 8000) jaswave_mix_bus_set_output_rate(static_cast<uint32_t>(sr));
     replyOk("\"totalFrames\":" + std::to_string(gOfflineTotal));
     return;
@@ -2272,7 +2440,25 @@ static void handleLine(const std::string& line) {
     }
     std::vector<float> block(static_cast<size_t>(frames) * 2u, 0.f);
     renderMix(block.data(), frames);
-    gOfflinePcm.insert(gOfflinePcm.end(), block.begin(), block.end());
+    // A partir del primer bloque ya no se admiten cambios en la línea de tiempo.
+    gOfflineSetup.store(false);
+    // El PCM se escribe a disco: no se acumula en RAM (renders largos).
+    if (!writeOfflinePcmBlock(gOfflineFile, block, gOfflineBits)) {
+      gOfflineRunning = false;
+      gOfflineActive.store(false);
+      gOfflineSetup.store(false);
+      if (gOfflineFile) {
+        std::fclose(gOfflineFile);
+        gOfflineFile = nullptr;
+      }
+      // Se borra el WAV parcial: no es utilizable.
+      if (!gOfflineOutPath.empty()) std::remove(gOfflineOutPath.c_str());
+      jaswave_mix_bus_set_offline(false);
+      jaswave_audio_set_renderer(renderMix);
+      replyFail("RenderWriteFailed", "No se pudo escribir en outPath");
+      return;
+    }
+    gOfflineFramesWritten += frames;
     gOfflineDone += frames;
     const double prog =
         gOfflineTotal > 0 ? static_cast<double>(gOfflineDone) / static_cast<double>(gOfflineTotal) : 0.0;
@@ -2284,8 +2470,18 @@ static void handleLine(const std::string& line) {
   if (type == "renderOfflineCancel") {
     gOfflineCancel.store(true);
     std::lock_guard<std::mutex> lock(gOfflineMu);
+    // Solo se borra el archivo si queda un WAV parcial abierto: un bounce ya
+    // finalizado no se debe eliminar.
+    const bool parcial = gOfflineFile != nullptr;
     gOfflineRunning = false;
+    gOfflineActive.store(false);
+    gOfflineSetup.store(false);
     gOfflinePcm.clear();
+    if (gOfflineFile) {
+      std::fclose(gOfflineFile);
+      gOfflineFile = nullptr;
+    }
+    if (parcial && !gOfflineOutPath.empty()) std::remove(gOfflineOutPath.c_str());
     jaswave::transport_clock_set_playing(false);
     jaswave_mix_bus_set_offline(false);
     jaswave_audio_set_renderer(renderMix);
@@ -2298,98 +2494,57 @@ static void handleLine(const std::string& line) {
       replyFail("RenderIdle", "No hay bounce activo");
       return;
     }
+    auto writeFail = [&](const std::string& msg) {
+      gOfflineRunning = false;
+      gOfflineActive.store(false);
+      gOfflineSetup.store(false);
+      gOfflinePcm.clear();
+      if (gOfflineFile) {
+        std::fclose(gOfflineFile);
+        gOfflineFile = nullptr;
+      }
+      jaswave_mix_bus_set_offline(false);
+      jaswave_audio_set_renderer(renderMix);
+      replyFail("RenderWriteFailed", msg);
+    };
     if (gOfflineCancel.load()) {
       gOfflineRunning = false;
+      gOfflineActive.store(false);
+    gOfflineSetup.store(false);
       gOfflinePcm.clear();
+      if (gOfflineFile) {
+        std::fclose(gOfflineFile);
+        gOfflineFile = nullptr;
+      }
+      if (!gOfflineOutPath.empty()) std::remove(gOfflineOutPath.c_str());
       jaswave::transport_clock_set_playing(false);
       jaswave_mix_bus_set_offline(false);
       jaswave_audio_set_renderer(renderMix);
       replyOk("\"cancelled\":true");
       return;
     }
-    const uint32_t frames = static_cast<uint32_t>(gOfflinePcm.size() / 2);
-    const uint32_t sr = static_cast<uint32_t>(currentSampleRate());
-    auto writeFail = [&](const std::string& msg) {
-      gOfflineRunning = false;
-      gOfflinePcm.clear();
-      jaswave_mix_bus_set_offline(false);
-      jaswave_audio_set_renderer(renderMix);
-      replyFail("RenderWriteFailed", msg);
-    };
-#ifdef _WIN32
-    FILE* f = nullptr;
-    if (fopen_s(&f, gOfflineOutPath.c_str(), "wb") != 0 || !f) {
+    const uint32_t frames = gOfflineFramesWritten;
+    const uint32_t sr = gOfflineSampleRate;
+    if (!gOfflineFile) {
       writeFail("No se pudo abrir outPath");
       return;
     }
-#else
-    FILE* f = std::fopen(gOfflineOutPath.c_str(), "wb");
-    if (!f) {
-      writeFail("No se pudo abrir outPath");
+    if (!finalizeOfflineWav(gOfflineFile, sr, gOfflineBits, frames)) {
+      gOfflineFile = nullptr;
+      writeFail("No se pudo escribir el WAV");
       return;
     }
-#endif
-    const uint16_t numCh = 2;
-    const uint16_t bits = gOfflineBits >= 24 ? 24 : 16;
-    const uint32_t byteRate = sr * numCh * (bits / 8);
-    const uint16_t blockAlign = numCh * (bits / 8);
-    const uint32_t dataSize = frames * blockAlign;
-    auto w32 = [&](uint32_t v) {
-      unsigned char b[4] = {static_cast<unsigned char>(v & 255), static_cast<unsigned char>((v >> 8) & 255),
-                            static_cast<unsigned char>((v >> 16) & 255),
-                            static_cast<unsigned char>((v >> 24) & 255)};
-      std::fwrite(b, 1, 4, f);
-    };
-    auto w16 = [&](uint16_t v) {
-      unsigned char b[2] = {static_cast<unsigned char>(v & 255), static_cast<unsigned char>((v >> 8) & 255)};
-      std::fwrite(b, 1, 2, f);
-    };
-    std::fwrite("RIFF", 1, 4, f);
-    w32(36 + dataSize);
-    std::fwrite("WAVE", 1, 4, f);
-    std::fwrite("fmt ", 1, 4, f);
-    w32(16);
-    w16(1);
-    w16(numCh);
-    w32(sr);
-    w32(byteRate);
-    w16(blockAlign);
-    w16(bits);
-    std::fwrite("data", 1, 4, f);
-    w32(dataSize);
-    auto randUnit = []() {
-      return static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
-    };
-    for (uint32_t i = 0; i < frames * 2; ++i) {
-      float x = gOfflinePcm[i];
-      if (x < -1.f) x = -1.f;
-      if (x > 1.f) x = 1.f;
-      // Dithering TPDF: suma de dos uniforms → triangular en ±1 LSB.
-      const float lsb = bits == 24 ? (1.f / 8388608.f) : (1.f / 32768.f);
-      x += (randUnit() + randUnit() - 1.f) * lsb;
-      if (x < -1.f) x = -1.f;
-      if (x > 1.f) x = 1.f;
-      if (bits == 24) {
-        const int v = static_cast<int>(x * 8388607.f);
-        const unsigned char b3[3] = {static_cast<unsigned char>(v & 255),
-                                     static_cast<unsigned char>((v >> 8) & 255),
-                                     static_cast<unsigned char>((v >> 16) & 255)};
-        std::fwrite(b3, 1, 3, f);
-      } else {
-        const int16_t s =
-            x < 0 ? static_cast<int16_t>(x * 32768.f) : static_cast<int16_t>(x * 32767.f);
-        w16(static_cast<uint16_t>(s));
-      }
-    }
-    std::fclose(f);
+    gOfflineFile = nullptr;
     const std::string path = gOfflineOutPath;
     gOfflineRunning = false;
+    gOfflineActive.store(false);
+    gOfflineSetup.store(false);
     gOfflinePcm.clear();
     jaswave::transport_clock_set_playing(false);
     jaswave_mix_bus_set_offline(false);
     jaswave_audio_set_renderer(renderMix);
     replyOk("\"path\":\"" + jsonEscape(path) + "\",\"frames\":" + std::to_string(frames) +
-            ",\"sampleRate\":" + std::to_string(sr) + ",\"bitDepth\":" + std::to_string(bits));
+            ",\"sampleRate\":" + std::to_string(sr) + ",\"bitDepth\":" + std::to_string(gOfflineBits));
     return;
   }
   if (type == "focusEditor" || type == "crashReport") {
@@ -2475,13 +2630,13 @@ int main(int argc, char** argv) {
     PostQuitMessage(0);
 #endif
   });
-
 #ifdef _WIN32
   MSG msg;
   while (running) {
 #if defined(JASWAVE_HAS_VST3_SDK)
     drainUiQueue();
 #endif
+    checkPendingAudioReset();
     const BOOL gm = GetMessageW(&msg, nullptr, 0, 0);
     if (gm <= 0) {
       running = false;
@@ -2494,6 +2649,7 @@ int main(int argc, char** argv) {
 #if defined(JASWAVE_HAS_VST3_SDK)
     drainUiQueue();
 #endif
+    checkPendingAudioReset();
   }
 #else
   while (running) {

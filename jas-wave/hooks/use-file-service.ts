@@ -34,6 +34,10 @@ declare global {
       confirmAppClose?: () => Promise<boolean>
       cancelAppClose?: () => Promise<boolean>
       onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => () => void
+      /** Main pide abrir un proyecto (segunda instancia o asociación de archivos, U7). */
+      onOpenProjectRequested?: (callback: (ruta: string) => void) => () => void
+      /** Proyecto que llegó antes de que el renderer estuviera listo (U7). */
+      projectTakePending?: () => Promise<string | null>
       getAppVersion: () => Promise<string>
       logError?: (scope: string, message: string, stack?: string) => void
       openLogsFolder?: () => Promise<string>
@@ -43,7 +47,29 @@ declare global {
       fileReadBinary: (ruta: string) => Promise<Uint8Array>
       fileExists: (ruta: string) => Promise<boolean>
       fileSize: (ruta: string) => Promise<number>
+    /** Firma del archivo (mtime + tamaño) para detectar cambios externos (U7). */
+    fileStat?: (ruta: string) => Promise<{ mtimeMs: number; size: number } | null>
+      fileListDir?: (dir: string) => Promise<{
+        success: boolean
+        error?: string
+        entries: Array<{ name: string; isDirectory: boolean; isFile: boolean }>
+      }>
       recordingsDir: (projectPath?: string) => Promise<string>
+      /** Ruta real de un archivo arrastrado desde el explorador (Electron). */
+      pathForFile?: (file: File) => string
+      /** Copia un archivo de audio al media del proyecto (o a media/pending/). */
+      mediaCopy?: (opts: { src: string; destDir: string; nombre?: string; mover?: boolean }) => Promise<{
+        ok: boolean
+        ruta?: string
+        nombre?: string
+        error?: string
+      }>
+      /** Busca archivos por nombre en una carpeta (reenlace de media faltante). */
+      mediaBuscar?: (opts: { carpeta: string; nombres: string[] }) => Promise<{
+        ok: boolean
+        encontrados?: Record<string, string>
+        error?: string
+      }>
       dialogSave: (defaultPath?: string) => Promise<{ canceled: boolean; filePath?: string }>
       dialogOpenDirectory: () => Promise<{ canceled: boolean; filePaths?: string[] }>
       projectOpenDialog: () => Promise<{ success: boolean; data?: unknown; path?: string; canceled?: boolean; error?: string }>
@@ -115,9 +141,15 @@ declare global {
       pluginHostSend: (cmd: unknown) => Promise<unknown>
       pluginHostMidi: (cmd: unknown) => void
       onPluginHostRestarted?: (callback: () => void) => () => void
+    /** U7: reinicia el motor de audio (limpia el contador de fallos). */
+    pluginHostReset?: () => Promise<{ ok: boolean; message?: string }>
+    /** U7: el motor entró en bucle de fallos. */
+    onPluginHostCrashLoop?: (callback: (info?: { activo?: boolean; mensaje?: string }) => void) => () => void
       onPluginHostExited?: (
         callback: (info?: { code?: number | null; signal?: string | null }) => void,
       ) => () => void
+      /** U6: aviso del dispositivo de audio (reset del driver o pérdida de la interfaz). */
+      onAudioDeviceNotice?: (callback: (notice: 'reset' | 'lost') => void) => () => void
       pluginHostPushPcm: (samples: Float32Array | ArrayBuffer | Uint8Array) => void
       pluginHostStop: () => Promise<{ ok: boolean }>
       onAgentBridgeRequest?: (

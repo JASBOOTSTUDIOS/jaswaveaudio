@@ -1,5 +1,5 @@
-// Preload en sandbox: solo 'electron' (contextBridge/ipcRenderer) y process.env.
-const { contextBridge, ipcRenderer } = require('electron')
+// Preload en sandbox: solo 'electron' (contextBridge/ipcRenderer/webUtils) y process.env.
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 contextBridge.exposeInMainWorld('electron', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
@@ -43,6 +43,17 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.on('window-maximized-changed', handler)
     return () => ipcRenderer.removeListener('window-maximized-changed', handler)
   },
+  /**
+   * main pide abrir un proyecto (segunda instancia o asociación de archivos).
+   * El renderer decide con la guarda de cambios sin guardar (U1).
+   */
+  onOpenProjectRequested: (callback: (ruta: string) => void) => {
+    const handler = (_event: unknown, ruta: string) => callback(ruta)
+    ipcRenderer.on('open-project-requested', handler)
+    return () => ipcRenderer.removeListener('open-project-requested', handler)
+  },
+  /** Proyecto que llegó antes de que el renderer estuviera listo (U7). */
+  projectTakePending: () => ipcRenderer.invoke('project-take-pending'),
   fileSave: (ruta: string, contenido: string) => ipcRenderer.invoke('file-save', ruta, contenido),
   fileSaveBinary: (ruta: string, data: Uint8Array) => ipcRenderer.invoke('file-save-binary', ruta, data),
   ffmpegConvert: (input: string, output: string, args?: string[]) =>
@@ -53,7 +64,22 @@ contextBridge.exposeInMainWorld('electron', {
   fileExists: (ruta: string) => ipcRenderer.invoke('file-exists', ruta),
   fileListDir: (dir: string) => ipcRenderer.invoke('file-list-dir', dir),
   fileSize: (ruta: string) => ipcRenderer.invoke('file-size', ruta),
+  /** Firma del archivo (mtime + tamaño) para detectar cambios externos (U7). */
+  fileStat: (ruta: string) => ipcRenderer.invoke('file-stat', ruta),
   recordingsDir: (projectPath?: string) => ipcRenderer.invoke('recordings-dir', projectPath),
+  /** Ruta real de un archivo arrastrado desde el explorador. */
+  pathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ''
+    }
+  },
+  /** Copia un archivo de audio al media del proyecto; devuelve ruta absoluta y nombre final. */
+  mediaCopy: (opts: { src: string; destDir: string; nombre?: string; mover?: boolean }) =>
+    ipcRenderer.invoke('media-copy', opts),
+  /** Busca archivos por nombre en una carpeta (reenlace de media faltante). */
+  mediaBuscar: (opts: { carpeta: string; nombres: string[] }) => ipcRenderer.invoke('media-buscar', opts),
   dialogSave: (defaultPath?: string) => ipcRenderer.invoke('dialog-save', defaultPath),
   dialogOpenDirectory: () => ipcRenderer.invoke('dialog-open-directory'),
   projectOpenDialog: () => ipcRenderer.invoke('project-open-dialog'),
@@ -113,6 +139,8 @@ contextBridge.exposeInMainWorld('electron', {
   nativeAudioGetMeterPeak: () => ipcRenderer.invoke('native-audio-meter'),
   pluginHostStatus: () => ipcRenderer.invoke('plugin-host-status'),
   pluginHostEnsure: () => ipcRenderer.invoke('plugin-host-ensure'),
+  /** U7: limpia el contador de fallos y reinicia el motor (sin cargar plugins). */
+  pluginHostReset: () => ipcRenderer.invoke('plugin-host-reset'),
   pluginHostSend: (cmd: unknown) => ipcRenderer.invoke('plugin-host-send', cmd),
   pluginHostMidi: (cmd: unknown) => ipcRenderer.send('plugin-host-midi', cmd),
   onPluginHostRestarted: (callback: () => void) => {
@@ -120,10 +148,24 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.on('plugin-host-restarted', handler)
     return () => ipcRenderer.removeListener('plugin-host-restarted', handler)
   },
+  /** U7: el motor entró en bucle de fallos (o se resolvió con "Reiniciar motor"). */
+  onPluginHostCrashLoop: (callback: (info?: { activo?: boolean; mensaje?: string }) => void) => {
+    const handler = (_: unknown, info: { activo?: boolean; mensaje?: string }) => callback(info)
+    ipcRenderer.on('plugin-host-crash-loop', handler)
+    return () => ipcRenderer.removeListener('plugin-host-crash-loop', handler)
+  },
   onPluginHostExited: (callback: (info?: { code?: number | null; signal?: string | null }) => void) => {
     const handler = (_: unknown, info: { code?: number | null; signal?: string | null }) => callback(info)
     ipcRenderer.on('plugin-host-exited', handler)
     return () => ipcRenderer.removeListener('plugin-host-exited', handler)
+  },
+  // U6: el host nativo avisa de reinicios y pérdidas del dispositivo de audio.
+  onAudioDeviceNotice: (callback: (notice: 'reset' | 'lost') => void) => {
+    const handler = (_: unknown, info: { notice?: 'reset' | 'lost' }) => {
+      if (info?.notice) callback(info.notice)
+    }
+    ipcRenderer.on('jaswave-audio-device-notice', handler)
+    return () => ipcRenderer.removeListener('jaswave-audio-device-notice', handler)
   },
   pluginHostPushPcm: (samples: Float32Array | ArrayBuffer | Uint8Array) => {
     // Siempre Uint8Array: ArrayBuffer puro a veces no sobrevive el clone IPC de Electron.

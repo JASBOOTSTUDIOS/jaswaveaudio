@@ -21,4 +21,13 @@ uint32_t jaswave_asio_sample_rate();
 uint32_t jaswave_asio_buffer_size();
 bool jaswave_asio_control_panel(const std::string& driverName, std::string& err);
 
+// U6: el driver ASIO pide reinicio (reset / cambio de buffer / resync).
+// Se marca aquí y el host lo reinicializa fuera del callback del driver.
+void jaswave_asio_notify_reset();
+bool jaswave_asio_reset_pending();
+void jaswave_asio_clear_reset_pending();
+
+/** Despierta el hilo principal del host (para procesar avisos del driver). */
+void jaswave_host_wake_main_thread();
+
 #endif
