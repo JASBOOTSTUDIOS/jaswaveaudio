@@ -1710,10 +1710,22 @@ export function ArrangementView() {
                     const files = Array.from(e.dataTransfer.files ?? [])
                     if (files.length === 0) return
                     const dropBeat = clientXToBeat(e.clientX)
-                    // Importación múltiple: cada archivo se copia al media del proyecto.
+                    const pistaDestino = sharedTracks.find((t) => t.id === track.id)
+                    const esMidi = (pistaDestino?.tipo as string | undefined) === 'midi'
+                    // Importación múltiple → una pista por archivo; si la pista de destino
+                    // es MIDI, el audio va a una pista de audio nueva.
                     for (const file of files) {
                       try {
-                        await addClipFromFile(track.id, file, dropBeat)
+                        let destino = track.id
+                        if (esMidi || files.length > 1) {
+                          const created = await tienda.executor.execute('track.create', {
+                            nombre: file.name.replace(/\.[^.]+$/, ''),
+                            tipo: 'audio',
+                          })
+                          if (!created.success) continue
+                          destino = (created.result as { trackId?: string })?.trackId ?? destino
+                        }
+                        await addClipFromFile(destino, file, dropBeat)
                       } catch (err) {
                         const msg = err instanceof Error ? err.message : String(err)
                         tienda.busEventos.emit('comando.fallido', {

@@ -1336,7 +1336,18 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
         const bufferKey = `file-${trackId}-${Date.now()}`
         importProgress.setProgress(0.35, 'decoding')
-        const { buffer, duration } = await audioEngine.decodeAudioFile(bufferKey, file)
+        let buffer: AudioBuffer
+        let duration: number
+        try {
+          const decodificado = await audioEngine.decodeAudioFile(bufferKey, file)
+          buffer = decodificado.buffer
+          duration = decodificado.duration
+        } catch (err) {
+          throw new Error(
+            `No se pudo decodificar "${file.name}". El archivo puede estar dañado o usar un formato no compatible.`,
+            { cause: err },
+          )
+        }
         const durationBeats = secondsToBeats(duration, BPM)
 
         const duracion = validarImportacionAudio({ ruta: file.name, duracionSec: duration })
