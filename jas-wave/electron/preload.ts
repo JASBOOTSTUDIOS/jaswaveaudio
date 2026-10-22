@@ -138,6 +138,14 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.on('plugin-host-exited', handler)
     return () => ipcRenderer.removeListener('plugin-host-exited', handler)
   },
+  // U6: el host nativo avisa de reinicios y pérdidas del dispositivo de audio.
+  onAudioDeviceNotice: (callback: (notice: 'reset' | 'lost') => void) => {
+    const handler = (_: unknown, info: { notice?: 'reset' | 'lost' }) => {
+      if (info?.notice) callback(info.notice)
+    }
+    ipcRenderer.on('jaswave-audio-device-notice', handler)
+    return () => ipcRenderer.removeListener('jaswave-audio-device-notice', handler)
+  },
   pluginHostPushPcm: (samples: Float32Array | ArrayBuffer | Uint8Array) => {
     // Siempre Uint8Array: ArrayBuffer puro a veces no sobrevive el clone IPC de Electron.
     let u8: Uint8Array

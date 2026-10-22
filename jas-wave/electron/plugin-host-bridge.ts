@@ -10,6 +10,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 import { app, BrowserWindow } from 'electron'
+import { parseAudioDeviceNotice, type AudioDeviceNotice } from './audio-device-notice'
 
 export type AudioDevicePrefs = {
   backend: string
@@ -678,6 +679,34 @@ function onChunk(chunk: Buffer) {
 type NativeMidiListener = (msg: { id: string; data: number[] }) => void
 const nativeMidiListeners = new Set<NativeMidiListener>()
 
+export type { AudioDeviceNotice } from './audio-device-notice'
+
+export function subscribeAudioDeviceNotice(cb: (notice: AudioDeviceNotice) => void): () => void {
+  audioDeviceNoticeListeners.add(cb)
+  return () => audioDeviceNoticeListeners.delete(cb)
+}
+
+const audioDeviceNoticeListeners = new Set<(notice: AudioDeviceNotice) => void>()
+
+/** Traduce un aviso del host nativo a un evento para la UI. */
+function notifyAudioDevice(notice: AudioDeviceNotice) {
+  logLine('warn', 'plugin-host', `audio device ${notice}`)
+  for (const l of audioDeviceNoticeListeners) {
+    try {
+      l(notice)
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('jaswave-audio-device-notice', { notice })
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 export function subscribeNativeMidi(cb: NativeMidiListener): () => void {
   nativeMidiListeners.add(cb)
   return () => nativeMidiListeners.delete(cb)
@@ -709,6 +738,12 @@ function parseHostLogLine(raw: string) {
     }
     if (!t) continue
     console.error('[plugin-host]', t)
+    // U6: el host avisa de reinicios y pérdidas del dispositivo de audio.
+    const notice = parseAudioDeviceNotice(t)
+    if (notice) {
+      notifyAudioDevice(notice)
+      continue
+    }
     // Bounce offline y fallos del host: al log persistente (la consola no siempre se captura).
     if (/offline|render|error|fail|crash/i.test(t)) logLine('info', 'plugin-host', t)
   }

@@ -183,6 +183,21 @@ void dataCallback(ma_device* /*device*/, void* output, const void* /*input*/, ma
   jaswave_audio_mix_test_tone(out, frameCount, sr ? sr : 48000);
 }
 
+// U6: miniaudio avisa cuando el dispositivo se para por fuerza (desconectado).
+void deviceNotificationCallback(const ma_device_notification* n) {
+  if (!n) return;
+  if (n->type == ma_device_notification_type_stopped ||
+      n->type == ma_device_notification_type_interruption_began) {
+    std::fprintf(stderr, "[jaswave-plugin-host] device-lost\n");
+    std::fflush(stderr);
+    gStatus.running = false;
+    gStatus.lastError = "El dispositivo de audio se ha desconectado";
+#ifdef _WIN32
+    jaswave_host_wake_main_thread();
+#endif
+  }
+}
+
 bool tryListBackend(ma_backend backend, std::vector<JaswaveAudioDevice>& devices) {
   ma_context ctx{};
   ma_backend backends[] = {backend};
@@ -276,6 +291,7 @@ bool openDeviceLocked(JaswaveAudioConfig cfg, std::string& err) {
   dcfg.sampleRate = cfg.sampleRate;
   dcfg.periodSizeInFrames = cfg.bufferSize;
   dcfg.dataCallback = dataCallback;
+  dcfg.notificationCallback = deviceNotificationCallback;
 #if defined(_WIN32)
   dcfg.wasapi.noAutoConvertSRC = MA_FALSE;
   dcfg.wasapi.usage = ma_wasapi_usage_pro_audio;

@@ -17,6 +17,7 @@ import { IconRail } from '@/components/icon-rail'
 import { TransportBar } from '@/components/transport-bar'
 import { EditToolbar } from '@/components/edit-toolbar'
 import { EventToasts } from '@/components/event-toasts'
+import { AudioDeviceBanner } from '@/components/audio-device-banner'
 import { ProjectCloseDialog } from '@/components/project-close-dialog'
 import { MediaFaltanteDialog } from '@/components/media-faltante-dialog'
 import { AppCloseGuard } from '@/components/app-close-guard'
@@ -311,6 +312,7 @@ function AppShell() {
       <CommandPalette />
       <EventToasts />
       <UpdateBanner />
+      <AudioDeviceBanner />
       <ProjectCloseDialog />
       <MediaFaltanteDialog />
       <AppCloseGuard />

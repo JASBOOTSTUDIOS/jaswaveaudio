@@ -138,6 +138,8 @@ declare global {
       onPluginHostExited?: (
         callback: (info?: { code?: number | null; signal?: string | null }) => void,
       ) => () => void
+      /** U6: aviso del dispositivo de audio (reset del driver o pérdida de la interfaz). */
+      onAudioDeviceNotice?: (callback: (notice: 'reset' | 'lost') => void) => () => void
       pluginHostPushPcm: (samples: Float32Array | ArrayBuffer | Uint8Array) => void
       pluginHostStop: () => Promise<{ ok: boolean }>
       onAgentBridgeRequest?: (
