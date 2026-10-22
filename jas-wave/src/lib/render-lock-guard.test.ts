@@ -26,7 +26,7 @@ describe('render-lock-guard (U6)', () => {
       assert.equal(r.success, false)
       assert.equal(r.error?.code, 'RenderBusy')
       assert.equal(r.error?.message, MENSAJE_BLOQUEO_RENDER)
-      const pistas = tienda.obtenerEstado().project?.pistas ?? []
+      const pistas = tienda.obtenerEstado().project?.tracks ?? []
       assert.equal(pistas.length, 0)
     } finally {
       desactivarRenderLock()

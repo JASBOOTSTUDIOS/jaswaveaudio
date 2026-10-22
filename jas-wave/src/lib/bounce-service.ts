@@ -17,6 +17,7 @@ import {
 } from '../../../shared/src/audio/mix-analysis'
 import { renderJobGet, renderJobUpdate } from '../../../shared/src/render/job-store'
 import type { RenderJob } from '../../../shared/src/types/render'
+import { activarRenderLock, desactivarRenderLock } from './render-lock'
 import { encodeWavPcm16 } from './encode-wav'
 import {
   findTrackPlaybackInstrument,
@@ -137,6 +138,9 @@ export async function runNativeBounce(
   emit?: (nombre: string, payload: Record<string, unknown>) => void,
   dawState?: DAWState,
 ): Promise<RenderJob> {
+  // U6: cualquier bounce (diálogo, IA, master pass, freeze) bloquea la app:
+  // transporte, edición y atajos quedan deshabilitados hasta que termina.
+  activarRenderLock()
   try {
     return await runNativeBounceUnsafe(job, content, emit, dawState)
   } catch (e) {
@@ -149,6 +153,8 @@ export async function runNativeBounce(
       /* host caído: nada que cancelar */
     }
     return renderJobGet(job.id) ?? { ...job, status: 'failed' as const, error: msg }
+  } finally {
+    desactivarRenderLock()
   }
 }
 
