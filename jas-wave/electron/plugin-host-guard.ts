@@ -62,6 +62,28 @@ const PLUGIN_EXTENSIONS = new Set(['.vst3', '.dll'])
 
 export type HostCommandCheck = { ok: true } | { ok: false; error: string }
 
+/**
+ * Raíz de renders de análisis (userData/analysis). El proceso main la fija al
+ * arrancar: los WAV por stem que escribe `renderOfflineStart` con `analysis`
+ * no necesitan grant del usuario porque solo se leen para medir.
+ */
+let analysisRoot: string | null = null
+
+export function setAnalysisRoot(dir: string) {
+  analysisRoot = path.resolve(dir)
+}
+
+export function clearAnalysisRoot() {
+  analysisRoot = null
+}
+
+/** true si `p` cae dentro de la raíz de análisis (sin escapes con `..`). */
+export function dentroDeRaizAnalisis(p: unknown): boolean {
+  if (typeof p !== 'string' || !analysisRoot) return false
+  const abs = path.resolve(p)
+  return abs === analysisRoot || abs.startsWith(analysisRoot + path.sep)
+}
+
 function pluginPathOk(p: unknown, grants: PathGrants): boolean {
   if (typeof p !== 'string') return false
   return PLUGIN_EXTENSIONS.has(path.extname(p).toLowerCase()) && grants.isAllowed(p, 'read')
@@ -94,11 +116,25 @@ export function checkHostCommand(cmd: Record<string, unknown>, grants: PathGrant
         return { ok: false, error: `Audio no permitido: ${String(cmd.path)}` }
       }
       break
-    case 'renderOfflineStart':
+    case 'renderOfflineStart': {
+      const esAnalisis = cmd.analysis === true
+      if (cmd.outDir !== undefined && !esAnalisis) {
+        return { ok: false, error: 'outDir solo se permite con analysis: true' }
+      }
+      if (esAnalisis) {
+        if (!dentroDeRaizAnalisis(cmd.outDir)) {
+          return { ok: false, error: `Destino de análisis fuera de ${analysisRoot ?? 'userData/analysis'}: ${String(cmd.outDir)}` }
+        }
+        if (cmd.outPath !== undefined && !grants.isAllowed(cmd.outPath, 'write')) {
+          return { ok: false, error: `Destino de render no permitido: ${String(cmd.outPath)}` }
+        }
+        break
+      }
       if (!grants.isAllowed(cmd.outPath, 'write')) {
         return { ok: false, error: `Destino de render no permitido: ${String(cmd.outPath)}` }
       }
       break
+    }
   }
   return { ok: true }
 }

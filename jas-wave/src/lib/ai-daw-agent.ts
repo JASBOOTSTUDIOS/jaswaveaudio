@@ -2998,10 +2998,15 @@ export async function executeDawActions(
             const { toggleReferenceAb } = await import('./audio-import-agent')
             const modeArg = p.mode as 'mix' | 'reference' | 'toggle' | undefined
             const r = await toggleReferenceAb(tienda, modeArg)
+            const igualacion =
+              r.gananciaAplicadaDb !== null && Math.abs(r.gananciaAplicadaDb) >= 0.05
+                ? ` · igualación ${r.gananciaAplicadaDb > 0 ? '+' : ''}${r.gananciaAplicadaDb.toFixed(1)} dB`
+                : ''
+            const bypass = r.mode === 'reference' && r.bypassMaster ? ' · master en bypass' : ''
             results.push({
               type: action.type,
               success: true,
-              message: `A/B referencia: modo ${r.mode}`,
+              message: `A/B referencia: modo ${r.mode}${igualacion}${bypass}`,
               data: r,
             })
           } catch (e) {

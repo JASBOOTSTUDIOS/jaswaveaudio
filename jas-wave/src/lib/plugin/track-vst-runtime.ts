@@ -598,6 +598,13 @@ export function syncReaperTrackGraph(
     }>
     buses?: Array<{ id: string }>
   } | null,
+  opts?: {
+    /**
+     * No rehacer el layout de stems Web Audio (mismas pistas, solo cambian
+     * fader/paneo). Para publicaciones frecuentes durante el bounce offline.
+     */
+    omitirLayout?: boolean
+  },
 ): void {
   const anySolo = tracks.some((t) => t.soloActiva)
 
@@ -697,7 +704,7 @@ export function syncReaperTrackGraph(
     usedSlotIds.add(loaded.slotId)
     stemIds.push(loaded.trackId)
   }
-  audioEngine.setTrackStemLayout(stemIds)
+  if (!opts?.omitirLayout) audioEngine.setTrackStemLayout(stemIds)
 
   const master: Array<{ slotId: string; instrument: boolean; bypass: boolean }> = []
   for (const p of masterPlugins ?? []) {

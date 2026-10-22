@@ -28,7 +28,7 @@ export async function freezeTrack(tienda: TiendaDAW, trackId: string): Promise<F
     }
   }
 
-  const endSec = Math.min(120, Math.max(8, estimateProjectEndSec(st)))
+  const endSec = Math.max(8, estimateProjectEndSec(st))
   const start = await tienda.executor.execute('render.start', {
     format: 'wav',
     startSec: 0,

@@ -17,11 +17,14 @@ import {
   registrarMidiAiTools,
   registrarPluginTools,
   registrarAnalysisTools,
+  registrarProveedorAnalisis,
 } from '../../../shared/src'
 import { configurarFileService } from '../../../shared/src/commands/project-commands'
 import { permissionManager } from '../../../shared/src/state/permissions'
 import { FileServiceElectron } from '@/src/lib/file-service'
 import { registerAgentCatalogOnRegistry } from '@/src/lib/agent-action-catalog'
+import { crearBackendAnalisisWeb } from '@/src/lib/analysis-render-web'
+import { crearServicioAnalisis } from '@/src/lib/analysis-render'
 import {
   attachSessionAutosave,
   hydrateSession,
@@ -64,6 +67,18 @@ export function getSharedStore() {
       instalarGuardiaRenderLock(sharedStore)
     } catch {
       /* ignore */
+    }
+
+    // Motor de análisis por pista (A7b): las herramientas analysis.* del agente
+    // miden el proyecto real (no inventan datos) cuando hay audio que renderizar.
+    try {
+      const servicio = crearServicioAnalisis({
+        obtenerEstado: () => sharedStore!.obtenerEstado(),
+        backend: crearBackendAnalisisWeb(),
+      })
+      registrarProveedorAnalisis(servicio.proveedor)
+    } catch {
+      /* HMR */
     }
 
     if (typeof window !== 'undefined' && window.electron) {

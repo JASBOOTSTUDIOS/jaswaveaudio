@@ -36,7 +36,12 @@ import {
   teardownNativeClipsAfterBounce,
 } from './bounce-native-clips'
 import { prerenderWebStems } from './bounce-offline-audio'
-import { bakeVolumeAutomationIntoStem } from './automation-runtime'
+import {
+  bakeVolumeAutomationIntoStem,
+  hayAutomatizacion,
+  publicarAutomatizacionBounce,
+  type ContextoAutomatizacionBounce,
+} from './automation-runtime'
 import { syncReaperTrackGraph } from '@/src/lib/plugin/track-vst-runtime'
 import type { DAWState } from '../../../shared/src/types/state'
 
@@ -266,6 +271,7 @@ async function runNativeBounceUnsafe(
     bitDepth: job.bitDepth ?? 16,
   })
 
+  let autoPublicada = false
   try {
     // Clips de audio DESPUÉS de renderOfflineStart: el host hace clip_stop_all_scheduled()
     // al iniciar el bounce, así que programarlos antes dejaba las pistas de audio en silencio.
@@ -279,6 +285,19 @@ async function runNativeBounceUnsafe(
     scheduleVstEvents(bounceContent, sr, startSec)
 
     let done = 0
+    // Automatización de vol/paneo/parámetros: se muestrea un valor por bloque
+    // (BLOCK=512 ≈ 10 ms de audio) y se publica al host entre pasos.
+    const ctxAuto: ContextoAutomatizacionBounce | null =
+      dawState?.project?.tracks?.length && hayAutomatizacion(dawState.project.tracks)
+        ? {
+            tracks: dawState.project.tracks,
+            masterPlugins: dawState.project.master?.plugins,
+            routing: dawState.project.routing,
+            volumenHorneado: new Set(
+              bounceContent.tracks.filter((t) => t.audioClips.length > 0).map((t) => t.trackId),
+            ),
+          }
+        : null
     while (done < totalFrames) {
       if (renderJobGet(job.id)?.status === 'cancelled') {
         await hostSend({ type: 'renderOfflineCancel' })
@@ -286,6 +305,10 @@ async function runNativeBounceUnsafe(
         return renderJobGet(job.id) ?? { ...job, status: 'cancelled' }
       }
       const frames = Math.min(BLOCK, totalFrames - done)
+      if (ctxAuto) {
+        publicarAutomatizacionBounce(ctxAuto, startSec + done / sr)
+        autoPublicada = true
+      }
       await hostSend({ type: 'renderOfflineStep', frames })
 
       done += frames
@@ -420,6 +443,15 @@ async function runNativeBounceUnsafe(
     throw e
   } finally {
     teardownNativeClipsAfterBounce()
+    // El bounce deja muestreados fader/paneo en el grafo nativo: restaurar los
+    // valores base del proyecto para que la reproducción en vivo no herede curvas.
+    if (autoPublicada && dawState?.project?.tracks?.length) {
+      syncReaperTrackGraph(
+        dawState.project.tracks,
+        dawState.project.master?.plugins,
+        dawState.project.routing,
+      )
+    }
   }
 }
 

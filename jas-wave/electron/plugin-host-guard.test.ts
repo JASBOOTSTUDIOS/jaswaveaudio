@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { describe, it } from 'node:test'
+import { after, describe, it } from 'node:test'
 import { PathGrants } from './path-grants'
-import { checkHostCommand } from './plugin-host-guard'
+import { checkHostCommand, clearAnalysisRoot, setAnalysisRoot } from './plugin-host-guard'
 
 function grants() {
   const g = new PathGrants({ platform: 'win32' })
@@ -32,5 +32,55 @@ describe('plugin-host-guard', () => {
   it('permite comandos sin rutas', () => {
     assert.equal(checkHostCommand({ type: 'noteOn', note: 60 }, grants()).ok, true)
     assert.equal(checkHostCommand({ type: 'clip.load', clipId: 'a', pcmBase64: '' }, grants()).ok, true)
+  })
+})
+
+describe('plugin-host-guard: renders de análisis (A7b)', () => {
+  const raiz = 'C:\\Users\\me\\AppData\\Roaming\\JasWave\\analysis'
+  setAnalysisRoot(raiz)
+  after(() => clearAnalysisRoot())
+
+  it('admite analysis:true con outDir dentro de userData/analysis', () => {
+    const r = checkHostCommand(
+      { type: 'renderOfflineStart', analysis: true, outDir: `${raiz}\\job1`, tap: 'post', tapStems: 'all' },
+      grants(),
+    )
+    assert.equal(r.ok, true)
+  })
+
+  it('rechaza outDir fuera de la raíz de análisis', () => {
+    const fuera = checkHostCommand(
+      { type: 'renderOfflineStart', analysis: true, outDir: 'D:\\Proyectos\\cancion\\analisis' },
+      grants(),
+    )
+    assert.equal(fuera.ok, false)
+    const escape = checkHostCommand(
+      { type: 'renderOfflineStart', analysis: true, outDir: `${raiz}\\..\\..\\otro` },
+      grants(),
+    )
+    assert.equal(escape.ok, false)
+  })
+
+  it('rechaza outDir sin analysis:true', () => {
+    const r = checkHostCommand({ type: 'renderOfflineStart', outDir: `${raiz}\\job1` }, grants())
+    assert.equal(r.ok, false)
+  })
+
+  it('rechaza analysis sin outDir', () => {
+    const r = checkHostCommand({ type: 'renderOfflineStart', analysis: true }, grants())
+    assert.equal(r.ok, false)
+  })
+
+  it('con analysis el outPath opcional sigue necesitando escritura', () => {
+    const ok = checkHostCommand(
+      { type: 'renderOfflineStart', analysis: true, outDir: `${raiz}\\job1`, outPath: 'D:\\Proyectos\\cancion\\mix.wav' },
+      grants(),
+    )
+    assert.equal(ok.ok, true)
+    const mal = checkHostCommand(
+      { type: 'renderOfflineStart', analysis: true, outDir: `${raiz}\\job1`, outPath: 'C:\\Windows\\mix.wav' },
+      grants(),
+    )
+    assert.equal(mal.ok, false)
   })
 })
