@@ -4,6 +4,7 @@
 
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { crearEstadoInicial } from '../../../shared/src'
+import { isUndockWindow } from '@/lib/undock-window'
 import { esNombreSinTitulo, nombreAlGuardar } from '../../../shared/src/project/ciclo-vida'
 import { clearSessionSnapshot, saveSessionNow } from './session-persist'
 import { detectarConflictoProyecto, refrescarFirmaArchivo } from './project-conflict'
@@ -24,6 +25,8 @@ export type ResultadoIO = {
   requiereConfirmacion?: boolean
   /** El usuario canceló porque había cambios sin guardar (o falló el guardado previo). */
   cambiosSinGuardar?: boolean
+  /** U7: la petición se reenvió a la ventana principal (satélite). */
+  reenviado?: boolean
 }
 
 function mensajeError(error: ResultadoIO['error']): string | undefined {
@@ -34,6 +37,33 @@ function mensajeError(error: ResultadoIO['error']): string | undefined {
 
 function rutaNormalizada(filePath: string): string {
   return filePath.endsWith('.jaswave') ? filePath : `${filePath}.jaswave`
+}
+
+/** ¿Esta ventana es un satélite (undock)? */
+function esSatelite(): boolean {
+  try {
+    return isUndockWindow()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * U7: el satélite no tiene autoridad sobre el proyecto → reenvía la petición a
+ * la ventana principal (que es la que guarda, abre y deshace).
+ */
+async function reenviarAlPrimario(
+  accion: 'guardar' | 'guardar-como' | 'abrir',
+  payload?: { ruta?: string },
+): Promise<ResultadoIO> {
+  try {
+    const { enviarMensaje } = await import('../workspace/satellite-channel')
+    const enviado = enviarMensaje({ type: 'action', action: accion, payload })
+    if (!enviado) return { success: false, error: 'No se pudo contactar con la ventana principal' }
+    return { success: true, reenviado: true }
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e) }
+  }
 }
 
 function nombreSugeridoDialogo(nombre: string | undefined): string | undefined {
@@ -88,6 +118,11 @@ async function asentarMediaEnProyecto(tienda: TiendaDAW, ruta: string): Promise<
  * espera la misma promesa: un solo diálogo y un solo guardado.
  */
 export function guardarProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
+  // U7: el satélite no guarda (su estado es un recorte sin waveforms): lo pide
+  // la ventana principal, que es la dueña del proyecto.
+  if (esSatelite()) {
+    return reenviarAlPrimario('guardar')
+  }
   return conGuardadoUnico(() => guardarProyectoImpl(tienda))
 }
 
@@ -129,6 +164,10 @@ async function guardarProyectoImpl(tienda: TiendaDAW): Promise<ResultadoIO> {
 }
 
 export function guardarProyectoComoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
+  // U7: en un satélite el "guardar como" lo hace la ventana principal.
+  if (esSatelite()) {
+    return reenviarAlPrimario('guardar-como')
+  }
   return conGuardadoUnico(() => guardarProyectoComoImpl(tienda))
 }
 
@@ -185,10 +224,20 @@ function canceladoPorCambios(r: ResultadoConfirmacion): ResultadoIO {
   }
 }
 
-export async function abrirProyectoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
+export async function abrirProyectoIO(
+  tienda: TiendaDAW,
+  opts?: { ruta?: string },
+): Promise<ResultadoIO> {
+  // U7: en un satélite, abrir lo hace la ventana principal (dialogo y carga).
+  if (esSatelite()) {
+    return reenviarAlPrimario('abrir', { ruta: opts?.ruta })
+  }
   if (!window.electron?.projectOpenDialog) return { success: false, error: 'Not in Electron' }
   const confirmado = await confirmarCambiosIO(tienda, 'abrir')
   if (!confirmado.continuar) return canceladoPorCambios(confirmado)
+  if (opts?.ruta) {
+    return cargarProyectoDesdeRutaIO(tienda, opts.ruta)
+  }
   const result = await window.electron.projectOpenDialog()
   if (result.canceled) return { success: false, canceled: true, error: 'Canceled' }
   if (!result.success || !result.path) {
