@@ -310,6 +310,7 @@ export function buildStateSummary(tienda: TiendaDAW) {
     nombre: st.project?.nombre,
     bpm: projectBpm(st),
     playing: Boolean(st.transport?.reproduciendo),
+    grabacion: st.transport?.grabacion ?? 'inactiva',
     positionSec: st.transport?.posicion?.segundos ?? 0,
     master: {
       volumen: st.project?.master?.volumen,
