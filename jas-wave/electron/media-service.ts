@@ -129,7 +129,7 @@ export async function buscarArchivosPorNombre(
 
   const visitar = async (dir: string, nivel: number): Promise<void> => {
     if (nivel > profundidad || Object.keys(encontrados).length === objetivo.size) return
-    let entradas: Awaited<ReturnType<typeof fs.readdir>>
+    let entradas: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>
     try {
       entradas = await fs.readdir(dir, { withFileTypes: true })
     } catch {

@@ -17,7 +17,7 @@ import { AiCredentialStore } from './ai-credentials'
 import { initLogger, logLine } from './logger'
 import { writeFileAtomic } from './atomic-write'
 import { defaultVstRoots, isAudioFile, PathAccessError, PathGrants, type AccessKind, type GrantMode } from './path-grants'
-import { buscarArchivosPorNombre, copiarMediaArchivo, moverMediaArchivo } from './media-service'
+import { buscarArchivosPorNombre, copiarMediaArchivo, moverMediaArchivo, traducirErrorDisco } from './media-service'
 import { checkHostCommand } from './plugin-host-guard'
 import { initAutoUpdater } from './updater'
 import {
@@ -557,7 +557,7 @@ ipcMain.handle('file-save', async (_event: IpcMainInvokeEvent, ruta: string, con
     await writeFileAtomic(ruta, String(contenido ?? ''), { backup: isProjectFile(ruta) })
     return { success: true }
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
+    return { success: false, error: traducirErrorDisco(err) }
   }
 })
 
@@ -568,7 +568,7 @@ ipcMain.handle('file-save-binary', async (_event: IpcMainInvokeEvent, ruta: stri
     await writeFileAtomic(ruta, buf)
     return { success: true }
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
+    return { success: false, error: traducirErrorDisco(err) }
   }
 })
 
