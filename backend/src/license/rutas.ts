@@ -2,7 +2,16 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { Db } from '../db.js';
 import type { Reloj } from './servicio.js';
-import { accionesEfectivas, codigoDispositivoSecreto, codigoUsuarioLegible, emitirLicencia, sincronizarUsuario } from './servicio.js';
+import {
+  accionesEfectivas,
+  buscarDispositivoPorToken,
+  codigoDispositivoSecreto,
+  codigoUsuarioLegible,
+  emitirLicencia,
+  registrarDispositivo,
+  rotarTokenDispositivo,
+  sincronizarUsuario,
+} from './servicio.js';
 import { exigirAutenticacion } from '../http/auth-middleware.js';
 import { ErrorApi } from '../http/errores.js';
 import type { VerificadorJwt } from '../auth/verificador-jwt.js';
@@ -19,7 +28,8 @@ export type OpcionesLicencias = {
 const iniciarEsquema = z.object({ productoId: z.string().min(1).max(200), dispositivo: z.string().min(1).max(120) });
 const pollEsquema = z.object({ codigoDispositivo: z.string().min(10).max(200), dispositivo: z.string().min(1).max(120) });
 const aprobarEsquema = z.object({ codigoUsuario: z.string().min(4).max(20) });
-const refrescarEsquema = z.object({ dispositivo: z.string().min(1).max(120) });
+const refrescarEsquema = z.object({ dispositivo: z.string().min(1).max(120), tokenDispositivo: z.string().min(20).max(200).optional() });
+const renovarEsquema = z.object({ tokenDispositivo: z.string().min(20).max(200), dispositivo: z.string().min(1).max(120) });
 
 export function rutasLicencias(opciones: OpcionesLicencias): Router {
   const { db, verificar, clavePrivadaPem, reloj } = opciones;
@@ -85,15 +95,36 @@ export function rutasLicencias(opciones: OpcionesLicencias): Router {
     const usuario = await db.usuario.findUniqueOrThrow({ where: { id: fila.usuarioId } });
     await db.codigoDispositivo.delete({ where: { codigoDispositivo } });
     const licencia = await emitirLicencia(db, clavePrivadaPem, usuario, dispositivo, reloj);
-    res.json({ estado: 'aprobado', ...licencia });
+    const { tokenDispositivo } = await registrarDispositivo(db, usuario.id, dispositivo, reloj());
+    res.json({ estado: 'aprobado', ...licencia, tokenDispositivo });
   });
 
-  /** Renueva la licencia firmada (24 h) para el dispositivo autenticado. */
+  /** El VST renueva su licencia sin sesión, con el token de dispositivo (que se rota en cada uso). */
+  r.post('/device/renovar', async (req, res) => {
+    const { tokenDispositivo, dispositivo } = renovarEsquema.parse(req.body);
+    const encontrado = await buscarDispositivoPorToken(db, tokenDispositivo);
+    const usuario = await db.usuario.findUniqueOrThrow({ where: { id: encontrado.dispositivo.usuarioId } });
+    const licencia = await emitirLicencia(db, clavePrivadaPem, usuario, dispositivo, reloj);
+    const nuevo = await rotarTokenDispositivo(db, encontrado, dispositivo, reloj());
+    res.json({ estado: 'aprobado', ...licencia, tokenDispositivo: nuevo });
+  });
+
+  /**
+   * El DAW (con sesión) renueva la licencia del equipo. Si envía su token de dispositivo se rota;
+   * si no, se registra el equipo, para que los VST puedan renovar después sin el DAW abierto.
+   */
   r.post('/refresh', autenticado, async (req, res) => {
-    const { dispositivo } = refrescarEsquema.parse(req.body);
+    const { dispositivo, tokenDispositivo } = refrescarEsquema.parse(req.body);
     const usuario = await sincronizarUsuario(db, req.identidad!);
     const licencia = await emitirLicencia(db, clavePrivadaPem, usuario, dispositivo, reloj);
-    res.json({ estado: 'aprobado', ...licencia });
+    let token: string;
+    const encontrado = tokenDispositivo ? await buscarDispositivoPorToken(db, tokenDispositivo).catch(() => null) : null;
+    if (encontrado && encontrado.dispositivo.usuarioId === usuario.id) {
+      token = await rotarTokenDispositivo(db, encontrado, dispositivo, reloj());
+    } else {
+      token = (await registrarDispositivo(db, usuario.id, dispositivo, reloj())).tokenDispositivo;
+    }
+    res.json({ estado: 'aprobado', ...licencia, tokenDispositivo: token });
   });
 
   return r;

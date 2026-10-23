@@ -156,6 +156,30 @@ export function rutasAdmin({ db, verificar }: OpcionesAdmin): Router {
     res.status(204).end();
   });
 
+  // ---------- Dispositivos (equipos que renuevan licencias sin sesión) ----------
+  r.get('/usuarios/:id/dispositivos', async (req, res) => {
+    const { id } = idEsquema.parse(req.params);
+    const dispositivos = await db.dispositivo.findMany({
+      where: { usuarioId: id },
+      orderBy: { ultimoUso: 'desc' },
+      select: { id: true, nombre: true, revocado: true, creadoEn: true, ultimoUso: true },
+    });
+    res.json({ dispositivos });
+  });
+
+  /** Revoca (o reactiva) un equipo: con `revocado: true` no podrá renovar su licencia. */
+  r.put('/dispositivos/:id', async (req, res) => {
+    const { id } = idEsquema.parse(req.params);
+    const { revocado } = z.object({ revocado: z.boolean() }).parse(req.body);
+    const d = await db.dispositivo.update({
+      where: { id },
+      data: revocado ? { revocado, hashToken: null, hashAnterior: null } : { revocado },
+      select: { id: true, nombre: true, revocado: true },
+    });
+    await auditar(db, actor(req), revocado ? 'dispositivo.revocar' : 'dispositivo.reactivar', id);
+    res.json({ dispositivo: d });
+  });
+
   // ---------- Licencias ----------
   /** Activa, suspende o revoca la licencia de un usuario para un producto. */
   r.put('/licencias/:usuarioId/:productoId', async (req, res) => {

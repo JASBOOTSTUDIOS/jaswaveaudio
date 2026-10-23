@@ -35,7 +35,7 @@ Fuente única para quienes implementan plugins (C++), el cargador (`shared/src/p
     "summary": "Ecualizador paramétrico de 8 bandas para corrección y color.",
     "intents": ["cortar-graves", "realzar-presencia", "eliminar-resonancia"],
     "parameters": [
-      { "id": "b1.freq", "name": "Banda 1 Frecuencia", "min": 20, "max": 20000, "default": 100, "unit": "Hz", "scale": "log", "feature": null }
+      { "id": "b1.freq", "vstParamId": 1, "name": "Banda 1 Frecuencia", "min": 20, "max": 20000, "default": 100, "unit": "Hz", "scale": "log", "feature": null }
     ]
   },
   "download": { "url": "https://github.com/…/releases/download/…/com.jaswave.plugin.param-eq-1.0.0.zip", "sha256": "", "sizeBytes": 0 },
@@ -43,6 +43,8 @@ Fuente única para quienes implementan plugins (C++), el cargador (`shared/src/p
 }
 ```
 
+`ai.parameters[].vstParamId` es el **ParamID numérico VST3** del parámetro (estable entre versiones): el DAW y la IA lo usan para
+automatizar y para `plugin.setParameter`. `id` es un nombre legible estable (p. ej. `b1.freq`, `comp.threshold`).
 `features[].key` sigue `^[a-z0-9][a-z0-9.\-]{1,120}$`. Un parámetro con `"feature": "x"` solo es operable si la licencia
 concede la acción `x`. Las funciones básicas de cada plugin pueden quedar sin feature (siempre activas con licencia válida).
 

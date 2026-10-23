@@ -126,13 +126,18 @@ model Licencia {
   @@unique([usuarioId, productoId])
 }
 
+/// Equipo autorizado a renovar licencias sin sesión (VST en cualquier DAW).
+/// Solo se guardan hashes SHA-256 del token; el anterior se acepta una vez (gracia ante respuestas perdidas).
 model Dispositivo {
-  id        String   @id @default(uuid())
-  usuarioId String
-  nombre    String   @default("")
-  creadoEn  DateTime @default(now())
-  ultimoUso DateTime @default(now())
-  usuario   Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  id           String   @id @default(uuid())
+  usuarioId    String
+  nombre       String   @default("")
+  hashToken    String?  @unique
+  hashAnterior String?  @unique
+  revocado     Boolean  @default(false)
+  creadoEn     DateTime @default(now())
+  ultimoUso    DateTime @default(now())
+  usuario      Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
 }
 
 enum EstadoCodigoDispositivo {

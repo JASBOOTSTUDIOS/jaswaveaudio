@@ -5,6 +5,7 @@
 import type { CommandDefinition, StateTransition } from '../types/command';
 import type { DAWState } from '../types/state';
 import type { EstadoSeleccion } from '../types/seleccion';
+import { entorno } from '../state/entorno-determinista';
 
 export type SelectionSetPayload = {
   ids?: string[];
@@ -34,6 +35,7 @@ function baseSeleccion(prev: EstadoSeleccion): EstadoSeleccion {
 export function crearComandoSelectionSet(): CommandDefinition<SelectionSetPayload> {
   return {
     type: 'selection.set',
+    replicacion: 'local',
     description: 'Establece la selección activa (pistas/clips)',
     risk: 'write',
     schema: {
@@ -68,7 +70,7 @@ export function crearComandoSelectionSet(): CommandDefinition<SelectionSetPayloa
           ? {
               tipo: tipo ?? 'clip',
               id: idPrincipal,
-              marcaTiempo: Date.now(),
+              marcaTiempo: entorno.ahora(),
               metodo: 'comando',
             }
           : null,
@@ -81,7 +83,7 @@ export function crearComandoSelectionSet(): CommandDefinition<SelectionSetPayloa
           {
             nombre: 'ui.seleccionCambiada',
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'selection-commands',
             payload: {
               idsClips: selection.idsClips,
@@ -99,6 +101,7 @@ export function crearComandoSelectionSet(): CommandDefinition<SelectionSetPayloa
 export function crearComandoSelectionClear(): CommandDefinition<SelectionClearPayload> {
   return {
     type: 'selection.clear',
+    replicacion: 'local',
     description: 'Limpia la selección activa',
     risk: 'write',
     schema: {
@@ -126,7 +129,7 @@ export function crearComandoSelectionClear(): CommandDefinition<SelectionClearPa
           {
             nombre: 'ui.seleccionCambiada',
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'selection-commands',
             payload: { limpia: true, alcance },
           },
@@ -144,6 +147,7 @@ export type UiSetPalettePayload = {
 export function crearComandoUiSetPalette(): CommandDefinition<UiSetPalettePayload> {
   return {
     type: 'ui.setPalette',
+    replicacion: 'local',
     description: 'Abre o cierra la paleta de comandos',
     risk: 'read',
     schema: {
@@ -176,7 +180,7 @@ export function crearComandoUiSetPalette(): CommandDefinition<UiSetPalettePayloa
           {
             nombre: payload.abierta ? 'ui.dialogoAbierto' : 'ui.dialogoCerrado',
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'selection-commands',
             payload: { dialogo: 'command-palette' },
           },

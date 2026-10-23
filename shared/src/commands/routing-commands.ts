@@ -11,14 +11,14 @@ function ev(nombre: string, payload: Record<string, unknown>): EventoDominio {
   return {
     nombre,
     version: 1,
-    marcaTiempo: Date.now(),
+    marcaTiempo: entorno.ahora(),
     fuente: 'builtin',
     payload: payload as EventoDominio['payload'],
   }
 }
 
 function newId(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+  return `${prefix}-${entorno.ahora().toString(36)}-${entorno.aleatorio().toString(36).slice(2, 6)}`
 }
 
 function ensureRouting(estado: DAWState): RoutingMatrix {
@@ -32,7 +32,7 @@ function ensureRouting(estado: DAWState): RoutingMatrix {
     conexionesDirectas: [],
     puentes: [],
     grupos: [],
-    validacion: { errores: [], validado: true, ultimaValidacion: Date.now() },
+    validacion: { errores: [], validado: true, ultimaValidacion: entorno.ahora() },
     estadisticas: {
       busesTotales: 0,
       enviosTotales: 0,
@@ -97,7 +97,7 @@ export function crearComandoBusCreate(): CommandDefinition<any> {
         reduccionGanancia: 0,
       }
       const buses = [...routing.buses, bus]
-      const now = Date.now()
+      const now = entorno.ahora()
       const busTrack = {
         id: busId,
         nombre,
@@ -349,3 +349,5 @@ export function crearComandoSidechainConnect(): CommandDefinition<any> {
     },
   }
 }
+
+import { entorno } from '../state/entorno-determinista';

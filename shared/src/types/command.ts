@@ -142,11 +142,18 @@ export interface StateTransition<TResult = unknown> {
    * CommandDefinition.inverseType cuando el inverso depende de la rama ejecutada).
    */
   inverseType?: string;
+  /**
+   * Tipo con el que rehacer, si no es el propio comando (p. ej. un parche diferencial que solo
+   * reaplica lo que este comando cambió, sin pisar ediciones concurrentes de otros usuarios).
+   */
+  redoType?: string;
 }
 
 export interface CommandPayload<T = unknown> {
   type: string;
   payload: T;
+  /** Entorno determinista propio (réplicas de un lote remoto); si falta, lo decide el ejecutor. */
+  entorno?: import('../state/entorno-determinista').EntornoComando;
 }
 
 export interface TransactionResult {
@@ -198,6 +205,16 @@ export interface CommandDefinition<T = unknown> {
    * Por defecto, un comando sin inverso que cambia el proyecto invalida el redo.
    */
   historialUndo?: 'instantanea' | 'ninguno';
+  /**
+   * Cómo se replica en colaboración en tiempo real:
+   *   - `'operacion'` (por defecto): se reenvía tipo + payload + entorno y cada réplica lo reejecuta
+   *     (determinista: el handler usa `entorno` para tiempo, azar e ids). Permite fusionar ediciones
+   *     concurrentes de grano fino (p. ej. dos usuarios añadiendo notas al mismo clip).
+   *   - `'resultado'`: el resultado depende de algo local (medición de audio, host nativo): se envía
+   *     la instantánea parcial del cambio y las réplicas la aplican tal cual.
+   *   - `'local'`: no se replica (selección, vista, estado efímero de cada usuario).
+   */
+  replicacion?: 'operacion' | 'resultado' | 'local';
   handler: (state: import('../types/state').DAWState, payload: T) => StateTransition<T> | Promise<StateTransition<T>>;
   validate?: (state: import('../types/state').DAWState, payload: T) => ValidationResult;
 }
@@ -211,6 +228,11 @@ export interface CommandDefinition<T = unknown> {
 export interface OpcionesEjecucion {
   coalesceKey?: string;
   gestureId?: string;
+  /**
+   * Entorno determinista (tiempo + semilla) con el que ejecutar el handler. Lo fija el autor del
+   * comando; las réplicas lo reutilizan para obtener exactamente los mismos ids y marcas de tiempo.
+   */
+  entorno?: import('../state/entorno-determinista').EntornoComando;
 }
 
 export interface CommandHistoryEntry {

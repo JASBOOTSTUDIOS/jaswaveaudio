@@ -19,16 +19,17 @@
 
 import type { DAWState } from '../types/state';
 import type { Track } from '../types/tracks';
+import { entorno } from './entorno-determinista';
 
 type Registro = Record<string, unknown>;
 
 /** Valores de las claves que cambiaron, en cada lado (undefined = la clave no existía). */
-interface CambioClaves {
+export interface CambioClaves {
   antes: Registro;
   despues: Registro;
 }
 
-type CambioPista =
+export type CambioPista =
   | { modo: 'campos'; cambio: CambioClaves }
   | { modo: 'entera'; antes: Track | undefined; despues: Track | undefined };
 
@@ -112,7 +113,7 @@ function aplicarPistas(actuales: Track[], pistas: NonNullable<InstantaneaParcial
   const orden = lado === 'antes' ? pistas.ordenAntes : pistas.ordenDespues;
   const usados = new Set<string>();
   const resultado: Track[] = [];
-  const ahora = Date.now();
+  const ahora = entorno.ahora();
   for (const id of orden) {
     usados.add(id);
     const cambio = pistas.cambios.get(id);
@@ -146,7 +147,7 @@ export function aplicarInstantaneaParcial(estado: DAWState, inst: InstantaneaPar
   if (inst.proyecto || inst.pistas) {
     project = inst.proyecto ? aplicarClaves(project, inst.proyecto[lado]) : { ...project };
     if (inst.pistas) project = { ...project, tracks: aplicarPistas(estado.project.tracks ?? [], inst.pistas, lado) };
-    project = { ...project, modificado: true, fechaModificacion: Date.now() };
+    project = { ...project, modificado: true, fechaModificacion: entorno.ahora() };
   }
   const transport = inst.transporte ? aplicarClaves(estado.transport, inst.transporte[lado]) : estado.transport;
   return { ...estado, project, transport };

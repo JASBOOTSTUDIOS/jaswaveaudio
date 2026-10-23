@@ -47,6 +47,7 @@ import { applyGroove } from '../midi/groove';
 import { ensureExpression, setCcLane, setPitchBendPoints } from '../midi/expression';
 import type { MidiClipExpression } from '../types/clips';
 import { nombreTrackUnico } from '../state/validacion-dominio';
+import { entorno } from '../state/entorno-determinista';
 
 function posicionDesdeSegundos(segundos: number, bpm: number) {
   const s = Math.max(0, segundos)
@@ -62,7 +63,7 @@ function posicionDesdeSegundos(segundos: number, bpm: number) {
 }
 
 function generarId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  return `${entorno.ahora()}-${entorno.aleatorio().toString(36).slice(2, 7)}`;
 }
 
 /**
@@ -165,6 +166,54 @@ export type MidiClipCreatePayload = {
   /** Ids fijados para las notas creadas, en orden (redo determinista). */
   idsGenerados?: string[];
 };
+
+/**
+ * Parche de notas: solo las notas que un comando tocó. Es el inverso (y el redo) de toda operación
+ * de notas, de modo que deshacer lo propio no borra notas que otro colaborador añadió al mismo clip.
+ * `indice` es la posición de la nota en la lista de destino (conserva el orden en uso individual).
+ */
+export type MidiNotesPatchPayload = {
+  pistaId: string;
+  clipId: string;
+  upsert: { nota: MidiNote; indice: number }[];
+  removeIds: string[];
+  /** Duración base del clip; nunca queda por debajo del final de sus notas. */
+  duracion?: number;
+  /** `null` quita la expresión; ausente = no se toca. */
+  expression?: MidiClipExpression | null;
+};
+
+function claveEstable(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(claveEstable).join(',')}]`;
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o).filter((k) => o[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${claveEstable(o[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(v);
+}
+
+/** Diferencia de `desde` a `hacia` (por id): notas nuevas o cambiadas y notas eliminadas. */
+export function parcheNotas(desde: MidiNote[], hacia: MidiNote[]): Pick<MidiNotesPatchPayload, 'upsert' | 'removeIds'> {
+  const porId = new Map(desde.map((n) => [n.id, n]));
+  const idsHacia = new Set(hacia.map((n) => n.id));
+  const upsert: MidiNotesPatchPayload['upsert'] = [];
+  hacia.forEach((nota, indice) => {
+    const previa = porId.get(nota.id);
+    if (!previa || claveEstable(previa) !== claveEstable(nota)) upsert.push({ nota, indice });
+  });
+  return { upsert, removeIds: desde.filter((n) => !idsHacia.has(n.id)).map((n) => n.id) };
+}
+
+export function aplicarParcheNotas(notas: MidiNote[], parche: Pick<MidiNotesPatchPayload, 'upsert' | 'removeIds'>): MidiNote[] {
+  const quitar = new Set(parche.removeIds);
+  const r = notas.filter((n) => !quitar.has(n.id));
+  for (const { nota, indice } of [...parche.upsert].sort((a, b) => a.indice - b.indice)) {
+    const i = r.findIndex((n) => n.id === nota.id);
+    if (i >= 0) r[i] = nota;
+    else r.splice(Math.min(Math.max(0, indice), r.length), 0, nota);
+  }
+  return r;
+}
 
 export type MidiNotesSetPayload = {
   pistaId: string;
@@ -298,7 +347,7 @@ function avisoNotasDescartadas(recibidas: number, validas: number): StateTransit
     {
       nombre: 'validacion.advertencia',
       version: 1,
-      marcaTiempo: Date.now(),
+      marcaTiempo: entorno.ahora(),
       fuente: 'domain-commands',
       payload: {
         code: 'MIDI_NOTES_DISCARDED',
@@ -331,6 +380,7 @@ function applyMidiNotesToClip(
   pistaId: string,
   clipId: string,
   transform: (notas: MidiNote[], existing: MidiClip) => MidiNote[],
+  opciones?: { duracion?: number; expression?: MidiClipExpression | null },
 ): StateTransition<{ pistaId: string; clipId: string }> {
   const pista = estado.project.tracks.find((t) => t.id === pistaId);
   if (!pista) throw new Error(`Pista no encontrada: ${pistaId}`);
@@ -343,23 +393,27 @@ function applyMidiNotesToClip(
   const prevNotas = existing.notas ?? [];
   // Cualquier operación MIDI (humanize, quantize, timeStretch…) que produzca NaN no llega al proyecto.
   const notas = transform(prevNotas, existing).filter(esNotaMidiValida);
-  let duracion = existing.duracion;
+  let duracion = opciones?.duracion ?? existing.duracion;
   if (notas.length > 0) {
     const end = notas.reduce((max, n) => Math.max(max, n.inicio + n.duracion), 0);
     duracion = Math.max(duracion, end);
   }
-  clips[index] = {
+  const clipNuevo: MidiClip = {
     ...existing,
     notas,
     duracion,
     loop: { ...(existing.loop ?? { activo: false, inicio: 0, fin: duracion }), fin: duracion },
   };
-  const pistaActualizada = { ...pista, clips, fechaModificacion: Date.now() } as Track;
+  if (opciones?.expression === null) delete (clipNuevo as { expression?: unknown }).expression;
+  else if (opciones?.expression !== undefined) clipNuevo.expression = opciones.expression;
+  clips[index] = clipNuevo;
+  const expresionCambia = opciones?.expression !== undefined;
+  const pistaActualizada = { ...pista, clips, fechaModificacion: entorno.ahora() } as Track;
   const proyecto: ProjectState = {
     ...estado.project,
     tracks: estado.project.tracks.map((t) => (t.id === pistaId ? pistaActualizada : t)),
     modificado: true,
-    fechaModificacion: Date.now(),
+    fechaModificacion: entorno.ahora(),
   };
   return {
     state: { ...estado, project: proyecto },
@@ -367,13 +421,28 @@ function applyMidiNotesToClip(
       {
         nombre: EventosClip.cuantizado,
         version: 1,
-        marcaTiempo: Date.now(),
+        marcaTiempo: entorno.ahora(),
         fuente: 'domain-commands',
         payload: { clipId, pistaId, notas: notas.length },
       },
     ],
     result: { pistaId, clipId },
-    inversePayload: { pistaId, clipId, notas: prevNotas, duracion: existing.duracion } as never,
+    inverseType: 'midi.notes.patch',
+    inversePayload: {
+      pistaId,
+      clipId,
+      ...parcheNotas(notas, prevNotas),
+      duracion: existing.duracion,
+      ...(expresionCambia ? { expression: existing.expression ?? null } : {}),
+    } satisfies MidiNotesPatchPayload as never,
+    redoType: 'midi.notes.patch',
+    redoPayload: {
+      pistaId,
+      clipId,
+      ...parcheNotas(prevNotas, notas),
+      duracion,
+      ...(expresionCambia ? { expression: opciones?.expression ?? null } : {}),
+    } satisfies MidiNotesPatchPayload as never,
   };
 }
 
@@ -484,8 +553,8 @@ function crearPista(nombre: string, tipo: Track['tipo'] = 'audio', color?: strin
     tags: [],
     notas: '',
     modificado: false,
-    fechaCreacion: Date.now(),
-    fechaModificacion: Date.now(),
+    fechaCreacion: entorno.ahora(),
+    fechaModificacion: entorno.ahora(),
     estadisticas: {
       clipsTotales: 0,
       clipsAudio: 0,
@@ -615,14 +684,14 @@ export function crearComandoTrackCreate(): CommandDefinition<TrackCreatePayload>
         ...estado.project,
         tracks: [...estado.project.tracks, pista],
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       const events: StateTransition<TrackCreatePayload>['events'] = [
         {
           nombre: EventosTrack.creada,
           version: 1,
-          marcaTiempo: Date.now(),
+          marcaTiempo: entorno.ahora(),
           fuente: 'domain-commands',
           payload: { trackId: pista.id, nombre, tipo },
         },
@@ -631,7 +700,7 @@ export function crearComandoTrackCreate(): CommandDefinition<TrackCreatePayload>
         events.push({
           nombre: 'validacion.advertencia',
           version: 1,
-          marcaTiempo: Date.now(),
+          marcaTiempo: entorno.ahora(),
           fuente: 'domain-commands',
           payload: {
             code: 'TRACK_NAME_DUPLICATED',
@@ -708,7 +777,7 @@ export function crearComandoTrackMove(): CommandDefinition<TrackMovePayload> {
         tracks: withOrden,
         routing,
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
       return {
         state: { ...estado, project: proyecto },
@@ -716,7 +785,7 @@ export function crearComandoTrackMove(): CommandDefinition<TrackMovePayload> {
           {
             nombre: EventosTrack.ordenCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { trackId: payload.trackId, fromIndex, toIndex },
           },
@@ -780,7 +849,7 @@ export function crearComandoTrackDelete(): CommandDefinition<TrackDeletePayload>
         tracks: estado.project.tracks.filter(t => t.id !== payload.trackId),
         routing: ruteo.routing ?? estado.project.routing,
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -789,7 +858,7 @@ export function crearComandoTrackDelete(): CommandDefinition<TrackDeletePayload>
           {
             nombre: EventosTrack.eliminada,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { trackId: payload.trackId },
           },
@@ -927,19 +996,19 @@ export function crearComandoTrackUpdate(): CommandDefinition<TrackUpdatePayload>
         datosAnteriores[clave] = (pista as unknown as Record<string, unknown>)[clave];
       }
 
-      const pistaActualizada = { ...pista, ...datos, fechaModificacion: Date.now() } as Track;
+      const pistaActualizada = { ...pista, ...datos, fechaModificacion: entorno.ahora() } as Track;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => t.id === payload.trackId ? pistaActualizada : t),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       const events: StateTransition<TrackUpdatePayload>['events'] = [
         {
           nombre: EventosTrack.actualizada,
           version: 1,
-          marcaTiempo: Date.now(),
+          marcaTiempo: entorno.ahora(),
           fuente: 'domain-commands',
           payload: { trackId: payload.trackId, cambios: datos as any },
         },
@@ -948,7 +1017,7 @@ export function crearComandoTrackUpdate(): CommandDefinition<TrackUpdatePayload>
         events.push({
           nombre: 'validacion.advertencia',
           version: 1,
-          marcaTiempo: Date.now(),
+          marcaTiempo: entorno.ahora(),
           fuente: 'domain-commands',
           payload: {
             code: 'TRACK_NAME_DUPLICATED',
@@ -988,12 +1057,12 @@ export function crearComandoTrackToggleMute(): CommandDefinition<TrackToggleMute
       }
 
       const silenciada = !pista.silenciada;
-      const pistaActualizada = { ...pista, silenciada, fechaModificacion: Date.now() } as Track;
+      const pistaActualizada = { ...pista, silenciada, fechaModificacion: entorno.ahora() } as Track;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => t.id === payload.trackId ? pistaActualizada : t),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -1002,7 +1071,7 @@ export function crearComandoTrackToggleMute(): CommandDefinition<TrackToggleMute
           {
             nombre: EventosTrack.silenciada,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { trackId: payload.trackId, silenciada },
           },
@@ -1034,12 +1103,12 @@ export function crearComandoTrackToggleSolo(): CommandDefinition<TrackToggleSolo
       }
 
       const soloActiva = !pista.soloActiva;
-      const pistaActualizada = { ...pista, soloActiva, fechaModificacion: Date.now() } as Track;
+      const pistaActualizada = { ...pista, soloActiva, fechaModificacion: entorno.ahora() } as Track;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => t.id === payload.trackId ? pistaActualizada : t),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -1048,7 +1117,7 @@ export function crearComandoTrackToggleSolo(): CommandDefinition<TrackToggleSolo
           {
             nombre: EventosTrack.soloActiva,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { trackId: payload.trackId, soloActiva },
           },
@@ -1088,12 +1157,12 @@ export function crearComandoTrackToggleArm(): CommandDefinition<TrackToggleArmPa
       }
 
       const armada = !pista.armada;
-      const pistaActualizada = { ...pista, armada, fechaModificacion: Date.now() } as Track;
+      const pistaActualizada = { ...pista, armada, fechaModificacion: entorno.ahora() } as Track;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => t.id === payload.trackId ? pistaActualizada : t),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -1102,7 +1171,7 @@ export function crearComandoTrackToggleArm(): CommandDefinition<TrackToggleArmPa
           {
             nombre: EventosTrack.armada,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { trackId: payload.trackId, armada },
           },
@@ -1137,13 +1206,13 @@ export function crearComandoTrackToggleMonitor(): CommandDefinition<TrackToggleM
       const pistaActualizada = {
         ...pista,
         configuracion: { ...pista.configuracion, monitorizarEntrada },
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       } as Track;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => t.id === payload.trackId ? pistaActualizada : t),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -1152,7 +1221,7 @@ export function crearComandoTrackToggleMonitor(): CommandDefinition<TrackToggleM
           {
             nombre: EventosTrack.monitorizada,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { trackId: payload.trackId, monitorizarEntrada },
           },
@@ -1229,14 +1298,14 @@ export function crearComandoClipCreate(): CommandDefinition<ClipCreatePayload> {
       const pistaActualizada = {
         ...pista,
         clips: [...(pista.clips as any[]), clip],
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       } as Track;
 
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => t.id === payload.pistaId ? pistaActualizada : t),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -1245,7 +1314,7 @@ export function crearComandoClipCreate(): CommandDefinition<ClipCreatePayload> {
           {
             nombre: EventosClip.creado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { clipId: clip.id, pistaId: payload.pistaId },
           },
@@ -1347,14 +1416,14 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
       const pistaActualizada = {
         ...pista,
         clips: [...(pista.clips as any[]), clip],
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       } as Track;
 
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => (t.id === pistaId ? pistaActualizada : t)),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -1363,7 +1432,7 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
           {
             nombre: EventosClip.creado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { clipId: clip.id, pistaId, tipo: 'midi', notas: notas.length },
           },
@@ -1374,6 +1443,34 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
         redoPayload: { ...payload, id: clip.id, idsGenerados: ids.usados },
       };
     },
+  };
+}
+
+/** Aplica un parche de notas (inverso/redo diferencial de las operaciones de notas). */
+export function crearComandoMidiNotesPatch(): CommandDefinition<MidiNotesPatchPayload> {
+  return {
+    type: 'midi.notes.patch',
+    description: 'Aplica cambios puntuales a notas de un clip MIDI (sin tocar las demás)',
+    risk: 'write',
+    inverseType: 'midi.notes.patch',
+    schema: {
+      type: 'object',
+      properties: {
+        pistaId: { type: 'string' },
+        clipId: { type: 'string' },
+        upsert: { type: 'array' },
+        removeIds: { type: 'array', items: { type: 'string' } },
+        duracion: { type: 'number' },
+        expression: {},
+      },
+      required: ['pistaId', 'clipId', 'upsert', 'removeIds'],
+      additionalProperties: false,
+    },
+    handler: (estado, payload) =>
+      applyMidiNotesToClip(estado, payload.pistaId, payload.clipId, (notas) => aplicarParcheNotas(notas, payload), {
+        ...(payload.duracion !== undefined ? { duracion: payload.duracion } : {}),
+        ...(payload.expression !== undefined ? { expression: payload.expression } : {}),
+      }) as StateTransition<MidiNotesPatchPayload>,
   };
 }
 
@@ -1438,12 +1535,12 @@ export function crearComandoMidiNotesSet(): CommandDefinition<MidiNotesSetPayloa
         loop: { ...(existing.loop ?? { activo: false, inicio: 0, fin: duracion }), fin: duracion },
       };
 
-      const pistaActualizada = { ...pista, clips, fechaModificacion: Date.now() } as Track;
+      const pistaActualizada = { ...pista, clips, fechaModificacion: entorno.ahora() } as Track;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => (t.id === payload.pistaId ? pistaActualizada : t)),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -1452,20 +1549,29 @@ export function crearComandoMidiNotesSet(): CommandDefinition<MidiNotesSetPayloa
           {
             nombre: EventosClip.cuantizado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { clipId: payload.clipId, pistaId: payload.pistaId, notas: notas.length },
           },
           ...avisoNotasDescartadas(payload.notas?.length ?? 0, notas.length),
         ],
         result: payload,
+        inverseType: 'midi.notes.patch',
         inversePayload: {
           pistaId: payload.pistaId,
           clipId: payload.clipId,
-          notas: prevNotas,
+          ...parcheNotas(notas, prevNotas),
           duracion: existing.duracion,
-          expression: prevExpression,
-        },
+          ...(payload.expression !== undefined ? { expression: prevExpression ?? null } : {}),
+        } satisfies MidiNotesPatchPayload as never,
+        redoType: 'midi.notes.patch',
+        redoPayload: {
+          pistaId: payload.pistaId,
+          clipId: payload.clipId,
+          ...parcheNotas(prevNotas, notas),
+          duracion,
+          ...(payload.expression !== undefined ? { expression: payload.expression ?? null } : {}),
+        } satisfies MidiNotesPatchPayload as never,
       };
     },
   };
@@ -1850,8 +1956,9 @@ export function crearComandoMidiGenerate(): CommandDefinition<MidiGeneratePayloa
         const transicion = applyMidiNotesToClip(estado, payload.pistaId, payload.clipId, (notas) =>
           payload.replace ? generated : appendNotes(notas, generated),
         ) as StateTransition<MidiGeneratePayload>;
-        // Sobre un clip existente el inverso es restaurar las notas, no borrar el clip.
-        return { ...transicion, inverseType: 'midi.notes.set' };
+        // Sobre un clip existente el inverso es restaurar las notas (parche diferencial que trae
+        // applyMidiNotesToClip), no borrar el clip.
+        return transicion;
       }
 
       const pista = estado.project.tracks.find((t) => t.id === payload.pistaId);
@@ -1880,12 +1987,12 @@ export function crearComandoMidiGenerate(): CommandDefinition<MidiGeneratePayloa
         loop: { activo: false, inicio: 0, fin: duracion },
       };
       const clips = [...(pista.clips as MidiClip[]), clip];
-      const pistaActualizada = { ...pista, clips, fechaModificacion: Date.now() } as Track;
+      const pistaActualizada = { ...pista, clips, fechaModificacion: entorno.ahora() } as Track;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map((t) => (t.id === payload.pistaId ? pistaActualizada : t)),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
       return {
         state: { ...estado, project: proyecto },
@@ -1893,7 +2000,7 @@ export function crearComandoMidiGenerate(): CommandDefinition<MidiGeneratePayloa
           {
             nombre: EventosClip.creado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { clipId: clip.id, pistaId: payload.pistaId, tipo: 'midi' },
           },
@@ -1921,12 +2028,12 @@ function patchMidiClip(
   if (existing.tipo !== 'midi') throw new Error('El clip no es MIDI');
   const prev = existing;
   clips[index] = patch(existing);
-  const pistaActualizada = { ...pista, clips, fechaModificacion: Date.now() } as Track;
+  const pistaActualizada = { ...pista, clips, fechaModificacion: entorno.ahora() } as Track;
   const proyecto: ProjectState = {
     ...estado.project,
     tracks: estado.project.tracks.map((t) => (t.id === pistaId ? pistaActualizada : t)),
     modificado: true,
-    fechaModificacion: Date.now(),
+    fechaModificacion: entorno.ahora(),
   };
   return {
     state: { ...estado, project: proyecto },
@@ -1934,7 +2041,7 @@ function patchMidiClip(
       {
         nombre: EventosClip.cuantizado,
         version: 1,
-        marcaTiempo: Date.now(),
+        marcaTiempo: entorno.ahora(),
         fuente: 'domain-commands',
         payload: { clipId, pistaId },
       },
@@ -2061,14 +2168,14 @@ export function crearComandoClipDelete(): CommandDefinition<ClipDeletePayload> {
       const pistaActualizada = {
         ...pista,
         clips: clips.filter(c => c.id !== payload.clipId),
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       } as Track;
 
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => t.id === payload.pistaId ? pistaActualizada : t),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -2077,7 +2184,7 @@ export function crearComandoClipDelete(): CommandDefinition<ClipDeletePayload> {
           {
             nombre: EventosClip.eliminado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { clipId: payload.clipId, pistaId: payload.pistaId },
           },
@@ -2155,12 +2262,12 @@ export function crearComandoClipMerge(): CommandDefinition<ClipMergePayload> {
         const remaining = (pista.clips as { id: string }[]).filter((c) => !ids.includes(c.id));
         remaining.push(merged as never);
         remaining.sort((a, b) => (a as { inicio?: number }).inicio! - (b as { inicio?: number }).inicio!);
-        const pistaActualizada = { ...pista, clips: remaining, fechaModificacion: Date.now() } as Track;
+        const pistaActualizada = { ...pista, clips: remaining, fechaModificacion: entorno.ahora() } as Track;
         const proyecto: ProjectState = {
           ...estado.project,
           tracks: estado.project.tracks.map((t) => (t.id === payload.pistaId ? pistaActualizada : t)),
           modificado: true,
-          fechaModificacion: Date.now(),
+          fechaModificacion: entorno.ahora(),
         };
         return {
           state: { ...estado, project: proyecto },
@@ -2168,7 +2275,7 @@ export function crearComandoClipMerge(): CommandDefinition<ClipMergePayload> {
             {
               nombre: EventosClip.unido,
               version: 1,
-              marcaTiempo: Date.now(),
+              marcaTiempo: entorno.ahora(),
               fuente: 'domain-commands',
               payload: { clipId: merged.id, pistaId: payload.pistaId, merged: ids },
             },
@@ -2190,12 +2297,12 @@ export function crearComandoClipMerge(): CommandDefinition<ClipMergePayload> {
       const remaining = (pista.clips as { id: string }[]).filter((c) => !ids.includes(c.id));
       remaining.push(merged as never);
       remaining.sort((a, b) => (a as { inicio?: number }).inicio! - (b as { inicio?: number }).inicio!);
-      const pistaActualizada = { ...pista, clips: remaining, fechaModificacion: Date.now() } as Track;
+      const pistaActualizada = { ...pista, clips: remaining, fechaModificacion: entorno.ahora() } as Track;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map((t) => (t.id === payload.pistaId ? pistaActualizada : t)),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
       return {
         state: { ...estado, project: proyecto },
@@ -2203,7 +2310,7 @@ export function crearComandoClipMerge(): CommandDefinition<ClipMergePayload> {
           {
             nombre: EventosClip.unido,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { clipId: merged.id, pistaId: payload.pistaId, merged: ids },
           },
@@ -2298,17 +2405,17 @@ export function crearComandoClipMove(): CommandDefinition<ClipMovePayload> {
         const clips = (pistaOrigen.clips as any[]).map(c =>
           c.id === payload.clipId ? clipMovido : c
         );
-        const pistaActualizada = { ...pistaOrigen, clips, fechaModificacion: Date.now() } as Track;
+        const pistaActualizada = { ...pistaOrigen, clips, fechaModificacion: entorno.ahora() } as Track;
         tracks = estado.project.tracks.map(t => t.id === payload.pistaId ? pistaActualizada : t);
       } else {
         const clipsOrigen = (pistaOrigen.clips as any[]).filter(c => c.id !== payload.clipId);
         const clipsDestino = [...(pistaDestino.clips as any[]), clipMovido];
         tracks = estado.project.tracks.map(t => {
           if (t.id === payload.pistaId) {
-            return { ...t, clips: clipsOrigen, fechaModificacion: Date.now() } as Track;
+            return { ...t, clips: clipsOrigen, fechaModificacion: entorno.ahora() } as Track;
           }
           if (t.id === destinoId) {
-            return { ...t, clips: clipsDestino, fechaModificacion: Date.now() } as Track;
+            return { ...t, clips: clipsDestino, fechaModificacion: entorno.ahora() } as Track;
           }
           return t;
         });
@@ -2318,7 +2425,7 @@ export function crearComandoClipMove(): CommandDefinition<ClipMovePayload> {
         ...estado.project,
         tracks,
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -2381,14 +2488,14 @@ export function crearComandoClipSetSource(): CommandDefinition<ClipSetSourcePayl
       const pistaActualizada = {
         ...pista,
         clips: (pista.clips as any[]).map(c => (c.id === payload.clipId ? clipActualizado : c)),
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       } as Track;
 
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => (t.id === payload.pistaId ? pistaActualizada : t)),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -2468,12 +2575,12 @@ export function crearComandoClipResize(): CommandDefinition<ClipResizePayload> {
           : c,
       );
 
-      const pistaActualizada = { ...pista, clips, fechaModificacion: Date.now() } as Track;
+      const pistaActualizada = { ...pista, clips, fechaModificacion: entorno.ahora() } as Track;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => (t.id === payload.pistaId ? pistaActualizada : t)),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -2587,12 +2694,12 @@ export function crearComandoClipSplit(): CommandDefinition<ClipSplitPayload> {
       });
 
       const clipsFlat = clips.flat();
-      const pistaActualizada = { ...pista, clips: clipsFlat, fechaModificacion: Date.now() } as Track;
+      const pistaActualizada = { ...pista, clips: clipsFlat, fechaModificacion: entorno.ahora() } as Track;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => t.id === payload.pistaId ? pistaActualizada : t),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       // Undo: quitar las dos mitades y reinsertar el clip original en su índice.
@@ -2708,13 +2815,13 @@ export function crearComandoMidiClipSplitIntoSections(): CommandDefinition<MidiC
       const pistaActualizada = {
         ...pista,
         clips,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       } as Track;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => (t.id === payload.pistaId ? pistaActualizada : t)),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -2723,7 +2830,7 @@ export function crearComandoMidiClipSplitIntoSections(): CommandDefinition<MidiC
           {
             nombre: EventosClip.dividido,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: {
               pistaId: payload.pistaId,
@@ -2749,6 +2856,7 @@ export function crearComandoMidiClipSplitIntoSections(): CommandDefinition<MidiC
 export function crearComandoTransportToggle(): CommandDefinition<TransportTogglePayload> {
   return {
     type: 'transport.toggle',
+    replicacion: 'local',
     historialUndo: 'ninguno',
     description: 'Alterna reproducción / pausa',
     risk: 'write',
@@ -2766,7 +2874,7 @@ export function crearComandoTransportToggle(): CommandDefinition<TransportToggle
           {
             nombre: transport.reproduciendo ? EventosTransporte.iniciado : EventosTransporte.pausado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: {},
           },
@@ -2780,6 +2888,7 @@ export function crearComandoTransportToggle(): CommandDefinition<TransportToggle
 export function crearComandoTransportStop(): CommandDefinition<TransportStopPayload> {
   return {
     type: 'transport.stop',
+    replicacion: 'local',
     historialUndo: 'ninguno',
     description: 'Detiene la reproducción y vuelve al inicio',
     risk: 'write',
@@ -2799,7 +2908,7 @@ export function crearComandoTransportStop(): CommandDefinition<TransportStopPayl
           {
             nombre: EventosTransporte.detenido,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: {},
           },
@@ -2813,6 +2922,7 @@ export function crearComandoTransportStop(): CommandDefinition<TransportStopPayl
 export function crearComandoTransportSeek(): CommandDefinition<TransportSeekPayload> {
   return {
     type: 'transport.seek',
+    replicacion: 'local',
     historialUndo: 'ninguno',
     description: 'Busca a una posición en segundos',
     risk: 'write',
@@ -2843,6 +2953,7 @@ export function crearComandoTransportSeek(): CommandDefinition<TransportSeekPayl
 export function crearComandoTransportToggleLoop(): CommandDefinition<TransportToggleLoopPayload> {
   return {
     type: 'transport.toggleLoop',
+    replicacion: 'local',
     historialUndo: 'ninguno',
     description: 'Alterna el bucle de transporte',
     risk: 'write',
@@ -2865,6 +2976,7 @@ export function crearComandoTransportToggleLoop(): CommandDefinition<TransportTo
 export function crearComandoTransportToggleMetronome(): CommandDefinition<TransportToggleMetronomePayload> {
   return {
     type: 'transport.toggleMetronome',
+    replicacion: 'local',
     historialUndo: 'ninguno',
     description: 'Alterna el metrónomo',
     risk: 'write',
@@ -2887,6 +2999,7 @@ export function crearComandoTransportToggleMetronome(): CommandDefinition<Transp
 export function crearComandoTransportToggleRecord(): CommandDefinition<TransportToggleRecordPayload> {
   return {
     type: 'transport.toggleRecord',
+    replicacion: 'local',
     historialUndo: 'ninguno',
     description: 'Alterna el estado de grabación',
     risk: 'dangerous',
@@ -2911,6 +3024,7 @@ export type TransportTogglePunchPayload = Record<string, never>;
 export function crearComandoTransportTogglePunch(): CommandDefinition<TransportTogglePunchPayload> {
   return {
     type: 'transport.togglePunch',
+    replicacion: 'local',
     historialUndo: 'ninguno',
     description: 'Activa/desactiva punch in/out (ventana de grabación)',
     risk: 'write',
@@ -2958,6 +3072,7 @@ export type TransportToggleCountInPayload = Record<string, never>;
 export function crearComandoTransportToggleCountIn(): CommandDefinition<TransportToggleCountInPayload> {
   return {
     type: 'transport.toggleCountIn',
+    replicacion: 'local',
     historialUndo: 'ninguno',
     description: 'Activa/desactiva count-in (pre-roll) antes de grabar',
     risk: 'write',
@@ -3003,7 +3118,7 @@ export function crearComandoProjectSetBpm(): CommandDefinition<ProjectSetBpmPayl
         ...estado.project,
         bpm: { ...estado.project.bpm, valor: bpm },
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -3012,7 +3127,7 @@ export function crearComandoProjectSetBpm(): CommandDefinition<ProjectSetBpmPayl
           {
             nombre: EventosProyecto.modificado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { bpm },
           },
@@ -3057,7 +3172,7 @@ export function crearComandoTrackRestore(): CommandDefinition<TrackRestorePayloa
         tracks,
         routing,
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
       return {
         state: { ...estado, project: proyecto },
@@ -3065,7 +3180,7 @@ export function crearComandoTrackRestore(): CommandDefinition<TrackRestorePayloa
           {
             nombre: EventosTrack.creada,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { trackId: payload.track.id, restaurado: true },
           },
@@ -3107,12 +3222,12 @@ export function crearComandoClipRestore(): CommandDefinition<ClipRestorePayload>
       const clips = [...(pista.clips as any[])];
       const index = Math.min(Math.max(payload.index ?? clips.length, 0), clips.length);
       clips.splice(index, 0, payload.clip);
-      const pistaActualizada = { ...pista, clips, fechaModificacion: Date.now() } as Track;
+      const pistaActualizada = { ...pista, clips, fechaModificacion: entorno.ahora() } as Track;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => (t.id === payload.pistaId ? pistaActualizada : t)),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
       const clipId = (payload.clip as { id?: string })?.id ?? '';
       return {
@@ -3121,7 +3236,7 @@ export function crearComandoClipRestore(): CommandDefinition<ClipRestorePayload>
           {
             nombre: EventosClip.creado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'domain-commands',
             payload: { clipId, pistaId: payload.pistaId, restaurado: true },
           },
@@ -3191,15 +3306,15 @@ export function crearComandoClipRestoreMany(): CommandDefinition<ClipRestoreMany
         clips.splice(Math.min(Math.max(index, 0), clips.length), 0, clip);
       }
 
-      const pistaActualizada = { ...pista, clips, fechaModificacion: Date.now() } as Track;
+      const pistaActualizada = { ...pista, clips, fechaModificacion: entorno.ahora() } as Track;
       const proyecto: ProjectState = {
         ...estado.project,
         tracks: estado.project.tracks.map(t => (t.id === payload.pistaId ? pistaActualizada : t)),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
       const insertadosIds = aInsertar.map((x) => x.clip.id);
-      const marcaTiempo = Date.now();
+      const marcaTiempo = entorno.ahora();
       return {
         state: { ...estado, project: proyecto },
         events: [

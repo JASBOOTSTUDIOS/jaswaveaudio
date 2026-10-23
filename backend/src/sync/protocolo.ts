@@ -10,7 +10,8 @@ export const CIERRE = {
   SIN_LATIDO: 4003,
 } as const;
 
-export const TAMANO_MAX_PAYLOAD_BYTES = 64 * 1024;
+/** Las instantáneas de cambios "resultado" incluyen pistas completas: margen holgado pero acotado. */
+export const TAMANO_MAX_PAYLOAD_BYTES = 512 * 1024;
 
 const salaId = z.string().min(1).max(64);
 

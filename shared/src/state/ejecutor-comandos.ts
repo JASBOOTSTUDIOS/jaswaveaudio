@@ -23,7 +23,8 @@ import type { DAWState } from '../types/state';
 import type { CommandDefinition, CommandResult, TransactionResult, CommandError, CommandPayload, CommandHistoryEntry, StateTransition, ActionRequest, ValidatorPipeline, OpcionesEjecucion } from '../types/command';
 import type { EventoDominio, MetaEmit } from '../events/evento-dominio';
 import type { BusEventos } from '../events/event-bus';
-import type { PilaDeshacerRehacer } from '../state/pila-deshacer-rehacer';
+import { crearPilaDeshacerRehacer, type PilaDeshacerRehacer } from '../state/pila-deshacer-rehacer';
+import { conEntorno, nuevoEntorno, type EntornoComando } from './entorno-determinista';
 import type { CommandRegistry } from '../state/registro-comandos';
 import type { AuditLog } from '../state/registro-auditoria';
 import type { Command } from '../types/command';
@@ -33,6 +34,26 @@ import { capturarInstantaneaParcial, aplicarInstantaneaParcial, type Instantanea
 import { withUpdatedStateRevision } from './state-revision';
 import { computeSemanticDiff, type SemanticStateDiff } from './diff-estado';
 import { agregarAcotado, MAX_ENTRADAS_REGISTRO, resumirPayloadParaRegistro } from './resumen-payload';
+
+/** Usuario dueño de la pila de undo cuando un comando no indica `userId` (UI e IA locales). */
+export const USUARIO_LOCAL = 'local';
+
+/**
+ * Cambio aplicado localmente que debe replicarse a otros colaboradores.
+ * Los cambios que llegan de otras réplicas se aplican con `reemplazarEstado` y no se notifican aquí.
+ */
+export type CambioReplicable =
+  | {
+      modo: 'operacion';
+      id: string;
+      userId: string;
+      comandos: { type: string; payload: unknown; entorno: EntornoComando }[];
+      antes: DAWState;
+      despues: DAWState;
+    }
+  | { modo: 'resultado'; id: string; userId: string; origen: string; antes: DAWState; despues: DAWState };
+
+export type ListenerReplicacion = (cambio: CambioReplicable) => void;
 
 export interface CommandExecutorOptions {
   busEventos: BusEventos;
@@ -93,7 +114,11 @@ function transicionDesdeComando(command: Command, estado: DAWState, direccion: '
 export class CommandExecutor {
   private estado: DAWState;
   private bus: BusEventos;
-  private pila: PilaDeshacerRehacer;
+  /** Pilas de undo/redo por usuario: cada colaborador deshace solo lo suyo. */
+  private pilas = new Map<string, PilaDeshacerRehacer>();
+  /** Usuario de la operación en curso; la cola serial garantiza que no se intercalan. */
+  private usuarioPila = USUARIO_LOCAL;
+  private listenersReplicacion = new Set<ListenerReplicacion>();
   private registro: CommandRegistry;
   private auditoria: AuditLog;
   private historial: CommandHistoryEntry[] = [];
@@ -107,28 +132,59 @@ export class CommandExecutor {
   constructor(opciones: CommandExecutorOptions) {
     this.estado = opciones.estadoInicial;
     this.bus = opciones.busEventos;
-    this.pila = opciones.pila;
+    this.pilas.set(USUARIO_LOCAL, opciones.pila);
     this.registro = opciones.registro;
     this.auditoria = opciones.auditoria;
     this.maxHistorial = Math.max(1, opciones.maxHistorial ?? MAX_ENTRADAS_REGISTRO);
     this.pipeline = opciones.pipelineValidacion ?? crearPipelineValidacion({ registroComandos: opciones.registro });
   }
 
+  private get pila(): PilaDeshacerRehacer {
+    return this.pilaDe(this.usuarioPila);
+  }
+
+  private pilaDe(usuario: string): PilaDeshacerRehacer {
+    let pila = this.pilas.get(usuario);
+    if (!pila) {
+      pila = crearPilaDeshacerRehacer();
+      this.pilas.set(usuario, pila);
+    }
+    return pila;
+  }
+
+  /** Suscribe a los cambios locales que deben replicarse (colaboración en tiempo real). */
+  alReplicar(listener: ListenerReplicacion): () => void {
+    this.listenersReplicacion.add(listener);
+    return () => {
+      this.listenersReplicacion.delete(listener);
+    };
+  }
+
+  private notificarReplicacion(cambio: CambioReplicable): void {
+    for (const l of this.listenersReplicacion) {
+      try {
+        l(cambio);
+      } catch {
+        // Un listener defectuoso no debe romper la ejecución local.
+      }
+    }
+  }
+
   obtenerEstado(): DAWState {
     return this.estado;
   }
 
-  canUndo(): boolean {
-    return this.pila.canUndo();
+  canUndo(usuario: string = USUARIO_LOCAL): boolean {
+    return this.pilaDe(usuario).canUndo();
   }
 
-  canRedo(): boolean {
-    return this.pila.canRedo();
+  canRedo(usuario: string = USUARIO_LOCAL): boolean {
+    return this.pilaDe(usuario).canRedo();
   }
 
   /** Profundidad actual de la pila de undo (para revertir un turno del agente). */
-  getUndoDepth(): number {
-    return this.pila.getUndoStack().length;
+  getUndoDepth(usuario: string = USUARIO_LOCAL): number {
+    return this.pilaDe(usuario).getUndoStack().length;
   }
 
   getHistory(): CommandHistoryEntry[] {
@@ -158,7 +214,7 @@ export class CommandExecutor {
 
   /** Vacía undo y redo. */
   limpiarPilaUndo(): void {
-    this.pila.restore({ undo: [], redo: [] });
+    for (const pila of this.pilas.values()) pila.restore({ undo: [], redo: [] });
   }
 
   marcarBoundary(): void {
@@ -166,6 +222,14 @@ export class CommandExecutor {
   }
 
   // ── Infraestructura ──────────────────────────────────────────────────────
+
+  /**
+   * Ejecuta `operacion` en la cola serial del ejecutor (sin intercalarse con comandos, undo ni redo).
+   * La usa la sincronización para aplicar cambios remotos de forma atómica respecto a lo local.
+   */
+  enColaExterna<R>(operacion: () => Promise<R>): Promise<R> {
+    return this.enCola(operacion);
+  }
 
   private enCola<R>(operacion: () => Promise<R>): Promise<R> {
     const ejecucion = this.cola.then(operacion);
@@ -364,6 +428,7 @@ export class CommandExecutor {
     payload: unknown,
     source: CommandHistoryEntry['source'],
     effectiveUserId: string | undefined,
+    entornoCmd: EntornoComando,
   ): Promise<Paso> {
     const emisiones: Emision[] = [];
     const definicion = this.registro.get(type);
@@ -405,7 +470,7 @@ export class CommandExecutor {
 
     let transition: StateTransition;
     try {
-      transition = await (definicion.handler(estadoBase, payload as never) as Promise<StateTransition> | StateTransition);
+      transition = await conEntorno(entornoCmd, () => definicion.handler(estadoBase, payload as never) as Promise<StateTransition> | StateTransition);
     } catch (e: unknown) {
       return {
         ok: false,
@@ -429,8 +494,9 @@ export class CommandExecutor {
     const payloadInverse = transition.inversePayload !== undefined ? transition.inversePayload : payload;
     const payloadRedo = transition.redoPayload !== undefined ? transition.redoPayload : payload;
     let entradaUndo: Command | null = null;
+    const redoDef = transition.redoType ? this.registro.get(transition.redoType) ?? definicion : definicion;
     if (inverseDef) {
-      entradaUndo = this.crearEntradaUndo(definicion, inverseDef, payloadRedo, payloadInverse);
+      entradaUndo = this.crearEntradaUndo(redoDef, inverseDef, payloadRedo, payloadInverse);
     } else if (definicion.historialUndo === 'instantanea') {
       const inst = capturarInstantaneaParcial(estadoBase, transition.state);
       if (inst) entradaUndo = this.crearEntradaInstantanea(definicion, inst);
@@ -475,8 +541,10 @@ export class CommandExecutor {
     const entryId = crypto.randomUUID();
     const timestamp = Date.now();
     const effectiveUserId = this.resolverUsuario(source, userId);
+    this.usuarioPila = effectiveUserId ?? USUARIO_LOCAL;
+    const entornoCmd = opciones?.entorno ?? nuevoEntorno();
 
-    const paso = await this.ejecutarPaso(this.estado, type, payload, source, effectiveUserId);
+    const paso = await this.ejecutarPaso(this.estado, type, payload, source, effectiveUserId, entornoCmd);
     if (!paso.ok) {
       this.emitirEmisiones(paso.emisiones);
       this.auditoria.log({ id: entryId, timestamp, commandType: type, payload, source, userId: effectiveUserId, result: 'failure', error: paso.error.message });
@@ -499,19 +567,22 @@ export class CommandExecutor {
     this.registrarHistorial({ id: entryId, commandType: type, payload, timestamp, source, userId: effectiveUserId, success: true });
     this.auditoria.log({ id: entryId, timestamp, commandType: type, payload, source, userId: effectiveUserId, result: 'success' });
     this.notificarCambio(this.estado, anterior);
+    this.replicarPaso(entryId, effectiveUserId, [{ type, payload, entorno: entornoCmd }], anterior);
 
     return { success: true, state: this.estado, events: paso.events, result: paso.result as T | undefined };
   }
 
-  undo(): Promise<CommandResult> {
-    return this.enCola(() => this.moverPila('undo'));
+  /** Deshace la última acción de `usuario` (por defecto el usuario local); no toca lo de otros. */
+  undo(usuario: string = USUARIO_LOCAL): Promise<CommandResult> {
+    return this.enCola(() => this.moverPila('undo', usuario));
   }
 
-  redo(): Promise<CommandResult> {
-    return this.enCola(() => this.moverPila('redo'));
+  redo(usuario: string = USUARIO_LOCAL): Promise<CommandResult> {
+    return this.enCola(() => this.moverPila('redo', usuario));
   }
 
-  private async moverPila(tipo: 'undo' | 'redo'): Promise<CommandResult> {
+  private async moverPila(tipo: 'undo' | 'redo', usuario: string): Promise<CommandResult> {
+    this.usuarioPila = usuario;
     const esUndo = tipo === 'undo';
     if (esUndo ? !this.pila.canUndo() : !this.pila.canRedo()) {
       const error: CommandError = esUndo
@@ -540,6 +611,8 @@ export class CommandExecutor {
       this.auditoria.log({ id: entryId, timestamp, commandType, payload: undefined, source: 'user', result: 'success' });
       this.bus.emit(esUndo ? 'undoRedo.undo' : 'undoRedo.redo', { comando: command.nombre });
       this.notificarCambio(this.estado, anterior);
+      // El undo se replica por su resultado: su inverso se calculó sobre el estado local.
+      this.notificarReplicacion({ modo: 'resultado', id: entryId, userId: usuario, origen: commandType, antes: anterior, despues: this.estado });
       return { success: true, state: this.estado, events };
     } catch (e: unknown) {
       const error: CommandError = {
@@ -573,14 +646,21 @@ export class CommandExecutor {
     opciones?: OpcionesEjecucion,
   ): Promise<TransactionResult> {
     const effectiveUserId = this.resolverUsuario(source, userId);
+    this.usuarioPila = effectiveUserId ?? USUARIO_LOCAL;
     const resultados: CommandResult[] = [];
-    const pasos: { cmd: CommandPayload; paso: PasoOk; id: string; timestamp: number }[] = [];
+    const pasos: { cmd: CommandPayload; paso: PasoOk; id: string; timestamp: number; entorno: EntornoComando }[] = [];
     let estado = this.estado;
 
     for (let i = 0; i < commands.length; i++) {
       const cmd = commands[i]!;
       const timestamp = Date.now();
-      const paso = await this.ejecutarPaso(estado, cmd.type, cmd.payload, source, effectiveUserId);
+      // En un lote cada comando recibe su propio entorno derivado del de opciones (si lo hay).
+      const entornoCmd =
+        cmd.entorno ??
+        (opciones?.entorno
+          ? { ahora: opciones.entorno.ahora, semilla: (opciones.entorno.semilla + i * 0x9e3779b1) >>> 0 }
+          : nuevoEntorno());
+      const paso = await this.ejecutarPaso(estado, cmd.type, cmd.payload, source, effectiveUserId, entornoCmd);
       if (!paso.ok) {
         resultados.push({ success: false, state: this.estado, events: [], error: paso.error });
         this.auditoria.log({
@@ -602,7 +682,7 @@ export class CommandExecutor {
       }
       estado = paso.estado;
       resultados.push({ success: true, state: paso.estado, events: paso.events, result: paso.result });
-      pasos.push({ cmd, paso, id: crypto.randomUUID(), timestamp });
+      pasos.push({ cmd, paso, id: crypto.randomUUID(), timestamp, entorno: entornoCmd });
     }
 
     const anterior = this.estado;
@@ -631,6 +711,12 @@ export class CommandExecutor {
       this.auditoria.log({ id, timestamp, commandType: cmd.type, payload: cmd.payload, source, userId: effectiveUserId, result: 'success' });
     }
     this.notificarCambio(this.estado, anterior);
+    this.replicarPaso(
+      pasos[0]?.id ?? crypto.randomUUID(),
+      effectiveUserId,
+      pasos.map((p) => ({ type: p.cmd.type, payload: p.cmd.payload, entorno: p.entorno })),
+      anterior,
+    );
 
     return { success: true, results: resultados, rolledBack: false };
   }
@@ -651,7 +737,7 @@ export class CommandExecutor {
       const results: CommandResult[] = [];
       let success = true;
       for (const cmd of commands) {
-        const paso = await this.ejecutarPaso(estado, cmd.type, cmd.payload, source, effectiveUserId);
+        const paso = await this.ejecutarPaso(estado, cmd.type, cmd.payload, source, effectiveUserId, nuevoEntorno());
         if (!paso.ok) {
           success = false;
           results.push({ success: false, state: before, events: [], error: paso.error });
@@ -663,5 +749,27 @@ export class CommandExecutor {
       const stateDiff = computeSemanticDiff(before, success ? estado : before);
       return { success, results, stateDiff };
     });
+  }
+
+  /**
+   * Notifica un cambio local a la replicación. Si algún comando del paso no es reejecutable de forma
+   * determinista (`replicacion: 'resultado'`) se replica el resultado completo; si todos son
+   * `'local'`, no se replica.
+   */
+  private replicarPaso(
+    id: string,
+    userId: string | undefined,
+    comandos: { type: string; payload: unknown; entorno: EntornoComando }[],
+    antes: DAWState,
+  ): void {
+    if (this.listenersReplicacion.size === 0 || antes === this.estado) return;
+    const modos = comandos.map((c) => this.registro.get(c.type)?.replicacion ?? 'operacion');
+    if (modos.every((m) => m === 'local')) return;
+    const usuario = userId ?? USUARIO_LOCAL;
+    if (modos.includes('resultado') || modos.includes('local')) {
+      this.notificarReplicacion({ modo: 'resultado', id, userId: usuario, origen: comandos.map((c) => c.type).join('+'), antes, despues: this.estado });
+      return;
+    }
+    this.notificarReplicacion({ modo: 'operacion', id, userId: usuario, comandos, antes, despues: this.estado });
   }
 }

@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomInt } from 'node:crypto';
 import type { Db } from '../db.js';
 import type { Identidad } from '../auth/verificador-jwt.js';
 import { resolverAcciones, type EstadoLicenciaDominio } from './permisos.js';
@@ -68,16 +68,61 @@ export async function emitirLicencia(
   const iat = Math.floor(ahora.getTime() / 1000);
   const exp = iat + VIGENCIA_LICENCIA_SEGUNDOS;
   const carga: CargaLicencia = { sub: usuario.id, email: usuario.email, dispositivo, productos, iat, exp };
-  await db.dispositivo.create({ data: { usuarioId: usuario.id, nombre: dispositivo, ultimoUso: ahora } });
   return { token: firmarLicencia(carga, clavePrivadaPem), expiraEn: new Date(exp * 1000).toISOString(), productos };
 }
 
-/** Código de 8 caracteres legibles para que el usuario lo escriba en el navegador (XXXX-XXXX). */
+/** Hash SHA-256 (hex) del token de dispositivo: en BD nunca se guarda el token en claro. */
+export function hashTokenDispositivo(token: string): string {
+  return createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
+/** Registra un dispositivo nuevo del usuario y devuelve su token secreto (solo se entrega una vez). */
+export async function registrarDispositivo(db: Db, usuarioId: string, nombre: string, ahora: Date) {
+  const token = randomBytes(32).toString('base64url');
+  const d = await db.dispositivo.create({
+    data: { usuarioId, nombre, hashToken: hashTokenDispositivo(token), ultimoUso: ahora },
+  });
+  return { dispositivoId: d.id, tokenDispositivo: token };
+}
+
+/**
+ * Localiza el dispositivo por su token actual o el inmediatamente anterior (gracia de una rotación,
+ * por si la respuesta de la renovación previa se perdió). No modifica nada.
+ */
+export async function buscarDispositivoPorToken(db: Db, tokenPresentado: string) {
+  const hash = hashTokenDispositivo(tokenPresentado);
+  const d = await db.dispositivo.findFirst({ where: { OR: [{ hashToken: hash }, { hashAnterior: hash }] } });
+  if (!d || d.revocado) throw new ErrorApi(401, 'dispositivo_revocado', 'dispositivo desconocido o revocado');
+  return { dispositivo: d, hashPresentado: hash };
+}
+
+/** Rota el token (llamar solo tras emitir la licencia con éxito, para no dejar al equipo sin token válido). */
+export async function rotarTokenDispositivo(
+  db: Db,
+  encontrado: Awaited<ReturnType<typeof buscarDispositivoPorToken>>,
+  nombre: string,
+  ahora: Date,
+): Promise<string> {
+  const { dispositivo: d, hashPresentado } = encontrado;
+  const nuevo = randomBytes(32).toString('base64url');
+  await db.dispositivo.update({
+    where: { id: d.id },
+    // La gracia solo cubre el token actual: si se presentó el anterior, éste deja de valer.
+    data: {
+      hashAnterior: d.hashToken === hashPresentado ? hashPresentado : null,
+      hashToken: hashTokenDispositivo(nuevo),
+      nombre,
+      ultimoUso: ahora,
+    },
+  });
+  return nuevo;
+}
+
+/** Código de 8 caracteres legibles para que el usuario lo escriba en el navegador (XXXX-XXXX), sin sesgo. */
 const ALFABETO = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export function codigoUsuarioLegible(): string {
-  const bytes = randomBytes(8);
   let s = '';
-  for (const b of bytes) s += ALFABETO[b % ALFABETO.length];
+  for (let i = 0; i < 8; i++) s += ALFABETO[randomInt(ALFABETO.length)];
   return `${s.slice(0, 4)}-${s.slice(4)}`;
 }
 

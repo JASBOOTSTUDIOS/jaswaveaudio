@@ -34,9 +34,10 @@ import { obtenerProveedorAnalisis } from '../audio/analysis-provider';
 import type { MedidaPista } from '../audio/diagnosis';
 import { getStateRevision } from '../state/state-revision';
 import { EventosTrack, EventosMezcla, EventosPlugin } from '../constants/nombres-eventos';
+import { entorno } from '../state/entorno-determinista';
 
 function generarId(): string {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  return `${entorno.ahora().toString(36)}-${entorno.aleatorio().toString(36).slice(2, 7)}`;
 }
 
 type ProcesadorTipo = 'eq' | 'compresor' | 'limite';
@@ -183,7 +184,7 @@ function actualizarPlugins(
   trackId: string,
   plugins: PluginInfo[],
 ): ProjectState {
-  const now = Date.now();
+  const now = entorno.ahora();
   return {
     ...estado.project,
     tracks: estado.project.tracks.map((t) =>
@@ -201,6 +202,7 @@ export type TrackGananciaPayload = { trackId: string; db: number };
 export function crearComandoTrackGanancia(): CommandDefinition<TrackGananciaPayload> {
   return {
     type: 'track.ganancia',
+    replicacion: 'resultado',
     inverseType: 'track.ganancia',
     description: 'Fija la ganancia de una pista en dB (lineal = 10^(dB/20))',
     risk: 'write',
@@ -224,11 +226,11 @@ export function crearComandoTrackGanancia(): CommandDefinition<TrackGananciaPayl
         ...estado.project,
         tracks: estado.project.tracks.map((t) =>
           t.id === pista.id
-            ? ({ ...t, volumen: volumenDespues, fechaModificacion: Date.now() } as Track)
+            ? ({ ...t, volumen: volumenDespues, fechaModificacion: entorno.ahora() } as Track)
             : t,
         ),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
       return {
         state: { ...estado, project: proyecto },
@@ -236,7 +238,7 @@ export function crearComandoTrackGanancia(): CommandDefinition<TrackGananciaPayl
           {
             nombre: EventosTrack.volumenCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'actuacion-commands',
             payload: {
               trackId: pista.id,
@@ -265,6 +267,7 @@ export type PistaPanPayload = { trackId: string; pan: number };
 export function crearComandoPistaPan(): CommandDefinition<PistaPanPayload> {
   return {
     type: 'pista.pan',
+    replicacion: 'resultado',
     inverseType: 'pista.pan',
     description: 'Fija el paneo de una pista (-1 izquierda .. 1 derecha)',
     risk: 'write',
@@ -285,11 +288,11 @@ export function crearComandoPistaPan(): CommandDefinition<PistaPanPayload> {
         ...estado.project,
         tracks: estado.project.tracks.map((t) =>
           t.id === pista.id
-            ? ({ ...t, paneo: pan, fechaModificacion: Date.now() } as Track)
+            ? ({ ...t, paneo: pan, fechaModificacion: entorno.ahora() } as Track)
             : t,
         ),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
       return {
         state: { ...estado, project: proyecto },
@@ -297,7 +300,7 @@ export function crearComandoPistaPan(): CommandDefinition<PistaPanPayload> {
           {
             nombre: EventosTrack.paneoCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'actuacion-commands',
             payload: { trackId: pista.id, panAntes, panDespues: pan },
           },
@@ -314,6 +317,7 @@ export function crearComandoPistaPan(): CommandDefinition<PistaPanPayload> {
 export function crearComandoPistaEqAgregar(): CommandDefinition<EqPayload> {
   return {
     type: 'pista.eq.agregar',
+    replicacion: 'resultado',
     inverseType: 'pista.eq.quitar',
     description: 'Añade (o actualiza) un ecualizador en la pista con bandas reales (Hz/dB)',
     risk: 'write',
@@ -363,7 +367,7 @@ export function crearComandoPistaEqAgregar(): CommandDefinition<EqPayload> {
           {
             nombre: EventosMezcla.eqCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'actuacion-commands',
             payload: {
               trackId: pista.id,
@@ -376,7 +380,7 @@ export function crearComandoPistaEqAgregar(): CommandDefinition<EqPayload> {
           {
             nombre: EventosPlugin.parametroCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'actuacion-commands',
             payload: { trackId: pista.id, pluginInstanceId: id, parameterId: 'eq.band.*.gain' },
           },
@@ -405,6 +409,7 @@ export function crearComandoPistaEqAgregar(): CommandDefinition<EqPayload> {
 export function crearComandoPistaEqEditar(): CommandDefinition<EqPayload> {
   return {
     type: 'pista.eq.editar',
+    replicacion: 'resultado',
     inverseType: 'pista.eq.editar',
     description: 'Edita las bandas del ecualizador existente de una pista',
     risk: 'write',
@@ -451,7 +456,7 @@ export function crearComandoPistaEqEditar(): CommandDefinition<EqPayload> {
           {
             nombre: EventosMezcla.eqCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'actuacion-commands',
             payload: {
               trackId: pista.id,
@@ -472,6 +477,7 @@ export function crearComandoPistaEqEditar(): CommandDefinition<EqPayload> {
 export function crearComandoPistaEqQuitar(): CommandDefinition<EqPayload> {
   return {
     type: 'pista.eq.quitar',
+    replicacion: 'resultado',
     inverseType: 'pista.eq.agregar',
     description: 'Quita el ecualizador de una pista',
     risk: 'write',
@@ -500,7 +506,7 @@ export function crearComandoPistaEqQuitar(): CommandDefinition<EqPayload> {
           {
             nombre: EventosMezcla.eqCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'actuacion-commands',
             payload: { trackId: pista.id, pluginInstanceId: existente.id, creado: false, bandas: [], removido: true },
           },
@@ -521,6 +527,7 @@ export function crearComandoPistaEqQuitar(): CommandDefinition<EqPayload> {
 export function crearComandoPistaCompresorAgregar(): CommandDefinition<CompPayload> {
   return {
     type: 'pista.compresor.agregar',
+    replicacion: 'resultado',
     inverseType: 'pista.compresor.quitar',
     description: 'Añade (o actualiza) un compresor en la pista con valores reales (dB, ms, :1)',
     risk: 'write',
@@ -560,7 +567,7 @@ export function crearComandoPistaCompresorAgregar(): CommandDefinition<CompPaylo
           {
             nombre: EventosMezcla.compresorCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'actuacion-commands',
             payload: {
               trackId: pista.id,
@@ -581,6 +588,7 @@ export function crearComandoPistaCompresorAgregar(): CommandDefinition<CompPaylo
 export function crearComandoPistaCompresorEditar(): CommandDefinition<CompPayload> {
   return {
     type: 'pista.compresor.editar',
+    replicacion: 'resultado',
     inverseType: 'pista.compresor.editar',
     description: 'Edita los parámetros del compresor existente de una pista',
     risk: 'write',
@@ -621,7 +629,7 @@ export function crearComandoPistaCompresorEditar(): CommandDefinition<CompPayloa
           {
             nombre: EventosMezcla.compresorCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'actuacion-commands',
             payload: {
               trackId: pista.id,
@@ -642,6 +650,7 @@ export function crearComandoPistaCompresorEditar(): CommandDefinition<CompPayloa
 export function crearComandoPistaCompresorQuitar(): CommandDefinition<CompPayload> {
   return {
     type: 'pista.compresor.quitar',
+    replicacion: 'resultado',
     inverseType: 'pista.compresor.agregar',
     description: 'Quita el compresor de una pista',
     risk: 'write',
@@ -670,7 +679,7 @@ export function crearComandoPistaCompresorQuitar(): CommandDefinition<CompPayloa
           {
             nombre: EventosMezcla.compresorCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'actuacion-commands',
             payload: {
               trackId: pista.id,
@@ -693,6 +702,7 @@ export function crearComandoPistaCompresorQuitar(): CommandDefinition<CompPayloa
 export function crearComandoPistaLimite(): CommandDefinition<LimitePayload> {
   return {
     type: 'pista.limite',
+    replicacion: 'resultado',
     description: 'Fija el techo (ceiling) y ganancia de entrada del limitador de una pista',
     risk: 'write',
     historialUndo: 'instantanea',
@@ -730,7 +740,7 @@ export function crearComandoPistaLimite(): CommandDefinition<LimitePayload> {
           {
             nombre: EventosPlugin.parametroCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'actuacion-commands',
             payload: { trackId: pista.id, pluginInstanceId: id, parameterId: 'limit.ceiling' },
           },
@@ -746,6 +756,7 @@ export function crearComandoPistaLimite(): CommandDefinition<LimitePayload> {
 export function crearComandoMasterNormalizar(): CommandDefinition<NormalizarPayload> {
   return {
     type: 'master.normalizar',
+    replicacion: 'resultado',
     description: 'Normaliza el master a un objetivo LUFS real (usa medición A7b)',
     risk: 'write',
     historialUndo: 'instantanea',
@@ -772,7 +783,7 @@ export function crearComandoMasterNormalizar(): CommandDefinition<NormalizarPayl
         ...estado.project,
         master: { ...master, volumen: volumenDespues },
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
       return {
         state: { ...estado, project: proyecto },
@@ -780,7 +791,7 @@ export function crearComandoMasterNormalizar(): CommandDefinition<NormalizarPayl
           {
             nombre: EventosMezcla.eqCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'actuacion-commands',
             payload: {
               trackId: 'master',

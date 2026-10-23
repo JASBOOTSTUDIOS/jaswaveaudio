@@ -18,7 +18,7 @@ function ev(nombre: string, payload: Record<string, unknown>): EventoDominio {
   return {
     nombre,
     version: 1,
-    marcaTiempo: Date.now(),
+    marcaTiempo: entorno.ahora(),
     fuente: 'builtin',
     payload: payload as EventoDominio['payload'],
     asincrono: true,
@@ -40,12 +40,13 @@ function secToPos(sec: number): TimePosition {
 }
 
 function newId(): string {
-  return `render-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  return `render-${entorno.ahora().toString(36)}-${entorno.aleatorio().toString(36).slice(2, 8)}`
 }
 
 export function crearComandoRenderStart(): CommandDefinition<any> {
   return {
     type: 'render.start',
+    replicacion: 'resultado',
     description: 'Inicia bounce/export WAV/FLAC/MP3 del proyecto',
     risk: 'write',
     schema: {
@@ -114,6 +115,7 @@ export function crearComandoRenderStart(): CommandDefinition<any> {
 export function crearComandoRenderCancel(): CommandDefinition<{ renderJobId: string }> {
   return {
     type: 'render.cancel',
+    replicacion: 'resultado',
     description: 'Cancela un bounce en curso',
     risk: 'write',
     schema: {
@@ -138,6 +140,7 @@ export function crearComandoRenderCancel(): CommandDefinition<{ renderJobId: str
 export function crearComandoRenderGetStatus(): CommandDefinition<any> {
   return {
     type: 'render.getStatus',
+    replicacion: 'resultado',
     description: 'Estado de un RenderJob',
     risk: 'read',
     schema: {
@@ -153,3 +156,5 @@ export function crearComandoRenderGetStatus(): CommandDefinition<any> {
     },
   }
 }
+
+import { entorno } from '../state/entorno-determinista';
