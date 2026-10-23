@@ -9,7 +9,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { apiJasWave } from '@/src/lib/backend/sesion'
 import type { ProveedorIAApi } from '@/src/lib/backend/api'
-import { refrescarCatalogoIA } from '@/src/lib/ia/catalogo-ia'
 import { Aviso, Boton, Seccion } from '../cuenta/ui'
 import { CambiarClave, FormularioProveedorIA } from '../ia/formulario-proveedor-ia'
 
@@ -43,8 +42,8 @@ export function PestanaIA() {
       await fn()
       setAviso({ tipo: 'ok', texto: ok })
       await recargar()
-      // El propio admin también usa estos proveedores.
-      void refrescarCatalogoIA().catch(() => {})
+      // El propio admin también usa estos proveedores: el asistente (si está activo) recarga su catálogo.
+      window.dispatchEvent(new CustomEvent('jaswave-ia-catalogo-invalidado'))
     } catch (e) {
       setAviso({ tipo: 'error', texto: mensaje(e) })
       throw e

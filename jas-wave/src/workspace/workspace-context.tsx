@@ -430,6 +430,11 @@ export function useWorkspace() {
   return ctx
 }
 
+/** Id de herramienta bien formado (del núcleo o de un módulo). */
+export function esIdHerramientaValido(id: string): boolean {
+  return /^[a-z0-9][a-z0-9.-]{0,80}$/.test(id)
+}
+
 export function getUndockToolIdFromUrl(): ToolId | null {
   try {
     const params = new URLSearchParams(window.location.search)
@@ -437,7 +442,8 @@ export function getUndockToolIdFromUrl(): ToolId | null {
     const fromQuery = params.get('undock')
     const fromHash = hash.startsWith('undock/') ? hash.slice('undock/'.length) : null
     const id = (fromQuery || fromHash) as ToolId | null
-    if (id && id in TOOL_CATALOG) return id
+    // Las herramientas de módulos se registran después de arrancar: basta con que el id sea válido.
+    if (id && esIdHerramientaValido(id)) return id
   } catch {
     /* ignore */
   }

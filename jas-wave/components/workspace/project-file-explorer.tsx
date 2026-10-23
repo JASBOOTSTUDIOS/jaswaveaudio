@@ -30,7 +30,7 @@ import {
   FolderSearch,
 } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
-import { openDocsTab } from '@/src/lib/docs-editor-store'
+import { servicioDeModulo } from '@/src/modulos/contribuciones'
 import { requestOpenTool } from '@/src/workspace/types'
 
 interface FileNode {
@@ -144,8 +144,9 @@ export function ProjectFileExplorer() {
 
     const ext = node.name.split('.').pop()?.toLowerCase() ?? ''
     if (ext === 'md') {
-      openDocsTab(node.name, 'edit')
-      requestOpenTool('docs', { zone: 'left' })
+      const documentos = servicioDeModulo('documentos')
+      if (documentos) documentos.abrir(node.name, 'edit')
+      else requestOpenTool('modulos')
     } else if (ext === 'mid' || ext === 'midi') {
       requestOpenTool('piano-roll', { zone: 'bottom' })
     }

@@ -7,7 +7,6 @@
 import { configBackend } from '../lib/backend/config'
 import { sincronizarModulosCatalogo, type ModuloCatalogo } from './cargador'
 import { CLAVE_PUBLICA_CATALOGO } from './clave-catalogo'
-import { registrarModulosIntegrados } from './integrados'
 import { instalarSdkHost } from './sdk-host'
 
 function base64urlABytes(s: string): Uint8Array {
@@ -47,7 +46,6 @@ export async function sincronizarCatalogoWeb(apiBase = configBackend().apiUrl, f
 
 export function iniciarModulos(): void {
   instalarSdkHost()
-  registrarModulosIntegrados()
   if (typeof window !== 'undefined' && !window.electron?.pluginsListar) {
     void sincronizarCatalogoWeb().catch((e) => console.warn('[modulos] no se pudo cargar el catálogo de módulos', e))
   }

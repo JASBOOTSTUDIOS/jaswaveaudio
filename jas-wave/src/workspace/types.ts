@@ -41,6 +41,8 @@ export interface ToolDefinitionUI {
   icono?: ComponentType<{ className?: string }>
   /** Módulo que aporta la herramienta (undefined = núcleo). */
   moduloId?: string
+  /** Al colocarse por primera vez queda como pestaña activa de su zona. */
+  destacada?: boolean
 }
 
 /** Herramientas disponibles: las del núcleo + las de los módulos activos (mutable en tiempo de ejecución). */
@@ -255,6 +257,7 @@ function ensureCatalogTools(layout: WorkspaceLayout): WorkspaceLayout {
     // No estaba colocado ni cerrado → zona por defecto (herramientas nuevas)
     const zone = TOOL_CATALOG[id].defaultZone
     next.zones[zone] = [...next.zones[zone], id]
+    if (TOOL_CATALOG[id].destacada) next.activeTab[zone] = id
   }
 
   for (const zone of ['left', 'center', 'right', 'bottom'] as DockZone[]) {

@@ -137,6 +137,7 @@ export function cargarModulo(id: string): Promise<void> {
           singleton: true,
           ...(h.bajoDemanda ? { bajoDemanda: true } : {}),
           ...(h.icono ? { icono: h.icono } : {}),
+          ...(h.destacada ? { destacada: true } : {}),
           moduloId: id,
         })
       }

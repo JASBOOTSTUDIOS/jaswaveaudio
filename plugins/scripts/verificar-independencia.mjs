@@ -40,6 +40,11 @@ function importsDe(f) {
 
 const dentro = (p, dir) => path.resolve(p).toLowerCase().startsWith(path.resolve(dir).toLowerCase() + path.sep)
 const violaciones = []
+const LIBRERIAS = new Set(
+  fs.existsSync(path.join(PLUGINS, 'lib'))
+    ? fs.readdirSync(path.join(PLUGINS, 'lib')).map((d) => JSON.parse(fs.readFileSync(path.join(PLUGINS, 'lib', d, 'package.json'), 'utf8')).name)
+    : [],
+)
 const rel = (p) => path.relative(REPO, p).split(path.sep).join('/')
 
 // 1) Módulos
@@ -48,9 +53,11 @@ for (const m of modulos) {
   const raiz = path.join(PLUGINS, m.name)
   for (const f of archivos(path.join(raiz, 'src'))) {
     // La API privada del escritorio es del DAW: los módulos usan la del SDK (archivos, diálogos…).
-    if (/window.electron/.test(fs.readFileSync(f, 'utf8'))) violaciones.push(`${rel(f)} usa window.electron (usa la API de @jaswave/host-sdk)`)
+    if (/\bwindow\.electron\b/.test(fs.readFileSync(f, 'utf8'))) violaciones.push(`${rel(f)} usa window.electron (usa la API de @jaswave/host-sdk)`)
     for (const esp of importsDe(f)) {
       if (esp === '@jaswave/host-sdk' || esp === 'tailwindcss/theme' || esp === 'tailwindcss/utilities') continue
+      // Librerías del workspace de plugins (plugins/lib/*): se empaquetan dentro del módulo.
+      if (LIBRERIAS.has(esp)) continue
       if (esp.startsWith('@/') || esp.startsWith('@jaswave/')) {
         violaciones.push(`${rel(f)} importa ${esp} (solo se permite @jaswave/host-sdk)`)
         continue
@@ -61,6 +68,18 @@ for (const m of modulos) {
         if (f.endsWith('.css') && dentro(destino, path.join(PLUGINS, 'sdk', 'host-sdk', 'src'))) continue
         if (!dentro(destino, raiz)) violaciones.push(`${rel(f)} importa ${esp} fuera de su paquete`)
       }
+    }
+  }
+}
+
+// 1b) Librerías del workspace: solo npm y sus propios archivos
+for (const d of fs.existsSync(path.join(PLUGINS, 'lib')) ? fs.readdirSync(path.join(PLUGINS, 'lib')) : []) {
+  const raiz = path.join(PLUGINS, 'lib', d)
+  for (const f of archivos(path.join(raiz, 'src'))) {
+    if (/\bwindow\.electron\b/.test(fs.readFileSync(f, 'utf8'))) violaciones.push(`${rel(f)} usa window.electron`)
+    for (const esp of importsDe(f)) {
+      if (esp.startsWith('@/') || esp.startsWith('@jaswave/')) violaciones.push(`${rel(f)} importa ${esp} (una librería no depende del DAW)`)
+      else if (esp.startsWith('.') && !dentro(path.resolve(path.dirname(f), esp), raiz)) violaciones.push(`${rel(f)} importa ${esp} fuera de su paquete`)
     }
   }
 }

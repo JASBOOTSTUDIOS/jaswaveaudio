@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { FolderOpen, Music2, AudioLines, Settings2, Keyboard, ListOrdered, Shield, Bot, Piano, Plus, Trash2 } from 'lucide-react'
+import { FolderOpen, Music2, AudioLines, Settings2, Keyboard, ListOrdered, Shield, Piano, Plus, Trash2 } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { NumericField } from '@/components/ui/numeric-field'
 import { TimeSignatureField } from '@/components/ui/time-signature-field'
@@ -7,8 +7,8 @@ import type { DAWState } from '../../shared/src/types/state'
 import { ACCIONES_ATAJO, ATAJOS_POR_DEFECTO } from '../../shared/src'
 import type { AccionAtajo } from '../../shared/src'
 import { permissionManager, type AutonomyLevel } from '../../shared/src/state/permissions'
-import { AjustesIA } from '@/components/ia/ajustes-ia'
-import { JasWaveLogo } from '@/components/brand'
+import { usePaginasAjustes } from '@/src/modulos/contribuciones'
+import { AppErrorBoundary } from '@/components/app-error-boundary'
 import { audioEngine } from '@/lib/audio-engine'
 import { midiController } from '@/src/lib/midi-controller'
 import {
@@ -30,13 +30,14 @@ const SAMPLE_RATES = [44100, 48000, 88200, 96000, 192000]
 const BIT_DEPTHS = [16, 24, 32]
 const BUFFER_SIZES = [64, 128, 256, 512, 1024, 2048, 4096]
 
-type SettingsTab = 'general' | 'audio' | 'midi' | 'rutas' | 'atajos' | 'comandos' | 'permisos' | 'ia'
+type PestanaNucleo = 'general' | 'audio' | 'midi' | 'rutas' | 'atajos' | 'comandos' | 'permisos'
+/** Pestañas del núcleo o el id de una página de ajustes de un módulo. */
+type SettingsTab = PestanaNucleo | string
 
-const TABS: { id: SettingsTab; label: string; icon: typeof Music2 }[] = [
+const TABS: { id: PestanaNucleo; label: string; icon: typeof Music2 }[] = [
   { id: 'general', label: 'General', icon: Music2 },
   { id: 'audio', label: 'Audio', icon: AudioLines },
   { id: 'midi', label: 'MIDI', icon: Piano },
-  { id: 'ia', label: 'IA', icon: Bot },
   { id: 'rutas', label: 'Rutas', icon: FolderOpen },
   { id: 'atajos', label: 'Atajos', icon: Keyboard },
   { id: 'comandos', label: 'Comandos', icon: ListOrdered },
@@ -1324,7 +1325,9 @@ function PermisosTab() {
 }
 
 export function SettingsPanel() {
-  const [tab, setTab] = useState<SettingsTab>('ia')
+  const paginasModulos = usePaginasAjustes()
+  const [tab, setTab] = useState<SettingsTab>(() => paginasModulos[0]?.id ?? 'general')
+  const paginaModulo = paginasModulos.find((p) => p.id === tab)
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-panel">
@@ -1335,6 +1338,20 @@ export function SettingsPanel() {
       </div>
 
       <div className="flex shrink-0 gap-0.5 overflow-x-auto border-b border-border px-2 pt-1">
+        {paginasModulos.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => setTab(p.id)}
+            className={`flex shrink-0 items-center gap-1.5 rounded-t-md px-2.5 py-1.5 text-[11px] font-medium transition-colors ${
+              tab === p.id
+                ? 'bg-panel-raised text-foreground border-b-2 border-accent-amber'
+                : 'text-muted-foreground hover:bg-panel-raised/50 hover:text-foreground'
+            }`}
+          >
+            {p.titulo}
+          </button>
+        ))}
         {TABS.map((t) => {
           const Icon = t.icon
           return (
@@ -1348,7 +1365,7 @@ export function SettingsPanel() {
                   : 'text-muted-foreground hover:bg-panel-raised/50 hover:text-foreground'
               }`}
             >
-              {t.id === 'ia' ? <JasWaveLogo className="size-3.5" alt="" /> : <Icon className="size-3.5" />}
+              <Icon className="size-3.5" />
               {t.label}
             </button>
           )
@@ -1359,7 +1376,12 @@ export function SettingsPanel() {
         {tab === 'general' && <GeneralTab />}
         {tab === 'audio' && <AudioTab />}
         {tab === 'midi' && <MidiTab />}
-        {tab === 'ia' && <AjustesIA />}
+        {paginaModulo ? (
+          <AppErrorBoundary area={`ajustes-${paginaModulo.id}`} compact>
+            <paginaModulo.componente />
+          </AppErrorBoundary>
+        ) : null}
+        {!paginaModulo && !TABS.some((t) => t.id === tab) ? <GeneralTab /> : null}
         {tab === 'rutas' && <RutasTab />}
         {tab === 'atajos' && <AtajosTab />}
         {tab === 'comandos' && <ComandosTab />}

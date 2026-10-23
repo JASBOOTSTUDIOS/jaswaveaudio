@@ -20,7 +20,7 @@ function ToolTabLabel({ toolId }: { toolId: ToolId }) {
   if (toolId === 'plugin-editor' && pluginTitle) {
     return <span className="max-w-[9rem] truncate">{pluginTitle}</span>
   }
-  return <>{TOOL_CATALOG[toolId].title}</>
+  return <>{TOOL_CATALOG[toolId]?.title ?? toolId}</>
 }
 
 function AddToolButton({ zone }: { zone: DockZone }) {

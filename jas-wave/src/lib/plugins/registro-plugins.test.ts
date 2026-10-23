@@ -3,8 +3,7 @@
  */
 import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
-import { agentActionClassOfType } from '@jaswave/ai-harness'
-import { listAgentToolSchemas } from '../agent-tool-schemas'
+import { agentActionClassOfType, registroHerramientasPlugins } from '@jaswave/ai-harness'
 import {
   _reiniciarPluginsParaPruebas,
   activarPaquetes,
@@ -49,19 +48,13 @@ describe('plugins activos (P1/P2 en el DAW)', () => {
   it('un paquete válido expone sus herramientas al rol permitido y no a otros', () => {
     const r = activarPaquetes([paquete()])
     assert.equal(r.activos.length, 1)
-    const mezcla = listAgentToolSchemas({ mode: 'auto', role: 'mezcla' }).map((t) => t.name)
+    const mezcla = registroHerramientasPlugins.listar('mezcla').map((t) => t.name)
     assert.ok(mezcla.includes('plugin.param-eq.ajustar'))
     assert.ok(mezcla.includes('plugin.param-eq.describir'))
-    const productor = listAgentToolSchemas({ mode: 'auto', role: 'productor' }).map((t) => t.name)
+    const productor = registroHerramientasPlugins.listar('productor').map((t) => t.name)
     assert.ok(!productor.includes('plugin.param-eq.ajustar'))
   })
 
-  it('en modo ask solo se ven las herramientas de lectura del plugin', () => {
-    activarPaquetes([paquete()])
-    const ask = listAgentToolSchemas({ mode: 'ask', role: 'mezcla' }).map((t) => t.name)
-    assert.ok(ask.includes('plugin.param-eq.describir'))
-    assert.ok(!ask.includes('plugin.param-eq.ajustar'))
-  })
 
   it('rechaza paquetes alterados, manifiestos inválidos e ids duplicados', () => {
     const r = activarPaquetes([

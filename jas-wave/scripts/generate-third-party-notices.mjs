@@ -40,7 +40,6 @@ const BUNDLED_ROOTS = [
   'electron-updater',
   'clsx',
   'lucide-react',
-  'mermaid',
   'react',
   'react-dom',
   'react-resizable-panels',

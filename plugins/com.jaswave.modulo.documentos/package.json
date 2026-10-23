@@ -1,0 +1,15 @@
+{
+  "name": "@jaswave/modulo-documentos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Módulo de JasWave: editor y explorador de los documentos Markdown del proyecto (docs/, plan.md).",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@jaswave/ui-markdown": "1.0.0",
+    "lucide-react": "^1.16.0"
+  }
+}

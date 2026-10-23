@@ -7,7 +7,7 @@ import {
   mensajeError,
   nuevoProyectoIO,
 } from '../src/lib/project-io'
-import type { AiChatRequest, AiChatResult, AiHealthResult } from '../src/lib/ai-settings'
+import type { AiChatRequest, AiChatResult, AiHealthResult } from '../src/lib/ia/proveedores'
 
 declare global {
   interface Window {
@@ -100,6 +100,7 @@ declare global {
         baseUrl?: string
       }>
       aiChatCancel?: (requestId: string) => Promise<boolean>
+      aiMockActivo?: () => Promise<boolean>
       /** Chat con streaming (deltas por evento); resuelve con el resultado final. */
       aiChatStream?: (
         payload: AiChatRequest,

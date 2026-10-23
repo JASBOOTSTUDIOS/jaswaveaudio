@@ -33,6 +33,7 @@ import {
   WorkspaceProvider,
   useWorkspace,
   getUndockToolIdFromUrl,
+  esIdHerramientaValido,
 } from '@/src/workspace/workspace-context'
 import { TOOL_CATALOG, type ToolId } from '@/src/workspace/types'
 import { herramientasDisponibles } from '@/src/modulos/herramientas'
@@ -61,7 +62,7 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
         const parsed = raw
           .split(',')
           .map((s) => s.trim())
-          .filter((id): id is ToolId => id in TOOL_CATALOG)
+          .filter((id): id is ToolId => esIdHerramientaValido(id))
         if (parsed.length) return [...new Set(parsed)]
       }
     } catch {
@@ -84,7 +85,7 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
         const data = ev.data as { type?: string; toolId?: string; floatHost?: string }
         if (data?.type === 'float-accept-tab' && data.toolId && data.floatHost === initialToolId) {
           const id = data.toolId as ToolId
-          if (!(id in TOOL_CATALOG)) return
+          if (!esIdHerramientaValido(id)) return
           setTabs((prev) => (prev.includes(id) ? prev : [...prev, id]))
           setActive(id)
         }
@@ -150,7 +151,7 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
                 id === visible ? 'bg-background text-foreground' : 'text-muted-foreground hover:bg-panel-raised'
               }`}
             >
-              {TOOL_CATALOG[id].title}
+              {TOOL_CATALOG[id]?.title ?? id}
               <span
                 role="button"
                 tabIndex={0}
@@ -185,7 +186,7 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
                   onClick={() => stealTool(id)}
                   className="flex w-full px-3 py-1.5 text-left text-[11px] hover:bg-panel-raised disabled:opacity-40"
                 >
-                  {TOOL_CATALOG[id].title}
+                  {TOOL_CATALOG[id]?.title ?? id}
                 </button>
               ))}
             </div>

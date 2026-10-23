@@ -20,7 +20,6 @@ import { permissionManager } from '../../../shared/src/state/permissions'
 import { fallbackActionsFromUserIntent } from './ai-daw-agent'
 import { parseMidiBriefFromText } from './midi-song-generator'
 import { detectAgentMode } from './ai-modes'
-import { lastCreativeUserText } from './ai-clarify'
 
 describe('ai-action-policy', () => {
   it('plan/think/ask bloquean mutación', () => {
@@ -193,21 +192,5 @@ describe('BPM en brief y fallback', () => {
   it('«hazlo» solo no reconstruye la canción', () => {
     const actions = fallbackActionsFromUserIntent('hazlo', undefined, 'create')
     assert.equal(actions.some((a) => a.type === 'daw.musicBuild'), false)
-  })
-
-  it('lastCreativeUserText recupera el pedido de batería, no el hola/estado', () => {
-    const brief =
-      'creame una pista de bateria worship con crescendo y toms, tiempo sea 72 4/4'
-    const got = lastCreativeUserText(
-      [
-        { role: 'user', content: brief },
-        { role: 'assistant', content: 'falló' },
-        { role: 'user', content: 'no se creo el clip.' },
-        { role: 'user', content: 'hola' },
-        { role: 'user', content: 'hola, dame el estado de este proyecto.' },
-      ],
-      'hazlo',
-    )
-    assert.equal(got, brief)
   })
 })

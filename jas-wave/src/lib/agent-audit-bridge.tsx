@@ -22,7 +22,7 @@ import {
   waitUntilProjectReady,
 } from './project-ready'
 import { getLoadedInstrumentForTrack } from './plugin/track-vst-runtime'
-import type { HarnessHealthContext } from './agent-harness'
+import type { HarnessHealthContext } from '@jaswave/ai-harness'
 import { inferPluginRole, localUsageGuide } from './plugin-knowledge'
 import type { ProductionPluginGuide } from '@jaswave/ai-harness'
 

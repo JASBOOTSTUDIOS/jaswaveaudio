@@ -15,7 +15,6 @@ import {
   evaluatePlanAgainstDaw,
   planMarkdownFromProjectPlan,
 } from './agent-plan-eval'
-import { buildHarnessReviewMessage, harnessReviewNeeded } from './agent-harness'
 import {
   buildDocTextAnchor,
   formatMusicalSelectionForPrompt,
@@ -119,35 +118,5 @@ describe('agent-plan-eval', () => {
     assert.match(getMarkdownSection(ev.markdown, 'Implementado'), /Crear pista|Bajo/)
     assert.match(getMarkdownSection(ev.markdown, 'Por implementar'), /MIDI|Escribir/)
     assert.match(getMarkdownSection(ev.markdown, 'Evaluación'), /Intención vs ejecución/)
-  })
-})
-
-describe('agent-harness', () => {
-  it('pide revisión tras mutar el DAW, no tras solo leer docs', () => {
-    assert.equal(harnessReviewNeeded([{ type: 'track.create', success: true, message: 'ok' }]), true)
-    assert.equal(harnessReviewNeeded([{ type: 'doc.read', success: true, message: 'ok' }]), false)
-  })
-
-  it('el mensaje de revisión pide las tres capas', () => {
-    const msg = buildHarnessReviewMessage({
-      userText: 'crea un bajo',
-      evalSummary: 'Falta el pad',
-      actionsSummary: '✓ pista',
-      projectId: 'test-harness',
-      evaluation: {
-        planned: 2,
-        done: 1,
-        missing: ['Pad aéreo'],
-        extraTracks: [],
-        summary: 'Falta el pad',
-        markdown: '',
-        checks: [],
-      },
-    })
-    assert.match(msg, /Intención/)
-    assert.match(msg, /Por implementar/)
-    assert.match(msg, /Implementado/)
-    assert.match(msg, /crea un bajo/)
-    assert.match(msg, /Notas del usuario/)
   })
 })

@@ -115,6 +115,8 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.invoke('ai-chat', payload, model, baseUrl, temperature),
   aiHealth: (payload?: unknown) => ipcRenderer.invoke('ai-health', payload),
   aiChatCancel: (requestId: string) => ipcRenderer.invoke('ai-chat-cancel', requestId),
+  /** true si main arrancó con JASWAVE_AI_MOCK (pruebas): proveedor simulado local. */
+  aiMockActivo: () => ipcRenderer.invoke('ai-mock-activo'),
   /** Chat con streaming: onEvent recibe {type:'delta',text} / {type:'done'}; resuelve con el resultado. */
   aiChatStream: (payload: { requestId?: string }, onEvent: (e: { type: string; text?: string; success?: boolean }) => void) => {
     const requestId = String(payload?.requestId ?? '')

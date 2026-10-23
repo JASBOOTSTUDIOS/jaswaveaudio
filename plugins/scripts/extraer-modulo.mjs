@@ -25,6 +25,8 @@ const EXT = ['.ts', '.tsx', '.js', '.mjs']
 const norm = (p) => path.resolve(p).toLowerCase()
 /** origen absoluto → destino absoluto */
 const mover = new Map(Object.entries(plan.archivos).map(([o, d]) => [norm(path.join(REPO, o)), path.join(MOD, 'src', d)]))
+/** origen absoluto → paquete del workspace que lo contendrá (p. ej. @jaswave/ui-markdown) */
+const paquetes = new Map(Object.entries(plan.paquetes ?? {}).map(([o, p]) => [norm(path.join(REPO, o)), p]))
 
 function resolver(desdeOrigen, esp) {
   let base
@@ -81,6 +83,7 @@ function reescribir(origen, destino, texto) {
     const r = resolver(origen, esp)
     if (r.tipo === 'npm') return m
     if (r.tipo === 'archivo' && mover.has(norm(r.ruta))) return `${nl}${ind}${kw}${tipoKw ?? ''} ${cuerpo} from ${q}${relDesde(destino, mover.get(norm(r.ruta)))}${q}`
+    if (r.tipo === 'archivo' && paquetes.has(norm(r.ruta))) return `${nl}${ind}${kw}${tipoKw ?? ''} ${cuerpo} from ${q}${paquetes.get(norm(r.ruta))}${q}`
     if (r.tipo === 'desconocido') {
       problemas.push(`${path.relative(REPO, origen)}: no se resuelve ${esp}`)
       return m
@@ -92,28 +95,43 @@ function reescribir(origen, destino, texto) {
       return m
     }
     const objetivo = r.tipo === 'harness' ? '@jaswave/ai-harness' : r.ruta
+    if (kw === 'export') {
+      // Re-exportación de algo del host: se re-exporta desde el SDK.
+      for (const n of parsearNombres(llaves[1])) pedir(objetivo, n.nombre, soloTipo || n.tipo)
+      return `${nl}${ind}export${tipoKw ?? ''} {${llaves[1]}} from ${q}@jaswave/host-sdk${q}`
+    }
     for (const n of parsearNombres(llaves[1])) {
       pedir(objetivo, n.nombre, soloTipo || n.tipo)
       const txt = n.alias ? `${n.nombre} as ${n.alias}` : n.nombre
-      if (kw === 'export') problemas.push(`${path.relative(REPO, origen)}: re-export del host (${n.nombre}); revisar`)
       ;(soloTipo || n.tipo ? hostTipos : hostValores).push(txt)
     }
     return nl
   })
 
   // import() dinámicos hacia el host: const { a, b } = await import('x')
-  s = s.replace(/import\(\s*(['"])([^'"]+)\1\s*\)/g, (m, q, esp) => {
+  s = s.replace(/import\(\s*(['"])([^'"]+)\1\s*\)/g, (m, q, esp, desplazamiento) => {
     const r = resolver(origen, esp)
     if (r.tipo === 'npm') return m
     if (r.tipo === 'archivo' && mover.has(norm(r.ruta))) return `import(${q}${relDesde(destino, mover.get(norm(r.ruta)))}${q})`
+    if (r.tipo === 'archivo' && paquetes.has(norm(r.ruta))) return `import(${q}${paquetes.get(norm(r.ruta))}${q})`
     if (r.tipo === 'desconocido') {
       problemas.push(`${path.relative(REPO, origen)}: no se resuelve import(${esp})`)
       return m
     }
     // Nombres desestructurados justo antes
-    const antes = s.slice(0, s.indexOf(m))
-    const d = antes.match(/\{([^{}]*)\}\s*=\s*await\s*$/)
-    if (d) for (const n of parsearNombres(d[1].replace(/:\s*\w+/g, ''))) pedir(r.tipo === 'harness' ? '@jaswave/ai-harness' : r.ruta, n.nombre, false)
+    // Posición real de esta coincidencia (puede haber varios import() iguales en el archivo).
+    const i = desplazamiento
+    const antes = s.slice(0, i)
+    const despues = s.slice(i + m.length, i + m.length + 200)
+    // `const { a } = await import(x)` o `import(x).then(({ a }) => …)`
+    const d = antes.match(/\{([^{}]*)\}\s*=\s*await\s*$/) ?? despues.match(/^\s*\.then\(\s*\(\s*\{([^{}]*)\}\s*\)\s*=>/)
+    const objetivoDin = r.tipo === 'harness' ? '@jaswave/ai-harness' : r.ruta
+    // `import('x').Tipo` (posición de tipo) o `(await import('x')).valor`
+    const tipoInline = despues.match(/^\.(\w+)/)
+    const valorAwait = /\(\s*await\s*$/.test(antes) ? despues.match(/^\s*\)\s*\.(\w+)/) : null
+    if (d) for (const n of parsearNombres(d[1].replace(/:\s*\w+/g, ''))) pedir(objetivoDin, n.nombre, false)
+    else if (tipoInline) pedir(objetivoDin, tipoInline[1], true)
+    else if (valorAwait) pedir(objetivoDin, valorAwait[1], false)
     else problemas.push(`${path.relative(REPO, origen)}: import() dinámico del host sin desestructurar (${esp})`)
     return `import(${q}@jaswave/host-sdk${q})`
   })
@@ -155,6 +173,14 @@ if (!seco) {
 const api = fs.existsSync(API_HOST) ? fs.readFileSync(API_HOST, 'utf8') : ''
 const yaExportados = new Set([...api.matchAll(/export\s+(?:type\s+)?\{([^}]*)\}/g)].flatMap((m) => parsearNombres(m[1]).map((n) => n.alias ?? n.nombre)))
 const nuevas = []
+const origenDe = new Map()
+for (const [objetivo, { valores, tipos }] of pedidos) {
+  for (const n of [...valores, ...tipos]) {
+    const previo = origenDe.get(n)
+    if (previo && previo !== objetivo) problemas.push(`«${n}» llega de dos orígenes (${path.relative(REPO, previo)} y ${path.relative(REPO, objetivo)}): se exporta el primero; comprueba que son equivalentes`)
+    else origenDe.set(n, objetivo)
+  }
+}
 for (const [objetivo, { valores, tipos }] of [...pedidos].sort((a, b) => a[0].localeCompare(b[0]))) {
   const desde = objetivo === '@jaswave/ai-harness' ? '@jaswave/ai-harness' : relDesde(API_HOST, objetivo).replace(/^\.\/\.\.\//, '../')
   const v = [...valores].filter((n) => !yaExportados.has(n))

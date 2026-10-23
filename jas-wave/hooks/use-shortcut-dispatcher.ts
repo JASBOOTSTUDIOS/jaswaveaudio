@@ -20,8 +20,8 @@ import { loteBorrarClips, loteDuplicarClips, lotePegarClips } from '../src/lib/c
 import { solicitarBorrarPista } from '../src/lib/track-delete-request'
 
 import { requestOpenTool } from '../src/workspace/types'
-import { bumpUiZoom, bumpDocsTextZoom, isDocsZoomTarget, setDocsTextZoom } from '../src/lib/docs-editor-store'
-import { bumpChatTextZoom, isChatZoomTarget, setChatTextZoom } from '../src/lib/chat-ui-store'
+import { bumpUiZoom } from '../src/lib/ui-zoom'
+import { zoomDeModulo } from '../src/modulos/contribuciones'
 import { captureActiveDocTextSelection } from '../src/lib/ai-selection-context'
 import { resolveSnapDivision } from '../src/lib/timeline-snap'
 import { estaRenderLock } from '../src/lib/render-lock'
@@ -369,14 +369,10 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       },
 
       'timeline.zoomIn': () => {
-        // Panel Docs con foco / undock Docs: Ctrl+= zoom tipográfico del .md.
-        if (isDocsZoomTarget()) {
-          bumpDocsTextZoom(0.1)
-          return
-        }
-        // Chat / Asistente Jas con foco: zoom solo del chat
-        if (isChatZoomTarget()) {
-          bumpChatTextZoom(0.1)
+        // Panel de un módulo con zoom propio (Docs, chat del asistente…) con foco: zoom solo de ese panel.
+        const zoomModulo = zoomDeModulo(document.activeElement)
+        if (zoomModulo) {
+          zoomModulo.cambiar(0.1)
           return
         }
         const z = st().ui?.zoomHorizontal ?? 1
@@ -386,12 +382,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         bumpUiZoom(0.05)
       },
       'timeline.zoomOut': () => {
-        if (isDocsZoomTarget()) {
-          bumpDocsTextZoom(-0.1)
-          return
-        }
-        if (isChatZoomTarget()) {
-          bumpChatTextZoom(-0.1)
+        const zoomModulo = zoomDeModulo(document.activeElement)
+        if (zoomModulo) {
+          zoomModulo.cambiar(-0.1)
           return
         }
         const z = st().ui?.zoomHorizontal ?? 1
@@ -401,12 +394,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         bumpUiZoom(-0.05)
       },
       'timeline.zoomToProject': () => {
-        if (isDocsZoomTarget()) {
-          setDocsTextZoom(1)
-          return
-        }
-        if (isChatZoomTarget()) {
-          setChatTextZoom(1)
+        const zoomModulo = zoomDeModulo(document.activeElement)
+        if (zoomModulo) {
+          zoomModulo.restablecer()
           return
         }
         void executeOrNotify(tienda, 'ui.setZoom', { horizontal: 1, vertical: 1 })
@@ -493,7 +483,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         resolved === 'editing.paste' ||
         resolved === 'editing.duplicate'
       // Zoom de chat/docs debe llegar aunque el panel ignore atajos globales
-      if (isZoomAction(resolved) && (isChatZoomTarget() || isDocsZoomTarget())) {
+      if (isZoomAction(resolved) && zoomDeModulo(document.activeElement)) {
         system.actions.execute(resolved)
         return
       }
@@ -519,7 +509,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         resolved === 'editing.cut' ||
         resolved === 'editing.paste' ||
         resolved === 'editing.duplicate'
-      if (isZoomAction(resolved) && (isChatZoomTarget() || isDocsZoomTarget())) {
+      if (isZoomAction(resolved) && zoomDeModulo(document.activeElement)) {
         system.actions.execute(resolved)
         return
       }

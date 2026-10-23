@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Ke
 import { ChevronDown, Columns2, Plus, SquareTerminal, Trash2 } from 'lucide-react'
 import { useDAW } from '@/src/context/daw-context'
 import { DAW_CLI_HELP_SECTIONS, formatTermCwd, runDawCliLine } from '@/src/lib/daw-cli-inapp'
-import { getActiveConversationId } from '@/src/lib/ai-chat-store'
+import { conversacionActiva } from '@/src/lib/conversacion-activa'
 import {
   appendTerminalLine,
   clearTerminalSession,
@@ -135,7 +135,7 @@ function SessionPane({
     pushTerminalHistory(session.id, line)
     setCmd('')
     setHistIdx(-1)
-    const conversationId = getActiveConversationId() ?? 'terminal'
+    const conversationId = conversacionActiva() ?? 'terminal'
     try {
       const r = await runDawCliLine(tienda, line, {
         conversationId,

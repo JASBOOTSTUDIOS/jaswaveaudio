@@ -41,7 +41,8 @@ export function configurarModulo(o: OpcionesModulo): UserConfig {
       sourcemap: false,
       target: 'es2022',
       lib: { entry: resolve(o.raiz, o.entrada), formats: ['es'], fileName: () => 'modulo.js', cssFileName: 'modulo' },
-      rollupOptions: { output: { inlineDynamicImports: true } },
+      // Los import() dinámicos (p. ej. Mermaid) quedan en dist/chunks/ y solo se descargan cuando se usan.
+      rollupOptions: { output: { chunkFileNames: 'chunks/[name]-[hash].js' } },
     },
   }
 }

@@ -3,7 +3,7 @@
  * Si hay ambigüedad → formulario track_pick para el usuario.
  */
 
-import type { ClarificationQuestion } from '@/src/lib/ai-clarify'
+import type { ClarificationQuestion } from './aclaraciones'
 import type { DAWState } from '@jaswave/shared'
 import type { Track } from '@jaswave/shared'
 

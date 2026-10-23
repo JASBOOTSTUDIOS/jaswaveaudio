@@ -21,6 +21,8 @@ export type DefinicionHerramienta = {
   icono?: ComponentType<{ className?: string }>
   /** No se coloca sola en el layout: solo cuando se pide. */
   bajoDemanda?: boolean
+  /** La primera vez que aparece en el layout queda como pestaña activa de su zona. */
+  destacada?: boolean
 }
 
 export type ContextoClip = { clipId: string; trackId: string; tipo: 'midi' | 'audio' }
@@ -47,6 +49,10 @@ export type ContribucionAtajo = { id: string; teclas: string; descripcion: strin
  * falta el módulo. La tienda se pasa como `unknown`: el SDK no depende de tipos internos del DAW.
  */
 export type ServiciosModulo = {
+  /** Editor de documentos del proyecto (docs/*.md). */
+  documentos?: {
+    abrir: (slug: string, modo?: 'edit' | 'preview') => void
+  }
   partitura?: {
     exportarClipPdf: (tienda: unknown, pistaId: string, clipId: string) => Promise<{ ok: boolean; message: string }>
     exportarProyecto: (tienda: unknown, carpeta: string, incluirProyecto: boolean) => Promise<{ ok: boolean; message: string; count: number }>

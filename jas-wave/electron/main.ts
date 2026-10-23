@@ -4,6 +4,7 @@ const fs = require('fs/promises')
 const fsSync = require('fs')
 import type { IpcMainInvokeEvent } from 'electron'
 import { aiChat, aiChatStream, aiHealth, cancelAiChat, legacyChatArgsToRequest, type AiChatRequest, type AiHealthRequest } from './ai-gateway'
+import { mockScriptPathFromEnv } from './ai-mock'
 import { createAgentRunStore } from './agent-runs'
 import { lookupPluginOnWeb } from './plugin-lookup'
 import { searchWeb } from './web-search'
@@ -1018,6 +1019,9 @@ ipcMain.handle('ai-chat', async (_event: IpcMainInvokeEvent, payload: unknown, m
   }
   return aiChat(legacyChatArgsToRequest((payload as unknown[]) ?? [], model, baseUrl, temperature))
 })
+
+/** Modo de pruebas (JASWAVE_AI_MOCK): el asistente usa el proveedor simulado local, sin backend ni claves. */
+ipcMain.handle('ai-mock-activo', () => mockScriptPathFromEnv() !== null)
 
 ipcMain.handle('ai-health', async (_event: IpcMainInvokeEvent, payload?: unknown) => {
   if (payload && typeof payload === 'object' && !Array.isArray(payload) && 'kind' in (payload as object)) {

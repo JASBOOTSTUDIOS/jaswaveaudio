@@ -9,6 +9,14 @@ import { setupJasWave } from './fixtures/harness'
 
 const app = setupJasWave({ label: 'modulos' })
 
+/** Abre una herramienta por evento, reintentando hasta que la app haya registrado su escucha. */
+async function abrir(page: import('@playwright/test').Page, toolId: string, visible: import('@playwright/test').Locator): Promise<void> {
+  await expect(async () => {
+    await page.evaluate((id) => window.dispatchEvent(new CustomEvent('jaswave-open-tool', { detail: { toolId: id } })), toolId)
+    await expect(visible).toBeVisible({ timeout: 1_000 })
+  }).toPass({ timeout: 30_000 })
+}
+
 async function hayModulo(page: import('@playwright/test').Page): Promise<boolean> {
   const p = (await page.evaluate(() => (window as any).electron.pluginsListar?.())) as Array<{ manifiesto: { id?: string } | null }>
   return p.some((x) => x.manifiesto?.id === 'com.jaswave.modulo.midi-md')
@@ -17,8 +25,8 @@ async function hayModulo(page: import('@playwright/test').Page): Promise<boolean
 test('MIDI·MD se carga desde su paquete por jaswave-modulo:// y aparece en Módulos', async () => {
   const { page, target } = app()
   test.skip(!(await hayModulo(page)), target === 'dev' ? 'compila los módulos (npm run build:modulos)' : 'módulo no instalado')
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent('jaswave-open-tool', { detail: { toolId: 'modulos' } })))
   const panel = page.getByTestId('panel-modulos')
+  await abrir(page, 'modulos', panel)
   await expect(panel).toContainText('MIDI · Markdown')
   await expect(panel).toContainText('Cargado', { timeout: 15_000 })
   // Sus estilos vienen del paquete por el protocolo de módulos, y el protocolo sirve su código.
@@ -40,7 +48,7 @@ test('la herramienta del módulo se abre y desactivar el módulo la quita (el pr
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('jaswave-open-tool', { detail: { toolId: 'midi-md' } })))
   await expect(page.getByRole('button', { name: 'MIDI · MD', exact: true }).first()).toBeVisible()
 
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent('jaswave-open-tool', { detail: { toolId: 'modulos' } })))
+  await abrir(page, 'modulos', page.getByTestId('panel-modulos'))
   const interruptor = page.getByRole('switch', { name: 'Activar MIDI · Markdown' })
   await interruptor.uncheck()
   await expect(page.getByRole('button', { name: 'MIDI · MD', exact: true })).toHaveCount(0)
@@ -56,8 +64,8 @@ test('Partitura es un módulo: aporta su herramienta y se puede desactivar y rea
     return p.some((x) => x.manifiesto?.id === 'com.jaswave.modulo.partitura')
   })
   test.skip(!hay, 'módulo Partitura no disponible')
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent('jaswave-open-tool', { detail: { toolId: 'modulos' } })))
   const seccion = page.getByTestId('panel-modulos')
+  await abrir(page, 'modulos', seccion)
   await expect(seccion).toContainText('Partitura')
   await expect(page.getByRole('button', { name: 'Partitura', exact: true }).first()).toBeVisible({ timeout: 15_000 })
 

@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { PROVIDER_PRESETS, type AiApiStyle, type AiAuthStyle, type AiProviderCustom, type AiProviderKind } from '@/src/lib/ai-settings'
+import { PROVIDER_PRESETS, type AiApiStyle, type AiAuthStyle, type AiProviderCustom, type AiProviderKind } from '@/src/lib/ia/proveedores'
 import type { DatosProveedorIA, ProveedorIAApi } from '@/src/lib/backend/api'
 import { Boton, Campo, Selector } from '@/components/cuenta/ui'
 

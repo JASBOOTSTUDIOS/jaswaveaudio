@@ -4,6 +4,7 @@
   "description": "Workspace de plugins y módulos instalables de JasWave: cada paquete se compila y publica por separado.",
   "workspaces": [
     "sdk/host-sdk",
+    "lib/*",
     "com.jaswave.modulo.*"
   ],
   "scripts": {

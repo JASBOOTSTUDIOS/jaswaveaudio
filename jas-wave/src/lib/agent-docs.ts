@@ -397,12 +397,22 @@ export function parseDocBlocksFromText(text: string): Array<{ slug: string; cont
   return out
 }
 
+/** Cambio en un documento del proyecto (lo muestran el chat y el panel de progreso). */
+export type ChatDocEdit = {
+  slug: string
+  title: string
+  action: 'create' | 'write' | 'append'
+  previousContent: string
+  newContent: string
+  updatedAt: number
+}
+
 export function applyMarkdownDocsFromModel(
   projectId: string,
   text: string,
-): { slugs: string[]; edits: import('./chat-doc-edits').ChatDocEdit[] } {
+): { slugs: string[]; edits: ChatDocEdit[] } {
   const slugs: string[] = []
-  const edits: import('./chat-doc-edits').ChatDocEdit[] = []
+  const edits: ChatDocEdit[] = []
   for (const b of parseDocBlocksFromText(text)) {
     const prev = getAgentDoc(projectId, b.slug)
     const previousContent = prev?.content ?? ''
