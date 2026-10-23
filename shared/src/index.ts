@@ -46,3 +46,4 @@ export * from './audio/true-peak';
 export * from './audio/diagnosis';
 export * from './audio/analysis-provider';
 export * from './sync';
+export * from './plugins';

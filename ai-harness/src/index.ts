@@ -301,9 +301,20 @@ export {
   partitionActions,
   payloadOfAction,
   withAplicarTrue,
+  registroHerramientasPlugins,
   type ActionPartition,
   type AgentAction,
 } from './agent/action-policy'
+
+export {
+  AgentToolRegistry,
+  ErrorRegistroHerramientas,
+  claseMinimaPorPermisos,
+  type HerramientaPlugin,
+  type HerramientaRegistrada,
+  type PermisosPlugin,
+  type RegistroPlugin,
+} from './agents/registro-herramientas-dinamico'
 
 export {
   answerLocalReadQuery,

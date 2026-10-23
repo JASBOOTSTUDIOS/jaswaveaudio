@@ -4,6 +4,7 @@
 
 import type { HarnessDawAction } from '../types/actions'
 import { modeBlocksMutation, wantsFullProject, type AgentMode } from './modes'
+import { AgentToolRegistry } from '../agents/registro-herramientas-dinamico'
 
 /**
  * Clase de riesgo de cada acción que el agente puede emitir (fail closed):
@@ -245,10 +246,18 @@ function payloadHasPath(p: Record<string, unknown>): boolean {
 }
 
 /** Clase estática (por tipo) — undefined = sin clasificar (fail closed). */
+/**
+ * Herramientas aportadas por plugins activos (P2). Solo amplía el catálogo: no puede reclasificar ni
+ * suplantar herramientas del núcleo, y lo que no esté registrado sigue sin clase (bloqueado).
+ */
+export const registroHerramientasPlugins = new AgentToolRegistry({
+  esHerramientaNucleo: (nombre) => Object.prototype.hasOwnProperty.call(AGENT_ACTION_CLASSES, nombre),
+})
+
 export function agentActionClassOfType(type: string): AgentActionClass | undefined {
   return Object.prototype.hasOwnProperty.call(AGENT_ACTION_CLASSES, type)
     ? AGENT_ACTION_CLASSES[type]
-    : undefined
+    : registroHerramientasPlugins.claseDe(type)
 }
 
 /** Clase efectiva teniendo en cuenta el payload (notas vacías, rutas de disco…). */
