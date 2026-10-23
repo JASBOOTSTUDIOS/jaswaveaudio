@@ -2287,6 +2287,30 @@ static void handleLine(const std::string& line) {
             std::to_string(gRtMaxDelay[gRtBuf.load(std::memory_order_acquire)]));
     return;
   }
+  if (type == "getSlotStats") {
+    // Carga por slot para el watchdog de cuarentena (V5 §2.4). load = tiempo de process() / duración del bloque.
+    const bool reset = getBoolField(line, "reset", false);
+    std::ostringstream js;
+    js << "\"slots\":[";
+    {
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      bool first = true;
+      for (auto& [id, slot] : gSlots) {
+        if (!slot) continue;
+        const HostedSlot::Stats st = slot->stats();
+        if (!first) js << ",";
+        first = false;
+        js << "{\"slot\":\"" << jsonEscape(id) << "\",\"path\":\"" << jsonEscape(slot->path()) << "\""
+           << ",\"blocks\":" << st.blocks << ",\"avgLoad\":" << st.avgLoad << ",\"maxLoad\":" << st.maxLoad
+           << ",\"overruns\":" << st.overruns << ",\"exceptions\":" << st.exceptions
+           << ",\"bypassed\":" << (slot->isBypassed() ? "true" : "false") << "}";
+        if (reset) slot->resetStats();
+      }
+    }
+    js << "]";
+    replyOk(js.str());
+    return;
+  }
   if (type == "getMixBufferStats") {
     if (getBoolField(line, "reset", false)) jaswave_mix_bus_reset_stats();
     JaswaveMixBusStats st{};

@@ -1,16 +1,16 @@
 /**
- * Compila los binarios nativos que se incluyen en el instalador (Release, x64):
- *   - native/plugin-host  → jaswave-plugin-host.exe + JasWavePiano.vst3 (piano-synth)
- *   - native/jaswave-roles-vst → JasWaveRoles.vst3
- *   - native/jaswave-fx → JasWaveFx.vst3 (solo si VST3 SDK disponible; se salta si falta)
+ * Compila el NÚCLEO nativo que se incluye en el instalador (Release, x64):
+ *   - native/plugin-host → jaswave-plugin-host.exe
  *
- *   node native/scripts/build-native.mjs [--config Release] [--clean] [--no-fx]
+ *   node native/scripts/build-native.mjs [--config Release] [--clean]
  *
- * Generador: "Visual Studio 17 2022" (disponible en los runners windows-latest).
- * Se puede cambiar con JASWAVE_CMAKE_GENERATOR (p. ej. "Visual Studio 18 2026" o "Ninja").
- * Requiere el VST3 SDK: `npm run native:sdk`.
+ * Los plugins JasWave (EQ, compresor, limitador, de-esser, utility, piano, roles) ya NO forman parte
+ * del núcleo (K1): viven en plugins/ y se compilan con `node native/scripts/build-plugins.mjs`; se
+ * entregan bajo demanda (manifiesto V5 + descarga), no dentro del instalador.
+ * native/audio-engine (addon N-API) se compila con su propio `npm install` (node-gyp) y no es parte del release.
  *
- * native/audio-engine (addon N-API, stub tras JASWAVE_NATIVE_AUDIO=1) NO forma parte del release.
+ * Generador: "Visual Studio 17 2022" (runners windows-latest). Cambiable con JASWAVE_CMAKE_GENERATOR
+ * (p. ej. "Visual Studio 18 2026" o "Ninja"). SDK VST3: `npm run native:sdk`, o JASWAVE_VST3_SDK_DIR.
  */
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -24,22 +24,19 @@ const args = process.argv.slice(2)
 const cfgIdx = args.indexOf('--config')
 const config = cfgIdx >= 0 && args[cfgIdx + 1] ? args[cfgIdx + 1] : 'Release'
 const clean = args.includes('--clean')
-const buildFx = !args.includes('--no-fx')
 const generator = process.env.JASWAVE_CMAKE_GENERATOR || 'Visual Studio 17 2022'
 const isVs = /^Visual Studio/i.test(generator)
 const BUILD_DIR_NAME = 'build-release'
 
-const sdkDir = path.join(nativeRoot, 'plugin-host', 'third_party', 'vst3sdk')
+const sdkDir = process.env.JASWAVE_VST3_SDK_DIR || path.join(nativeRoot, 'plugin-host', 'third_party', 'vst3sdk')
 
 function log(msg) {
   console.log(`[build-native] ${msg}`)
 }
-
 function fail(msg) {
   console.error(`[build-native] ERROR: ${msg}`)
   process.exit(1)
 }
-
 function run(cmd, cmdArgs) {
   log(`> ${cmd} ${cmdArgs.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}`)
   execFileSync(cmd, cmdArgs, { stdio: 'inherit' })
@@ -57,36 +54,6 @@ function prepareBuildDir(buildDir) {
   }
 }
 
-/**
- * targets: [{ name, subdir? }]. Con generadores de Visual Studio, un target de un
- * add_subdirectory(... EXCLUDE_FROM_ALL) no está en la .sln raíz: se compila desde
- * la .sln de su subdirectorio. Se compila un target por llamada.
- */
-function configureAndBuild(project, targets, extraDefs = []) {
-  const src = path.join(nativeRoot, project)
-  const buildDir = path.join(src, BUILD_DIR_NAME)
-  prepareBuildDir(buildDir)
-  run('cmake', [
-    '-S', src,
-    '-B', buildDir,
-    '-G', generator,
-    ...(isVs ? ['-A', 'x64'] : [`-DCMAKE_BUILD_TYPE=${config}`]),
-    // El release no toca %LOCALAPPDATA%: stage-plugin-host.mjs toma los bundles del build dir.
-    '-DJASWAVE_INSTALL_USER_VST3=OFF',
-    ...extraDefs,
-  ])
-  for (const t of targets) {
-    const dir = isVs && t.subdir ? path.join(buildDir, t.subdir) : buildDir
-    run('cmake', ['--build', dir, '--config', config, '--parallel', '--target', t.name])
-  }
-  return buildDir
-}
-
-function expectFile(file) {
-  if (!fs.existsSync(file)) fail(`no se generó ${file}`)
-  log(`OK ${file}`)
-}
-
 if (process.platform !== 'win32') fail('el build nativo de release solo está soportado en Windows.')
 try {
   execFileSync('cmake', ['--version'], { stdio: 'ignore' })
@@ -96,37 +63,26 @@ try {
 for (const f of ['CMakeLists.txt', 'public.sdk/source/vst/hosting/module.h', 'pluginterfaces/vst/ivstaudioprocessor.h']) {
   if (!fs.existsSync(path.join(sdkDir, f))) fail(`VST3 SDK incompleto (${f}). Ejecuta: npm run native:sdk`)
 }
-if (!fs.existsSync(path.join(nativeRoot, 'plugin-host', 'vendor', 'miniaudio.h'))) {
-  fail('falta native/plugin-host/vendor/miniaudio.h')
-}
+if (!fs.existsSync(path.join(nativeRoot, 'plugin-host', 'vendor', 'miniaudio.h'))) fail('falta native/plugin-host/vendor/miniaudio.h')
 
 log(`config=${config} generador="${generator}"`)
-
-const hostBuild = configureAndBuild('plugin-host', [{ name: 'jaswave-plugin-host' }, { name: 'JasWavePiano', subdir: 'piano-synth' }], [
+const src = path.join(nativeRoot, 'plugin-host')
+const buildDir = path.join(src, BUILD_DIR_NAME)
+prepareBuildDir(buildDir)
+run('cmake', [
+  '-S', src,
+  '-B', buildDir,
+  '-G', generator,
+  ...(isVs ? ['-A', 'x64'] : [`-DCMAKE_BUILD_TYPE=${config}`]),
+  `-DVST3_SDK_DIR=${sdkDir}`,
   '-DJASWAVE_VST3_SDK=ON',
   '-DSMTG_ENABLE_VSTGUI_SUPPORT=OFF',
   '-DSMTG_ENABLE_VST3_PLUGIN_EXAMPLES=OFF',
 ])
-const rolesBuild = configureAndBuild('jaswave-roles-vst', [{ name: 'JasWaveRoles' }])
-
-let fxBuild = null
-if (buildFx) {
-  fxBuild = configureAndBuild('jaswave-fx', [{ name: 'JasWaveFx' }], [
-    '-DJASWAVE_VST3_SDK=ON',
-    '-DSMTG_ENABLE_VSTGUI_SUPPORT=OFF',
-    '-DSMTG_ENABLE_VST3_PLUGIN_EXAMPLES=OFF',
-  ])
-}
+run('cmake', ['--build', buildDir, '--config', config, '--parallel', '4', '--target', 'jaswave-plugin-host'])
 
 // Multi-config (VS) deja el exe en <build>/<Config>/; single-config (Ninja) en <build>/.
-const exe = [path.join(hostBuild, config, 'jaswave-plugin-host.exe'), path.join(hostBuild, 'jaswave-plugin-host.exe')].find(
-  (p) => fs.existsSync(p),
-)
-expectFile(exe ?? path.join(hostBuild, config, 'jaswave-plugin-host.exe'))
-expectFile(path.join(hostBuild, 'JasWavePiano.vst3', 'Contents', 'x86_64-win', 'JasWavePiano.vst3'))
-expectFile(path.join(rolesBuild, 'JasWaveRoles.vst3', 'Contents', 'x86_64-win', 'JasWaveRoles.vst3'))
-if (fxBuild) {
-  expectFile(path.join(fxBuild, 'JasWaveFx.vst3', 'Contents', 'x86_64-win', 'JasWaveFx.vst3'))
-}
-
-log('listo. Siguiente paso: npm run pack:win (stage:host copia los binarios a jas-wave/resources).')
+const exe = [path.join(buildDir, config, 'jaswave-plugin-host.exe'), path.join(buildDir, 'jaswave-plugin-host.exe')].find((p) => fs.existsSync(p))
+if (!exe) fail(`no se generó jaswave-plugin-host.exe en ${buildDir}`)
+log(`OK ${exe}`)
+log('listo. Plugins: node native/scripts/build-plugins.mjs. Instalador: npm run pack:win (stage:host copia el host).')

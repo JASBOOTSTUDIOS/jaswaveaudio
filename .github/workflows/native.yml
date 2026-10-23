@@ -1,12 +1,13 @@
 name: Native
 
-# Compila los binarios nativos del instalador (plugin host + JasWave Piano + JasWave Roles).
+# Compila el núcleo nativo del instalador (plugin host) y los plugins VST3 independientes de plugins/.
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
       - 'native/**'
+      - 'plugins/**'
       - '.github/workflows/native.yml'
 
 concurrency:
@@ -30,6 +31,9 @@ jobs:
       - name: Build nativo (Release x64, VS 2022)
         run: npm run native:build
 
+      - name: Plugins VST3 independientes (plugins/) + selftest DSP y licencias
+        run: node native/scripts/build-plugins.mjs --test
+
       - name: Subir binarios
         uses: actions/upload-artifact@v4
         with:
@@ -38,5 +42,4 @@ jobs:
           retention-days: 14
           path: |
             native/plugin-host/build-release/Release/jaswave-plugin-host.exe
-            native/plugin-host/build-release/JasWavePiano.vst3/
-            native/jaswave-roles-vst/build-release/JasWaveRoles.vst3/
+            plugins/build/VST3/Release/

@@ -65,6 +65,7 @@ public:
   void applyMix(float* outL, float* outR, int frames) const;
   void setBypass(bool bypass) { bypass_.store(bypass, std::memory_order_relaxed); }
   bool isBypassed() const { return bypass_.load(std::memory_order_relaxed); }
+  uint32_t processExceptions() const { return exceptions_.load(std::memory_order_relaxed); }
 
   static bool isPe64Dll(const std::string& path);
 
@@ -79,5 +80,6 @@ private:
   std::atomic<float> mixPan_{0.f};
   std::atomic<bool> mixMuted_{false};
   std::atomic<bool> bypass_{false};
+  std::atomic<uint32_t> exceptions_{0};   // excepciones SEH/C++ capturadas en process()
   int latencySamples_{0};
 };

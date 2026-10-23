@@ -558,6 +558,7 @@ void Vst2Slot::process(const float* inL, const float* inR, float* outL, float* o
   safeVst2ProcessReplacing(&pctx);
   if (!pctx.ok) {
     impl_->crashed.store(true, std::memory_order_relaxed);
+    exceptions_.fetch_add(1, std::memory_order_relaxed);
     bypass_.store(true, std::memory_order_relaxed);
     if (outL) std::memset(outL, 0, static_cast<size_t>(frames) * sizeof(float));
     if (outR) std::memset(outR, 0, static_cast<size_t>(frames) * sizeof(float));
