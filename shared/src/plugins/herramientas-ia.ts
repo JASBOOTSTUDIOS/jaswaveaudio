@@ -19,6 +19,22 @@ export type ComandoPlugin = { type: 'plugin.setParameter'; payload: { trackId: s
 
 const limitar = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 
+/** Valor de un parámetro: número en sus unidades o, si es `enum`, la etiqueta o su índice. */
+export type ValorParametro = number | string;
+
+/** Convierte una etiqueta de `enum` en su valor numérico; los números pasan tal cual. */
+export function valorNumerico(p: ParametroIAPlugin, valor: ValorParametro): number {
+  if (typeof valor === 'number') return valor;
+  if (p.scale === 'enum' && p.values) {
+    const i = p.values.findIndex((v) => v.toLowerCase() === valor.trim().toLowerCase());
+    if (i >= 0) return p.min + i;
+    throw new Error(`valor "${valor}" no válido para ${p.id}; opciones: ${p.values.join(', ')}`);
+  }
+  const n = Number(valor);
+  if (!Number.isFinite(n)) throw new Error(`valor no numérico para ${p.id}`);
+  return n;
+}
+
 /** Valor en unidades del parámetro → valor normalizado VST (0..1). */
 export function normalizarValor(p: ParametroIAPlugin, valor: number): number {
   if (!Number.isFinite(valor)) throw new Error(`valor no numérico para ${p.id}`);
@@ -31,6 +47,7 @@ export function normalizarValor(p: ParametroIAPlugin, valor: number): number {
       if (p.min <= 0) return (v - p.min) / (p.max - p.min);
       return Math.log(v / p.min) / Math.log(p.max / p.min);
     case 'stepped':
+    case 'enum':
       return (Math.round(v) - p.min) / (p.max - p.min);
     default:
       return (v - p.min) / (p.max - p.min);
@@ -39,7 +56,7 @@ export function normalizarValor(p: ParametroIAPlugin, valor: number): number {
 
 export function herramientasDesdeManifiesto(m: ManifiestoPlugin): HerramientaManifiesto[] {
   const alias = aliasPlugin(m);
-  const params = m.ai?.parameters ?? [];
+  const params = (m.ai?.parameters ?? []).filter((p) => !p.readOnly);
   const out: HerramientaManifiesto[] = [
     {
       name: `plugin.${alias}.describir`,
@@ -63,7 +80,14 @@ export function herramientasDesdeManifiesto(m: ManifiestoPlugin): HerramientaMan
           valores: {
             type: 'object',
             description: 'Mapa id de parámetro → valor en sus unidades',
-            properties: Object.fromEntries(params.map((p) => [p.id, { type: 'number', minimum: p.min, maximum: p.max, description: `${p.name}${p.unit ? ` (${p.unit})` : ''}` }])),
+            properties: Object.fromEntries(
+              params.map((p) => [
+                p.id,
+                p.scale === 'enum' && p.values
+                  ? { type: 'string', enum: p.values, description: p.name }
+                  : { type: 'number', minimum: p.min, maximum: p.max, description: `${p.name}${p.unit ? ` (${p.unit})` : ''}` },
+              ]),
+            ),
             additionalProperties: false,
           },
         },
@@ -90,6 +114,8 @@ export function describirPlugin(m: ManifiestoPlugin, accionesConcedidas?: readon
       max: p.max,
       default: p.default,
       unidad: p.unit,
+      ...(p.values ? { opciones: p.values } : {}),
+      ...(p.readOnly ? { soloLectura: true } : {}),
       disponible: !p.feature || !accionesConcedidas || accionesConcedidas.includes(p.feature),
     })),
   };
@@ -101,14 +127,16 @@ export function describirPlugin(m: ManifiestoPlugin, accionesConcedidas?: readon
  */
 export function traducirAjuste(
   m: ManifiestoPlugin,
-  args: { trackId: string; pluginInstanceId: string; valores: Record<string, number> },
+  args: { trackId: string; pluginInstanceId: string; valores: Record<string, ValorParametro> },
   accionesConcedidas?: readonly string[],
 ): ComandoPlugin[] {
   if (!m.permissions.commands.includes('plugin.setParameter')) throw new Error(`${m.id} no permite plugin.setParameter`);
   const porId = new Map((m.ai?.parameters ?? []).map((p) => [p.id, p]));
-  return Object.entries(args.valores).map(([id, valor]) => {
+  return Object.entries(args.valores).map(([id, crudo]) => {
     const p = porId.get(id);
     if (!p) throw new Error(`parámetro desconocido en ${m.id}: ${id}`);
+    if (p.readOnly) throw new Error(`"${p.name}" es una medición de solo lectura`);
+    const valor = valorNumerico(p, crudo);
     if (p.feature && accionesConcedidas && !accionesConcedidas.includes(p.feature)) {
       throw new Error(`"${p.name}" no está incluido en tu licencia (${p.feature})`);
     }

@@ -107,3 +107,40 @@ describe('P1 — herramientas de IA desde el manifiesto', () => {
     expect(describirPlugin(m, []).parametros.find((p) => p.id === 'b5.gain')?.disponible).toBe(false);
   });
 });
+
+describe('P1 — parámetros enum y de solo lectura', () => {
+  const conEnum = () => {
+    const b = base() as ReturnType<typeof base> & { ai: { parameters: Record<string, unknown>[] } };
+    b.ai.parameters.push(
+      { id: 'b1.tipo', vstParamId: 1, name: 'Banda 1 Tipo', min: 0, max: 2, default: 1, scale: 'enum', values: ['HPF', 'Peak', 'LPF'] },
+      { id: 'gr', vstParamId: 40, name: 'Reducción', min: -30, max: 0, default: 0, readOnly: true },
+    );
+    return b;
+  };
+
+  it('un enum necesita una etiqueta por valor', () => {
+    const b = conEnum();
+    (b.ai.parameters[b.ai.parameters.length - 2] as unknown as { values: string[] }).values = ['HPF'];
+    expect(validarManifiesto(b).ok).toBe(false);
+  });
+
+  it('acepta la etiqueta o el índice y normaliza como escalonado', () => {
+    const r = validarManifiesto(conEnum());
+    if (!r.ok) throw new Error(r.errores.join(';'));
+    const [porEtiqueta] = traducirAjuste(r.manifiesto, { trackId: 't', pluginInstanceId: 'p', valores: { 'b1.tipo': 'lpf' } });
+    expect(porEtiqueta!.payload).toMatchObject({ parameterId: '1', normalizedValue: 1, plainValue: 2 });
+    const [porIndice] = traducirAjuste(r.manifiesto, { trackId: 't', pluginInstanceId: 'p', valores: { 'b1.tipo': 1 } });
+    expect(porIndice!.payload.normalizedValue).toBe(0.5);
+    expect(() => traducirAjuste(r.manifiesto, { trackId: 't', pluginInstanceId: 'p', valores: { 'b1.tipo': 'Bell' } })).toThrow(/opciones/);
+  });
+
+  it('los parámetros de solo lectura no se pueden ajustar ni aparecen en el esquema de ajustar', () => {
+    const r = validarManifiesto(conEnum());
+    if (!r.ok) throw new Error(r.errores.join(';'));
+    const ajustar = herramientasDesdeManifiesto(r.manifiesto).find((t) => t.name.endsWith('.ajustar'))!;
+    const props = (ajustar.parameters.properties as { valores: { properties: Record<string, unknown> } }).valores.properties;
+    expect(Object.keys(props)).not.toContain('gr');
+    expect(props['b1.tipo']).toMatchObject({ type: 'string', enum: ['HPF', 'Peak', 'LPF'] });
+    expect(() => traducirAjuste(r.manifiesto, { trackId: 't', pluginInstanceId: 'p', valores: { gr: -3 } })).toThrow(/solo lectura/);
+  });
+});

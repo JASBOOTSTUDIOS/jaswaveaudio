@@ -35,8 +35,12 @@ const parametroIA = z.object({
   max: z.number(),
   default: z.number(),
   unit: z.string().max(16).default(''),
-  scale: z.enum(['linear', 'log', 'stepped', 'toggle']).default('linear'),
+  scale: z.enum(['linear', 'log', 'stepped', 'toggle', 'enum']).default('linear'),
+  /** Etiquetas de un parámetro `enum` (una por valor entero de min a max). */
+  values: z.array(z.string().min(1).max(60)).max(256).optional(),
   feature: claveAccion.nullable().default(null),
+  /** Medición que el plugin publica (p. ej. reducción de ganancia): se lee, no se ajusta. */
+  readOnly: z.boolean().default(false),
 });
 
 export const esquemaManifiesto = z
@@ -120,6 +124,9 @@ export const esquemaManifiesto = z
       }
       if (p.min > p.max || p.default < p.min || p.default > p.max) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ai', 'parameters', i], message: 'rango o default inválido' });
+      }
+      if (p.scale === 'enum' && (!p.values || p.values.length !== p.max - p.min + 1)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ai', 'parameters', i, 'values'], message: 'un parámetro enum necesita una etiqueta por valor (max − min + 1)' });
       }
       if (vistos.has(p.id)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ai', 'parameters', i, 'id'], message: `id repetido: ${p.id}` });
       vistos.add(p.id);

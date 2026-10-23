@@ -43,6 +43,10 @@ Fuente única para quienes implementan plugins (C++), el cargador (`shared/src/p
 }
 ```
 
+`ai.parameters[].scale`: `linear` | `log` | `stepped` | `toggle` | `enum`. Un `enum` lleva `values` (una etiqueta por valor entero de
+min a max) y la IA puede indicar la etiqueta o el índice. `readOnly: true` marca mediciones (p. ej. reducción de ganancia):
+se describen pero no se ajustan.
+
 `ai.parameters[].vstParamId` es el **ParamID numérico VST3** del parámetro (estable entre versiones): el DAW y la IA lo usan para
 automatizar y para `plugin.setParameter`. `id` es un nombre legible estable (p. ej. `b1.freq`, `comp.threshold`).
 `features[].key` sigue `^[a-z0-9][a-z0-9.\-]{1,120}$`. Un parámetro con `"feature": "x"` solo es operable si la licencia
