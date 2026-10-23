@@ -4,18 +4,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { FileCode2, Link2, Unlink } from 'lucide-react'
-import { useDAW, useDAWState } from '@/src/context/daw-context'
-import type { DAWState } from '../../shared/src/types/state'
-import { getAgentDoc, subscribeAgentDocs, writeAgentDoc } from '@/src/lib/agent-docs'
+
 import {
   getMidiClipMdSyncStatus,
   getPreferredMidiClipMd,
   openMidiClipMdSync,
   subscribeMidiClipMdSync,
   unbindMidiClipMdSync,
-} from '@/src/lib/midi-clip-md-sync'
-import { midiClipDocSlug } from '@/src/lib/midi-clip-markdown'
-import { getSelectedTrackId } from '@/src/lib/selection-helpers'
+} from './sync'
+import { getAgentDoc, getSelectedTrackId, midiClipDocSlug, subscribeAgentDocs, useDAW, useDAWState, writeAgentDoc } from '@jaswave/host-sdk'
+import type { DAWState } from '@jaswave/host-sdk'
 
 function useSyncStatus() {
   return useSyncExternalStore(

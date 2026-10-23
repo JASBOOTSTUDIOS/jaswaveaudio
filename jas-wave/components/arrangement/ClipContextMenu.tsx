@@ -11,7 +11,7 @@ import { loteBorrarClips, lotePegarClips } from '@/src/lib/clip-edit-commands'
 import { batchOrNotify } from '@/src/lib/execute-or-toast'
 import { exportClipScorePdfDialog } from '@/src/lib/midi-score-export'
 import { styleSaveFromClip } from '@/src/lib/styles/ops'
-import { openMidiClipMdPanel } from '@/src/lib/open-midi-clip-md'
+import { accionesDeClip, ejecutarAccionDeClip } from '@/src/modulos/contribuciones'
 
 export type ClipMenuState = {
   trackId: string
@@ -265,22 +265,26 @@ export function ClipContextMenu({ menu, onClose, tienda }: Props) {
         }
       />
       ) : null}
-      {!multi && midi ? (
-        <MenuItem
-          label="Abrir MIDI · MD"
-          onClick={() =>
-            run(() => {
-              void tienda.executor.execute('selection.set', {
-                idsClips: menu.clipIds,
-                idsPistas: [track.id],
-                tipo: 'clip',
-                idPrincipal: track.id,
-              })
-              openMidiClipMdPanel(tienda, clip.id, track.id)
-            })
-          }
-        />
-      ) : null}
+      {/* Acciones que aportan los módulos activos (p. ej. «Abrir MIDI · MD»). */}
+      {!multi
+        ? accionesDeClip({ clipId: clip.id, trackId: track.id, tipo: midi ? 'midi' : 'audio' }).map((a) => (
+            <MenuItem
+              key={a.id}
+              label={a.etiqueta}
+              onClick={() =>
+                run(() => {
+                  void tienda.executor.execute('selection.set', {
+                    idsClips: menu.clipIds,
+                    idsPistas: [track.id],
+                    tipo: 'clip',
+                    idPrincipal: track.id,
+                  })
+                  ejecutarAccionDeClip(a, { clipId: clip.id, trackId: track.id, tipo: midi ? 'midi' : 'audio' })
+                })
+              }
+            />
+          ))
+        : null}
       {!multi ? (
       <MenuItem
         label="Renombrar…"

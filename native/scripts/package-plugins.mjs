@@ -1,12 +1,17 @@
 /**
- * Empaqueta los plugins VST3 independientes de plugins/ para la entrega bajo demanda (D1).
+ * Empaqueta los plugins VST3 y los módulos del DAW de plugins/ para la entrega bajo demanda (D1/M3).
  *
  *   node native/scripts/package-plugins.mjs [--config Release] [--base-url <url>] [--salida <dir>]
  *
  * Por cada plugins/com.jaswave.plugin.* genera <salida>/<id>-<version>.zip con:
  *   jaswave-plugin.json
  *   vst3/<Bundle>.vst3/...     (desde plugins/build/VST3/<Config>, compilar antes con build-plugins.mjs)
- * y <salida>/catalogo.json con { id, nombre, version, url, sha256, sizeBytes } por paquete.
+ * Por cada plugins/com.jaswave.modulo.* (compilar antes con `npm run build:modulos`):
+ *   jaswave-plugin.json
+ *   dist/...                   (código ESM del módulo + estilos)
+ * y <salida>/catalogo.json con { id, nombre, version, url, sha256, sizeBytes, categoria, plataformas,
+ * descripcion, ui?, uiEstilos? } por paquete. Los módulos con plataforma web dejan además sus archivos en
+ * <salida>/web/<id>/<version>/ para publicarlos en el backend (plugins/scripts/publicar-modulos-web.mjs).
  *
  * No publica nada: subir los zip a GitHub Releases y registrar el catálogo en el backend son pasos
  * explícitos (ver instrucciones que imprime al final).
@@ -55,8 +60,52 @@ const problemas = []
 for (const nombre of fs.readdirSync(path.join(raiz, 'plugins')).sort()) {
   const dir = path.join(raiz, 'plugins', nombre)
   const rutaManifiesto = path.join(dir, 'jaswave-plugin.json')
-  if (!nombre.startsWith('com.jaswave.plugin.') || !fs.existsSync(rutaManifiesto)) continue
+  const esModulo = nombre.startsWith('com.jaswave.modulo.')
+  if ((!nombre.startsWith('com.jaswave.plugin.') && !esModulo) || !fs.existsSync(rutaManifiesto)) continue
   const manifiesto = JSON.parse(fs.readFileSync(rutaManifiesto, 'utf8'))
+  const comunes = {
+    categoria: manifiesto.category,
+    plataformas: manifiesto.targetPlatforms,
+    descripcion: (manifiesto.description ?? '').slice(0, 2000),
+  }
+  if (esModulo) {
+    const ui = manifiesto.entrypoints?.ui
+    const dist = path.join(dir, 'dist')
+    if (!ui || !fs.existsSync(path.join(dir, ui))) {
+      problemas.push(`${nombre}: falta ${ui ?? 'entrypoints.ui'} (ejecuta npm run build:modulos)`)
+      continue
+    }
+    const staging = fs.mkdtempSync(path.join(os.tmpdir(), `jw-pkg-${manifiesto.id}-`))
+    try {
+      fs.copyFileSync(rutaManifiesto, path.join(staging, 'jaswave-plugin.json'))
+      copiarDirectorio(dist, path.join(staging, 'dist'))
+      const archivo = `${manifiesto.id}-${manifiesto.version}.zip`
+      const destino = path.join(salida, archivo)
+      fs.rmSync(destino, { force: true })
+      execFileSync(tar, ['-a', '-c', '-f', destino, '-C', staging, 'jaswave-plugin.json', 'dist'], { stdio: 'inherit' })
+      const tamano = fs.statSync(destino).size
+      catalogo.push({
+        id: manifiesto.id,
+        nombre: manifiesto.name,
+        version: manifiesto.version,
+        url: baseUrl ? `${baseUrl}/${archivo}` : archivo,
+        sha256: sha256(destino),
+        sizeBytes: tamano,
+        ...comunes,
+        ui,
+        ...(manifiesto.entrypoints?.uiEstilos ? { uiEstilos: manifiesto.entrypoints.uiEstilos } : {}),
+      })
+      if (manifiesto.targetPlatforms?.includes('web')) {
+        const web = path.join(salida, 'web', manifiesto.id, manifiesto.version)
+        fs.rmSync(web, { recursive: true, force: true })
+        copiarDirectorio(dist, path.join(web, 'dist'))
+      }
+      console.log(`[package-plugins] ${archivo}  ${(tamano / 1024).toFixed(0)} KB (módulo)`)
+    } finally {
+      fs.rmSync(staging, { recursive: true, force: true })
+    }
+    continue
+  }
   const entrada = manifiesto.entrypoints?.dspDesktop
   if (!entrada) {
     problemas.push(`${nombre}: sin entrypoints.dspDesktop`)
@@ -86,6 +135,7 @@ for (const nombre of fs.readdirSync(path.join(raiz, 'plugins')).sort()) {
       url: baseUrl ? `${baseUrl}/${archivo}` : archivo,
       sha256: sha256(destino),
       sizeBytes: tamano,
+      ...comunes,
     })
     console.log(`[package-plugins] ${archivo}  ${(tamano / 1024).toFixed(0)} KB`)
   } finally {
@@ -106,6 +156,7 @@ console.log(
     `  1. gh release create plugins-<version> ${path.join(salida, '*.zip')} --draft   # o gh release upload`,
     '  2. Regenera el catálogo con --base-url https://github.com/<org>/<repo>/releases/download/plugins-<version>',
     '  3. POST <backend>/catalogo con el contenido de catalogo.json (token de administrador)',
+    '  4. Módulos web: node plugins/scripts/publicar-modulos-web.mjs --api <backend> (token de administrador)',
   ].join('\n'),
 )
 if (problemas.length) process.exit(1)

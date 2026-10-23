@@ -17,6 +17,12 @@ describe('manifiestos de plugins/ del repositorio', () => {
     for (const d of dirs) {
       const r = validarManifiesto(readFileSync(join(raiz, d, 'jaswave-plugin.json'), 'utf8'))
       assert.equal(r.ok ? 'ok' : `${d}: ${r.errores.join(' | ')}`, 'ok')
+      if (r.ok && (r.manifiesto.category === 'ui-extension' || r.manifiesto.category === 'ai-skill')) {
+        // Módulo del DAW (M3): código ESM en dist/, sin binario VST3.
+        assert.match(r.manifiesto.entrypoints.ui ?? '', /^dist\//, d)
+        assert.equal(r.manifiesto.entrypoints.dspDesktop, undefined, d)
+        continue
+      }
       if (r.ok) {
         assert.equal(herramientasDesdeManifiesto(r.manifiesto).length, 2, d)
         assert.equal(r.manifiesto.license?.productId, r.manifiesto.id, `${d}: productId debe ser el id`)

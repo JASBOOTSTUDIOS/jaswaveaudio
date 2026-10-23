@@ -24,6 +24,7 @@ jobs:
             shared/package-lock.json
             ai-harness/package-lock.json
             jas-wave/package-lock.json
+            plugins/package-lock.json
 
       - name: Instalar dependencias
         run: npm run install:all
@@ -36,6 +37,11 @@ jobs:
 
       - name: Tests
         run: npm test
+
+      - name: Módulos instalables (SDK, typecheck, tests de contrato, independencia, build)
+        run: |
+          npm run verify:modulos
+          npm run build:modulos
 
       - name: Build (renderer + main)
         run: npm run build

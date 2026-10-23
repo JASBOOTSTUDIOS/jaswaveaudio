@@ -9,7 +9,7 @@ import { setupJasWave } from './fixtures/harness'
 
 const app = setupJasWave({ label: 'plugins-manifiesto' })
 
-type Paquete = { dir: string; manifiesto: { id?: string } | null; integridad: string; rutaDsp?: string; errores: string[] }
+type Paquete = { dir: string; manifiesto: { id?: string; entrypoints?: { dspDesktop?: string } } | null; integridad: string; rutaDsp?: string; errores: string[] }
 
 test('lista los paquetes de plugins con integridad y ruta del binario', async () => {
   const { page, target } = app()
@@ -30,7 +30,8 @@ test('lista los paquetes de plugins con integridad y ruta del binario', async ()
   for (const p of paquetes) {
     expect(p.errores, p.dir).toEqual([])
     expect(p.integridad, p.dir).not.toBe('alterada')
-    expect(p.rutaDsp, `${p.dir}: binario VST3 resuelto`).toMatch(/\.vst3$/i)
+    // Los módulos del DAW (asistente IA, MIDI·MD…) no tienen binario VST3.
+    if (p.manifiesto?.entrypoints?.dspDesktop) expect(p.rutaDsp, `${p.dir}: binario VST3 resuelto`).toMatch(/\.vst3$/i)
   }
 })
 

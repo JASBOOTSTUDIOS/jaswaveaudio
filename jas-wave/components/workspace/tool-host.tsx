@@ -1,5 +1,4 @@
-import { useEffect, useState, type ComponentType } from 'react'
-import { Boxes, Construction, Library, GitBranch, Loader2, Piano, SlidersHorizontal } from 'lucide-react'
+import { Boxes, Construction, GitBranch } from 'lucide-react'
 import { DawTerminalPanel } from '@/components/daw-terminal-panel'
 import { ArrangeView } from '@/components/arrange-view'
 import { Mixer } from '@/components/mixer'
@@ -17,7 +16,7 @@ import { ProjectFileExplorer } from './project-file-explorer'
 import { PanelCuenta } from '@/components/cuenta/panel-cuenta'
 import { PanelAdmin } from '@/components/admin/panel-admin'
 import { PanelModulos } from '@/components/modulos/panel-modulos'
-import { cargarModulo, estadoCarga, fijarModuloActivo, moduloActivo, moduloDeHerramienta, type ModuloDAW } from '@/src/modulos/registro-modulos'
+import { panelDeHerramienta } from '@/src/modulos/registro-modulos'
 import { useVersionModulos } from '@/src/modulos/use-modulos'
 import { useDAWState } from '@/src/context/daw-context'
 import type { ToolId } from '@/src/workspace/types'
@@ -45,73 +44,11 @@ export function ToolHost({ toolId }: { toolId: ToolId }) {
   )
 }
 
-/** Herramienta de un módulo: se descarga su código (chunk aparte) la primera vez que se abre. */
-function PanelDeModulo({ modulo, toolId }: { modulo: ModuloDAW; toolId: ToolId }) {
-  useVersionModulos()
-  const [Panel, setPanel] = useState<ComponentType | null>(null)
-  const activo = moduloActivo(modulo.id)
-  const carga = estadoCarga(modulo.id)
-
-  useEffect(() => {
-    if (!activo) return
-    let vivo = true
-    cargarModulo(modulo.id).then(
-      (paneles) => {
-        const p = paneles[toolId]
-        if (vivo && p) setPanel(() => p)
-      },
-      () => {},
-    )
-    return () => {
-      vivo = false
-    }
-  }, [activo, modulo.id, toolId])
-
-  if (!activo) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 bg-panel px-4 text-center" data-testid="modulo-inactivo">
-        <Boxes className="size-8 text-muted-foreground/40" />
-        <span className="text-[13px] font-semibold text-foreground">{modulo.nombre}</span>
-        <p className="max-w-[260px] text-[11px] text-muted-foreground">Este módulo está desactivado.</p>
-        <button
-          type="button"
-          className="rounded-md bg-accent-amber/20 px-2.5 py-1.5 text-[11px] font-semibold text-accent-amber hover:bg-accent-amber/30"
-          onClick={() => fijarModuloActivo(modulo.id, true)}
-        >
-          Activar módulo
-        </button>
-      </div>
-    )
-  }
-  if (Panel) return <Panel />
-  if (carga.estado === 'error') {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 bg-panel px-4 text-center">
-        <p role="alert" className="text-[11px] text-red-400">
-          No se pudo descargar {modulo.nombre}: {carga.error}
-        </p>
-        <button
-          type="button"
-          className="rounded-md border border-border px-2.5 py-1.5 text-[11px]"
-          onClick={() => void cargarModulo(modulo.id).catch(() => {})}
-        >
-          Reintentar
-        </button>
-      </div>
-    )
-  }
-  return (
-    <div className="flex h-full items-center justify-center gap-2 bg-panel text-[11px] text-muted-foreground">
-      <Loader2 className="size-4 animate-spin" />
-      Cargando {modulo.nombre}…
-    </div>
-  )
-}
-
 function ToolContent({ toolId }: { toolId: ToolId }) {
   const selectedTrackId = useDAWState((s) => getSelectedTrackId(s))
-  const modulo = moduloDeHerramienta(toolId)
-  if (modulo) return <PanelDeModulo modulo={modulo} toolId={toolId} />
+  useVersionModulos()
+  const PanelModulo = panelDeHerramienta(toolId)
+  if (PanelModulo) return <PanelModulo />
 
   switch (toolId) {
     case 'arrange':
@@ -156,11 +93,20 @@ function ToolContent({ toolId }: { toolId: ToolId }) {
         </div>
       )
     default:
+      // Herramienta de un módulo que no está instalado, activo o cargado en este equipo.
       return (
-        <div className="flex h-full items-center justify-center gap-2 bg-panel text-muted-foreground">
-          <Library className="size-5" />
-          <SlidersHorizontal className="size-5" />
-          <Piano className="size-5" />
+        <div className="flex h-full flex-col items-center justify-center gap-3 bg-panel px-4 text-center" data-testid="herramienta-no-disponible">
+          <Boxes className="size-8 text-muted-foreground/40" />
+          <p className="max-w-[260px] text-[11px] text-muted-foreground">
+            Esta herramienta es de un módulo que no está instalado o activo.
+          </p>
+          <button
+            type="button"
+            className="rounded-md bg-accent-amber/20 px-2.5 py-1.5 text-[11px] font-semibold text-accent-amber hover:bg-accent-amber/30"
+            onClick={() => window.dispatchEvent(new CustomEvent('jaswave-open-tool', { detail: { toolId: 'modulos' } }))}
+          >
+            Abrir Módulos
+          </button>
         </div>
       )
   }

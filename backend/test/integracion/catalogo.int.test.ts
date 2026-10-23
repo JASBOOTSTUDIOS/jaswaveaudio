@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import request from 'supertest';
-import { createPublicKey, verify } from 'node:crypto';
+import { createHash, createPublicKey, verify } from 'node:crypto';
 import { crearApp } from '../../src/app.js';
 import { claveDesdeJwksLocal, crearVerificadorJwt } from '../../src/auth/verificador-jwt.js';
 import { crearDb, type Db } from '../../src/db.js';
@@ -69,5 +69,65 @@ describe('D1 — catálogo firmado de paquetes de plugins', () => {
     await publicar([eq('1.0.0')]);
     const auditoria = await db.registroAuditoria.findMany();
     expect(auditoria.map((a) => a.accion)).toEqual(['catalogo.publicar']);
+  });
+
+  describe('M3 — módulos del DAW para la web', () => {
+    const modulo = (version = '1.0.0') => ({
+      id: 'com.jaswave.modulo.midi-md',
+      nombre: 'MIDI · Markdown',
+      version,
+      url: `https://github.com/jaswave/plugins/releases/download/v${version}/midi-md.zip`,
+      sha256: sha('e'),
+      sizeBytes: 999,
+      categoria: 'ui-extension',
+      plataformas: ['win-x64', 'web'],
+      descripcion: 'Clip MIDI como Markdown',
+      ui: 'dist/modulo.js',
+      uiEstilos: 'dist/modulo.css',
+    });
+    const subir = async (archivos: { ruta: string; contenido: string }[], email = ADMIN, version = '1.0.0') =>
+      request(app)
+        .post(`/catalogo/modulos/com.jaswave.modulo.midi-md/${version}/archivos`)
+        .set('Authorization', `Bearer ${await emisor.emitir({ sub: 'sub-' + email, email })}`)
+        .send({ archivos: archivos.map((a) => ({ ruta: a.ruta, contenido: Buffer.from(a.contenido).toString('base64') })) });
+    const JS = 'export default { id: "com.jaswave.modulo.midi-md" }'
+
+    it('se publica el módulo y sus archivos; el catálogo firmado lleva entradas y hashes; se sirven con caché inmutable y CORP', async () => {
+      await publicar([modulo()]).then((r) => expect(r.status).toBe(200));
+      const r = await subir([
+        { ruta: 'dist/modulo.js', contenido: JS },
+        { ruta: 'dist/modulo.css', contenido: '.x{}' },
+      ]);
+      expect(r.status).toBe(200);
+      const cat = (await request(app).get('/catalogo')).body.catalogo.paquetes[0];
+      expect(cat).toMatchObject({ categoria: 'ui-extension', plataformas: ['win-x64', 'web'], ui: 'dist/modulo.js', uiEstilos: 'dist/modulo.css' });
+      expect(cat.archivos['dist/modulo.js']).toBe(createHash('sha256').update(JS).digest('hex'));
+      const js = await request(app).get('/modulos/com.jaswave.modulo.midi-md/1.0.0/dist/modulo.js');
+      expect(js.status).toBe(200);
+      expect(js.headers['content-type']).toContain('text/javascript');
+      expect(js.headers['cache-control']).toContain('immutable');
+      expect(js.headers['cross-origin-resource-policy']).toBe('cross-origin');
+      expect(js.text).toBe(JS);
+    });
+
+    it('una versión publicada es inmutable; solo admin publica; tipos y rutas peligrosas se rechazan', async () => {
+      await publicar([modulo()]);
+      await subir([{ ruta: 'dist/modulo.js', contenido: JS }]).then((r) => expect(r.status).toBe(200));
+      expect((await subir([{ ruta: 'dist/modulo.js', contenido: JS + ';' }])).status).toBe(409);
+      expect((await subir([{ ruta: 'dist/modulo.js', contenido: JS }], 'otro@jaswave.test')).status).toBe(403);
+      expect((await subir([{ ruta: 'dist/modulo.js', contenido: JS }, { ruta: 'dist/x.exe', contenido: 'MZ' }])).status).toBe(400);
+      expect((await subir([{ ruta: '../escape.js', contenido: JS }])).status).toBe(400);
+      expect((await request(app).get('/modulos/com.jaswave.modulo.midi-md/1.0.0/..%2F..%2Fetc')).status).toBe(404);
+      expect((await request(app).get('/modulos/com.jaswave.modulo.midi-md/9.9.9/dist/modulo.js')).status).toBe(404);
+    });
+
+    it('un plugin VST sin entrypoints.ui no admite archivos web', async () => {
+      await publicar([eq('1.0.0')]);
+      const r = await request(app)
+        .post('/catalogo/modulos/com.jaswave.plugin.param-eq/1.0.0/archivos')
+        .set('Authorization', `Bearer ${await emisor.emitir({ sub: 'sub-a', email: ADMIN })}`)
+        .send({ archivos: [{ ruta: 'dist/modulo.js', contenido: 'eA==' }] });
+      expect(r.status).toBe(400);
+    });
   });
 });

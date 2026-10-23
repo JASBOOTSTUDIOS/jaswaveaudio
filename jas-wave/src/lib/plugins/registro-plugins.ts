@@ -18,6 +18,7 @@ import {
 } from '@jaswave/shared'
 import { pluginRegistry } from '../plugin/registry'
 import type { PluginDescriptor } from '../plugin/types'
+import { sincronizarModulosInstalados } from '../../modulos/cargador'
 
 export type PaqueteRecibido = {
   dir: string
@@ -220,5 +221,7 @@ export async function cargarPluginsInstalados(
   if (!listar) return { activos: [], rechazados: [] }
   const resultado = activarPaquetes(await listar())
   for (const r of resultado.rechazados) console.warn(`[plugins] paquete rechazado (${r.dir}): ${r.motivo}`)
+  // Módulos del DAW (asistente IA, partitura…): paquetes con entrypoints.ui.
+  sincronizarModulosInstalados(resultado.activos)
   return resultado
 }

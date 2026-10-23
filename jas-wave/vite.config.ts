@@ -24,26 +24,38 @@ export function origenesBackend(env: Record<string, string>): string[] {
   return [...out]
 }
 
+/** Origen del API (VITE_API_URL): sirve los módulos del DAW a la web en /modulos (M3). */
+export function origenModulosWeb(env: Record<string, string>): string[] {
+  try {
+    const u = new URL(env.VITE_API_URL ?? '')
+    return u.protocol === 'http:' || u.protocol === 'https:' ? [u.origin] : []
+  } catch {
+    return []
+  }
+}
+
 /**
  * CSP del renderer empaquetado (file://). Solo en build: en dev, Vite/HMR necesita
  * scripts inline y websocket. Todo es local salvo el backend y Supabase (origenesBackend).
+ * Código de módulos: los instalados (jaswave-modulo:, verificados por el proceso main) y, en la web,
+ * los publicados por el API (origenModulosWeb).
  */
-const cspBase = (conectar: string[]) => [
+const cspBase = (conectar: string[], modulos: string[]) => [
   "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
+  ["script-src 'self' jaswave-modulo:", ...modulos].join(' '),
+  ["style-src 'self' 'unsafe-inline' jaswave-modulo:", ...modulos].join(' '),
   "font-src 'self' data:",
   "img-src 'self' data: blob:",
   "media-src 'self' data: blob:",
   "worker-src 'self' blob:",
-  ["connect-src 'self' data: blob:", ...conectar].join(' '),
+  ["connect-src 'self' data: blob: jaswave-modulo:", ...conectar].join(' '),
   "object-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
 ].join('; ')
 
-function contentSecurityPolicy(conectar: string[]): Plugin {
-  const CONTENT_SECURITY_POLICY = cspBase(conectar)
+function contentSecurityPolicy(conectar: string[], modulos: string[]): Plugin {
+  const CONTENT_SECURITY_POLICY = cspBase(conectar, modulos)
   return {
     name: 'jaswave-csp',
     apply: 'build',
@@ -57,7 +69,7 @@ function contentSecurityPolicy(conectar: string[]): Plugin {
 }
 
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), tsconfigPaths(), contentSecurityPolicy(origenesBackend(loadEnv(mode, __dirname, 'VITE_')))],
+  plugins: [react(), tsconfigPaths(), contentSecurityPolicy(origenesBackend(loadEnv(mode, __dirname, 'VITE_')), origenModulosWeb(loadEnv(mode, __dirname, 'VITE_')))],
   publicDir: resolve(__dirname, 'public'),
   base: './',
   build: {
@@ -76,6 +88,7 @@ export default defineConfig(({ mode }) => ({
       '@': resolve(__dirname, ''),
       '@jaswave/ai-harness': resolve(__dirname, '../ai-harness/src/index.ts'),
       '@jaswave/shared': resolve(__dirname, '../shared/src/index.ts'),
+      '@jaswave/host-sdk': resolve(__dirname, '../plugins/sdk/host-sdk/src'),
       'vexflow-bravura-font': resolve(__dirname, 'node_modules/vexflow/build/esm/src/fonts/bravura.js'),
       react: resolve(__dirname, 'node_modules/react'),
       'react-dom': resolve(__dirname, 'node_modules/react-dom'),

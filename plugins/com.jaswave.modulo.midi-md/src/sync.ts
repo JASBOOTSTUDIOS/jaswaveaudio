@@ -2,19 +2,8 @@
  * Sync bidireccional clip MIDI ↔ clip-*.md (Docs).
  * Observa DAW + AgentDocs; anti-bucle con hash + debounce.
  */
-
-import type { TiendaDAW } from '../../../shared/src/state/tienda'
-import { findMidiClip } from '../../../shared/src/midi/query'
-import {
-  getAgentDoc,
-  subscribeAgentDocs,
-  writeAgentDoc,
-} from './agent-docs'
-import {
-  midiClipDocSlug,
-  parseMidiClipMd,
-  serializeMidiClipMd,
-} from './midi-clip-markdown'
+import { findMidiClip, getAgentDoc, midiClipDocSlug, parseMidiClipMd, serializeMidiClipMd, subscribeAgentDocs, writeAgentDoc } from '@jaswave/host-sdk'
+import type { TiendaDAW } from '@jaswave/host-sdk'
 
 export type MidiClipMdBound = {
   projectId: string

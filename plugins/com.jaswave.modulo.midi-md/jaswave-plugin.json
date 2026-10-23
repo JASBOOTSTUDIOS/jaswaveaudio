@@ -1,0 +1,26 @@
+{
+  "id": "com.jaswave.modulo.midi-md",
+  "name": "MIDI · Markdown",
+  "version": "1.0.0",
+  "vendor": "JasWave",
+  "category": "ui-extension",
+  "description": "Edita un clip MIDI como documento Markdown (tabla de notas) con sincronización en vivo con el piano roll. Útil para revisar y para que la IA edite notas.",
+  "targetPlatforms": [
+    "win-x64",
+    "web"
+  ],
+  "entrypoints": {
+    "ui": "dist/modulo.js",
+    "uiEstilos": "dist/modulo.css"
+  },
+  "permissions": {
+    "realtimeAudio": false,
+    "fileSystem": "none",
+    "network": false,
+    "commands": []
+  },
+  "rolesAllowed": [
+    "productor",
+    "mezcla"
+  ]
+}

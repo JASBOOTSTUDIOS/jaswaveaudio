@@ -1,44 +1,51 @@
 /**
- * Módulos del DAW (M1): piezas opcionales (asistente IA, partitura, MIDI·MD…) que aportan herramientas
- * al workspace y se activan, desactivan o descargan sin tocar el núcleo. El código de cada módulo se
- * carga con `import()` diferido, así que en la web solo se descarga al activarlo y abrirlo.
+ * Módulos del DAW (M1/M3): piezas instalables (asistente IA, partitura, MIDI·MD, terceros) que viven
+ * fuera del código del DAW. Cada módulo es un paquete independiente (plugins/<id>/) cuyo código se
+ * descarga del catálogo firmado y se carga en tiempo de ejecución; exporta `definirModulo` del SDK
+ * (@jaswave/host-sdk). El núcleo solo conoce este registro:
  *
- * Un módulo se registra con `registrarModulo`; el núcleo pregunta `herramientaDisponible(toolId)`
- * antes de listar o montar una herramienta. Los módulos esenciales no se pueden desactivar.
+ *   registrarModulo(fuente) → (si está activo) cargar() → activar(ctx) → herramientas + contribuciones
+ *
+ * La activación se guarda por equipo. Desactivar quita sus herramientas y contribuciones sin tocar el
+ * proyecto ni el audio.
  */
 
-import type { ComponentType } from 'react'
-import type { ToolId } from '../workspace/types'
+import type { ContextoModulo, DefinicionModulo, ModuloActivo } from '@jaswave/host-sdk/contrato'
+import { VERSION_SDK } from '@jaswave/host-sdk/runtime'
+import { quitarHerramientasDeModulo, registrarHerramienta } from '../workspace/types'
 
-export type PanelesModulo = Partial<Record<ToolId, ComponentType>>
-
-export type ModuloDAW = {
+/** De dónde sale el código de un módulo. */
+export type FuenteModulo = {
   id: string
   nombre: string
   descripcion: string
   version: string
-  /** Herramientas del workspace que aporta (deben existir en TOOL_CATALOG). */
-  herramientas: ToolId[]
-  /** Capacidades que expone (p. ej. 'ia.chat', 'ia.agente'); informativo para la UI y la IA. */
-  capacidades?: string[]
+  /** 'instalado' = paquete en el equipo (escritorio); 'catalogo' = servido por el backend (web). */
+  origen: 'instalado' | 'catalogo' | 'pruebas'
   /** Activo si el usuario no lo desactivó (por defecto true). */
   activoPorDefecto?: boolean
-  /** Carga el código del módulo (chunk aparte). */
-  cargar: () => Promise<PanelesModulo>
+  /** Descarga y evalúa el código del módulo. */
+  cargar: () => Promise<DefinicionModulo>
 }
 
 export type EstadoCarga = 'sin-cargar' | 'descargando' | 'listo' | 'error'
+
+type Entrada = {
+  fuente: FuenteModulo
+  estado: EstadoCarga
+  error?: string
+  definicion?: DefinicionModulo
+  activo?: ModuloActivo
+  promesa?: Promise<void>
+}
 
 const CLAVE = 'jaswave.modulos.v1'
 export const EVENTO_MODULOS = 'jaswave-modulos-cambiados'
 
 type Persistido = { desactivados: string[]; activados: string[] }
+type Almacen = { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem?(k: string): void }
 
-type Almacen = { getItem(k: string): string | null; setItem(k: string, v: string): void }
-
-const modulos = new Map<string, ModuloDAW>()
-const porHerramienta = new Map<ToolId, string>()
-const cargas = new Map<string, { estado: EstadoCarga; promesa?: Promise<PanelesModulo>; paneles?: PanelesModulo; error?: string }>()
+const modulos = new Map<string, Entrada>()
 const oyentes = new Set<() => void>()
 let version = 0
 
@@ -60,60 +67,129 @@ function leer(): Persistido {
   }
 }
 
-function guardar(p: Persistido): void {
-  try {
-    almacen()?.setItem(CLAVE, JSON.stringify(p))
-  } catch {
-    /* sin almacenamiento: el estado vive en memoria */
-  }
-}
-
 let persistido: Persistido = leer()
 
 function notificar(): void {
   version++
   for (const o of oyentes) o()
-  if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(EVENTO_MODULOS))
+  if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') window.dispatchEvent(new CustomEvent(EVENTO_MODULOS))
+}
+
+function plataforma(): 'escritorio' | 'web' {
+  return typeof window !== 'undefined' && window.electron ? 'escritorio' : 'web'
+}
+
+/** Almacenamiento con espacio de nombres del módulo. */
+function almacenDe(id: string): ContextoModulo['almacen'] {
+  const k = (c: string) => `jaswave.modulo.${id}.${c}`
+  return {
+    leer: (c) => almacen()?.getItem(k(c)) ?? null,
+    escribir: (c, v) => {
+      try {
+        almacen()?.setItem(k(c), v)
+      } catch {
+        /* sin almacenamiento */
+      }
+    },
+    borrar: (c) => almacen()?.removeItem?.(k(c)),
   }
-}
-
-export function registrarModulo(m: ModuloDAW): void {
-  if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(m.id)) throw new Error(`id de módulo inválido: ${m.id}`)
-  for (const h of m.herramientas) {
-    const dueño = porHerramienta.get(h)
-    if (dueño && dueño !== m.id) throw new Error(`la herramienta ${h} ya pertenece al módulo ${dueño}`)
-  }
-  modulos.set(m.id, m)
-  for (const h of m.herramientas) porHerramienta.set(h, m.id)
-  notificar()
-}
-
-export function listarModulos(): ModuloDAW[] {
-  return [...modulos.values()]
-}
-
-export function obtenerModulo(id: string): ModuloDAW | undefined {
-  return modulos.get(id)
-}
-
-export function moduloDeHerramienta(toolId: ToolId): ModuloDAW | undefined {
-  const id = porHerramienta.get(toolId)
-  return id ? modulos.get(id) : undefined
 }
 
 export function moduloActivo(id: string): boolean {
-  const m = modulos.get(id)
-  if (!m) return false
+  const e = modulos.get(id)
+  if (!e) return false
   if (persistido.desactivados.includes(id)) return false
   if (persistido.activados.includes(id)) return true
-  return m.activoPorDefecto !== false
+  return e.fuente.activoPorDefecto !== false
 }
 
-/** Las herramientas del núcleo siempre están disponibles; las de un módulo, si el módulo está activo. */
-export function herramientaDisponible(toolId: ToolId): boolean {
-  const m = moduloDeHerramienta(toolId)
-  return !m || moduloActivo(m.id)
+/** Carga y activa el módulo (una vez). Un fallo se puede reintentar. */
+export function cargarModulo(id: string): Promise<void> {
+  const e = modulos.get(id)
+  if (!e) return Promise.reject(new Error(`módulo desconocido: ${id}`))
+  if (e.estado === 'listo') return Promise.resolve()
+  if (e.promesa && e.estado === 'descargando') return e.promesa
+  e.estado = 'descargando'
+  delete e.error
+  notificar()
+  e.promesa = (async () => {
+    try {
+      const def = await e.fuente.cargar()
+      if (!def || typeof def.activar !== 'function') throw new Error('el paquete no exporta un módulo de JasWave')
+      if (def.id !== id) throw new Error(`el paquete declara el id ${def.id}, se esperaba ${id}`)
+      if (def.sdk !== VERSION_SDK) throw new Error(`el módulo usa el SDK v${def.sdk}; este DAW ofrece v${VERSION_SDK}`)
+      const activo = await def.activar({ idModulo: id, plataforma: plataforma(), almacen: almacenDe(id) })
+      for (const h of def.herramientas) {
+        if (!activo.paneles[h.id]) throw new Error(`el módulo no aporta el panel de la herramienta ${h.id}`)
+      }
+      // Si mientras cargaba se desactivó, no se publica nada.
+      if (!moduloActivo(id)) {
+        activo.desactivar?.()
+        e.estado = 'sin-cargar'
+        return
+      }
+      for (const h of def.herramientas) {
+        registrarHerramienta({
+          id: h.id,
+          title: h.titulo,
+          description: h.descripcion,
+          defaultZone: h.zona,
+          singleton: true,
+          ...(h.bajoDemanda ? { bajoDemanda: true } : {}),
+          ...(h.icono ? { icono: h.icono } : {}),
+          moduloId: id,
+        })
+      }
+      e.definicion = def
+      e.activo = activo
+      e.estado = 'listo'
+    } catch (err) {
+      quitarHerramientasDeModulo(id)
+      e.estado = 'error'
+      e.error = err instanceof Error ? err.message : String(err)
+      throw err
+    } finally {
+      notificar()
+    }
+  })()
+  return e.promesa
+}
+
+function descargar(id: string): void {
+  const e = modulos.get(id)
+  if (!e) return
+  try {
+    e.activo?.desactivar?.()
+  } catch {
+    /* el módulo no debe impedir su desactivación */
+  }
+  quitarHerramientasDeModulo(id)
+  delete e.activo
+  delete e.definicion
+  delete e.promesa
+  e.estado = 'sin-cargar'
+}
+
+/**
+ * Registra (o actualiza) un módulo disponible y, si está activo, lo carga. Re-registrar un id con otra
+ * versión descarga la anterior.
+ */
+export function registrarModulo(fuente: FuenteModulo): Promise<void> {
+  if (!/^[a-z0-9][a-z0-9.-]{1,120}$/.test(fuente.id)) throw new Error(`id de módulo inválido: ${fuente.id}`)
+  const previo = modulos.get(fuente.id)
+  if (previo && previo.fuente.version === fuente.version && previo.fuente.origen === fuente.origen) return previo.promesa ?? Promise.resolve()
+  if (previo) descargar(fuente.id)
+  modulos.set(fuente.id, { fuente, estado: 'sin-cargar' })
+  notificar()
+  return moduloActivo(fuente.id) ? cargarModulo(fuente.id).catch(() => {}) : Promise.resolve()
+}
+
+/** Quita un módulo (desinstalado). */
+export function quitarModulo(id: string): void {
+  if (!modulos.has(id)) return
+  descargar(id)
+  modulos.delete(id)
+  notificar()
 }
 
 export function fijarModuloActivo(id: string, activo: boolean): void {
@@ -122,38 +198,40 @@ export function fijarModuloActivo(id: string, activo: boolean): void {
     desactivados: persistido.desactivados.filter((x) => x !== id).concat(activo ? [] : [id]),
     activados: persistido.activados.filter((x) => x !== id).concat(activo ? [id] : []),
   }
-  guardar(persistido)
-  notificar()
-  // Al activarlo se descarga ya, para que abrir sus paneles sea inmediato.
+  try {
+    almacen()?.setItem(CLAVE, JSON.stringify(persistido))
+  } catch {
+    /* sin almacenamiento: el estado vive en memoria */
+  }
   if (activo) void cargarModulo(id).catch(() => {})
-}
-
-export function estadoCarga(id: string): { estado: EstadoCarga; error?: string } {
-  const c = cargas.get(id)
-  return c ? { estado: c.estado, ...(c.error ? { error: c.error } : {}) } : { estado: 'sin-cargar' }
-}
-
-/** Descarga (una vez) el código del módulo. Un fallo se puede reintentar. */
-export function cargarModulo(id: string): Promise<PanelesModulo> {
-  const m = modulos.get(id)
-  if (!m) return Promise.reject(new Error(`módulo desconocido: ${id}`))
-  const previa = cargas.get(id)
-  if (previa?.promesa && previa.estado !== 'error') return previa.promesa
-  const promesa = m.cargar().then(
-    (paneles) => {
-      cargas.set(id, { estado: 'listo', promesa, paneles })
-      notificar()
-      return paneles
-    },
-    (e: unknown) => {
-      cargas.set(id, { estado: 'error', error: e instanceof Error ? e.message : String(e) })
-      notificar()
-      throw e
-    },
-  )
-  cargas.set(id, { estado: 'descargando', promesa })
+  else descargar(id)
   notificar()
-  return promesa
+}
+
+export type VistaModulo = { fuente: FuenteModulo; activo: boolean; estado: EstadoCarga; error?: string; herramientas: string[] }
+
+export function listarModulos(): VistaModulo[] {
+  return [...modulos.values()].map((e) => ({
+    fuente: e.fuente,
+    activo: moduloActivo(e.fuente.id),
+    estado: e.estado,
+    ...(e.error ? { error: e.error } : {}),
+    herramientas: e.definicion?.herramientas.map((h) => h.id) ?? [],
+  }))
+}
+
+/** Panel de una herramienta aportada por un módulo activo y cargado. */
+export function panelDeHerramienta(toolId: string): ModuloActivo['paneles'][string] | undefined {
+  for (const e of modulos.values()) {
+    const p = e.activo?.paneles[toolId]
+    if (p) return p
+  }
+  return undefined
+}
+
+/** Contribuciones de todos los módulos activos (menús, ajustes, componentes globales, zoom). */
+export function contribuciones(): ModuloActivo[] {
+  return [...modulos.values()].flatMap((e) => (e.activo ? [e.activo] : []))
 }
 
 /** Suscripción para useSyncExternalStore. */
@@ -168,9 +246,8 @@ export function versionModulos(): number {
 
 /** Solo pruebas. */
 export function reiniciarModulosParaPruebas(): void {
+  for (const id of [...modulos.keys()]) descargar(id)
   modulos.clear()
-  porHerramienta.clear()
-  cargas.clear()
   persistido = leer()
   notificar()
 }

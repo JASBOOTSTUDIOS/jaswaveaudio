@@ -37,7 +37,6 @@ import {
 import { TOOL_CATALOG, type ToolId } from '@/src/workspace/types'
 import { herramientasDisponibles } from '@/src/modulos/herramientas'
 import { useVersionModulos } from '@/src/modulos/use-modulos'
-import { EVENTO_MODULOS, listarModulos, moduloActivo } from '@/src/modulos/registro-modulos'
 import { MultiWindowSync } from '@/src/workspace/multi-window-sync'
 import { WorkspaceMenu } from '@/components/workspace/workspace-menu'
 import { ImportProgressProvider } from '@/src/context/import-progress-context'
@@ -280,18 +279,6 @@ function AppShell() {
     window.addEventListener('jaswave-open-tool', handler)
     return () => window.removeEventListener('jaswave-open-tool', handler)
   }, [layout.undocked, toolsInZone, setActiveTab, openTool])
-
-  // Desactivar un módulo cierra sus herramientas (el proyecto y el audio no se tocan).
-  useEffect(() => {
-    const handler = () => {
-      for (const m of listarModulos()) {
-        if (moduloActivo(m.id)) continue
-        for (const h of m.herramientas) if (isToolOpen(h)) closeTool(h)
-      }
-    }
-    window.addEventListener(EVENTO_MODULOS, handler)
-    return () => window.removeEventListener(EVENTO_MODULOS, handler)
-  }, [closeTool, isToolOpen])
 
   useEffect(() => {
     const handler = (ev: Event) => {

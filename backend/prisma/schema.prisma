@@ -217,15 +217,38 @@ model ComandoSala {
 
 /// Versión publicada de un paquete descargable (zip en GitHub Releases).
 model PaquetePlugin {
-  id          String
-  version     String
-  nombre      String
-  url         String
-  sha256      String
-  sizeBytes   Int
-  publicadoEn DateTime @default(now())
+  id             String
+  version        String
+  nombre         String
+  url            String
+  sha256         String
+  sizeBytes      Int
+  publicadoEn    DateTime @default(now())
+  /// Categoría del manifiesto (audio-effect, instrument, ui-extension, ai-skill…).
+  categoria      String   @default("audio-effect")
+  /// Plataformas del manifiesto (win-x64, web).
+  plataformas    String[] @default([])
+  descripcion    String   @default("")
+  /// Módulos del DAW (M3): entrypoints.ui y entrypoints.uiEstilos del manifiesto.
+  entradaUi      String?
+  entradaEstilos String?
+  archivos       ArchivoModulo[]
 
   @@id([id, version])
+}
+
+/// Archivos de un módulo publicados para el cliente web (M3): se sirven en
+/// /modulos/<id>/<versión>/<ruta> con URLs inmutables. El SHA-256 lo calcula el servidor al publicar.
+model ArchivoModulo {
+  paqueteId String
+  version   String
+  ruta      String
+  tipo      String
+  sha256    String
+  contenido Bytes
+  paquete   PaquetePlugin @relation(fields: [paqueteId, version], references: [id, version], onDelete: Cascade)
+
+  @@id([paqueteId, version, ruta])
 }
 
 // ---------- Handover web → escritorio (H1) ----------

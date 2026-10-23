@@ -57,7 +57,10 @@ export const esquemaManifiesto = z
         dspDesktop: rutaRelativa.optional(),
         dspWeb: rutaRelativa.optional(),
         aiSkill: rutaRelativa.optional(),
+        /** Módulo del DAW (ESM que exporta definirModulo de @jaswave/host-sdk). */
         ui: rutaRelativa.optional(),
+        /** Hoja de estilos del módulo (la carga el DAW junto con `ui`). */
+        uiEstilos: rutaRelativa.optional(),
       })
       .refine((e) => Object.values(e).some(Boolean), 'al menos un entrypoint'),
     vst3: z
@@ -115,6 +118,12 @@ export const esquemaManifiesto = z
     }
     if (m.entrypoints.dspDesktop && !m.targetPlatforms.includes('win-x64')) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetPlatforms'], message: 'dspDesktop requiere win-x64' });
+    }
+    if ((m.category === 'ui-extension' || m.category === 'ai-skill') && !m.entrypoints.ui) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['entrypoints', 'ui'], message: 'un módulo del DAW necesita entrypoints.ui' });
+    }
+    if (m.entrypoints.uiEstilos && !m.entrypoints.ui) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['entrypoints', 'uiEstilos'], message: 'uiEstilos requiere entrypoints.ui' });
     }
     const features = new Set(m.license?.features.map((f) => f.key) ?? []);
     const vistos = new Set<string>();

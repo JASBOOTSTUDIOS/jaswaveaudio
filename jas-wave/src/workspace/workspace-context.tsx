@@ -9,6 +9,8 @@ import {
 } from 'react'
 import {
   DEFAULT_WORKSPACE,
+  EVENTO_HERRAMIENTAS,
+  reconciliarLayout,
   loadWorkspace,
   saveWorkspace,
   TOOL_CATALOG,
@@ -59,10 +61,21 @@ function stripTool(layout: WorkspaceLayout, toolId: ToolId): WorkspaceLayout {
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const daw = useDAW()
   const [layout, setLayout] = useState<WorkspaceLayout>(() => loadWorkspace())
+  // Cambia cuando un módulo añade o quita herramientas (catálogo dinámico).
+  const [versionCatalogo, setVersionCatalogo] = useState(0)
 
   useEffect(() => {
     saveWorkspace(layout)
   }, [layout])
+
+  useEffect(() => {
+    const al = () => {
+      setVersionCatalogo((v) => v + 1)
+      setLayout((prev) => reconciliarLayout(prev))
+    }
+    window.addEventListener(EVENTO_HERRAMIENTAS, al)
+    return () => window.removeEventListener(EVENTO_HERRAMIENTAS, al)
+  }, [])
 
   useEffect(() => {
     const api = window.electron as typeof window.electron & {
@@ -364,9 +377,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [layout.undocked],
   )
 
+  // Solo las herramientas del catálogo: las de módulos aún no cargados siguen en el layout, ocultas.
   const toolsInZone = useCallback(
-    (zone: DockZone) => layout.zones[zone].filter((id) => !layout.undocked.includes(id)),
-    [layout],
+    (zone: DockZone) => layout.zones[zone].filter((id) => id in TOOL_CATALOG && !layout.undocked.includes(id)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layout, versionCatalogo],
   )
 
   const resetLayout = useCallback(() => {

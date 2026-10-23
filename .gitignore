@@ -62,3 +62,6 @@ plugins/**/*.vst3/
 
 # Salidas de compilación de cualquier proyecto nativo (incluye restos de plugins movidos a plugins/)
 native/*/build*/
+
+# Tipos del host generados para @jaswave/host-sdk (jas-wave: npm run sdk:generar)
+plugins/sdk/host-sdk/tipos-host/

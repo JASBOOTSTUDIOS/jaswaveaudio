@@ -5,10 +5,15 @@ import { TOOL_CATALOG, type DockZone, type ToolId } from '@/src/workspace/types'
 import { herramientasDisponibles } from '@/src/modulos/herramientas'
 import { useVersionModulos } from '@/src/modulos/use-modulos'
 import { ToolHost } from './tool-host'
-import { JasWaveLogo } from '@/components/brand'
 import { usePluginEditorTabTitle } from '@/components/plugin-editor-panel'
 
 const ZONE_DROP = 'application/x-jaswave-tool'
+
+/** Icono que aporta un módulo a su herramienta (las del núcleo no llevan). */
+function IconoHerramienta({ toolId }: { toolId: ToolId }) {
+  const Icono = TOOL_CATALOG[toolId]?.icono
+  return Icono ? <Icono className="size-4 shrink-0" /> : null
+}
 
 function ToolTabLabel({ toolId }: { toolId: ToolId }) {
   const pluginTitle = usePluginEditorTabTitle()
@@ -68,7 +73,7 @@ function AddToolButton({ zone }: { zone: DockZone }) {
                 }}
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-foreground hover:bg-panel-raised disabled:opacity-40"
               >
-                {toolId === 'coproducer' && <JasWaveLogo className="size-4 shrink-0" alt="" />}
+                <IconoHerramienta toolId={toolId} />
                 <span className="min-w-0 flex-1 truncate">{TOOL_CATALOG[toolId].title}</span>
                 <span className="text-[9px] text-muted-foreground">
                   {alreadyHere ? 'aquí' : floating ? 'ventana' : elsewhere ? 'mover' : 'abrir'}
@@ -197,7 +202,7 @@ export function DockZonePanel({
                   onClick={() => setActiveTab(zone, toolId)}
                   className="flex max-w-[10rem] items-center gap-1.5 py-1"
                 >
-                  {toolId === 'coproducer' && <JasWaveLogo className="size-4 shrink-0" alt="" />}
+                  <IconoHerramienta toolId={toolId} />
                   <ToolTabLabel toolId={toolId} />
                 </button>
                 <button

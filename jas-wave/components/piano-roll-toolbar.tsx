@@ -19,9 +19,11 @@ import {
   Layers2,
   Sparkles,
   FileDown,
-  FileCode2,
 } from 'lucide-react'
+import type { ComponentType } from 'react'
+import type { ContextoClip } from '@jaswave/host-sdk/contrato'
 import { TIMELINE_SNAP_OPTIONS, snapSelectValue } from '@/src/lib/timeline-snap'
+import { ejecutarAccionDeClip, useAccionesDeClip } from '@/src/modulos/contribuciones'
 
 export type PianoRollTool = 'seleccionar' | 'dibujar' | 'borrar'
 
@@ -76,7 +78,7 @@ type ToolBtnProps = {
   activo?: boolean
   titulo: string
   atajo?: string
-  icon: LucideIcon
+  icon: LucideIcon | ComponentType<{ className?: string }>
   onClick: () => void
   peligro?: boolean
 }
@@ -141,7 +143,7 @@ export function PianoRollToolbar({
   nombreClip,
   onSaveStyle,
   onExportScorePdf,
-  onOpenMidiMd,
+  contextoClip,
 }: {
   herramienta: PianoRollTool
   onHerramienta: (t: PianoRollTool) => void
@@ -182,8 +184,10 @@ export function PianoRollToolbar({
   nombreClip: string
   onSaveStyle?: () => void
   onExportScorePdf?: () => void
-  onOpenMidiMd?: () => void
+  /** Clip del piano roll: los módulos activos añaden sus acciones con icono (p. ej. MIDI · MD). */
+  contextoClip?: ContextoClip
 }) {
+  const accionesModulos = useAccionesDeClip(contextoClip ?? null).filter((a) => a.icono)
   return (
     <div className="flex shrink-0 flex-col border-b border-border">
       <div className="flex h-8 items-center gap-2 border-b border-border/60 px-2">
@@ -364,9 +368,9 @@ export function PianoRollToolbar({
         {onExportScorePdf ? (
           <ToolBtn titulo="Vista previa / exportar partitura PDF" icon={FileDown} onClick={onExportScorePdf} />
         ) : null}
-        {onOpenMidiMd ? (
-          <ToolBtn titulo="Abrir MIDI · MD (sync en vivo)" icon={FileCode2} onClick={onOpenMidiMd} />
-        ) : null}
+        {accionesModulos.map((a) => (
+          <ToolBtn key={a.id} titulo={a.etiqueta} icon={a.icono!} onClick={() => contextoClip && ejecutarAccionDeClip(a, contextoClip)} />
+        ))}
 
         <select
           className="h-6 max-w-[140px] rounded border border-border bg-background px-1 text-[10px]"

@@ -148,10 +148,41 @@ export async function instalarPaquete(entrada: EntradaCatalogo, o: OpcionesInsta
     const manifiesto = JSON.parse(await fs.readFile(path.join(extraido, 'jaswave-plugin.json'), 'utf8')) as {
       id?: unknown
       version?: unknown
-      entrypoints?: { dspDesktop?: unknown }
+      entrypoints?: { dspDesktop?: unknown; ui?: unknown }
     }
     if (manifiesto.id !== entrada.id || manifiesto.version !== entrada.version) throw new Error('el manifiesto no corresponde al catálogo')
     const entradaDsp = manifiesto.entrypoints?.dspDesktop
+    // Módulo del DAW (M3): sin VST3; su código va en dist/ dentro del paquete.
+    const esModulo = typeof manifiesto.entrypoints?.ui === 'string'
+    if (esModulo && typeof entradaDsp !== 'string') {
+      const ui = String(manifiesto.entrypoints!.ui)
+      if (!ui.startsWith('dist/') || !rutaDentroDe(extraido, ui)) throw new Error('el módulo debe tener su código en dist/')
+      await fs.stat(path.join(extraido, ui))
+      o.alProgreso({ id: entrada.id, fase: 'instalando' })
+      const dirPaquete = path.join(o.carpetaPaquetes, entrada.id)
+      await fs.mkdir(dirPaquete, { recursive: true })
+      // dist/ se intercambia entero: nunca quedan archivos de dos versiones mezclados.
+      const destinoDist = path.join(dirPaquete, 'dist')
+      const nuevoDist = `${destinoDist}.nuevo-${process.pid}`
+      const viejoDist = `${destinoDist}.viejo-${process.pid}`
+      await fs.rm(nuevoDist, { recursive: true, force: true })
+      await copiarDirectorio(path.join(extraido, 'dist'), nuevoDist)
+      await fs.rename(destinoDist, viejoDist).catch((e: NodeJS.ErrnoException) => {
+        if (e.code !== 'ENOENT') throw e
+      })
+      await fs.rename(nuevoDist, destinoDist)
+      await fs.rm(viejoDist, { recursive: true, force: true })
+      const textoManifiesto = await fs.readFile(path.join(extraido, 'jaswave-plugin.json'))
+      await writeFileAtomic(path.join(dirPaquete, 'jaswave-plugin.json'), textoManifiesto)
+      const archivos: Record<string, string> = { 'jaswave-plugin.json': sha256(textoManifiesto) }
+      for (const [rel, h] of Object.entries(await hashes(destinoDist))) archivos[`dist/${rel}`] = h
+      await writeFileAtomic(
+        path.join(dirPaquete, 'instalacion.json'),
+        JSON.stringify({ version: entrada.version, instaladoEn: new Date().toISOString(), archivos }, null, 2),
+      )
+      o.alProgreso({ id: entrada.id, fase: 'listo' })
+      return dirPaquete
+    }
     const bundle = typeof entradaDsp === 'string' ? path.basename(entradaDsp) : ''
     if (!/^[A-Za-z0-9 ._&()-]+\.vst3$/i.test(bundle)) throw new Error('el paquete no declara un bundle VST3 válido')
     const origenBundle = path.join(extraido, 'vst3', bundle)

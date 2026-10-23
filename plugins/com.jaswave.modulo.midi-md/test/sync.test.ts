@@ -1,15 +1,16 @@
+/**
+ * Prueba de contrato: el módulo funciona contra el DAW real a través de @jaswave/host-sdk.
+ * npm test (tsx con pruebas/tsconfig.pruebas.json del SDK)
+ */
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
-import { crearEstadoInicial, crearTiendaDAW } from '../../../shared/src'
-import { findMidiClip } from '../../../shared/src/midi/query'
-import { getAgentDoc } from './agent-docs'
-import { midiClipDocSlug } from './midi-clip-markdown'
-import {
-  bindMidiClipMdSync,
-  ensureMidiClipDoc,
-  getMidiClipMdSyncStatus,
-  unbindMidiClipMdSync,
-} from './midi-clip-md-sync'
+import { instalarHostReal } from '../../sdk/host-sdk/pruebas/host-real'
+
+// El runtime del host debe existir antes de evaluar @jaswave/host-sdk y el código del módulo.
+instalarHostReal()
+const { crearEstadoInicial, crearTiendaDAW } = await import('../../../shared/src')
+const { findMidiClip, getAgentDoc, midiClipDocSlug } = await import('@jaswave/host-sdk')
+const { bindMidiClipMdSync, ensureMidiClipDoc, getMidiClipMdSyncStatus, unbindMidiClipMdSync } = await import('../src/sync')
 
 function installLocalStorage() {
   const bag = new Map<string, string>()
@@ -106,7 +107,7 @@ describe('midi-clip-md-sync', () => {
     const bound = bindMidiClipMdSync({ tienda, clipId: clip.id, trackId: track.id })
     assert.ok(bound)
 
-    const { writeAgentDoc } = await import('./agent-docs')
+    const { writeAgentDoc } = await import('@jaswave/host-sdk')
     writeAgentDoc(tienda.obtenerEstado().project.id, bound!.slug, '# bad\n\n## Notas\n\n| x |\n| --- |\n| no |\n', {
       origin: 'user',
       preserveUserNotes: false,
@@ -133,7 +134,7 @@ describe('midi-clip-md-sync', () => {
     const bound = bindMidiClipMdSync({ tienda, clipId: clip.id, trackId: track.id })
     assert.ok(bound)
 
-    const { writeAgentDoc } = await import('./agent-docs')
+    const { writeAgentDoc } = await import('@jaswave/host-sdk')
     const before = getAgentDoc(tienda.obtenerEstado().project.id, bound!.slug)!.content
     const edited = before.replace(
       /(\|\s*[\w.-]+\s*\|\s*)60(\s*\|\s*C4\s*\|)/,

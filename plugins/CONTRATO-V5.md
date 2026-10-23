@@ -88,3 +88,32 @@ admin puede revocarlo. Guardar cifrado con **DPAPI** (`CryptProtectData`, ámbit
 
 Escritura atómica (archivo temporal + `MoveFileEx` con reemplazo). Renovación en hilo de fondo cuando quedan < 6 h,
 reintentos con backoff; nunca en el hilo de audio.
+
+## 5. Módulos del DAW (`category: ui-extension | ai-skill`, M3)
+
+Un módulo es un paquete independiente en `plugins/com.jaswave.modulo.<nombre>/` con su propio `package.json`,
+build (`vite build` → `dist/modulo.js` + `dist/modulo.css`) y manifiesto:
+
+```json
+{ "category": "ui-extension", "targetPlatforms": ["win-x64", "web"],
+  "entrypoints": { "ui": "dist/modulo.js", "uiEstilos": "dist/modulo.css" } }
+```
+
+- **Código**: `dist/modulo.js` es ESM y exporta por defecto `definirModulo({...})` de `@jaswave/host-sdk`
+  (herramientas del workspace, `activar(ctx)` → paneles, menús de clip, páginas de ajustes, componentes
+  globales, zoom, `desactivar`).
+- **Dependencias**: el módulo solo importa `@jaswave/host-sdk`, sus propios archivos y paquetes npm. React y la
+  API del DAW los aporta el host en tiempo de ejecución (`globalThis.__JASWAVE_SDK__`); no se empaquetan.
+  `plugins/scripts/verificar-independencia.mjs` lo comprueba en `npm run verify`.
+- **API del DAW**: `jas-wave/src/modulos/api-host.ts` (lo publicado); sus tipos se generan en
+  `plugins/sdk/host-sdk` con `npm run sdk:generar`. Cambiar una firma existente exige subir `VERSION_SDK`.
+- **Entrega en escritorio**: zip con `jaswave-plugin.json` + `dist/` en el catálogo firmado (`jwc1`). El
+  instalador verifica firma, SHA-256 y tamaño, intercambia `dist/` de forma atómica y registra el hash de cada
+  archivo en `instalacion.json`. El renderer lo carga por `jaswave-modulo://<id>/dist/…`, que solo sirve
+  archivos de `dist/` cuyo hash coincide (en desarrollo, también los de `plugins/` sin registro).
+- **Entrega en la web**: el catálogo incluye `ui`, `uiEstilos` y el SHA-256 de cada archivo; los archivos se
+  publican con `plugins/scripts/publicar-modulos-web.mjs` y se sirven en
+  `<api>/modulos/<id>/<versión>/<ruta>` (inmutables). El navegador verifica la firma del catálogo con
+  WebCrypto (Ed25519) antes de registrar módulos.
+- **Pruebas**: cada módulo tiene pruebas de contrato en `test/` que se ejecutan contra el DAW real
+  (`plugins/sdk/host-sdk/pruebas/host-real.ts`); su código de producción no importa el DAW.

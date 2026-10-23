@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain: rawIpcMain, dialog, Menu, session, clipboard, shell, safeStorage, crashReporter } = require('electron')
+const { app, BrowserWindow, ipcMain: rawIpcMain, dialog, Menu, session, clipboard, shell, safeStorage, crashReporter, protocol } = require('electron')
 const path = require('path')
 const fs = require('fs/promises')
 const fsSync = require('fs')
@@ -33,6 +33,7 @@ import { escanearPaquetes } from './plugins/escaner'
 import { crearVigilancia } from './plugins/vigilancia'
 import { instalarPaquete, obtenerCatalogo } from './plugins/instalador'
 import { CLAVE_PUBLICA_JASWAVE } from './plugins/clave-catalogo'
+import { crearManejadorModulos, ESQUEMA_MODULOS } from './plugins/protocolo-modulos'
 import { guardarLicenciaLocal, leerLicenciaLocal, leerTokenDispositivo } from './licencias-locales'
 import * as os from 'node:os'
 
@@ -527,6 +528,12 @@ function isMainWindowSender(e: IpcMainInvokeEvent): boolean {
   return !!mainWindow && !mainWindow.isDestroyed() && e.sender === mainWindow.webContents
 }
 
+// M3: código de los módulos instalados (jaswave-modulo://<id>/dist/…), servido solo si su hash coincide
+// con la instalación. Debe registrarse como esquema estándar y seguro antes de que la app esté lista.
+protocol.registerSchemesAsPrivileged([
+  { scheme: ESQUEMA_MODULOS, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
+])
+
 app.whenReady().then(() => {
   if (!instanciaUnica) return
   if (process.platform === 'win32') {
@@ -535,6 +542,14 @@ app.whenReady().then(() => {
   initLogger(logsDir())
   logLine('info', 'main', `JasWave ${app.getVersion()} · Electron ${process.versions.electron} · ${process.platform}`)
   installPermissionHandlers(session.defaultSession)
+  session.defaultSession.protocol.handle(
+    ESQUEMA_MODULOS,
+    crearManejadorModulos({
+      raices: raicesPlugins,
+      // Solo en desarrollo: los módulos compilados en plugins/ del repositorio no tienen registro de instalación.
+      admitirSinRegistro: (dir) => !app.isPackaged && path.resolve(dir).startsWith(path.resolve(__dirname, '..', '..', '..', '..', 'plugins') + path.sep),
+    }),
+  )
   initPathGrants()
   buildAppMenu()
   createWindow()

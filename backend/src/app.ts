@@ -7,7 +7,7 @@ import { crearManejadorErrores, type RegistroErrores } from './http/errores.js';
 import type { Db } from './db.js';
 import { rutasLicencias } from './license/rutas.js';
 import { rutasAdmin } from './admin/rutas.js';
-import { rutasCatalogo } from './catalog/rutas.js';
+import { rutasCatalogo, rutasModulos } from './catalog/rutas.js';
 import { rutasHandover } from './handover/rutas.js';
 import { rutasAdminIA, rutasIA } from './ia/rutas.js';
 import type { ServicioProveedoresIA } from './ia/proveedores.js';
@@ -42,6 +42,8 @@ export function crearApp(opciones: OpcionesApp): Express {
   // IA: contexto y herramientas pueden superar 256 KB (límite propio de 4 MB).
   app.use('/ia', rutasIA({ verificar: opciones.verificar, servicio: opciones.ia ?? null }));
   if (opciones.ia?.admin) app.use('/admin/ia', rutasAdminIA({ verificar: opciones.verificar, admin: opciones.ia.admin }));
+  // Publicar archivos de módulos (M3, solo admin) lleva el bundle completo en base64.
+  app.use('/catalogo/modulos', express.json({ limit: '40mb' }));
   app.use(express.json({ limit: '256kb' }));
 
   app.get('/health', (_req, res) => {
@@ -57,6 +59,7 @@ export function crearApp(opciones: OpcionesApp): Express {
     app.use('/license', rutasLicencias({ db, verificar: opciones.verificar, clavePrivadaPem, reloj }));
     app.use('/admin', rutasAdmin({ db, verificar: opciones.verificar }));
     app.use('/catalogo', rutasCatalogo({ db, verificar: opciones.verificar, clavePrivadaPem, reloj }));
+    app.use('/modulos', rutasModulos({ db }));
   }
 
   app.use((_req, res) => {

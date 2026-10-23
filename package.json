@@ -4,7 +4,7 @@
   "private": true,
   "description": "JasWave — AI-First Digital Audio Workstation",
   "scripts": {
-    "install:all": "npm ci --prefix shared && npm ci --prefix ai-harness && npm ci --prefix jas-wave",
+    "install:all": "npm ci --prefix shared && npm ci --prefix ai-harness && npm ci --prefix jas-wave && npm ci --prefix plugins",
     "dev": "npm run dev --prefix jas-wave",
     "cli": "npm run cli --prefix jas-wave --",
     "cli:watch": "npm run cli:watch --prefix jas-wave",
@@ -13,14 +13,16 @@
     "typecheck": "npm run typecheck --prefix shared && npm run typecheck --prefix ai-harness && npm run typecheck --prefix jas-wave",
     "test": "npm test --prefix shared && npm test --prefix ai-harness && npm test --prefix jas-wave",
     "test:harness": "npm test --prefix ai-harness",
-    "verify": "npm run lint && npm run typecheck && npm test",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run verify:modulos",
     "certify": "npm run cli:certify:quick --prefix jas-wave",
     "native:plugins": "node native/scripts/build-plugins.mjs",
     "native:sdk": "node native/scripts/fetch-vst3sdk.mjs",
     "native:build": "node native/scripts/build-native.mjs",
     "pack:win": "npm run pack:win --prefix jas-wave",
     "release:win": "npm run release:win --prefix jas-wave",
-    "e2e": "npm run e2e --prefix jas-wave"
+    "e2e": "npm run e2e --prefix jas-wave",
+    "verify:modulos": "node jas-wave/scripts/generar-sdk.mjs --comprobar && npm run typecheck --prefix plugins && npm test --prefix plugins && node plugins/scripts/verificar-independencia.mjs",
+    "build:modulos": "npm run build:modulos --prefix plugins"
   },
   "engines": {
     "node": ">=22"

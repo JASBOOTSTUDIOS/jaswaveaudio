@@ -1,9 +1,12 @@
+import type { ComponentType } from 'react'
+
 export type DockZone = 'left' | 'center' | 'right' | 'bottom'
 
-export type ToolId =
-  | 'coproducer'
-  | 'docs'
-  | 'docs-explorer'
+/**
+ * Herramientas del núcleo del DAW. Los módulos instalables (asistente IA, partitura…) añaden las suyas en
+ * tiempo de ejecución con `registrarHerramienta`, así que un ToolId puede ser cualquier cadena.
+ */
+export type HerramientaNucleo =
   | 'arrange'
   | 'mixer'
   | 'library'
@@ -16,15 +19,14 @@ export type ToolId =
   | 'plugin-editor'
   | 'midi-map'
   | 'piano-roll'
-  | 'midi-md'
-  | 'score-editor'
   | 'terminal'
   | 'settings'
-  | 'progress'
   | 'project-files'
   | 'cuenta'
   | 'admin'
   | 'modulos'
+
+export type ToolId = HerramientaNucleo | (string & {})
 
 export interface ToolDefinitionUI {
   id: ToolId
@@ -35,30 +37,14 @@ export interface ToolDefinitionUI {
   singleton: boolean
   /** No se coloca sola en el layout: solo aparece cuando se pide (p. ej. el panel admin). */
   bajoDemanda?: boolean
+  /** Icono de la pestaña (lo aportan los módulos). */
+  icono?: ComponentType<{ className?: string }>
+  /** Módulo que aporta la herramienta (undefined = núcleo). */
+  moduloId?: string
 }
 
+/** Herramientas disponibles: las del núcleo + las de los módulos activos (mutable en tiempo de ejecución). */
 export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
-  coproducer: {
-    id: 'coproducer',
-    title: 'Asistente Jas',
-    description: 'Asistente JasWave',
-    defaultZone: 'left',
-    singleton: true,
-  },
-  docs: {
-    id: 'docs',
-    title: 'Docs',
-    description: 'Tabs de edición y vista de Markdown del proyecto',
-    defaultZone: 'left',
-    singleton: true,
-  },
-  'docs-explorer': {
-    id: 'docs-explorer',
-    title: 'Explorador',
-    description: 'Árbol de docs/ del proyecto (plan.md y contextos)',
-    defaultZone: 'left',
-    singleton: true,
-  },
   arrange: {
     id: 'arrange',
     title: 'Arrange',
@@ -143,20 +129,6 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     defaultZone: 'bottom',
     singleton: true,
   },
-  'midi-md': {
-    id: 'midi-md',
-    title: 'MIDI · MD',
-    description: 'Clip MIDI como .md con sync en vivo al piano roll',
-    defaultZone: 'left',
-    singleton: true,
-  },
-  'score-editor': {
-    id: 'score-editor',
-    title: 'Partitura',
-    description: 'Editor de partitura sincronizado con el clip MIDI',
-    defaultZone: 'bottom',
-    singleton: true,
-  },
   terminal: {
     id: 'terminal',
     title: 'Terminal',
@@ -168,13 +140,6 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     id: 'settings',
     title: 'Configuración',
     description: 'Ajustes del DAW',
-    defaultZone: 'right',
-    singleton: true,
-  },
-  progress: {
-    id: 'progress',
-    title: 'Progreso',
-    description: 'Plan, bitácora, diffs y métricas (A9)',
     defaultZone: 'right',
     singleton: true,
   },
@@ -221,13 +186,13 @@ export type WorkspaceLayout = {
 
 export const DEFAULT_WORKSPACE: WorkspaceLayout = {
   zones: {
-    left: ['project-files', 'coproducer', 'docs-explorer', 'instruments'],
+    left: ['project-files', 'instruments'],
     center: ['arrange'],
     right: ['track-detail', 'plugin-editor', 'settings'],
     bottom: ['mixer', 'piano-roll'],
   },
   activeTab: {
-    left: 'coproducer',
+    left: 'project-files',
     center: 'arrange',
     right: 'track-detail',
     bottom: 'mixer',
@@ -240,15 +205,12 @@ export const DEFAULT_WORKSPACE: WorkspaceLayout = {
     bottom: true,
   },
   closed: [
-    'docs',
     'library',
-    'midi-md',
     'fx-chain',
     'automation',
     'midi-map',
     'meters',
     'routing',
-    'score-editor',
     'terminal',
   ],
 }
@@ -257,7 +219,7 @@ const STORAGE_KEY = 'jaswave.workspace.v1'
 
 /** Garantiza catálogo coherente: closed no se reinyecta; el resto se coloca. */
 function ensureCatalogTools(layout: WorkspaceLayout): WorkspaceLayout {
-  const closed = [...(layout.closed ?? [])].filter((id) => id in TOOL_CATALOG)
+  const closed = [...(layout.closed ?? [])]
   const closedSet = new Set(closed)
   const next: WorkspaceLayout = {
     ...layout,
@@ -272,11 +234,12 @@ function ensureCatalogTools(layout: WorkspaceLayout): WorkspaceLayout {
     zoneVisible: { ...layout.zoneVisible },
     closed,
   }
-  // Quitar de zonas/undocked lo que esté cerrado
+  // Quitar de zonas/undocked lo que esté cerrado. Las de módulos aún no cargados se conservan: aparecen al
+  // registrarse el módulo (toolsInZone solo devuelve las del catálogo).
   for (const zone of ['left', 'center', 'right', 'bottom'] as DockZone[]) {
-    next.zones[zone] = next.zones[zone].filter((id) => id in TOOL_CATALOG && !closedSet.has(id))
+    next.zones[zone] = next.zones[zone].filter((id) => !closedSet.has(id))
   }
-  next.undocked = next.undocked.filter((id) => id in TOOL_CATALOG && !closedSet.has(id))
+  next.undocked = next.undocked.filter((id) => !closedSet.has(id))
 
   for (const id of Object.keys(TOOL_CATALOG) as ToolId[]) {
     if (closedSet.has(id) || TOOL_CATALOG[id].bajoDemanda) continue
@@ -301,6 +264,39 @@ function ensureCatalogTools(layout: WorkspaceLayout): WorkspaceLayout {
     }
   }
   return next
+}
+
+/** Recoloca herramientas tras registrar o quitar las de un módulo. */
+export function reconciliarLayout(layout: WorkspaceLayout): WorkspaceLayout {
+  return ensureCatalogTools(layout)
+}
+
+export const EVENTO_HERRAMIENTAS = 'jaswave-herramientas-cambiadas'
+
+function avisarHerramientas(): void {
+  if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') window.dispatchEvent(new CustomEvent(EVENTO_HERRAMIENTAS))
+}
+
+/** Añade una herramienta de un módulo al catálogo (no puede reemplazar una del núcleo ni de otro módulo). */
+export function registrarHerramienta(def: ToolDefinitionUI & { moduloId: string }): void {
+  const previa = TOOL_CATALOG[def.id]
+  if (previa && previa.moduloId !== def.moduloId) {
+    throw new Error(`la herramienta ${def.id} ya existe${previa.moduloId ? ` (módulo ${previa.moduloId})` : ' en el núcleo'}`)
+  }
+  TOOL_CATALOG[def.id] = def
+  avisarHerramientas()
+}
+
+/** Quita las herramientas de un módulo (al desactivarlo o desinstalarlo). */
+export function quitarHerramientasDeModulo(moduloId: string): void {
+  let cambio = false
+  for (const [id, def] of Object.entries(TOOL_CATALOG)) {
+    if (def.moduloId === moduloId) {
+      delete TOOL_CATALOG[id]
+      cambio = true
+    }
+  }
+  if (cambio) avisarHerramientas()
 }
 
 export function loadWorkspace(): WorkspaceLayout {
