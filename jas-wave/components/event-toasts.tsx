@@ -24,6 +24,7 @@ const EVENT_TOAST_MAP: Record<string, { message: string; type: Toast['type'] }> 
   'validacion.advertencia': { message: 'Advertencia de validación', type: 'warning' },
   'sistema.error': { message: 'Error del sistema', type: 'warning' },
   'plugin.cuarentena': { message: 'Plugin apartado por inestable', type: 'warning' },
+  'handover.recibido': { message: 'Proyecto recibido desde la web', type: 'success' },
   'portapapeles.copiado': { message: 'Clip copiado', type: 'success' },
   'portapapeles.pegado': { message: 'Clip pegado', type: 'success' },
 }
@@ -46,6 +47,11 @@ export function EventToasts() {
     Object.entries(EVENT_TOAST_MAP).map(([nombre, config]) => ({
       nombre,
       manejador: (payload: unknown) => {
+        if (nombre === 'handover.recibido') {
+          const p = payload as { ms?: number }
+          addToast(`${config.message}${p.ms !== undefined ? ` (${p.ms} ms)` : ''}`, config.type)
+          return
+        }
         if (nombre === 'plugin.cuarentena') {
           const p = payload as { mensaje?: string }
           addToast(p.mensaje ?? config.message, config.type)

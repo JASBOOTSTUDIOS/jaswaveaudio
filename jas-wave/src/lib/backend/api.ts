@@ -76,6 +76,13 @@ export function crearClienteApi(o: OpcionesClienteApi) {
     me: () => pedir<{ identidad: Identidad }>('GET', '/me').then((r) => r.identidad),
     refrescarLicencia: (datos: { dispositivo: string; tokenDispositivo?: string }) => pedir<RespuestaLicencia>('POST', '/license/refresh', datos),
     aprobarCodigo: (codigoUsuario: string) => pedir<{ ok: true }>('POST', '/license/device/aprobar', { codigoUsuario }),
+    handover: {
+      crear: (datos: Record<string, unknown>, sesion?: { access_token: string; refresh_token: string }) =>
+        pedir<{ token: string; url: string; caducaEn: string }>('POST', '/handover', { datos, ...(sesion ? { sesion } : {}) }),
+      /** El token de un solo uso es la credencial: no requiere sesión. */
+      canjear: (token: string) =>
+        pedir<{ datos: Record<string, unknown>; sesion?: { access_token: string; refresh_token: string } }>('POST', '/handover/canjear', { token }, false),
+    },
     admin: {
       productos: () => pedir<{ productos: ProductoAdmin[] }>('GET', '/admin/productos').then((r) => r.productos),
       crearProducto: (id: string, nombre: string) => pedir<{ producto: ProductoAdmin }>('POST', '/admin/productos', { id, nombre }),

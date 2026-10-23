@@ -10,12 +10,16 @@
 Token one-time de 60 s; registro del protocolo en NSIS; cursor/selección/reproducción restaurados en < 3 s (medido en test); reabre instancia existente.
 
 ## Checklist
-- [ ] Implementación
-- [ ] Tests automatizados
-- [ ] Verificación reproducible documentada
+- [x] Backend /handover (token 60 s, un solo uso, AES-256-GCM con clave derivada del token)
+- [x] jaswave://abrir validado estrictamente; arranque y segunda instancia; protocolo en el instalador
+- [x] Renderer: restaura proyecto (validado), posición, selección, reproducción y sesión; mide el tiempo
+- [x] Botón web «Abrir en JasWave Desktop»
+- [ ] Unirse automáticamente a la sala colaborativa (salaId viaja, falta el cliente WS en la app)
 
 ## Verificación
 `npm run verify` en raíz; tests específicos del workstream (ver criterios).
 
 ## Notas de traspaso
-- (vacío: workstream pendiente)
+- Tiempo medido en prueba: muy por debajo de 3 s (test handover.test.ts).
+- setAsDefaultProtocolClient solo en la app empaquetada (en dev no se toca el registro de Windows).
+- No se ha probado el salto real navegador → app instalada (requiere instalar el paquete); cubierto por pruebas de cada lado.

@@ -20,6 +20,7 @@ import {
   registrarProveedorAnalisis,
 } from '../../../shared/src'
 import { configurarFileService } from '../../../shared/src/commands/project-commands'
+import { FileServiceNavegador } from '../lib/web/file-service-navegador'
 import { permissionManager } from '../../../shared/src/state/permissions'
 import { FileServiceElectron } from '@/src/lib/file-service'
 import { registerAgentCatalogOnRegistry } from '@/src/lib/agent-action-catalog'
@@ -83,6 +84,9 @@ export function getSharedStore() {
 
     if (typeof window !== 'undefined' && window.electron) {
       configurarFileService(new FileServiceElectron())
+    } else if (typeof indexedDB !== 'undefined') {
+      // Cliente web (W1): los proyectos se guardan en IndexedDB con el mismo formato .jaswave.
+      configurarFileService(new FileServiceNavegador())
     }
   }
   return sharedStore

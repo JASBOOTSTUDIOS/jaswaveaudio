@@ -18,6 +18,8 @@ import { TransportBar } from '@/components/transport-bar'
 import { EditToolbar } from '@/components/edit-toolbar'
 import { EventToasts } from '@/components/event-toasts'
 import { PluginsNecesarios } from '@/components/plugins/plugins-necesarios'
+import { ProyectosWebDialog } from '@/components/web/proyectos-web-dialog'
+import { ReceptorHandover } from '@/components/handover/receptor-handover'
 import { AudioDeviceBanner } from '@/components/audio-device-banner'
 import { PluginHostCrashLoopBanner } from '@/components/plugin-host-crash-loop-banner'
 import { ProjectCloseDialog } from '@/components/project-close-dialog'
@@ -316,6 +318,8 @@ function AppShell() {
       <CommandPalette />
       <EventToasts />
       <PluginsNecesarios />
+      <ProyectosWebDialog />
+      <ReceptorHandover />
       <UpdateBanner />
       <AudioDeviceBanner />
       <PluginHostCrashLoopBanner />

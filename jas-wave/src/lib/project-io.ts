@@ -9,6 +9,7 @@ import { esNombreSinTitulo, nombreAlGuardar } from '../../../shared/src/project/
 import { clearSessionSnapshot, saveSessionNow } from './session-persist'
 import { detectarConflictoProyecto, refrescarFirmaArchivo } from './project-conflict'
 import { solicitarDecisionConflicto } from './save-conflict'
+import { rutaWebPara } from './web/file-service-navegador'
 import {
   conGuardadoUnico,
   confirmarDescartarCambios,
@@ -136,6 +137,11 @@ async function guardarProyectoImpl(tienda: TiendaDAW): Promise<ResultadoIO> {
 
   const state = tienda.obtenerEstado()
 
+  // Cliente web (W1): sin diálogo nativo, el proyecto se guarda en el navegador con su nombre.
+  if (!state.project.ruta && !window.electron) {
+    return persistirRutaYGuardar(tienda, rutaWebPara(state.project.nombre))
+  }
+
   if (!state.project.ruta && window.electron?.dialogSave) {
     const dialog = await window.electron.dialogSave(nombreSugeridoDialogo(state.project.nombre))
     if (dialog.canceled || !dialog.filePath) return { success: false, error: 'Canceled', canceled: true }
@@ -172,6 +178,11 @@ export function guardarProyectoComoIO(tienda: TiendaDAW): Promise<ResultadoIO> {
 }
 
 async function guardarProyectoComoImpl(tienda: TiendaDAW): Promise<ResultadoIO> {
+  if (!window.electron) {
+    // Web: «guardar como» crea una copia con otro nombre en el navegador.
+    const nombre = `${tienda.obtenerEstado().project.nombre || 'Proyecto'} (copia ${new Date().toLocaleString()})`
+    return persistirRutaYGuardar(tienda, rutaWebPara(nombre))
+  }
   if (!window.electron?.dialogSave) return { success: false, error: 'No dialog available' }
   try {
     const { snapshotLoadedPluginsIntoProject } = await import('./plugin/track-vst-runtime')
@@ -231,6 +242,12 @@ export async function abrirProyectoIO(
   // U7: en un satélite, abrir lo hace la ventana principal (dialogo y carga).
   if (esSatelite()) {
     return reenviarAlPrimario('abrir', { ruta: opts?.ruta })
+  }
+  if (!window.electron) {
+    // Web: con ruta se carga del navegador; sin ella se muestra la lista de proyectos del navegador.
+    if (opts?.ruta) return cargarProyectoDesdeRutaIO(tienda, opts.ruta)
+    window.dispatchEvent(new CustomEvent('jaswave-abrir-web'))
+    return { success: false, canceled: true, error: 'Canceled' }
   }
   if (!window.electron?.projectOpenDialog) return { success: false, error: 'Not in Electron' }
   const confirmado = await confirmarCambiosIO(tienda, 'abrir')

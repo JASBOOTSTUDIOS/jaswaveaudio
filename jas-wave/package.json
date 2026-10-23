@@ -36,7 +36,9 @@
     "native:plugins": "node ../native/scripts/build-plugins.mjs",
     "stage:host:strict": "node scripts/stage-plugin-host.mjs --strict",
     "electron:dir": "npm run build && npm run stage:host && electron-builder --win dir --publish never",
-    "release:win": "npm run build && npm run stage:host:strict && electron-builder --win nsis --publish always"
+    "release:win": "npm run build && npm run stage:host:strict && electron-builder --win nsis --publish always",
+    "build:web": "vite build --mode web --outDir dist-web",
+    "web:preview": "vite preview --outDir dist-web --port 4173"
   },
   "dependencies": {
     "electron-updater": "^6.8.10"

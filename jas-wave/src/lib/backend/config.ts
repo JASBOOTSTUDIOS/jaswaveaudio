@@ -17,6 +17,8 @@ export type ConfigBackend = {
   supabaseUrl: string
   supabaseAnonKey: string
   proveedoresOAuth: ProveedorOAuth[]
+  /** Dónde descargar JasWave Desktop (instalador ligero). */
+  descargaUrl: string
 }
 
 export function configBackend(env: EnvVite = envVite()): ConfigBackend {
@@ -29,6 +31,7 @@ export function configBackend(env: EnvVite = envVite()): ConfigBackend {
       .split(',')
       .map((p) => p.trim())
       .filter((p): p is ProveedorOAuth => p === 'google' || p === 'github'),
+    descargaUrl: env.VITE_DESCARGA_URL || '',
   }
 }
 
