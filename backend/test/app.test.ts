@@ -48,6 +48,13 @@ describe('B0 — API base y autenticación', () => {
     expect(r.status).toBe(401);
   });
 
+  it('las respuestas no se cachean (no-store, sin ETag)', async () => {
+    const token = await emisor.emitir({ sub: 'u1', email: 'a@b.c' });
+    const r = await request(app).get('/me').set('Authorization', `Bearer ${token}`);
+    expect(r.headers['cache-control']).toBe('no-store');
+    expect(r.headers.etag).toBeUndefined();
+  });
+
   it('ruta inexistente devuelve 404 JSON', async () => {
     const r = await request(app).get('/no-existe');
     expect(r.status).toBe(404);

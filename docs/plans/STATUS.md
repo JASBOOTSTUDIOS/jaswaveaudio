@@ -29,7 +29,7 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | S2 | Reconciliación vectorial y undo por usuario | S1, K1 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log shared/src/sync) |
 | L1 | Licencias, roles y API admin | B0 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log backend/) |
 | L2 | Licencia dentro de cada VST | L1, V1 | hecho | Claude Opus 5.5 · 2026-10-23 | ae53d2c |
-| L3 | Login y panel admin en el DAW | L1 | en curso (código y pruebas hechos; verificación en vivo pendiente) | Claude Opus 5.5 · 2026-10-23 | 7a607aa |
+| L3 | Login y panel admin en el DAW | L1 | hecho | Claude Opus 5.5 · 2026-10-23 | 7a607aa |
 | P1 | Manifiesto jaswave-plugin.json y cargador | K1 | en curso | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | P2 | Registro dinámico de herramientas IA | P1 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | K1 | Microkernel sin dependencias estáticas | — | en curso (parte nativa hecha; TS pendiente) | Claude Opus 5.5 · 2026-10-23 | ae53d2c |

@@ -20,6 +20,12 @@ export type OpcionesApp = {
 export function crearApp(opciones: OpcionesApp): Express {
   const app = express();
   app.disable('x-powered-by');
+  // Datos autenticados y mutables: nada se cachea (el navegador reutilizaba GET tras un PUT).
+  app.set('etag', false);
+  app.use((_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
   app.use(helmet());
   app.use(cors({ origin: opciones.origenesCors }));
   app.use(express.json({ limit: '256kb' }));

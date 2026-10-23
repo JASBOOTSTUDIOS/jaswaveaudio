@@ -59,7 +59,7 @@ export function crearClienteApi(o: OpcionesClienteApi) {
     }
     let r: Response
     try {
-      r = await f(`${o.base}${ruta}`, { method: metodo, headers: cabeceras, ...(cuerpo !== undefined ? { body: JSON.stringify(cuerpo) } : {}) })
+      r = await f(`${o.base}${ruta}`, { method: metodo, headers: cabeceras, cache: 'no-store', ...(cuerpo !== undefined ? { body: JSON.stringify(cuerpo) } : {}) })
     } catch {
       throw new ErrorApiCliente(0, 'sin_conexion', 'no se pudo contactar con el servidor de JasWave')
     }

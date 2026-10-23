@@ -8,7 +8,7 @@
  * - Auditoría de cada cambio.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Download, Plus, ShieldAlert, Trash2 } from 'lucide-react'
 import { apiJasWave, useSesion } from '@/src/lib/backend/sesion'
 import { ErrorApiCliente, type DispositivoAdmin, type ProductoAdmin, type RegistroAuditoriaAdmin, type UsuarioAdmin } from '@/src/lib/backend/api'
@@ -79,16 +79,33 @@ export function PanelAdmin() {
   )
 }
 
+/**
+ * Recargas solapadas (dos cambios seguidos) pueden responder en otro orden: solo se aplica la
+ * respuesta de la última petición para no mostrar datos viejos.
+ */
+function useUltimaPeticion() {
+  const contador = useRef(0)
+  return () => {
+    const id = ++contador.current
+    return () => id === contador.current
+  }
+}
+
 function useProductos() {
   const [productos, setProductos] = useState<ProductoAdmin[]>([])
   const [error, setError] = useState<string | null>(null)
+  const nuevaPeticion = useUltimaPeticion()
   const recargar = useCallback(async () => {
+    const vigente = nuevaPeticion()
     try {
-      setProductos(await apiJasWave().admin.productos())
+      const datos = await apiJasWave().admin.productos()
+      if (!vigente()) return
+      setProductos(datos)
       setError(null)
     } catch (e) {
-      setError(mensaje(e))
+      if (vigente()) setError(mensaje(e))
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   useEffect(() => {
     void recargar()
@@ -256,12 +273,16 @@ function PestanaUsuarios() {
   const [aviso, setAviso] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null)
   const api = apiJasWave()
 
+  const nuevaPeticion = useUltimaPeticion()
   const recargar = useCallback(async () => {
+    const vigente = nuevaPeticion()
     try {
-      setUsuarios(await apiJasWave().admin.usuarios())
+      const datos = await apiJasWave().admin.usuarios()
+      if (vigente()) setUsuarios(datos)
     } catch (e) {
-      setAviso({ tipo: 'error', texto: mensaje(e) })
+      if (vigente()) setAviso({ tipo: 'error', texto: mensaje(e) })
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   useEffect(() => {
     void recargar()
