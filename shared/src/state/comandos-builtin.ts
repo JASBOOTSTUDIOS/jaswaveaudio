@@ -27,6 +27,7 @@ import {
   crearComandoClipCreate,
   crearComandoMidiClipCreate,
   crearComandoMidiNotesSet,
+  crearComandoMidiNotesPatch,
   crearComandoMidiTranspose,
   crearComandoMidiQuantize,
   crearComandoMidiHumanize,
@@ -150,6 +151,7 @@ import {
   crearComandoPistaLimite,
   crearComandoMasterNormalizar,
 } from '../commands/actuacion-commands';
+import { entorno } from './entorno-determinista';
 
 /**
  * Crea un evento de dominio estandarizado para el bus.
@@ -162,7 +164,7 @@ function evento(nombre: string, payload: Record<string, unknown>): EventoDominio
   return {
     nombre,
     version: 1,
-    marcaTiempo: Date.now(),
+    marcaTiempo: entorno.ahora(),
     fuente: 'builtin',
     payload: payload as any,
   };
@@ -204,6 +206,7 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoClipCreate(), registry);
   registrar(crearComandoMidiClipCreate(), registry);
   registrar(crearComandoMidiNotesSet(), registry);
+  registrar(crearComandoMidiNotesPatch(), registry);
   registrar(crearComandoMidiTranspose(), registry);
   registrar(crearComandoMidiQuantize(), registry);
   registrar(crearComandoMidiHumanize(), registry);

@@ -45,7 +45,8 @@ export function adjuntarSync(servidor: HttpServer, opciones: OpcionesSync): WebS
   const ruta = opciones.ruta ?? '/sync';
   const intervalo = opciones.intervaloLatidoMs ?? 15_000;
   const ahora = opciones.ahora ?? Date.now;
-  const wss = new WebSocketServer({ noServer: true });
+  // Frames acotados: el límite por defecto de ws (100 MB) permitiría agotar memoria.
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const conexiones = new Set<Conexion>();
   const conexionDe = new WeakMap<WebSocket, Conexion>();
 

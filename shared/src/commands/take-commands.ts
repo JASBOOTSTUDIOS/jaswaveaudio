@@ -8,14 +8,14 @@ import type { EventoDominio } from '../events/evento-dominio'
 import type { CompSegment, Take, TakeFolder } from '../types/entidades'
 
 function newId(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  return `${prefix}-${entorno.ahora().toString(36)}-${entorno.aleatorio().toString(36).slice(2, 8)}`
 }
 
 function ev(nombre: string, payload: Record<string, unknown>): EventoDominio {
   return {
     nombre,
     version: 1,
-    marcaTiempo: Date.now(),
+    marcaTiempo: entorno.ahora(),
     fuente: 'builtin',
     payload: payload as EventoDominio['payload'],
   }
@@ -346,6 +346,7 @@ export function crearComandoCompSegmentClear(): CommandDefinition<any> {
 export function crearComandoTransportSetRecordMode(): CommandDefinition<any> {
   return {
     type: 'transport.setRecordMode',
+    replicacion: 'local',
     historialUndo: 'ninguno',
     description: 'Cambia modo de grabación (normal, comping, punch, …)',
     risk: 'write',
@@ -373,3 +374,5 @@ export function crearComandoTransportSetRecordMode(): CommandDefinition<any> {
     },
   }
 }
+
+import { entorno } from '../state/entorno-determinista';

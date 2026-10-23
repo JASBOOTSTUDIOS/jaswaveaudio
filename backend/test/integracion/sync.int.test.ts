@@ -155,6 +155,18 @@ describe('S1 — sincronización WebSocket con auth JWT', () => {
     b.ws.close();
   });
 
+  it('un payload de más de 512 KB se rechaza y no se persiste', async () => {
+    const a = conectar(urlCon(await emisor.emitir({ sub: 'sub-editor', email: 'editor@t.test' })));
+    await a.abierto;
+    a.enviar({ tipo: 'sala.unirse', salaId });
+    await esperar(() => a.mensajes.some((m) => m.tipo === 'sala.unido'));
+    a.enviar({ tipo: 'comando', salaId, clienteId: 'A', comando: 'x', payload: { datos: 'x'.repeat(600 * 1024) }, vclock: {}, baseSeq: 0 });
+    await esperar(() => a.mensajes.some((m) => m.tipo === 'error'));
+    expect(a.mensajes.find((m) => m.tipo === 'error')).toMatchObject({ codigo: 'payload_grande' });
+    expect(await db.comandoSala.count({ where: { salaId } })).toBe(0);
+    a.ws.close();
+  });
+
   it('reconectar con desdeSeq reenvía solo lo que falta', async () => {
     const e = await emisor.emitir({ sub: 'sub-editor', email: 'editor@t.test' });
     const w = conectar(urlCon(e));

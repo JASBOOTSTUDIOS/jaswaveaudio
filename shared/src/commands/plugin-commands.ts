@@ -14,7 +14,7 @@ import { EventosPlugin, EventosTrack } from '../constants/nombres-eventos'
 export const MASTER_FX_TRACK_ID = 'master'
 
 function generarId(): string {
-  return `plugin-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+  return `plugin-${entorno.ahora().toString(36)}-${entorno.aleatorio().toString(36).slice(2, 7)}`
 }
 
 function isMasterFxId(trackId: string): boolean {
@@ -37,7 +37,7 @@ function resolveChainHost(estado: DAWState, trackId: string): ChainHost {
 }
 
 function applyChain(estado: DAWState, trackId: string, plugins: PluginInfo[]): ProjectState {
-  const now = Date.now()
+  const now = entorno.ahora()
   if (isMasterFxId(trackId)) {
     return {
       ...estado.project,
@@ -159,7 +159,7 @@ export function crearComandoPluginInsert(): CommandDefinition<PluginInsertPayloa
           {
             nombre: EventosPlugin.cargado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -172,7 +172,7 @@ export function crearComandoPluginInsert(): CommandDefinition<PluginInsertPayloa
           {
             nombre: EventosTrack.actualizada,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: { trackId: payload.trackId, cambios: { plugins: chain } as any },
           },
@@ -226,7 +226,7 @@ export function crearComandoPluginUpdate(): CommandDefinition<PluginUpdatePayloa
           {
             nombre: EventosTrack.actualizada,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: { trackId: payload.trackId, cambios: { plugins: chain } as never },
           },
@@ -270,7 +270,7 @@ export function crearComandoPluginRemove(): CommandDefinition<PluginRemovePayloa
           {
             nombre: EventosPlugin.descargado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -281,7 +281,7 @@ export function crearComandoPluginRemove(): CommandDefinition<PluginRemovePayloa
           {
             nombre: EventosTrack.actualizada,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: { trackId: payload.trackId, cambios: { plugins: chain } as any },
           },
@@ -336,7 +336,7 @@ export function crearComandoPluginMove(): CommandDefinition<PluginMovePayload> {
           {
             nombre: EventosPlugin.movido,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -348,7 +348,7 @@ export function crearComandoPluginMove(): CommandDefinition<PluginMovePayload> {
           {
             nombre: EventosTrack.actualizada,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: { trackId: payload.trackId, cambios: { plugins: chain } as any },
           },
@@ -396,7 +396,7 @@ export function crearComandoPluginBypass(): CommandDefinition<PluginBypassPayloa
           {
             nombre: EventosPlugin.bypassCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -454,7 +454,7 @@ export function crearComandoPluginDuplicate(): CommandDefinition<PluginDuplicate
           {
             nombre: EventosPlugin.cargado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -516,7 +516,7 @@ export function crearComandoPluginReplace(): CommandDefinition<PluginReplacePayl
           {
             nombre: EventosPlugin.cargado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -528,7 +528,7 @@ export function crearComandoPluginReplace(): CommandDefinition<PluginReplacePayl
           {
             nombre: EventosPlugin.descargado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: { trackId: payload.trackId, pluginInstanceId: payload.pluginInstanceId },
           },
@@ -607,7 +607,7 @@ export function crearComandoPluginSetParameter(): CommandDefinition<PluginSetPar
           {
             nombre: EventosPlugin.parametroCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -727,7 +727,7 @@ export function crearComandoFxChainPaste(): CommandDefinition<FxChainPastePayloa
           {
             nombre: EventosTrack.actualizada,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: { trackId: payload.trackId, fxChainPasted: newIds },
           },
@@ -810,7 +810,7 @@ export function crearComandoFxChainLoadPreset(): CommandDefinition<FxChainPreset
           {
             nombre: EventosPlugin.presetCargado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -860,7 +860,7 @@ export function crearComandoFxChainSavePreset(): CommandDefinition<FxChainCopyPa
           {
             nombre: EventosPlugin.presetGuardado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -969,6 +969,7 @@ const SCHEMA_SNAPSHOT_PROPS = {
 export function crearComandoTrackSnapshotPluginState(): CommandDefinition<TrackSnapshotPluginStatePayload> {
   return {
     type: 'track.snapshotPluginState',
+    replicacion: 'resultado',
     historialUndo: 'ninguno',
     description: 'Guarda en el proyecto el estado de un plugin leído del host (autosave; sin undo ni "modificado")',
     risk: 'write',
@@ -998,3 +999,5 @@ export function crearComandoMasterSnapshotPluginState(): CommandDefinition<Maste
       aplicarSnapshotPlugin(estado, MASTER_FX_TRACK_ID, { ...payload, trackId: MASTER_FX_TRACK_ID }) as never,
   }
 }
+
+import { entorno } from '../state/entorno-determinista';

@@ -25,6 +25,7 @@ import { proyectoNuevo, nombreAlGuardar } from '../project/ciclo-vida';
 import type { AudioReference } from '../project/ciclo-vida';
 import { crearValidadorConflictos } from '../state/validacion-conflictos';
 import { guardarProyecto, cargarProyectoConRespaldo, rutaRespaldo } from '../project/persistencia';
+import { entorno } from '../state/entorno-determinista';
 
 export type ProjectNewPayload = {
   nombre?: string;
@@ -83,7 +84,7 @@ export function crearComandoProjectNew(): CommandDefinition<ProjectNewPayload> {
           {
             nombre: NombresEventos.creado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'project-commands',
             payload: { projectId: proyecto.id, nombre },
           },
@@ -133,7 +134,7 @@ export function crearComandoProjectSave(): CommandDefinition<ProjectSavePayload>
         ruta: rutaGuardada,
         nombre,
         modificado: false,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       await guardarProyecto(proyecto, rutaGuardada, fileService);
@@ -144,7 +145,7 @@ export function crearComandoProjectSave(): CommandDefinition<ProjectSavePayload>
           {
              nombre: NombresEventos.guardado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'project-commands',
             payload: { projectId: proyecto.id, ruta: rutaGuardada },
           },
@@ -198,7 +199,7 @@ export function crearComandoProjectLoad(): CommandDefinition<ProjectLoadPayload>
         modificado: usadoRespaldo,
       };
 
-      const marcaTiempo = Date.now();
+      const marcaTiempo = entorno.ahora();
       const events: EventoDominio[] = [
         {
           nombre: NombresEventos.cargado,
@@ -319,7 +320,7 @@ export function crearComandoProjectClose(): CommandDefinition<ProjectClosePayloa
             {
               nombre: NombresEventos.cerrado,
               version: 1,
-              marcaTiempo: Date.now(),
+              marcaTiempo: entorno.ahora(),
               fuente: 'project-commands',
               payload: {},
             },
@@ -361,7 +362,7 @@ export function crearComandoProjectClose(): CommandDefinition<ProjectClosePayloa
           {
             nombre: NombresEventos.cerrado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'project-commands',
             payload: { projectId: proyecto.id },
           },

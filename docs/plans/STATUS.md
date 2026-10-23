@@ -26,7 +26,7 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | A9 | Auditoría y progreso | A4 (plan), A1 (bitácora) | hecho | Claude (subagente) · 2026-10-21 | 58268d7 |
 | B0 | Backend independiente (Express+TS+Supabase) | — | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log backend/) |
 | S1 | Auth JWT + WebSocket de sync | B0 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log backend/) |
-| S2 | Reconciliación vectorial y undo por usuario | S1, K1 | pendiente | | |
+| S2 | Reconciliación vectorial y undo por usuario | S1, K1 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log shared/src/sync) |
 | L1 | Licencias, roles y API admin | B0 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log backend/) |
 | L2 | Licencia dentro de cada VST | L1, V1 | pendiente | | |
 | L3 | Login y panel admin en el DAW | L1 | pendiente | | |

@@ -13,14 +13,14 @@ function ev(nombre: string, payload: Record<string, unknown>): EventoDominio {
   return {
     nombre,
     version: 1,
-    marcaTiempo: Date.now(),
+    marcaTiempo: entorno.ahora(),
     fuente: 'builtin',
     payload: payload as EventoDominio['payload'],
   }
 }
 
 function newId(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+  return `${prefix}-${entorno.ahora().toString(36)}-${entorno.aleatorio().toString(36).slice(2, 6)}`
 }
 
 function toMidiPoints(puntos: PuntoAutomatizacion[]): MidiAutomationPoint[] {
@@ -222,3 +222,5 @@ export function crearComandoAutomationWritePoint(): CommandDefinition<any> {
     },
   }
 }
+
+import { entorno } from '../state/entorno-determinista';

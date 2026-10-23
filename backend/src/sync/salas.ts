@@ -42,7 +42,7 @@ export type ComandoAplicado = {
 export function aplicarComando(db: Db, autorId: string, mensaje: ComandoEntrante): Promise<ComandoAplicado> {
   const tamano = Buffer.byteLength(JSON.stringify(mensaje.payload), 'utf8');
   if (tamano > TAMANO_MAX_PAYLOAD_BYTES) {
-    throw new ErrorApi(413, 'payload_grande', 'el payload supera 64 KB');
+    throw new ErrorApi(413, 'payload_grande', 'el payload supera 512 KB');
   }
   return enSerie(mensaje.salaId, async () => {
     const rol = await rolEnSala(db, mensaje.salaId, autorId);

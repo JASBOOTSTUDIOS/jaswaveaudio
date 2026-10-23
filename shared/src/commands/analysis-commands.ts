@@ -35,7 +35,7 @@ function ev(nombre: string, payload: Record<string, unknown>): EventoDominio {
   return {
     nombre,
     version: 1,
-    marcaTiempo: Date.now(),
+    marcaTiempo: entorno.ahora(),
     fuente: 'builtin',
     payload: payload as EventoDominio['payload'],
   }
@@ -55,6 +55,7 @@ export type AnalysisLoudnessPayload = {
 export function crearComandoAnalysisLoudness(): CommandDefinition<any> {
   return {
     type: 'analysis.loudness',
+    replicacion: 'resultado',
     description: 'Devuelve loudness medido (último render o análisis de proyecto)',
     risk: 'read',
     schema: {
@@ -123,6 +124,7 @@ export function crearComandoAnalysisLoudness(): CommandDefinition<any> {
 export function crearComandoAnalysisCompareTarget(): CommandDefinition<any> {
   return {
     type: 'analysis.compareTarget',
+    replicacion: 'resultado',
     description: 'Compara loudness integrado vs target de plataforma (spotify, apple, youtube, amazon, club, broadcast, cd, streaming)',
     risk: 'read',
     schema: {
@@ -166,6 +168,7 @@ export function crearComandoAnalysisCompareTarget(): CommandDefinition<any> {
 export function crearComandoAnalysisSpectrum(): CommandDefinition<any> {
   return {
     type: 'analysis.spectrum',
+    replicacion: 'resultado',
     description: 'Energía por bandas del último bounce',
     risk: 'read',
     schema: {
@@ -196,6 +199,7 @@ export function crearComandoAnalysisSpectrum(): CommandDefinition<any> {
 export function crearComandoAnalysisStereo(): CommandDefinition<any> {
   return {
     type: 'analysis.stereo',
+    replicacion: 'resultado',
     description: 'Correlación estéreo y clipping del último bounce',
     risk: 'read',
     schema: {
@@ -245,6 +249,7 @@ export function crearComandoAnalysisStereo(): CommandDefinition<any> {
 export function crearComandoAnalysisFullReport(): CommandDefinition<any> {
   return {
     type: 'analysis.fullReport',
+    replicacion: 'resultado',
     description: 'Informe completo / AudioListenReport del último bounce',
     risk: 'read',
       schema: {
@@ -399,6 +404,7 @@ export type AnalysisTrackPayload = RangoAnalisisPayload & { trackId: string }
 export function crearComandoAnalysisTrack(): CommandDefinition<any> {
   return {
     type: 'analysis.track',
+    replicacion: 'resultado',
     description: 'Mide una pista (loudness, espectro, dinámica, estéreo) en un rango',
     risk: 'read',
     schema: {
@@ -426,6 +432,7 @@ export function crearComandoAnalysisTrack(): CommandDefinition<any> {
 export function crearComandoAnalysisMix(): CommandDefinition<any> {
   return {
     type: 'analysis.mix',
+    replicacion: 'resultado',
     description: 'Mide la mezcla completa: cada pista, el master y la suma previa al master',
     risk: 'read',
     schema: {
@@ -454,6 +461,7 @@ export function crearComandoAnalysisMix(): CommandDefinition<any> {
 export function crearComandoAnalysisMasking(): CommandDefinition<any> {
   return {
     type: 'analysis.masking',
+    replicacion: 'resultado',
     description: 'Detecta qué pista tapa a cuál (kick/bajo, voz/guitarra…)',
     risk: 'read',
     schema: {
@@ -487,6 +495,7 @@ export function crearComandoAnalysisMasking(): CommandDefinition<any> {
 export function crearComandoAnalysisDynamics(): CommandDefinition<any> {
   return {
     type: 'analysis.dynamics',
+    replicacion: 'resultado',
     description: 'Mide la dinámica (crest, PLR, LRA, transientes) de la mezcla o de una pista',
     risk: 'read',
     schema: {
@@ -529,6 +538,7 @@ export function crearComandoAnalysisDynamics(): CommandDefinition<any> {
 export function crearComandoAnalysisSection(): CommandDefinition<any> {
   return {
     type: 'analysis.section',
+    replicacion: 'resultado',
     description: 'Analiza una sección del proyecto (marcador o rango) con su diagnóstico',
     risk: 'read',
     schema: {
@@ -558,6 +568,7 @@ export function crearComandoAnalysisSection(): CommandDefinition<any> {
 export function crearComandoAnalysisReference(): CommandDefinition<any> {
   return {
     type: 'analysis.reference',
+    replicacion: 'resultado',
     description: 'Compara una pista de referencia con la mezcla actual (loudness, espectro, ancho)',
     risk: 'read',
     schema: {
@@ -591,6 +602,7 @@ export function crearComandoAnalysisReference(): CommandDefinition<any> {
 export function crearComandoAnalysisDiagnose(): CommandDefinition<any> {
   return {
     type: 'analysis.diagnose',
+    replicacion: 'resultado',
     description: 'Diagnóstico de mezcla: barro, aspereza, sub, sibilancia, fase, compresión, enmascaramiento',
     risk: 'read',
     schema: {
@@ -617,3 +629,5 @@ export function crearComandoAnalysisDiagnose(): CommandDefinition<any> {
     },
   }
 }
+
+import { entorno } from '../state/entorno-determinista';

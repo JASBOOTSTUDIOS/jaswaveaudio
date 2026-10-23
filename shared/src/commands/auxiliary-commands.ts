@@ -12,6 +12,7 @@ import type { DAWState } from '../types/state';
 import type { ProjectState } from '../types/proyecto';
 import type { HerramientaActiva, IdPanel } from '../types/ui';
 import { NombresEventos, EventosUIExt, EventosProyecto } from '../constants/nombres-eventos';
+import { entorno } from '../state/entorno-determinista';
 
 // ── master.update ──────────────────────────────────────────────
 
@@ -46,7 +47,7 @@ export function crearComandoMasterUpdate(): CommandDefinition<MasterUpdatePayloa
         ...estado.project,
         master: masterActualizado,
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -55,7 +56,7 @@ export function crearComandoMasterUpdate(): CommandDefinition<MasterUpdatePayloa
           {
             nombre: EventosProyecto.modificado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'auxiliary-commands',
             payload: { canal: 'master' },
           },
@@ -98,7 +99,7 @@ export function crearComandoSetTimeSignature(): CommandDefinition<SetTimeSignatu
           nombre: `${payload.numerador}/${payload.denominador}`,
         },
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       // Alinear metrónomo con el compás del proyecto (estilo Reaper)
@@ -116,7 +117,7 @@ export function crearComandoSetTimeSignature(): CommandDefinition<SetTimeSignatu
           {
             nombre: EventosProyecto.modificado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'auxiliary-commands',
             payload: { timeSignature: payload },
           },
@@ -136,6 +137,7 @@ export type SetToolPayload = {
 export function crearComandoSetTool(): CommandDefinition<SetToolPayload> {
   return {
     type: 'ui.setTool',
+    replicacion: 'local',
     description: 'Cambia la herramienta activa del editor',
     risk: 'write',
     schema: {
@@ -156,7 +158,7 @@ export function crearComandoSetTool(): CommandDefinition<SetToolPayload> {
           {
             nombre: EventosUIExt.focoCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'auxiliary-commands',
             payload: { herramienta: payload.herramienta },
           },
@@ -176,6 +178,7 @@ export type TogglePanelPayload = {
 export function crearComandoTogglePanel(): CommandDefinition<TogglePanelPayload> {
   return {
     type: 'ui.togglePanel',
+    replicacion: 'local',
     description: 'Alterna la visibilidad de un panel de UI',
     risk: 'write',
     schema: {
@@ -197,7 +200,7 @@ export function crearComandoTogglePanel(): CommandDefinition<TogglePanelPayload>
           {
             nombre: EventosUIExt.focoCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'auxiliary-commands',
             payload: { panel: panelActivo },
           },
@@ -248,7 +251,7 @@ export function crearComandoSetSnap(): CommandDefinition<SetSnapPayload> {
           {
             nombre: NombresEventos.modificado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'auxiliary-commands',
             payload: { snap: payload.snap },
           },
@@ -270,6 +273,7 @@ export type SetZoomPayload = {
 export function crearComandoSetZoom(): CommandDefinition<SetZoomPayload> {
   return {
     type: 'ui.setZoom',
+    replicacion: 'local',
     description: 'Ajusta el zoom de la línea de tiempo',
     risk: 'write',
     schema: {
@@ -326,7 +330,7 @@ export function crearComandoMarkerCreate(): CommandDefinition<MarkerCreatePayloa
     },
     handler: (estado: DAWState, payload: MarkerCreatePayload): StateTransition<MarkerCreatePayload> => {
       const marcador = {
-        id: crypto.randomUUID(),
+        id: entorno.uuid(),
         nombre: payload.nombre?.trim() || `Marcador ${(estado.project.marcadores?.length ?? 0) + 1}`,
         tiempo: payload.tiempo,
         color: payload.color ?? '#f59e0b',
@@ -337,14 +341,14 @@ export function crearComandoMarkerCreate(): CommandDefinition<MarkerCreatePayloa
         ...estado.project,
         marcadores: [...(estado.project.marcadores ?? []), marcador],
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
       return {
         state: { ...estado, project: proyecto },
         events: [{
           nombre: 'marcador.creado',
           version: 1,
-          marcaTiempo: Date.now(),
+          marcaTiempo: entorno.ahora(),
           fuente: 'auxiliary-commands',
           payload: { id: marcador.id, tiempo: marcador.tiempo },
         }],
@@ -404,7 +408,7 @@ export function crearComandoProjectUpdate(): CommandDefinition<ProjectUpdatePayl
           configuracion: { ...estado.project.configuracion, ...datos.configuracion },
         } : {}),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
       const proyecto: ProjectState =
         datos.tonalidad !== undefined || datos.tonalidadRegiones !== undefined
@@ -424,7 +428,7 @@ export function crearComandoProjectUpdate(): CommandDefinition<ProjectUpdatePayl
           {
             nombre: EventosProyecto.modificado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'auxiliary-commands',
             payload: { campos: Object.keys(datos) },
           },

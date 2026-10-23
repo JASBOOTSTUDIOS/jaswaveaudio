@@ -40,6 +40,10 @@ export { registrarComandosBuiltin } from './comandos-builtin';
 export { crearPilaDeshacerRehacer } from './pila-deshacer-rehacer';
 export { CommandExecutor } from './ejecutor-comandos';
 export type { CommandExecutorOptions } from './ejecutor-comandos';
+export { USUARIO_LOCAL } from './ejecutor-comandos';
+export type { CambioReplicable, ListenerReplicacion } from './ejecutor-comandos';
+export { entorno, conEntorno, nuevoEntorno } from './entorno-determinista';
+export type { EntornoComando } from './entorno-determinista';
 export {
   computeSemanticDiff,
   formatSemanticDiffSummary,
