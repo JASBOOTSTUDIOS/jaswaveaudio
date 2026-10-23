@@ -6,6 +6,7 @@ import { claveDesdeJwksRemoto, crearVerificadorJwt } from './auth/verificador-jw
 import { crearDb } from './db.js';
 import { createPrivateKey } from 'node:crypto';
 import { adjuntarSync } from './sync/servidor.js';
+import { configIADesdeEntorno } from './ia/rutas.js';
 
 const config = cargarConfiguracion();
 const log = pino({ level: config.nivelLog });
@@ -38,6 +39,7 @@ const app = crearApp({
   verificar,
   origenesCors: config.origenesCors,
   log,
+  ia: configIADesdeEntorno(),
   datos: { db, clavePrivadaPem: config.clavePrivadaLicencia, reloj: () => new Date() },
 });
 const servidor = http.createServer(app);

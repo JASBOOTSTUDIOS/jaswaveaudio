@@ -9,12 +9,15 @@ import { rutasLicencias } from './license/rutas.js';
 import { rutasAdmin } from './admin/rutas.js';
 import { rutasCatalogo } from './catalog/rutas.js';
 import { rutasHandover } from './handover/rutas.js';
+import { rutasIA, type ConfigIA } from './ia/rutas.js';
 import type { Reloj } from './license/servicio.js';
 
 export type OpcionesApp = {
   verificar: VerificadorJwt;
   origenesCors: string[];
   log?: RegistroErrores;
+  /** IA en la web (M1); null/ausente = no configurada (responde 503). */
+  ia?: ConfigIA | null;
   /** Dependencias de datos y licencias; sin ellas solo quedan /health y /me. */
   datos?: { db: Db; clavePrivadaPem: string; reloj: Reloj };
 };
@@ -35,6 +38,8 @@ export function crearApp(opciones: OpcionesApp): Express {
     const { db, reloj } = opciones.datos;
     app.use('/handover', rutasHandover({ db, verificar: opciones.verificar, reloj }));
   }
+  // IA: contexto y herramientas pueden superar 256 KB (límite propio de 4 MB).
+  app.use('/ia', rutasIA({ verificar: opciones.verificar, config: opciones.ia ?? null }));
   app.use(express.json({ limit: '256kb' }));
 
   app.get('/health', (_req, res) => {
