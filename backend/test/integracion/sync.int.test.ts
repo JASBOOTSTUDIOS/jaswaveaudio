@@ -8,7 +8,7 @@ import { adjuntarSync } from '../../src/sync/servidor.js';
 import { CIERRE } from '../../src/sync/protocolo.js';
 import { crearEmisorPrueba } from '../jwt-local.js';
 
-const URL_DB = process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@127.0.0.1:55322/postgres';
+import { URL_BD_PRUEBAS as URL_DB } from './preparar-bd.js';
 
 type Emisor = Awaited<ReturnType<typeof crearEmisorPrueba>>;
 

@@ -6,7 +6,7 @@ import { crearDb, type Db } from '../../src/db.js';
 import { generarParClaves, verificarLicencia } from '../../src/license/token-licencia.js';
 import { crearEmisorPrueba } from '../jwt-local.js';
 
-const URL_DB = process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@127.0.0.1:55322/postgres';
+import { URL_BD_PRUEBAS as URL_DB } from './preparar-bd.js';
 const PRODUCTO = 'com.jaswave.plugin.param-eq';
 const ADMIN = 'admin@jaswave.test';
 
@@ -156,5 +156,24 @@ describe('L1 — licencias, roles y permisos (integración con Postgres)', () =>
     const otra = (await send('post', '/admin/productos/com.jaswave.plugin.otro/acciones', { clave: 'otro.x' })).body.accion;
     const r = await send('put', `/admin/roles/${rol.id}/acciones`, { accionIds: [otra.id] });
     expect(r.status).toBe(400);
+  });
+it('crear un producto duplicado devuelve 409, no 500', async () => {
+    const { send } = await prepararEscenario();
+    const r = await send('post', '/admin/productos', { id: PRODUCTO, nombre: 'Repetido' });
+    expect(r.status).toBe(409);
+    expect(r.body.error.codigo).toBe('conflicto');
+  });
+
+  it('datos inválidos devuelven 400 con detalles, no 500', async () => {
+    const adminToken = await tokenDe(ADMIN, 'sub-admin');
+    const r = await request(app).post('/admin/productos').set('Authorization', `Bearer ${adminToken}`).send({ id: 'X Mayúsculas', nombre: '' });
+    expect(r.status).toBe(400);
+    expect(r.body.error.codigo).toBe('datos_invalidos');
+  });
+
+  it('eliminar un producto inexistente devuelve 404', async () => {
+    const { send } = await prepararEscenario();
+    const r = await send('delete', '/admin/productos/com.jaswave.plugin.nada');
+    expect(r.status).toBe(404);
   });
 });

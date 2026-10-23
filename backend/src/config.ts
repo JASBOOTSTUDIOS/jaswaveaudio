@@ -39,7 +39,8 @@ export function cargarConfiguracion(entorno: NodeJS.ProcessEnv = process.env): C
     ...(v.JWT_ISSUER ? { emisorJwt: v.JWT_ISSUER } : {}),
     adminsIniciales: v.ADMIN_EMAILS.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
     ...(v.DATABASE_URL ? { urlBaseDatos: v.DATABASE_URL } : {}),
-    ...(v.LICENSE_SIGNING_KEY_PEM ? { clavePrivadaLicencia: v.LICENSE_SIGNING_KEY_PEM } : {}),
+    // En .env el PEM va en una línea con `\n` literales; aquí se restauran los saltos reales.
+    ...(v.LICENSE_SIGNING_KEY_PEM ? { clavePrivadaLicencia: v.LICENSE_SIGNING_KEY_PEM.replace(/\\n/g, '\n') } : {}),
     origenesCors: v.CORS_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean),
   };
 }

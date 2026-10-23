@@ -4,6 +4,7 @@ import { cargarConfiguracion } from './config.js';
 import { crearApp } from './app.js';
 import { claveDesdeJwksRemoto, crearVerificadorJwt } from './auth/verificador-jwt.js';
 import { crearDb } from './db.js';
+import { createPrivateKey } from 'node:crypto';
 import { adjuntarSync } from './sync/servidor.js';
 
 const config = cargarConfiguracion();
@@ -18,6 +19,14 @@ if (!config.clavePrivadaLicencia) {
   process.exit(1);
 }
 
+try {
+  const clave = createPrivateKey(config.clavePrivadaLicencia);
+  if (clave.asymmetricKeyType !== 'ed25519') throw new Error('la clave no es Ed25519');
+} catch (err) {
+  log.error({ err }, 'LICENSE_SIGNING_KEY_PEM inválida');
+  process.exit(1);
+}
+
 const verificar = crearVerificadorJwt({
   claves: claveDesdeJwksRemoto(config.jwksUrl),
   ...(config.emisorJwt ? { emisor: config.emisorJwt } : {}),
@@ -28,6 +37,7 @@ const db = crearDb(config.urlBaseDatos);
 const app = crearApp({
   verificar,
   origenesCors: config.origenesCors,
+  log,
   datos: { db, clavePrivadaPem: config.clavePrivadaLicencia, reloj: () => new Date() },
 });
 const servidor = http.createServer(app);
