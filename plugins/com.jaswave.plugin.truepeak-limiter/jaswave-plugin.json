@@ -1,0 +1,31 @@
+{
+  "id": "com.jaswave.plugin.truepeak-limiter",
+  "name": "JasWave True-Peak Limiter Pro",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "subCategory": "Fx|Limiter",
+  "description": "Limitador True-Peak conforme a ITU-R BS.1770-4 con sobremuestreo 4x y lookahead seleccionable para mastering transparente.",
+  "vendor": "JasWave Audio",
+  "classId": "{4A15A3A0-3C1A-4C4F-B19A-8E40280D5E03}",
+  "entrypoints": {
+    "vst3": "bin/JasWaveTruePeakLimiter.vst3",
+    "vst3Bundle": "bin/JasWaveTruePeakLimiter.vst3/Contents/x86_64-win/JasWaveTruePeakLimiter.vst3"
+  },
+  "compatibility": {
+    "jaswave": ">=4.0.0",
+    "reaper": ">=6.0.0",
+    "vst3Standard": "3.7.0"
+  },
+  "parameters": {
+    "ceilingRangeDb": [-12.0, 0.0],
+    "inputGainDb": [0.0, 24.0],
+    "releaseRangeMs": [1.0, 1000.0],
+    "lookaheadMs": [0.0, 10.0]
+  },
+  "rolesAllowed": ["mastering", "qa"],
+  "download": {
+    "githubRelease": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/v4.0.0-plugins/com.jaswave.plugin.truepeak-limiter-v1.0.0.zip",
+    "sizeBytes": 2320000,
+    "checksumSha256": ""
+  }
+}

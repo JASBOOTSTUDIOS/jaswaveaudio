@@ -1,0 +1,32 @@
+{
+  "id": "com.jaswave.plugin.bus-compressor",
+  "name": "JasWave Bus Compressor",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "subCategory": "Fx|Dynamics",
+  "description": "Compresor de bus de mezcla VCA con circuito sidechain externo, rodilla suave (soft-knee) y compensación automática de ganancia.",
+  "vendor": "JasWave Audio",
+  "classId": "{4A15A3A0-3C1A-4C4F-B19A-8E40280D5E02}",
+  "entrypoints": {
+    "vst3": "bin/JasWaveBusCompressor.vst3",
+    "vst3Bundle": "bin/JasWaveBusCompressor.vst3/Contents/x86_64-win/JasWaveBusCompressor.vst3"
+  },
+  "compatibility": {
+    "jaswave": ">=4.0.0",
+    "reaper": ">=6.0.0",
+    "vst3Standard": "3.7.0"
+  },
+  "parameters": {
+    "thresholdRangeDb": [-60.0, 0.0],
+    "ratioRange": [1.0, 20.0],
+    "attackRangeMs": [0.1, 100.0],
+    "releaseRangeMs": [10.0, 1200.0],
+    "sidechainFilter": true
+  },
+  "rolesAllowed": ["productor", "mezcla", "mastering"],
+  "download": {
+    "githubRelease": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/v4.0.0-plugins/com.jaswave.plugin.bus-compressor-v1.0.0.zip",
+    "sizeBytes": 2210000,
+    "checksumSha256": ""
+  }
+}

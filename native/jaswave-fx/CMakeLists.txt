@@ -23,7 +23,6 @@ endif()
 set(fx_sources
   src/factory.cpp
   src/processor.cpp
-  src/controller.cpp
   src/editor.cpp
   "${VST3_SDK_DIR}/public.sdk/source/main/dllmain.cpp"
   "${VST3_SDK_DIR}/public.sdk/source/common/pluginview.cpp"

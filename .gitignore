@@ -52,3 +52,12 @@ jas-wave/jas-wave/
 # Worktrees/estado local de agentes
 .claude/
 native/plugin-host/build-release/
+
+# Artefactos de build de plugins y CMake (binarios generados, no fuente)
+native/jaswave-fx/build-release/
+plugins/*/build/
+plugins/*/bin/
+plugins/*/v*/
+plugins/tests/build/
+plugins/**/*.vst3
+plugins/**/*.vst3/

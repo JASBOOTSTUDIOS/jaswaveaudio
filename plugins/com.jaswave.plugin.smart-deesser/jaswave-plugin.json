@@ -1,0 +1,30 @@
+{
+  "id": "com.jaswave.plugin.smart-deesser",
+  "name": "JasWave Smart De-Esser",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "subCategory": "Fx|DeEsser",
+  "description": "De-esser inteligente con detección espectral reactiva para control transparente de sibilancias y resonancias agudas.",
+  "vendor": "JasWave Audio",
+  "classId": "{4A15A3A0-3C1A-4C4F-B19A-8E40280D5E04}",
+  "entrypoints": {
+    "vst3": "bin/JasWaveSmartDeEsser.vst3",
+    "vst3Bundle": "bin/JasWaveSmartDeEsser.vst3/Contents/x86_64-win/JasWaveSmartDeEsser.vst3"
+  },
+  "compatibility": {
+    "jaswave": ">=4.0.0",
+    "reaper": ">=6.0.0",
+    "vst3Standard": "3.7.0"
+  },
+  "parameters": {
+    "freqRangeHz": [3000.0, 12000.0],
+    "thresholdRangeDb": [-40.0, 0.0],
+    "modes": ["Split-Band", "Wide-Band"]
+  },
+  "rolesAllowed": ["productor", "mezcla", "qa"],
+  "download": {
+    "githubRelease": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/v4.0.0-plugins/com.jaswave.plugin.smart-deesser-v1.0.0.zip",
+    "sizeBytes": 2180000,
+    "checksumSha256": ""
+  }
+}

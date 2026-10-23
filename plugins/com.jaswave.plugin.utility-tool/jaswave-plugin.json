@@ -1,0 +1,32 @@
+{
+  "id": "com.jaswave.plugin.utility-tool",
+  "name": "JasWave Utility & Phase Tool",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "subCategory": "Fx|Utility",
+  "description": "Herramienta de canal para control de ganancia limpia (+/-24dB), ancho estéreo (M/S), inversión de fase e inversión L/R.",
+  "vendor": "JasWave Audio",
+  "classId": "{4A15A3A0-3C1A-4C4F-B19A-8E40280D5E05}",
+  "entrypoints": {
+    "vst3": "bin/JasWaveUtility.vst3",
+    "vst3Bundle": "bin/JasWaveUtility.vst3/Contents/x86_64-win/JasWaveUtility.vst3"
+  },
+  "compatibility": {
+    "jaswave": ">=4.0.0",
+    "reaper": ">=6.0.0",
+    "vst3Standard": "3.7.0"
+  },
+  "parameters": {
+    "gainDb": [-24.0, 24.0],
+    "widthPercent": [0.0, 200.0],
+    "phaseInvertL": true,
+    "phaseInvertR": true,
+    "monoCollapse": true
+  },
+  "rolesAllowed": ["todos"],
+  "download": {
+    "githubRelease": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/v4.0.0-plugins/com.jaswave.plugin.utility-tool-v1.0.0.zip",
+    "sizeBytes": 1950000,
+    "checksumSha256": ""
+  }
+}

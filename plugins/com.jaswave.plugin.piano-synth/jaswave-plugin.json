@@ -1,0 +1,31 @@
+{
+  "id": "com.jaswave.plugin.piano-synth",
+  "name": "JasWave Piano Synth",
+  "version": "1.0.0",
+  "category": "instrument",
+  "subCategory": "Instrument|Synth",
+  "description": "Sintetizador y modelador de piano acústico y eléctrico de baja latencia con respuesta dinámica a velocidad MIDI.",
+  "vendor": "JasWave Audio",
+  "classId": "{4A15A3A0-3C1A-4C4F-B19A-8E40280D5E10}",
+  "entrypoints": {
+    "vst3": "bin/JasWavePianoSynth.vst3",
+    "vst3Bundle": "bin/JasWavePianoSynth.vst3/Contents/x86_64-win/JasWavePianoSynth.vst3"
+  },
+  "compatibility": {
+    "jaswave": ">=4.0.0",
+    "reaper": ">=6.0.0",
+    "vst3Standard": "3.7.0"
+  },
+  "parameters": {
+    "brightness": [0.0, 1.0],
+    "release": [0.05, 5.0],
+    "damping": [0.0, 1.0],
+    "hardness": [0.0, 1.0]
+  },
+  "rolesAllowed": ["productor"],
+  "download": {
+    "githubRelease": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/v4.0.0-plugins/com.jaswave.plugin.piano-synth-v1.0.0.zip",
+    "sizeBytes": 3150000,
+    "checksumSha256": ""
+  }
+}

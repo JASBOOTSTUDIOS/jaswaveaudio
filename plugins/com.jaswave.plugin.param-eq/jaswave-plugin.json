@@ -1,0 +1,30 @@
+{
+  "id": "com.jaswave.plugin.param-eq",
+  "name": "JasWave EQ Parametric Pro",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "subCategory": "Fx|EQ",
+  "description": "Ecualizador paramétrico quirúrgico de 8 bandas con filtros Bell, LowCut, HighCut, Notch y Shelving.",
+  "vendor": "JasWave Audio",
+  "classId": "{4A15A3A0-3C1A-4C4F-B19A-8E40280D5E01}",
+  "entrypoints": {
+    "vst3": "bin/JasWaveParamEq.vst3",
+    "vst3Bundle": "bin/JasWaveParamEq.vst3/Contents/x86_64-win/JasWaveParamEq.vst3"
+  },
+  "compatibility": {
+    "jaswave": ">=4.0.0",
+    "reaper": ">=6.0.0",
+    "vst3Standard": "3.7.0"
+  },
+  "parameters": {
+    "count": 42,
+    "bands": 8,
+    "features": ["linearPhase", "oversampling", "realtimeFft"]
+  },
+  "rolesAllowed": ["mezcla", "mastering", "qa"],
+  "download": {
+    "githubRelease": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/v4.0.0-plugins/com.jaswave.plugin.param-eq-v1.0.0.zip",
+    "sizeBytes": 2450000,
+    "checksumSha256": ""
+  }
+}

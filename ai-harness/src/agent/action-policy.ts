@@ -80,6 +80,10 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'audit.compareReference': 'read',
   'session.summary': 'read',
 
+  // ── A10 · Workspace Filesystem & Terminal (confinados a proyecto) ──
+  'fs.readFile': 'read',
+  'fs.listDirectory': 'read',
+
   // ── Escritura (deshacible) ──────────────────────────────
   'doc.create': 'write',
   'doc.write': 'write',
@@ -191,6 +195,11 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'plan.addStep': 'write',
   'plan.proposeChange': 'write',
 
+  // ── A10 · Modificación de archivos en proyecto ──
+  'fs.createDirectory': 'write',
+  'fs.writeFile': 'write',
+  'fs.createScaffold': 'write',
+
   // ── Destructivas (borran contenido) ─────────────────────
   'track.delete': 'destructive',
   'clip.delete': 'destructive',
@@ -215,6 +224,7 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'render.cancel': 'system',
   'score.exportClip': 'system',
   'score.exportProject': 'system',
+  'terminal.execute': 'system',
 })
 
 /** Claves de payload que indican una ruta de disco (plugin.insert con path → system). */

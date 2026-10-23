@@ -21,6 +21,7 @@ export type ToolId =
   | 'terminal'
   | 'settings'
   | 'progress'
+  | 'project-files'
 
 export interface ToolDefinitionUI {
   id: ToolId
@@ -172,6 +173,13 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     defaultZone: 'right',
     singleton: true,
   },
+  'project-files': {
+    id: 'project-files',
+    title: 'Archivos',
+    description: 'Explorador del proyecto por carpetas estilo IDE con vista contextual',
+    defaultZone: 'left',
+    singleton: true,
+  },
 }
 
 export type WorkspaceLayout = {
@@ -185,7 +193,7 @@ export type WorkspaceLayout = {
 
 export const DEFAULT_WORKSPACE: WorkspaceLayout = {
   zones: {
-    left: ['coproducer', 'docs-explorer', 'instruments'],
+    left: ['project-files', 'coproducer', 'docs-explorer', 'instruments'],
     center: ['arrange'],
     right: ['track-detail', 'plugin-editor', 'settings'],
     bottom: ['mixer', 'piano-roll'],

@@ -20,6 +20,42 @@ export type CatalogEntry = {
 /** Acciones orquestadas por executeDawActions (pueden no existir en registry). */
 export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
   {
+    type: 'fs.readFile',
+    kind: 'agent',
+    description: 'Lee el contenido de un archivo en texto plano dentro del workspace del proyecto',
+    examplePayload: { path: 'docs/plan.md' },
+  },
+  {
+    type: 'fs.listDirectory',
+    kind: 'agent',
+    description: 'Lista los archivos y subcarpetas dentro del proyecto',
+    examplePayload: { path: '' },
+  },
+  {
+    type: 'fs.createDirectory',
+    kind: 'agent',
+    description: 'Crea una carpeta o estructura de carpetas anidadas dentro del proyecto',
+    examplePayload: { path: 'stems/vocal' },
+  },
+  {
+    type: 'fs.writeFile',
+    kind: 'agent',
+    description: 'Crea o sobrescribe un archivo dentro del proyecto de forma segura',
+    examplePayload: { path: 'docs/mix-notes.md', content: '# Notas de mezcla' },
+  },
+  {
+    type: 'fs.createScaffold',
+    kind: 'agent',
+    description: 'Genera el scaffold de carpetas y archivos recomendado según el género musical',
+    examplePayload: { genre: 'worship' },
+  },
+  {
+    type: 'terminal.execute',
+    kind: 'agent',
+    description: 'Ejecuta un comando en la terminal integrada dentro de la raíz del proyecto',
+    examplePayload: { command: 'git status' },
+  },
+  {
     type: 'daw.musicBuild',
     kind: 'agent',
     description: 'Orquesta proyecto/MIDI/VSTs por fases',

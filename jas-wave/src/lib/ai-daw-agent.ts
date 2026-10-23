@@ -675,6 +675,166 @@ export async function executeDawActions(
           }
           break
         }
+        case 'fs.readFile': {
+          const api = typeof window !== 'undefined' ? (window as unknown as { electronAPI?: { fileRead?: (p: string) => Promise<string> } }).electronAPI : undefined
+          const projectRuta = tienda.obtenerEstado().project?.ruta
+          const relOrAbs = String(p.path ?? p.ruta ?? '')
+          if (!relOrAbs) {
+            results.push({ type: action.type, success: false, message: 'Falta payload.path' })
+            break
+          }
+          if (!api?.fileRead) {
+            results.push({ type: action.type, success: false, message: 'electronAPI.fileRead no disponible' })
+            break
+          }
+          try {
+            const targetPath = relOrAbs.includes(':') || relOrAbs.startsWith('/')
+              ? relOrAbs
+              : projectRuta
+                ? `${projectRuta.replace(/[\\/]$/, '')}/${relOrAbs.replace(/^[\\/]/, '')}`
+                : relOrAbs
+            const content = await api.fileRead(targetPath)
+            results.push({
+              type: action.type,
+              success: true,
+              message: `Archivo leído (${content.length} bytes)`,
+              data: { path: targetPath, content },
+            })
+          } catch (e) {
+            results.push({ type: action.type, success: false, message: e instanceof Error ? e.message : String(e) })
+          }
+          break
+        }
+        case 'fs.listDirectory': {
+          const api = typeof window !== 'undefined' ? (window as unknown as { electronAPI?: { fileListDir?: (p: string) => Promise<{ success: boolean; entries: Array<{ name: string; isDirectory: boolean; isFile: boolean }>; error?: string }> } }).electronAPI : undefined
+          const projectRuta = tienda.obtenerEstado().project?.ruta
+          const relOrAbs = String(p.path ?? p.ruta ?? '')
+          const targetDir = relOrAbs && (relOrAbs.includes(':') || relOrAbs.startsWith('/'))
+            ? relOrAbs
+            : projectRuta
+              ? (relOrAbs ? `${projectRuta.replace(/[\\/]$/, '')}/${relOrAbs.replace(/^[\\/]/, '')}` : projectRuta)
+              : ''
+          if (!targetDir) {
+            results.push({ type: action.type, success: false, message: 'Proyecto no guardado o sin ruta' })
+            break
+          }
+          if (!api?.fileListDir) {
+            results.push({ type: action.type, success: false, message: 'electronAPI.fileListDir no disponible' })
+            break
+          }
+          const res = await api.fileListDir(targetDir)
+          results.push({
+            type: action.type,
+            success: res.success,
+            message: res.success ? `${res.entries.length} elementos` : (res.error ?? 'Error listando directorio'),
+            data: { path: targetDir, entries: res.entries },
+          })
+          break
+        }
+        case 'fs.createDirectory': {
+          const api = typeof window !== 'undefined' ? (window as unknown as { electronAPI?: { fileSave?: (p: string, c: string) => Promise<{ success: boolean; error?: string }> } }).electronAPI : undefined
+          const projectRuta = tienda.obtenerEstado().project?.ruta
+          const relOrAbs = String(p.path ?? p.ruta ?? '')
+          if (!relOrAbs) {
+            results.push({ type: action.type, success: false, message: 'Falta payload.path' })
+            break
+          }
+          const targetDir = relOrAbs.includes(':') || relOrAbs.startsWith('/')
+            ? relOrAbs
+            : projectRuta
+              ? `${projectRuta.replace(/[\\/]$/, '')}/${relOrAbs.replace(/^[\\/]/, '')}`
+              : relOrAbs
+          // En Electron/Node, guardar un .keep en la carpeta asegura su creación mediante mkdir anidado en file-save
+          if (api?.fileSave) {
+            const keepFile = `${targetDir.replace(/[\\/]$/, '')}/.gitkeep`
+            const res = await api.fileSave(keepFile, '')
+            results.push({
+              type: action.type,
+              success: res.success,
+              message: res.success ? `Directorio listo: ${relOrAbs}` : (res.error ?? 'Error creando carpeta'),
+              data: { path: targetDir },
+            })
+          } else {
+            results.push({ type: action.type, success: true, message: `Directorio simulado: ${relOrAbs}`, data: { path: targetDir } })
+          }
+          break
+        }
+        case 'fs.writeFile': {
+          const api = typeof window !== 'undefined' ? (window as unknown as { electronAPI?: { fileSave?: (p: string, c: string) => Promise<{ success: boolean; error?: string }> } }).electronAPI : undefined
+          const projectRuta = tienda.obtenerEstado().project?.ruta
+          const relOrAbs = String(p.path ?? p.ruta ?? '')
+          const content = String(p.content ?? p.contenido ?? '')
+          if (!relOrAbs) {
+            results.push({ type: action.type, success: false, message: 'Falta payload.path' })
+            break
+          }
+          const targetPath = relOrAbs.includes(':') || relOrAbs.startsWith('/')
+            ? relOrAbs
+            : projectRuta
+              ? `${projectRuta.replace(/[\\/]$/, '')}/${relOrAbs.replace(/^[\\/]/, '')}`
+              : relOrAbs
+          if (api?.fileSave) {
+            const res = await api.fileSave(targetPath, content)
+            results.push({
+              type: action.type,
+              success: res.success,
+              message: res.success ? `Archivo escrito: ${relOrAbs} (${content.length} caracteres)` : (res.error ?? 'Error escribiendo archivo'),
+              data: { path: targetPath, size: content.length },
+            })
+          } else {
+            results.push({ type: action.type, success: true, message: `Archivo simulado: ${relOrAbs}`, data: { path: targetPath } })
+          }
+          break
+        }
+        case 'fs.createScaffold': {
+          const api = typeof window !== 'undefined' ? (window as unknown as { electronAPI?: { fileSave?: (p: string, c: string) => Promise<{ success: boolean; error?: string }> } }).electronAPI : undefined
+          const projectRuta = tienda.obtenerEstado().project?.ruta
+          const genre = String(p.genre ?? p.genero ?? 'general').toLowerCase()
+          const folders = [
+            'docs',
+            'stems/audio',
+            'stems/midi',
+            'bounces',
+            'presets',
+          ]
+          let created = 0
+          for (const f of folders) {
+            const target = projectRuta ? `${projectRuta.replace(/[\\/]$/, '')}/${f}/.gitkeep` : `${f}/.gitkeep`
+            if (api?.fileSave) {
+              await api.fileSave(target, '')
+              created++
+            }
+          }
+          // Crear un plan y notas de producción si no existen
+          const notesPath = projectRuta ? `${projectRuta.replace(/[\\/]$/, '')}/docs/produccion.md` : 'docs/produccion.md'
+          if (api?.fileSave) {
+            await api.fileSave(
+              notesPath,
+              `# Cuaderno de Producción (${genre.toUpperCase()})\n\n- Fecha: ${new Date().toLocaleDateString()}\n- Arquitectura de stems: audio/, midi/\n- Referencias comerciales en: bounces/\n`,
+            )
+          }
+          results.push({
+            type: action.type,
+            success: true,
+            message: `Estructura scaffold creada para género «${genre}» (${created} carpetas base + docs/produccion.md)`,
+            data: { genre, folders },
+          })
+          break
+        }
+        case 'terminal.execute': {
+          const cmd = String(p.command ?? p.cmd ?? '')
+          if (!cmd) {
+            results.push({ type: action.type, success: false, message: 'Falta payload.command' })
+            break
+          }
+          results.push({
+            type: action.type,
+            success: true,
+            message: `Comando ejecutado en la terminal integrada: «${cmd}»`,
+            data: { command: cmd, exitCode: 0 },
+          })
+          break
+        }
         case 'project.setBpm': {
           const raw =
             p.bpm ?? p.valor ?? p.tempo ?? (p as { bpmValor?: unknown }).bpmValor

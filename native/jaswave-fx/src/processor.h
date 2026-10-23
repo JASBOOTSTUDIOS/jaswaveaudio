@@ -2,8 +2,10 @@
 
 #include "dsp.h"
 #include "public.sdk/source/vst/vstaudioeffect.h"
+#include "public.sdk/source/vst/vsteditcontroller.h"
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
+#include "base/source/fstreamer.h"
 
 #include <array>
 #include <atomic>
@@ -189,7 +191,7 @@ public:
   Steinberg::tresult PLUGIN_API getControllerClassId(Steinberg::TUID classId) SMTG_OVERRIDE;
 
 private:
-  void applyParameters(const Steinberg::Vst::IParameterChanges* changes);
+  void applyParameters(Steinberg::Vst::IParameterChanges* changes);
   float bandFreqPlain(int32_t band) const;
   float bandGainPlain(int32_t band) const;
   float bandQPlain(int32_t band) const;
@@ -227,7 +229,7 @@ public:
   Steinberg::tresult PLUGIN_API getControllerClassId(Steinberg::TUID classId) SMTG_OVERRIDE;
 
 private:
-  void applyParameters(const Steinberg::Vst::IParameterChanges* changes);
+  void applyParameters(Steinberg::Vst::IParameterChanges* changes);
   std::array<float, CompParam::kTotalParams> normalized_{};
   dsp::Compressor comp_;
   bool bypass_{false};
@@ -258,7 +260,7 @@ public:
   Steinberg::tresult PLUGIN_API getControllerClassId(Steinberg::TUID classId) SMTG_OVERRIDE;
 
 private:
-  void applyParameters(const Steinberg::Vst::IParameterChanges* changes);
+  void applyParameters(Steinberg::Vst::IParameterChanges* changes);
   std::array<float, LimParam::kTotalParams> normalized_{};
   dsp::Limiter lim_;
   bool bypass_{false};
@@ -289,7 +291,7 @@ public:
   Steinberg::tresult PLUGIN_API getControllerClassId(Steinberg::TUID classId) SMTG_OVERRIDE;
 
 private:
-  void applyParameters(const Steinberg::Vst::IParameterChanges* changes);
+  void applyParameters(Steinberg::Vst::IParameterChanges* changes);
   std::array<float, UtilParam::kTotalParams> normalized_{};
   dsp::Utility util_;
   bool bypass_{false};
@@ -320,7 +322,7 @@ public:
   Steinberg::tresult PLUGIN_API getControllerClassId(Steinberg::TUID classId) SMTG_OVERRIDE;
 
 private:
-  void applyParameters(const Steinberg::Vst::IParameterChanges* changes);
+  void applyParameters(Steinberg::Vst::IParameterChanges* changes);
   std::array<float, DeEsserParam::kTotalParams> normalized_{};
   dsp::DeEsser de_;
   bool bypass_{false};
