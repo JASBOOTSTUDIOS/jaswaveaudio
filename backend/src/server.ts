@@ -4,6 +4,7 @@ import { cargarConfiguracion } from './config.js';
 import { crearApp } from './app.js';
 import { claveDesdeJwksRemoto, crearVerificadorJwt } from './auth/verificador-jwt.js';
 import { crearDb } from './db.js';
+import { adjuntarSync } from './sync/servidor.js';
 
 const config = cargarConfiguracion();
 const log = pino({ level: config.nivelLog });
@@ -30,4 +31,5 @@ const app = crearApp({
   datos: { db, clavePrivadaPem: config.clavePrivadaLicencia, reloj: () => new Date() },
 });
 const servidor = http.createServer(app);
+adjuntarSync(servidor, { db, verificar });
 servidor.listen(config.puerto, () => log.info({ puerto: config.puerto }, 'backend escuchando'));

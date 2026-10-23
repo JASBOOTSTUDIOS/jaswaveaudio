@@ -1,4 +1,4 @@
-# Estado de los workstreams
+ hecho | Claude Opus 5.5 · 2026-10-23 | (este commit) |hecho | Claude Opus 5.5 · 2026-10-23 | (este commit) |hecho | Claude Opus 5.5 · 2026-10-23 | (este commit) |# Estado de los workstreams
 
 Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md`).
 
@@ -24,10 +24,10 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | A7e | masterPass y mezcla por medición | A7b, A7c | pendiente | | |
 | A8 | CLI con turnos completos | A1, A5 | pendiente | | |
 | A9 | Auditoría y progreso | A4 (plan), A1 (bitácora) | hecho | Claude (subagente) · 2026-10-21 | 58268d7 |
-| B0 | Backend independiente (Express+TS+Supabase) | — | pendiente | | |
-| S1 | Auth JWT + WebSocket de sync | B0 | pendiente | | |
+| B0 | Backend independiente (Express+TS+Supabase) | — | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log backend/) |
+| S1 | Auth JWT + WebSocket de sync | B0 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log backend/) |
 | S2 | Reconciliación vectorial y undo por usuario | S1, K1 | pendiente | | |
-| L1 | Licencias, roles y API admin | B0 | pendiente | | |
+| L1 | Licencias, roles y API admin | B0 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log backend/) |
 | L2 | Licencia dentro de cada VST | L1, V1 | pendiente | | |
 | L3 | Login y panel admin en el DAW | L1 | pendiente | | |
 | P1 | Manifiesto jaswave-plugin.json y cargador | K1 | pendiente | | |

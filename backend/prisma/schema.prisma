@@ -4,12 +4,13 @@
 // (RBAC en código), no por RLS.
 
 generator client {
-  provider = "prisma-client-js"
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // ---------- Catálogo de VST (licenciables) ----------
@@ -71,6 +72,7 @@ model Usuario {
   concesiones  Concesion[]
   licencias    Licencia[]
   dispositivos Dispositivo[]
+  membresias   MiembroSala[]
 }
 
 /// Un usuario puede tener varios roles de distintos (o el mismo) producto.
@@ -161,4 +163,46 @@ model RegistroAuditoria {
   creadoEn  DateTime @default(now())
 
   @@index([creadoEn])
+}
+
+// ---------- Sincronización de sesiones (S1) ----------
+
+enum RolSala {
+  owner
+  editor
+  viewer
+}
+
+model Sala {
+  id        String          @id @default(uuid())
+  nombre    String
+  creadaEn  DateTime        @default(now())
+  miembros  MiembroSala[]
+  comandos  ComandoSala[]
+}
+
+model MiembroSala {
+  salaId    String
+  usuarioId String
+  rol       RolSala
+  sala      Sala    @relation(fields: [salaId], references: [id], onDelete: Cascade)
+  usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@id([salaId, usuarioId])
+}
+
+/// Registro ordenado de comandos de una sala. `seq` lo asigna el servidor (monótono, sin huecos).
+model ComandoSala {
+  id        String   @id @default(uuid())
+  salaId    String
+  seq       Int
+  autorId   String
+  clienteId String
+  tipo      String
+  payload   Json
+  vclock    Json     @default("{}")
+  creadoEn  DateTime @default(now())
+  sala      Sala     @relation(fields: [salaId], references: [id], onDelete: Cascade)
+
+  @@unique([salaId, seq])
 }

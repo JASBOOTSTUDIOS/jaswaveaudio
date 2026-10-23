@@ -10,12 +10,15 @@
 Efectivo = roles ∪ grants allow − grants deny y solo con licencia activa; token Ed25519 con exp = 24 h; device-code login; solo admins acceden a `/admin/*` (validado en servidor); auditoría de cada cambio; tests de integración contra Supabase local.
 
 ## Checklist
-- [ ] Implementación
-- [ ] Tests automatizados
-- [ ] Verificación reproducible documentada
+- [x] Implementación
+- [x] Tests automatizados
+- [x] Verificación reproducible documentada
 
 ## Verificación
 `npm run verify` en raíz; tests específicos del workstream (ver criterios).
 
 ## Notas de traspaso
-- (vacío: workstream pendiente)
+- Usuario se identifica por correo (subAuth se vincula al primer login): el admin puede asignar antes del registro.
+- Licencia jwl1 (no JWT) para verificar offline en C++ con Ed25519.
+- Pendiente para L2/L3: incrustar clave pública en los VST; UI del panel admin.
+- 9 pruebas de integración en test/integracion/licencias.int.test.ts.
