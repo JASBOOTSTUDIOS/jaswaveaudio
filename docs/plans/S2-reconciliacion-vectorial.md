@@ -18,8 +18,8 @@ N clientes simulados con mutaciones concurrentes en el mismo compás y entrega e
 `npm run verify` en raíz; tests específicos del workstream (ver criterios).
 
 ## Notas de traspaso
-- Determinismo: los handlers usan  (shared/src/state/entorno-determinista.ts); el ejecutor fija un EntornoComando por comando y lo reutilizan las réplicas.
-- Replicación híbrida:  en CommandDefinition — 'operacion' (por defecto), 'resultado' (28 comandos de medición/host: instantánea parcial) y 'local' (15: selección, transporte, UI → canal de presencia).
+- Determinismo: los handlers usan `entorno.ahora()`, `entorno.aleatorio()` y `entorno.uuid()` (shared/src/state/entorno-determinista.ts); el ejecutor fija un EntornoComando por comando y lo reutilizan las réplicas.
+- Replicación híbrida: campo `replicacion` en CommandDefinition — 'operacion' (por defecto), 'resultado' (28 comandos de medición/host: instantánea parcial) y 'local' (15: selección, transporte, UI → canal de presencia).
 - Réplica con rebase sobre el orden total del servidor (shared/src/sync/replica.ts); ClienteColaborativo aplica lo remoto dentro de la cola del ejecutor (enColaExterna).
 - Undo por usuario: pilas por userId (sin userId → 'local', conserva la UX de deshacer cambios de la IA local). Los cambios remotos nunca entran en la pila local.
 - Inverso diferencial de notas MIDI (midi.notes.patch + redoType): deshacer lo propio no borra notas ajenas del mismo clip.
