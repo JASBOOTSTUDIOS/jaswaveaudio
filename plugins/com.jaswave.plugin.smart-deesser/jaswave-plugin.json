@@ -3,28 +3,182 @@
   "name": "JasWave Smart De-Esser",
   "version": "1.0.0",
   "category": "audio-effect",
-  "subCategory": "Fx|DeEsser",
-  "description": "De-esser inteligente con detección espectral reactiva para control transparente de sibilancias y resonancias agudas.",
   "vendor": "JasWave Audio",
-  "classId": "{4A15A3A0-3C1A-4C4F-B19A-8E40280D5E04}",
+  "description": "De-esser de banda dividida (cruce Linkwitz-Riley 4º orden) o banda completa, con sidechain filtrado HP/BP, detección absoluta o relativa y escucha.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
   "entrypoints": {
-    "vst3": "bin/JasWaveSmartDeEsser.vst3",
-    "vst3Bundle": "bin/JasWaveSmartDeEsser.vst3/Contents/x86_64-win/JasWaveSmartDeEsser.vst3"
+    "dspDesktop": "bin/JasWaveSmartDeEsser.vst3"
   },
-  "compatibility": {
-    "jaswave": ">=4.0.0",
-    "reaper": ">=6.0.0",
-    "vst3Standard": "3.7.0"
+  "vst3": {
+    "classId": "{4A617357-4445-5352-5072-6F6356335431}",
+    "subCategories": "Fx|Dynamics"
   },
-  "parameters": {
-    "freqRangeHz": [3000.0, 12000.0],
-    "thresholdRangeDb": [-40.0, 0.0],
-    "modes": ["Split-Band", "Wide-Band"]
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
   },
-  "rolesAllowed": ["productor", "mezcla", "qa"],
+  "rolesAllowed": [
+    "productor",
+    "mezcla",
+    "qa"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.smart-deesser",
+    "features": [
+      {
+        "key": "deesser.escucha-sidechain",
+        "description": "Escucha del sidechain filtrado"
+      },
+      {
+        "key": "deesser.deteccion-relativa",
+        "description": "Detección relativa (sidechain frente a banda completa)"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Controla sibilancias y resonancias agudas de voces sin oscurecer el resto de la señal.",
+    "intents": [
+      "quitar-sibilancia",
+      "suavizar-eses",
+      "domar-agudos-voz"
+    ],
+    "parameters": [
+      {
+        "id": "bypass",
+        "vstParamId": 0,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "bypass": true
+      },
+      {
+        "id": "deesser.freq",
+        "vstParamId": 1,
+        "name": "Frecuencia",
+        "min": 3000,
+        "max": 12000,
+        "default": 6000,
+        "unit": "Hz",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "deesser.umbral",
+        "vstParamId": 2,
+        "name": "Umbral",
+        "min": -60,
+        "max": 0,
+        "default": -20,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "deesser.rango",
+        "vstParamId": 3,
+        "name": "Rango máximo",
+        "min": 0,
+        "max": 24,
+        "default": 12,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "deesser.modo",
+        "vstParamId": 4,
+        "name": "Modo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Split",
+          "Wide"
+        ]
+      },
+      {
+        "id": "deesser.escucha",
+        "vstParamId": 5,
+        "name": "Escuchar sidechain",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": "deesser.escucha-sidechain"
+      },
+      {
+        "id": "deesser.deteccion",
+        "vstParamId": 6,
+        "name": "Detección",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": "deesser.deteccion-relativa",
+        "values": [
+          "Absolute",
+          "Relative"
+        ]
+      },
+      {
+        "id": "deesser.filtro-sc",
+        "vstParamId": 7,
+        "name": "Filtro del sidechain",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "High-pass",
+          "Band-pass"
+        ]
+      },
+      {
+        "id": "deesser.release",
+        "vstParamId": 8,
+        "name": "Release",
+        "min": 20,
+        "max": 300,
+        "default": 80,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "deesser.gr",
+        "vstParamId": 40,
+        "name": "Reducción (medidor)",
+        "min": -60,
+        "max": 0,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      }
+    ]
+  },
   "download": {
-    "githubRelease": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/v4.0.0-plugins/com.jaswave.plugin.smart-deesser-v1.0.0.zip",
-    "sizeBytes": 2180000,
-    "checksumSha256": ""
-  }
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.smart-deesser-1.0.0.zip",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
 }

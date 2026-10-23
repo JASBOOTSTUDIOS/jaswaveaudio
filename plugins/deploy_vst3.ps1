@@ -1,50 +1,19 @@
-$ErrorActionPreference = "Stop"
-
-$plugins = @(
-    @{ Name = 'JasWaveParamEq'; Dir = 'com.jaswave.plugin.param-eq' },
-    @{ Name = 'JasWaveBusCompressor'; Dir = 'com.jaswave.plugin.bus-compressor' },
-    @{ Name = 'JasWaveTruePeakLimiter'; Dir = 'com.jaswave.plugin.truepeak-limiter' }
+# Copia (solo desarrollo) los bundles compilados a una carpeta VST3 de USUARIO para probarlos en un DAW.
+#   powershell -File plugins/deploy_vst3.ps1 [-Build plugins/build] [-Config Release] [-Dest <carpeta>]
+# Por defecto: %LOCALAPPDATA%\Programs\Common\VST3\JasWave (no requiere administrador; Reaper la escanea).
+# No toca C:\Program Files\Common Files\VST3.
+param(
+    [string]$Build = (Join-Path $PSScriptRoot 'build'),
+    [string]$Config = 'Release',
+    [string]$Dest = (Join-Path $env:LOCALAPPDATA 'Programs\Common\VST3\JasWave')
 )
-
-$destReaper = 'C:\Studio_Musical\Reaper_VST'
-if (!(Test-Path $destReaper)) { New-Item -ItemType Directory -Path $destReaper -Force | Out-Null }
-
-$destCommon = Join-Path $env:LOCALAPPDATA 'Programs\Common\VST3\JasWave'
-if (!(Test-Path $destCommon)) { New-Item -ItemType Directory -Path $destCommon -Force | Out-Null }
-
-foreach ($p in $plugins) {
-    $srcVst = "C:\src\jaswave-ia\plugins\$($p.Dir)\build\Release\$($p.Name).vst3"
-    if (!(Test-Path $srcVst)) {
-        Write-Host "[ERROR] No existe $srcVst"
-        continue
-    }
-
-    $dirBin = "C:\src\jaswave-ia\plugins\$($p.Dir)\bin"
-    $dirVer = "C:\src\jaswave-ia\plugins\$($p.Dir)\v1.0.0"
-    $dirRoot = "C:\src\jaswave-ia\plugins\$($p.Dir)\$($p.Name).vst3"
-
-    if (!(Test-Path $dirBin)) { New-Item -ItemType Directory -Path $dirBin -Force | Out-Null }
-    if (!(Test-Path $dirVer)) { New-Item -ItemType Directory -Path $dirVer -Force | Out-Null }
-
-    Copy-Item $srcVst -Destination "$dirBin\$($p.Name).vst3" -Force
-    Copy-Item $srcVst -Destination "$dirVer\$($p.Name).vst3" -Force
-    Copy-Item $srcVst -Destination $dirRoot -Force
-
-    $reaperTarget = "$destReaper\$($p.Name).vst3"
-    if (Test-Path $reaperTarget) {
-        $oldTarget = "$reaperTarget.old_" + (Get-Date -Format 'yyyyMMdd_HHmmss')
-        try { Move-Item -Path $reaperTarget -Destination $oldTarget -Force } catch {
-            Write-Host "[WARN] No se pudo mover $reaperTarget, intentando sobreescribir..."
-        }
-    }
-    Copy-Item $srcVst -Destination $reaperTarget -Force
-
-    $commonTarget = "$destCommon\$($p.Name).vst3"
-    if (Test-Path $commonTarget) {
-        $oldTarget = "$commonTarget.old_" + (Get-Date -Format 'yyyyMMdd_HHmmss')
-        try { Move-Item -Path $commonTarget -Destination $oldTarget -Force } catch {}
-    }
-    Copy-Item $srcVst -Destination $commonTarget -Force
-
-    Write-Host "[DEPLOYED] $($p.Name).vst3 distribuido a bin, v1.0.0, raíz, Reaper y Common VST3"
+$ErrorActionPreference = 'Stop'
+$src = Join-Path $Build "VST3\$Config"
+if (!(Test-Path $src)) { throw "No existe $src: compila primero (cmake --build plugins/build --config $Config)" }
+New-Item -ItemType Directory -Force -Path $Dest | Out-Null
+Get-ChildItem $src -Directory -Filter '*.vst3' | ForEach-Object {
+    $target = Join-Path $Dest $_.Name
+    if (Test-Path $target) { Remove-Item $target -Recurse -Force }
+    Copy-Item $_.FullName -Destination $target -Recurse -Force
+    Write-Host "[DEPLOYED] $($_.Name) -> $target"
 }

@@ -3,29 +3,168 @@
   "name": "JasWave Piano Synth",
   "version": "1.0.0",
   "category": "instrument",
-  "subCategory": "Instrument|Synth",
-  "description": "Sintetizador y modelador de piano acústico y eléctrico de baja latencia con respuesta dinámica a velocidad MIDI.",
   "vendor": "JasWave Audio",
-  "classId": "{4A15A3A0-3C1A-4C4F-B19A-8E40280D5E10}",
+  "description": "Piano de síntesis modal (sin muestras): parciales inarmónicos, cuerdas al unísono, martillo, pedal de sustain y polifonía de hasta 64 voces.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
   "entrypoints": {
-    "vst3": "bin/JasWavePianoSynth.vst3",
-    "vst3Bundle": "bin/JasWavePianoSynth.vst3/Contents/x86_64-win/JasWavePianoSynth.vst3"
+    "dspDesktop": "bin/JasWavePiano.vst3"
   },
-  "compatibility": {
-    "jaswave": ">=4.0.0",
-    "reaper": ">=6.0.0",
-    "vst3Standard": "3.7.0"
+  "vst3": {
+    "classId": "{B3A7C9E1-4D2F-4A8B-9E6C-1F3D5A7B8C0D}",
+    "subCategories": "Instrument|Piano"
   },
-  "parameters": {
-    "brightness": [0.0, 1.0],
-    "release": [0.05, 5.0],
-    "damping": [0.0, 1.0],
-    "hardness": [0.0, 1.0]
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
   },
-  "rolesAllowed": ["productor"],
+  "rolesAllowed": [
+    "productor"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.piano-synth",
+    "features": [
+      {
+        "key": "piano.polifonia-extendida",
+        "description": "Polifonía de 64 voces (básica: 16)"
+      },
+      {
+        "key": "piano.imagen-estereo",
+        "description": "Imagen estéreo por registro"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Piano acústico sintetizado con respuesta dinámica a la velocidad MIDI.",
+    "intents": [
+      "piano-brillante",
+      "piano-suave",
+      "acompanamiento",
+      "balada"
+    ],
+    "parameters": [
+      {
+        "id": "piano.velocidad",
+        "vstParamId": 0,
+        "name": "Sensibilidad a la velocidad",
+        "min": 0,
+        "max": 100,
+        "default": 70,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "piano.brillo",
+        "vstParamId": 1,
+        "name": "Brillo",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "piano.decay",
+        "vstParamId": 2,
+        "name": "Duración de la cuerda",
+        "min": 0,
+        "max": 100,
+        "default": 45,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "piano.release",
+        "vstParamId": 3,
+        "name": "Release de apagadores",
+        "min": 0.05,
+        "max": 3,
+        "default": 0.4,
+        "unit": "s",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "piano.estereo",
+        "vstParamId": 4,
+        "name": "Ancho estéreo",
+        "min": 0,
+        "max": 100,
+        "default": 30,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "piano.imagen-estereo"
+      },
+      {
+        "id": "bypass",
+        "vstParamId": 5,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "bypass": true
+      },
+      {
+        "id": "piano.volumen",
+        "vstParamId": 6,
+        "name": "Volumen",
+        "min": -24,
+        "max": 6,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "piano.afinacion",
+        "vstParamId": 7,
+        "name": "Afinación LA4",
+        "min": 430,
+        "max": 450,
+        "default": 440,
+        "unit": "Hz",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "piano.dureza",
+        "vstParamId": 8,
+        "name": "Dureza del martillo",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "piano.sustain",
+        "vstParamId": 9,
+        "name": "Pedal de sustain (CC64)",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      }
+    ]
+  },
   "download": {
-    "githubRelease": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/v4.0.0-plugins/com.jaswave.plugin.piano-synth-v1.0.0.zip",
-    "sizeBytes": 3150000,
-    "checksumSha256": ""
-  }
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.piano-synth-1.0.0.zip",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
 }

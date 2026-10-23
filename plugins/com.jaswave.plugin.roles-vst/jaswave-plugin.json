@@ -1,0 +1,230 @@
+{
+  "id": "com.jaswave.plugin.roles-vst",
+  "name": "JasWave Roles",
+  "version": "1.0.0",
+  "category": "instrument",
+  "vendor": "JasWave Audio",
+  "description": "Instrumento por rol musical (batería, bajo, guitarra, piano, teclas, pad, cuerdas, coro, lead, metales, synth, percusión) con filtro y efectos.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveRoles.vst3"
+  },
+  "vst3": {
+    "classId": "{4A617357-526F-6C65-5072-6F6356335431}",
+    "subCategories": "Instrument|Synth"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "director",
+    "productor"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.roles-vst",
+    "features": [
+      {
+        "key": "roles.bateria",
+        "description": "Roles de batería y percusión"
+      },
+      {
+        "key": "roles.efectos",
+        "description": "Efectos chorus, delay y reverb"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Genera la parte de cada rol de un arreglo con un único instrumento ligero.",
+    "intents": [
+      "bateria-basica",
+      "linea-de-bajo",
+      "pad-ambiente",
+      "cuerdas",
+      "boceto-arreglo"
+    ],
+    "parameters": [
+      {
+        "id": "roles.rol",
+        "vstParamId": 0,
+        "name": "Rol",
+        "min": 0,
+        "max": 12,
+        "default": 5,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Bateria",
+          "Bajo",
+          "Guitarra",
+          "Piano",
+          "Teclas",
+          "Pad",
+          "Cuerdas",
+          "Coro",
+          "Lead",
+          "Metales",
+          "Synth",
+          "Percusion",
+          "Default"
+        ]
+      },
+      {
+        "id": "roles.ataque",
+        "vstParamId": 1,
+        "name": "Ataque",
+        "min": 0,
+        "max": 100,
+        "default": 35,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "roles.release",
+        "vstParamId": 2,
+        "name": "Release",
+        "min": 0,
+        "max": 100,
+        "default": 40,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "roles.corte",
+        "vstParamId": 3,
+        "name": "Corte del filtro",
+        "min": 0,
+        "max": 100,
+        "default": 55,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "roles.resonancia",
+        "vstParamId": 4,
+        "name": "Resonancia",
+        "min": 0,
+        "max": 100,
+        "default": 25,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "roles.nivel",
+        "vstParamId": 5,
+        "name": "Nivel",
+        "min": 0,
+        "max": 100,
+        "default": 70,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "roles.voces",
+        "vstParamId": 6,
+        "name": "Voces",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "roles.drive",
+        "vstParamId": 7,
+        "name": "Drive",
+        "min": 0,
+        "max": 100,
+        "default": 15,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "roles.gate",
+        "vstParamId": 8,
+        "name": "Gate",
+        "min": 0,
+        "max": 100,
+        "default": 0,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "roles.chorus",
+        "vstParamId": 9,
+        "name": "Chorus",
+        "min": 0,
+        "max": 100,
+        "default": 20,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "roles.efectos"
+      },
+      {
+        "id": "roles.delay",
+        "vstParamId": 10,
+        "name": "Delay",
+        "min": 0,
+        "max": 100,
+        "default": 15,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "roles.efectos"
+      },
+      {
+        "id": "roles.reverb",
+        "vstParamId": 11,
+        "name": "Reverb",
+        "min": 0,
+        "max": 100,
+        "default": 25,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "roles.efectos"
+      },
+      {
+        "id": "roles.eq-graves",
+        "vstParamId": 12,
+        "name": "EQ graves",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "roles.eq-agudos",
+        "vstParamId": 13,
+        "name": "EQ agudos",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      }
+    ]
+  },
+  "download": {
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.roles-vst-1.0.0.zip",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
+}

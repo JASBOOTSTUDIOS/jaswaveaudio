@@ -3,28 +3,624 @@
   "name": "JasWave EQ Parametric Pro",
   "version": "1.0.0",
   "category": "audio-effect",
-  "subCategory": "Fx|EQ",
-  "description": "Ecualizador paramétrico quirúrgico de 8 bandas con filtros Bell, LowCut, HighCut, Notch y Shelving.",
   "vendor": "JasWave Audio",
-  "classId": "{4A15A3A0-3C1A-4C4F-B19A-8E40280D5E01}",
+  "description": "Ecualizador paramétrico de 8 bandas de tipo seleccionable (HPF, shelving, peak, notch, LPF), fase mínima y latencia 0.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
   "entrypoints": {
-    "vst3": "bin/JasWaveParamEq.vst3",
-    "vst3Bundle": "bin/JasWaveParamEq.vst3/Contents/x86_64-win/JasWaveParamEq.vst3"
+    "dspDesktop": "bin/JasWaveParamEq.vst3"
   },
-  "compatibility": {
-    "jaswave": ">=4.0.0",
-    "reaper": ">=6.0.0",
-    "vst3Standard": "3.7.0"
+  "vst3": {
+    "classId": "{4A617357-4658-4551-5072-6F6356335431}",
+    "subCategories": "Fx|EQ"
   },
-  "parameters": {
-    "count": 42,
-    "bands": 8,
-    "features": ["linearPhase", "oversampling", "realtimeFft"]
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
   },
-  "rolesAllowed": ["mezcla", "mastering", "qa"],
+  "rolesAllowed": [
+    "mezcla",
+    "mastering",
+    "qa"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.param-eq",
+    "features": [
+      {
+        "key": "eq.bandas-avanzadas",
+        "description": "Bandas 5–8"
+      },
+      {
+        "key": "eq.pendientes-altas",
+        "description": "Pendientes HPF/LPF de 24 a 48 dB/oct"
+      },
+      {
+        "key": "eq.analizador",
+        "description": "Analizador de espectro pre/post"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Ecualizador paramétrico de 8 bandas para corrección y color (RBJ, 12–48 dB/oct en los cortes).",
+    "intents": [
+      "cortar-graves",
+      "realzar-presencia",
+      "eliminar-resonancia",
+      "suavizar-agudos",
+      "dar-cuerpo"
+    ],
+    "parameters": [
+      {
+        "id": "bypass",
+        "vstParamId": 0,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "bypass": true
+      },
+      {
+        "id": "b1.tipo",
+        "vstParamId": 1,
+        "name": "Banda 1 Tipo",
+        "min": 0,
+        "max": 5,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "HPF",
+          "Low Shelf",
+          "Peak",
+          "High Shelf",
+          "LPF",
+          "Notch"
+        ]
+      },
+      {
+        "id": "b1.freq",
+        "vstParamId": 2,
+        "name": "Banda 1 Frecuencia",
+        "min": 20,
+        "max": 20000,
+        "default": 30,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "b1.ganancia",
+        "vstParamId": 3,
+        "name": "Banda 1 Ganancia",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "b1.q",
+        "vstParamId": 4,
+        "name": "Banda 1 Q",
+        "min": 0.1,
+        "max": 18,
+        "default": 0.71,
+        "unit": "",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "b1.activa",
+        "vstParamId": 5,
+        "name": "Banda 1 Activa",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "b2.tipo",
+        "vstParamId": 6,
+        "name": "Banda 2 Tipo",
+        "min": 0,
+        "max": 5,
+        "default": 1,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "HPF",
+          "Low Shelf",
+          "Peak",
+          "High Shelf",
+          "LPF",
+          "Notch"
+        ]
+      },
+      {
+        "id": "b2.freq",
+        "vstParamId": 7,
+        "name": "Banda 2 Frecuencia",
+        "min": 20,
+        "max": 20000,
+        "default": 100,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "b2.ganancia",
+        "vstParamId": 8,
+        "name": "Banda 2 Ganancia",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "b2.q",
+        "vstParamId": 9,
+        "name": "Banda 2 Q",
+        "min": 0.1,
+        "max": 18,
+        "default": 0.71,
+        "unit": "",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "b2.activa",
+        "vstParamId": 10,
+        "name": "Banda 2 Activa",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "b3.tipo",
+        "vstParamId": 11,
+        "name": "Banda 3 Tipo",
+        "min": 0,
+        "max": 5,
+        "default": 2,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "HPF",
+          "Low Shelf",
+          "Peak",
+          "High Shelf",
+          "LPF",
+          "Notch"
+        ]
+      },
+      {
+        "id": "b3.freq",
+        "vstParamId": 12,
+        "name": "Banda 3 Frecuencia",
+        "min": 20,
+        "max": 20000,
+        "default": 250,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "b3.ganancia",
+        "vstParamId": 13,
+        "name": "Banda 3 Ganancia",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "b3.q",
+        "vstParamId": 14,
+        "name": "Banda 3 Q",
+        "min": 0.1,
+        "max": 18,
+        "default": 1,
+        "unit": "",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "b3.activa",
+        "vstParamId": 15,
+        "name": "Banda 3 Activa",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "b4.tipo",
+        "vstParamId": 16,
+        "name": "Banda 4 Tipo",
+        "min": 0,
+        "max": 5,
+        "default": 2,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "HPF",
+          "Low Shelf",
+          "Peak",
+          "High Shelf",
+          "LPF",
+          "Notch"
+        ]
+      },
+      {
+        "id": "b4.freq",
+        "vstParamId": 17,
+        "name": "Banda 4 Frecuencia",
+        "min": 20,
+        "max": 20000,
+        "default": 1000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "b4.ganancia",
+        "vstParamId": 18,
+        "name": "Banda 4 Ganancia",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "b4.q",
+        "vstParamId": 19,
+        "name": "Banda 4 Q",
+        "min": 0.1,
+        "max": 18,
+        "default": 1,
+        "unit": "",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "b4.activa",
+        "vstParamId": 20,
+        "name": "Banda 4 Activa",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "b5.tipo",
+        "vstParamId": 21,
+        "name": "Banda 5 Tipo",
+        "min": 0,
+        "max": 5,
+        "default": 2,
+        "unit": "",
+        "scale": "enum",
+        "feature": "eq.bandas-avanzadas",
+        "values": [
+          "HPF",
+          "Low Shelf",
+          "Peak",
+          "High Shelf",
+          "LPF",
+          "Notch"
+        ]
+      },
+      {
+        "id": "b5.freq",
+        "vstParamId": 22,
+        "name": "Banda 5 Frecuencia",
+        "min": 20,
+        "max": 20000,
+        "default": 3000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b5.ganancia",
+        "vstParamId": 23,
+        "name": "Banda 5 Ganancia",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b5.q",
+        "vstParamId": 24,
+        "name": "Banda 5 Q",
+        "min": 0.1,
+        "max": 18,
+        "default": 1,
+        "unit": "",
+        "scale": "linear",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b5.activa",
+        "vstParamId": 25,
+        "name": "Banda 5 Activa",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "unit": "",
+        "scale": "toggle",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b6.tipo",
+        "vstParamId": 26,
+        "name": "Banda 6 Tipo",
+        "min": 0,
+        "max": 5,
+        "default": 2,
+        "unit": "",
+        "scale": "enum",
+        "feature": "eq.bandas-avanzadas",
+        "values": [
+          "HPF",
+          "Low Shelf",
+          "Peak",
+          "High Shelf",
+          "LPF",
+          "Notch"
+        ]
+      },
+      {
+        "id": "b6.freq",
+        "vstParamId": 27,
+        "name": "Banda 6 Frecuencia",
+        "min": 20,
+        "max": 20000,
+        "default": 6000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b6.ganancia",
+        "vstParamId": 28,
+        "name": "Banda 6 Ganancia",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b6.q",
+        "vstParamId": 29,
+        "name": "Banda 6 Q",
+        "min": 0.1,
+        "max": 18,
+        "default": 1,
+        "unit": "",
+        "scale": "linear",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b6.activa",
+        "vstParamId": 30,
+        "name": "Banda 6 Activa",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "unit": "",
+        "scale": "toggle",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b7.tipo",
+        "vstParamId": 31,
+        "name": "Banda 7 Tipo",
+        "min": 0,
+        "max": 5,
+        "default": 3,
+        "unit": "",
+        "scale": "enum",
+        "feature": "eq.bandas-avanzadas",
+        "values": [
+          "HPF",
+          "Low Shelf",
+          "Peak",
+          "High Shelf",
+          "LPF",
+          "Notch"
+        ]
+      },
+      {
+        "id": "b7.freq",
+        "vstParamId": 32,
+        "name": "Banda 7 Frecuencia",
+        "min": 20,
+        "max": 20000,
+        "default": 10000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b7.ganancia",
+        "vstParamId": 33,
+        "name": "Banda 7 Ganancia",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b7.q",
+        "vstParamId": 34,
+        "name": "Banda 7 Q",
+        "min": 0.1,
+        "max": 18,
+        "default": 0.71,
+        "unit": "",
+        "scale": "linear",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b7.activa",
+        "vstParamId": 35,
+        "name": "Banda 7 Activa",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "unit": "",
+        "scale": "toggle",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b8.tipo",
+        "vstParamId": 36,
+        "name": "Banda 8 Tipo",
+        "min": 0,
+        "max": 5,
+        "default": 4,
+        "unit": "",
+        "scale": "enum",
+        "feature": "eq.bandas-avanzadas",
+        "values": [
+          "HPF",
+          "Low Shelf",
+          "Peak",
+          "High Shelf",
+          "LPF",
+          "Notch"
+        ]
+      },
+      {
+        "id": "b8.freq",
+        "vstParamId": 37,
+        "name": "Banda 8 Frecuencia",
+        "min": 20,
+        "max": 20000,
+        "default": 18000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b8.ganancia",
+        "vstParamId": 38,
+        "name": "Banda 8 Ganancia",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b8.q",
+        "vstParamId": 39,
+        "name": "Banda 8 Q",
+        "min": 0.1,
+        "max": 18,
+        "default": 0.71,
+        "unit": "",
+        "scale": "linear",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "b8.activa",
+        "vstParamId": 40,
+        "name": "Banda 8 Activa",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": "eq.bandas-avanzadas"
+      },
+      {
+        "id": "salida",
+        "vstParamId": 41,
+        "name": "Ganancia de salida",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "pendiente",
+        "vstParamId": 42,
+        "name": "Pendiente HPF/LPF",
+        "min": 0,
+        "max": 3,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": "eq.pendientes-altas",
+        "values": [
+          "12 dB/oct",
+          "24 dB/oct",
+          "36 dB/oct",
+          "48 dB/oct"
+        ]
+      },
+      {
+        "id": "analizador",
+        "vstParamId": 43,
+        "name": "Analizador de espectro",
+        "min": 0,
+        "max": 2,
+        "default": 1,
+        "unit": "",
+        "scale": "enum",
+        "feature": "eq.analizador",
+        "values": [
+          "Off",
+          "Post",
+          "Pre+Post"
+        ]
+      }
+    ]
+  },
   "download": {
-    "githubRelease": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/v4.0.0-plugins/com.jaswave.plugin.param-eq-v1.0.0.zip",
-    "sizeBytes": 2450000,
-    "checksumSha256": ""
-  }
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.param-eq-1.0.0.zip",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
 }
