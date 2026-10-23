@@ -29,6 +29,7 @@ import {
   isSafeExternalUrl,
   loadRenderer,
 } from './security'
+import { escanearPaquetes } from './plugins/escaner'
 
 // ── Diagnóstico: log persistente y minidumps locales (sin envío a servidores) ──
 const logsDir = () => path.join(app.getPath('userData'), 'logs')
@@ -567,6 +568,18 @@ ipcMain.handle('known-paths', () => {
     bundledVst3Dir: resourcesPath ? path.join(resourcesPath, 'vst3', 'JasWave') : '',
   }
 })
+
+/**
+ * Raíces de paquetes de plugins JasWave (P1): la instalación de usuario (D1) y, en desarrollo,
+ * la carpeta plugins/ del repositorio. JASWAVE_PLUGINS_DIR añade una raíz (pruebas/CI).
+ */
+function raicesPlugins(): string[] {
+  const raices = [path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'JasWave', 'plugins')]
+  if (!app.isPackaged) raices.push(path.resolve(__dirname, '..', '..', '..', 'plugins'))
+  if (process.env.JASWAVE_PLUGINS_DIR) raices.push(path.resolve(process.env.JASWAVE_PLUGINS_DIR))
+  return raices
+}
+ipcMain.handle('plugins-listar', () => escanearPaquetes(raicesPlugins()))
 
 // Errores del renderer (window.onerror, rechazos, error boundaries) → log persistente.
 let rendererLogBudget = { windowStart: 0, count: 0 }

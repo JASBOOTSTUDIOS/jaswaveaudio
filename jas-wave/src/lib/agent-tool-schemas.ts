@@ -3,8 +3,8 @@
  * filtrados por rol y modo (`toolsForRole`, clase de riesgo de la política fail-closed).
  */
 
-import { agentActionClassOfType } from '@jaswave/ai-harness'
-import { buildToolSchemas, capToolSchemas, toolsForRole, type ToolAgentMode, type ToolAgentRole, type ToolJsonSchema } from '../../../shared/src/ai/tool-schemas'
+import { agentActionClassOfType, registroHerramientasPlugins } from '@jaswave/ai-harness'
+import { buildToolSchemas, capToolSchemas, modeAllowsToolClass, toolsForRole, type ToolAgentMode, type ToolAgentRole, type ToolJsonSchema } from '../../../shared/src/ai/tool-schemas'
 import { registroComandos } from '../../../shared/src/state/registro-comandos'
 import { AGENT_ONLY_ACTIONS, KNOWN_AGENT_ACTION_TYPES } from './agent-action-catalog'
 import { A9_TOOL_SCHEMAS } from './agent-audit-tools'
@@ -39,5 +39,15 @@ export function allAgentToolSchemas(commandRegistry: { list(): Array<{ type: str
 
 /** Herramientas visibles para un rol en un modo (A3/A6), recortadas a `max` (≤128 en OpenAI). */
 export function listAgentToolSchemas(opts: { mode: ToolAgentMode; role: ToolAgentRole; max?: number }): ToolJsonSchema[] {
-  return capToolSchemas(toolsForRole(allAgentToolSchemas(), { mode: opts.mode, role: opts.role, classOf: agentActionClassOfType }), opts.max ?? 120)
+  // Herramientas de plugins activos (P2): el registro filtra por rol y aquí se aplica el modo
+  // con la misma regla de clases que al núcleo (en ask/think solo lecturas).
+  const plugins = registroHerramientasPlugins
+    .listar(opts.role)
+    .filter((t) => modeAllowsToolClass(opts.mode, t.name, agentActionClassOfType(t.name)))
+  const max = opts.max ?? 120
+  const nucleo = capToolSchemas(
+    toolsForRole(allAgentToolSchemas(), { mode: opts.mode, role: opts.role, classOf: agentActionClassOfType }),
+    Math.max(0, max - plugins.length),
+  )
+  return [...nucleo, ...plugins.slice(0, max)]
 }

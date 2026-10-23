@@ -32,10 +32,13 @@ import {
   pickJasWavePluginPath,
 } from '@/src/lib/plugin/bundled-plugins'
 import { setBundledVst3SearchDir } from '@/src/lib/plugin/search-paths'
+import { cargarPluginsInstalados } from '@/src/lib/plugins/registro-plugins'
 
 export function PluginHostBootstrap() {
   useEffect(() => {
     hydratePluginCatalog()
+    // Plugins JasWave por manifiesto (P1): valida, descarta alterados y registra sus herramientas IA.
+    void cargarPluginsInstalados().catch((e) => console.warn('[plugins] no se pudieron cargar los paquetes', e))
     pluginManager.ensureBuiltins()
     void window.electron?.localAppData?.().then(async (p: string) => {
       if (p) setLocalAppDataHint(p)

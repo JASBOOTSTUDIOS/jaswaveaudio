@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('electron', {
   userDataPath: () => ipcRenderer.invoke('user-data-path'),
   /** { resourcesPath, localAppData, bundledVst3Dir } — bundled solo en la app empaquetada. */
   knownPaths: () => ipcRenderer.invoke('known-paths'),
+  /** Paquetes de plugins JasWave encontrados (manifiesto sin validar + integridad). */
+  pluginsListar: () => ipcRenderer.invoke('plugins-listar'),
   // Auto-update (electron/updater.ts)
   onUpdateStatus: (callback: (status: { state: string; version?: string; message?: string }) => void) => {
     const handler = (_event: unknown, status: { state: string; version?: string; message?: string }) => callback(status)

@@ -16,6 +16,7 @@ declare global {
       localAppData?: () => Promise<string>
       userDataPath?: () => Promise<string>
       knownPaths?: () => Promise<{ resourcesPath: string; localAppData: string; bundledVst3Dir: string }>
+      pluginsListar?: () => Promise<import('../src/lib/plugins/registro-plugins').PaqueteRecibido[]>
       onUpdateStatus?: (
         callback: (status: {
           state: 'checking' | 'available' | 'downloaded' | 'error' | 'none'

@@ -45,6 +45,7 @@ import { formatMusicalSelectionForPrompt, getMusicalSelectionAnchor } from './ai
 import { getAgentDoc, PLAN_SLUG, writeAgentDoc } from './agent-docs'
 import { runRegisteredTools } from './agent-tool-runner'
 import { listAgentToolSchemas } from './agent-tool-schemas'
+import { esHerramientaDePlugin, planificarHerramientaPlugin } from './plugins/registro-plugins'
 import { computeFallbackActions, isFallbackTool } from './agent-fallback-tools'
 import { appendMessage, getConversation, patchMessage } from './ai-chat-store'
 import type { AgentMode } from './ai-modes'
@@ -148,7 +149,18 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
       // fallback.* solo calculan propuestas sobre el estado actual (clase read).
       const fallback = allCalls.filter((c) => isFallbackTool(c.name))
       const a9 = allCalls.filter((c) => (A9_TOOL_NAMES as readonly string[]).includes(c.name))
-      const calls = allCalls.filter((c) => !isFallbackTool(c.name) && !(A9_TOOL_NAMES as readonly string[]).includes(c.name))
+      const deplugins = allCalls.filter((c) => esHerramientaDePlugin(c.name))
+      const calls = allCalls.filter(
+        (c) => !isFallbackTool(c.name) && !(A9_TOOL_NAMES as readonly string[]).includes(c.name) && !esHerramientaDePlugin(c.name),
+      )
+      const opcionesHerramientas = {
+        agentMode: ctx.mode as AgentMode,
+        forceApply: true,
+        source: 'model_actions' as const,
+        conversationId: run?.conversationId,
+        messageId: run?.messageId,
+        userConfirmed: ctx.userConfirmed,
+      }
       const fbResults = fallback.map((c) => ({
         callId: c.id,
         name: c.name,
@@ -175,22 +187,46 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
           }
         }),
       )
-      if (!calls.length) return [...fbResults, ...a9Results]
+      // P1/P2: plugin.<alias>.describir responde con datos del manifiesto; plugin.<alias>.ajustar se
+      // traduce a plugin.setParameter y pasa por la misma puerta (clase, autonomía, confirmación).
+      const pluginResults = []
+      for (const c of deplugins) {
+        try {
+          const plan = planificarHerramientaPlugin(c.name, (c.arguments ?? {}) as Record<string, unknown>)
+          if (plan.tipo === 'respuesta') {
+            pluginResults.push({ callId: c.id, name: c.name, status: 'success' as const, data: plan.data })
+            continue
+          }
+          const parciales = await runRegisteredTools(
+            tienda,
+            plan.llamadas.map((l, i) => ({ id: `${c.id}#${i}`, tool: l.tool, arguments: l.arguments })),
+            opcionesHerramientas,
+          )
+          const fallo = parciales.find((r) => r.status !== 'success')
+          pluginResults.push(
+            fallo
+              ? { callId: c.id, name: c.name, status: fallo.status, data: fallo.data, error: fallo.error }
+              : { callId: c.id, name: c.name, status: 'success' as const, data: { aplicados: parciales.length } },
+          )
+        } catch (e) {
+          pluginResults.push({
+            callId: c.id,
+            name: c.name,
+            status: 'error' as const,
+            error: { code: 'plugin_tool_failed', message: e instanceof Error ? e.message : String(e) },
+          })
+        }
+      }
+      if (!calls.length) return [...fbResults, ...a9Results, ...pluginResults]
       const results = await runRegisteredTools(
         tienda,
         calls.map((c) => ({ id: c.id, tool: c.name, arguments: c.arguments })),
-        {
-          agentMode: ctx.mode as AgentMode,
-          forceApply: true,
-          source: 'model_actions',
-          conversationId: run?.conversationId,
-          messageId: run?.messageId,
-          userConfirmed: ctx.userConfirmed,
-        },
+        opcionesHerramientas,
       )
       return [
         ...fbResults,
         ...a9Results,
+        ...pluginResults,
         ...results.map((r) => ({
           callId: r.callId,
           name: r.tool,

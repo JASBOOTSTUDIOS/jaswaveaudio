@@ -30,8 +30,8 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | L1 | Licencias, roles y API admin | B0 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log backend/) |
 | L2 | Licencia dentro de cada VST | L1, V1 | pendiente | | |
 | L3 | Login y panel admin en el DAW | L1 | pendiente | | |
-| P1 | Manifiesto jaswave-plugin.json y cargador | K1 | pendiente | | |
-| P2 | Registro dinámico de herramientas IA | P1 | pendiente | | |
+| P1 | Manifiesto jaswave-plugin.json y cargador | K1 | en curso | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
+| P2 | Registro dinámico de herramientas IA | P1 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | K1 | Microkernel sin dependencias estáticas | — | pendiente | | |
 | V1 | Plugins VST3 independientes | K1 | pendiente | | |
 | V2 | Rediseño UI cyber y calidad DSP | V1 | pendiente | | |
