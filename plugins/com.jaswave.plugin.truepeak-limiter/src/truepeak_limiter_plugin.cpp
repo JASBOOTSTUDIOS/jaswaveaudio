@@ -1,4 +1,4 @@
-// JasWave True-Peak Limiter Pro – VST3 (procesador, controlador, editor Cyber con forma de onda, TP y LUFS)
+﻿// JasWave True-Peak Limiter Pro – VST3 (procesador, controlador, editor Cyber con forma de onda, TP y LUFS)
 #include "truepeak_limiter_dsp.h"
 #include "jw_vst3.h"
 #include "jw_ui.h"
@@ -64,7 +64,7 @@ private:
 class Editor : public JasWaveUI::PluginEditor {
 public:
     const wchar_t* title() const override { return L"TRUE-PEAK LIMITER"; }
-    const wchar_t* subtitle() const override { return L"ITU-R BS.1770 · SOBREMUESTREO 4× · LOOKAHEAD"; }
+    const wchar_t* subtitle() const override { return L"DETECCIÓN TRUE-PEAK 8× · MEDICIÓN BS.1770-4 · LOOKAHEAD"; }
     void build(JasWaveUI::EditorContext& c) override {
         using namespace JasWaveUI;
         c.section({ 666, 92, 1048, 404 }, L"LIMITADOR", kBypass, true);
