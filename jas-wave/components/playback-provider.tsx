@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { TransportClock } from '@/lib/transport-clock'
 import { audioEngine, type AudioClipPlaybackInfo, type MidiClipPlaybackInfo, type TrackAudioConfig } from '@/lib/audio-engine'
+import { presetParaPista } from '@/lib/web-synth/web-synth'
 import type { AudioClip } from '../../shared/src/types/clips'
 import { beatsASegundos, segundosABeats } from '@/lib/audio-conversions'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
@@ -95,6 +96,8 @@ function trackAudioConfigFromShared(
     soloActiva: Boolean(t.soloActiva),
     stemIndex,
     vstInstrumentSlotId: vstSlot,
+    // W2: preset del WebSynth para escuchar la pista en la web.
+    instrumentoWeb: presetParaPista([t.nombre, ...(t.tags ?? []), ...(t.plugins ?? []).map((p) => p.nombre)]),
   }
 }
 

@@ -10,12 +10,16 @@
 Pistas VST reproducen con WebSynth sin host nativo; stems congelados se reproducen manteniendo MIDI editable; test de audio no nulo.
 
 ## Checklist
-- [ ] Implementación
-- [ ] Tests automatizados
-- [ ] Verificación reproducible documentada
+- [x] WebSynth AudioWorklet (16 voces, PolyBLEP, SVF, sustractivo/FM/piano/batería GM)
+- [x] Integrado en el planificador MIDI y la previsualización cuando no hay plugin host (web)
+- [x] Pruebas DSP: afinación ±1 cent, sin NaN ni recortes, inicio al sample, release, robo de voz, batería
+- [ ] Stem freezing (bounce del escritorio a Storage y reproducción en web): pendiente
+- [ ] Escucha verificada en navegador real
 
 ## Verificación
 `npm run verify` en raíz; tests específicos del workstream (ver criterios).
 
 ## Notas de traspaso
-- (vacío: workstream pendiente)
+- lib/web-synth/web-synth-processor.js es el worklet real y también se prueba en Node (vm).
+- Preset por pista: presetParaPista (nombre, etiquetas, plugins) → TrackAudioConfig.instrumentoWeb.
+- La salida entra en getTrackNode(trackId).gain: volumen, paneo y medidores aplican.

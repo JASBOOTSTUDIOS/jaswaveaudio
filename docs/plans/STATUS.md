@@ -36,7 +36,7 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | V1 | Plugins VST3 independientes | K1 | hecho | Claude Opus 5.5 · 2026-10-23 | ae53d2c |
 | V2 | Rediseño UI cyber y calidad DSP | V1 | hecho | Claude Opus 5.5 · 2026-10-23 | ae53d2c |
 | W1 | Cliente web | B0, K1 | en curso (IA web en M1) | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
-| W2 | WebSynth y stem freezing | W1 | pendiente | | |
+| W2 | WebSynth y stem freezing | W1 | en curso (WebSynth hecho; stem freezing pendiente) | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | H1 | Handover web → desktop | S1, W1 | hecho (unión automática a sala pendiente) | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | D1 | Instalador ligero y entrega modular | V1, L2 | hecho (publicación en GitHub pendiente de confirmación) | Claude Opus 5.5 · 2026-10-23 | 685a5c5 |
 

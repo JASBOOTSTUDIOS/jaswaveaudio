@@ -28,6 +28,7 @@ import {
   stopHostTransportClockPoll,
 } from '@/src/lib/plugin/host-transport'
 import pcmTapProcessorUrl from './pcm-tap-processor.js?url'
+import { WebSynthPistas, usarWebSynth, type PresetWebSynth } from './web-synth/web-synth'
 import { peakFromByteTimeDomain } from './audio-dsp'
 import { synthDemoSamples } from './demo-synth'
 import { ensureMicPermission, listAudioInputs, refreshAudioInputs } from '@/src/lib/audio-inputs'
@@ -42,6 +43,8 @@ export interface TrackAudioConfig {
   stemIndex?: number
   /** Slot del Plugin Host para el instrumento VST3 de esta pista. */
   vstInstrumentSlotId?: string
+  /** Preset del WebSynth para escuchar la pista en la web (sin plugin host). */
+  instrumentoWeb?: PresetWebSynth
 }
 
 export interface AudioClipPlaybackInfo {
@@ -133,6 +136,11 @@ export class WebAudioEngine {
   private audioBuffers = new Map<string, AudioBuffer>()
   private activeSources = new Map<string, AudioBufferSourceNode>()
   private midiScheduleTimer: ReturnType<typeof setInterval> | null = null
+  /** W2: sintetizador de respaldo en la web (sin plugin host). */
+  private webSynth = new WebSynthPistas(
+    () => this.ensureContext(),
+    (trackId) => this.getTrackNode(trackId).gain,
+  )
   private recSessions = new Map<string, InputCaptureSession>()
   private recTrackDevice = new Map<string, string>()
   private pendingMidiClips: MidiClipPlaybackInfo[] = []
@@ -772,14 +780,28 @@ export class WebAudioEngine {
     /* Soft Pad Web Audio eliminado — JasWave Roles VST. */
   }
 
-  /** Preview MIDI: solo VST de la pista preferida / activa. */
+  /** Preview MIDI: solo VST de la pista preferida / activa (en la web, WebSynth). */
   public noteOn(pitch: number, velocity = 90): void {
+    if (usarWebSynth()) {
+      void this.webSynth.preparar().then(() => this.webSynth.inmediata('__preview__', this.presetPreview, true, pitch, velocity))
+      return
+    }
     routeMidiToActiveVst(true, pitch, velocity)
   }
 
   /** Preview MIDI: nota apagada. */
   public noteOff(pitch: number, _releaseSec = 0.25): void {
+    if (usarWebSynth()) {
+      this.webSynth.inmediata('__preview__', this.presetPreview, false, pitch, 0)
+      return
+    }
     routeMidiToActiveVst(false, pitch, 0)
+  }
+
+  private presetPreview: PresetWebSynth = 'piano'
+  /** Preset de la previsualización web (la pista seleccionada). */
+  public setPresetPreviewWeb(preset: PresetWebSynth): void {
+    this.presetPreview = preset
   }
 
   public allNotesOff(): void {
@@ -977,6 +999,31 @@ export class WebAudioEngine {
     this.scheduleMidiLookahead()
   }
 
+  /** W2: programa en el WebSynth las notas del clip que caen en la ventana. */
+  private scheduleWebSynthClip(
+    clip: MidiClipPlaybackInfo,
+    cfg: TrackAudioConfig,
+    windowStart: number,
+    windowEnd: number,
+    nowTimeline: number,
+  ) {
+    if (!this.webSynth.listo) {
+      void this.webSynth.preparar()
+      return
+    }
+    const ctxAhora = this.ensureContext().currentTime
+    const preset = cfg.instrumentoWeb ?? 'piano'
+    clip.notes.forEach((note, ni) => {
+      const inicio = Math.max(note.startSec, this.playheadStartSec)
+      const fin = note.startSec + Math.max(0.03, note.durationSec)
+      if (inicio < windowStart || inicio >= windowEnd || fin - inicio <= 0.02) return
+      const key = clip.id + ':' + ni + ':' + note.pitch + ':' + note.startSec.toFixed(4)
+      if (this.midiVoiceKeys.has(key)) return
+      const cuando = ctxAhora + Math.max(0, inicio - nowTimeline)
+      if (this.webSynth.nota(clip.trackId, preset, note.pitch, note.velocity, cuando, fin - inicio)) this.midiVoiceKeys.add(key)
+    })
+  }
+
   private stopMidiScheduler() {
     if (this.midiScheduleTimer) {
       clearInterval(this.midiScheduleTimer)
@@ -985,6 +1032,7 @@ export class WebAudioEngine {
     for (const t of this.vstMidiTimers) clearTimeout(t)
     this.vstMidiTimers = []
     allNotesOffAllTracks()
+    this.webSynth.silenciarTodo()
   }
 
   /** Programa MIDI por ventanas sin AudioContext (reloj host). */
@@ -1019,7 +1067,11 @@ export class WebAudioEngine {
       }
 
       const vstSlot = cfg?.vstInstrumentSlotId
-      if (!vstSlot) continue
+      if (!vstSlot) {
+        // Web: sin plugin host, la pista suena con el WebSynth (preescucha V5 §3.2).
+        if (cfg && usarWebSynth()) this.scheduleWebSynthClip(clip, cfg, windowStart, windowEnd, nowTimeline)
+        continue
+      }
 
       let ni = this.midiClipNoteCursor.get(clip.id) ?? 0
       while (ni < clip.notes.length) {
