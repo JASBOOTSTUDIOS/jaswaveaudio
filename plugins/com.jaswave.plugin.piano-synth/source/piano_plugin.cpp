@@ -1,208 +1,232 @@
-#include "piano_plugin.h"
-#include "public.sdk/source/vst/vstaudioprocessoralgo.h"
-#include "pluginterfaces/vst/ivstevents.h"
-#include "pluginterfaces/vst/ivstparameterchanges.h"
-#include "base/source/fstreamer.h"
-#include <cstring>
+// JasWave Piano Synth – VST3 instrumento (procesador, controlador, editor Cyber con teclado y voces)
+#include "piano_dsp.h"
+#include "jw_vst3.h"
+#include "jw_ui.h"
+#include "jw_ui_kit.h"
+
+#include "public.sdk/source/main/pluginfactory.h"
 
 using namespace Steinberg;
+using namespace Steinberg::Vst;
+using namespace JasWaveVst;
 
-JasWavePiano::JasWavePiano () {}
+namespace JasWavePiano {
 
-tresult PLUGIN_API JasWavePiano::initialize (FUnknown* context)
-{
-    tresult r = SingleComponentEffect::initialize (context);
-    if (r != kResultOk) return r;
-    addAudioOutput (STR16 ("Stereo Out"), Vst::SpeakerArr::kStereo);
-    addEventInput (STR16 ("MIDI In"), 1);
-    parameters.addParameter (STR16 ("Velocity"), STR16 ("%"), 0, 0.7, Vst::ParameterInfo::kCanAutomate, 0);
-    parameters.addParameter (STR16 ("Brightness"), STR16 ("%"), 0, 0.5, Vst::ParameterInfo::kCanAutomate, 1);
-    parameters.addParameter (STR16 ("Damping"), STR16 ("%"), 0, 0.45, Vst::ParameterInfo::kCanAutomate, 2);
-    parameters.addParameter (STR16 ("Release"), STR16 ("s"), 0, 0.8, Vst::ParameterInfo::kCanAutomate, 3);
-    parameters.addParameter (STR16 ("Stereo"), STR16 ("%"), 0, 0.3, Vst::ParameterInfo::kCanAutomate, 4);
-    return kResultOk;
-}
+// FUID del procesador = el del piano previo (native/piano-synth, componente único): proyectos existentes cargan.
+static const FUID kProcessorUid(0xB3A7C9E1, 0x4D2F4A8B, 0x9E6C1F3D, 0x5A7B8C0D);
+static const FUID kControllerUid(0xB3A7C9E1, 0x4D2F4A8B, 0x9E6C1F3D, 0x5A7B8C0E);
 
-tresult PLUGIN_API JasWavePiano::terminate () { return SingleComponentEffect::terminate (); }
+static const FeatureDef kFeatures[] = {
+    { "piano.polifonia-extendida", "Polifonía de 64 voces (básica: 16)" },
+    { "piano.imagen-estereo", "Imagen estéreo por registro" },
+};
+static const PluginDescriptor kDesc{ "com.jaswave.plugin.piano-synth", "JasWave Piano Synth", L"PIANO SYNTH", kFeatures, 2, true };
 
-tresult PLUGIN_API JasWavePiano::setActive (TBool state)
-{
-    if (state) for (auto& v : voces) v.reset ();
-    else for (auto& v : voces) v.reset (); // silence on deactivate / host unload
-    return kResultOk;
-}
+// ---------------------------------------------------------------------------------
+class Processor : public JwProcessor {
+public:
+    Processor() : JwProcessor(kDesc, paramDefs(), kControllerUid) { registerBus(pbus_ = std::make_shared<PianoBus>()); }
+    static FUnknown* createInstance(void*) { return static_cast<IAudioProcessor*>(new Processor()); }
 
-tresult PLUGIN_API JasWavePiano::setProcessing (TBool /*state*/)
-{
-    return kResultOk;
-}
-
-tresult PLUGIN_API JasWavePiano::setupProcessing (Vst::ProcessSetup& setup)
-{
-    sr = static_cast<Steinberg::int32> (setup.sampleRate);
-    return SingleComponentEffect::setupProcessing (setup);
-}
-
-tresult PLUGIN_API JasWavePiano::setBusArrangements (Vst::SpeakerArrangement* ins, int32 numIns,
-                                                       Vst::SpeakerArrangement* outs, int32 numOuts)
-{
-    if (numIns == 0 && numOuts == 1 && Vst::SpeakerArr::getChannelCount (outs[0]) == 2)
-    {
-        if (auto* bus = FCast<Vst::AudioBus> (audioOutputs.at (0)))
-        {
-            bus->setArrangement (outs[0]);
-            bus->setName (STR16 ("Stereo Out"));
-            return kResultOk;
-        }
+protected:
+    void prepare(double sr, int maxBlock) override { engine_.prepare(sr, maxBlock); }
+    void resetDsp() override { engine_.reset(); }
+    void updateParams() override {
+        PianoSettings s;
+        s.velSens = plainOf(kVelocity) / 100.0;
+        s.bright = plainOf(kBrightness) / 100.0;
+        s.decay = plainOf(kDecay) / 100.0;
+        s.releaseS = plainOf(kRelease);
+        s.stereo = plainOf(kStereo) / 100.0;
+        s.volumeDb = plainOf(kVolume);
+        s.a4 = plainOf(kTune);
+        s.hardness = plainOf(kHardness) / 100.0;
+        s.sustain = boolOf(kSustain);
+        s.bypass = boolOf(kBypass) || !licensed();     // sin licencia: silencio con fundido
+        s.maxVoices = feature(kFeatPolyphony) ? kMaxVoices : kBasicVoices;
+        engine_.setSettings(s);
     }
-    return kResultFalse;
-}
-
-tresult PLUGIN_API JasWavePiano::canProcessSampleSize (int32 size)
-{
-    return (size == Vst::kSample32 || size == Vst::kSample64) ? kResultTrue : kResultFalse;
-}
-
-void JasWavePiano::leerParametros (Vst::ProcessData& data)
-{
-    if (!data.inputParameterChanges) return;
-    int32 n = data.inputParameterChanges->getParameterCount ();
-    for (int32 i = 0; i < n; i++)
-    {
-        auto* q = data.inputParameterChanges->getParameterData (i);
-        if (!q) continue;
-        Vst::ParamValue v; int32 off;
-        if (q->getPoint (q->getPointCount () - 1, off, v) != kResultOk) continue;
-        switch (q->getParameterId ())
-        {
-            case 0: pVel = 0.3f + (float)v * 1.7f; break;
-            case 1: pBri = (float)v; break;
-            case 2: pDamp = 0.85f + (float)v * 0.14f; break;
-            case 3: pRel = 0.05f + (float)v * 2.95f; break;
-            case 4: pStereo = (float)v; break;
-        }
-    }
-}
-
-VozPiano* JasWavePiano::buscarLibre ()
-{
-    VozPiano* best = nullptr; int32 maxAge = -1;
-    for (auto& v : voces) { if (v.pitch < 0) return &v; if (v.age > maxAge) { maxAge = v.age; best = &v; } }
-    return best;
-}
-
-VozPiano* JasWavePiano::buscarPorNota (int32 nota)
-{
-    for (auto& v : voces) if (v.pitch == nota && !v.releasing) return &v;
-    return nullptr;
-}
-
-void JasWavePiano::procesarMidi (Vst::ProcessData& data)
-{
-    if (data.processContext)
-    {
-        const bool playing = (data.processContext->state & Vst::ProcessContext::kPlaying) != 0;
-        if (wasPlaying && !playing)
-        {
-            for (auto& v : voces) v.reset ();
-        }
-        wasPlaying = playing;
-    }
-    if (!data.inputEvents) return;
-    int32 num = data.inputEvents->getEventCount ();
-    for (int32 i = 0; i < num; i++)
-    {
-        Vst::Event e {};
-        if (data.inputEvents->getEvent (i, e) != kResultOk) continue;
-        if (e.type == Vst::Event::kNoteOnEvent)
-        {
-            if (e.noteOn.velocity == 0)
-            {
-                VozPiano* v = buscarPorNota (e.noteOn.pitch);
-                if (v) v->reset ();
-                continue;
+    template <class T>
+    void renderT(T* oL, T* oR, int n, int offset, ProcessData& data) {
+        std::fill(oL, oL + n, T(0));
+        std::fill(oR, oR + n, T(0));
+        IEventList* ev = data.inputEvents;
+        const int32 count = ev ? ev->getEventCount() : 0;
+        int pos = 0;
+        for (int32 i = 0; i <= count; ++i) {
+            Event e{};
+            int at = n;
+            if (i < count) {
+                if (ev->getEvent(i, e) != kResultOk) continue;
+                at = e.sampleOffset - offset;
+                if (at < 0 || at >= n) { if (at < 0 && offset == 0) at = 0; else continue; }
             }
-            VozPiano* v = buscarLibre ();
-            if (v) {
-                float vn = e.noteOn.velocity;
-                if (vn > 1.f) vn = vn / 127.f;
-                vn = std::pow (std::max (0.f, vn), 1.f / pVel);
-                vn = std::max (0.05f, std::min (1.f, vn));
-                v->noteOn (e.noteOn.pitch, vn, pBri, pDamp, sr, rng);
-            }
+            if (at > pos) { engine_.render(oL + pos, oR + pos, at - pos, pbus_.get()); pos = at; }
+            if (i == count) break;
+            if (e.type == Event::kNoteOnEvent) engine_.noteOn(e.noteOn.pitch, e.noteOn.velocity);
+            else if (e.type == Event::kNoteOffEvent) engine_.noteOff(e.noteOff.pitch);
         }
-        else if (e.type == Vst::Event::kNoteOffEvent)
-        {
-            VozPiano* v = buscarPorNota (e.noteOff.pitch);
-            if (v) v->noteOff (std::min (pRel, 0.08f), sr);
-        }
-        else if (e.type == Vst::Event::kLegacyMIDICCOutEvent)
-        {
-            if (e.midiCCOut.controlNumber == 120 || e.midiCCOut.controlNumber == 123)
-            {
-                for (auto& v : voces) v.reset ();
-            }
-        }
+        if (pos < n) engine_.render(oL + pos, oR + pos, n - pos, pbus_.get());
     }
-}
+    void render(const float*, const float*, float* oL, float* oR, int n, int off, ProcessData& d) override { renderT(oL, oR, n, off, d); }
+    void render(const double*, const double*, double* oL, double* oR, int n, int off, ProcessData& d) override { renderT(oL, oR, n, off, d); }
+    uint32 tailSamples() override { return kInfiniteTail; }
+    LegacyStateFn legacyState() override { return legacyPiano(); }
 
-void JasWavePiano::renderizarAudio (Vst::ProcessData& data)
-{
-    if (data.numOutputs == 0) return;
-    void** obuf = Vst::getChannelBuffersPointer (processSetup, data.outputs[0]);
-    float* L = (float*)obuf[0];
-    float* R = (data.outputs[0].numChannels >= 2) ? (float*)obuf[1] : L;
-    int32 num = data.numSamples;
-
-    float active = 0.f;
-    for (const auto& v : voces) if (v.pitch >= 0) active += 1.f;
-    float norm = (active > 1.f) ? 1.f / std::sqrt (active) : 1.f;
-
-    for (int32 s = 0; s < num; s++)
-    {
-        float mL = 0.f, mR = 0.f;
-        for (auto& v : voces)
-        {
-            if (v.pitch < 0) continue;
-            float sample = v.tick (pDamp);
-            v.age++;
-            float bal = 0.5f + pStereo * 0.5f;
-            mL += sample * bal;
-            mR += sample * (1.f - pStereo * 0.2f);
-        }
-        L[s] = mL * norm * 7.5f;
-        if (L != R) R[s] = mR * norm * 7.5f;
-        else L[s] = (mL + mR) * 0.5f * norm * 7.5f;
+public:
+    // Estado del piano previo: 5 floats planos (vel 0.3..2, brillo, damp 0.85..0.99, release s, estéreo)
+    static LegacyStateFn legacyPiano() {
+        return [](IBStream* st, const ParamTable& t, std::vector<double>& n) {
+            IBStreamer s(st, kLittleEndian);
+            float v = 0, b = 0, d = 0, r = 0, w = 0;
+            if (!s.readFloat(v) || !s.readFloat(b) || !s.readFloat(d) || !s.readFloat(r) || !s.readFloat(w)) return false;
+            auto set = [&](uint32_t id, double norm) { const int i = t.index(id); if (i >= 0) n[static_cast<size_t>(i)] = clamp01(norm); };
+            set(kVelocity, (v - 0.3) / 1.7);
+            set(kBrightness, b);
+            set(kDecay, (d - 0.85) / 0.14);
+            set(kRelease, (r - 0.05) / 2.95);
+            set(kStereo, w);
+            return true;
+        };
     }
-    data.outputs[0].silenceFlags = 0;
-}
 
-tresult PLUGIN_API JasWavePiano::process (Vst::ProcessData& data)
-{
-    leerParametros (data);
-    procesarMidi (data);
-    renderizarAudio (data);
-    return kResultOk;
-}
+private:
+    PianoEngine engine_;
+    std::shared_ptr<PianoBus> pbus_;
+};
 
-tresult PLUGIN_API JasWavePiano::setState (IBStream* state)
-{
-    IBStreamer s (state, kLittleEndian);
-    float v, b, d, r, st;
-    s.readFloat (v); s.readFloat (b); s.readFloat (d); s.readFloat (r); s.readFloat (st);
-    pVel = v; pBri = b; pDamp = d; pRel = r; pStereo = st;
-    return kResultOk;
-}
+// ---------------------------------------------------------------------------------
+class Editor : public JasWaveUI::PluginEditor {
+public:
+    const wchar_t* title() const override { return L"PIANO SYNTH"; }
+    const wchar_t* subtitle() const override { return L"SÍNTESIS MODAL · CUERDAS AL UNÍSONO · 88 TECLAS"; }
+    void build(JasWaveUI::EditorContext& c) override {
+        using namespace JasWaveUI;
+        c.section({ 666, 92, 1048, 404 }, L"MARTILLO · CUERDA");
+        c.knob(kBrightness, 742, 176, KnobSize::Main, L"BRILLO");
+        c.knob(kHardness, 857, 176, KnobSize::Main, L"DUREZA");
+        c.knob(kDecay, 972, 176, KnobSize::Main, L"DECAY");
+        c.knob(kVelocity, 742, 304, KnobSize::Normal, L"VELOCIDAD");
+        c.knob(kRelease, 857, 304, KnobSize::Normal, L"RELEASE");
+        c.knob(kTune, 972, 304, KnobSize::Normal, L"LA4");
+        c.section({ 666, 418, 1048, 556 }, L"SALIDA", kBypass, true);
+        c.fader(kVolume, { 680, 440, 724, 552 }, L"VOLUMEN");
+        c.knob(kStereo, 790, 482, KnobSize::Normal, L"ESTÉREO");
+        c.toggle(kSustain, { 850, 470, 950, 496 }, L"SUSTAIN");
+        meters_.build(c, 1000.0f, 446.0f, 528.0f);
+    }
+    void tick(JasWaveUI::EditorContext& c) override {
+        bus_ = std::dynamic_pointer_cast<PianoBus>(c.params.bus());
+        if (!bus_) return;
+        static JasWaveDsp::PeakMeter none[2];
+        meters_.update(none, bus_->outPk);
+        an_.update(bus_->out, bus_->sampleRate.load(std::memory_order_relaxed));
+        an_.columns(cols_, kCols, 25.0, 16000.0, 4.5);
+        keys_[0] = bus_->keys[0].load(std::memory_order_relaxed);
+        keys_[1] = bus_->keys[1].load(std::memory_order_relaxed);
+        voices_ = bus_->activeVoices.load(std::memory_order_relaxed);
+        maxVoices_ = bus_->maxVoices.load(std::memory_order_relaxed);
+        for (int k = 0; k < 128; ++k) {
+            const bool on = k < 64 ? ((keys_[0] >> k) & 1) != 0 : ((keys_[1] >> (k - 64)) & 1) != 0;
+            glow_[static_cast<size_t>(k)] = on ? 1.0f : glow_[static_cast<size_t>(k)] * 0.85f;
+        }
+        hist_[static_cast<size_t>(histPos_)] = static_cast<float>(voices_);
+        histPos_ = (histPos_ + 1) % kHist;
+    }
+    float outputLevel() const override { return meters_.level(); }
+    void drawPanels(JasWaveUI::Gfx& g, JasWaveUI::EditorContext&) override {
+        using namespace JasWaveUI;
+        const Rect v = Layout::kVisualizer;
+        Kit::panel(g, v, L"ARMÓNICOS · TECLADO");
+        g.text(L"OUT", { 1000, 532, 1040, 546 }, Font::Label, Pal::textoEtiqueta, Align::Center, true);
+        const Rect sp{ v.l + 14, v.t + 34, v.r - 14, v.t + 200 };
+        if (cols_.size() == static_cast<size_t>(kCols)) {
+            for (int i = 0; i < kCols; ++i)
+                pts_[static_cast<size_t>(i)] = { sp.l + sp.w() * (i + 0.5f) / kCols, sp.b - std::clamp((cols_[static_cast<size_t>(i)] + 96.0f) / 90.0f, 0.0f, 1.0f) * sp.h() };
+            Kit::wireTrace(g, pts_.data(), kCols, Pal::cian, sp.b, true);
+        }
+        // teclado de 88 teclas (A0..C8)
+        const Rect kb{ v.l + 14, v.b - 90, v.r - 14, v.b - 14 };
+        int whites = 0;
+        for (int n = 21; n <= 108; ++n) if (!isBlack(n)) ++whites;
+        const float ww = kb.w() / whites;
+        int wi = 0;
+        for (int n = 21; n <= 108; ++n) {
+            if (isBlack(n)) continue;
+            const Rect r{ kb.l + wi * ww + 0.6f, kb.t, kb.l + (wi + 1) * ww - 0.6f, kb.b };
+            const float gl = glow_[static_cast<size_t>(n)];
+            g.fillRect(r, gl > 0.02f ? Pal::cian.withAlpha(0.25f + 0.65f * gl) : hex(0x0F1E28));
+            g.strokeRect(r, Pal::panelBorde, 0.8f);
+            ++wi;
+        }
+        wi = 0;
+        for (int n = 21; n <= 108; ++n) {
+            if (!isBlack(n)) { ++wi; continue; }
+            const float x = kb.l + wi * ww;
+            const Rect r{ x - ww * 0.32f, kb.t, x + ww * 0.32f, kb.t + kb.h() * 0.6f };
+            const float gl = glow_[static_cast<size_t>(n)];
+            g.fillRect(r, gl > 0.02f ? Pal::cianNucleo.withAlpha(0.3f + 0.6f * gl) : hex(0x03080C));
+            g.strokeRect(r, Pal::panelBorde, 0.8f);
+        }
+        for (int n = 21; n <= 108; ++n) if (glow_[static_cast<size_t>(n)] > 0.5f) {
+            int w2 = 0;
+            for (int m = 21; m < n; ++m) if (!isBlack(m)) ++w2;
+            const float x = kb.l + w2 * ww + (isBlack(n) ? 0.0f : ww * 0.5f);
+            g.glowDot(x, kb.t - 6.0f, 2.0f, Pal::cian);
+        }
+        // mini-panel: voces
+        const Rect m = Layout::kMiniPanel;
+        Kit::panel(g, m, L"POLIFONÍA");
+        const Rect h{ m.l + 14, m.t + 34, m.r - 150, m.b - 12 };
+        const float maxV = static_cast<float>(std::max(1, maxVoices_));
+        for (int i = 0; i < kHist; ++i) {
+            const float val = hist_[static_cast<size_t>((histPos_ + i) % kHist)];
+            hpts_[static_cast<size_t>(i)] = { h.l + h.w() * i / (kHist - 1), h.b - std::clamp(val / maxV, 0.0f, 1.0f) * h.h() };
+        }
+        Kit::wireTrace(g, hpts_.data(), kHist, Pal::cian, h.b, true);
+        wchar_t buf[32];
+        swprintf_s(buf, L"%d / %d", voices_, maxVoices_);
+        Kit::readout(g, m.r - 130, m.t + 34, L"VOCES", buf);
+        Kit::readout(g, m.r - 130, m.t + 72, L"POLIFONÍA", maxVoices_ >= kMaxVoices ? L"EXTENDIDA" : L"BÁSICA");
+    }
+    const wchar_t* footerId() const override { return L"com.jaswave.plugin.piano-synth"; }
 
-tresult PLUGIN_API JasWavePiano::getState (IBStream* state)
-{
-    IBStreamer s (state, kLittleEndian);
-    s.writeFloat (pVel); s.writeFloat (pBri); s.writeFloat (pDamp);
-    s.writeFloat (pRel); s.writeFloat (pStereo);
-    return kResultOk;
-}
+private:
+    static bool isBlack(int n) { const int p = n % 12; return p == 1 || p == 3 || p == 6 || p == 8 || p == 10; }
+    static constexpr int kCols = 200;
+    static constexpr int kHist = 240;
+    std::shared_ptr<PianoBus> bus_;
+    JasWaveUI::Kit::StereoMeters meters_;
+    JasWaveDsp::SpectrumAnalyzer an_;
+    std::vector<float> cols_;
+    std::array<JasWaveUI::Pt, kCols> pts_{};
+    std::array<JasWaveUI::Pt, kHist> hpts_{};
+    std::array<float, kHist> hist_{};
+    std::array<float, 128> glow_{};
+    uint64_t keys_[2] = {};
+    int voices_{0}, maxVoices_{kMaxVoices}, histPos_{0};
+};
 
-tresult PLUGIN_API JasWavePiano::setParamNormalized (Vst::ParamID tag, Vst::ParamValue value)
-{
-    return SingleComponentEffect::setParamNormalized (tag, value);
-}
+// ---------------------------------------------------------------------------------
+class Controller : public JwController {
+public:
+    Controller() : JwController(kDesc, paramDefs()) {}
+    static FUnknown* createInstance(void*) { return static_cast<IEditController*>(new Controller()); }
+    std::unique_ptr<JasWaveUI::PluginEditor> createEditor() override { return std::make_unique<Editor>(); }
+    std::vector<DemoParam> demoPreset() const override { return { { kBrightness, 62.0 }, { kDecay, 55.0 }, { kStereo, 60.0 } }; }
+protected:
+    int midiCcParam(int cc) const override { return cc == 64 ? static_cast<int>(kSustain) : -1; }
+    LegacyStateFn legacyState() override { return Processor::legacyPiano(); }
+};
+
+} // namespace JasWavePiano
+
+bool InitModule() { return true; }
+bool DeinitModule() { return true; }
+
+BEGIN_FACTORY_DEF("JasWave Audio", "https://jaswave.app", "mailto:dev@jaswave.app")
+    DEF_CLASS2(INLINE_UID_FROM_FUID(JasWavePiano::kProcessorUid), PClassInfo::kManyInstances, kVstAudioEffectClass, "JasWave Piano Synth",
+               Vst::kDistributable, Vst::PlugType::kInstrumentPiano, "1.0.0", kVstVersionString, JasWavePiano::Processor::createInstance)
+    DEF_CLASS2(INLINE_UID_FROM_FUID(JasWavePiano::kControllerUid), PClassInfo::kManyInstances, kVstComponentControllerClass,
+               "JasWave Piano Synth Controller", 0, "", "1.0.0", kVstVersionString, JasWavePiano::Controller::createInstance)
+END_FACTORY

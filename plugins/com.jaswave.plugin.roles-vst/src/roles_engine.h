@@ -1,131 +1,146 @@
-#include "processor.h"
+// =====================================================================================
+//  JasWave Roles – motor de síntesis por roles (portado de native/jaswave-roles-vst sin cambios
+//  de sonido). Sin asignaciones en process: los búferes de FX se dimensionan en prepare().
+// =====================================================================================
+#pragma once
 
-#include "base/source/fstreamer.h"
-#include "pluginterfaces/base/ibstream.h"
-#include "pluginterfaces/vst/ivstparameterchanges.h"
+#include "roles_map.h"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
 #include <cstring>
-
-using namespace Steinberg;
-using namespace Steinberg::Vst;
+#include <vector>
 
 namespace JasWaveRoles {
-namespace {
 
-float midiToHz(int pitch) {
-  return 440.f * std::pow(2.f, (static_cast<float>(pitch) - 69.f) / 12.f);
-}
+namespace detail {
+inline float midiToHz(int pitch) { return 440.f * std::pow(2.f, (static_cast<float>(pitch) - 69.f) / 12.f); }
+inline float clampEnv(float x) { return std::max(0.0001f, x); }
+// valor normalizado (antes std::atomic: el motor ahora vive solo en el hilo de audio)
+struct NormValue {
+  float v;
+  float load() const { return v; }
+  void store(float x) { v = x; }
+};
+} // namespace detail
+using detail::midiToHz;
+using detail::clampEnv;
 
-float clampEnv(float x) { return std::max(0.0001f, x); }
+enum class OscType : uint8_t { Sine, Triangle, Saw, Square, Noise };
 
-} // namespace
+struct Partial {
+  OscType type{OscType::Sine};
+  float freqHz{440.f};
+  float gain{0.f};
+  float phase{0.f};
+  float detuneCents{0.f};
+  bool active{false};
+};
 
-Processor::Processor() {
-  setControllerClass(kControllerUid);
-}
+struct Voice {
+  bool active{false};
+  bool releasing{false};
+  int16_t pitch{60};
+  float velocity{0.f};
+  Role role{Role::Default};
+  uint64_t age{0};
+  float env{0.f};
+  float envTarget{0.f};
+  float attackInc{0.f};
+  float releaseInc{0.f};
+  float filterCutoff{2000.f};
+  float filterQ{0.7f};
+  float filterZ1{0.f};
+  float filterZ2{0.f};
+  float noiseState{0.f};
+  int samplesLeft{0};
+  bool oneShot{false};
+  /** -1 = synth normal; 0 kick, 1 snare, 2 closed hat, 3 open hat, 4 tom, 5 clap, 6 perc */
+  int8_t drumKind{-1};
+  float drumPitchHz{60.f};
+  float drumPitchTarget{40.f};
+  float drumPitchGlide{0.998f};
+  float clickEnv{0.f};
+  float clickDec{0.f};
+  float noiseEnv{0.f};
+  float noiseDec{0.f};
+  float bodyEnv{0.f};
+  float bodyDec{0.f};
+  float noiseHpZ_{0.f};
+  std::array<Partial, 4> partials{};
+};
 
-tresult PLUGIN_API Processor::initialize(FUnknown* context) {
-  const tresult r = AudioEffect::initialize(context);
-  if (r != kResultOk) return r;
-  addAudioOutput(STR16("Stereo Out"), SpeakerArr::kStereo);
-  addEventInput(STR16("MIDI In"), 16);
-  return kResultOk;
-}
-
-tresult PLUGIN_API Processor::setBusArrangements(SpeakerArrangement* inputs, int32 numIns,
-                                                 SpeakerArrangement* outputs, int32 numOuts) {
-  if (numIns == 0 && numOuts == 1 && outputs && outputs[0] == SpeakerArr::kStereo) {
-    return AudioEffect::setBusArrangements(inputs, numIns, outputs, numOuts);
+class RolesEngine {
+public:
+  void prepare(double sr) {
+    sampleRate_ = sr > 0 ? sr : 48000.0;
+    ensureFxBuffers(static_cast<float>(sampleRate_));
+    panicAll();
   }
-  return kResultFalse;
-}
-
-tresult PLUGIN_API Processor::canProcessSampleSize(int32 symbolicSampleSize) {
-  if (symbolicSampleSize == kSample32) return kResultTrue;
-  return kResultFalse;
-}
-
-tresult PLUGIN_API Processor::setActive(TBool state) {
-  if (state) {
-    sampleRate_ = processSetup.sampleRate > 0 ? processSetup.sampleRate : 48000.0;
-    for (auto& v : voices_) v = Voice{};
+  void setRole(int32_t r) { activeRole_.store(static_cast<float>(std::clamp(r, 0, kNumRoles - 1))); }
+  int32_t role() const { return static_cast<int32_t>(activeRole_.load()); }
+  void setNorm(int32_t id, float n) {
+    n = std::clamp(n, 0.f, 1.f);
+    switch (id) {
+      case kParamAttackId: attackN_.store(n); break;
+      case kParamReleaseId: releaseN_.store(n); break;
+      case kParamCutoffId: cutoffN_.store(n); break;
+      case kParamResonanceId: resonanceN_.store(n); break;
+      case kParamGainId: gainN_.store(n); break;
+      case kParamVoicesId: voicesN_.store(n); break;
+      case kParamDriveId: driveN_.store(n); break;
+      case kParamGateId: gateN_.store(n); break;
+      case kParamChorusId: chorusN_.store(n); break;
+      case kParamDelayId: delayN_.store(n); break;
+      case kParamReverbId: reverbN_.store(n); break;
+      case kParamEqLowId: eqLowN_.store(n); break;
+      case kParamEqHighId: eqHighN_.store(n); break;
+      default: break;
+    }
   }
-  return AudioEffect::setActive(state);
+  void noteOn(int16_t pitch, float velocity, int32_t sampleOffset);
+  void noteOff(int16_t pitch, int32_t sampleOffset);
+  void panicAll();
+  // render escribe (no suma) n muestras en L/R
+  void render(float* L, float* R, int32_t numSamples);
+  int activeVoices() const { int a = 0; for (const auto& v : voices_) a += v.active ? 1 : 0; return a; }
+  const std::array<Voice, kMaxVoices>& voices() const { return voices_; }
+
+private:
+  void applyRole(double normalized);
+  void setupVoice(Voice& v, int16_t pitch, float velocity, Role role);
+  int32_t allocVoice(Role role);
+  void applyFx(float* L, float* R, int32_t numSamples);
+  void clearFxTail();
+  float nextOsc(Partial& p, float sr);
+  float processFilter(Voice& v, float x);
+  float renderDrumSample(Voice& v, float sr);
+  void ensureFxBuffers(float sr);
+
+  double sampleRate_{48000.0};
+  detail::NormValue activeRole_{static_cast<float>(Role::Default)};
+  detail::NormValue attackN_{0.35f}, releaseN_{0.4f}, cutoffN_{0.55f}, resonanceN_{0.25f}, gainN_{0.7f}, voicesN_{0.5f};
+  detail::NormValue driveN_{0.15f}, gateN_{0.0f}, chorusN_{0.2f}, delayN_{0.15f}, reverbN_{0.25f}, eqLowN_{0.5f}, eqHighN_{0.5f};
+  std::array<Voice, kMaxVoices> voices_{};
+  uint64_t ageCounter_{0};
+  uint32_t noiseSeed_{0xA5A5A5A5u};
+  float gateEnv_{0.f}, eqLowZ_{0.f}, eqHighZ_{0.f}, chorusPhase_{0.f};
+  std::vector<float> delayBufL_{}, delayBufR_{};
+  int delayWrite_{0};
+  std::vector<float> chorusBuf_{};
+  int chorusWrite_{0};
+  std::array<float, 4> revComb_{};
+  std::array<int, 4> revCombW_{};
+  std::vector<float> revCombBuf0_{}, revCombBuf1_{}, revCombBuf2_{}, revCombBuf3_{};
+};
+
+inline void RolesEngine::applyRole(double normalized) {
+  activeRole_.store(static_cast<float>(roleFromNormalized(normalized)));
 }
 
-tresult PLUGIN_API Processor::setProcessing(TBool /*state*/) {
-  // AudioEffect base returns kNotImplemented; host exige kResultOk.
-  return kResultOk;
-}
-
-tresult PLUGIN_API Processor::getControllerClassId(TUID classId) {
-  kControllerUid.toTUID(classId);
-  return kResultTrue;
-}
-
-tresult PLUGIN_API Processor::setState(IBStream* state) {
-  if (!state) return kResultFalse;
-  IBStreamer streamer(state, kLittleEndian);
-  int32 role = 0;
-  if (!streamer.readInt32(role)) return kResultFalse;
-  activeRole_.store(std::clamp(role, 0, kNumRoles - 1));
-  double attack = 0.35, release = 0.4, cutoff = 0.55, reso = 0.25, gain = 0.7, voices = 0.5;
-  double drive = 0.15, gate = 0.0, chorus = 0.2, delay = 0.15, reverb = 0.25, eqL = 0.5, eqH = 0.5;
-  streamer.readDouble(attack);
-  streamer.readDouble(release);
-  streamer.readDouble(cutoff);
-  streamer.readDouble(reso);
-  streamer.readDouble(gain);
-  streamer.readDouble(voices);
-  streamer.readDouble(drive);
-  streamer.readDouble(gate);
-  streamer.readDouble(chorus);
-  streamer.readDouble(delay);
-  streamer.readDouble(reverb);
-  streamer.readDouble(eqL);
-  streamer.readDouble(eqH);
-  attackN_.store(static_cast<float>(std::clamp(attack, 0.0, 1.0)));
-  releaseN_.store(static_cast<float>(std::clamp(release, 0.0, 1.0)));
-  cutoffN_.store(static_cast<float>(std::clamp(cutoff, 0.0, 1.0)));
-  resonanceN_.store(static_cast<float>(std::clamp(reso, 0.0, 1.0)));
-  gainN_.store(static_cast<float>(std::clamp(gain, 0.0, 1.0)));
-  voicesN_.store(static_cast<float>(std::clamp(voices, 0.0, 1.0)));
-  driveN_.store(static_cast<float>(std::clamp(drive, 0.0, 1.0)));
-  gateN_.store(static_cast<float>(std::clamp(gate, 0.0, 1.0)));
-  chorusN_.store(static_cast<float>(std::clamp(chorus, 0.0, 1.0)));
-  delayN_.store(static_cast<float>(std::clamp(delay, 0.0, 1.0)));
-  reverbN_.store(static_cast<float>(std::clamp(reverb, 0.0, 1.0)));
-  eqLowN_.store(static_cast<float>(std::clamp(eqL, 0.0, 1.0)));
-  eqHighN_.store(static_cast<float>(std::clamp(eqH, 0.0, 1.0)));
-  return kResultOk;
-}
-
-tresult PLUGIN_API Processor::getState(IBStream* state) {
-  if (!state) return kResultFalse;
-  IBStreamer streamer(state, kLittleEndian);
-  streamer.writeInt32(activeRole_.load());
-  streamer.writeDouble(attackN_.load());
-  streamer.writeDouble(releaseN_.load());
-  streamer.writeDouble(cutoffN_.load());
-  streamer.writeDouble(resonanceN_.load());
-  streamer.writeDouble(gainN_.load());
-  streamer.writeDouble(voicesN_.load());
-  streamer.writeDouble(driveN_.load());
-  streamer.writeDouble(gateN_.load());
-  streamer.writeDouble(chorusN_.load());
-  streamer.writeDouble(delayN_.load());
-  streamer.writeDouble(reverbN_.load());
-  streamer.writeDouble(eqLowN_.load());
-  streamer.writeDouble(eqHighN_.load());
-  return kResultOk;
-}
-
-void Processor::applyRole(double normalized) {
-  activeRole_.store(static_cast<int32_t>(roleFromNormalized(normalized)));
-}
-
-int32_t Processor::allocVoice(Role role) {
+inline int32_t RolesEngine::allocVoice(Role role) {
   const float voicesBias = voicesN_.load();
   const int32_t baseCap = voiceCapForRole(role);
   const int32_t cap = std::clamp(static_cast<int32_t>(std::lround(baseCap * (0.35f + voicesBias * 1.3f))),
@@ -169,7 +184,7 @@ int32_t Processor::allocVoice(Role role) {
   return oldestIdx;
 }
 
-void Processor::setupVoice(Voice& v, int16_t pitch, float velocity, Role role) {
+inline void RolesEngine::setupVoice(Voice& v, int16_t pitch, float velocity, Role role) {
   v = Voice{};
   v.active = true;
   v.releasing = false;
@@ -352,13 +367,13 @@ void Processor::setupVoice(Voice& v, int16_t pitch, float velocity, Role role) {
   }
 }
 
-void Processor::noteOn(int16_t pitch, float velocity, int32_t /*sampleOffset*/) {
-  const Role role = static_cast<Role>(activeRole_.load());
+inline void RolesEngine::noteOn(int16_t pitch, float velocity, int32_t /*sampleOffset*/) {
+  const Role role = static_cast<Role>(static_cast<int32_t>(activeRole_.load()));
   const int32_t idx = allocVoice(role);
   setupVoice(voices_[static_cast<size_t>(idx)], pitch, velocity, role);
 }
 
-void Processor::noteOff(int16_t pitch, int32_t /*sampleOffset*/) {
+inline void RolesEngine::noteOff(int16_t pitch, int32_t /*sampleOffset*/) {
   for (auto& v : voices_) {
     if (!v.active || v.pitch != pitch) continue;
     if (v.oneShot) {
@@ -382,12 +397,12 @@ void Processor::noteOff(int16_t pitch, int32_t /*sampleOffset*/) {
   }
 }
 
-void Processor::panicAll() {
+inline void RolesEngine::panicAll() {
   for (auto& v : voices_) v = Voice{};
   clearFxTail();
 }
 
-void Processor::clearFxTail() {
+inline void RolesEngine::clearFxTail() {
   gateEnv_ = 0.f;
   eqLowZ_ = 0.f;
   eqHighZ_ = 0.f;
@@ -404,7 +419,7 @@ void Processor::clearFxTail() {
   std::fill(revCombBuf3_.begin(), revCombBuf3_.end(), 0.f);
 }
 
-float Processor::nextOsc(Partial& p, float sr) {
+inline float RolesEngine::nextOsc(Partial& p, float sr) {
   if (!p.active) return 0.f;
   float sample = 0.f;
   const float det = std::pow(2.f, p.detuneCents / 1200.f);
@@ -436,7 +451,7 @@ float Processor::nextOsc(Partial& p, float sr) {
   return sample * p.gain;
 }
 
-float Processor::processFilter(Voice& v, float x) {
+inline float RolesEngine::processFilter(Voice& v, float x) {
   // One-pole lowpass approx (cheap, stable)
   const float sr = static_cast<float>(sampleRate_);
   const float cutoff = std::clamp(v.filterCutoff, 40.f, sr * 0.45f);
@@ -445,7 +460,7 @@ float Processor::processFilter(Voice& v, float x) {
   return v.filterZ1;
 }
 
-float Processor::renderDrumSample(Voice& v, float sr) {
+inline float RolesEngine::renderDrumSample(Voice& v, float sr) {
   // Ruido blanco
   noiseSeed_ = noiseSeed_ * 1664525u + 1013904223u;
   const float white = (static_cast<int32_t>(noiseSeed_ >> 8) / 8388608.f) - 1.f;
@@ -520,7 +535,7 @@ float Processor::renderDrumSample(Voice& v, float sr) {
   return s;
 }
 
-void Processor::render(float* L, float* R, int32_t numSamples) {
+inline void RolesEngine::render(float* L, float* R, int32_t numSamples) {
   const float sr = static_cast<float>(sampleRate_);
   for (int32_t i = 0; i < numSamples; ++i) {
     float mix = 0.f;
@@ -571,7 +586,7 @@ void Processor::render(float* L, float* R, int32_t numSamples) {
   applyFx(L, R, numSamples);
 }
 
-void Processor::ensureFxBuffers(float sr) {
+inline void RolesEngine::ensureFxBuffers(float sr) {
   const int delayCap = std::max(64, static_cast<int>(sr * 1.2f));
   if (static_cast<int>(delayBufL_.size()) != delayCap) {
     delayBufL_.assign(static_cast<size_t>(delayCap), 0.f);
@@ -601,7 +616,7 @@ void Processor::ensureFxBuffers(float sr) {
   ensureComb(revCombBuf3_, combLens[3], revCombW_[3]);
 }
 
-void Processor::applyFx(float* L, float* R, int32_t numSamples) {
+inline void RolesEngine::applyFx(float* L, float* R, int32_t numSamples) {
   const float sr = static_cast<float>(sampleRate_);
   ensureFxBuffers(sr);
   const float drive = driveN_.load();
@@ -710,94 +725,5 @@ void Processor::applyFx(float* L, float* R, int32_t numSamples) {
   }
 }
 
-tresult PLUGIN_API Processor::process(ProcessData& data) {
-  if (data.processContext && data.processContext->sampleRate > 0) {
-    sampleRate_ = data.processContext->sampleRate;
-  }
-
-  // Transport stop/pause → panic una vez (no silenciar en vivo: MIDI live debe sonar parado).
-  if (data.processContext) {
-    const bool playing = (data.processContext->state & ProcessContext::kPlaying) != 0;
-    if (wasPlaying_ && !playing) panicAll();
-    wasPlaying_ = playing;
-  }
-
-  if (data.inputParameterChanges) {
-    const int32 nParams = data.inputParameterChanges->getParameterCount();
-    for (int32 i = 0; i < nParams; ++i) {
-      auto* q = data.inputParameterChanges->getParameterData(i);
-      if (!q) continue;
-      ParamID id = q->getParameterId();
-      int32 nPts = q->getPointCount();
-      if (nPts <= 0) continue;
-      int32 sampleOffset = 0;
-      ParamValue value = 0;
-      if (q->getPoint(nPts - 1, sampleOffset, value) == kResultOk) {
-        if (id == static_cast<ParamID>(kParamRoleId)) applyRole(value);
-        else if (id == static_cast<ParamID>(kParamAttackId))
-          attackN_.store(static_cast<float>(std::clamp(value, 0.0, 1.0)));
-        else if (id == static_cast<ParamID>(kParamReleaseId))
-          releaseN_.store(static_cast<float>(std::clamp(value, 0.0, 1.0)));
-        else if (id == static_cast<ParamID>(kParamCutoffId))
-          cutoffN_.store(static_cast<float>(std::clamp(value, 0.0, 1.0)));
-        else if (id == static_cast<ParamID>(kParamResonanceId))
-          resonanceN_.store(static_cast<float>(std::clamp(value, 0.0, 1.0)));
-        else if (id == static_cast<ParamID>(kParamGainId))
-          gainN_.store(static_cast<float>(std::clamp(value, 0.0, 1.0)));
-        else if (id == static_cast<ParamID>(kParamVoicesId))
-          voicesN_.store(static_cast<float>(std::clamp(value, 0.0, 1.0)));
-        else if (id == static_cast<ParamID>(kParamDriveId))
-          driveN_.store(static_cast<float>(std::clamp(value, 0.0, 1.0)));
-        else if (id == static_cast<ParamID>(kParamGateId))
-          gateN_.store(static_cast<float>(std::clamp(value, 0.0, 1.0)));
-        else if (id == static_cast<ParamID>(kParamChorusId))
-          chorusN_.store(static_cast<float>(std::clamp(value, 0.0, 1.0)));
-        else if (id == static_cast<ParamID>(kParamDelayId))
-          delayN_.store(static_cast<float>(std::clamp(value, 0.0, 1.0)));
-        else if (id == static_cast<ParamID>(kParamReverbId))
-          reverbN_.store(static_cast<float>(std::clamp(value, 0.0, 1.0)));
-        else if (id == static_cast<ParamID>(kParamEqLowId))
-          eqLowN_.store(static_cast<float>(std::clamp(value, 0.0, 1.0)));
-        else if (id == static_cast<ParamID>(kParamEqHighId))
-          eqHighN_.store(static_cast<float>(std::clamp(value, 0.0, 1.0)));
-      }
-    }
-  }
-
-  if (data.inputEvents) {
-    const int32 nEv = data.inputEvents->getEventCount();
-    for (int32 i = 0; i < nEv; ++i) {
-      Event e{};
-      if (data.inputEvents->getEvent(i, e) != kResultOk) continue;
-      if (e.type == Event::kNoteOnEvent) {
-        float v = e.noteOn.velocity;
-        if (v <= 0.f) {
-          noteOff(static_cast<int16_t>(e.noteOn.pitch), e.sampleOffset);
-          continue;
-        }
-        if (v > 1.f) v = v / 127.f;
-        noteOn(static_cast<int16_t>(e.noteOn.pitch), v, e.sampleOffset);
-      } else if (e.type == Event::kNoteOffEvent) {
-        noteOff(static_cast<int16_t>(e.noteOff.pitch), e.sampleOffset);
-      } else if (e.type == Event::kLegacyMIDICCOutEvent) {
-        // Host allNotesOff → CC 120/123
-        if (e.midiCCOut.controlNumber == 120 || e.midiCCOut.controlNumber == 123) {
-          panicAll();
-        }
-      }
-    }
-  }
-
-  if (data.numOutputs < 1 || !data.outputs || data.outputs[0].numChannels < 1) return kResultOk;
-  float* L = data.outputs[0].channelBuffers32[0];
-  float* R = data.outputs[0].numChannels >= 2 ? data.outputs[0].channelBuffers32[1] : L;
-  if (!L) return kResultOk;
-
-  const int32 n = data.numSamples;
-  std::memset(L, 0, static_cast<size_t>(n) * sizeof(float));
-  if (R != L) std::memset(R, 0, static_cast<size_t>(n) * sizeof(float));
-  render(L, R, n);
-  return kResultOk;
-}
 
 } // namespace JasWaveRoles

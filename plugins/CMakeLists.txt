@@ -12,7 +12,9 @@ set(JW_PLUGIN_DIRS
   com.jaswave.plugin.bus-compressor
   com.jaswave.plugin.truepeak-limiter
   com.jaswave.plugin.smart-deesser
-  com.jaswave.plugin.utility-tool)
+  com.jaswave.plugin.utility-tool
+  com.jaswave.plugin.piano-synth
+  com.jaswave.plugin.roles-vst)
 foreach(_d ${JW_PLUGIN_DIRS})
   add_subdirectory(${_d})
 endforeach()

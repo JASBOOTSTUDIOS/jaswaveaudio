@@ -1,19 +1,9 @@
-# JasWave Roles VST3
+﻿# JasWave Roles (VST3)
 
-Instrumento nativo (stereo) que sustituye Soft Pad. Roles vía parámetro `Role` (id 0).
+Instrumento estéreo por **rol musical** (batería, bajo, guitarra, piano, teclas, pad, cuerdas, coro, lead, metales,
+synth, percusión, default) con envolvente, filtro, drive, gate y efectos (chorus/delay/reverb). Parámetro `Role` = id 0.
 
-## Build (MSVC x64)
-
-```bat
-cd native/jaswave-roles-vst
-cmake -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release
-```
-
-O desde `jas-wave`:
-
-```bat
-npm run native:roles-vst
-```
-
-Instala en `%LOCALAPPDATA%\Programs\Common\VST3\JasWave\JasWaveRoles.vst3`.
+- Licencia: `com.jaswave.plugin.roles-vst` (features `roles.bateria`, `roles.efectos`), ver `../CONTRATO-V5.md`.
+- Build independiente: `cmake -S . -B build -G "Visual Studio 18 2026" -A x64 && cmake --build build --config Release`
+  (o todos los plugins desde `plugins/`). Bundle: `build/VST3/Release/JasWaveRoles.vst3`.
+- FUID y IDs de parámetro conservados respecto a `native/jaswave-roles-vst` (estado previo compatible).
