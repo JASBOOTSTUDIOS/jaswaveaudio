@@ -1,0 +1,164 @@
+// Fuente de verdad del modelo de datos del backend de JasWave.
+// Supabase aporta Auth (JWT) y el Postgres local; el acceso a datos va por Prisma.
+// Prisma se conecta con rol de servicio, así que la autorización se aplica en el backend
+// (RBAC en código), no por RLS.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Catálogo de VST (licenciables) ----------
+
+model Producto {
+  id          String   @id // p. ej. com.jaswave.plugin.param-eq
+  nombre      String
+  creadoEn    DateTime @default(now())
+  acciones    Accion[]
+  roles       RolProducto[]
+  licencias   Licencia[]
+  concesiones Concesion[]
+}
+
+/// Acción o funcionalidad concreta de un producto (p. ej. "banda-6.exportar").
+model Accion {
+  id          String   @id @default(uuid())
+  productoId  String
+  clave       String
+  descripcion String   @default("")
+  producto    Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  rolesAccion RolAccion[]
+  concesiones Concesion[]
+
+  @@unique([productoId, clave])
+}
+
+/// Rol definido por el admin para un producto (p. ej. "mezcla" del EQ).
+model RolProducto {
+  id         String   @id @default(uuid())
+  productoId String
+  nombre     String
+  producto   Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  acciones   RolAccion[]
+  asignados  AsignacionRol[]
+
+  @@unique([productoId, nombre])
+}
+
+model RolAccion {
+  rolId    String
+  accionId String
+  rol      RolProducto @relation(fields: [rolId], references: [id], onDelete: Cascade)
+  accion   Accion      @relation(fields: [accionId], references: [id], onDelete: Cascade)
+
+  @@id([rolId, accionId])
+}
+
+// ---------- Usuarios, roles asignados y permisos directos ----------
+
+model Usuario {
+  id           String   @id @default(uuid())
+  /// sub de Supabase Auth; null hasta que el usuario inicia sesión por primera vez.
+  subAuth      String?  @unique
+  email        String   @unique
+  esAdmin      Boolean  @default(false)
+  creadoEn     DateTime @default(now())
+  roles        AsignacionRol[]
+  concesiones  Concesion[]
+  licencias    Licencia[]
+  dispositivos Dispositivo[]
+}
+
+/// Un usuario puede tener varios roles de distintos (o el mismo) producto.
+model AsignacionRol {
+  usuarioId String
+  rolId     String
+  usuario   Usuario     @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  rol       RolProducto @relation(fields: [rolId], references: [id], onDelete: Cascade)
+
+  @@id([usuarioId, rolId])
+}
+
+/// Permiso directo independiente de los roles: allow o deny sobre una acción.
+model Concesion {
+  id          String    @id @default(uuid())
+  usuarioId   String
+  productoId  String
+  accionId    String
+  efecto      Efecto
+  expiraEn    DateTime?
+  creadoEn    DateTime  @default(now())
+  usuario     Usuario   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  producto    Producto  @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  accion      Accion    @relation(fields: [accionId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, accionId])
+}
+
+enum Efecto {
+  allow
+  deny
+}
+
+// ---------- Licencias y dispositivos ----------
+
+enum EstadoLicencia {
+  activa
+  suspendida
+  revocada
+}
+
+model Licencia {
+  id         String         @id @default(uuid())
+  usuarioId  String
+  productoId String
+  estado     EstadoLicencia @default(activa)
+  actualizadaEn DateTime    @updatedAt
+  usuario    Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  producto   Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, productoId])
+}
+
+model Dispositivo {
+  id        String   @id @default(uuid())
+  usuarioId String
+  nombre    String   @default("")
+  creadoEn  DateTime @default(now())
+  ultimoUso DateTime @default(now())
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+}
+
+enum EstadoCodigoDispositivo {
+  pendiente
+  aprobado
+  caducado
+}
+
+/// Flujo device-code: el VST muestra `codigoUsuario`, el usuario lo aprueba en el navegador.
+model CodigoDispositivo {
+  codigoDispositivo String                  @id
+  codigoUsuario     String                  @unique
+  estado            EstadoCodigoDispositivo @default(pendiente)
+  usuarioId         String?
+  productoId        String
+  caducaEn          DateTime
+  creadoEn          DateTime                @default(now())
+}
+
+// ---------- Auditoría ----------
+
+model RegistroAuditoria {
+  id        String   @id @default(uuid())
+  actorId   String
+  accion    String
+  objetivo  String
+  datos     Json     @default("{}")
+  creadoEn  DateTime @default(now())
+
+  @@index([creadoEn])
+}
