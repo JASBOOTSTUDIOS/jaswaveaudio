@@ -59,3 +59,6 @@ plugins/*/v*/
 plugins/tests/build/
 plugins/**/*.vst3
 plugins/**/*.vst3/
+
+# Salidas de compilación de cualquier proyecto nativo (incluye restos de plugins movidos a plugins/)
+native/*/build*/
