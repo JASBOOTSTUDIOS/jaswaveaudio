@@ -413,9 +413,21 @@ struct Manager::Impl {
         }
         std::wstring api, web;
         endpoints(api, web);
-        const std::string body = std::string("{\"tokenDispositivo\":") + jsonQuote(devToken) + ",\"dispositivo\":" + jsonQuote(deviceName()) + "}";
+        auto renovar = [&](const std::string& tok) {
+            std::string body = std::string("{\"tokenDispositivo\":") + jsonQuote(tok) + ",\"dispositivo\":" + jsonQuote(deviceName()) + "}";
+            HttpResult r = httpPostJson(api, L"/license/device/renovar", body);
+            SecureZeroMemory(&body[0], body.size());
+            return r;
+        };
+        HttpResult res = renovar(devToken);
+        if (res.status == 401) {
+            // El DAW u otro proceso pudo rotar device.bin mientras tanto: se relee una vez y se reintenta
+            std::string blob2, devToken2;
+            if (readFileLimited(devPath(), blob2) && dpapiUnprotect(blob2, devToken2) && !devToken2.empty() && devToken2 != devToken)
+                res = renovar(devToken2);
+            if (!devToken2.empty()) SecureZeroMemory(&devToken2[0], devToken2.size());
+        }
         SecureZeroMemory(&devToken[0], devToken.size());
-        const HttpResult res = httpPostJson(api, L"/license/device/renovar", body);
         if (res.status == 200 && res.jsonOk && res.json.getString("estado") == "aprobado") {
             const std::string token = res.json.getString("token");
             const std::string nuevoDev = res.json.getString("tokenDispositivo");

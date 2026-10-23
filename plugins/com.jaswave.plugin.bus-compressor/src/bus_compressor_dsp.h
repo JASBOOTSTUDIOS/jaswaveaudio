@@ -8,8 +8,8 @@
 // =====================================================================================
 #pragma once
 
-#include "../../shared-dsp/jw_dsp.h"
-#include "../../shared-dsp/jw_params.h"
+#include "jw_dsp.h"
+#include "jw_params.h"
 
 namespace JasWaveComp {
 
@@ -17,29 +17,32 @@ using namespace JasWaveDsp;
 using namespace JasWaveVst;
 
 enum : uint32_t { kBypass = 0, kThreshold = 1, kRatio = 2, kAttack = 3, kRelease = 4, kKnee = 5,
-                  kMakeup = 6, kMix = 7, kScHpf = 8, kDetector = 9 };
+                  kMakeup = 6, kMix = 7, kScHpf = 8, kDetector = 9, kGrMeter = 40 };
+enum Feature : int { kFeatScFilter = 0, kFeatParallel = 1 };
 
+// IDs, rangos y mapeos lineales compatibles con "JasWave Compresor" (JasWaveFx / processor-profiles.json)
 inline const std::vector<ParamDef>& paramDefs() {
     static const std::vector<ParamDef> defs = [] {
         static const char* const kDet[] = { "Peak", "RMS" };
         std::vector<ParamDef> v;
         v.push_back(toggleP(kBypass, "Bypass", 0, true));
-        v.push_back(linearP(kThreshold, "Threshold", "dB", -60.0, 0.0, -18.0, 1));
-        v.push_back(logP(kRatio, "Ratio", ":1", 1.0, 20.0, 4.0, 1));
-        v.push_back(logP(kAttack, "Attack", "ms", 0.1, 100.0, 10.0, 1));
-        v.push_back(logP(kRelease, "Release", "ms", 10.0, 1500.0, 150.0, 0));
+        v.push_back(linearP(kThreshold, "Threshold", "dB", -60.0, 0.0, -20.0, 1));
+        v.push_back(linearP(kRatio, "Ratio", ":1", 1.0, 20.0, 4.0, 1));
+        v.push_back(linearP(kAttack, "Attack", "ms", 0.1, 200.0, 10.0, 1));
+        v.push_back(linearP(kRelease, "Release", "ms", 5.0, 2000.0, 100.0, 0));
         v.push_back(linearP(kKnee, "Knee", "dB", 0.0, 24.0, 6.0, 1));
-        v.push_back(linearP(kMakeup, "Makeup", "dB", 0.0, 24.0, 0.0, 1));
-        v.push_back(linearP(kMix, "Mix", "%", 0.0, 100.0, 100.0, 0));
-        v.push_back(logP(kScHpf, "SC HPF", "Hz", 20.0, 500.0, 20.0, 0));
+        v.push_back(linearP(kMakeup, "Makeup", "dB", -24.0, 24.0, 0.0, 1, true));
+        v.push_back(withFeature(linearP(kMix, "Mix", "%", 0.0, 100.0, 100.0, 0), kFeatParallel));
+        v.push_back(withFeature(linearP(kScHpf, "Sidechain HP", "Hz", 0.0, 500.0, 0.0, 0), kFeatScFilter));
         v.push_back(stepP(kDetector, "Detector", 1, 1, kDet));
+        v.push_back(asReadOnly(linearP(kGrMeter, "GR", "dB", -60.0, 0.0, 0.0, 1)));
         return v;
     }();
     return defs;
 }
 
 struct CompSettings {
-    double thrDb{-18.0}, ratio{4.0}, attackMs{10.0}, releaseMs{150.0}, kneeDb{6.0}, makeupDb{0.0}, mix{1.0}, scHpfHz{20.0};
+    double thrDb{-20.0}, ratio{4.0}, attackMs{10.0}, releaseMs{100.0}, kneeDb{6.0}, makeupDb{0.0}, mix{1.0}, scHpfHz{0.0};
     bool rms{true}, bypass{false};
 };
 
@@ -77,6 +80,7 @@ public:
         reset();
     }
     void reset() { gr_ = 0.0; pw_ = 0.0; for (auto& c : hpSt_) c.reset(); }
+    double grDb() const { return gr_; }
 
     void snapAll() {
         thr_.reset(thr_.target()); ratio_.reset(ratio_.target()); knee_.reset(knee_.target());
@@ -89,7 +93,7 @@ public:
         makeup_.setTarget(s.makeupDb); mix_.setTarget(s.mix); wet_.setTarget(s.bypass ? 0.0 : 1.0);
         atkCoef_ = 1.0 - std::exp(-1.0 / (sr_ * std::max(0.01, s.attackMs) * 0.001));
         relCoef_ = 1.0 - std::exp(-1.0 / (sr_ * std::max(1.0, s.releaseMs) * 0.001));
-        hpOn_ = s.scHpfHz > 20.5;
+        hpOn_ = s.scHpfHz >= 20.0;
         if (hpOn_) hpC_ = BiquadCoefs::design(FilterType::HighPass, sr_, s.scHpfHz, 0.0, 0.70710678);
     }
 

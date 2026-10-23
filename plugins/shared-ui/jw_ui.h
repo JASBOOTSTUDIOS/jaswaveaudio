@@ -205,6 +205,7 @@ public:
     void onDouble(const MouseEvent& e, ParamAccess& p) override;
     void onWheel(const MouseEvent& e, ParamAccess& p) override;
     int paramId() const override { return static_cast<int>(id_); }
+    void setParam(uint32_t id, const wchar_t* label = nullptr) { id_ = id; if (label) label_ = label; }
 private:
     uint32_t id_;
     float cx_, cy_, radius_;
@@ -238,6 +239,7 @@ public:
     void draw(Gfx& g, ParamAccess& p, bool hover) override;
     bool onDown(const MouseEvent& e, ParamAccess& p) override;
     int paramId() const override { return static_cast<int>(id_); }
+    void setParam(uint32_t id) { id_ = id; }
 private:
     uint32_t id_;
     std::wstring label_;
@@ -252,6 +254,7 @@ public:
     int paramId() const override { return static_cast<int>(id_); }
     bool onDown(const MouseEvent& e, ParamAccess& p) override;   // la vista abre el menú (paramId)
     const std::wstring& label() const { return label_; }
+    void setParam(uint32_t id) { id_ = id; }
 private:
     uint32_t id_;
     std::wstring label_;
@@ -267,6 +270,9 @@ public:
     int paramId() const override { return toggle_; }
     bool isLocked(ParamAccess& p) const override;
     Rect pillRect() const;
+    void setTitle(const wchar_t* t) { title_ = t; }
+    void setToggle(int id) { toggle_ = id; }
+    void setFeature(int f) { feature_ = f; }
 private:
     std::wstring title_;
     int toggle_;

@@ -51,7 +51,7 @@ struct ScopedNoDenormals {
 // -------------------------------------------------------------------------------------
 //  Biquad (RBJ cookbook) – coeficientes normalizados a0 = 1, forma transpuesta directa II
 // -------------------------------------------------------------------------------------
-enum class FilterType { HighPass, LowPass, LowShelf, HighShelf, Bell, Notch };
+enum class FilterType { HighPass, LowPass, LowShelf, HighShelf, Bell, Notch, BandPass };
 
 struct BiquadCoefs {
     double b0{1.0}, b1{0.0}, b2{0.0}, a1{0.0}, a2{0.0};
@@ -99,6 +99,10 @@ struct BiquadCoefs {
                 a2 = (A + 1.0) - (A - 1.0) * cw - s2;
                 break;
             }
+            case FilterType::BandPass:   // ganancia de pico constante 0 dB
+                b0 = alpha; b1 = 0.0; b2 = -alpha;
+                a0 = 1.0 + alpha; a1 = -2.0 * cw; a2 = 1.0 - alpha;
+                break;
             case FilterType::Notch:
             default:
                 b0 = 1.0; b1 = -2.0 * cw; b2 = 1.0;

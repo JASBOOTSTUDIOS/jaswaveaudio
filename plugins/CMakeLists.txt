@@ -8,6 +8,10 @@ include("${CMAKE_CURRENT_LIST_DIR}/cmake/JasWavePlugins.cmake")
 jw_setup_shared()
 
 set(JW_PLUGIN_DIRS
+  com.jaswave.plugin.param-eq
+  com.jaswave.plugin.bus-compressor
+  com.jaswave.plugin.truepeak-limiter
+  com.jaswave.plugin.smart-deesser
   com.jaswave.plugin.utility-tool)
 foreach(_d ${JW_PLUGIN_DIRS})
   add_subdirectory(${_d})
