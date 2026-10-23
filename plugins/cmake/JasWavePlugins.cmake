@@ -84,7 +84,7 @@ function(jaswave_add_vst3)
       COMMENT "Instalando ${T}.vst3 en %LOCALAPPDATA% (desarrollo)")
   endif()
 
-  add_executable(${T}_snapshot "${JW_PLUGINS_ROOT}/shared-ui/jw_snapshot_main.cpp" $<TARGET_OBJECTS:${T}_obj>
+  add_executable(${T}_snapshot "${JW_PLUGINS_ROOT}/shared-ui/jw_snapshot_main.cpp" $<TARGET_OBJECTS:${T}_obj> ${JW_SNAPSHOT_HOST_SOURCES}
                  "${JW_VST3_SDK_DIR}/public.sdk/source/main/dllmain.cpp")
   target_include_directories(${T}_snapshot PRIVATE "${JW_PLUGINS_ROOT}/shared-dsp" "${JW_PLUGINS_ROOT}/shared-ui" "${JW_VST3_SDK_DIR}")
   target_link_libraries(${T}_snapshot PRIVATE ${_libs} jw_license_testing)
