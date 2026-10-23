@@ -41,13 +41,11 @@ const BUNDLED_ROOTS = [
   'clsx',
   'lucide-react',
   'mermaid',
-  'pdf-lib',
   'react',
   'react-dom',
   'react-resizable-panels',
   'tailwind-merge',
   'tw-animate-css',
-  'vexflow',
 ]
 
 const LICENSE_FILE_RE = /^(licen[cs]e|copying|unlicense)(\.|-|$)/i

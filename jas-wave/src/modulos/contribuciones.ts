@@ -3,7 +3,7 @@
  * núcleo las pinta donde corresponde sin conocer los módulos.
  */
 
-import type { ContextoClip, ContribucionMenuClip, PaginaAjustes } from '@jaswave/host-sdk/contrato'
+import type { ContextoClip, ContribucionMenuClip, PaginaAjustes, ServiciosModulo } from '@jaswave/host-sdk/contrato'
 import { contribuciones } from './registro-modulos'
 import { useVersionModulos } from './use-modulos'
 
@@ -54,4 +54,13 @@ export function zoomDeModulo(el: Element | null) {
     }
   }
   return null
+}
+
+/** Servicio que ofrece algún módulo activo (p. ej. 'partitura'); undefined si ninguno lo ofrece. */
+export function servicioDeModulo<K extends keyof ServiciosModulo>(nombre: K): ServiciosModulo[K] | undefined {
+  for (const m of contribuciones()) {
+    const s = m.servicios?.[nombre]
+    if (s) return s
+  }
+  return undefined
 }

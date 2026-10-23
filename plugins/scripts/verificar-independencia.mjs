@@ -47,6 +47,8 @@ const modulos = fs.readdirSync(PLUGINS, { withFileTypes: true }).filter((d) => d
 for (const m of modulos) {
   const raiz = path.join(PLUGINS, m.name)
   for (const f of archivos(path.join(raiz, 'src'))) {
+    // La API privada del escritorio es del DAW: los módulos usan la del SDK (archivos, diálogos…).
+    if (/window.electron/.test(fs.readFileSync(f, 'utf8'))) violaciones.push(`${rel(f)} usa window.electron (usa la API de @jaswave/host-sdk)`)
     for (const esp of importsDe(f)) {
       if (esp === '@jaswave/host-sdk' || esp === 'tailwindcss/theme' || esp === 'tailwindcss/utilities') continue
       if (esp.startsWith('@/') || esp.startsWith('@jaswave/')) {

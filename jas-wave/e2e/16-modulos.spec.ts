@@ -48,3 +48,22 @@ test('la herramienta del módulo se abre y desactivar el módulo la quita (el pr
   await interruptor.check()
   await expect(page.getByTestId('panel-modulos')).toContainText('Cargado', { timeout: 15_000 })
 })
+
+test('Partitura es un módulo: aporta su herramienta y se puede desactivar y reactivar', async () => {
+  const { page } = app()
+  const hay = await page.evaluate(async () => {
+    const p = (await (window as any).electron.pluginsListar?.()) as Array<{ manifiesto: { id?: string } | null }>
+    return p.some((x) => x.manifiesto?.id === 'com.jaswave.modulo.partitura')
+  })
+  test.skip(!hay, 'módulo Partitura no disponible')
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('jaswave-open-tool', { detail: { toolId: 'modulos' } })))
+  const seccion = page.getByTestId('panel-modulos')
+  await expect(seccion).toContainText('Partitura')
+  await expect(page.getByRole('button', { name: 'Partitura', exact: true }).first()).toBeVisible({ timeout: 15_000 })
+
+  // Desactivarlo quita su herramienta; reactivarlo la vuelve a cargar.
+  await page.getByRole('switch', { name: 'Activar Partitura' }).uncheck()
+  await expect(page.getByRole('button', { name: 'Partitura', exact: true })).toHaveCount(0)
+  await page.getByRole('switch', { name: 'Activar Partitura' }).check()
+  await expect(page.getByRole('button', { name: 'Partitura', exact: true }).first()).toBeVisible({ timeout: 15_000 })
+})

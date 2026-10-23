@@ -41,6 +41,18 @@ export type PaginaAjustes = { id: string; titulo: string; componente: ComponentT
 /** Atajo de teclado global del módulo (solo se dispara si el foco no está en un campo de texto). */
 export type ContribucionAtajo = { id: string; teclas: string; descripcion: string; ejecutar: () => void }
 
+/**
+ * Servicios que un módulo ofrece al núcleo y a otros módulos (p. ej. el motor de acciones del DAW pide
+ * `partitura` para `score.exportClip`). Si ningún módulo activo lo ofrece, quien lo pide informa de que
+ * falta el módulo. La tienda se pasa como `unknown`: el SDK no depende de tipos internos del DAW.
+ */
+export type ServiciosModulo = {
+  partitura?: {
+    exportarClipPdf: (tienda: unknown, pistaId: string, clipId: string) => Promise<{ ok: boolean; message: string }>
+    exportarProyecto: (tienda: unknown, carpeta: string, incluirProyecto: boolean) => Promise<{ ok: boolean; message: string; count: number }>
+  }
+}
+
 export type ModuloActivo = {
   /** Componente de cada herramienta declarada (por id). */
   paneles: Record<string, ComponentType>
@@ -48,6 +60,7 @@ export type ModuloActivo = {
   menus?: { clip?: ContribucionMenuClip[] }
   /** Montados siempre mientras el módulo está activo (diálogos, escuchas de eventos…). */
   globales?: ComponentType[]
+  servicios?: ServiciosModulo
   /** Zoom de texto con Ctrl+rueda/Ctrl± cuando el foco está dentro de un elemento del módulo. */
   zoom?: { esObjetivo: (el: Element) => boolean; cambiar: (delta: number) => void; restablecer: () => void }
   desactivar?: () => void

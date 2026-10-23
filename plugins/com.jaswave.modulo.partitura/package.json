@@ -1,0 +1,17 @@
+{
+  "name": "@jaswave/modulo-partitura",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Módulo de JasWave: editor de partitura sincronizado con el clip MIDI y exportación a PDF.",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --tsconfig test/tsconfig.json --test test/*.test.ts"
+  },
+  "dependencies": {
+    "lucide-react": "^1.16.0",
+    "pdf-lib": "^1.17.1",
+    "vexflow": "^5.0.0"
+  }
+}

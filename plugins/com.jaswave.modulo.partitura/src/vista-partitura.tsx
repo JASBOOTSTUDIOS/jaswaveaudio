@@ -3,14 +3,15 @@
  */
 
 import { useEffect, useMemo, useRef, type ReactNode, Fragment } from 'react'
-import type { MidiNote } from '@jaswave/shared'
+
 import {
   computeScoreBarCount,
   renderScoreBarToContainer,
   SHEET_BAR_SLOT_WIDTH,
   SHEET_BAR_SLOT_HEIGHT,
-} from '@/src/lib/midi-score-render'
-import { ensureVexFlowFonts } from '@/src/lib/vexflow-ready'
+} from './render'
+import { ensureVexFlowFonts } from './vexflow-listo'
+import type { MidiNote } from '@jaswave/host-sdk'
 
 export const SCORE_BAR_HEIGHT = SHEET_BAR_SLOT_HEIGHT
 

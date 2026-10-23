@@ -2571,19 +2571,28 @@ export async function executeDawActions(
           break
         }
         case 'score.exportClip': {
-          const { exportClipScorePdfDialog } = await import('./midi-score-export')
+          // La partitura es un módulo instalable (M5): el DAW solo usa su servicio si está activo.
+          const partitura = (await import('../modulos/contribuciones')).servicioDeModulo('partitura')
+          if (!partitura) {
+            results.push({ type: action.type, success: false, message: 'Instala o activa el módulo Partitura para exportar partituras' })
+            break
+          }
           const pistaId = String(p.pistaId ?? p.trackId ?? getSelectedTrackId(tienda.obtenerEstado()) ?? '')
           const clipId = String(p.clipId ?? '')
           if (!pistaId || !clipId) {
             results.push({ type: action.type, success: false, message: 'Falta pistaId o clipId' })
             break
           }
-          const exp = await exportClipScorePdfDialog(tienda, pistaId, clipId)
+          const exp = await partitura.exportarClipPdf(tienda, pistaId, clipId)
           results.push({ type: action.type, success: exp.ok, message: exp.message })
           break
         }
         case 'score.exportProject': {
-          const { exportProjectScoresToFolder } = await import('./midi-score-export')
+          const partitura = (await import('../modulos/contribuciones')).servicioDeModulo('partitura')
+          if (!partitura) {
+            results.push({ type: action.type, success: false, message: 'Instala o activa el módulo Partitura para exportar partituras' })
+            break
+          }
           let folder = p.folderPath ? String(p.folderPath) : ''
           if (!folder && typeof window !== 'undefined' && window.electron?.dialogOpenDirectory) {
             const dir = await window.electron.dialogOpenDirectory()
@@ -2593,7 +2602,7 @@ export async function executeDawActions(
             results.push({ type: action.type, success: false, message: 'Falta folderPath / carpeta' })
             break
           }
-          const exp = await exportProjectScoresToFolder(tienda, folder, p.includeProject === true)
+          const exp = await partitura.exportarProyecto(tienda, folder, p.includeProject === true)
           results.push({ type: action.type, success: exp.ok, message: exp.message, data: { count: exp.count } })
           break
         }

@@ -12,12 +12,7 @@ import {
   Piano,
   Save,
 } from 'lucide-react'
-import { useDAW, useDAWState } from '@/src/context/daw-context'
-import type { DAWState } from '../../shared/src/types/state'
-import type { MidiNote } from '../../shared/src/types/clips'
-import { getUndockUrlFocus } from '@/lib/undock-window'
-import { listMidiClips, resolvePianoRollClip } from '@/src/lib/selection-helpers'
-import { requestOpenTool } from '@/src/workspace/types'
+
 import {
   BEATS_PER_BAR,
   computeScoreBarCount,
@@ -27,18 +22,19 @@ import {
   pitchToStaffY,
   xToBeatInBar,
   yToPitch,
-} from '@/src/lib/midi-score-render'
-import { isDrumishNotes } from '@/src/lib/midi-score-export'
-import { buildScorePdfBytes, saveScorePdfBytes, scoreFileName } from '@/src/lib/midi-score-export'
-import { openScorePreview } from '@/src/lib/score-preview-store'
+} from './render'
+import { isDrumishNotes } from './exportar'
+import { buildScorePdfBytes, saveScorePdfBytes, scoreFileName } from './exportar'
+import { openScorePreview } from './vista-previa-store'
 import {
   SCORE_NOTE_DURATIONS,
   durationById,
-} from '@/src/lib/score-note-durations'
-import { getProjectKey, getProjectKeyRegions } from '../../shared/src/music/project-key'
-import { shouldIgnoreGlobalShortcuts } from '../../shared/src'
-import { ScoreBarView, ScoreSheetCanvas, SCORE_BAR_HEIGHT } from '@/components/score-sheet-view'
-import { SHEET_BAR_SLOT_WIDTH } from '@/src/lib/midi-score-render'
+} from './duraciones'
+
+import { ScoreBarView, ScoreSheetCanvas, SCORE_BAR_HEIGHT } from './vista-partitura'
+import { SHEET_BAR_SLOT_WIDTH } from './render'
+import { getProjectKey, getProjectKeyRegions, getUndockUrlFocus, listMidiClips, requestOpenTool, resolvePianoRollClip, shouldIgnoreGlobalShortcuts, useDAW, useDAWState } from '@jaswave/host-sdk'
+import type { DAWState, MidiNote } from '@jaswave/host-sdk'
 
 type LocalNote = {
   id: string

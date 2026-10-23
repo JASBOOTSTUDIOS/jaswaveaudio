@@ -47,23 +47,4 @@ export function registrarModulosIntegrados(): void {
       })
     },
   })
-
-  void registrarModulo({
-    id: 'partitura',
-    nombre: 'Partitura',
-    descripcion: 'Editor de partitura sincronizado con el clip MIDI y exportación.',
-    version: '1.0.0',
-    origen: 'instalado',
-    cargar: async () => {
-      const { ScoreEditorToolPanel } = await import('@/components/score-editor-panel')
-      return definirModulo({
-        id: 'partitura',
-        nombre: 'Partitura',
-        version: '1.0.0',
-        sdk: VERSION_SDK,
-        herramientas: [{ id: 'score-editor', titulo: 'Partitura', descripcion: 'Editor de partitura sincronizado con el clip MIDI', zona: 'bottom', bajoDemanda: true }],
-        activar: () => ({ paneles: { 'score-editor': ScoreEditorToolPanel } }),
-      })
-    },
-  })
 }

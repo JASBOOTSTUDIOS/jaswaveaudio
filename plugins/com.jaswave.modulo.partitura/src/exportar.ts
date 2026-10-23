@@ -3,15 +3,15 @@
  */
 
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
-import type { MidiClip, MidiNote } from '@jaswave/shared'
-import type { TiendaDAW } from '../../../shared/src/state/tienda'
-import { renderScoreSheetPages, type ScorePage, type ScoreExportOpts, isDrumishNotes } from './midi-score-render'
-import { ensureVexFlowFonts, embedBravuraInSvg } from './vexflow-ready'
-import { openScorePreview } from './score-preview-store'
-import { saveBinaryOrThrow } from './electron-fs'
 
-export type { ScoreExportOpts } from './midi-score-render'
-export { isDrumishNotes } from './midi-score-render'
+import { renderScoreSheetPages, type ScorePage, type ScoreExportOpts, isDrumishNotes } from './render'
+import { ensureVexFlowFonts, embedBravuraInSvg } from './vexflow-listo'
+import { openScorePreview } from './vista-previa-store'
+
+export type { ScoreExportOpts } from './render'
+export { isDrumishNotes } from './render'
+import { archivosDeEscritorio, descargarArchivo, elegirRutaGuardar, guardarBinario, guardarTexto, leerTexto } from '@jaswave/host-sdk'
+import type { MidiClip, MidiNote, TiendaDAW } from '@jaswave/host-sdk'
 
 function sanitizeFileName(name: string): string {
   return name.replace(/[^\w.\- áéíóúñÁÉÍÓÚÑ]+/gi, '-').replace(/\s+/g, '-').slice(0, 80) || 'score'
@@ -229,22 +229,18 @@ export async function saveScorePdfBytes(
   bytes: Uint8Array,
   fileName: string,
 ): Promise<{ ok: boolean; message: string }> {
-  if (typeof window !== 'undefined' && window.electron?.dialogSave) {
-    const dialog = await window.electron.dialogSave(fileName)
-    const path = typeof dialog === 'string' ? dialog : dialog && !dialog.canceled ? dialog.filePath : undefined
-    if (!path) return { ok: false, message: 'Cancelado' }
-    if (window.electron.fileSaveBinary) {
-      const result = await window.electron.fileSaveBinary(path, bytes)
-      if (result && result.success === false) {
-        downloadBlob(bytes, fileName)
-        return { ok: false, message: result.error || 'Error al guardar PDF' }
-      }
-    } else {
-      downloadBlob(bytes, fileName)
+  if (archivosDeEscritorio()) {
+    const ruta = await elegirRutaGuardar(fileName)
+    if (!ruta) return { ok: false, message: 'Cancelado' }
+    try {
+      await guardarBinario(ruta, bytes)
+    } catch (e) {
+      descargarArchivo(fileName, bytes, 'application/pdf')
+      return { ok: false, message: e instanceof Error ? e.message : 'Error al guardar PDF' }
     }
-    return { ok: true, message: `Partitura guardada: ${path}` }
+    return { ok: true, message: `Partitura guardada: ${ruta}` }
   }
-  downloadBlob(bytes, fileName)
+  descargarArchivo(fileName, bytes, 'application/pdf')
   return { ok: true, message: `Descarga iniciada: ${fileName}` }
 }
 
@@ -301,12 +297,12 @@ export async function exportProjectScoresToFolder(
       count += 1
     }
   }
-  if (includeProjectCopy && st.project?.ruta && window.electron?.fileRead && window.electron?.fileSave) {
+  if (includeProjectCopy && st.project?.ruta && archivosDeEscritorio()) {
     try {
-      const raw = await window.electron.fileRead(st.project.ruta)
+      const raw = await leerTexto(st.project.ruta)
       if (raw) {
         const dest = `${folderPath.replace(/[/\\]+$/, '')}/${sanitizeFileName(st.project.nombre || 'proyecto')}.jaswave`
-        await window.electron.fileSave(dest, raw)
+        await guardarTexto(dest, raw)
       }
     } catch {
       /* optional */
@@ -320,20 +316,10 @@ export async function exportProjectScoresToFolder(
 }
 
 async function saveBytes(path: string, bytes: Uint8Array): Promise<void> {
-  if (typeof window !== 'undefined' && typeof window.electron?.fileSaveBinary === 'function') {
-    await saveBinaryOrThrow(path, bytes)
+  if (archivosDeEscritorio()) {
+    await guardarBinario(path, bytes)
     return
   }
-  downloadBlob(bytes, path.split(/[/\\]/).pop() || 'score.pdf')
+  descargarArchivo(path.split(/[/\\]/).pop() || 'score.pdf', bytes, 'application/pdf')
 }
 
-function downloadBlob(bytes: Uint8Array, name: string): void {
-  if (typeof document === 'undefined') return
-  const blob = new Blob([bytes], { type: 'application/pdf' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = name
-  a.click()
-  URL.revokeObjectURL(url)
-}

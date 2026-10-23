@@ -23,3 +23,15 @@ export { findMidiClip } from '../../../shared/src/midi/query'
 // Tipos del dominio
 export type { DAWState } from '../../../shared/src/types/state'
 export type { TiendaDAW } from '../../../shared/src/state/tienda'
+
+// Añadido al extraer com.jaswave.modulo.partitura
+export { getUndockUrlFocus } from '../../lib/undock-window'
+export { useDAWOptional } from '../context/daw-context'
+export { saveBinaryOrThrow } from '../lib/electron-fs'
+export { listMidiClips, resolvePianoRollClip } from '../lib/selection-helpers'
+export { shouldIgnoreGlobalShortcuts } from '../../../shared/src/index'
+export type { MidiClip, MidiNote } from '../../../shared/src/index'
+export { getProjectKey, getProjectKeyRegions } from '../../../shared/src/music/project-key'
+
+// Archivos (diálogos y disco a través del DAW; en la web, descarga)
+export { archivosDeEscritorio, descargarArchivo, elegirCarpeta, elegirRutaGuardar, guardarBinario, guardarTexto, leerTexto } from './api-archivos'

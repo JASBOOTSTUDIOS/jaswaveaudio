@@ -1428,11 +1428,6 @@ export function PianoRoll({ trackId, clipId, embedded = false }: PianoRollProps)
             }),
           )
         }}
-        onExportScorePdf={() => {
-          void import('@/src/lib/midi-score-export').then(({ exportClipScorePdfDialog }) =>
-            exportClipScorePdfDialog(tienda, trackId, clipId),
-          )
-        }}
         contextoClip={{ clipId, trackId, tipo: 'midi' }}
         notasCount={notes.length}
         seleccionCount={selectedIds.size}

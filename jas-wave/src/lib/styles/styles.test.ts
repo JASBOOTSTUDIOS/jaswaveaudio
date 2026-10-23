@@ -11,7 +11,6 @@ function examplePreset() {
   return styleProfileFromPreset(EXAMPLE_STYLE_PRESETS[0])
 }
 import { applyStyleProfileToNotes, pitchesDifferEnough } from '../styles/apply-style-profile'
-import { buildScorePdfBytes, isDrumishNotes } from '../midi-score-export'
 
 function note(pitch: number, inicio: number, duracion = 0.25, velocidad = 90): MidiNote {
   return {
@@ -81,24 +80,5 @@ describe('applyStyleProfileToNotes', () => {
     const pitches = generated.map((n) => n.pitch)
     assert.ok(pitchesDifferEnough(originPitches, pitches, 0.2))
     assert.ok(generated.some((n) => n.pitch === 36 || n.pitch === 38))
-  })
-})
-
-describe('midi-score-export', () => {
-  it('detecta drums y produce PDF válido', async () => {
-    const notas = [note(36, 0), note(38, 1), note(42, 0.5), note(36, 2), note(38, 3)]
-    assert.equal(isDrumishNotes(notas), true)
-    const bytes = await buildScorePdfBytes(notas, { bpm: 72, drums: true, title: 'Test Drums' })
-    assert.ok(bytes.length > 100)
-    const head = String.fromCharCode(...bytes.slice(0, 4))
-    assert.equal(head, '%PDF')
-  })
-
-  it('produce PDF melódico', async () => {
-    const notas = [note(60, 0, 0.5), note(62, 0.5), note(64, 1), note(65, 1.5), note(67, 2, 1)]
-    const bytes = await buildScorePdfBytes(notas, { bpm: 100, drums: false, title: 'Melody' })
-    assert.ok(bytes.byteLength > 100)
-    assert.equal(bytes[0], 0x25) // %
-    assert.equal(bytes[1], 0x50) // P
   })
 })

@@ -1,8 +1,7 @@
 /**
  * Estado global para abrir la vista previa de partitura PDF.
  */
-
-import type { MidiNote } from '@jaswave/shared'
+import type { MidiNote } from '@jaswave/host-sdk'
 
 export type ScorePreviewRequest = {
   title: string

@@ -3,8 +3,9 @@
  */
 
 import { useEffect } from 'react'
-import { useDAWOptional } from '@/src/context/daw-context'
-import { exportProjectScoresToFolder } from '@/src/lib/midi-score-export'
+
+import { exportProjectScoresToFolder } from './exportar'
+import { useDAWOptional, archivosDeEscritorio, elegirCarpeta } from '@jaswave/host-sdk'
 
 export function ScoreExportMenuListener() {
   const tienda = useDAWOptional()
@@ -18,15 +19,11 @@ export function ScoreExportMenuListener() {
         return
       }
       void (async () => {
-        if (!window.electron?.dialogOpenDirectory) {
-          window.alert('Elegir carpeta solo está disponible en Electron.')
+        if (!archivosDeEscritorio()) {
+          window.alert('Exportar a una carpeta solo está disponible en JasWave Desktop.')
           return
         }
-        const dirResult = await window.electron.dialogOpenDirectory()
-        const folder =
-          dirResult && !dirResult.canceled && dirResult.filePaths?.[0]
-            ? dirResult.filePaths[0]
-            : undefined
+        const folder = await elegirCarpeta()
         if (!folder) return
         const r = await exportProjectScoresToFolder(
           tienda,

@@ -18,7 +18,6 @@ import {
   Keyboard,
   Layers2,
   Sparkles,
-  FileDown,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import type { ContextoClip } from '@jaswave/host-sdk/contrato'
@@ -142,7 +141,6 @@ export function PianoRollToolbar({
   dirty,
   nombreClip,
   onSaveStyle,
-  onExportScorePdf,
   contextoClip,
 }: {
   herramienta: PianoRollTool
@@ -183,7 +181,6 @@ export function PianoRollToolbar({
   dirty: boolean
   nombreClip: string
   onSaveStyle?: () => void
-  onExportScorePdf?: () => void
   /** Clip del piano roll: los módulos activos añaden sus acciones con icono (p. ej. MIDI · MD). */
   contextoClip?: ContextoClip
 }) {
@@ -364,9 +361,6 @@ export function PianoRollToolbar({
             <div className="mx-0.5 h-5 w-px bg-border" />
             <ToolBtn titulo="Guardar como estilo" icon={Sparkles} onClick={onSaveStyle} />
           </>
-        ) : null}
-        {onExportScorePdf ? (
-          <ToolBtn titulo="Vista previa / exportar partitura PDF" icon={FileDown} onClick={onExportScorePdf} />
         ) : null}
         {accionesModulos.map((a) => (
           <ToolBtn key={a.id} titulo={a.etiqueta} icon={a.icono!} onClick={() => contextoClip && ejecutarAccionDeClip(a, contextoClip)} />

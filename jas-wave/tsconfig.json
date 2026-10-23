@@ -19,8 +19,7 @@
       "@jaswave/shared": ["../shared/src/index.ts"],
       "@jaswave/host-sdk/*": ["../plugins/sdk/host-sdk/src/*"],
       "react": ["./node_modules/@types/react"],
-      "react/*": ["./node_modules/@types/react/*"],
-      "vexflow-bravura-font": ["./src/types/vexflow-bravura-font.d.ts"]
+      "react/*": ["./node_modules/@types/react/*"]
     }
   },
   "include": [

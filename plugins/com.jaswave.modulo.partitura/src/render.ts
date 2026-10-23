@@ -2,8 +2,8 @@
  * Renderizado de partitura con VexFlow (SVG) — layout por compases.
  */
 
-import type { MidiNote } from '@jaswave/shared'
-import { ensureVexFlowFonts, embedBravuraInSvg } from './vexflow-ready'
+import { ensureVexFlowFonts, embedBravuraInSvg } from './vexflow-listo'
+import type { MidiNote } from '@jaswave/host-sdk'
 
 export type ScoreExportOpts = {
   title?: string

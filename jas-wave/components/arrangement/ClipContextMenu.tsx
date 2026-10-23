@@ -9,7 +9,6 @@ import { requestOpenTool } from '@/src/workspace/types'
 import { dawClipboard, type ClipboardClip } from '@/src/lib/daw-clipboard'
 import { loteBorrarClips, lotePegarClips } from '@/src/lib/clip-edit-commands'
 import { batchOrNotify } from '@/src/lib/execute-or-toast'
-import { exportClipScorePdfDialog } from '@/src/lib/midi-score-export'
 import { styleSaveFromClip } from '@/src/lib/styles/ops'
 import { accionesDeClip, ejecutarAccionDeClip } from '@/src/modulos/contribuciones'
 
@@ -358,24 +357,6 @@ export function ClipContextMenu({ menu, onClose, tienda }: Props) {
       {!multi && midi ? (
         <>
           <Sep />
-      <MenuItem
-        label="Abrir editor de partitura"
-        onClick={() =>
-          run(() => {
-            void tienda.executor.execute('selection.set', {
-              idsClips: menu.clipIds,
-              idsPistas: [track.id],
-              tipo: 'clip',
-              idPrincipal: track.id,
-            })
-            requestOpenTool('score-editor', { zone: 'bottom' })
-          })
-        }
-      />
-      <MenuItem
-        label="Vista previa / exportar partitura PDF…"
-            onClick={() => run(() => exportClipScorePdfDialog(tienda, track.id, clip.id))}
-          />
           <MenuItem
             label="Guardar como estilo…"
             onClick={() =>

@@ -8,12 +8,12 @@ import {
   closeScorePreview,
   getScorePreviewRequest,
   subscribeScorePreview,
-} from '@/src/lib/score-preview-store'
-import { ensureVexFlowFonts } from '@/src/lib/vexflow-ready'
-import { buildScorePdfBytes, saveScorePdfBytes } from '@/src/lib/midi-score-export'
-import { computeScoreBarCount } from '@/src/lib/midi-score-render'
-import { ScoreSheetCanvas } from '@/components/score-sheet-view'
-import { requestOpenTool } from '@/src/workspace/types'
+} from './vista-previa-store'
+import { ensureVexFlowFonts } from './vexflow-listo'
+import { buildScorePdfBytes, saveScorePdfBytes } from './exportar'
+import { computeScoreBarCount } from './render'
+import { ScoreSheetCanvas } from './vista-partitura'
+import { requestOpenTool } from '@jaswave/host-sdk'
 
 export function ScorePreviewDialog() {
   const request = useSyncExternalStore(subscribeScorePreview, getScorePreviewRequest, () => null)

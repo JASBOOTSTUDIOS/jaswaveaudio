@@ -137,15 +137,18 @@ function reescribir(origen, destino, texto) {
   return crlf ? s.replace(/\n/g, '\r\n') : s
 }
 
-// 1) Reescribir y mover
-for (const [o, d] of Object.entries(plan.archivos)) {
+// 1) Reescribir todo contra el árbol original y después mover (si no, un archivo ya movido no se resuelve)
+const reescritos = Object.entries(plan.archivos).map(([o, d]) => {
   const origen = path.join(REPO, o)
   const destino = path.join(MOD, 'src', d)
-  const nuevo = reescribir(origen, destino, fs.readFileSync(origen, 'utf8'))
-  if (seco) continue
-  fs.mkdirSync(path.dirname(destino), { recursive: true })
-  execFileSync('git', ['mv', origen, destino], { cwd: REPO })
-  fs.writeFileSync(destino, nuevo)
+  return { origen, destino, nuevo: reescribir(origen, destino, fs.readFileSync(origen, 'utf8')) }
+})
+if (!seco) {
+  for (const { origen, destino, nuevo } of reescritos) {
+    fs.mkdirSync(path.dirname(destino), { recursive: true })
+    execFileSync('git', ['mv', origen, destino], { cwd: REPO })
+    fs.writeFileSync(destino, nuevo)
+  }
 }
 
 // 2) API del host: añadir lo que falte

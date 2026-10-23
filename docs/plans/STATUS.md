@@ -44,6 +44,6 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | M2 | Proveedores de IA en BD con permisos por rol | L1, M1 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | M3 | SDK de host y carga de módulos en runtime | M1, D1 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | M4 | Asistente IA como paquete independiente | M2, M3 | pendiente | | |
-| M5 | Partitura y MIDI·MD como paquetes | M3 | en curso (MIDI·MD hecho) | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
+| M5 | Partitura y MIDI·MD como paquetes | M3 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 
 Estados: `pendiente` · `en curso` · `bloqueado (motivo)` · `hecho`.
