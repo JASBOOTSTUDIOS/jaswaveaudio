@@ -1,7 +1,7 @@
 // =====================================================================================
 //  JasWave TruePeak Brickwall Limiter – motor DSP
-//   - Detección true-peak 4x (polifásica) sobre la señal amplificada (Input Gain)
-//   - Lookahead ajustable 0–10 ms dentro de una latencia FIJA (10 ms + 6 muestras): el detector
+//   - Detección true-peak 8x (polifásica, 257 taps) sobre la señal amplificada (Input Gain)
+//   - Lookahead ajustable 0–10 ms dentro de una latencia FIJA (10 ms + 17 muestras): el detector
 //     se pre-retrasa (Nmax − N) para que la rampa termine siempre al llegar el pico
 //   - Mínimo deslizante + media móvil (rampa de ataque sin distorsión), hold 2 ms, release exp.
 //   - Margen anti-overshoot interpolado y limitador de seguridad final a ±techo
@@ -62,7 +62,7 @@ public:
     void prepare(double sr, int /*maxBlock*/) {
         sr_ = sr > 0 ? sr : 48000.0;
         Nmax_ = std::max(1, static_cast<int>(std::lround(kMaxLookaheadMs * 0.001 * sr_)));
-        D_ = Nmax_ - 1 + TruePeak4x::kDelay;
+        D_ = Nmax_ + TruePeak8x::kDelay + 1;   // +2 muestras de seguridad: el pico interpolado puede caer antes de la muestra central
         dlyLen_ = D_ + 1;
         for (int c = 0; c < 2; ++c) { dlyDriven_[c].assign(static_cast<size_t>(dlyLen_), 0.0f); dlyDry_[c].assign(static_cast<size_t>(dlyLen_), 0.0f); }
         pre_.assign(static_cast<size_t>(Nmax_ + 1), 1.0f);
@@ -162,7 +162,7 @@ public:
                 if (++boxPos_ >= N_) boxPos_ = 0;
                 const double g = std::min(1.0, boxSum_ / N_);
                 gNow_ = g;
-                // 5) audio retardado D = Nmax-1+6 (latencia fija)
+                // 5) audio retardado D = Nmax+17 (latencia fija)
                 float oDriven[2], oDry[2];
                 const int rp = wp_ >= D_ ? wp_ - D_ : wp_ - D_ + dlyLen_;
                 for (int c = 0; c < 2; ++c) {
@@ -225,7 +225,8 @@ private:
     std::vector<float> pre_, box_;
     SlidingMin smin_;
     Smoother gain_, wet_;
-    std::array<TruePeak4x, 2> tpIn_, tpOut_;
+    std::array<TruePeak8x, 2> tpIn_;
+    std::array<TruePeak4x, 2> tpOut_;
     ScopeAccum accum_;
 };
 

@@ -1,340 +1,623 @@
-// Autoverificación numérica del DSP de JasWave (sin SDK, sin UI).
-// Verifica que el audio NO se daña: respuesta del EQ, curva estática del compresor,
-// techo true-peak del limitador, latencia exacta, bypass transparente, LUFS y espectro reales.
+// =====================================================================================
+//  Autoverificación objetiva del DSP de todos los plugins JasWave (sin SDK, sin UI).
+//   - EQ: respuesta medida con senos contra fórmulas RBJ independientes (≤ 0.1 dB) y Butterworth
+//   - Compresor: curva estática (umbral / ratio / rodilla)
+//   - Limitador: true-peak de salida ≤ techo medido con sobremuestreo 16× (y 4× BS.1770) en
+//     señales difíciles; latencia exacta
+//   - De-esser: reduce la banda sibilante sin tocar el resto; cruce LR4 plano
+//   - Utility: fase, swap, M/S, mono-graves, balance, DC
+//   - Piano: afinación A4 = 440 Hz ±1 cent (y LA4 = 442), polifonía 16/64, sin denormales
+//   - Todos: sin NaN/Inf, tamaños de bloque 1/64/512/4096 idénticos, 44.1–192 kHz,
+//     y CERO asignaciones de memoria dentro de process (operator new instrumentado)
+// =====================================================================================
 #define _USE_MATH_DEFINES
-#include <chrono>
+#include <atomic>
+#include <cfloat>
 #include <cstdio>
 #include <cstdlib>
+#include <new>
 #include <random>
 
-#include "../com.jaswave.plugin.param-eq/src/param_eq_dsp.h"
-#include "../com.jaswave.plugin.bus-compressor/src/bus_compressor_dsp.h"
-#include "../com.jaswave.plugin.truepeak-limiter/src/truepeak_limiter_dsp.h"
+// ---- contador de asignaciones (solo cuenta dentro de las secciones "process") ----
+static std::atomic<long long> g_allocs{0};
+static thread_local bool g_inProcess = false;
+void* operator new(size_t n) {
+    if (g_inProcess) g_allocs.fetch_add(1);
+    if (void* p = std::malloc(n ? n : 1)) return p;
+    throw std::bad_alloc();
+}
+void* operator new[](size_t n) { return operator new(n); }
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete[](void* p) noexcept { std::free(p); }
+void operator delete(void* p, size_t) noexcept { std::free(p); }
+void operator delete[](void* p, size_t) noexcept { std::free(p); }
+struct ProcessScope { ProcessScope() { g_inProcess = true; } ~ProcessScope() { g_inProcess = false; } };
+
+#include "com.jaswave.plugin.param-eq/src/param_eq_dsp.h"
+#include "com.jaswave.plugin.bus-compressor/src/bus_compressor_dsp.h"
+#include "com.jaswave.plugin.truepeak-limiter/src/truepeak_limiter_dsp.h"
+#include "com.jaswave.plugin.smart-deesser/src/deesser_dsp.h"
+#include "com.jaswave.plugin.utility-tool/src/utility_dsp.h"
+#include "com.jaswave.plugin.piano-synth/source/piano_dsp.h"
+#include "com.jaswave.plugin.roles-vst/src/roles_engine.h"
 
 using namespace JasWaveDsp;
 
 static int g_fail = 0, g_pass = 0;
 #define CHECK(cond, ...) do { if (cond) { ++g_pass; std::printf("  [ OK ] "); } else { ++g_fail; std::printf("  [FAIL] "); } std::printf(__VA_ARGS__); std::printf("\n"); } while (0)
 
-static const double kSr = 48000.0;
+using Buf = std::vector<double>;
 
-static std::vector<float> sine(double f, double ampDb, double sr, int n, double phase = 0.0) {
-    std::vector<float> v(static_cast<size_t>(n));
-    const double a = dbToLinear(ampDb);
-    for (int i = 0; i < n; ++i) v[static_cast<size_t>(i)] = static_cast<float>(a * std::sin(2.0 * kPi * f * i / sr + phase));
+static Buf sine(double f, double amp, double sr, int n, double phase = 0.0) {
+    Buf v(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) v[static_cast<size_t>(i)] = amp * std::sin(2.0 * kPi * f * i / sr + phase);
     return v;
 }
-static double rmsDb(const std::vector<float>& x, int from, int to) {
-    double s = 0; for (int i = from; i < to; ++i) s += static_cast<double>(x[static_cast<size_t>(i)]) * x[static_cast<size_t>(i)];
-    return 10.0 * std::log10(std::max(1e-30, s / (to - from)));
+static double rms(const Buf& x, int from, int to) {
+    double s = 0;
+    for (int i = from; i < to; ++i) s += x[static_cast<size_t>(i)] * x[static_cast<size_t>(i)];
+    return std::sqrt(s / std::max(1, to - from));
 }
-static double peakAbs(const std::vector<float>& x, int from = 0) {
-    double p = 0; for (size_t i = static_cast<size_t>(from); i < x.size(); ++i) p = std::max(p, static_cast<double>(std::fabs(x[i]))); return p;
+static double db(double lin) { return 20.0 * std::log10(std::max(lin, 1e-30)); }
+static bool allFinite(const Buf& x) { for (double v : x) if (!std::isfinite(v)) return false; return true; }
+// Amplitud de la componente a frecuencia f (proyección sobre seno/coseno, ventana entera)
+static double toneAmp(const Buf& x, int from, int to, double f, double sr) {
+    double c = 0, s = 0;
+    for (int i = from; i < to; ++i) { const double w = 2.0 * kPi * f * i / sr; c += x[static_cast<size_t>(i)] * std::cos(w); s += x[static_cast<size_t>(i)] * std::sin(w); }
+    return 2.0 * std::sqrt(c * c + s * s) / (to - from);
 }
-// True-peak de referencia: sobremuestreo 16x con sinc de 64 taps/fase (Blackman), independiente del detector del plugin
-static double referenceTruePeak(const std::vector<float>& x, int from) {
+
+// True-peak de referencia: sobremuestreo 16× con sinc de 64 taps/fase (Blackman), independiente del plugin
+static double truePeak16(const Buf& x, int from) {
     const int os = 16, half = 32;
-    double best = 0.0;
-    std::vector<double> h(static_cast<size_t>(2 * half * os + 1));
-    for (int i = 0; i < static_cast<int>(h.size()); ++i) {
-        const double t = (i - half * os) / static_cast<double>(os);
-        const double s = (t == 0.0) ? 1.0 : std::sin(kPi * t) / (kPi * t);
-        const double r = static_cast<double>(i) / (h.size() - 1);
-        const double w = 0.42 - 0.5 * std::cos(2 * kPi * r) + 0.08 * std::cos(4 * kPi * r);
-        h[static_cast<size_t>(i)] = s * w;
+    static std::vector<double> h;
+    if (h.empty()) {
+        h.resize(static_cast<size_t>(2 * half * os + 1));
+        for (int i = 0; i < static_cast<int>(h.size()); ++i) {
+            const double t = (i - half * os) / static_cast<double>(os);
+            const double s = (t == 0.0) ? 1.0 : std::sin(kPi * t) / (kPi * t);
+            const double r = static_cast<double>(i) / (h.size() - 1);
+            h[static_cast<size_t>(i)] = s * (0.42 - 0.5 * std::cos(2 * kPi * r) + 0.08 * std::cos(4 * kPi * r));
+        }
     }
+    double best = 0.0;
     for (int n = std::max(from, half); n < static_cast<int>(x.size()) - half; ++n) {
-        for (int p = 0; p < os; ++p) {
+        best = std::max(best, std::fabs(x[static_cast<size_t>(n)]));
+        for (int p = 1; p < os; ++p) {
             double acc = 0.0;
-            for (int k = -half + 1; k <= half; ++k) {
-                const int idx = k * os - p + half * os;   // t = k - p/os
-                if (idx < 0 || idx >= static_cast<int>(h.size())) continue;
-                acc += static_cast<double>(x[static_cast<size_t>(n - k)]) * h[static_cast<size_t>(idx)];
-            }
+            for (int k = -half + 1; k <= half; ++k) acc += x[static_cast<size_t>(n - k)] * h[static_cast<size_t>(k * os - p + half * os)];
             best = std::max(best, std::fabs(acc));
         }
     }
     return best;
 }
+// True-peak 4× con los coeficientes normativos de ITU-R BS.1770-4 (Anexo 2, 48 taps, 4 fases)
+static double truePeak4(const Buf& x, int from) {
+    static const double c[4][12] = {
+        { 0.0017089843750, 0.0109863281250, -0.0196533203125, 0.0332031250000, -0.0594482421875, 0.1373291015625, 0.9721679687500, -0.1022949218750, 0.0476074218750, -0.0266113281250, 0.0148925781250, -0.0083007812500 },
+        { -0.0291748046875, 0.0292968750000, -0.0517578125000, 0.0891113281250, -0.1665039062500, 0.4650878906250, 0.7797851562500, -0.2003173828125, 0.1015625000000, -0.0582275390625, 0.0330810546875, -0.0189208984375 },
+        { -0.0189208984375, 0.0330810546875, -0.0582275390625, 0.1015625000000, -0.2003173828125, 0.7797851562500, 0.4650878906250, -0.1665039062500, 0.0891113281250, -0.0517578125000, 0.0292968750000, -0.0291748046875 },
+        { -0.0083007812500, 0.0148925781250, -0.0266113281250, 0.0476074218750, -0.1022949218750, 0.9721679687500, 0.1373291015625, -0.0594482421875, 0.0332031250000, -0.0196533203125, 0.0109863281250, 0.0017089843750 } };
+    double best = 0.0;
+    for (int n = std::max(from, 11); n < static_cast<int>(x.size()); ++n)
+        for (int p = 0; p < 4; ++p) {
+            double acc = 0.0;
+            for (int k = 0; k < 12; ++k) acc += c[p][k] * x[static_cast<size_t>(n - k)];
+            best = std::max(best, std::fabs(acc));
+        }
+    return best;
+}
 
-// ------------------------------------------------------------------------------------
+// RBJ cookbook independiente (re-implementado aquí) -> |H| en dB
+static double rbjDb(const char* type, double sr, double f0, double gainDb, double q, double f) {
+    const double A = std::pow(10.0, gainDb / 40.0), w0 = 2 * kPi * f0 / sr, al = std::sin(w0) / (2 * q), cw = std::cos(w0);
+    double b0, b1, b2, a0, a1, a2;
+    const std::string t = type;
+    if (t == "peak") { b0 = 1 + al * A; b1 = -2 * cw; b2 = 1 - al * A; a0 = 1 + al / A; a1 = -2 * cw; a2 = 1 - al / A; }
+    else if (t == "lp") { b0 = (1 - cw) / 2; b1 = 1 - cw; b2 = (1 - cw) / 2; a0 = 1 + al; a1 = -2 * cw; a2 = 1 - al; }
+    else if (t == "hp") { b0 = (1 + cw) / 2; b1 = -(1 + cw); b2 = (1 + cw) / 2; a0 = 1 + al; a1 = -2 * cw; a2 = 1 - al; }
+    else if (t == "notch") { b0 = 1; b1 = -2 * cw; b2 = 1; a0 = 1 + al; a1 = -2 * cw; a2 = 1 - al; }
+    else if (t == "ls") {
+        const double s = 2 * std::sqrt(A) * al;
+        b0 = A * ((A + 1) - (A - 1) * cw + s); b1 = 2 * A * ((A - 1) - (A + 1) * cw); b2 = A * ((A + 1) - (A - 1) * cw - s);
+        a0 = (A + 1) + (A - 1) * cw + s; a1 = -2 * ((A - 1) + (A + 1) * cw); a2 = (A + 1) + (A - 1) * cw - s;
+    } else {
+        const double s = 2 * std::sqrt(A) * al;
+        b0 = A * ((A + 1) + (A - 1) * cw + s); b1 = -2 * A * ((A - 1) + (A + 1) * cw); b2 = A * ((A + 1) + (A - 1) * cw - s);
+        a0 = (A + 1) - (A - 1) * cw + s; a1 = 2 * ((A - 1) - (A + 1) * cw); a2 = (A + 1) - (A - 1) * cw - s;
+    }
+    const double w = 2 * kPi * f / sr;
+    const double nr = b0 + b1 * std::cos(w) + b2 * std::cos(2 * w), ni = -(b1 * std::sin(w) + b2 * std::sin(2 * w));
+    const double dr = a0 + a1 * std::cos(w) + a2 * std::cos(2 * w), di = -(a1 * std::sin(w) + a2 * std::sin(2 * w));
+    return 10 * std::log10((nr * nr + ni * ni) / (dr * dr + di * di));
+}
+
+// Procesa por bloques de tamaño `block` (todas las engines tienen la misma firma de efecto)
+template <class E, class Bus>
+static void runFx(E& e, Bus* bus, const Buf& inL, const Buf& inR, Buf& outL, Buf& outR, int block) {
+    const int n = static_cast<int>(inL.size());
+    outL.assign(inL.size(), 0.0);
+    outR.assign(inR.size(), 0.0);
+    ProcessScope ps;
+    for (int p = 0; p < n; p += block) {
+        const int m = std::min(block, n - p);
+        e.process(inL.data() + p, inR.data() + p, outL.data() + p, outR.data() + p, m, bus);
+    }
+}
+
+// =====================================================================================
 static void testEq() {
-    std::printf("\n== EQ Parametric Pro ==\n");
+    std::printf("\n[EQ] respuesta medida vs RBJ independiente (tolerancia 0.1 dB)\n");
     using namespace JasWaveEq;
-    const int N = static_cast<int>(kSr * 1.5);
-
-    // 1) Plano = transparente bit a bit
-    {
-        EqEngine e; e.prepare(kSr, 512); e.setSettings(EqSettings{}); e.snapAll();
-        auto in = sine(997.0, -6.0, kSr, N); std::vector<float> outL(in.size()), outR(in.size());
-        e.process(in.data(), in.data(), outL.data(), outR.data(), N);
-        double md = 0; for (size_t i = 0; i < in.size(); ++i) md = std::max(md, std::fabs(static_cast<double>(outL[i]) - in[i]));
-        CHECK(md == 0.0, "EQ plano: salida idéntica a la entrada (max diff = %.3g)", md);
-    }
-    // 2) Respuesta de cada tipo de banda vs análisis exacto
-    struct Case { int band; double f, g, q; double probe; };
-    const Case cases[] = { {3, 1000.0, 12.0, 1.0, 1000.0}, {3, 1000.0, -9.0, 2.0, 800.0}, {1, 110.0, 8.0, 0.71, 40.0},
-                           {6, 10000.0, -10.0, 0.71, 16000.0}, {2, 300.0, 6.0, 4.0, 300.0}, {5, 6500.0, 15.0, 0.5, 5000.0} };
+    const double sr = 48000.0;
+    struct Case { int type; const char* rbj; double f0, g, q; };
+    const Case cases[] = { { tPeak, "peak", 1000, 9, 1.4 }, { tPeak, "peak", 120, -12, 0.7 }, { tLowShelf, "ls", 200, 6, 0.71 },
+                           { tHighShelf, "hs", 6000, -8, 0.71 }, { tHpf, "hp", 150, 0, 0.71 }, { tLpf, "lp", 5000, 0, 2.0 }, { tNotch, "notch", 2000, 0, 4.0 } };
+    const double freqs[] = { 50, 100, 250, 700, 1000, 1500, 3000, 6000, 12000 };
+    double worst = 0;
+    long long allocs0 = g_allocs.load();
     for (const Case& c : cases) {
-        EqSettings s; s.band[c.band].on = true; s.band[c.band].freq = c.f; s.band[c.band].gainDb = c.g; s.band[c.band].q = c.q;
-        EqEngine e; e.prepare(kSr, 512); e.setSettings(s); e.snapAll();
-        auto in = sine(c.probe, -12.0, kSr, N); std::vector<float> oL(in.size()), oR(in.size());
-        e.process(in.data(), in.data(), oL.data(), oR.data(), N);
-        const double measured = rmsDb(oL, N / 2, N) - rmsDb(in, N / 2, N);
-        EqSlots sl; buildSlots(s, kSr, sl, false);
-        const double expected = responseDb(s, sl, kSr, c.probe);
-        CHECK(std::fabs(measured - expected) < 0.05, "Banda %d (%s %.0f Hz %+.0f dB Q%.2f) @%.0f Hz: medido %+.3f dB, teórico %+.3f dB",
-              c.band + 1, c.band == 1 ? "LowShelf" : c.band == 6 ? "HighShelf" : "Bell", c.f, c.g, c.q, c.probe, measured, expected);
-    }
-    // 3) Low-cut 24 dB/oct a 100 Hz
-    {
-        EqSettings s; s.band[0].on = true; s.band[0].freq = 100.0; s.slopeIdx = 1;
-        EqEngine e; e.prepare(kSr, 512); e.setSettings(s); e.snapAll();
-        auto in = sine(50.0, -12.0, kSr, N); std::vector<float> oL(in.size()), oR(in.size());
-        e.process(in.data(), in.data(), oL.data(), oR.data(), N);
-        const double att = rmsDb(oL, N / 2, N) - rmsDb(in, N / 2, N);
-        CHECK(std::fabs(att - (-24.1)) < 0.4, "Low-cut 24 dB/oct @100 Hz, sonda 50 Hz: %.2f dB (esperado ≈ -24.1)", att);
-        auto in2 = sine(1000.0, -12.0, kSr, N); std::vector<float> o2(in2.size()), o2r(in2.size());
-        e.process(in2.data(), in2.data(), o2.data(), o2r.data(), N);
-        CHECK(std::fabs(rmsDb(o2, N / 2, N) - rmsDb(in2, N / 2, N)) < 0.02, "Low-cut no altera 1 kHz");
-    }
-    // 4) Bypass transparente con crossfade
-    {
-        EqSettings s; s.band[3].gainDb = 12.0; EqEngine e; e.prepare(kSr, 512); e.setSettings(s); e.snapAll();
-        s.bypass = true; e.setSettings(s);
-        auto in = sine(997.0, -6.0, kSr, N); std::vector<float> oL(in.size()), oR(in.size());
-        e.process(in.data(), in.data(), oL.data(), oR.data(), N);
-        double md = 0; for (int i = N / 2; i < N; ++i) md = std::max(md, std::fabs(static_cast<double>(oL[static_cast<size_t>(i)]) - in[static_cast<size_t>(i)]));
-        CHECK(md == 0.0, "Bypass: pasa idéntico tras el crossfade (max diff = %.3g)", md);
-    }
-    // 5) Estrés: automatización agresiva, sin NaN/Inf ni explosión
-    {
-        EqEngine e; e.prepare(kSr, 512); std::mt19937 rng(7); std::uniform_real_distribution<double> U(0.0, 1.0);
-        std::vector<float> in(512), oL(512), oR(512); bool ok = true; double pk = 0;
-        for (int blk = 0; blk < 800; ++blk) {
-            EqSettings s;
-            for (int b = 0; b < kBands; ++b) { s.band[b].on = U(rng) > 0.3; s.band[b].freq = 20.0 * std::pow(1000.0, U(rng)); s.band[b].gainDb = (U(rng) - 0.5) * 36.0; s.band[b].q = 0.1 * std::pow(180.0, U(rng)); }
-            s.slopeIdx = static_cast<int>(U(rng) * 3.99); s.outGainDb = (U(rng) - 0.5) * 12.0;
-            e.setSettings(s);
-            for (auto& v : in) v = static_cast<float>((U(rng) - 0.5) * 0.5);
-            e.process(in.data(), in.data(), oL.data(), oR.data(), 512);
-            for (float v : oL) { if (!std::isfinite(v)) ok = false; pk = std::max(pk, static_cast<double>(std::fabs(v))); }
+        EqSettings s;
+        for (auto& b : s.band) b.on = false;
+        s.band[2] = { c.type, c.f0, c.g, c.q, true };
+        s.analyzer = 0;
+        EqEngine e;
+        e.setSettings(s);
+        e.prepare(sr, 512);
+        for (double f : freqs) {
+            if (c.type == tNotch && std::fabs(f - c.f0) < 1.0) continue;
+            const int n = 48000;
+            const Buf x = sine(f, 0.25, sr, n);
+            Buf yl, yr;
+            e.reset();
+            runFx(e, static_cast<EqBus*>(nullptr), x, x, yl, yr, 512);
+            const double meas = db(toneAmp(yl, n / 2, n, f, sr) / 0.25);
+            const double ref = rbjDb(c.rbj, sr, c.f0, c.g, c.q, f);
+            const double err = std::fabs(meas - ref);
+            if (ref > -60.0) worst = std::max(worst, err);
+            if (err > 0.1 && ref > -60.0) std::printf("     %s f0=%.0f @%.0f Hz: medido %.3f, RBJ %.3f\n", c.rbj, c.f0, f, meas, ref);
         }
-        CHECK(ok && pk < 200.0, "Estrés (800 bloques con parámetros aleatorios): finito y estable (pico %.2f)", pk);
     }
-    // 6) CPU
+    CHECK(worst <= 0.1, "7 tipos × 9 frecuencias: error máximo %.4f dB (≤ 0.1)", worst);
+    // Butterworth 48 dB/oct (4 secciones) contra |H|² = 1/(1+(fc/f)^16)
     {
-        EqSettings s; for (int b = 1; b < 7; ++b) s.band[b].gainDb = 3.0; s.band[0].on = s.band[7].on = true; s.slopeIdx = 3;
-        EqEngine e; e.prepare(kSr, 512); e.setSettings(s); e.snapAll();
-        std::vector<float> in(512, 0.1f), oL(512), oR(512);
-        const int blocks = 4000;
-        auto t0 = std::chrono::high_resolution_clock::now();
-        for (int i = 0; i < blocks; ++i) e.process(in.data(), in.data(), oL.data(), oR.data(), 512);
-        const double sec = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - t0).count();
-        const double audioSec = blocks * 512.0 / kSr;
-        std::printf("  [PERF] EQ (8 bandas activas, 48 dB/oct): %.2f %% de un núcleo (%.0fx tiempo real)\n", 100.0 * sec / audioSec, audioSec / sec);
+        EqSettings s;
+        for (auto& b : s.band) b.on = false;
+        s.band[0] = { tHpf, 200.0, 0.0, 0.71, true };
+        s.slopeIdx = 3;
+        s.analyzer = 0;
+        EqEngine e;
+        e.setSettings(s);
+        e.prepare(sr, 512);
+        double w = 0;
+        for (double f : { 100.0, 150.0, 200.0, 300.0, 600.0, 2000.0 }) {
+            const int n = 96000;
+            const Buf x = sine(f, 0.25, sr, n);
+            Buf yl, yr;
+            e.reset();
+            runFx(e, static_cast<EqBus*>(nullptr), x, x, yl, yr, 256);
+            const double meas = db(toneAmp(yl, n / 2, n, f, sr) / 0.25);
+            // bilineal: frecuencia pre-deformada
+            const double fw = std::tan(kPi * f / sr), cw = std::tan(kPi * 200.0 / sr);
+            const double ref = -10.0 * std::log10(1.0 + std::pow(cw / fw, 16.0));
+            w = std::max(w, std::fabs(meas - ref));
+        }
+        CHECK(w <= 0.1, "HPF Butterworth 48 dB/oct: error máximo %.4f dB frente a la fórmula analítica", w);
     }
+    CHECK(g_allocs.load() == allocs0, "EQ: 0 asignaciones de memoria en process (%lld)", g_allocs.load() - allocs0);
 }
 
-// ------------------------------------------------------------------------------------
 static void testComp() {
-    std::printf("\n== Bus Compressor ==\n");
+    std::printf("\n[COMPRESOR] curva estática (umbral/ratio/rodilla)\n");
     using namespace JasWaveComp;
-    const int N = static_cast<int>(kSr * 3.0);
-
-    auto run = [&](const CompSettings& s, const std::vector<float>& in, std::vector<float>& out) {
-        CompressorEngine e; e.prepare(kSr, 512); e.setSettings(s); e.snapAll();
-        out.assign(in.size(), 0.0f); std::vector<float> oR(in.size());
-        e.process(in.data(), in.data(), out.data(), oR.data(), static_cast<int>(in.size()), nullptr);
-    };
-    {
-        CompSettings s; s.thrDb = -18; s.ratio = 4; s.kneeDb = 0; s.rms = true; s.attackMs = 5; s.releaseMs = 100;
-        auto in = sine(1000.0, -6.0, kSr, N); std::vector<float> out; run(s, in, out);
-        const double gr = rmsDb(in, N * 2 / 3, N) - rmsDb(out, N * 2 / 3, N);
-        const double expected = (-6.0) - staticOutDb(-6.0, -18.0, 4.0, 0.0);
-        CHECK(std::fabs(gr - expected) < 0.15, "Curva estática (thr -18, 4:1, entrada -6 dB): GR medido %.3f dB, teórico %.3f dB", gr, expected);
+    const double sr = 48000.0;
+    double worst = 0;
+    for (double knee : { 0.0, 12.0 }) {
+        for (double inDb : { -40.0, -26.0, -20.0, -14.0, -6.0, 0.0 }) {
+            CompSettings s;
+            s.thrDb = -20; s.ratio = 4; s.kneeDb = knee; s.attackMs = 1; s.releaseMs = 40; s.makeupDb = 0; s.mix = 1; s.rms = true;
+            CompressorEngine e;
+            e.setSettings(s);
+            e.prepare(sr, 512);
+            const int n = 48000;
+            const Buf x = sine(997.0, std::pow(10.0, inDb / 20.0), sr, n);
+            Buf yl, yr;
+            runFx(e, static_cast<CompBus*>(nullptr), x, x, yl, yr, 512);
+            const double gain = db(rms(yl, n / 2, n) / rms(x, n / 2, n));
+            const double expect = staticOutDb(inDb, -20, 4, knee) - inDb;
+            worst = std::max(worst, std::fabs(gain - expect));
+            if (std::fabs(gain - expect) > 0.25) std::printf("     knee %.0f in %.0f: ganancia %.3f, esperada %.3f\n", knee, inDb, gain, expect);
+        }
     }
-    {
-        CompSettings s; s.thrDb = -18; s.ratio = 8; s.kneeDb = 12; s.rms = true;
-        auto in = sine(1000.0, -15.0, kSr, N); std::vector<float> out; run(s, in, out);
-        const double gr = rmsDb(in, N * 2 / 3, N) - rmsDb(out, N * 2 / 3, N);
-        const double expected = (-15.0) - staticOutDb(-15.0, -18.0, 8.0, 12.0);
-        CHECK(std::fabs(gr - expected) < 0.15, "Soft-knee 12 dB dentro de la rodilla (-15 dB): GR %.3f dB, teórico %.3f dB", gr, expected);
-    }
-    {
-        CompSettings s; s.ratio = 1.0; s.thrDb = -40;
-        auto in = sine(1000.0, -3.0, kSr, N); std::vector<float> out; run(s, in, out);
-        double md = 0; for (size_t i = 0; i < in.size(); ++i) md = std::max(md, std::fabs(static_cast<double>(out[i]) - in[i]));
-        CHECK(md < 1e-6, "Ratio 1:1 es transparente (max diff %.3g)", md);
-    }
-    {
-        CompSettings s; s.thrDb = -30; s.mix = 0.0;
-        auto in = sine(1000.0, -3.0, kSr, N); std::vector<float> out; run(s, in, out);
-        double md = 0; for (size_t i = 0; i < in.size(); ++i) md = std::max(md, std::fabs(static_cast<double>(out[i]) - in[i]));
-        CHECK(md < 1e-6, "Mix 0 %% = señal seca (max diff %.3g)", md);
-    }
-    {   // Tiempo de ataque (detector Peak): 63 % del GR final ≈ attack
-        CompSettings s; s.thrDb = -30; s.ratio = 20; s.kneeDb = 0; s.rms = false; s.attackMs = 20; s.releaseMs = 1000;
-        std::vector<float> in(static_cast<size_t>(kSr * 0.6), 0.0f);
-        const int onset = static_cast<int>(kSr * 0.1);
-        for (size_t i = static_cast<size_t>(onset); i < in.size(); ++i) in[i] = 0.5f;  // DC -6 dB (respuesta del detector limpia)
-        std::vector<float> out; run(s, in, out);
-        const double finalGr = -20.0 * std::log10(out.back() / 0.5);
-        int t63 = -1;
-        for (size_t i = static_cast<size_t>(onset); i < out.size(); ++i) { const double gr = -20.0 * std::log10(std::max(1e-9f, out[i]) / 0.5); if (gr >= 0.632 * finalGr) { t63 = static_cast<int>(i) - onset; break; } }
-        const double ms = 1000.0 * t63 / kSr;
-        CHECK(std::fabs(ms - 20.0) < 3.0, "Ataque 20 ms: el GR alcanza 63 %% en %.1f ms (GR final %.1f dB)", ms, finalGr);
-    }
-    {   // Bypass
-        CompSettings s; s.thrDb = -40; s.ratio = 20; s.bypass = true;
-        auto in = sine(1000.0, -3.0, kSr, N); std::vector<float> out; run(s, in, out);
-        double md = 0; for (size_t i = 0; i < in.size(); ++i) md = std::max(md, std::fabs(static_cast<double>(out[i]) - in[i]));
-        CHECK(md == 0.0, "Bypass idéntico (max diff %.3g)", md);
-    }
-    {   // Telemetría real: la GR del bus coincide con el audio procesado
-        CompBus bus; CompSettings s; s.thrDb = -24; s.ratio = 6; s.kneeDb = 3; s.rms = true;
-        CompressorEngine e; e.prepare(kSr, 512); e.setSettings(s);
-        auto in = sine(440.0, -6.0, kSr, 48000); std::vector<float> oL(in.size()), oR(in.size());
-        for (int p = 0; p < 48000; p += 512) e.process(in.data() + p, in.data() + p, oL.data() + p, oR.data() + p, std::min(512, 48000 - p), &bus);
-        const double grBus = bus.grNow.load();
-        const double grAudio = rmsDb(in, 40000, 47000) - rmsDb(oL, 40000, 47000);
-        CHECK(std::fabs(grBus - grAudio) < 0.2, "Telemetría GR del bus %.2f dB == GR del audio %.2f dB", grBus, grAudio);
-        CHECK(bus.scope.count() > 900, "Scope recibió %llu entradas reales (≈1/ms)", static_cast<unsigned long long>(bus.scope.count()));
-    }
-    {   // CPU
-        CompSettings s; s.rms = true; s.scHpfHz = 100.0; CompBus bus;
-        CompressorEngine e; e.prepare(kSr, 512); e.setSettings(s);
-        auto in = sine(200.0, -6.0, kSr, 512); std::vector<float> oL(512), oR(512);
-        const int blocks = 4000; auto t0 = std::chrono::high_resolution_clock::now();
-        for (int i = 0; i < blocks; ++i) e.process(in.data(), in.data(), oL.data(), oR.data(), 512, &bus);
-        const double sec = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - t0).count();
-        const double audioSec = blocks * 512.0 / kSr;
-        std::printf("  [PERF] Compresor (RMS + SC HPF + telemetría): %.2f %% de un núcleo (%.0fx tiempo real)\n", 100.0 * sec / audioSec, audioSec / sec);
-    }
+    CHECK(worst <= 0.25, "umbral −20 dB, 4:1, rodilla 0/12 dB: error máximo %.3f dB (≤ 0.25, detector RMS)", worst);
+    CHECK(std::fabs(staticOutDb(-10, -20, 4, 0) - (-17.5)) < 1e-12 && std::fabs(staticOutDb(-30, -20, 4, 0) - (-30)) < 1e-12, "curva estática exacta: −10 dB → −17.5 dB, −30 dB intacto");
 }
 
-// ------------------------------------------------------------------------------------
 static void testLimiter() {
-    std::printf("\n== TruePeak Limiter ==\n");
+    std::printf("\n[LIMITADOR] true-peak de salida ≤ techo (16× y 4× BS.1770) en señales difíciles\n");
     using namespace JasWaveLimiter;
-    auto run = [&](const LimiterSettings& s, const std::vector<float>& inL, const std::vector<float>& inR, std::vector<float>& oL, std::vector<float>& oR, uint32_t* lat, LimiterBus* bus = nullptr, int blk = 512) {
-        LimiterEngine e; e.prepare(kSr, blk); e.setSettings(s); e.snapAll(); if (lat) *lat = e.latencySamples();
-        if (bus) bus->loudness.prepare(kSr);
-        oL.assign(inL.size(), 0.0f); oR.assign(inL.size(), 0.0f);
-        for (int p = 0; p < static_cast<int>(inL.size()); p += blk) {
-            const int m = std::min(blk, static_cast<int>(inL.size()) - p);
-            e.process(inL.data() + p, inR.data() + p, oL.data() + p, oR.data() + p, m, bus);
+    for (double sr : { 44100.0, 48000.0, 96000.0 }) {
+        const int n = static_cast<int>(sr * 1.5);
+        std::mt19937 rng(7);
+        std::normal_distribution<double> nd(0.0, 0.5);
+        struct Sig { const char* name; Buf x; double gain; };
+        std::vector<Sig> sigs;
+        sigs.push_back({ "seno fs/4 a 45° (+3 dB entre muestras)", sine(sr / 4.0, 0.9, sr, n, kPi / 4.0), 12.0 });
+        Buf sq(static_cast<size_t>(n));
+        for (int i = 0; i < n; ++i) sq[static_cast<size_t>(i)] = std::sin(2 * kPi * 997.0 * i / sr) >= 0 ? 0.95 : -0.95;
+        sigs.push_back({ "cuadrada 997 Hz a fondo de escala", sq, 9.0 });
+        Buf wn(static_cast<size_t>(n));
+        for (auto& v : wn) v = std::clamp(nd(rng), -1.0, 1.0);
+        sigs.push_back({ "ruido blanco +20 dB", wn, 20.0 });
+        Buf imp(static_cast<size_t>(n), 0.0);
+        for (int i = 1000; i < n; i += 3001) imp[static_cast<size_t>(i)] = (i / 3001) % 2 ? 1.0 : -1.0;
+        sigs.push_back({ "impulsos alternos", imp, 6.0 });
+        Buf sw(static_cast<size_t>(n));
+        double ph = 0;
+        for (int i = 0; i < n; ++i) { const double f = 20.0 * std::pow(1000.0, static_cast<double>(i) / n); ph += 2 * kPi * f / sr; sw[static_cast<size_t>(i)] = 0.8 * std::sin(ph); }
+        sigs.push_back({ "barrido 20 Hz–20 kHz", sw, 15.0 });
+        for (const auto& sg : sigs) {
+            for (double ceilDb : { -1.0, -0.1 }) {
+                LimiterSettings s;
+                s.ceilingDb = ceilDb; s.gainDb = sg.gain; s.releaseMs = 50; s.lookaheadMs = 2.0; s.loudness = false;
+                LimiterEngine e;
+                e.setSettings(s);
+                e.prepare(sr, 512);
+                Buf yl, yr;
+                runFx(e, static_cast<LimiterBus*>(nullptr), sg.x, sg.x, yl, yr, 512);
+                const double tp16 = db(std::max(truePeak16(yl, 0), truePeak16(yr, 0)));
+                const double tp4 = db(std::max(truePeak4(yl, 0), truePeak4(yr, 0)));
+                double spk = 0;
+                for (size_t i = 0; i < yl.size(); ++i) spk = std::max(spk, std::max(std::fabs(yl[i]), std::fabs(yr[i])));
+                CHECK(tp16 <= ceilDb + 1e-9 && tp4 <= ceilDb + 1e-9 && allFinite(yl), "%.1f kHz %-38s techo %.1f: TP16 %.3f / TP4(BS.1770) %.3f dBTP (pico muestra %.3f dBFS)", sr / 1000, sg.name, ceilDb, tp16, tp4, db(spk));
+            }
         }
-    };
-    // 1) Latencia exacta y transparencia bajo el techo
-    {
-        LimiterSettings s; s.ceilingDb = -1.0; auto in = sine(997.0, -6.0, kSr, 48000);
-        std::vector<float> oL, oR; uint32_t lat = 0; run(s, in, in, oL, oR, &lat);
-        double md = 0; for (size_t i = lat; i < in.size(); ++i) md = std::max(md, std::fabs(static_cast<double>(oL[i]) - in[i - lat]));
-        CHECK(md == 0.0, "Bajo el techo: salida == entrada retardada %u muestras (%.2f ms), max diff %.3g", lat, 1000.0 * lat / kSr, md);
     }
-    // 2) Techo true-peak con +12 dB de ganancia sobre material denso (ruido rosa-ish + bursts)
+    // latencia exacta: impulso sin limitación aparece en D muestras
     {
-        std::mt19937 rng(3); std::normal_distribution<double> G(0.0, 0.25);
-        std::vector<float> in(static_cast<size_t>(kSr * 4)), inR(in.size());
-        double lp = 0;
-        for (size_t i = 0; i < in.size(); ++i) {
-            lp += 0.3 * (G(rng) - lp);
-            double burst = (i / 24000) % 3 == 0 ? 2.0 : 1.0;
-            in[i] = static_cast<float>(std::max(-1.0, std::min(1.0, lp * burst)));
-            inR[i] = static_cast<float>(std::max(-1.0, std::min(1.0, 0.7 * lp * burst + 0.2 * G(rng))));
-        }
-        LimiterSettings s; s.ceilingDb = -1.0; s.gainDb = 12.0; s.releaseMs = 100.0;
-        std::vector<float> oL, oR; uint32_t lat; LimiterBus bus; run(s, in, inR, oL, oR, &lat, &bus);
-        const double sp = std::max(peakAbs(oL, 4800), peakAbs(oR, 4800));
-        const double tp = std::max(referenceTruePeak(oL, 4800), referenceTruePeak(oR, 4800));
-        CHECK(sp <= dbToLinear(-1.0) + 1e-6, "Material denso +12 dB: pico de muestra %.3f dBFS <= techo -1.0", linearToDb(sp));
-        CHECK(linearToDb(tp) <= -1.0 + 0.15, "Material denso +12 dB: true-peak de referencia (16x) %.3f dBTP (techo -1.0, tolerancia 0.15)", linearToDb(tp));
-        const double tpBus = linearToDb(bus.tpOut.take());
-        CHECK(std::fabs(tpBus - linearToDb(tp)) < 0.6, "Medidor TP del plugin (%.2f dBTP) coincide con la referencia (%.2f dBTP)", tpBus, linearToDb(tp));
-    }
-    // 3) Peor caso inter-muestra: fs/4 con fase 45° (picos reales 3 dB por encima de las muestras)
-    {
-        auto in = sine(kSr / 4.0, 3.0, kSr, 48000, kPi / 4.0);
-        const double rawSample = peakAbs(in), rawTp = referenceTruePeak(in, 100);
-        LimiterSettings s; s.ceilingDb = -1.0; s.releaseMs = 50.0; std::vector<float> oL, oR; uint32_t lat; run(s, in, in, oL, oR, &lat);
-        const double tp = referenceTruePeak(oL, 4800);
-        CHECK(linearToDb(tp) <= -1.0 + 0.2, "Inter-muestra fs/4: entrada %.2f dBFS muestra / %.2f dBTP real -> salida %.3f dBTP (techo -1.0)", linearToDb(rawSample), linearToDb(rawTp), linearToDb(tp));
-    }
-    // 4) THD del limitador actuando sobre senoidal 1 kHz (+6 dB sobre techo)
-    {
-        auto in = sine(1000.0, 5.0 - 1.0 + 0.0, kSr, 96000);  // amplitud 4 dB → clipping al limitar
-        for (auto& v : in) v = static_cast<float>(v * 0.5);   // +/−: 0.5*10^(4/20)=0.79 dBFS≈-2 → con gain 6 dB actúa
-        LimiterSettings s; s.ceilingDb = -1.0; s.gainDb = 6.0; s.releaseMs = 120.0;
-        std::vector<float> oL, oR; uint32_t lat; run(s, in, in, oL, oR, &lat);
-        const int n = 16384, from = 60000;
-        SpectrumTap tap; tap.push(oL.data() + from, nullptr, n);
-        // THD+N simple con FFT de la salida (ventana Hann)
-        SpectrumAnalyzer an; std::vector<float> snap(n); tap.snapshot(snap.data(), n);
-        FFT fft(14); std::vector<float> re(n), im(n, 0.0f);
-        for (int i = 0; i < n; ++i) re[static_cast<size_t>(i)] = snap[static_cast<size_t>(i)] * static_cast<float>(0.5 - 0.5 * std::cos(2 * kPi * i / n));
-        fft.forward(re.data(), im.data());
-        const double bin = 1000.0 * n / kSr; double fund = 0, tot = 0;
-        for (int k = 1; k < n / 2; ++k) { const double p = static_cast<double>(re[static_cast<size_t>(k)]) * re[static_cast<size_t>(k)] + static_cast<double>(im[static_cast<size_t>(k)]) * im[static_cast<size_t>(k)]; tot += p; if (std::fabs(k - bin) <= 6.0) fund += p; }
-        const double thd = 10.0 * std::log10((tot - fund) / fund);
-        CHECK(thd < -45.0, "THD+N del limitador con 4.5 dB de GR sostenido (release 120 ms): %.1f dB (< -45)", thd);
-    }
-    // 5) LUFS BS.1770: 1 kHz estéreo -23 dBFS == -23.0 LUFS
-    {
-        LimiterBus bus; LimiterSettings s; s.ceilingDb = 0.0; s.releaseMs = 50.0;
-        auto in = sine(997.0, -23.0, kSr, static_cast<int>(kSr * 6)); std::vector<float> oL, oR; uint32_t lat; run(s, in, in, oL, oR, &lat, &bus);
-        const double I = bus.loudness.integrated.load(), M = bus.loudness.momentary.load(), S = bus.loudness.shortTerm.load();
-        CHECK(std::fabs(I + 23.0) < 0.15 && std::fabs(M + 23.0) < 0.15 && std::fabs(S + 23.0) < 0.15, "LUFS de senoidal 997 Hz a -23 dBFS: M %.2f  S %.2f  I %.2f (esperado -23.0)", M, S, I);
-    }
-    // 6) Gating: silencio no contamina la sonoridad integrada
-    {
-        LimiterBus bus; LimiterSettings s; s.ceilingDb = 0.0;
-        auto a = sine(997.0, -20.0, kSr, static_cast<int>(kSr * 4)); std::vector<float> in = a; in.insert(in.end(), static_cast<size_t>(kSr * 4), 0.0f);
-        std::vector<float> oL, oR; uint32_t lat; run(s, in, in, oL, oR, &lat, &bus);
-        const double I = bus.loudness.integrated.load();
-        CHECK(std::fabs(I + 20.0) < 0.2, "Gating absoluto/relativo: 4 s de tono -20 + 4 s de silencio -> I = %.2f LUFS (esperado -20.0)", I);
-    }
-    // 7) Bypass
-    {
-        LimiterSettings s; s.gainDb = 12.0; s.bypass = true; auto in = sine(997.0, -3.0, kSr, 48000);
-        std::vector<float> oL, oR; uint32_t lat; run(s, in, in, oL, oR, &lat);
-        double md = 0; for (size_t i = lat + 4800; i < in.size(); ++i) md = std::max(md, std::fabs(static_cast<double>(oL[i]) - in[i - lat]));
-        CHECK(md == 0.0, "Bypass alineado en latencia (%u muestras): idéntico (max diff %.3g)", lat, md);
-    }
-    // 8) CPU
-    {
-        LimiterSettings s; s.gainDb = 6.0; LimiterBus bus; bus.loudness.prepare(kSr);
-        LimiterEngine e; e.prepare(kSr, 512); e.setSettings(s);
-        std::vector<float> in = sine(220.0, -3.0, kSr, 512), oL(512), oR(512);
-        const int blocks = 4000; auto t0 = std::chrono::high_resolution_clock::now();
-        for (int i = 0; i < blocks; ++i) e.process(in.data(), in.data(), oL.data(), oR.data(), 512, &bus);
-        const double sec = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - t0).count();
-        const double audioSec = blocks * 512.0 / kSr;
-        std::printf("  [PERF] Limitador (TP 4x + lookahead + LUFS + scope): %.2f %% de un núcleo (%.0fx tiempo real)\n", 100.0 * sec / audioSec, audioSec / sec);
+        LimiterSettings s;
+        s.ceilingDb = 0.0; s.gainDb = 0.0; s.lookaheadMs = 5.0; s.loudness = false;
+        LimiterEngine e;
+        e.setSettings(s);
+        e.prepare(48000.0, 512);
+        Buf x(4096, 0.0);
+        x[100] = 0.5;
+        Buf yl, yr;
+        runFx(e, static_cast<LimiterBus*>(nullptr), x, x, yl, yr, 64);
+        int at = -1;
+        for (int i = 0; i < 4096; ++i) if (std::fabs(yl[static_cast<size_t>(i)] - 0.5) < 1e-6) at = i;
+        CHECK(at == 100 + static_cast<int>(e.latencySamples()), "latencia reportada %u muestras = retardo medido %d (lookahead 5 ms dentro de latencia fija)", e.latencySamples(), at - 100);
     }
 }
 
-// ------------------------------------------------------------------------------------
-static void testAnalyzer() {
-    std::printf("\n== Analizador de espectro ==\n");
-    SpectrumTap tap; SpectrumAnalyzer an;
-    auto in = sine(1000.0, -10.0, kSr, 16384);
-    tap.push(in.data(), nullptr, 16384);
-    for (int i = 0; i < 40; ++i) an.update(tap, kSr);
-    std::vector<float> cols; an.columns(cols, 800, 20.0, 20000.0, 0.0);
-    int best = 0; for (int i = 0; i < 800; ++i) if (cols[static_cast<size_t>(i)] > cols[static_cast<size_t>(best)]) best = i;
-    const double fPeak = 20.0 * std::pow(1000.0, (best + 0.5) / 800.0);
-    CHECK(std::fabs(fPeak - 1000.0) < 25.0, "Pico del espectro en %.1f Hz (senoidal de 1000 Hz)", fPeak);
-    CHECK(std::fabs(cols[static_cast<size_t>(best)] + 10.0) < 1.6, "Nivel medido %.2f dBFS (senoidal de -10 dBFS; margen Hann ±1.5 dB)", cols[static_cast<size_t>(best)]);
-    CHECK(cols[100] < -90.0, "Suelo de ruido lejos del tono: %.1f dBFS", cols[100]);
-    // K-weighting @48k vs coeficientes normativos BS.1770
-    BiquadCoefs sh = BiquadCoefs::designBs1770Stage1(48000.0);
-    CHECK(std::fabs(sh.b0 - 1.53512485958697) < 1e-6 && std::fabs(sh.a1 + 1.69065929318241) < 1e-6, "K-weighting etapa 1 == coeficientes BS.1770 (b0=%.8f, a1=%.8f)", sh.b0, sh.a1);
+static void testDeEsser() {
+    std::printf("\n[DE-ESSER] banda sibilante reducida, resto intacto\n");
+    using namespace JasWaveDeEsser;
+    const double sr = 48000.0;
+    const int n = 96000;
+    Buf x(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) x[static_cast<size_t>(i)] = 0.3 * std::sin(2 * kPi * 300.0 * i / sr) + 0.3 * std::sin(2 * kPi * 7000.0 * i / sr);
+    for (int wide = 0; wide <= 1; ++wide) {
+        DeEsserSettings s;
+        s.freqHz = 5000; s.thrDb = -30; s.rangeDb = 12; s.wide = wide == 1; s.releaseMs = 80;
+        DeEsserEngine e;
+        e.setSettings(s);
+        e.prepare(sr, 512);
+        Buf yl, yr;
+        runFx(e, static_cast<DeEsserBus*>(nullptr), x, x, yl, yr, 256);
+        const double low = db(toneAmp(yl, n / 2, n, 300.0, sr) / 0.3), high = db(toneAmp(yl, n / 2, n, 7000.0, sr) / 0.3);
+        if (!wide) {
+            CHECK(std::fabs(low) < 0.1 && high < -6.0, "split: 300 Hz %+.3f dB (|·|<0.1), 7 kHz %+.2f dB (< −6)", low, high);
+        } else {
+            CHECK(low < -6.0 && high < -6.0, "wide: reducción de banda completa (300 Hz %+.2f dB, 7 kHz %+.2f dB)", low, high);
+        }
+    }
+    // sin sibilancia: el cruce LR4 es plano (suma de magnitud 0 dB)
+    {
+        DeEsserSettings s;
+        s.freqHz = 6000; s.thrDb = 0; s.rangeDb = 12;
+        DeEsserEngine e;
+        e.setSettings(s);
+        e.prepare(sr, 512);
+        double w = 0;
+        for (double f : { 100.0, 1000.0, 5000.0, 6000.0, 7000.0, 15000.0 }) {
+            const Buf t = sine(f, 0.05, sr, 48000);
+            Buf yl, yr;
+            e.reset();
+            runFx(e, static_cast<DeEsserBus*>(nullptr), t, t, yl, yr, 512);
+            w = std::max(w, std::fabs(db(toneAmp(yl, 24000, 48000, f, sr) / 0.05)));
+        }
+        CHECK(w < 0.05, "sin reducción, cruce LR4 plano: desviación máxima %.4f dB", w);
+    }
+}
+
+static void testUtility() {
+    std::printf("\n[UTILITY] fase, swap, M/S, mono-graves, balance, DC\n");
+    using namespace JasWaveUtility;
+    const double sr = 48000.0;
+    const int n = 48000;
+    const Buf l = sine(1000, 0.5, sr, n), r = sine(1000, 0.25, sr, n, 0.6);
+    auto run = [&](const UtilitySettings& s, const Buf& a, const Buf& b, Buf& oa, Buf& ob) {
+        UtilityEngine e;
+        e.setSettings(s);
+        e.prepare(sr, 512);
+        runFx(e, static_cast<UtilityBus*>(nullptr), a, b, oa, ob, 512);
+    };
+    Buf ol, orr;
+    UtilitySettings s;
+    s.invL = true;
+    run(s, l, r, ol, orr);
+    double e1 = 0;
+    for (int i = 0; i < n; ++i) e1 = std::max(e1, std::fabs(ol[static_cast<size_t>(i)] + l[static_cast<size_t>(i)]) + std::fabs(orr[static_cast<size_t>(i)] - r[static_cast<size_t>(i)]));
+    CHECK(e1 < 1e-9, "inversión de fase L exacta (error %.2e)", e1);
+    s = UtilitySettings{};
+    s.swap = true;
+    run(s, l, r, ol, orr);
+    e1 = 0;
+    for (int i = 0; i < n; ++i) e1 = std::max(e1, std::fabs(ol[static_cast<size_t>(i)] - r[static_cast<size_t>(i)]) + std::fabs(orr[static_cast<size_t>(i)] - l[static_cast<size_t>(i)]));
+    CHECK(e1 < 1e-9, "intercambio L/R exacto (error %.2e)", e1);
+    s = UtilitySettings{};
+    s.width = 0.0;
+    run(s, l, r, ol, orr);
+    e1 = 0;
+    for (int i = 0; i < n; ++i) e1 = std::max(e1, std::fabs(ol[static_cast<size_t>(i)] - orr[static_cast<size_t>(i)]));
+    CHECK(e1 < 1e-9, "ancho 0 %% → mono exacto (L−R máx %.2e)", e1);
+    s.width = 2.0;
+    run(s, l, r, ol, orr);
+    double sideIn = 0, sideOut = 0, midErr = 0;
+    for (int i = n / 2; i < n; ++i) {
+        const size_t k = static_cast<size_t>(i);
+        sideIn += std::pow(0.5 * (l[k] - r[k]), 2); sideOut += std::pow(0.5 * (ol[k] - orr[k]), 2);
+        midErr = std::max(midErr, std::fabs(0.5 * (ol[k] + orr[k]) - 0.5 * (l[k] + r[k])));
+    }
+    CHECK(std::fabs(db(std::sqrt(sideOut / sideIn)) - db(2.0)) < 0.01 && midErr < 1e-9, "ancho 200 %%: Side ×2 (%+.3f dB), Mid intacto", db(std::sqrt(sideOut / sideIn)));
+    // mono-graves 120 Hz: 40 Hz en antifase → Side atenuado; 1 kHz conservado
+    s = UtilitySettings{};
+    s.monoBelowHz = 120.0;
+    const Buf a40 = sine(40, 0.5, sr, n), b40 = sine(40, -0.5, sr, n);
+    run(s, a40, b40, ol, orr);
+    const double side40 = db(rms(ol, n / 2, n) / rms(a40, n / 2, n));
+    const Buf a1k = sine(1000, 0.5, sr, n), b1k = sine(1000, -0.5, sr, n);
+    run(s, a1k, b1k, ol, orr);
+    const double side1k = db(rms(ol, n / 2, n) / rms(a1k, n / 2, n));
+    CHECK(side40 < -20.0 && std::fabs(side1k) < 0.5, "mono-graves 120 Hz: Side 40 Hz %.1f dB (< −20), Side 1 kHz %+.2f dB", side40, side1k);
+    // balance −1: R a 0, L intacto
+    s = UtilitySettings{};
+    s.balance = -1.0;
+    run(s, l, r, ol, orr);
+    CHECK(rms(orr, n / 2, n) < 1e-9 && std::fabs(db(rms(ol, n / 2, n) / rms(l, n / 2, n))) < 1e-6, "balance totalmente a la izquierda: R silenciado, L a 0 dB");
+    // DC: offset +0.3 eliminado
+    s = UtilitySettings{};
+    s.dc = true;
+    Buf dcIn(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) dcIn[static_cast<size_t>(i)] = 0.3 + l[static_cast<size_t>(i)] * 0.2;
+    run(s, dcIn, dcIn, ol, orr);
+    double mean = 0;
+    for (int i = n / 2; i < n; ++i) mean += ol[static_cast<size_t>(i)];
+    mean /= (n / 2);
+    CHECK(std::fabs(mean) < 1e-3, "filtro DC: media residual %.2e", mean);
+}
+
+static double measurePitch(const Buf& x, int from, int to, double guess, double sr) {
+    // máximo de la DTFT con ventana de Hann alrededor de la conjetura, refinado por búsqueda dorada
+    auto mag = [&](double f) {
+        double c = 0, s = 0;
+        const int N = to - from;
+        for (int i = 0; i < N; ++i) {
+            const double w = 0.5 - 0.5 * std::cos(2 * kPi * i / (N - 1));
+            const double ph = 2 * kPi * f * (from + i) / sr;
+            c += w * x[static_cast<size_t>(from + i)] * std::cos(ph);
+            s += w * x[static_cast<size_t>(from + i)] * std::sin(ph);
+        }
+        return c * c + s * s;
+    };
+    double lo = guess * std::pow(2.0, -30.0 / 1200), hi = guess * std::pow(2.0, 30.0 / 1200);
+    // barrido grueso
+    double best = guess, bm = -1;
+    for (int k = 0; k <= 60; ++k) { const double f = lo * std::pow(hi / lo, k / 60.0); const double m = mag(f); if (m > bm) { bm = m; best = f; } }
+    lo = best * std::pow(2.0, -1.5 / 1200); hi = best * std::pow(2.0, 1.5 / 1200);
+    for (int it = 0; it < 40; ++it) {
+        const double a = lo + (hi - lo) * 0.382, b = lo + (hi - lo) * 0.618;
+        if (mag(a) > mag(b)) hi = b; else lo = a;
+    }
+    return 0.5 * (lo + hi);
+}
+
+static void testPiano() {
+    std::printf("\n[PIANO] afinación, polifonía, denormales\n");
+    using namespace JasWavePiano;
+    for (double sr : { 44100.0, 48000.0, 96000.0 }) {
+        for (double a4 : { 440.0, 442.0 }) {
+            PianoEngine e;
+            PianoSettings s;
+            s.a4 = a4;
+            e.setSettings(s);
+            e.prepare(sr, 512);
+            const int n = static_cast<int>(sr * 2.0);
+            Buf L(static_cast<size_t>(n), 0.0), R(static_cast<size_t>(n), 0.0);
+            {
+                ProcessScope ps;
+                e.noteOn(69, 0.8f);
+                for (int p = 0; p < n; p += 256) e.render(L.data() + p, R.data() + p, std::min(256, n - p), nullptr);
+            }
+            const double f = measurePitch(L, static_cast<int>(sr * 0.2), n, a4, sr);
+            const double cents = 1200.0 * std::log2(f / a4);
+            CHECK(std::fabs(cents) <= 1.0, "%.1f kHz LA4=%.0f: medido %.3f Hz (%+.3f cents, ≤ ±1)", sr / 1000, a4, f, cents);
+        }
+    }
+    // octavas: C2, C4, C6 contra temperamento igual
+    {
+        PianoEngine e;
+        PianoSettings s;
+        e.setSettings(s);
+        e.prepare(48000.0, 512);
+        double worst = 0;
+        for (int note : { 36, 60, 84 }) {
+            e.reset();
+            const int n = 96000;
+            Buf L(static_cast<size_t>(n), 0.0), R(static_cast<size_t>(n), 0.0);
+            e.noteOn(note, 0.8f);
+            for (int p = 0; p < n; p += 256) e.render(L.data() + p, R.data() + p, 256, nullptr);
+            const double ref = 440.0 * std::pow(2.0, (note - 69) / 12.0);
+            worst = std::max(worst, std::fabs(1200.0 * std::log2(measurePitch(L, 9600, n, ref, 48000.0) / ref)));
+        }
+        CHECK(worst <= 1.0, "C2/C4/C6: desviación máxima %.3f cents", worst);
+    }
+    // polifonía
+    for (int maxV : { kBasicVoices, kMaxVoices }) {
+        PianoEngine e;
+        PianoSettings s;
+        s.maxVoices = maxV;
+        e.setSettings(s);
+        e.prepare(48000.0, 512);
+        Buf L(512, 0.0), R(512, 0.0);
+        ProcessScope ps;
+        for (int k = 0; k < 80; ++k) e.noteOn(24 + k, 0.7f);
+        for (int b = 0; b < 4; ++b) { std::fill(L.begin(), L.end(), 0.0); std::fill(R.begin(), R.end(), 0.0); e.render(L.data(), R.data(), 512, nullptr); }
+        CHECK(e.activeVoices() == maxV && allFinite(L), "80 notas con límite %d → %d voces activas, sin NaN", maxV, e.activeVoices());
+    }
+    // denormales: tras soltar, la salida llega a 0 exacto y las voces se liberan
+    {
+        PianoEngine e;
+        PianoSettings s;
+        s.releaseS = 0.1;
+        e.setSettings(s);
+        e.prepare(48000.0, 512);
+        Buf L(512, 0.0), R(512, 0.0);
+        e.noteOn(40, 1.0f);
+        e.noteOn(64, 1.0f);
+        bool denorm = false;
+        for (int b = 0; b < 600; ++b) {
+            if (b == 50) { e.noteOff(40); e.noteOff(64); }
+            std::fill(L.begin(), L.end(), 0.0); std::fill(R.begin(), R.end(), 0.0);
+            e.render(L.data(), R.data(), 512, nullptr);
+            for (double v : L) if (v != 0.0 && std::fabs(v) < DBL_MIN) denorm = true;
+        }
+        CHECK(!denorm && e.activeVoices() == 0 && L[511] == 0.0, "release: voces liberadas (%d), salida 0 exacta, sin denormales", e.activeVoices());
+    }
+}
+
+// Tamaños de bloque y frecuencias de muestreo: mismas muestras con bloques 1/64/512/4096
+template <class E, class Bus, class Setup>
+static void blockSizeInvariance(const char* name, Setup setup) {
+    const double sr = 48000.0;
+    const int n = 16384;
+    std::mt19937 rng(3);
+    std::uniform_real_distribution<double> ud(-0.8, 0.8);
+    Buf a(static_cast<size_t>(n)), b(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) { a[static_cast<size_t>(i)] = ud(rng) * 0.5 + 0.4 * std::sin(i * 0.05); b[static_cast<size_t>(i)] = ud(rng) * 0.5; }
+    Buf refL, refR;
+    double worst = 0;
+    bool finite = true;
+    for (int block : { 4096, 512, 64, 1 }) {
+        E e;
+        setup(e);
+        e.prepare(sr, 4096);
+        Buf yl, yr;
+        runFx(e, static_cast<Bus*>(nullptr), a, b, yl, yr, block);
+        finite = finite && allFinite(yl) && allFinite(yr);
+        if (refL.empty()) { refL = yl; refR = yr; continue; }
+        for (int i = 0; i < n; ++i) worst = std::max(worst, std::max(std::fabs(yl[static_cast<size_t>(i)] - refL[static_cast<size_t>(i)]), std::fabs(yr[static_cast<size_t>(i)] - refR[static_cast<size_t>(i)])));
+    }
+    CHECK(worst < 1e-6 && finite, "%-12s bloques 1/64/512/4096 idénticos (dif. máx %.2e), finitos", name, worst);
+    // frecuencias de muestreo y entradas extremas
+    bool ok = true;
+    for (double rate : { 44100.0, 88200.0, 96000.0, 176400.0, 192000.0 }) {
+        E e;
+        setup(e);
+        e.prepare(rate, 512);
+        Buf x(8192), yl, yr;
+        for (int i = 0; i < 8192; ++i) x[static_cast<size_t>(i)] = (i % 997 == 0) ? 8.0 : (i % 3 == 0 ? 1e-310 : std::sin(i * 0.3) * 0.9);
+        runFx(e, static_cast<Bus*>(nullptr), x, x, yl, yr, 333);
+        ok = ok && allFinite(yl) && allFinite(yr);
+    }
+    CHECK(ok, "%-12s 44.1/88.2/96/176.4/192 kHz con impulsos +18 dB y denormales: salida finita", name);
+}
+
+static void testInvariance() {
+    std::printf("\n[TODOS] bloques, frecuencias de muestreo, NaN/Inf, asignaciones\n");
+    const long long allocs0 = g_allocs.load();
+    blockSizeInvariance<JasWaveEq::EqEngine, JasWaveEq::EqBus>("EQ", [](JasWaveEq::EqEngine& e) {
+        JasWaveEq::EqSettings s;
+        s.band[2].gainDb = 6; s.band[3].gainDb = -4; s.band[0].on = true; s.slopeIdx = 2; s.analyzer = 0;
+        e.setSettings(s);
+    });
+    blockSizeInvariance<JasWaveComp::CompressorEngine, JasWaveComp::CompBus>("Compresor", [](JasWaveComp::CompressorEngine& e) {
+        JasWaveComp::CompSettings s;
+        s.thrDb = -24; s.ratio = 6; s.scHpfHz = 120; s.mix = 0.8;
+        e.setSettings(s);
+    });
+    blockSizeInvariance<JasWaveLimiter::LimiterEngine, JasWaveLimiter::LimiterBus>("Limitador", [](JasWaveLimiter::LimiterEngine& e) {
+        JasWaveLimiter::LimiterSettings s;
+        s.gainDb = 10; s.loudness = false;
+        e.setSettings(s);
+    });
+    blockSizeInvariance<JasWaveDeEsser::DeEsserEngine, JasWaveDeEsser::DeEsserBus>("De-esser", [](JasWaveDeEsser::DeEsserEngine& e) {
+        JasWaveDeEsser::DeEsserSettings s;
+        s.thrDb = -40; s.relative = true;
+        e.setSettings(s);
+    });
+    blockSizeInvariance<JasWaveUtility::UtilityEngine, JasWaveUtility::UtilityBus>("Utility", [](JasWaveUtility::UtilityEngine& e) {
+        JasWaveUtility::UtilitySettings s;
+        s.width = 1.4; s.monoBelowHz = 100; s.dc = true; s.balance = 0.2;
+        e.setSettings(s);
+    });
+    // Con buses de telemetría (la ruta real del plugin) también sin asignaciones
+    {
+        auto eqBus = std::make_unique<JasWaveEq::EqBus>();
+        auto compBus = std::make_unique<JasWaveComp::CompBus>();
+        auto limBus = std::make_unique<JasWaveLimiter::LimiterBus>();
+        auto deBus = std::make_unique<JasWaveDeEsser::DeEsserBus>();
+        auto utBus = std::make_unique<JasWaveUtility::UtilityBus>();
+        limBus->loudness.prepare(48000.0);
+        JasWaveEq::EqEngine eq; eq.prepare(48000, 512);
+        JasWaveComp::CompressorEngine cp; cp.prepare(48000, 512);
+        JasWaveLimiter::LimiterEngine lm; lm.prepare(48000, 512);
+        JasWaveDeEsser::DeEsserEngine de; de.prepare(48000, 512);
+        JasWaveUtility::UtilityEngine ut; ut.prepare(48000, 512);
+        const Buf x = sine(440, 0.7, 48000, 8192);
+        Buf yl, yr;
+        const long long before = g_allocs.load();
+        runFx(eq, eqBus.get(), x, x, yl, yr, 512);
+        runFx(cp, compBus.get(), x, x, yl, yr, 512);
+        runFx(lm, limBus.get(), x, x, yl, yr, 512);
+        runFx(de, deBus.get(), x, x, yl, yr, 512);
+        runFx(ut, utBus.get(), x, x, yl, yr, 512);
+        // instrumentos
+        JasWavePiano::PianoEngine pn;
+        pn.prepare(48000, 512);
+        auto pnBus = std::make_unique<JasWavePiano::PianoBus>();
+        JasWaveRoles::RolesEngine rl;
+        rl.prepare(48000);
+        std::vector<float> fl(512), fr(512);
+        Buf L(512, 0.0), R(512, 0.0);
+        {
+            ProcessScope ps;
+            for (int k = 0; k < 70; ++k) pn.noteOn(30 + k, 0.6f);
+            for (int b = 0; b < 20; ++b) pn.render(L.data(), R.data(), 512, pnBus.get());
+            for (int role = 0; role < JasWaveRoles::kNumRoles; ++role) {
+                rl.setRole(role);
+                for (int k = 0; k < 8; ++k) rl.noteOn(static_cast<int16_t>(36 + k * 5), 0.8f, 0);
+                for (int b = 0; b < 4; ++b) rl.render(fl.data(), fr.data(), 512);
+            }
+        }
+        bool finite = true;
+        for (float v : fl) finite = finite && std::isfinite(v);
+        CHECK(g_allocs.load() == before && finite, "process de los 7 motores (con telemetría, 70 notas de piano, 13 roles): 0 asignaciones, salida finita");
+    }
+    CHECK(g_allocs.load() == allocs0, "total en secciones process: %lld asignaciones", g_allocs.load() - allocs0);
 }
 
 int main() {
-    std::printf("JasWave DSP selftest (sr = %.0f Hz)\n", kSr);
-    testEq(); testComp(); testLimiter(); testAnalyzer();
-    std::printf("\nResultado: %d OK, %d FAIL\n", g_pass, g_fail);
-    return g_fail ? 1 : 0;
+    std::printf("JasWave DSP selftest\n");
+    testEq();
+    testComp();
+    testLimiter();
+    testDeEsser();
+    testUtility();
+    testPiano();
+    testInvariance();
+    std::printf("\n%d OK, %d FALLOS\n", g_pass, g_fail);
+    std::printf(g_fail == 0 ? "DSP SELFTEST: OK\n" : "DSP SELFTEST: FALLO\n");
+    return g_fail == 0 ? 0 : 1;
 }

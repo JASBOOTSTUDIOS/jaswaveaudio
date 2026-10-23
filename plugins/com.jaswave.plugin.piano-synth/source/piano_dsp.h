@@ -90,7 +90,7 @@ public:
         Voice* free = nullptr;
         int used = 0;
         for (auto& v : voices_) {
-            if (v.active) { if (!v.killing) ++used; }
+            if (v.active) { if (!v.killing || v.pendingNote >= 0) ++used; }   // las robadas con nota pendiente cuentan
             else if (!free) free = &v;
         }
         const int limit = std::clamp(s_.maxVoices, 1, kMaxVoices);
@@ -103,8 +103,9 @@ public:
             const double score = v.level * v.env * (v.released ? 0.25 : 1.0) + v.age * 1e-12;
             if (score < best) { best = score; victim = &v; }
         }
-        if (victim) startKill(*victim, note, vel);
-        else if (free) start(*free, note, vel);
+        if (victim) { startKill(*victim, note, vel); return; }
+        // todas las voces ya se están robando: la nota sustituye a la pendiente más antigua
+        for (auto& v : voices_) if (v.active && v.killing && v.pendingNote >= 0) { v.pendingNote = note; v.pendingVel = vel; return; }
     }
     void noteOff(int note) {
         for (auto& v : voices_) {
