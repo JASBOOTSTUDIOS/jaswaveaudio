@@ -33,14 +33,15 @@ function sse(eventos: unknown[], trozo = 7): Response {
 }
 
 describe('M1 — transporte de IA hacia el backend', () => {
-  it('chat: envía el JWT y solo mensajes/herramientas/opciones (nunca host, clave ni modelo local)', async () => {
+  it('chat: envía el JWT, el proveedor y el modelo elegidos, y nunca host ni clave', async () => {
     const { f, llamadas } = fetchFalso(() => json({ success: true, content: 'hola' }))
     const t = crearTransporteBackend({ base: 'https://api.test', token: async () => 'jwt-1', fetch: f })
     const r = await t.chat({
       kind: 'openai',
       baseUrl: 'https://api.openai.com',
       apiKey: 'sk-local',
-      model: 'gpt-local',
+      model: 'gpt-4o',
+      providerId: '6f1c2b8e-1d2a-4c3b-9a8e-112233445566',
       messages: [{ role: 'user', content: 'hola' }],
       tools: [{ name: 'transport.setBpm', description: 'BPM', parameters: { type: 'object' } }],
       requestId: 'chat-abc',
@@ -49,7 +50,9 @@ describe('M1 — transporte de IA hacia el backend', () => {
     assert.equal(llamadas[0]!.url, 'https://api.test/ia/chat')
     assert.equal((llamadas[0]!.init.headers as Record<string, string>).Authorization, 'Bearer jwt-1')
     const cuerpo = JSON.parse(String(llamadas[0]!.init.body))
-    assert.deepEqual(Object.keys(cuerpo).sort(), ['messages', 'requestId', 'tools'])
+    assert.deepEqual(Object.keys(cuerpo).sort(), ['messages', 'model', 'proveedorId', 'requestId', 'tools'])
+    assert.equal(cuerpo.proveedorId, '6f1c2b8e-1d2a-4c3b-9a8e-112233445566')
+    assert.ok(!JSON.stringify(cuerpo).includes('sk-local'))
   })
 
   it('sin sesión no llama al servidor y pide iniciar sesión', async () => {

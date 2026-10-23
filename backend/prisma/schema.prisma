@@ -73,6 +73,7 @@ model Usuario {
   licencias    Licencia[]
   dispositivos Dispositivo[]
   membresias   MiembroSala[]
+  proveedoresIA ProveedorIA[]
 }
 
 /// Un usuario puede tener varios roles de distintos (o el mismo) producto.
@@ -239,4 +240,39 @@ model TokenHandover {
   creadoEn  DateTime @default(now())
 
   @@index([caducaEn])
+}
+
+// ---------- Proveedores de IA (M2) ----------
+
+/// Dónde se ejecutan las peticiones de un proveedor propio del usuario.
+enum EjecucionIA {
+  servidor
+  local
+}
+
+/// Proveedor de modelos de IA. propietarioId null = del admin (lo usan los roles con la acción
+/// ia.proveedor.<slug>); con valor = proveedor propio del usuario (requiere ia.modelo-propio).
+/// La clave va cifrada con AES-256-GCM (IA_CLAVE_MAESTRA) y nunca sale por la API.
+model ProveedorIA {
+  id                  String      @id @default(uuid())
+  slug                String      @unique
+  nombre              String
+  tipo                String
+  baseUrl             String
+  claveCifrada        Bytes?
+  versionClave        Int         @default(1)
+  custom              Json?
+  modelos             String[]
+  modeloPorDefecto    String
+  maxTokens           Int         @default(4096)
+  peticionesPorMinuto Int         @default(30)
+  herramientas        Boolean?
+  propietarioId       String?
+  ejecucion           EjecucionIA @default(servidor)
+  activo              Boolean     @default(true)
+  creadoEn            DateTime    @default(now())
+  actualizadoEn       DateTime    @updatedAt
+  propietario         Usuario?    @relation(fields: [propietarioId], references: [id], onDelete: Cascade)
+
+  @@index([propietarioId])
 }

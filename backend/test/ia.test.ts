@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import request from 'supertest';
 import { crearApp } from '../src/app.js';
 import { claveDesdeJwksLocal, crearVerificadorJwt } from '../src/auth/verificador-jwt.js';
-import type { ConfigIA } from '../src/ia/rutas.js';
+import { crearServicioIAEnMemoria, type PermisosIA, type ProveedorResuelto, type ServicioProveedoresIA } from '../src/ia/proveedores.js';
 import { crearEmisorPrueba } from './jwt-local.js';
 
 /** Proveedor falso compatible con OpenAI: responde texto, tool_calls o un stream SSE. */
@@ -48,26 +48,35 @@ function proveedorFalso() {
 describe('M1 — IA en la web vía backend', () => {
   let emisor: Awaited<ReturnType<typeof crearEmisorPrueba>>;
   const falso = proveedorFalso();
-  let config: ConfigIA;
+  let proveedor: ProveedorResuelto & { nombre: string };
+  let config: ServicioProveedoresIA;
   let token: string;
 
-  const app = (cfg: ConfigIA | null) =>
-    crearApp({ verificar: crearVerificadorJwt({ claves: claveDesdeJwksLocal(emisor.jwks), adminsIniciales: [] }), origenesCors: [], ia: cfg });
+  const app = (servicio: ServicioProveedoresIA | null) =>
+    crearApp({ verificar: crearVerificadorJwt({ claves: claveDesdeJwksLocal(emisor.jwks), adminsIniciales: [] }), origenesCors: [], ia: servicio });
 
   beforeAll(async () => {
     emisor = await crearEmisorPrueba();
     token = await emisor.emitir({ sub: 'u1', email: 'a@b.c' });
     await new Promise<void>((r) => falso.servidor.listen(0, '127.0.0.1', () => r()));
-    config = {
-      proveedor: 'openai-compatible',
-      baseUrl: `http://127.0.0.1:${(falso.servidor.address() as AddressInfo).port}/v1`,
-      apiKey: 'clave-del-servidor',
-      modelo: 'modelo-a',
-      modelosPermitidos: ['modelo-a'],
-      maxTokens: 1000,
+    proveedor = {
+      id: '11111111-1111-4111-8111-111111111111',
+      slug: 'principal',
+      nombre: 'Principal',
+      origen: 'admin',
       peticionesPorMinuto: 5,
+      modelos: ['modelo-a'],
+      modeloPorDefecto: 'modelo-a',
+      maxTokens: 1000,
       herramientas: true,
+      redRestringida: false,
+      destino: {
+        kind: 'openai-compatible',
+        baseUrl: `http://127.0.0.1:${(falso.servidor.address() as AddressInfo).port}/v1`,
+        apiKey: 'clave-del-servidor',
+      },
     };
+    config = crearServicioIAEnMemoria([proveedor]);
   });
   afterAll(async () => {
     await new Promise<void>((r) => falso.servidor.close(() => r()));
@@ -124,8 +133,21 @@ describe('M1 — IA en la web vía backend', () => {
 
   it('/ia/estado informa disponibilidad y modelos', async () => {
     const r = await request(app(config)).get('/ia/estado').set('Authorization', `Bearer ${token}`);
-    expect(r.body).toMatchObject({ proveedor: 'openai-compatible', modelo: 'modelo-a', modelos: ['modelo-a'] });
+    expect(r.body).toMatchObject({ proveedorId: proveedor.id, proveedor: 'openai-compatible', modelo: 'modelo-a', modelos: ['modelo-a'] });
     const sin = await request(app(null)).get('/ia/estado').set('Authorization', `Bearer ${token}`);
     expect(sin.body).toEqual({ disponible: false, motivo: 'ia_no_configurada' });
+  });
+
+  it('permisos: sin ia.usar → 403; proveedor no concedido → 403/404; /ia/proveedores solo lista los permitidos', async () => {
+    const sinUso: PermisosIA = { usar: false, modeloPropio: false, proveedores: [] };
+    const a = app(crearServicioIAEnMemoria([proveedor], () => sinUso));
+    expect((await chat(a, { messages: [{ role: 'user', content: 'x' }] })).status).toBe(403);
+    const sinProveedor = app(crearServicioIAEnMemoria([proveedor], () => ({ usar: true, modeloPropio: false, proveedores: [] })));
+    expect((await chat(sinProveedor, { messages: [{ role: 'user', content: 'x' }], proveedorId: proveedor.id })).status).toBe(404);
+    const lista = await request(sinProveedor).get('/ia/proveedores').set('Authorization', `Bearer ${token}`);
+    expect(lista.body.proveedores).toEqual([]);
+    const con = await request(app(config)).get('/ia/proveedores').set('Authorization', `Bearer ${token}`);
+    expect(con.body.proveedores[0]).toMatchObject({ id: proveedor.id, tieneClave: true });
+    expect(JSON.stringify(con.body)).not.toContain('clave-del-servidor');
   });
 });

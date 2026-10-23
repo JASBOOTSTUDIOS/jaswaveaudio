@@ -28,6 +28,7 @@ import {
 } from './ai-tools.js'
 import { createStreamAccumulator, type StreamStyle } from './ai-stream.js'
 import { createMockPlayer, envMockPlayer, mockScriptPathFromEnv } from './ai-mock.js'
+import { fetchActual } from '../../seguridad/red-restringida.js'
 
 export type AiProviderKind =
   | 'ollama'
@@ -335,7 +336,8 @@ async function fetchWithTimeout(
   outer?.addEventListener('abort', onOuterAbort)
   if (outer?.aborted) controller.abort()
   try {
-    return await fetch(url, { ...init, signal: controller.signal })
+    // Dentro de conRedRestringida (proveedores de usuario) se usa el fetch que bloquea redes privadas.
+    return await fetchActual()(url, { ...init, signal: controller.signal })
   } finally {
     clearTimeout(timer)
     outer?.removeEventListener('abort', onOuterAbort)

@@ -22,6 +22,7 @@ import {
   toAiHealthPayload,
 } from '@/src/lib/ai-settings'
 import { transporteIA } from '@/src/lib/ia/transporte-ia'
+import { useCatalogoIA } from '@/src/lib/ia/use-catalogo-ia'
 import { ensureTerminalAuditMirror } from '@/src/lib/daw-terminal-sessions'
 import {
   ASK_AI_SELECTION_EVENT,
@@ -446,6 +447,9 @@ export function CoProducerPanel() {
     }
   }, [])
 
+  // Catálogo de modelos de la cuenta (backend): se recarga al iniciar o cerrar sesión.
+  useCatalogoIA()
+
   useEffect(() => {
     const refresh = () => {
       const cfg = loadAiSettings()
@@ -455,6 +459,11 @@ export function CoProducerPanel() {
       if (!transporte) {
         setAiStatus('misconfigured')
         setStatusDetail('Inicia sesión en tu cuenta JasWave (o abre JasWave Desktop) para usar el asistente.')
+        return
+      }
+      if (!provider.id) {
+        setAiStatus('misconfigured')
+        setStatusDetail('Tu cuenta no tiene modelos de IA disponibles. Inicia sesión o pide acceso a tu administrador.')
         return
       }
 
@@ -789,14 +798,7 @@ export function CoProducerPanel() {
             </button>
           </div>
         </div>
-        {transporteIA()?.origen === 'backend' ? (
-          // En la web el modelo lo gestiona el servidor de JasWave: no aplica el catálogo local.
-          <p className="px-1 text-[11px] text-muted-foreground" data-testid="ia-servidor">
-            Modelo del servidor JasWave
-          </p>
-        ) : (
-          <AiModelPicker compact />
-        )}
+        <AiModelPicker compact />
       </header>
 
       {historyOpen ? (

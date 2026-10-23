@@ -9,15 +9,16 @@ import { rutasLicencias } from './license/rutas.js';
 import { rutasAdmin } from './admin/rutas.js';
 import { rutasCatalogo } from './catalog/rutas.js';
 import { rutasHandover } from './handover/rutas.js';
-import { rutasIA, type ConfigIA } from './ia/rutas.js';
+import { rutasAdminIA, rutasIA } from './ia/rutas.js';
+import type { ServicioProveedoresIA } from './ia/proveedores.js';
 import type { Reloj } from './license/servicio.js';
 
 export type OpcionesApp = {
   verificar: VerificadorJwt;
   origenesCors: string[];
   log?: RegistroErrores;
-  /** IA en la web (M1); null/ausente = no configurada (responde 503). */
-  ia?: ConfigIA | null;
+  /** Proveedores de IA (M2, en BD); null/ausente = IA no configurada (responde 503). */
+  ia?: ServicioProveedoresIA | null;
   /** Dependencias de datos y licencias; sin ellas solo quedan /health y /me. */
   datos?: { db: Db; clavePrivadaPem: string; reloj: Reloj };
 };
@@ -39,7 +40,8 @@ export function crearApp(opciones: OpcionesApp): Express {
     app.use('/handover', rutasHandover({ db, verificar: opciones.verificar, reloj }));
   }
   // IA: contexto y herramientas pueden superar 256 KB (límite propio de 4 MB).
-  app.use('/ia', rutasIA({ verificar: opciones.verificar, config: opciones.ia ?? null }));
+  app.use('/ia', rutasIA({ verificar: opciones.verificar, servicio: opciones.ia ?? null }));
+  if (opciones.ia?.admin) app.use('/admin/ia', rutasAdminIA({ verificar: opciones.verificar, admin: opciones.ia.admin }));
   app.use(express.json({ limit: '256kb' }));
 
   app.get('/health', (_req, res) => {

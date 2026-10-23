@@ -1,12 +1,15 @@
 /**
- * Configuración multi-proveedor de IA (OpenAI, Anthropic, Gemini, Ollama, KiloCode, etc.).
- * Persistida en localStorage. Las claves API viven solo en el escritorio local.
+ * Ajustes de IA del asistente (M2). Los proveedores y modelos NO se configuran aquí: vienen del backend
+ * (proveedores del admin permitidos por rol + modelos propios si el admin lo permite; ver
+ * ia/catalogo-ia.ts). Localmente solo se guardan preferencias: proveedor y modelo elegidos,
+ * temperatura, tokens y si se reintenta con otros modelos.
  *
- * Los presets son plantillas. Cualquier proveedor no listado se integra como
- * `openai-compatible` + `custom` (URL, paths, auth, headers, modelos propios).
+ * Los presets describen cada tipo de proveedor (etiquetas, URL y modelos sugeridos) para el formulario
+ * de modelos propios.
  */
 
 import { transporteIA } from './ia/transporte-ia'
+import { catalogoIA } from './ia/catalogo-ia'
 
 export type AiProviderKind =
   | 'ollama'
@@ -63,6 +66,10 @@ export type AiProviderProfile = {
   lastHealthAt?: number
   /** Modelos reportados por el endpoint en el último health OK. */
   discoveredModels?: string[]
+  /** Proveedor del admin (lo ejecuta el backend) o propio del usuario. */
+  origen?: 'admin' | 'propio'
+  /** Solo propios: 'local' = se ejecuta en este equipo (escritorio). */
+  ejecucion?: 'servidor' | 'local'
 }
 
 export type AiSettings = {
@@ -174,8 +181,9 @@ export type AiHealthResult = {
   hint?: string
 }
 
-const STORAGE_KEY = 'jaswave-ai-settings-v2'
-const LEGACY_KEY = 'jaswave-ai-settings-v1'
+const STORAGE_KEY = 'jaswave-ai-preferencias-v3'
+/** Ajustes antiguos con proveedores locales (antes de M2): se eliminan junto con sus claves del equipo. */
+const LEGACY_KEYS = ['jaswave-ai-settings-v2', 'jaswave-ai-settings-v1']
 
 export const PROVIDER_PRESETS: Record<
   AiProviderKind,
@@ -370,7 +378,15 @@ export function toAiHealthPayload(provider: AiProviderProfile): AiHealthRequest 
   }
 }
 
+/** El backend ejecuta el proveedor (del admin, o propio con ejecución en servidor). */
+export function providerEnServidor(provider: AiProviderProfile): boolean {
+  return provider.origen === 'admin' || (provider.origen === 'propio' && provider.ejecucion !== 'local')
+}
+
 export function providerIsReady(provider: AiProviderProfile): boolean {
+  if (!provider.id) return false
+  // El servidor conoce URL y clave; aquí basta con tener modelo.
+  if (providerEnServidor(provider)) return Boolean(String(provider.selectedModel || provider.models[0] || '').trim())
   if (!String(provider.baseUrl || '').trim()) return false
   if (!String(provider.selectedModel || provider.models[0] || '').trim()) return false
   if (providerNeedsApiKey(provider) && !String(provider.apiKey || '').trim() && !provider.hasApiKey) return false
@@ -390,12 +406,8 @@ export function listCatalogModels(settings: AiSettings = loadAiSettings()): Cata
   for (const p of settings.providers) {
     const models = Array.from(
       new Set(
-        [
-          p.selectedModel,
-          ...(p.discoveredModels ?? []),
-          ...p.models,
-          ...PROVIDER_PRESETS[p.kind].suggestedModels,
-        ].filter(Boolean),
+        // Solo los modelos que el servidor permite para ese proveedor (sin sugerencias de presets).
+        [p.selectedModel, ...p.models].filter(Boolean),
       ),
     )
     const ready = providerIsReady(p)
@@ -552,9 +564,9 @@ export async function aiChatWithFallback(
   if (!chain.length) {
     return {
       success: false,
-      error: 'No hay modelos configurados listos en el catálogo.',
+      error: 'Tu cuenta no tiene modelos de IA disponibles.',
       errorCode: 'missing_model',
-      hint: 'Añade un proveedor en Configuración → IA y elige un modelo.',
+      hint: 'Inicia sesión y pide a tu administrador acceso al asistente (o permiso para añadir tus propios modelos).',
     }
   }
 
@@ -635,137 +647,111 @@ export async function aiChatWithFallback(
     error: last.error || 'Ningún modelo del catálogo respondió.',
     hint:
       last.hint ||
-      'Prueba otro modelo en el selector del chat o revisa API keys en Configuración → IA.',
+      'Prueba otro modelo en el selector del chat. Si no tienes modelos, pide acceso a tu administrador.',
   }
 }
 
-function createDefaultSettings(): AiSettings {
-  const ollama = createProviderProfile('ollama')
-  return {
-    version: 2,
-    activeProviderId: ollama.id,
-    providers: [ollama],
-    temperature: 0.4,
-    maxTokens: 2048,
-    fallbackEnabled: true,
-  }
+type Preferencias = {
+  activeProviderId?: string
+  /** Modelo elegido por proveedor. */
+  modelos?: Record<string, string>
+  temperature?: number
+  maxTokens?: number
+  fallbackEnabled?: boolean
 }
 
-function migrateFromV1(raw: string): AiSettings | null {
+/** Perfil vacío cuando la cuenta no tiene proveedores (nunca está listo). */
+export const SIN_PROVEEDOR: AiProviderProfile = {
+  id: '',
+  kind: 'openai-compatible',
+  name: 'Sin modelos disponibles',
+  baseUrl: '',
+  apiKey: '',
+  models: [],
+  selectedModel: '',
+}
+
+let limpiezaHecha = false
+
+/** Una vez: borra los ajustes antiguos con proveedores locales y sus claves guardadas en el equipo. */
+function limpiarAjustesAntiguos(): void {
+  if (limpiezaHecha) return
+  limpiezaHecha = true
   try {
-    const parsed = JSON.parse(raw) as {
-      baseUrl?: string
-      selectedModel?: string
-      customModels?: string[]
-      temperature?: number
-    }
-    const ollama = createProviderProfile('ollama', {
-      baseUrl: parsed.baseUrl,
-      selectedModel: parsed.selectedModel,
-      models: Array.isArray(parsed.customModels)
-        ? [
-            ...new Set(
-              [...(parsed.customModels ?? []), parsed.selectedModel ?? 'llama3.2'].filter(Boolean) as string[],
-            ),
-          ]
-        : undefined,
-    })
-    return {
-      version: 2,
-      activeProviderId: ollama.id,
-      providers: [ollama],
-      temperature: typeof parsed.temperature === 'number' ? parsed.temperature : 0.4,
-      maxTokens: 2048,
+    for (const k of LEGACY_KEYS) {
+      const raw = localStorage.getItem(k)
+      if (!raw) continue
+      const viejos = (JSON.parse(raw) as { providers?: { id?: string }[] }).providers ?? []
+      for (const p of viejos) if (p.id && typeof window !== 'undefined') void window.electron?.aiCredSet?.(p.id, '')
+      localStorage.removeItem(k)
     }
   } catch {
-    return null
+    /* nada que limpiar */
   }
 }
 
-export function loadAiSettings(): AiSettings {
+function leerPreferencias(): Preferencias {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<AiSettings>
-      if (parsed.version === 2 && Array.isArray(parsed.providers) && parsed.providers.length > 0) {
-        const providers = parsed.providers.map((p) => ({
-          ...createProviderProfile((p.kind as AiProviderKind) || 'ollama', {
-            ...p,
-            custom: p.custom,
-          }),
-          id: p.id || newId(),
-        }))
-        if (secureKeyStoreAvailable() && providers.some((p) => String(p.apiKey || '').trim())) {
-          // Migración: keys en texto plano (versiones anteriores) → almacén cifrado.
-          moveKeysToSecureStore(providers)
-          localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...parsed, providers: providers.map(stripApiKey) }))
-        }
-        const activeProviderId = providers.some((p) => p.id === parsed.activeProviderId)
-          ? (parsed.activeProviderId as string)
-          : providers[0]!.id
-        return {
-          version: 2,
-          activeProviderId,
-          providers,
-          temperature:
-            typeof parsed.temperature === 'number' && Number.isFinite(parsed.temperature)
-              ? Math.max(0, Math.min(2, parsed.temperature))
-              : 0.4,
-          maxTokens:
-            typeof parsed.maxTokens === 'number' && Number.isFinite(parsed.maxTokens)
-              ? Math.max(256, Math.min(128000, parsed.maxTokens))
-              : 2048,
-          fallbackEnabled: parsed.fallbackEnabled !== false,
-        }
-      }
-    }
-    const legacy = localStorage.getItem(LEGACY_KEY)
-    if (legacy) {
-      const migrated = migrateFromV1(legacy)
-      if (migrated) {
-        saveAiSettings(migrated)
-        return migrated
-      }
-    }
+    return raw ? (JSON.parse(raw) as Preferencias) : {}
   } catch {
-    /* fallthrough */
-  }
-  return createDefaultSettings()
-}
-
-function secureKeyStoreAvailable(): boolean {
-  return typeof window !== 'undefined' && typeof window.electron?.aiCredSet === 'function'
-}
-
-/** Envía a main las keys escritas y borra las que el usuario quitó. Marca hasApiKey en memoria. */
-function moveKeysToSecureStore(providers: AiProviderProfile[]): void {
-  for (const p of providers) {
-    const key = String(p.apiKey || '').trim()
-    if (key) {
-      void window.electron.aiCredSet!(p.id, key)
-      p.hasApiKey = true
-    } else if (p.hasApiKey === false) {
-      void window.electron.aiCredSet!(p.id, '')
-    }
+    return {}
   }
 }
 
-function stripApiKey(p: AiProviderProfile): AiProviderProfile {
-  return { ...p, apiKey: '', hasApiKey: !!(p.hasApiKey || String(p.apiKey || '').trim()) }
+/** Ajustes efectivos: proveedores del catálogo del backend + preferencias locales. */
+export function loadAiSettings(): AiSettings {
+  limpiarAjustesAntiguos()
+  const pref = leerPreferencias()
+  const providers: AiProviderProfile[] = catalogoIA()
+    .proveedores.filter((p) => p.activo)
+    .map((p) => {
+      const elegido = pref.modelos?.[p.id]
+      return {
+        id: p.id,
+        kind: p.tipo as AiProviderKind,
+        name: p.origen === 'propio' ? `${p.nombre} (propio)` : p.nombre,
+        baseUrl: p.baseUrl ?? '',
+        apiKey: '',
+        hasApiKey: p.tieneClave,
+        models: p.modelos,
+        selectedModel: elegido && p.modelos.includes(elegido) ? elegido : p.modeloPorDefecto,
+        ...(p.custom ? { custom: p.custom as AiProviderCustom } : {}),
+        origen: p.origen,
+        ejecucion: p.ejecucion,
+      }
+    })
+  const activeProviderId = providers.some((p) => p.id === pref.activeProviderId) ? pref.activeProviderId! : (providers[0]?.id ?? '')
+  return {
+    version: 2,
+    activeProviderId,
+    providers,
+    temperature:
+      typeof pref.temperature === 'number' && Number.isFinite(pref.temperature) ? Math.max(0, Math.min(2, pref.temperature)) : 0.4,
+    maxTokens: typeof pref.maxTokens === 'number' && Number.isFinite(pref.maxTokens) ? Math.max(256, Math.min(128000, pref.maxTokens)) : 2048,
+    fallbackEnabled: pref.fallbackEnabled !== false,
+  }
 }
 
+/** Guarda solo preferencias (el catálogo lo gestiona el backend). */
 export function saveAiSettings(settings: AiSettings): void {
-  if (!secureKeyStoreAvailable()) {
-    // Sin Electron (vite web:dev): no hay almacén seguro; se mantiene el comportamiento local.
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
-    return
+  const previas = leerPreferencias()
+  const pref: Preferencias = {
+    activeProviderId: settings.activeProviderId,
+    modelos: { ...(previas.modelos ?? {}), ...Object.fromEntries(settings.providers.filter((p) => p.id).map((p) => [p.id, p.selectedModel])) },
+    temperature: settings.temperature,
+    maxTokens: settings.maxTokens,
+    fallbackEnabled: settings.fallbackEnabled !== false,
   }
-  moveKeysToSecureStore(settings.providers)
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...settings, providers: settings.providers.map(stripApiKey) }))
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(pref))
+  } catch {
+    /* sin almacenamiento */
+  }
 }
 
 export function getActiveProvider(settings: AiSettings = loadAiSettings()): AiProviderProfile {
-  return settings.providers.find((p) => p.id === settings.activeProviderId) ?? settings.providers[0]!
+  return settings.providers.find((p) => p.id === settings.activeProviderId) ?? settings.providers[0] ?? SIN_PROVEEDOR
 }
 
 export function upsertProviderModel(provider: AiProviderProfile, model: string): AiProviderProfile {

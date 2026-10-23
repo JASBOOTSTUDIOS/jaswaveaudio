@@ -5,6 +5,7 @@
  * - Productos (VST): acciones/funcionalidades licenciables, roles por producto y qué acciones da cada rol.
  * - Usuarios (por correo): varios roles, permisos directos (permitir/denegar con caducidad),
  *   estado de licencia por producto y dispositivos (revocar).
+ * - IA: proveedores de modelos para los roles y modelos propios de los usuarios (M2).
  * - Auditoría de cada cambio.
  */
 
@@ -14,8 +15,9 @@ import { apiJasWave, useSesion } from '@/src/lib/backend/sesion'
 import { ErrorApiCliente, type DispositivoAdmin, type ProductoAdmin, type RegistroAuditoriaAdmin, type UsuarioAdmin } from '@/src/lib/backend/api'
 import { pluginsActivos } from '@/src/lib/plugins/registro-plugins'
 import { Aviso, Boton, Campo, Seccion, Selector } from '../cuenta/ui'
+import { PestanaIA } from './admin-ia'
 
-type Pestana = 'productos' | 'usuarios' | 'auditoria'
+type Pestana = 'productos' | 'usuarios' | 'ia' | 'auditoria'
 
 const mensaje = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -60,7 +62,7 @@ export function PanelAdmin() {
   return (
     <div className="flex h-full flex-col">
       <nav className="flex gap-1 border-b border-border px-3 pt-2" role="tablist" aria-label="Administración">
-        {(['productos', 'usuarios', 'auditoria'] as const).map((p) => (
+        {(['productos', 'usuarios', 'ia', 'auditoria'] as const).map((p) => (
           <button
             key={p}
             role="tab"
@@ -68,12 +70,20 @@ export function PanelAdmin() {
             onClick={() => setPestana(p)}
             className={`rounded-t-md px-3 py-1.5 text-[11px] ${pestana === p ? 'bg-panel-raised text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
           >
-            {p === 'productos' ? 'Plugins y roles' : p === 'usuarios' ? 'Usuarios y accesos' : 'Auditoría'}
+            {p === 'productos' ? 'Plugins y roles' : p === 'usuarios' ? 'Usuarios y accesos' : p === 'ia' ? 'IA' : 'Auditoría'}
           </button>
         ))}
       </nav>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {pestana === 'productos' ? <PestanaProductos /> : pestana === 'usuarios' ? <PestanaUsuarios /> : <PestanaAuditoria />}
+        {pestana === 'productos' ? (
+          <PestanaProductos />
+        ) : pestana === 'usuarios' ? (
+          <PestanaUsuarios />
+        ) : pestana === 'ia' ? (
+          <PestanaIA />
+        ) : (
+          <PestanaAuditoria />
+        )}
       </div>
     </div>
   )

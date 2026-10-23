@@ -6,7 +6,8 @@ import { claveDesdeJwksRemoto, crearVerificadorJwt } from './auth/verificador-jw
 import { crearDb } from './db.js';
 import { createPrivateKey } from 'node:crypto';
 import { adjuntarSync } from './sync/servidor.js';
-import { configIADesdeEntorno } from './ia/rutas.js';
+import { crearServicioIA, sembrarProductoIA } from './ia/proveedores.js';
+import { claveMaestraDesdeBase64, type ClaveMaestra } from './seguridad/cifrado.js';
 
 const config = cargarConfiguracion();
 const log = pino({ level: config.nivelLog });
@@ -28,6 +29,18 @@ try {
   process.exit(1);
 }
 
+let claveMaestraIA: ClaveMaestra | null = null;
+if (config.claveMaestraIA) {
+  try {
+    claveMaestraIA = claveMaestraDesdeBase64(config.claveMaestraIA);
+  } catch (err) {
+    log.error({ err }, 'IA_CLAVE_MAESTRA inválida');
+    process.exit(1);
+  }
+} else {
+  log.warn('IA_CLAVE_MAESTRA no configurada: no se podrán guardar ni usar claves de proveedores de IA (ejecuta `npm run ia:generar-clave`)');
+}
+
 const verificar = crearVerificadorJwt({
   claves: claveDesdeJwksRemoto(config.jwksUrl),
   ...(config.emisorJwt ? { emisor: config.emisorJwt } : {}),
@@ -39,9 +52,11 @@ const app = crearApp({
   verificar,
   origenesCors: config.origenesCors,
   log,
-  ia: configIADesdeEntorno(),
+  ia: crearServicioIA({ db, claveMaestra: claveMaestraIA }),
   datos: { db, clavePrivadaPem: config.clavePrivadaLicencia, reloj: () => new Date() },
 });
+// Producto del asistente y acciones base para que el admin pueda asignarlas desde el primer arranque.
+await sembrarProductoIA(db).catch((err: unknown) => log.error({ err }, 'no se pudo sembrar el producto de IA'));
 const servidor = http.createServer(app);
 adjuntarSync(servidor, { db, verificar });
 servidor.listen(config.puerto, () => log.info({ puerto: config.puerto }, 'backend escuchando'));

@@ -39,6 +39,41 @@ export type UsuarioAdmin = {
 export type DispositivoAdmin = { id: string; nombre: string; revocado: boolean; creadoEn: string; ultimoUso: string }
 export type RegistroAuditoriaAdmin = { id: string; actorId: string; accion: string; objetivo: string; datos: unknown; creadoEn: string }
 
+/** Proveedor de IA tal como lo devuelve el backend (M2). Nunca incluye la clave. */
+export type ProveedorIAApi = {
+  id: string
+  slug: string
+  nombre: string
+  tipo: string
+  baseUrl?: string
+  modelos: string[]
+  modeloPorDefecto: string
+  maxTokens: number
+  herramientas: boolean | null
+  origen: 'admin' | 'propio'
+  ejecucion: 'servidor' | 'local'
+  activo: boolean
+  tieneClave: boolean
+  custom?: Record<string, unknown> | null
+  peticionesPorMinuto?: number
+}
+export type PermisosIAApi = { usar: boolean; modeloPropio: boolean; proveedores: string[] }
+export type DatosProveedorIA = {
+  nombre?: string
+  tipo?: string
+  baseUrl?: string
+  modelos?: string[]
+  modeloPorDefecto?: string
+  maxTokens?: number
+  herramientas?: boolean | null
+  custom?: Record<string, unknown> | null
+  activo?: boolean
+  apiKey?: string
+  ejecucion?: 'servidor' | 'local'
+  slug?: string
+  peticionesPorMinuto?: number
+}
+
 export type OpcionesClienteApi = {
   base: string
   /** Devuelve el JWT vigente de la sesión (o null sin sesión). */
@@ -83,7 +118,31 @@ export function crearClienteApi(o: OpcionesClienteApi) {
       canjear: (token: string) =>
         pedir<{ datos: Record<string, unknown>; sesion?: { access_token: string; refresh_token: string } }>('POST', '/handover/canjear', { token }, false),
     },
+    ia: {
+      proveedores: () => pedir<{ permisos: PermisosIAApi; proveedores: ProveedorIAApi[] }>('GET', '/ia/proveedores'),
+      misProveedores: () => pedir<{ proveedores: ProveedorIAApi[] }>('GET', '/ia/mis-proveedores').then((r) => r.proveedores),
+      crearPropio: (d: DatosProveedorIA) => pedir<{ proveedor: ProveedorIAApi }>('POST', '/ia/mis-proveedores', d).then((r) => r.proveedor),
+      actualizarPropio: (id: string, d: DatosProveedorIA) =>
+        pedir<{ proveedor: ProveedorIAApi }>('PUT', `/ia/mis-proveedores/${enc(id)}`, d).then((r) => r.proveedor),
+      clavePropia: (id: string, apiKey: string | null) => pedir<{ ok: true }>('PUT', `/ia/mis-proveedores/${enc(id)}/clave`, { apiKey }),
+      eliminarPropio: (id: string) => pedir<void>('DELETE', `/ia/mis-proveedores/${enc(id)}`),
+      /** Escritorio: credencial de un modelo propio de ejecución local (solo su dueño). */
+      credencialLocal: (id: string) =>
+        pedir<{ proveedor: ProveedorIAApi & { apiKey?: string } }>('GET', `/ia/mis-proveedores/${enc(id)}/credencial`).then((r) => r.proveedor),
+    },
     admin: {
+      ia: {
+        proveedores: () => pedir<{ proveedores: ProveedorIAApi[] }>('GET', '/admin/ia/proveedores').then((r) => r.proveedores),
+        deUsuarios: () =>
+          pedir<{ proveedores: (ProveedorIAApi & { propietario: string | null })[] }>('GET', '/admin/ia/proveedores-usuario').then((r) => r.proveedores),
+        crear: (d: DatosProveedorIA & { slug: string }) => pedir<{ proveedor: ProveedorIAApi }>('POST', '/admin/ia/proveedores', d).then((r) => r.proveedor),
+        actualizar: (id: string, d: DatosProveedorIA) =>
+          pedir<{ proveedor: ProveedorIAApi }>('PUT', `/admin/ia/proveedores/${enc(id)}`, d).then((r) => r.proveedor),
+        clave: (id: string, apiKey: string | null) => pedir<{ ok: true }>('PUT', `/admin/ia/proveedores/${enc(id)}/clave`, { apiKey }),
+        eliminar: (id: string) => pedir<void>('DELETE', `/admin/ia/proveedores/${enc(id)}`),
+        probar: (id: string) =>
+          pedir<{ estado: string; modelos: string[]; error?: string; pista?: string }>('POST', `/admin/ia/proveedores/${enc(id)}/probar`),
+      },
       productos: () => pedir<{ productos: ProductoAdmin[] }>('GET', '/admin/productos').then((r) => r.productos),
       crearProducto: (id: string, nombre: string) => pedir<{ producto: ProductoAdmin }>('POST', '/admin/productos', { id, nombre }),
       eliminarProducto: (id: string) => pedir<void>('DELETE', `/admin/productos/${enc(id)}`),

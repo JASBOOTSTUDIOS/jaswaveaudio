@@ -1,15 +1,19 @@
 /**
- * Transporte del asistente (M1): en escritorio habla con el gateway de Electron (IPC); en la web,
- * con el gateway `/ia` del backend usando el JWT de la sesión. El modelo y las claves los decide el
- * servidor, así que del lado web solo viajan mensajes, herramientas y opciones.
+ * Transporte del asistente (M1/M2). Cada petición va según su proveedor (`providerId`):
+ * - Proveedores del admin y propios de ejecución en servidor → gateway `/ia` del backend con el JWT de
+ *   la sesión. URL y clave las pone el servidor; aquí solo viajan mensajes, herramientas, opciones, el id
+ *   del proveedor y el modelo elegido.
+ * - Modelos propios de ejecución local (solo escritorio) → gateway de Electron; la clave se descarga del
+ *   backend al almacén cifrado de main (ver catalogo-ia.ts) y main la inyecta por `providerId`.
  */
 
 import type { AiChatRequest, AiChatResult, AiErrorCode, AiHealthResult } from '../ai-settings'
+import { esProveedorLocal, prepararCredencialLocal, proveedorDelCatalogo } from './catalogo-ia'
 
 export type EventoStreamIA = { type: 'delta' | 'done' | string; text?: string; success?: boolean }
 
 export type TransporteIA = {
-  origen: 'electron' | 'backend'
+  origen: 'electron' | 'backend' | 'mixto'
   chat(req: AiChatRequest): Promise<AiChatResult>
   chatStream?(req: AiChatRequest, onEvent: (e: EventoStreamIA) => void): Promise<AiChatResult>
   cancelar(requestId: string): Promise<boolean>
@@ -24,10 +28,14 @@ export type OpcionesTransporteBackend = {
   fetch?: typeof fetch
 }
 
-/** Solo los campos que el backend acepta; host, clave y modelo del perfil local no salen del navegador. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Solo los campos que el backend acepta: nunca host ni clave. */
 function cuerpoChat(req: AiChatRequest) {
   return {
     messages: req.messages,
+    ...(req.providerId && UUID.test(req.providerId) ? { proveedorId: req.providerId } : {}),
+    ...(req.model ? { model: req.model } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
     ...(req.tools?.length ? { tools: req.tools } : {}),
@@ -105,19 +113,22 @@ export function crearTransporteBackend(o: OpcionesTransporteBackend): Transporte
       const r = await pedir('/ia/cancelar', { method: 'POST', body: { requestId } })
       return r instanceof Response && r.ok && Boolean(((await r.json()) as { cancelada?: boolean }).cancelada)
     },
-    async salud() {
-      const r = await pedir('/ia/estado', { method: 'GET' })
+    async salud(payload) {
+      const id = (payload as { providerId?: string } | undefined)?.providerId
+      const r = await pedir(`/ia/estado${id && UUID.test(id) ? `?proveedorId=${encodeURIComponent(id)}` : ''}`, { method: 'GET' })
       if (!(r instanceof Response)) return { status: r.errorCode === 'unauthorized' ? 'misconfigured' : 'disconnected', models: [], ...(r.error ? { error: r.error } : {}), ...(r.hint ? { hint: r.hint } : {}) }
       if (!r.ok) {
         const e = await errorHttp(r)
         return { status: 'disconnected', models: [], ...(e.error ? { error: e.error } : {}) }
       }
-      const est = (await r.json()) as EstadoIABackend
+      const est = (await r.json()) as EstadoIABackend & { mensaje?: string }
+      const sinAcceso = est.motivo === 'sin_permiso' || est.motivo === 'ia_no_configurada' || est.motivo === 'proveedor_no_encontrado'
       return {
-        status: est.disponible ? 'healthy' : est.motivo === 'ia_no_configurada' ? 'misconfigured' : 'disconnected',
+        status: est.disponible ? 'healthy' : sinAcceso ? 'misconfigured' : 'disconnected',
         models: est.modelos ?? [],
         ...(est.proveedor ? { provider: est.proveedor } : {}),
-        ...(est.motivo ? { error: est.motivo === 'ia_no_configurada' ? 'El servidor no tiene IA configurada.' : est.motivo } : {}),
+        ...(est.motivo ? { error: est.mensaje ?? est.motivo } : {}),
+        ...(sinAcceso ? { hint: 'Pide a tu administrador acceso al asistente o a este modelo.' } : {}),
       }
     },
   }
@@ -157,10 +168,87 @@ function transporteWeb(): TransporteIA | null {
   return backend
 }
 
-/** Transporte activo: Electron si existe; si no, el backend (web con sesión configurada). */
+/**
+ * Enruta cada petición: modelos propios locales → Electron (con su credencial preparada); el resto →
+ * backend. Exportado para pruebas.
+ */
+export function crearTransporteMixto(
+  backendT: TransporteIA | null,
+  electronT: TransporteIA | null,
+  preparar: typeof prepararCredencialLocal = prepararCredencialLocal,
+): TransporteIA | null {
+  if (!backendT && !electronT) return null
+  const sinRuta = (local: boolean) =>
+    local
+      ? fallo('Este modelo propio se ejecuta en tu equipo: úsalo desde JasWave Desktop.', 'not_available')
+      : fallo('Inicia sesión en tu cuenta JasWave para usar el asistente.', 'unauthorized', 'Cuenta → Iniciar sesión')
+
+  /** Prepara la petición local: credencial en main y URL/tipo vigentes del catálogo. */
+  async function local(req: AiChatRequest): Promise<AiChatRequest | AiChatResult> {
+    const p = proveedorDelCatalogo(req.providerId)!
+    const r = await preparar(p)
+    if (!r.ok) return fallo(r.error, r.estado === 403 ? 'forbidden' : 'not_available', 'Pide a tu administrador permiso para usar modelos propios.')
+    const { apiKey: _sin, ...sinClave } = req
+    return {
+      ...sinClave,
+      kind: r.proveedor.tipo as AiChatRequest['kind'],
+      baseUrl: r.proveedor.baseUrl ?? req.baseUrl,
+      ...(r.proveedor.custom ? { custom: r.proveedor.custom as AiChatRequest['custom'] } : {}),
+    }
+  }
+  const esLocal = (id?: string) => esProveedorLocal(proveedorDelCatalogo(id))
+
+  return {
+    origen: backendT && electronT ? 'mixto' : backendT ? 'backend' : 'electron',
+    async chat(req) {
+      if (!esLocal(req.providerId)) return backendT ? backendT.chat(req) : sinRuta(false)
+      if (!electronT) return sinRuta(true)
+      const listo = await local(req)
+      return 'messages' in listo ? electronT.chat(listo) : listo
+    },
+    ...(backendT?.chatStream || electronT?.chatStream
+      ? {
+          async chatStream(req: AiChatRequest, onEvent: (e: EventoStreamIA) => void) {
+            if (!esLocal(req.providerId)) {
+              if (!backendT) return sinRuta(false)
+              return backendT.chatStream ? backendT.chatStream(req, onEvent) : backendT.chat(req)
+            }
+            if (!electronT) return sinRuta(true)
+            const listo = await local(req)
+            if (!('messages' in listo)) return listo
+            return electronT.chatStream ? electronT.chatStream(listo, onEvent) : electronT.chat(listo)
+          },
+        }
+      : {}),
+    async cancelar(id) {
+      const r = await Promise.all([backendT?.cancelar(id), electronT?.cancelar(id)])
+      return r.some(Boolean)
+    },
+    async salud(payload) {
+      const id = (payload as { providerId?: string } | undefined)?.providerId
+      if (!esLocal(id)) {
+        if (backendT) return backendT.salud(payload)
+        return { status: 'misconfigured', models: [], error: 'Inicia sesión en tu cuenta JasWave para usar el asistente.' }
+      }
+      if (!electronT) return { status: 'misconfigured', models: [], error: 'Este modelo propio solo funciona en JasWave Desktop.' }
+      const p = proveedorDelCatalogo(id)!
+      const r = await preparar(p)
+      if (!r.ok) return { status: 'misconfigured', models: [], error: r.error }
+      return electronT.salud({ ...(payload as object), kind: r.proveedor.tipo, baseUrl: r.proveedor.baseUrl, providerId: p.id })
+    },
+  }
+}
+
+let mixto: { clave: string; t: TransporteIA | null } | null = null
+
+/** Transporte activo: backend (con sesión configurada) y, en escritorio, Electron para modelos propios locales. */
 export function transporteIA(): TransporteIA | null {
   if (sustituto !== undefined) return sustituto
-  return transporteElectron() ?? transporteWeb()
+  const b = transporteWeb()
+  const e = transporteElectron()
+  const clave = `${b ? 1 : 0}${e ? 1 : 0}`
+  if (mixto?.clave !== clave) mixto = { clave, t: crearTransporteMixto(b, e) }
+  return mixto.t
 }
 
 export function iaRemotaDisponible(): boolean {

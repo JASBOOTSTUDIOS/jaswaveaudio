@@ -103,9 +103,7 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
       if (!transporte) {
         return { success: false, error: 'No hay modelo remoto disponible.', errorCode: 'not_available' }
       }
-      const local = loadAiSettings()
-      // En la web el modelo lo elige el backend: un solo intento, sin cadena de fallback local.
-      const cfg = transporte.origen === 'backend' ? { ...local, fallbackEnabled: false } : local
+      const cfg = loadAiSettings()
       const streamChat = transporte.chatStream
         ? (r: AiChatRequest, onDelta: (t: string) => void) =>
             transporte.chatStream!(r, (e) => {

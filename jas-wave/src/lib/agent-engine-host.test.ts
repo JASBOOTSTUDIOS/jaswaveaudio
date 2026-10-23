@@ -74,6 +74,28 @@ async function setup() {
   const tienda = shared.crearTiendaDAW({ estadoInicial: shared.crearEstadoInicial() })
   shared.toolRegistry.setContext(tienda.executor, tienda.permisos)
   registerAgentCatalogOnRegistry(shared.toolRegistry, undefined, tienda.registroComandos)
+  // M2: los modelos vienen del catálogo del backend; aquí, un modelo propio local (lo ejecuta "Electron").
+  const { fijarCatalogoIA } = await import('./ia/catalogo-ia')
+  fijarCatalogoIA({
+    permisos: { usar: true, modeloPropio: true, proveedores: [] },
+    proveedores: [
+      {
+        id: '00000000-0000-4000-8000-000000000001',
+        slug: 'u-mock',
+        nombre: 'Mock',
+        tipo: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        modelos: ['mock'],
+        modeloPorDefecto: 'mock',
+        maxTokens: 4096,
+        herramientas: true,
+        origen: 'propio',
+        ejecucion: 'local',
+        activo: true,
+        tieneClave: false,
+      },
+    ],
+  })
   const host = await import('./agent-engine-host')
   const chat = await import('./ai-chat-store')
   chat.setChatProjectScope('p1')

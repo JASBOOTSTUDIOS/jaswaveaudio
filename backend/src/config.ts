@@ -15,6 +15,8 @@ const esquema = z.object({
   /** Clave privada Ed25519 (PEM, PKCS8) para firmar licencias. */
   LICENSE_SIGNING_KEY_PEM: z.string().optional(),
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
+  /** Clave maestra (32 bytes en base64) para cifrar las claves de los proveedores de IA en la BD. */
+  IA_CLAVE_MAESTRA: z.string().optional(),
 });
 
 export type Configuracion = {
@@ -27,6 +29,7 @@ export type Configuracion = {
   urlBaseDatos?: string;
   clavePrivadaLicencia?: string;
   origenesCors: string[];
+  claveMaestraIA?: string;
 };
 
 export function cargarConfiguracion(entorno: NodeJS.ProcessEnv = process.env): Configuracion {
@@ -42,5 +45,6 @@ export function cargarConfiguracion(entorno: NodeJS.ProcessEnv = process.env): C
     // En .env el PEM va en una línea con `\n` literales; aquí se restauran los saltos reales.
     ...(v.LICENSE_SIGNING_KEY_PEM ? { clavePrivadaLicencia: v.LICENSE_SIGNING_KEY_PEM.replace(/\\n/g, '\n') } : {}),
     origenesCors: v.CORS_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean),
+    ...(v.IA_CLAVE_MAESTRA ? { claveMaestraIA: v.IA_CLAVE_MAESTRA } : {}),
   };
 }
