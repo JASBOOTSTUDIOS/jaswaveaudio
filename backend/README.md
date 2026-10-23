@@ -34,9 +34,10 @@ npm run test:integration       # requiere Supabase local en marcha
 | `GET /me` | JWT | Identidad (incluye `esAdmin`) |
 | `POST /license/device/start` | — | El VST pide un código de dispositivo |
 | `POST /license/device/aprobar` | JWT | El usuario aprueba el código en el navegador |
-| `POST /license/device/poll` | — | El VST recibe la licencia firmada (una vez) |
-| `POST /license/refresh` | JWT | Renueva la licencia (vigencia 24 h) |
-| `/admin/*` | JWT + admin | Productos, acciones, roles, usuarios, concesiones, licencias, auditoría |
+| `POST /license/device/poll` | — | El VST recibe la licencia firmada y su `tokenDispositivo` (una vez) |
+| `POST /license/device/renovar` | token de dispositivo | El VST renueva sin sesión; el token se rota (gracia de una rotación) |
+| `POST /license/refresh` | JWT | El DAW renueva la licencia y registra/rota el token del equipo (vigencia 24 h) |
+| `/admin/*` | JWT + admin | Productos, acciones, roles, usuarios, concesiones, licencias, dispositivos (revocar), auditoría |
 | `WS /sync?token=` | JWT | Salas: `sala.unirse`, `comando`, `auth.refresh`, `ping` |
 
 Licencia: `jwl1.<payload>.<firma Ed25519>`; acciones efectivas = roles ∪ allow − deny, solo con licencia `activa`.
