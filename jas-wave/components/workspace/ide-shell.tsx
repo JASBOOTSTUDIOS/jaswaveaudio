@@ -2,6 +2,8 @@ import { PanelRightOpen, X, Plus } from 'lucide-react'
 import { useEffect, useRef, useState, type WheelEvent as ReactWheelEvent } from 'react'
 import { useWorkspace } from '@/src/workspace/workspace-context'
 import { TOOL_CATALOG, type DockZone, type ToolId } from '@/src/workspace/types'
+import { herramientasDisponibles } from '@/src/modulos/herramientas'
+import { useVersionModulos } from '@/src/modulos/use-modulos'
 import { ToolHost } from './tool-host'
 import { JasWaveLogo } from '@/components/brand'
 import { usePluginEditorTabTitle } from '@/components/plugin-editor-panel'
@@ -17,6 +19,7 @@ function ToolTabLabel({ toolId }: { toolId: ToolId }) {
 }
 
 function AddToolButton({ zone }: { zone: DockZone }) {
+  useVersionModulos()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const { moveTool, dockTool, isUndocked, toolsInZone, openTool } = useWorkspace()
@@ -48,7 +51,7 @@ function AddToolButton({ zone }: { zone: DockZone }) {
       </button>
       {open && (
         <div className="absolute right-0 top-full z-[70] mt-1 max-h-64 w-48 overflow-y-auto rounded-md border border-border bg-panel py-1 shadow-xl">
-          {(Object.keys(TOOL_CATALOG) as ToolId[]).map((toolId) => {
+          {herramientasDisponibles().map((toolId) => {
             const alreadyHere = toolsInZone(zone).includes(toolId)
             const elsewhere = present.has(toolId)
             const floating = isUndocked(toolId)

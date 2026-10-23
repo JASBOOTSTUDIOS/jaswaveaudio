@@ -27,6 +27,7 @@ import {
 } from '@jaswave/ai-harness'
 import { auditStep, auditarProyecto } from '@jaswave/ai-harness'
 import { runAuditTool, A9_TOOL_NAMES } from './agent-audit-tools'
+import { iaRemotaDisponible, transporteIA } from './ia/transporte-ia'
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import {
   aiChatWithFallback,
@@ -98,17 +99,20 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
     newId: (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
 
     async chat(req, opts) {
-      if (typeof window === 'undefined' || !window.electron?.aiChat) {
+      const transporte = transporteIA()
+      if (!transporte) {
         return { success: false, error: 'No hay modelo remoto disponible.', errorCode: 'not_available' }
       }
-      const cfg = loadAiSettings()
-      const streamChat = window.electron.aiChatStream
+      const local = loadAiSettings()
+      // En la web el modelo lo elige el backend: un solo intento, sin cadena de fallback local.
+      const cfg = transporte.origen === 'backend' ? { ...local, fallbackEnabled: false } : local
+      const streamChat = transporte.chatStream
         ? (r: AiChatRequest, onDelta: (t: string) => void) =>
-            window.electron.aiChatStream!(r, (e) => {
+            transporte.chatStream!(r, (e) => {
               if (e.type === 'delta' && e.text) onDelta(e.text)
             })
         : undefined
-      const r = await aiChatWithFallback((x) => window.electron!.aiChat!(x), req.messages, {
+      const r = await aiChatWithFallback((x) => transporte.chat(x), req.messages, {
         temperature: req.temperature ?? cfg.temperature,
         maxTokens: req.maxTokens ?? cfg.maxTokens,
         settings: cfg,
@@ -460,7 +464,7 @@ export function createStandaloneEngineChat(tienda: TiendaDAW, opts: { mode: Engi
 export function registerCoproducerJobRunner(dawStore: TiendaDAW, opts: { onPhase?: (label: string) => void } = {}): void {
   registerAgentJobRunner(async (job, signal) => {
     if (signal.aborted) return
-    if (job.kind === 'certify' || typeof window === 'undefined' || !window.electron?.aiChat) {
+    if (job.kind === 'certify' || !iaRemotaDisponible()) {
       await runPostTurnCertifyPipeline(dawStore, [], {})
       return
     }

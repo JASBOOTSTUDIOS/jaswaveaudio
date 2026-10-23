@@ -44,7 +44,7 @@ describe('instancia-unica (U7)', () => {
 describe('tokenHandoverDeArgv (H1)', () => {
   const tok = 'A'.repeat(43)
   it('extrae el token de jaswave://abrir', () => {
-    assert.equal(tokenHandoverDeArgv(['C:\JasWave.exe', `jaswave://abrir?token=${tok}`]), tok)
+    assert.equal(tokenHandoverDeArgv(['C:\\JasWave.exe',`jaswave://abrir?token=${tok}`]), tok)
     assert.equal(tokenHandoverDeArgv([`jaswave://abrir/?token=${tok}`]), tok)
   })
   it('ignora otras acciones, otros esquemas y tokens mal formados', () => {
@@ -52,6 +52,6 @@ describe('tokenHandoverDeArgv (H1)', () => {
     assert.equal(tokenHandoverDeArgv([`https://abrir?token=${tok}`]), null)
     assert.equal(tokenHandoverDeArgv(['jaswave://abrir?token=corto']), null)
     assert.equal(tokenHandoverDeArgv([`jaswave://abrir?token=${tok}%22%20--inject`]), null)
-    assert.equal(tokenHandoverDeArgv(['C:\proyecto.jaswave']), null)
+    assert.equal(tokenHandoverDeArgv(['C:\\proyecto.jaswave']), null)
   })
 })

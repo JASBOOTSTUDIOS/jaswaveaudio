@@ -24,6 +24,7 @@ import {
   type AiApiStyle,
   type AiAuthStyle,
 } from '@/src/lib/ai-settings'
+import { transporteIA } from '@/src/lib/ia/transporte-ia'
 import { JasWaveLogo } from '@/components/brand'
 import { audioEngine } from '@/lib/audio-engine'
 import { midiController } from '@/src/lib/midi-controller'
@@ -1507,15 +1508,16 @@ function AiTab() {
   const refreshHealth = async (provider: AiProviderProfile = active) => {
     setStatus('checking')
     setStatusHint('')
-    if (!window.electron?.aiHealth) {
+    const transporte = transporteIA()
+    if (!transporte) {
       setStatus('error')
-      setStatusMsg('La IA en la nube solo funciona en la app Electron (escritorio).')
-      setStatusHint('Abre JasWave con npm run dev / electron, no solo el navegador.')
+      setStatusMsg('El asistente necesita JasWave Desktop o una sesión iniciada en tu cuenta JasWave.')
+      setStatusHint('En la web el modelo lo gestiona el servidor de JasWave.')
       setRemoteModels([])
       return
     }
     try {
-      const result = await window.electron.aiHealth(toAiHealthPayload(provider))
+      const result = await transporte.salud(toAiHealthPayload(provider))
       const models = Array.isArray(result.models)
         ? result.models
             .map((m) => (typeof m === 'string' ? m : String((m as { name?: string })?.name ?? m)))

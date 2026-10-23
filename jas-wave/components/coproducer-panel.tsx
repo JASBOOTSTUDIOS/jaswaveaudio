@@ -21,6 +21,7 @@ import {
   getActiveProvider,
   toAiHealthPayload,
 } from '@/src/lib/ai-settings'
+import { transporteIA } from '@/src/lib/ia/transporte-ia'
 import { ensureTerminalAuditMirror } from '@/src/lib/daw-terminal-sessions'
 import {
   ASK_AI_SELECTION_EVENT,
@@ -450,14 +451,15 @@ export function CoProducerPanel() {
       const cfg = loadAiSettings()
       const provider = getActiveProvider(cfg)
 
-      if (!window.electron?.aiHealth) {
+      const transporte = transporteIA()
+      if (!transporte) {
         setAiStatus('misconfigured')
-        setStatusDetail('Abre JasWave en Electron para usar proveedores de IA.')
+        setStatusDetail('Inicia sesión en tu cuenta JasWave (o abre JasWave Desktop) para usar el asistente.')
         return
       }
 
-      void window.electron
-        .aiHealth(toAiHealthPayload(provider))
+      void transporte
+        .salud(toAiHealthPayload(provider))
         .then((result) => {
           if (result.status === 'healthy') {
             setAiStatus('online')
@@ -787,7 +789,14 @@ export function CoProducerPanel() {
             </button>
           </div>
         </div>
-        <AiModelPicker compact />
+        {transporteIA()?.origen === 'backend' ? (
+          // En la web el modelo lo gestiona el servidor de JasWave: no aplica el catálogo local.
+          <p className="px-1 text-[11px] text-muted-foreground" data-testid="ia-servidor">
+            Modelo del servidor JasWave
+          </p>
+        ) : (
+          <AiModelPicker compact />
+        )}
       </header>
 
       {historyOpen ? (

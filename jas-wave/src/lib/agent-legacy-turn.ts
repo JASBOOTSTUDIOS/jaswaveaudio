@@ -131,6 +131,7 @@ import type { MidiClipMdPreviewData } from '../../components/midi-clip-md-previe
 import { listAgentToolSchemas } from './agent-tool-schemas'
 import { FALLBACK_TOOLS, runFallbackTool } from './agent-fallback-tools'
 import type { ApplyPendingAnswer } from './agent-engine-host'
+import { iaRemotaDisponible } from './ia/transporte-ia'
 
 export const LEGACY_PROGRAM_ID = 'coproductor-legacy'
 
@@ -561,7 +562,7 @@ async function runCoproducerTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<T
       const state = dawStore.obtenerEstado()
       bindAgentDocsDisk(projectId, state.project?.ruta)
       // Consultas locales muy cortas solo si el proveedor no está online
-      const preferLocal = aiStatus !== 'online' || !window.electron?.aiChat
+      const preferLocal = aiStatus !== 'online' || !iaRemotaDisponible()
       const local = preferLocal ? answerLocalReadQuery(state, userText) : null
       let accumulated = local ?? ''
       let actionsSummary = ''
@@ -671,8 +672,8 @@ async function runCoproducerTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<T
       } else if (isMidiAuditSkipFixReply(userText)) {
         accumulated = 'De acuerdo — dejo el proyecto como está. El informe anterior sigue válido.'
       } else if (!local && !skipAiTurn) {
-        if (!window.electron?.aiChat) {
-          // Sin Electron: si pide crear, ejecutamos igual en el DAW local
+        if (!iaRemotaDisponible()) {
+          // Sin modelo remoto (ni Electron ni backend): si pide crear, ejecutamos igual en el DAW local
           const forced = await runFallbackTool(ctx, FALLBACK_TOOLS.userIntent, { text: workText, mode: agentMode })
           if (forced.length) {
             const out = await processActionsForMode({
@@ -1520,7 +1521,7 @@ async function runCoproducerTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<T
       docEdits = mergeDocEdits(docEdits, firstReview.docEdits)
 
       const canReview =
-        Boolean(window.electron?.aiChat) &&
+        iaRemotaDisponible() &&
         !local &&
         !ac.signal.aborted &&
         ranMutations &&

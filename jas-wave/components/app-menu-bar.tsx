@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronRight } from 'lucide-react'
 import { useWorkspace } from '@/src/workspace/workspace-context'
-import { TOOL_CATALOG, requestToggleTool, type ToolId } from '@/src/workspace/types'
+import { TOOL_CATALOG, requestToggleTool } from '@/src/workspace/types'
+import { herramientasDisponibles } from '@/src/modulos/herramientas'
+import { useVersionModulos } from '@/src/modulos/use-modulos'
 
 export type MenuActionId =
   | 'proyecto.nuevo'
@@ -142,7 +144,8 @@ function dispatchMenuAction(id: MenuActionId) {
 function ToolsSubmenu({ onPicked }: { onPicked: () => void }) {
   const { isToolOpen } = useWorkspace()
   const [open, setOpen] = useState(false)
-  const ids = Object.keys(TOOL_CATALOG) as ToolId[]
+  useVersionModulos()
+  const ids = herramientasDisponibles()
 
   return (
     <div

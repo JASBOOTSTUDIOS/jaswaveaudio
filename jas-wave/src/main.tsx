@@ -8,8 +8,10 @@ import { initUiZoom } from './lib/docs-editor-store'
 import { AppErrorBoundary, reportRendererError } from '@/components/app-error-boundary'
 import { getSharedStore } from './context/daw-context'
 import { PaginaActivar, esRutaActivacion } from '@/components/cuenta/pagina-activar'
+import { registrarModulosIntegrados } from './modulos/integrados'
 
 initUiZoom()
+registrarModulosIntegrados()
 
 window.addEventListener('error', (e) => reportRendererError('window.onerror', e.error ?? e.message))
 window.addEventListener('unhandledrejection', (e) => reportRendererError('unhandledrejection', e.reason))

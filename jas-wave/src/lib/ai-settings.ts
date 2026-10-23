@@ -6,6 +6,8 @@
  * `openai-compatible` + `custom` (URL, paths, auth, headers, modelos propios).
  */
 
+import { transporteIA } from './ia/transporte-ia'
+
 export type AiProviderKind =
   | 'ollama'
   | 'openai'
@@ -589,7 +591,7 @@ export async function aiChatWithFallback(
     })
     req.requestId = `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     const cancelInMain = () => {
-      void window.electron?.aiChatCancel?.(req.requestId!)
+      void transporteIA()?.cancelar(req.requestId!)
     }
     opts.abort?.addEventListener('abort', cancelInMain, { once: true })
     try {

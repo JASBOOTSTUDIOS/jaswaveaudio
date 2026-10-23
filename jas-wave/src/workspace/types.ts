@@ -24,6 +24,7 @@ export type ToolId =
   | 'project-files'
   | 'cuenta'
   | 'admin'
+  | 'modulos'
 
 export interface ToolDefinitionUI {
   id: ToolId
@@ -196,6 +197,14 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     title: 'Administración',
     description: 'Plugins licenciables, roles, accesos por usuario, dispositivos y auditoría (solo administradores)',
     defaultZone: 'center',
+    singleton: true,
+    bajoDemanda: true,
+  },
+  modulos: {
+    id: 'modulos',
+    title: 'Módulos',
+    description: 'Activa, desactiva y descarga módulos opcionales del DAW (asistente IA, partitura…)',
+    defaultZone: 'right',
     singleton: true,
     bajoDemanda: true,
   },
