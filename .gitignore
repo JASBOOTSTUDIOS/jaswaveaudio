@@ -41,8 +41,6 @@ jas-wave/resources/plugin-host/jaswave-plugin-host.pdb
 jas-wave/resources/vst3/
 native/plugin-host/build*/
 native/plugin-host/third_party/
-native/jaswave-roles-vst/build*/
-native/piano-synth/build*/
 native/audio-engine/build/
 
 # CLI: scripts/probes temporales con prefijo "_" (los versionados siguen trackeados)
@@ -54,8 +52,8 @@ jas-wave/jas-wave/
 native/plugin-host/build-release/
 
 # Artefactos de build de plugins y CMake (binarios generados, no fuente)
-native/jaswave-fx/build-release/
-plugins/*/build/
+plugins/build*/
+plugins/*/build*/
 plugins/*/bin/
 plugins/*/v*/
 plugins/tests/build/

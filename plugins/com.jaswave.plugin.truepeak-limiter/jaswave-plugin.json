@@ -3,29 +3,142 @@
   "name": "JasWave True-Peak Limiter Pro",
   "version": "1.0.0",
   "category": "audio-effect",
-  "subCategory": "Fx|Limiter",
-  "description": "Limitador True-Peak conforme a ITU-R BS.1770-4 con sobremuestreo 4x y lookahead seleccionable para mastering transparente.",
   "vendor": "JasWave Audio",
-  "classId": "{4A15A3A0-3C1A-4C4F-B19A-8E40280D5E03}",
+  "description": "Limitador brickwall true-peak (detección 8x, verificación BS.1770-4) con lookahead ajustable, dither TPDF y sonoridad EBU R128.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
   "entrypoints": {
-    "vst3": "bin/JasWaveTruePeakLimiter.vst3",
-    "vst3Bundle": "bin/JasWaveTruePeakLimiter.vst3/Contents/x86_64-win/JasWaveTruePeakLimiter.vst3"
+    "dspDesktop": "bin/JasWaveTruePeakLimiter.vst3"
   },
-  "compatibility": {
-    "jaswave": ">=4.0.0",
-    "reaper": ">=6.0.0",
-    "vst3Standard": "3.7.0"
+  "vst3": {
+    "classId": "{4A617357-4C49-4D49-5072-6F6356335431}",
+    "subCategories": "Fx|Dynamics|Mastering"
   },
-  "parameters": {
-    "ceilingRangeDb": [-12.0, 0.0],
-    "inputGainDb": [0.0, 24.0],
-    "releaseRangeMs": [1.0, 1000.0],
-    "lookaheadMs": [0.0, 10.0]
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
   },
-  "rolesAllowed": ["mastering", "qa"],
+  "rolesAllowed": [
+    "mastering",
+    "qa"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.truepeak-limiter",
+    "features": [
+      {
+        "key": "limitador.medicion-lufs",
+        "description": "Sonoridad ITU-R BS.1770 / EBU R128 (M, S, I)"
+      },
+      {
+        "key": "limitador.dither",
+        "description": "Dither TPDF de 24/16 bit"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Limitador de mastering que garantiza el techo true-peak y mide la sonoridad integrada.",
+    "intents": [
+      "subir-sonoridad",
+      "proteger-techo",
+      "preparar-streaming",
+      "medir-lufs"
+    ],
+    "parameters": [
+      {
+        "id": "bypass",
+        "vstParamId": 0,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "bypass": true
+      },
+      {
+        "id": "lim.techo",
+        "vstParamId": 1,
+        "name": "Techo true-peak",
+        "min": -12,
+        "max": 0,
+        "default": -1,
+        "unit": "dBTP",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "lim.ganancia",
+        "vstParamId": 2,
+        "name": "Ganancia de entrada",
+        "min": 0,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "lim.release",
+        "vstParamId": 3,
+        "name": "Release",
+        "min": 1,
+        "max": 1000,
+        "default": 100,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "lim.lookahead",
+        "vstParamId": 4,
+        "name": "Lookahead",
+        "min": 0,
+        "max": 10,
+        "default": 2,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "lim.dither",
+        "vstParamId": 5,
+        "name": "Dither",
+        "min": 0,
+        "max": 2,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": "limitador.dither",
+        "values": [
+          "Off",
+          "24 bit",
+          "16 bit"
+        ]
+      },
+      {
+        "id": "lim.gr",
+        "vstParamId": 40,
+        "name": "Reducción de ganancia (medidor)",
+        "min": -60,
+        "max": 0,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      }
+    ]
+  },
   "download": {
-    "githubRelease": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/v4.0.0-plugins/com.jaswave.plugin.truepeak-limiter-v1.0.0.zip",
-    "sizeBytes": 2320000,
-    "checksumSha256": ""
-  }
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.truepeak-limiter-1.0.0.zip",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
 }

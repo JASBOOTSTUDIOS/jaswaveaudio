@@ -3,30 +3,173 @@
   "name": "JasWave Utility & Phase Tool",
   "version": "1.0.0",
   "category": "audio-effect",
-  "subCategory": "Fx|Utility",
-  "description": "Herramienta de canal para control de ganancia limpia (+/-24dB), ancho estéreo (M/S), inversión de fase e inversión L/R.",
   "vendor": "JasWave Audio",
-  "classId": "{4A15A3A0-3C1A-4C4F-B19A-8E40280D5E05}",
+  "description": "Utilidad de canal: ganancia ±24 dB, fase L/R, intercambio L/R, filtro DC, ancho estéreo M/S, mono por debajo de una frecuencia, mono y balance.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
   "entrypoints": {
-    "vst3": "bin/JasWaveUtility.vst3",
-    "vst3Bundle": "bin/JasWaveUtility.vst3/Contents/x86_64-win/JasWaveUtility.vst3"
+    "dspDesktop": "bin/JasWaveUtility.vst3"
   },
-  "compatibility": {
-    "jaswave": ">=4.0.0",
-    "reaper": ">=6.0.0",
-    "vst3Standard": "3.7.0"
+  "vst3": {
+    "classId": "{4A617357-5554-494C-5072-6F6356335431}",
+    "subCategories": "Fx|Tools"
   },
-  "parameters": {
-    "gainDb": [-24.0, 24.0],
-    "widthPercent": [0.0, 200.0],
-    "phaseInvertL": true,
-    "phaseInvertR": true,
-    "monoCollapse": true
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
   },
-  "rolesAllowed": ["todos"],
+  "rolesAllowed": [
+    "director",
+    "productor",
+    "mezcla",
+    "mastering",
+    "qa"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.utility-tool",
+    "features": [
+      {
+        "key": "utilidad.mono-graves",
+        "description": "Mono por debajo de una frecuencia"
+      },
+      {
+        "key": "utilidad.ancho-estereo",
+        "description": "Ancho estéreo M/S"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Ajustes de canal: ganancia, fase, imagen estéreo y mono-graves.",
+    "intents": [
+      "ajustar-ganancia",
+      "corregir-fase",
+      "ensanchar-estereo",
+      "mono-graves",
+      "quitar-dc"
+    ],
+    "parameters": [
+      {
+        "id": "bypass",
+        "vstParamId": 0,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "bypass": true
+      },
+      {
+        "id": "util.ganancia",
+        "vstParamId": 1,
+        "name": "Ganancia",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "util.ancho",
+        "vstParamId": 2,
+        "name": "Ancho estéreo",
+        "min": 0,
+        "max": 200,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "utilidad.ancho-estereo"
+      },
+      {
+        "id": "util.mono-bajo",
+        "vstParamId": 3,
+        "name": "Mono por debajo de (0 = off)",
+        "min": 0,
+        "max": 200,
+        "default": 0,
+        "unit": "Hz",
+        "scale": "linear",
+        "feature": "utilidad.mono-graves"
+      },
+      {
+        "id": "util.fase-l",
+        "vstParamId": 4,
+        "name": "Invertir fase L",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "util.fase-r",
+        "vstParamId": 5,
+        "name": "Invertir fase R",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "util.balance",
+        "vstParamId": 6,
+        "name": "Balance",
+        "min": -1,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "util.dc",
+        "vstParamId": 7,
+        "name": "Filtro DC",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "util.swap",
+        "vstParamId": 8,
+        "name": "Intercambiar L/R",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "util.mono",
+        "vstParamId": 9,
+        "name": "Mono",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      }
+    ]
+  },
   "download": {
-    "githubRelease": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/v4.0.0-plugins/com.jaswave.plugin.utility-tool-v1.0.0.zip",
-    "sizeBytes": 1950000,
-    "checksumSha256": ""
-  }
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.utility-tool-1.0.0.zip",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
 }

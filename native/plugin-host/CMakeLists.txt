@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(JASWAVE_VST3_SDK "Build Steinberg VST3 hosting (audio + editor embed)" ON)
 
-set(VST3_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vst3sdk")
+set(VST3_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vst3sdk" CACHE PATH "Ruta del VST3 SDK (npm run native:sdk)")
 set(HAS_VST3_SDK OFF)
 if(JASWAVE_VST3_SDK AND EXISTS "${VST3_SDK_DIR}/CMakeLists.txt"
    AND EXISTS "${VST3_SDK_DIR}/public.sdk/source/vst/hosting/module.h"
@@ -51,9 +51,8 @@ if(HAS_VST3_SDK)
   endif()
   message(STATUS "jaswave-plugin-host: VST3 audio+editor (miniaudio)")
 
-  # --- JasWave Piano Synth VST3 ---
-  add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../piano-synth" piano-synth EXCLUDE_FROM_ALL)
-  message(STATUS "JasWavePiano: VST3 instrument (Karplus-Strong synthesis)")
+  # El host no depende de ningún plugin concreto (K1): los plugins JasWave viven en plugins/ y se
+  # compilan aparte (native/scripts/build-plugins.mjs) y se entregan bajo demanda.
 else()
   add_executable(jaswave-plugin-host src/main.cpp)
   message(STATUS "jaswave-plugin-host: discover-only (SDK/miniaudio missing)")

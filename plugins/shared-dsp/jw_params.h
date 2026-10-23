@@ -28,6 +28,8 @@ struct ParamDef {
     bool bipolar;                // dibujar el arco desde el centro
     bool bypass;                 // marca ParameterInfo::kIsBypass
     const char* const* labels;   // etiquetas para Stepped (opcional)
+    int feature = -1;            // índice de feature de licencia que lo habilita (-1 = básica)
+    bool readOnly = false;       // parámetro de salida (medidor), no automatizable
 };
 
 inline const char* const* labelsOnOff() { static const char* const l[] = { "Off", "On" }; return l; }
@@ -45,6 +47,10 @@ inline ParamDef stepP(uint32_t id, const char* name, int steps, int df, const ch
 inline ParamDef toggleP(uint32_t id, const char* name, int df, bool isBypass = false) {
     return { id, name, "", Map::Stepped, 0.0, 1.0, static_cast<double>(df), 1, 0, false, isBypass, isBypass ? labelsBypass() : labelsOnOff() };
 }
+
+// Marca un parámetro como dependiente de una feature de licencia (DESIGN.md §5)
+inline ParamDef withFeature(ParamDef d, int featureIndex) { d.feature = featureIndex; return d; }
+inline ParamDef asReadOnly(ParamDef d) { d.readOnly = true; return d; }
 
 inline double clamp01(double v) { return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v); }
 

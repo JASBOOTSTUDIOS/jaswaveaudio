@@ -572,6 +572,21 @@ void Vst3Slot::applyMix(float* outL, float* outR, int frames) const {
   }
 }
 
+#ifdef _WIN32
+namespace {
+// process() del plugin protegido con SEH (también captura excepciones C++ que cruzan el límite de la DLL).
+// Sin objetos con destructor en esta función: requisito de __try.
+bool safeVst3Process(Steinberg::Vst::IAudioProcessor* p, Steinberg::Vst::ProcessData* d) {
+  __try {
+    p->process(*d);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+}  // namespace
+#endif
+
 void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* outR, int frames) {
   if (!outL || !outR || frames <= 0) return;
   if (bypass_.load(std::memory_order_relaxed) || !prepared_.load() || !impl_->processor) {
@@ -709,7 +724,19 @@ void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* o
     impl_->processContext.projectTimeMusic +=
         (static_cast<double>(n) / impl_->sampleRate) * (impl_->processContext.tempo / 60.0);
 
+#ifdef _WIN32
+    if (!safeVst3Process(impl_->processor.get(), &impl_->processData)) {
+      // Plugin roto: bypass silencioso para que el audio del resto siga (cuarentena V5 §2.4)
+      exceptions_.fetch_add(1, std::memory_order_relaxed);
+      bypass_.store(true, std::memory_order_relaxed);
+      std::fill(outL, outL + frames, 0.f);
+      std::fill(outR, outR + frames, 0.f);
+      inProcess_.store(false);
+      return;
+    }
+#else
     impl_->processor->process(impl_->processData);
+#endif
 
     const bool stereo = impl_->processData.numOutputs > 0 &&
                         impl_->processData.outputs &&

@@ -28,13 +28,13 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | S1 | Auth JWT + WebSocket de sync | B0 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log backend/) |
 | S2 | Reconciliación vectorial y undo por usuario | S1, K1 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log shared/src/sync) |
 | L1 | Licencias, roles y API admin | B0 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log backend/) |
-| L2 | Licencia dentro de cada VST | L1, V1 | pendiente | | |
-| L3 | Login y panel admin en el DAW | L1 | pendiente | | |
+| L2 | Licencia dentro de cada VST | L1, V1 | hecho | Claude Opus 5.5 · 2026-10-23 | ae53d2c |
+| L3 | Login y panel admin en el DAW | L1 | en curso (código y pruebas hechos; verificación en vivo pendiente) | Claude Opus 5.5 · 2026-10-23 | 7a607aa |
 | P1 | Manifiesto jaswave-plugin.json y cargador | K1 | en curso | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | P2 | Registro dinámico de herramientas IA | P1 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
-| K1 | Microkernel sin dependencias estáticas | — | pendiente | | |
-| V1 | Plugins VST3 independientes | K1 | pendiente | | |
-| V2 | Rediseño UI cyber y calidad DSP | V1 | pendiente | | |
+| K1 | Microkernel sin dependencias estáticas | — | en curso (parte nativa hecha; TS pendiente) | Claude Opus 5.5 · 2026-10-23 | ae53d2c |
+| V1 | Plugins VST3 independientes | K1 | hecho | Claude Opus 5.5 · 2026-10-23 | ae53d2c |
+| V2 | Rediseño UI cyber y calidad DSP | V1 | hecho | Claude Opus 5.5 · 2026-10-23 | ae53d2c |
 | W1 | Cliente web | B0, K1 | pendiente | | |
 | W2 | WebSynth y stem freezing | W1 | pendiente | | |
 | H1 | Handover web → desktop | S1, W1 | pendiente | | |

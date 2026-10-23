@@ -1,0 +1,7 @@
+﻿# JasWave Piano Synth – VST3 instrumento independiente (compila solo o desde plugins/CMakeLists.txt)
+cmake_minimum_required(VERSION 3.25)
+project(jaswave_piano_synth VERSION 1.0.0 LANGUAGES C CXX)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/JasWavePlugins.cmake")
+jw_setup_shared()
+# Bundle "JasWavePiano.vst3": mismo nombre de archivo que el piano previo (el DAW lo busca así)
+jaswave_add_vst3(TARGET JasWavePiano SOURCES source/piano_plugin.cpp INCLUDES "${CMAKE_CURRENT_SOURCE_DIR}/source")

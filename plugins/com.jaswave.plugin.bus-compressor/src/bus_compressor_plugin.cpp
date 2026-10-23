@@ -1,454 +1,204 @@
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-
+// JasWave Bus Compressor – VST3 (procesador, controlador, editor Cyber con historial de GR y curva estática)
 #include "bus_compressor_dsp.h"
-#include "../../shared-ui/jaswave_modern_ui.h"
+#include "jw_vst3.h"
+#include "jw_ui.h"
+#include "jw_ui_kit.h"
 
-#include "public.sdk/source/vst/vstaudioeffect.h"
-#include "public.sdk/source/vst/vsteditcontroller.h"
-#include "public.sdk/source/common/pluginview.h"
 #include "public.sdk/source/main/pluginfactory.h"
-#include "pluginterfaces/vst/ivstparameterchanges.h"
-
-#include <array>
-#include <string>
-#include <sstream>
-#include <iomanip>
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
+using namespace JasWaveVst;
 
-namespace JasWaveBusComp {
+namespace JasWaveComp {
 
+// FUID estables (los de "JasWave FX Compresor" y del compresor previo de plugins/): no cambiar
 static const FUID kProcessorUid(0x4A617357, 0x434F4D50, 0x50726F63, 0x56335431);
 static const FUID kControllerUid(0x4A617357, 0x434F4D50, 0x436E7472, 0x56335431);
 
-class BusCompController;
-
-#ifdef _WIN32
-class BusCompEditorView : public CPluginView {
-public:
-    explicit BusCompEditorView(BusCompController* controller);
-    ~BusCompEditorView() SMTG_OVERRIDE;
-
-    tresult PLUGIN_API isPlatformTypeSupported(FIDString type) SMTG_OVERRIDE {
-        return (strcmp(type, kPlatformTypeHWND) == 0) ? kResultOk : kResultFalse;
-    }
-
-    tresult PLUGIN_API canResize() SMTG_OVERRIDE { return kResultTrue; }
-
-    tresult PLUGIN_API checkSizeConstraint(ViewRect* r) SMTG_OVERRIDE {
-        if (!r) return kInvalidArgument;
-        int w = r->getWidth();
-        int h = r->getHeight();
-        if (w < 540) r->right = r->left + 540;
-        if (h < 400) r->bottom = r->top + 400;
-        return kResultOk;
-    }
-
-    tresult PLUGIN_API onSize(ViewRect* newRect) SMTG_OVERRIDE {
-        rect = *newRect;
-        if (hwnd_) {
-            SetWindowPos(hwnd_, nullptr, 0, 0, newRect->getWidth(), newRect->getHeight(),
-                         SWP_NOZORDER | SWP_NOACTIVATE);
-            updateLayout();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        }
-        return kResultOk;
-    }
-
-    void attachedToParent() SMTG_OVERRIDE;
-    void removedFromParent() SMTG_OVERRIDE;
-
-    void updateLayout();
-
-private:
-    static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
-    BusCompController* controller_{nullptr};
-    HWND hwnd_{nullptr};
-    static bool classRegistered_;
-
-    std::vector<JasWaveUI::CyberSlider> sliders_;
-    RECT visualizerRc_{0, 0, 0, 0};
-    int draggingSliderIdx_{-1};
-    float animPhase_{0.0f};
-
-    double threshDb_{-18.0};
-    double ratioVal_{4.0};
-    double attackMs_{10.0};
-    double releaseMs_{200.0};
-    double makeupGainDb_{3.0};
-    double currentGrDb_{-4.5};
-    std::shared_ptr<JasWaveComp::CompBus> bus_;
-    JasWaveDsp::ScopeSnapshot scopeSnap_;
+static const FeatureDef kFeatures[] = {
+    { "comp.filtro-sidechain", "Filtro paso alto del sidechain" },
+    { "comp.mezcla-paralela", "Compresión paralela (mezcla dry/wet)" },
 };
-#endif
+static const PluginDescriptor kDesc{ "com.jaswave.plugin.bus-compressor", "JasWave Bus Compressor", L"BUS COMPRESSOR", kFeatures, 2, false };
 
-class BusCompProcessor : public AudioEffect {
+// ---------------------------------------------------------------------------------
+class Processor : public JwProcessor {
 public:
-    BusCompProcessor() {
-        setControllerClass(kControllerUid);
-        bus_ = std::make_shared<JasWaveComp::CompBus>();
-        JasWaveDsp::PluginBusHub<JasWaveComp::CompBus>::set(this, bus_);
+    Processor() : JwProcessor(kDesc, paramDefs(), kControllerUid) { registerBus(cbus_ = std::make_shared<CompBus>()); }
+    static FUnknown* createInstance(void*) { return static_cast<IAudioProcessor*>(new Processor()); }
+
+protected:
+    void prepare(double sr, int maxBlock) override { engine_.prepare(sr, maxBlock); }
+    void resetDsp() override { engine_.snapAll(); engine_.reset(); }
+    void updateParams() override {
+        CompSettings s;
+        s.bypass = boolOf(kBypass) || !licensed();
+        s.thrDb = plainOf(kThreshold);
+        s.ratio = plainOf(kRatio);
+        s.attackMs = plainOf(kAttack);
+        s.releaseMs = plainOf(kRelease);
+        s.kneeDb = plainOf(kKnee);
+        s.makeupDb = plainOf(kMakeup);
+        s.mix = plainOf(kMix) / 100.0;
+        s.scHpfHz = plainOf(kScHpf);
+        s.rms = intOf(kDetector) == 1;
+        engine_.setSettings(s);
     }
-    ~BusCompProcessor() SMTG_OVERRIDE {
-        JasWaveDsp::PluginBusHub<JasWaveComp::CompBus>::remove(this);
+    void render(const float* iL, const float* iR, float* oL, float* oR, int n, int, ProcessData&) override { engine_.process(iL, iR, oL, oR, n, cbus_.get()); }
+    void render(const double* iL, const double* iR, double* oL, double* oR, int n, int, ProcessData&) override { engine_.process(iL, iR, oL, oR, n, cbus_.get()); }
+    uint32 tailSamples() override { return static_cast<uint32>(sr_ * 0.05); }
+    void writeOutputParams(ProcessData& data) override {
+        // GR de solo lectura (id 40): -GR dB en el rango -60..0
+        const double gr = std::min(60.0, engine_.grDb());
+        writeOutputParam(data, kGrMeter, (60.0 - gr) / 60.0);
     }
-    static FUnknown* createInstance(void*) { return (IAudioProcessor*)new BusCompProcessor(); }
-
-    tresult PLUGIN_API initialize(FUnknown* context) SMTG_OVERRIDE {
-        tresult result = AudioEffect::initialize(context);
-        if (result != kResultOk) return result;
-        addAudioInput(STR16("Stereo In"), SpeakerArr::kStereo);
-        addAudioOutput(STR16("Stereo Out"), SpeakerArr::kStereo);
-        return kResultOk;
-    }
-
-    tresult PLUGIN_API setupProcessing(ProcessSetup& newSetup) SMTG_OVERRIDE {
-        engine_.prepare(newSetup.sampleRate, newSetup.maxSamplesPerBlock);
-        if (bus_) bus_->sampleRate.store(newSetup.sampleRate);
-        return AudioEffect::setupProcessing(newSetup);
-    }
-
-    tresult PLUGIN_API process(ProcessData& data) SMTG_OVERRIDE {
-        if (data.inputParameterChanges) {
-            int32 numParams = data.inputParameterChanges->getParameterCount();
-            for (int32 i = 0; i < numParams; ++i) {
-                IParamValueQueue* queue = data.inputParameterChanges->getParameterData(i);
-                if (!queue) continue;
-                ParamValue val; int32 sampleOffset;
-                if (queue->getPoint(queue->getPointCount() - 1, sampleOffset, val) == kResultOk) {
-                    ParamID id = queue->getParameterId();
-                    if (id == 0) {
-                        settings_.bypass = (val > 0.5);
-                    } else if (id == 1) { // Threshold (-40 a 0 dB)
-                        settings_.thrDb = -40.0 + val * 40.0;
-                    } else if (id == 2) { // Ratio (1:1 a 20:1)
-                        settings_.ratio = 1.0 + val * 19.0;
-                    } else if (id == 3) { // Attack (0.1 a 100 ms)
-                        settings_.attackMs = 0.1 + val * 99.9;
-                    } else if (id == 4) { // Release (10 a 1000 ms)
-                        settings_.releaseMs = 10.0 + val * 990.0;
-                    } else if (id == 6) { // Makeup Gain (0 a 24 dB)
-                        settings_.makeupDb = val * 24.0;
-                    }
-                }
-            }
-            engine_.setSettings(settings_);
-        }
-
-        if (data.numInputs == 0 || data.numOutputs == 0) return kResultOk;
-
-        float* inL = data.inputs[0].channelBuffers32[0];
-        float* inR = data.inputs[0].channelBuffers32[1];
-        float* outL = data.outputs[0].channelBuffers32[0];
-        float* outR = data.outputs[0].channelBuffers32[1];
-
-        engine_.process(inL, inR, outL, outR, data.numSamples, bus_.get());
-        return kResultOk;
+    LegacyStateFn legacyState() override {
+        // "JasWave FX Compresor": 41 dobles (ids 0..40), mismos rangos lineales; el 40 (GR) se ignora
+        return [](IBStream* st, const ParamTable& t, std::vector<double>& n) { return readLegacyDoubles(st, t, n, 41, nullptr); };
     }
 
 private:
-    JasWaveComp::CompressorEngine engine_;
-    JasWaveComp::CompSettings settings_;
-    std::shared_ptr<JasWaveComp::CompBus> bus_;
+    CompressorEngine engine_;
+    std::shared_ptr<CompBus> cbus_;
 };
 
-class BusCompController : public EditController {
+// ---------------------------------------------------------------------------------
+class Editor : public JasWaveUI::PluginEditor {
 public:
-    static FUnknown* createInstance(void*) { return (IEditController*)new BusCompController(); }
-
-    tresult PLUGIN_API initialize(FUnknown* context) SMTG_OVERRIDE {
-        tresult result = EditController::initialize(context);
-        if (result != kResultOk) return result;
-        parameters.addParameter(STR16("Bypass"), nullptr, 1, 0, ParameterInfo::kCanAutomate, 0);
-        parameters.addParameter(STR16("Threshold (dB)"), STR16("dB"), 0, 0.55, ParameterInfo::kCanAutomate, 1);
-        parameters.addParameter(STR16("Ratio"), STR16(":1"), 0, 0.35, ParameterInfo::kCanAutomate, 2);
-        parameters.addParameter(STR16("Attack (ms)"), STR16("ms"), 0, 0.30, ParameterInfo::kCanAutomate, 3);
-        parameters.addParameter(STR16("Release (ms)"), STR16("ms"), 0, 0.25, ParameterInfo::kCanAutomate, 4);
-        parameters.addParameter(STR16("Makeup Gain (dB)"), STR16("dB"), 0, 0.15, ParameterInfo::kCanAutomate, 6);
-        return kResultOk;
+    const wchar_t* title() const override { return L"BUS COMPRESSOR"; }
+    const wchar_t* subtitle() const override { return L"VCA FEED-FORWARD · SOFT-KNEE · ENLACE ESTÉREO"; }
+    void build(JasWaveUI::EditorContext& c) override {
+        using namespace JasWaveUI;
+        c.section({ 666, 92, 1048, 404 }, L"COMPRESOR", kBypass, true);
+        c.knob(kThreshold, 742, 172, KnobSize::Main, L"UMBRAL");
+        c.knob(kRatio, 857, 172, KnobSize::Main, L"RATIO");
+        c.knob(kKnee, 972, 172, KnobSize::Main, L"RODILLA");
+        c.knob(kAttack, 742, 300, KnobSize::Normal, L"ATAQUE");
+        c.knob(kRelease, 857, 300, KnobSize::Normal, L"RELEASE");
+        c.dropdown(kDetector, { 930, 290, 1036, 310 }, L"DET");
+        c.section({ 666, 418, 1048, 556 }, L"SALIDA · SIDECHAIN");
+        c.fader(kMakeup, { 680, 440, 724, 552 }, L"MAKEUP");
+        c.knob(kMix, 772, 482, KnobSize::Normal, L"MEZCLA");
+        c.knob(kScHpf, 868, 482, KnobSize::Normal, L"SC HPF");
+        meters_.build(c, 976.0f, 446.0f, 528.0f);
     }
-
-    IPlugView* PLUGIN_API createView(FIDString name) SMTG_OVERRIDE {
-        if (name && strcmp(name, ViewType::kEditor) == 0) {
-#ifdef _WIN32
-            return new BusCompEditorView(this);
-#endif
+    void tick(JasWaveUI::EditorContext& c) override {
+        bus_ = std::dynamic_pointer_cast<CompBus>(c.params.bus());
+        if (!bus_) return;
+        meters_.update(bus_->inPk, bus_->outPk);
+        bus_->scope.snapshot(snap_, 1000);
+        const float g = bus_->grMax.take();
+        grNow_ += (bus_->grNow.load(std::memory_order_relaxed) - grNow_) * 0.35f;
+        grPeak_ = std::max(grPeak_ * 0.995f, g);
+        det_ = bus_->detLevelDb.load(std::memory_order_relaxed);
+    }
+    float outputLevel() const override { return meters_.level(); }
+    void drawPanels(JasWaveUI::Gfx& g, JasWaveUI::EditorContext& c) override {
+        using namespace JasWaveUI;
+        const Rect v = Layout::kVisualizer;
+        Kit::panel(g, v, L"HISTORIAL · REDUCCIÓN DE GANANCIA");
+        meters_.drawLabels(g);
+        // historial (izquierda): entrada (tenue), salida (cian) y GR desde arriba
+        const Rect h{ v.l + 14, v.t + 34, v.l + 400, v.b - 16 };
+        Chrome::drawGrid(g, h, 22.0f, false);
+        const int n = snap_.count;
+        if (n > 1) {
+            auto yLev = [&](float a) { const float db = a <= 1e-5f ? -60.0f : 20.0f * std::log10(a); return h.b - std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f) * h.h(); };
+            for (int i = 0; i < n; ++i) pts_[static_cast<size_t>(i)] = { h.l + h.w() * i / (n - 1), yLev(snap_.inAbs[static_cast<size_t>(i)]) };
+            g.fillUnder(pts_.data(), n, h.b, Pal::textoTenue.withAlpha(0.18f));
+            for (int i = 0; i < n; ++i) pts_[static_cast<size_t>(i)].y = yLev(snap_.outAbs[static_cast<size_t>(i)]);
+            Kit::wireTrace(g, pts_.data(), n, Pal::cian, h.b, true);
+            for (int i = 0; i < n; ++i)
+                pts_[static_cast<size_t>(i)].y = h.t + std::clamp(snap_.grDb[static_cast<size_t>(i)] / 24.0f, 0.0f, 1.0f) * h.h();
+            g.glowPolyline(pts_.data(), n, Pal::alerta.withAlpha(0.9f), 1.4f);
         }
-        return nullptr;
+        g.text(L"GR", { h.l + 4, h.t + 2, h.l + 40, h.t + 16 }, Font::Label, Pal::alerta, Align::Left, true);
+        g.text(L"0", { h.r + 2, h.t - 6, h.r + 30, h.t + 8 }, Font::ValueSmall, Pal::textoTenue);
+        g.text(L"-24", { h.r + 2, h.b - 8, h.r + 30, h.b + 6 }, Font::ValueSmall, Pal::textoTenue);
+        // curva estática (derecha)
+        const Rect cr{ v.r - 190, v.t + 46, v.r - 26, v.t + 46 + 164 };
+        g.fillRect(cr, hex(0x03080C, 0.6f));
+        g.strokeRect(cr, Pal::panelBorde, 1.0f);
+        for (int i = 1; i < 6; ++i) {
+            const float x = cr.l + cr.w() * i / 6.0f, y = cr.t + cr.h() * i / 6.0f;
+            g.line(x, cr.t, x, cr.b, Pal::reticula, 1.0f);
+            g.line(cr.l, y, cr.r, y, Pal::reticula, 1.0f);
+        }
+        g.line(cr.l, cr.b, cr.r, cr.t, Pal::cian.withAlpha(0.18f), 1.0f);
+        const double thr = c.params.plain(kThreshold), ratio = c.params.plain(kRatio), knee = c.params.plain(kKnee);
+        constexpr int kN = 64;
+        for (int i = 0; i < kN; ++i) {
+            const double x = -60.0 + 60.0 * i / (kN - 1);
+            const double y = staticOutDb(x, thr, ratio, knee);
+            curve_[static_cast<size_t>(i)] = { cr.l + cr.w() * static_cast<float>((x + 60.0) / 60.0), cr.b - cr.h() * static_cast<float>(std::clamp((y + 60.0) / 60.0, 0.0, 1.0)) };
+        }
+        g.glowPolyline(curve_.data(), kN, Pal::cian, 1.5f);
+        const float tx = cr.l + cr.w() * static_cast<float>((thr + 60.0) / 60.0);
+        g.line(tx, cr.t, tx, cr.b, Pal::cian.withAlpha(0.3f), 1.0f);
+        if (det_ > -60.0f) {
+            const double y = staticOutDb(det_, thr, ratio, knee);
+            g.glowDot(cr.l + cr.w() * (det_ + 60.0f) / 60.0f, cr.b - cr.h() * static_cast<float>(std::clamp((y + 60.0) / 60.0, 0.0, 1.0)), 3.0f, Pal::cianNucleo);
+        }
+        g.text(L"ENTRADA → SALIDA", { cr.l, cr.b + 4, cr.r, cr.b + 18 }, Font::Label, Pal::textoTenue, Align::Center, true);
+        // mini-panel: medidor horizontal de GR + lecturas
+        const Rect m = Layout::kMiniPanel;
+        Kit::panel(g, m, L"REDUCCIÓN DE GANANCIA");
+        const Rect bar{ m.l + 20, m.t + 46, m.r - 160, m.t + 66 };
+        const int segs = 48;
+        for (int i = 0; i < segs; ++i) {
+            const float x0 = bar.r - (i + 1) * bar.w() / segs;
+            const bool on = grNow_ >= (i + 0.5f) * 24.0f / segs;
+            const bool pk = std::fabs(grPeak_ - (i + 0.5f) * 24.0f / segs) < 0.25f;
+            g.fillRect({ x0 + 1, bar.t, x0 + bar.w() / segs - 1, bar.b }, on ? Pal::alerta : pk ? Pal::alerta.withAlpha(0.6f) : Pal::alerta.withAlpha(0.08f));
+        }
+        static const wchar_t* lab[] = { L"0", L"-6", L"-12", L"-18", L"-24" };
+        for (int i = 0; i <= 4; ++i) {
+            const float x = bar.r - bar.w() * i / 4.0f;
+            g.text(lab[i], { x - 20, bar.b + 4, x + 20, bar.b + 18 }, Font::ValueSmall, Pal::textoTenue, Align::Center);
+        }
+        wchar_t b1[32], b2[32], b3[32];
+        swprintf_s(b1, L"%.1f dB", -grNow_);
+        swprintf_s(b2, L"%.1f dB", -grPeak_);
+        swprintf_s(b3, L"%.1f dB", std::max(det_, -99.0f));
+        Kit::readout(g, m.r - 140, m.t + 32, L"GR", b1, Pal::alerta);
+        Kit::readout(g, m.r - 140, m.t + 66, L"PICO GR", b2);
+        Kit::readout(g, m.r - 70, m.t + 32, L"DETECTOR", b3);
+    }
+    const wchar_t* footerId() const override { return L"com.jaswave.plugin.bus-compressor"; }
+
+private:
+    std::shared_ptr<CompBus> bus_;
+    JasWaveUI::Kit::StereoMeters meters_;
+    JasWaveDsp::ScopeSnapshot snap_;
+    std::array<JasWaveUI::Pt, 1024> pts_{};
+    std::array<JasWaveUI::Pt, 64> curve_{};
+    float grNow_{0}, grPeak_{0}, det_{-100};
+};
+
+// ---------------------------------------------------------------------------------
+class Controller : public JwController {
+public:
+    Controller() : JwController(kDesc, paramDefs()) {}
+    static FUnknown* createInstance(void*) { return static_cast<IEditController*>(new Controller()); }
+    std::unique_ptr<JasWaveUI::PluginEditor> createEditor() override { return std::make_unique<Editor>(); }
+    std::vector<DemoParam> demoPreset() const override {
+        return { { kThreshold, -24.0 }, { kRatio, 4.0 }, { kAttack, 8.0 }, { kRelease, 160.0 }, { kKnee, 8.0 }, { kMakeup, 4.0 }, { kMix, 85.0 }, { kScHpf, 90.0 } };
+    }
+protected:
+    LegacyStateFn legacyState() override {
+        return [](IBStream* st, const ParamTable& t, std::vector<double>& n) { return readLegacyDoubles(st, t, n, 41, nullptr); };
     }
 };
 
-#ifdef _WIN32
-bool BusCompEditorView::classRegistered_ = false;
-
-BusCompEditorView::BusCompEditorView(BusCompController* controller)
-    : CPluginView(nullptr), controller_(controller) {
-    rect = ViewRect(0, 0, 680, 500);
-    JasWaveUI::ensureGdiplus();
-
-    sliders_ = {
-        { 1, L"THRESHOLD",   L"-18.0 dB", 0.55, {}, JasWaveUI::Colors::neonAmber(), false },
-        { 2, L"RATIO",       L"4.0:1",    0.35, {}, JasWaveUI::Colors::neonCyan(), false },
-        { 3, L"ATTACK",      L"10.0 ms",  0.30, {}, JasWaveUI::Colors::neonMagenta(), false },
-        { 4, L"RELEASE",     L"200 ms",   0.25, {}, JasWaveUI::Colors::neonCyan(), false },
-        { 6, L"MAKEUP GAIN", L"+3.0 dB",  0.15, {}, JasWaveUI::Colors::neonGreen(), false }
-    };
-}
-
-BusCompEditorView::~BusCompEditorView() {
-    removedFromParent();
-}
-
-void BusCompEditorView::updateLayout() {
-    if (!hwnd_) return;
-    RECT rc;
-    GetClientRect(hwnd_, &rc);
-    int w = rc.right - rc.left;
-    int h = rc.bottom - rc.top;
-    if (w <= 0 || h <= 0) return;
-
-    int padX = 28;
-    int visTop = 72;
-    int visH = (int)(h * 0.40);
-    if (visH < 120) visH = 120;
-    visualizerRc_ = { padX, visTop, w - padX, visTop + visH };
-
-    int slidersTop = visualizerRc_.bottom + 20;
-    int availableH = h - slidersTop - 24;
-    int sliderH = std::max(34, availableH / (int)sliders_.size());
-
-    for (size_t i = 0; i < sliders_.size(); ++i) {
-        int sy = slidersTop + (int)i * sliderH;
-        sliders_[i].bounds = { padX + 8, sy, w - padX - 8, sy + 30 };
-    }
-}
-
-void BusCompEditorView::attachedToParent() {
-    if (!systemWindow || hwnd_) return;
-    const wchar_t kClass[] = L"JasWaveBusCompModernEditor";
-    if (!classRegistered_) {
-        WNDCLASSW wc{};
-        wc.lpfnWndProc = WndProc;
-        wc.hInstance = GetModuleHandleW(nullptr);
-        wc.lpszClassName = kClass;
-        wc.hbrBackground = CreateSolidBrush(JasWaveUI::Colors::kBgDeepSpaceRef);
-        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        RegisterClassW(&wc);
-        classRegistered_ = true;
-    }
-
-    RECT parentRc{};
-    GetClientRect((HWND)systemWindow, &parentRc);
-    int initW = 680;
-    int initH = 500;
-    if (parentRc.right - parentRc.left > 200) initW = parentRc.right - parentRc.left;
-    if (parentRc.bottom - parentRc.top > 200) initH = parentRc.bottom - parentRc.top;
-    rect = ViewRect(0, 0, initW, initH);
-
-    hwnd_ = CreateWindowExW(0, kClass, L"JasWave Master Bus Compressor", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
-                            0, 0, initW, initH, (HWND)systemWindow, nullptr, GetModuleHandleW(nullptr), this);
-    if (!hwnd_) return;
-    SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
-
-    bus_ = JasWaveDsp::PluginBusHub<JasWaveComp::CompBus>::getLast();
-    updateLayout();
-    SetTimer(hwnd_, 102, 33, nullptr);
-}
-
-void BusCompEditorView::removedFromParent() {
-    if (hwnd_) {
-        KillTimer(hwnd_, 102);
-        DestroyWindow(hwnd_);
-        hwnd_ = nullptr;
-    }
-}
-
-LRESULT CALLBACK BusCompEditorView::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    auto* self = reinterpret_cast<BusCompEditorView*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    switch (msg) {
-        case WM_NCCREATE: {
-            auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
-            return DefWindowProcW(hwnd, msg, wParam, lParam);
-        }
-        case WM_SIZE: {
-            if (self) {
-                self->updateLayout();
-                InvalidateRect(hwnd, nullptr, FALSE);
-            }
-            return 0;
-        }
-        case WM_ERASEBKGND:
-            return 1;
-
-        case WM_TIMER: {
-            if (self) {
-                if (!self->bus_) self->bus_ = JasWaveDsp::PluginBusHub<JasWaveComp::CompBus>::getLast();
-                if (self->bus_) {
-                    self->bus_->scope.snapshot(self->scopeSnap_);
-                    self->currentGrDb_ = self->bus_->grMax.take();
-                }
-                InvalidateRect(hwnd, &self->visualizerRc_, FALSE);
-            }
-            return 0;
-        }
-        case WM_LBUTTONDOWN: {
-            if (!self) break;
-            int mx = LOWORD(lParam);
-            int my = HIWORD(lParam);
-
-            for (size_t i = 0; i < self->sliders_.size(); ++i) {
-                auto& s = self->sliders_[i];
-                if (mx >= s.bounds.left && mx <= s.bounds.right &&
-                    my >= s.bounds.top && my <= s.bounds.bottom) {
-                    self->draggingSliderIdx_ = (int)i;
-                    s.isDragging = true;
-                    SetCapture(hwnd);
-
-                    double norm = (double)(mx - s.bounds.left) / (double)(s.bounds.right - s.bounds.left);
-                    norm = std::max(0.0, std::min(1.0, norm));
-                    s.normalized = norm;
-
-                    if (s.id == 1) { // Threshold
-                        self->threshDb_ = -40.0 + norm * 40.0;
-                        std::wstringstream ss; ss << std::fixed << std::setprecision(1) << self->threshDb_ << L" dB";
-                        s.valueText = ss.str();
-                    } else if (s.id == 2) { // Ratio
-                        self->ratioVal_ = 1.0 + norm * 9.0;
-                        std::wstringstream ss; ss << std::fixed << std::setprecision(1) << self->ratioVal_ << L":1";
-                        s.valueText = ss.str();
-                    } else if (s.id == 3) { // Attack
-                        self->attackMs_ = 0.1 + norm * 29.9;
-                        std::wstringstream ss; ss << std::fixed << std::setprecision(1) << self->attackMs_ << L" ms";
-                        s.valueText = ss.str();
-                    } else if (s.id == 4) { // Release
-                        self->releaseMs_ = 50.0 + norm * 1150.0;
-                        s.valueText = std::to_wstring((int)self->releaseMs_) + L" ms";
-                    } else if (s.id == 6) { // Makeup
-                        self->makeupGainDb_ = norm * 18.0;
-                        std::wstringstream ss; ss << std::fixed << std::setprecision(1) << L"+" << self->makeupGainDb_ << L" dB";
-                        s.valueText = ss.str();
-                    }
-
-                    if (self->controller_) {
-                        self->controller_->setParamNormalized(s.id, norm);
-                        self->controller_->performEdit(s.id, norm);
-                    }
-                    InvalidateRect(hwnd, nullptr, FALSE);
-                    break;
-                }
-            }
-            return 0;
-        }
-        case WM_MOUSEMOVE: {
-            if (!self || self->draggingSliderIdx_ < 0) break;
-            int mx = LOWORD(lParam);
-            auto& s = self->sliders_[self->draggingSliderIdx_];
-            double norm = (double)(mx - s.bounds.left) / (double)(s.bounds.right - s.bounds.left);
-            norm = std::max(0.0, std::min(1.0, norm));
-            s.normalized = norm;
-
-            if (s.id == 1) {
-                self->threshDb_ = -40.0 + norm * 40.0;
-                std::wstringstream ss; ss << std::fixed << std::setprecision(1) << self->threshDb_ << L" dB";
-                s.valueText = ss.str();
-            } else if (s.id == 2) {
-                self->ratioVal_ = 1.0 + norm * 9.0;
-                std::wstringstream ss; ss << std::fixed << std::setprecision(1) << self->ratioVal_ << L":1";
-                s.valueText = ss.str();
-            } else if (s.id == 3) {
-                self->attackMs_ = 0.1 + norm * 29.9;
-                std::wstringstream ss; ss << std::fixed << std::setprecision(1) << self->attackMs_ << L" ms";
-                s.valueText = ss.str();
-            } else if (s.id == 4) {
-                self->releaseMs_ = 50.0 + norm * 1150.0;
-                s.valueText = std::to_wstring((int)self->releaseMs_) + L" ms";
-            } else if (s.id == 6) {
-                self->makeupGainDb_ = norm * 18.0;
-                std::wstringstream ss; ss << std::fixed << std::setprecision(1) << L"+" << self->makeupGainDb_ << L" dB";
-                s.valueText = ss.str();
-            }
-
-            if (self->controller_) {
-                self->controller_->setParamNormalized(s.id, norm);
-                self->controller_->performEdit(s.id, norm);
-            }
-            InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
-        }
-        case WM_LBUTTONUP: {
-            if (self && self->draggingSliderIdx_ >= 0) {
-                self->sliders_[self->draggingSliderIdx_].isDragging = false;
-                self->draggingSliderIdx_ = -1;
-                ReleaseCapture();
-            }
-            return 0;
-        }
-        case WM_PAINT: {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hwnd, &ps);
-            RECT rc;
-            GetClientRect(hwnd, &rc);
-            int w = rc.right - rc.left;
-            int h = rc.bottom - rc.top;
-
-            if (w > 0 && h > 0) {
-                HDC memDC = CreateCompatibleDC(hdc);
-                HBITMAP memBmp = CreateCompatibleBitmap(hdc, w, h);
-                HGDIOBJ oldBmp = SelectObject(memDC, memBmp);
-
-                {
-                    Gdiplus::Graphics g(memDC);
-                    JasWaveUI::drawCyberFrame(g, w, h,
-                                             L"JASWAVE MASTER BUS COMPRESSOR",
-                                             L"DYNAMIC VCA GLUE & ENVELOPE DYNAMICS",
-                                             L"[OPTO/VCA SMART-DETECTOR]");
-
-                    if (self) {
-                        JasWaveUI::drawCompressorVisualizer(g, self->visualizerRc_,
-                                                           self->threshDb_,
-                                                           self->ratioVal_,
-                                                           self->currentGrDb_,
-                                                           &self->scopeSnap_,
-                                                           self->bus_ ? static_cast<double>(self->bus_->detLevelDb.load(std::memory_order_relaxed)) : -100.0,
-                                                           self->animPhase_);
-
-                        for (const auto& s : self->sliders_) {
-                            JasWaveUI::drawCyberSlider(g, s);
-                        }
-                    }
-                }
-
-                BitBlt(hdc, 0, 0, w, h, memDC, 0, 0, SRCCOPY);
-                SelectObject(memDC, oldBmp);
-                DeleteObject(memBmp);
-                DeleteDC(memDC);
-            }
-
-            EndPaint(hwnd, &ps);
-            return 0;
-        }
-    }
-    return DefWindowProcW(hwnd, msg, wParam, lParam);
-}
-#endif
-
-} // namespace JasWaveBusComp
+} // namespace JasWaveComp
 
 bool InitModule() { return true; }
 bool DeinitModule() { return true; }
 
 BEGIN_FACTORY_DEF("JasWave Audio", "https://jaswave.app", "mailto:dev@jaswave.app")
-    DEF_CLASS2(INLINE_UID_FROM_FUID(JasWaveBusComp::kProcessorUid),
-               PClassInfo::kManyInstances, kVstAudioEffectClass,
-               "JasWave Master Bus Compressor", Vst::kDistributable, "Fx|Dynamics",
-               "1.0.0", kVstVersionString, JasWaveBusComp::BusCompProcessor::createInstance)
-    DEF_CLASS2(INLINE_UID_FROM_FUID(JasWaveBusComp::kControllerUid),
-               PClassInfo::kManyInstances, kVstComponentControllerClass,
-               "JasWave Master Bus Compressor Controller", 0, "",
-               "1.0.0", kVstVersionString, JasWaveBusComp::BusCompController::createInstance)
+    DEF_CLASS2(INLINE_UID_FROM_FUID(JasWaveComp::kProcessorUid), PClassInfo::kManyInstances, kVstAudioEffectClass, "JasWave Bus Compressor",
+               Vst::kDistributable, Vst::PlugType::kFxDynamics, "1.0.0", kVstVersionString, JasWaveComp::Processor::createInstance)
+    DEF_CLASS2(INLINE_UID_FROM_FUID(JasWaveComp::kControllerUid), PClassInfo::kManyInstances, kVstComponentControllerClass,
+               "JasWave Bus Compressor Controller", 0, "", "1.0.0", kVstVersionString, JasWaveComp::Controller::createInstance)
 END_FACTORY

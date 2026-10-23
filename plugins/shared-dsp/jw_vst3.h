@@ -1,25 +1,34 @@
 // =====================================================================================
-//  JasWave – pegamento VST3 compartido
-//   - JwParameter : Parameter con mapeo lineal / logarítmico / escalonado y strings reales
-//   - JwController: registra la tabla, restaura estado, recibe el bus de telemetría
-//   - JwProcessor : aplica cambios de parámetros, guarda/restaura estado, expone el bus al
-//                   controlador mediante IConnectionPoint (sin tocar el hilo de audio)
+//  JasWave – pegamento VST3 compartido por todos los plugins independientes
+//   - JwParameter : Parameter con mapeo lineal / logarítmico / escalonado y textos reales
+//   - JwProcessor : buses, 32/64 bit, cambios de parámetros, estado versionado (+legado),
+//                   licencia (lectura atómica por bloque), telemetría al controlador
+//   - JwController: tabla de parámetros, estado, bus de telemetría, IMidiMapping, editor
+//  Ningún método del hilo de audio asigna memoria ni toma locks.
 // =====================================================================================
 #pragma once
 
 #include "jw_dsp.h"
 #include "jw_params.h"
+#include "jw_license.h"
 
 #include "public.sdk/source/vst/vstaudioeffect.h"
 #include "public.sdk/source/vst/vsteditcontroller.h"
 #include "public.sdk/source/vst/vstparameters.h"
 #include "base/source/fstreamer.h"
-#include "pluginterfaces/vst/ivstparameterchanges.h"
+#include "pluginterfaces/base/ibstream.h"
+#include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivstmessage.h"
+#include "pluginterfaces/vst/ivstmidicontrollers.h"
+#include "pluginterfaces/vst/ivstparameterchanges.h"
 
+#include <cctype>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+
+namespace JasWaveUI { class PluginEditor; }
 
 namespace JasWaveVst {
 
@@ -27,12 +36,42 @@ using namespace Steinberg;
 using namespace Steinberg::Vst;
 
 constexpr int32 kStateMagic = 0x4A575354; // 'JWST'
-constexpr int32 kStateVersion = 1;
+constexpr int32 kStateVersion = 2;        // v2: pares (id, normalizado); v1: valores en orden de tabla
+
+// ---- Descriptor de producto (manifiesto V5 ⇄ código) ----
+struct FeatureDef {
+    const char* key;     // license.features[].key
+    const char* label;   // texto corto para la UI
+};
+
+struct PluginDescriptor {
+    const char* productId;            // = manifiesto.id = productId de licencia
+    const char* displayName;          // nombre comercial
+    const wchar_t* uiTitle;           // título en la cabecera del editor
+    const FeatureDef* features;
+    int featureCount;
+    bool instrument;
+};
+
+inline void configureLicense(const PluginDescriptor& d) {
+    const char* keys[24] = {};
+    const int n = d.featureCount < 24 ? d.featureCount : 24;
+    for (int i = 0; i < n; ++i) keys[i] = d.features[i].key;   // el Manager copia las cadenas
+    JasWaveLicense::Manager::instance().configure({ d.productId, keys, n });
+}
 
 inline void asciiToTChar(const char* src, TChar* dst, int cap) {
-    int i = 0;
-    for (; src && src[i] && i < cap - 1; ++i) dst[i] = static_cast<TChar>(static_cast<unsigned char>(src[i]));
-    dst[i] = 0;
+    // UTF-8 -> UTF-16 (BMP) para títulos con acentos
+    int i = 0, o = 0;
+    while (src && src[i] && o < cap - 1) {
+        const unsigned char c = static_cast<unsigned char>(src[i]);
+        uint32_t cp = c;
+        if (c >= 0xE0 && src[i + 1] && src[i + 2]) { cp = ((c & 0x0F) << 12) | ((src[i + 1] & 0x3F) << 6) | (src[i + 2] & 0x3F); i += 3; }
+        else if (c >= 0xC0 && src[i + 1]) { cp = ((c & 0x1F) << 6) | (src[i + 1] & 0x3F); i += 2; }
+        else { ++i; }
+        dst[o++] = static_cast<TChar>(cp);
+    }
+    dst[o] = 0;
 }
 inline std::string tcharToAscii(const TChar* s) {
     std::string out;
@@ -40,9 +79,10 @@ inline std::string tcharToAscii(const TChar* s) {
     return out;
 }
 inline bool iequals(const std::string& a, const char* b) {
-    size_t n = std::strlen(b);
+    const size_t n = std::strlen(b);
     if (a.size() != n) return false;
-    for (size_t i = 0; i < n; ++i) if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) return false;
+    for (size_t i = 0; i < n; ++i)
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) return false;
     return true;
 }
 
@@ -80,7 +120,8 @@ public:
         const std::string a = tcharToAscii(s);
         if (a.empty()) return false;
         if (def_.map == Map::Stepped && def_.labels) {
-            for (int i = 0; i <= def_.steps; ++i) if (iequals(a, def_.labels[i])) { n = JasWaveVst::toNorm(def_, i); return true; }
+            for (int i = 0; i <= def_.steps; ++i)
+                if (iequals(a, def_.labels[i])) { n = JasWaveVst::toNorm(def_, i); return true; }
         }
         char* end = nullptr;
         double v = std::strtod(a.c_str(), &end);
@@ -92,6 +133,7 @@ public:
     }
     ParamValue toPlain(ParamValue n) const SMTG_OVERRIDE { return JasWaveVst::toPlain(def_, n); }
     ParamValue toNormalized(ParamValue p) const SMTG_OVERRIDE { return JasWaveVst::toNorm(def_, p); }
+    const ParamDef& def() const { return def_; }
 
 private:
     static ParameterInfo makeInfo(const ParamDef& d) {
@@ -103,38 +145,349 @@ private:
         i.stepCount = d.map == Map::Stepped ? d.steps : 0;
         i.defaultNormalizedValue = defaultNorm(d);
         i.unitId = kRootUnitId;
-        i.flags = ParameterInfo::kCanAutomate;
+        if (d.readOnly) i.flags = ParameterInfo::kIsReadOnly;
+        else i.flags = ParameterInfo::kCanAutomate;
         if (d.bypass) i.flags |= ParameterInfo::kIsBypass;
-        if (d.map == Map::Stepped && d.steps > 1 && d.labels) i.flags |= ParameterInfo::kIsList;
+        if (d.map == Map::Stepped && d.steps >= 1 && d.labels) i.flags |= ParameterInfo::kIsList;
         return i;
     }
     ParamDef def_;
 };
 
-// ---- Controlador base ----
-class JwController : public EditController {
+// ---- Estado: escritura v2 y lectura v1/v2/legado (compartido Processor/Controller) ----
+using LegacyStateFn = std::function<bool(IBStream*, const ParamTable&, std::vector<double>&)>;
+
+inline bool readStateInto(IBStream* state, const ParamTable& table, std::vector<double>& norm, const LegacyStateFn& legacy) {
+    if (!state) return false;
+    int64 start = 0;
+    state->tell(&start);
+    IBStreamer s(state, kLittleEndian);
+    int32 magic = 0;
+    if (!s.readInt32(magic) || magic != kStateMagic) {
+        if (!legacy) return false;
+        state->seek(start, IBStream::kIBSeekSet, nullptr);
+        return legacy(state, table, norm);
+    }
+    int32 ver = 0, n = 0;
+    if (!s.readInt32(ver) || !s.readInt32(n) || n < 0 || n > 4096) return false;
+    for (int32 i = 0; i < n; ++i) {
+        if (ver >= 2) {
+            int32 id = 0;
+            double v = 0.0;
+            if (!s.readInt32(id) || !s.readDouble(v)) break;
+            const int idx = table.index(static_cast<uint32_t>(id));
+            if (idx >= 0 && !table.at(idx).readOnly && std::isfinite(v)) norm[static_cast<size_t>(idx)] = clamp01(v);
+        } else {
+            double v = 0.0;
+            if (!s.readDouble(v)) break;
+            if (i < table.count() && std::isfinite(v)) norm[static_cast<size_t>(i)] = clamp01(v);
+        }
+    }
+    return true;
+}
+
+inline void writeState(IBStream* state, const ParamTable& table, const std::vector<double>& norm) {
+    IBStreamer s(state, kLittleEndian);
+    int32 n = 0;
+    for (int i = 0; i < table.count(); ++i) if (!table.at(i).readOnly) ++n;
+    s.writeInt32(kStateMagic);
+    s.writeInt32(kStateVersion);
+    s.writeInt32(n);
+    for (int i = 0; i < table.count(); ++i) {
+        if (table.at(i).readOnly) continue;
+        s.writeInt32(static_cast<int32>(table.at(i).id));
+        s.writeDouble(norm[static_cast<size_t>(i)]);
+    }
+}
+
+// Ayuda para estados legados del bundle JasWaveFx: lista de doubles normalizados en orden de id
+// (0..count-1). `convert(id, legacyNorm)` devuelve el normalizado nuevo (o <0 para ignorar).
+inline bool readLegacyDoubles(IBStream* state, const ParamTable& table, std::vector<double>& norm, int count,
+                              const std::function<double(uint32_t, double)>& convert) {
+    IBStreamer s(state, kLittleEndian);
+    bool any = false;
+    for (int i = 0; i < count; ++i) {
+        double v = 0.0;
+        if (!s.readDouble(v)) break;
+        if (!std::isfinite(v)) continue;
+        const double nv = convert ? convert(static_cast<uint32_t>(i), clamp01(v)) : clamp01(v);
+        const int idx = table.index(static_cast<uint32_t>(i));
+        if (idx >= 0 && nv >= 0.0 && !table.at(idx).readOnly) { norm[static_cast<size_t>(idx)] = clamp01(nv); any = true; }
+    }
+    return any;
+}
+
+// ---- Procesador base ----
+class JwProcessor : public AudioEffect {
 public:
-    explicit JwController(const std::vector<ParamDef>& defs) : table_(defs) {}
+    JwProcessor(const PluginDescriptor& desc, const std::vector<ParamDef>& defs, const FUID& controllerUid)
+        : desc_(desc), table_(defs) {
+        setControllerClass(controllerUid);
+        norm_.resize(static_cast<size_t>(table_.count()));
+        for (int i = 0; i < table_.count(); ++i) norm_[static_cast<size_t>(i)] = defaultNorm(table_.at(i));
+        scratchL32_.assign(static_cast<size_t>(maxBlock_), 0.0f);
+        scratchR32_.assign(static_cast<size_t>(maxBlock_), 0.0f);
+        scratchL64_.assign(static_cast<size_t>(maxBlock_), 0.0);
+        scratchR64_.assign(static_cast<size_t>(maxBlock_), 0.0);
+        configureLicense(desc_);
+    }
+    ~JwProcessor() SMTG_OVERRIDE {
+        if (busId_) BusRegistry::get().remove(busId_);
+        if (licAcquired_) JasWaveLicense::Manager::instance().release();
+    }
+
+    tresult PLUGIN_API initialize(FUnknown* context) SMTG_OVERRIDE {
+        const tresult r = AudioEffect::initialize(context);
+        if (r != kResultOk) return r;
+        if (desc_.instrument) {
+            addEventInput(STR16("MIDI In"), 16);
+        } else {
+            addAudioInput(STR16("Stereo In"), SpeakerArr::kStereo);
+        }
+        addAudioOutput(STR16("Stereo Out"), SpeakerArr::kStereo);
+        if (!licAcquired_) { JasWaveLicense::Manager::instance().acquire(); licAcquired_ = true; }
+        return kResultOk;
+    }
+    tresult PLUGIN_API terminate() SMTG_OVERRIDE {
+        if (licAcquired_) { JasWaveLicense::Manager::instance().release(); licAcquired_ = false; }
+        return AudioEffect::terminate();
+    }
+
+    tresult PLUGIN_API canProcessSampleSize(int32 s) SMTG_OVERRIDE {
+        return (s == kSample32 || s == kSample64) ? kResultTrue : kResultFalse;
+    }
+
+    tresult PLUGIN_API setBusArrangements(SpeakerArrangement* inputs, int32 numIns, SpeakerArrangement* outputs, int32 numOuts) SMTG_OVERRIDE {
+        if (desc_.instrument) {
+            if (numIns != 0 || numOuts != 1) return kResultFalse;
+            if (outputs[0] != SpeakerArr::kStereo && outputs[0] != SpeakerArr::kMono) return kResultFalse;
+            return AudioEffect::setBusArrangements(inputs, numIns, outputs, numOuts);
+        }
+        if (numIns != 1 || numOuts != 1) return kResultFalse;
+        if (inputs[0] != outputs[0]) return kResultFalse;
+        if (inputs[0] != SpeakerArr::kStereo && inputs[0] != SpeakerArr::kMono) return kResultFalse;
+        return AudioEffect::setBusArrangements(inputs, numIns, outputs, numOuts);
+    }
+
+    tresult PLUGIN_API setupProcessing(ProcessSetup& setup) SMTG_OVERRIDE {
+        const tresult r = AudioEffect::setupProcessing(setup);
+        sr_ = setup.sampleRate > 0 ? setup.sampleRate : 48000.0;
+        maxBlock_ = setup.maxSamplesPerBlock > 0 ? setup.maxSamplesPerBlock : 4096;
+        scratchL32_.assign(static_cast<size_t>(maxBlock_), 0.0f);
+        scratchR32_.assign(static_cast<size_t>(maxBlock_), 0.0f);
+        scratchL64_.assign(static_cast<size_t>(maxBlock_), 0.0);
+        scratchR64_.assign(static_cast<size_t>(maxBlock_), 0.0);
+        if (bus_) bus_->sampleRate.store(sr_);
+        prepare(sr_, maxBlock_);
+        paramsDirty_ = true;
+        return r;
+    }
+
+    tresult PLUGIN_API setActive(TBool state) SMTG_OVERRIDE {
+        if (state) { resetDsp(); paramsDirty_ = true; }
+        return AudioEffect::setActive(state);
+    }
+    tresult PLUGIN_API setProcessing(TBool) SMTG_OVERRIDE { return kResultOk; }
+
+    tresult PLUGIN_API setState(IBStream* state) SMTG_OVERRIDE {
+        std::vector<double> n = norm_;
+        if (!readStateInto(state, table_, n, legacyState())) return kResultFalse;
+        // Se aplica en el siguiente process() (el host serializa setState con process)
+        norm_ = n;
+        paramsDirty_ = true;
+        return kResultOk;
+    }
+    tresult PLUGIN_API getState(IBStream* state) SMTG_OVERRIDE {
+        if (!state) return kResultFalse;
+        writeState(state, table_, norm_);
+        return kResultOk;
+    }
+
+    tresult PLUGIN_API connect(IConnectionPoint* other) SMTG_OVERRIDE {
+        const tresult r = AudioEffect::connect(other);
+        sendBusMessage();
+        return r;
+    }
+
+    uint32 PLUGIN_API getLatencySamples() SMTG_OVERRIDE { return latencySamples(); }
+    uint32 PLUGIN_API getTailSamples() SMTG_OVERRIDE { return tailSamples(); }
+
+    tresult PLUGIN_API process(ProcessData& data) SMTG_OVERRIDE {
+        JasWaveDsp::ScopedNoDenormals noDenormals;
+        const bool changed = applyParamChanges(data);
+        lic_ = JasWaveLicense::Manager::instance().state();   // atómico, sin bloqueo
+        if (changed || lic_ != lastLic_) { updateParams(); lastLic_ = lic_; }
+        if (data.numSamples <= 0) return kResultOk;            // flush de parámetros
+        if (data.numOutputs < 1 || !data.outputs || data.outputs[0].numChannels < 1) return kResultOk;
+        const int32 outCh = data.outputs[0].numChannels;
+        if (!desc_.instrument && (data.numInputs < 1 || !data.inputs || data.inputs[0].numChannels < 1)) return kResultOk;
+
+        int32 done = 0;
+        while (done < data.numSamples) {
+            const int32 n = std::min<int32>(data.numSamples - done, maxBlock_);
+            if (data.symbolicSampleSize == kSample64) runChunk<double>(data, done, n, outCh);
+            else runChunk<float>(data, done, n, outCh);
+            done += n;
+        }
+        data.outputs[0].silenceFlags = 0;
+        writeOutputParams(data);
+        return kResultOk;
+    }
+
+    const ParamTable& table() const { return table_; }
+
+protected:
+    // ---- a implementar por cada plugin ----
+    virtual void prepare(double sampleRate, int maxBlock) = 0;
+    virtual void resetDsp() = 0;
+    virtual void updateParams() = 0;   // leer plainOf()/licensed()/feature() y pasar a los motores
+    // Procesa n muestras estéreo (in* nulos en instrumentos). Las salidas pueden ser alias de las entradas.
+    virtual void render(const float* inL, const float* inR, float* outL, float* outR, int n, int offset, ProcessData& data) = 0;
+    virtual void render(const double* inL, const double* inR, double* outL, double* outR, int n, int offset, ProcessData& data) = 0;
+    virtual uint32 latencySamples() { return 0; }
+    virtual uint32 tailSamples() { return static_cast<uint32>(sr_ * 0.25); }
+    virtual LegacyStateFn legacyState() { return nullptr; }
+    virtual void writeOutputParams(ProcessData&) {}
+
+    // ---- utilidades ----
+    bool licensed() const { return JasWaveLicense::isLicensed(lic_); }
+    bool feature(int idx) const { return JasWaveLicense::hasFeature(lic_, idx); }
+    double plainOf(ParamID id) const {
+        const int i = table_.index(id);
+        if (i < 0) return 0.0;
+        const ParamDef& d = table_.at(i);
+        // feature no concedida => valor por defecto (función desactivada en DSP)
+        if (d.feature >= 0 && !feature(d.feature)) return d.defV;
+        return JasWaveVst::toPlain(d, norm_[static_cast<size_t>(i)]);
+    }
+    bool boolOf(ParamID id) const { return plainOf(id) >= 0.5; }
+    int intOf(ParamID id) const { return static_cast<int>(std::lround(plainOf(id))); }
+
+    void registerBus(std::shared_ptr<JasWaveDsp::MeterBusBase> bus) {
+        bus_ = std::move(bus);
+        busId_ = BusRegistry::get().add(bus_);
+    }
+    void writeOutputParam(ProcessData& data, ParamID id, double normalized) {
+        if (!data.outputParameterChanges) return;
+        int32 qi = 0;
+        if (IParamValueQueue* q = data.outputParameterChanges->addParameterData(id, qi)) {
+            int32 pi = 0;
+            q->addPoint(0, clamp01(normalized), pi);
+        }
+    }
+
+    const PluginDescriptor& desc_;
+    ParamTable table_;
+    std::vector<double> norm_;
+    double sr_{48000.0};
+    int32 maxBlock_{4096};
+    uint64_t lic_{0};
+    std::shared_ptr<JasWaveDsp::MeterBusBase> bus_;
+
+private:
+    template <class T>
+    std::vector<T>& scratchL();
+    template <class T>
+    std::vector<T>& scratchR();
+
+    template <class T>
+    void runChunk(ProcessData& data, int32 off, int32 n, int32 outCh) {
+        T** outs = reinterpret_cast<T**>(data.symbolicSampleSize == kSample64 ? static_cast<void*>(data.outputs[0].channelBuffers64)
+                                                                              : static_cast<void*>(data.outputs[0].channelBuffers32));
+        if (!outs || !outs[0]) return;
+        T* oL = outs[0] + off;
+        T* oR = outCh >= 2 && outs[1] ? outs[1] + off : scratchR<T>().data();
+        const T* iL = nullptr;
+        const T* iR = nullptr;
+        if (!desc_.instrument) {
+            T** ins = reinterpret_cast<T**>(data.symbolicSampleSize == kSample64 ? static_cast<void*>(data.inputs[0].channelBuffers64)
+                                                                                 : static_cast<void*>(data.inputs[0].channelBuffers32));
+            if (!ins || !ins[0]) { for (int32 c = 0; c < outCh; ++c) if (outs[c]) std::fill(outs[c] + off, outs[c] + off + n, T(0)); return; }
+            const int32 inCh = data.inputs[0].numChannels;
+            iL = ins[0] + off;
+            if (inCh >= 2 && ins[1]) iR = ins[1] + off;
+            else {
+                // mono: duplicamos la entrada para que la salida R (descartada) no pise L
+                std::copy(iL, iL + n, scratchL<T>().data());
+                iR = scratchL<T>().data();
+            }
+        }
+        render(iL, iR, oL, oR, n, off, data);
+        for (int32 c = 2; c < outCh; ++c) if (outs[c]) std::fill(outs[c] + off, outs[c] + off + n, T(0));
+    }
+
+    bool applyParamChanges(ProcessData& data) {
+        bool changed = paramsDirty_;
+        paramsDirty_ = false;
+        if (IParameterChanges* ch = data.inputParameterChanges) {
+            const int32 n = ch->getParameterCount();
+            for (int32 i = 0; i < n; ++i) {
+                IParamValueQueue* q = ch->getParameterData(i);
+                if (!q) continue;
+                const int idx = table_.index(q->getParameterId());
+                const int32 pts = q->getPointCount();
+                if (idx < 0 || pts <= 0 || table_.at(idx).readOnly) continue;
+                int32 off = 0;
+                ParamValue v = 0.0;
+                if (q->getPoint(pts - 1, off, v) == kResultTrue && std::isfinite(v)) {
+                    norm_[static_cast<size_t>(idx)] = clamp01(v);
+                    changed = true;
+                }
+            }
+        }
+        return changed;
+    }
+    void sendBusMessage() {
+        if (!busId_) return;
+        if (IMessage* m = allocateMessage()) {
+            m->setMessageID("JwBus");
+            m->getAttributes()->setInt("JwBusId", static_cast<int64>(busId_));
+            sendMessage(m);
+            m->release();
+        }
+    }
+
+    bool paramsDirty_{true};
+    bool licAcquired_{false};
+    uint64_t lastLic_{~0ull};
+    uint64_t busId_{0};
+    std::vector<float> scratchL32_, scratchR32_;
+    std::vector<double> scratchL64_, scratchR64_;
+};
+
+template <> inline std::vector<float>& JwProcessor::scratchL<float>() { return scratchL32_; }
+template <> inline std::vector<float>& JwProcessor::scratchR<float>() { return scratchR32_; }
+template <> inline std::vector<double>& JwProcessor::scratchL<double>() { return scratchL64_; }
+template <> inline std::vector<double>& JwProcessor::scratchR<double>() { return scratchR64_; }
+
+// ---- Controlador base ----
+class JwController : public EditController, public IMidiMapping {
+public:
+    JwController(const PluginDescriptor& desc, const std::vector<ParamDef>& defs) : desc_(desc), table_(defs) { configureLicense(desc_); }
+    ~JwController() SMTG_OVERRIDE { if (licAcquired_) JasWaveLicense::Manager::instance().release(); }
 
     tresult PLUGIN_API initialize(FUnknown* context) SMTG_OVERRIDE {
         const tresult r = EditController::initialize(context);
         if (r != kResultOk) return r;
         for (const auto& d : table_.defs()) parameters.addParameter(new JwParameter(d));
+        if (!licAcquired_) { JasWaveLicense::Manager::instance().acquire(); licAcquired_ = true; }
         return kResultOk;
+    }
+    tresult PLUGIN_API terminate() SMTG_OVERRIDE {
+        if (licAcquired_) { JasWaveLicense::Manager::instance().release(); licAcquired_ = false; }
+        {
+            std::lock_guard<std::mutex> lk(busMutex_);
+            bus_.reset();
+        }
+        return EditController::terminate();
     }
 
     tresult PLUGIN_API setComponentState(IBStream* state) SMTG_OVERRIDE {
-        if (!state) return kResultFalse;
-        IBStreamer s(state, kLittleEndian);
-        int32 magic = 0, ver = 0, n = 0;
-        if (!s.readInt32(magic) || magic != kStateMagic) return kResultFalse;
-        s.readInt32(ver);
-        s.readInt32(n);
-        for (int32 i = 0; i < n; ++i) {
-            double v = 0.0;
-            if (!s.readDouble(v)) break;
-            if (i < table_.count()) setParamNormalized(table_.at(i).id, v);
-        }
+        std::vector<double> n(static_cast<size_t>(table_.count()));
+        for (int i = 0; i < table_.count(); ++i) n[static_cast<size_t>(i)] = defaultNorm(table_.at(i));
+        if (!readStateInto(state, table_, n, legacyState())) return kResultFalse;
+        for (int i = 0; i < table_.count(); ++i)
+            if (!table_.at(i).readOnly) setParamNormalized(table_.at(i).id, n[static_cast<size_t>(i)]);
         return kResultOk;
     }
 
@@ -150,125 +503,50 @@ public:
         return EditController::notify(message);
     }
 
+    // IMidiMapping
+    tresult PLUGIN_API getMidiControllerAssignment(int32 busIndex, int16 /*channel*/, CtrlNumber cc, ParamID& id) SMTG_OVERRIDE {
+        if (busIndex != 0) return kResultFalse;
+        const int p = midiCcParam(cc);
+        if (p < 0) return kResultFalse;
+        id = static_cast<ParamID>(p);
+        return kResultTrue;
+    }
+
+    IPlugView* PLUGIN_API createView(FIDString name) SMTG_OVERRIDE;   // jw_ui_view.cpp
+
     std::shared_ptr<JasWaveDsp::MeterBusBase> bus() const {
         std::lock_guard<std::mutex> lk(busMutex_);
         return bus_;
     }
-    void setBus(std::shared_ptr<JasWaveDsp::MeterBusBase> b) {   // usado por tests / vista previa
-        std::lock_guard<std::mutex> lk(busMutex_);
-        bus_ = std::move(b);
-    }
-
     const ParamTable& table() const { return table_; }
+    const PluginDescriptor& descriptor() const { return desc_; }
     double plain(ParamID id) const {
         const ParamDef* d = table_.find(id);
-        return d ? JasWaveVst::toPlain(*d, getParamNormalized(id)) : 0.0;
+        return d ? JasWaveVst::toPlain(*d, const_cast<JwController*>(this)->getParamNormalized(id)) : 0.0;
     }
+    // Editor específico de cada plugin
+    virtual std::unique_ptr<JasWaveUI::PluginEditor> createEditor() = 0;
+    // Solo herramienta de capturas: ajustes de demostración (valores planos) y tipo de señal
+    struct DemoParam { uint32_t id; double plain; };
+    virtual std::vector<DemoParam> demoPreset() const { return {}; }
+    enum class DemoSignal { Music, Vocal, Midi };
+    virtual DemoSignal demoSignal() const { return desc_.instrument ? DemoSignal::Midi : DemoSignal::Music; }
+
+    OBJ_METHODS(JwController, EditController)
+    DEFINE_INTERFACES
+        DEF_INTERFACE(IMidiMapping)
+    END_DEFINE_INTERFACES(EditController)
+    REFCOUNT_METHODS(EditController)
 
 protected:
+    virtual int midiCcParam(int /*cc*/) const { return -1; }
+    virtual LegacyStateFn legacyState() { return nullptr; }
+
+    const PluginDescriptor& desc_;
     ParamTable table_;
     mutable std::mutex busMutex_;
     std::shared_ptr<JasWaveDsp::MeterBusBase> bus_;
-};
-
-// ---- Procesador base ----
-class JwProcessor : public AudioEffect {
-public:
-    JwProcessor(const std::vector<ParamDef>& defs, const FUID& controllerUid) : table_(defs) {
-        setControllerClass(controllerUid);
-        norm_.resize(static_cast<size_t>(table_.count()));
-        for (int i = 0; i < table_.count(); ++i) norm_[static_cast<size_t>(i)] = defaultNorm(table_.at(i));
-    }
-    ~JwProcessor() SMTG_OVERRIDE { if (busId_) BusRegistry::get().remove(busId_); }
-
-    tresult PLUGIN_API canProcessSampleSize(int32 s) SMTG_OVERRIDE {
-        return (s == kSample32 || s == kSample64) ? kResultTrue : kResultFalse;
-    }
-
-    tresult PLUGIN_API setBusArrangements(SpeakerArrangement* inputs, int32 numIns,
-                                          SpeakerArrangement* outputs, int32 numOuts) SMTG_OVERRIDE {
-        if (numIns != 1 || numOuts != 1) return kResultFalse;
-        if (inputs[0] != outputs[0]) return kResultFalse;
-        if (inputs[0] != SpeakerArr::kStereo && inputs[0] != SpeakerArr::kMono) return kResultFalse;
-        removeAudioBusses();
-        addAudioInput(STR16("Input"), inputs[0]);
-        addAudioOutput(STR16("Output"), outputs[0]);
-        return kResultTrue;
-    }
-
-    tresult PLUGIN_API setState(IBStream* state) SMTG_OVERRIDE {
-        if (!state) return kResultFalse;
-        IBStreamer s(state, kLittleEndian);
-        int32 magic = 0, ver = 0, n = 0;
-        if (!s.readInt32(magic) || magic != kStateMagic) return kResultFalse;
-        s.readInt32(ver);
-        s.readInt32(n);
-        for (int32 i = 0; i < n && i < table_.count(); ++i) {
-            double v = 0.0;
-            if (!s.readDouble(v)) break;
-            norm_[static_cast<size_t>(i)] = clamp01(v);
-        }
-        paramsDirty_ = true;
-        return kResultOk;
-    }
-    tresult PLUGIN_API getState(IBStream* state) SMTG_OVERRIDE {
-        if (!state) return kResultFalse;
-        IBStreamer s(state, kLittleEndian);
-        s.writeInt32(kStateMagic);
-        s.writeInt32(kStateVersion);
-        s.writeInt32(table_.count());
-        for (int i = 0; i < table_.count(); ++i) s.writeDouble(norm_[static_cast<size_t>(i)]);
-        return kResultOk;
-    }
-
-    tresult PLUGIN_API connect(IConnectionPoint* other) SMTG_OVERRIDE {
-        const tresult r = AudioEffect::connect(other);
-        sendBusMessage();
-        return r;
-    }
-
-protected:
-    void registerBus(std::shared_ptr<JasWaveDsp::MeterBusBase> bus) {
-        bus_ = std::move(bus);
-        busId_ = BusRegistry::get().add(bus_);
-    }
-    void sendBusMessage() {
-        if (!busId_) return;
-        if (IMessage* m = allocateMessage()) {
-            m->setMessageID("JwBus");
-            m->getAttributes()->setInt("JwBusId", static_cast<int64>(busId_));
-            sendMessage(m);
-            m->release();
-        }
-    }
-    // Último valor de cada cola del bloque (suavizado en DSP -> sin zipper noise)
-    bool applyParamChanges(ProcessData& data) {
-        bool changed = paramsDirty_;
-        paramsDirty_ = false;
-        if (IParameterChanges* ch = data.inputParameterChanges) {
-            const int32 n = ch->getParameterCount();
-            for (int32 i = 0; i < n; ++i) {
-                IParamValueQueue* q = ch->getParameterData(i);
-                if (!q) continue;
-                const int idx = table_.index(q->getParameterId());
-                const int32 pts = q->getPointCount();
-                if (idx < 0 || pts <= 0) continue;
-                int32 off = 0; ParamValue v = 0.0;
-                if (q->getPoint(pts - 1, off, v) == kResultTrue) { norm_[static_cast<size_t>(idx)] = clamp01(v); changed = true; }
-            }
-        }
-        return changed;
-    }
-    double plainOf(ParamID id) const {
-        const int i = table_.index(id);
-        return i < 0 ? 0.0 : JasWaveVst::toPlain(table_.at(i), norm_[static_cast<size_t>(i)]);
-    }
-
-    ParamTable table_;
-    std::vector<double> norm_;
-    bool paramsDirty_{true};
-    std::shared_ptr<JasWaveDsp::MeterBusBase> bus_;
-    uint64_t busId_{0};
+    bool licAcquired_{false};
 };
 
 } // namespace JasWaveVst

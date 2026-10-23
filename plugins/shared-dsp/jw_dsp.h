@@ -51,7 +51,7 @@ struct ScopedNoDenormals {
 // -------------------------------------------------------------------------------------
 //  Biquad (RBJ cookbook) – coeficientes normalizados a0 = 1, forma transpuesta directa II
 // -------------------------------------------------------------------------------------
-enum class FilterType { HighPass, LowPass, LowShelf, HighShelf, Bell, Notch };
+enum class FilterType { HighPass, LowPass, LowShelf, HighShelf, Bell, Notch, BandPass };
 
 struct BiquadCoefs {
     double b0{1.0}, b1{0.0}, b2{0.0}, a1{0.0}, a2{0.0};
@@ -99,6 +99,10 @@ struct BiquadCoefs {
                 a2 = (A + 1.0) - (A - 1.0) * cw - s2;
                 break;
             }
+            case FilterType::BandPass:   // ganancia de pico constante 0 dB
+                b0 = alpha; b1 = 0.0; b2 = -alpha;
+                a0 = 1.0 + alpha; a1 = -2.0 * cw; a2 = 1.0 - alpha;
+                break;
             case FilterType::Notch:
             default:
                 b0 = 1.0; b1 = -2.0 * cw; b2 = 1.0;
@@ -434,47 +438,80 @@ private:
 };
 
 // -------------------------------------------------------------------------------------
-//  Detector true-peak 4x (polifásico, 49 taps Kaiser, el tap central cae en la muestra original)
-//  process(x) devuelve el pico del intervalo [n-6, n-5) -> retardo kDelay = 6 muestras
+//  Medidor true-peak 4x con los coeficientes normativos de ITU-R BS.1770-4 (Anexo 2: 48 taps,
+//  12 por fase). process(x) devuelve el máximo de las 4 fases interpoladas (retardo ~6 muestras).
 // -------------------------------------------------------------------------------------
 class TruePeak4x {
 public:
     static constexpr int kTaps = 12;
     static constexpr int kDelay = 6;
-
-    TruePeak4x() {
-        constexpr int N = 49;
-        const double beta = 5.0;
-        auto i0 = [](double x) { double s = 1.0, t = 1.0; for (int k = 1; k < 40; ++k) { t *= (x / (2.0 * k)) * (x / (2.0 * k)); s += t; } return s; };
-        double h[N];
-        for (int n = 0; n < N; ++n) {
-            const double t = (n - 24) / 4.0;
-            const double s = (t == 0.0) ? 1.0 : std::sin(kPi * t) / (kPi * t);
-            const double r = (n - 24) / 24.0;
-            h[n] = s * i0(beta * std::sqrt(std::max(0.0, 1.0 - r * r))) / i0(beta);
-        }
-        for (int p = 1; p <= 3; ++p) {
-            double sum = 0.0;
-            for (int k = 0; k < kTaps; ++k) sum += h[4 * k + p];
-            for (int k = 0; k < kTaps; ++k) c_[p - 1][k] = static_cast<float>(h[4 * k + p] / sum);
-        }
-        reset();
-    }
+    TruePeak4x() { reset(); }
     void reset() { hist_.fill(0.0f); }
     inline float process(float x) {
-        for (int k = kTaps - 1; k > 0; --k) hist_[k] = hist_[k - 1];
+        static const float c[4][kTaps] = {
+            { 0.0017089843750f, 0.0109863281250f, -0.0196533203125f, 0.0332031250000f, -0.0594482421875f, 0.1373291015625f, 0.9721679687500f, -0.1022949218750f, 0.0476074218750f, -0.0266113281250f, 0.0148925781250f, -0.0083007812500f },
+            { -0.0291748046875f, 0.0292968750000f, -0.0517578125000f, 0.0891113281250f, -0.1665039062500f, 0.4650878906250f, 0.7797851562500f, -0.2003173828125f, 0.1015625000000f, -0.0582275390625f, 0.0330810546875f, -0.0189208984375f },
+            { -0.0189208984375f, 0.0330810546875f, -0.0582275390625f, 0.1015625000000f, -0.2003173828125f, 0.7797851562500f, 0.4650878906250f, -0.1665039062500f, 0.0891113281250f, -0.0517578125000f, 0.0292968750000f, -0.0291748046875f },
+            { -0.0083007812500f, 0.0148925781250f, -0.0266113281250f, 0.0476074218750f, -0.1022949218750f, 0.9721679687500f, 0.1373291015625f, -0.0594482421875f, 0.0332031250000f, -0.0196533203125f, 0.0109863281250f, 0.0017089843750f } };
+        for (int k = kTaps - 1; k > 0; --k) hist_[static_cast<size_t>(k)] = hist_[static_cast<size_t>(k - 1)];
         hist_[0] = x;
-        float pk = std::fabs(hist_[kDelay]);
-        for (int p = 0; p < 3; ++p) {
+        float pk = 0.0f;
+        for (int p = 0; p < 4; ++p) {
             float acc = 0.0f;
-            for (int k = 0; k < kTaps; ++k) acc += c_[p][k] * hist_[k];
+            for (int k = 0; k < kTaps; ++k) acc += c[p][k] * hist_[static_cast<size_t>(k)];
             pk = std::max(pk, std::fabs(acc));
         }
         return pk;
     }
 private:
-    float c_[3][kTaps];
     std::array<float, kTaps> hist_;
+};
+
+// Detector true-peak 8x de alta precisión (513 taps Kaiser β=10, 64 taps/fase). Usado por el
+// limitador para decidir la ganancia: el detector 4x corto subestima los picos de señales con
+// mucha energía cerca de Nyquist (p. ej. ruido blanco). process(x) devuelve el pico del intervalo
+// alrededor de la muestra n-32 -> retardo kDelay = 32 muestras.
+class TruePeak8x {
+public:
+    static constexpr int kTaps = 64;
+    static constexpr int kDelay = 32;
+    TruePeak8x() {
+        constexpr int N = 8 * kTaps + 1;
+        const double beta = 10.0;
+        auto i0 = [](double x) { double s = 1.0, t = 1.0; for (int k = 1; k < 80; ++k) { t *= (x / (2.0 * k)) * (x / (2.0 * k)); s += t; } return s; };
+        std::array<double, N> h{};
+        for (int n = 0; n < N; ++n) {
+            const double t = (n - 8 * kDelay) / 8.0;
+            const double sn = (t == 0.0) ? 1.0 : std::sin(kPi * t) / (kPi * t);
+            const double r = (n - 8 * kDelay) / (8.0 * kDelay);
+            h[static_cast<size_t>(n)] = sn * i0(beta * std::sqrt(std::max(0.0, 1.0 - r * r))) / i0(beta);
+        }
+        for (int p = 1; p < 8; ++p) {
+            double sum = 0.0;
+            for (int k = 0; k < kTaps; ++k) sum += h[static_cast<size_t>(8 * k + p)];
+            for (int k = 0; k < kTaps; ++k) c_[p - 1][k] = static_cast<float>(h[static_cast<size_t>(8 * k + p)] / sum);
+        }
+        reset();
+    }
+    void reset() { hist_.fill(0.0f); pos_ = 0; }
+    inline float process(float x) {
+        // anillo duplicado: ventana contigua sin desplazar 32 valores por muestra
+        pos_ = (pos_ + kTaps - 1) % kTaps;
+        hist_[static_cast<size_t>(pos_)] = x;
+        hist_[static_cast<size_t>(pos_ + kTaps)] = x;
+        const float* w = &hist_[static_cast<size_t>(pos_)];   // w[0] = muestra más reciente
+        float pk = std::fabs(w[kDelay]);
+        for (int p = 0; p < 7; ++p) {
+            float acc = 0.0f;
+            for (int k = 0; k < kTaps; ++k) acc += c_[p][k] * w[k];
+            pk = std::max(pk, std::fabs(acc));
+        }
+        return pk;
+    }
+private:
+    float c_[7][kTaps];
+    std::array<float, 2 * kTaps> hist_;
+    int pos_{0};
 };
 
 // Mínimo deslizante O(1) amortizado (deque monótona sobre anillo preasignado)

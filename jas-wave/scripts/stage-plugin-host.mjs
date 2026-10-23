@@ -1,12 +1,15 @@
 /**
  * Prepara los binarios nativos para que electron-builder los incluya en el instalador:
  *   - jaswave-plugin-host.exe (+ node-host.cjs fallback) → resources/plugin-host
- *   - JasWaveRoles.vst3 / JasWavePiano.vst3 (bundles)      → resources/vst3/JasWave
+ *
+ * K1/V1: los plugins JasWave (plugins/com.jaswave.plugin.*) ya NO se copian al paquete: son VST3
+ * independientes que se entregan bajo demanda (manifiesto V5 + descarga). Si quedó una copia antigua en
+ * resources/vst3/JasWave (de builds previos) se elimina para no empaquetarla.
  *
  *   node scripts/stage-plugin-host.mjs [--strict]
  *
  * En local solo avisa si falta algo. Con `--strict` o la variable CI definida, falla (exit 1):
- * un release no debe salir sin plugin host ni plugins propios.
+ * un release no debe salir sin plugin host.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -16,18 +19,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.join(__dirname, '..')
 const monorepo = path.join(root, '..')
 const destDir = path.join(root, 'resources', 'plugin-host')
-const vst3DestDir = path.join(root, 'resources', 'vst3', 'JasWave')
+const staleVst3Dir = path.join(root, 'resources', 'vst3', 'JasWave')
 
 const ciFlag = String(process.env.CI ?? '').trim().toLowerCase()
 const strict = process.argv.includes('--strict') || (ciFlag !== '' && ciFlag !== '0' && ciFlag !== 'false')
 
 const pluginHostDir = path.join(monorepo, 'native', 'plugin-host')
-const rolesDir = path.join(monorepo, 'native', 'jaswave-roles-vst')
-const fxDir = path.join(monorepo, 'native', 'jaswave-fx')
-const userVst3Dir = process.env.LOCALAPPDATA
-  ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Common', 'VST3', 'JasWave')
-  : null
-
 const exeCandidates = [
   path.join(pluginHostDir, 'build-release', 'Release', 'jaswave-plugin-host.exe'),
   path.join(pluginHostDir, 'build-vst3', 'Release', 'jaswave-plugin-host.exe'),
@@ -41,27 +38,6 @@ const nodeHostCandidates = [
   path.join(root, 'resources', 'plugin-host', 'node-host.cjs'),
 ]
 
-/** Bundles VST3: salida del POST_BUILD de CMake (<build>/X.vst3) o la instalación de usuario. */
-const bundleCandidates = {
-  'JasWaveRoles.vst3': [
-    path.join(rolesDir, 'build-release', 'JasWaveRoles.vst3'),
-    path.join(rolesDir, 'build', 'JasWaveRoles.vst3'),
-    ...(userVst3Dir ? [path.join(userVst3Dir, 'JasWaveRoles.vst3')] : []),
-  ],
-  'JasWaveFx.vst3': [
-    path.join(fxDir, 'build-release', 'JasWaveFx.vst3'),
-    path.join(fxDir, 'build', 'JasWaveFx.vst3'),
-    ...(userVst3Dir ? [path.join(userVst3Dir, 'JasWaveFx.vst3')] : []),
-  ],
-  'JasWavePiano.vst3': [
-    path.join(pluginHostDir, 'build-release', 'JasWavePiano.vst3'),
-    path.join(pluginHostDir, 'build-vst3', 'JasWavePiano.vst3'),
-    path.join(pluginHostDir, 'build-vs', 'JasWavePiano.vst3'),
-    path.join(pluginHostDir, 'build', 'JasWavePiano.vst3'),
-    ...(userVst3Dir ? [path.join(userVst3Dir, 'JasWavePiano.vst3')] : []),
-  ],
-}
-
 const problems = []
 
 function warnOrFail(msg) {
@@ -69,13 +45,7 @@ function warnOrFail(msg) {
   console[strict ? 'error' : 'warn'](`[stage-plugin-host] ${strict ? 'ERROR' : 'WARN'}: ${msg}`)
 }
 
-/** Un bundle válido tiene el binario en Contents/x86_64-win/<nombre>. */
-function bundleBinary(bundleDir, name) {
-  return path.join(bundleDir, 'Contents', 'x86_64-win', name)
-}
-
 fs.mkdirSync(destDir, { recursive: true })
-fs.mkdirSync(vst3DestDir, { recursive: true })
 
 // ── Plugin host ────────────────────────────────────────────────────────────
 const exeSrc = exeCandidates.find((p) => fs.existsSync(p))
@@ -95,23 +65,18 @@ for (const src of nodeHostCandidates) {
   break
 }
 
-// ── Plugins VST3 propios ───────────────────────────────────────────────────
-for (const [name, candidates] of Object.entries(bundleCandidates)) {
-  const src = candidates.find((dir) => fs.existsSync(bundleBinary(dir, name)))
-  const dest = path.join(vst3DestDir, name)
-  if (!src) {
-    warnOrFail(`${name} no encontrado (build de CMake ni %LOCALAPPDATA%). Ejecuta \`npm run native:build\`.`)
-    continue
-  }
-  fs.rmSync(dest, { recursive: true, force: true })
-  fs.cpSync(src, dest, { recursive: true })
-  console.log(`[stage-plugin-host] ${name} →`, dest, `(from ${src})`)
+// ── Plugins VST3 propios: ya no se empaquetan (entrega bajo demanda) ─────────
+if (fs.existsSync(staleVst3Dir) && fs.readdirSync(staleVst3Dir).length > 0) {
+  fs.rmSync(staleVst3Dir, { recursive: true, force: true })
+  console.log('[stage-plugin-host] eliminada copia antigua de plugins en', staleVst3Dir)
 }
+// Carpeta vacía: electron-builder.cjs aún declara extraResources resources/vst3/JasWave (lo retira el agente de jas-wave)
+fs.mkdirSync(staleVst3Dir, { recursive: true })
 
 if (problems.length > 0 && strict) {
   console.error(`[stage-plugin-host] ${problems.length} binario(s) nativo(s) faltan; modo estricto (CI/--strict) → abortando.`)
   process.exit(1)
 }
 
-console.log('[stage-plugin-host] listo:', destDir, '+', vst3DestDir)
+console.log('[stage-plugin-host] listo:', destDir)
 process.exit(0)
