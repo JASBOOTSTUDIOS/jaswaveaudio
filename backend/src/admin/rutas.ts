@@ -40,7 +40,10 @@ export function rutasAdmin({ db, verificar }: OpcionesAdmin): Router {
   r.get('/productos', async (_req, res) => {
     const productos = await db.producto.findMany({
       orderBy: { id: 'asc' },
-      include: { acciones: { orderBy: { clave: 'asc' } }, roles: { orderBy: { nombre: 'asc' } } },
+      include: {
+        acciones: { orderBy: { clave: 'asc' } },
+        roles: { orderBy: { nombre: 'asc' }, include: { acciones: { select: { accionId: true } } } },
+      },
     });
     res.json({ productos });
   });

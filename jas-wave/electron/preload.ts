@@ -11,6 +11,11 @@ contextBridge.exposeInMainWorld('electron', {
   knownPaths: () => ipcRenderer.invoke('known-paths'),
   /** Paquetes de plugins JasWave encontrados (manifiesto sin validar + integridad). */
   pluginsListar: () => ipcRenderer.invoke('plugins-listar'),
+  /** Licencia local compartida con los VST (license.jwl + device.bin con DPAPI). */
+  licenciaGuardar: (datos: { token: string; tokenDispositivo: string }) => ipcRenderer.invoke('licencia-guardar', datos),
+  licenciaLeer: () => ipcRenderer.invoke('licencia-leer'),
+  licenciaTokenDispositivo: () => ipcRenderer.invoke('licencia-token-dispositivo'),
+  equipoNombre: () => ipcRenderer.invoke('equipo-nombre'),
   // Auto-update (electron/updater.ts)
   onUpdateStatus: (callback: (status: { state: string; version?: string; message?: string }) => void) => {
     const handler = (_event: unknown, status: { state: string; version?: string; message?: string }) => callback(status)

@@ -1,13 +1,34 @@
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tsconfigPaths from 'vite-tsconfig-paths'
 import { resolve } from 'path'
 
 /**
- * CSP del renderer empaquetado (file://). Solo en build: en dev, Vite/HMR necesita
- * scripts inline y websocket. Todo es local: fuentes, worklets y assets van en dist/.
+ * Orígenes del backend (API + WebSocket de sincronización) y de Supabase Auth que el renderer
+ * puede contactar. Se fijan en build desde VITE_API_URL / VITE_SUPABASE_URL; nada más sale fuera.
  */
-const CONTENT_SECURITY_POLICY = [
+export function origenesBackend(env: Record<string, string>): string[] {
+  const out = new Set<string>()
+  for (const clave of ['VITE_API_URL', 'VITE_SUPABASE_URL']) {
+    const valor = env[clave]
+    if (!valor) continue
+    try {
+      const u = new URL(valor)
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') continue
+      out.add(u.origin)
+      out.add(`${u.protocol === 'https:' ? 'wss:' : 'ws:'}//${u.host}`)
+    } catch {
+      // valor inválido: no se añade a la CSP
+    }
+  }
+  return [...out]
+}
+
+/**
+ * CSP del renderer empaquetado (file://). Solo en build: en dev, Vite/HMR necesita
+ * scripts inline y websocket. Todo es local salvo el backend y Supabase (origenesBackend).
+ */
+const cspBase = (conectar: string[]) => [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
@@ -15,13 +36,14 @@ const CONTENT_SECURITY_POLICY = [
   "img-src 'self' data: blob:",
   "media-src 'self' data: blob:",
   "worker-src 'self' blob:",
-  "connect-src 'self' data: blob:",
+  ["connect-src 'self' data: blob:", ...conectar].join(' '),
   "object-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
 ].join('; ')
 
-function contentSecurityPolicy(): Plugin {
+function contentSecurityPolicy(conectar: string[]): Plugin {
+  const CONTENT_SECURITY_POLICY = cspBase(conectar)
   return {
     name: 'jaswave-csp',
     apply: 'build',
@@ -34,8 +56,8 @@ function contentSecurityPolicy(): Plugin {
   }
 }
 
-export default defineConfig({
-  plugins: [react(), tsconfigPaths(), contentSecurityPolicy()],
+export default defineConfig(({ mode }) => ({
+  plugins: [react(), tsconfigPaths(), contentSecurityPolicy(origenesBackend(loadEnv(mode, __dirname, 'VITE_')))],
   publicDir: resolve(__dirname, 'public'),
   base: './',
   build: {
@@ -63,4 +85,4 @@ export default defineConfig({
   optimizeDeps: {
     include: ['mermaid'],
   },
-})
+}))

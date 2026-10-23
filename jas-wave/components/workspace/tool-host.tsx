@@ -19,6 +19,8 @@ import { MidiMapPanel } from '@/components/midi-map-panel'
 import { SettingsPanel } from '@/components/project-settings-dialog'
 import { ProgressPanel } from '@/components/progress-panel'
 import { ProjectFileExplorer } from './project-file-explorer'
+import { PanelCuenta } from '@/components/cuenta/panel-cuenta'
+import { PanelAdmin } from '@/components/admin/panel-admin'
 import { useDAWState } from '@/src/context/daw-context'
 import type { ToolId } from '@/src/workspace/types'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
@@ -85,6 +87,10 @@ function ToolContent({ toolId }: { toolId: ToolId }) {
       return <ProgressPanel />
     case 'project-files':
       return <ProjectFileExplorer />
+    case 'cuenta':
+      return <PanelCuenta />
+    case 'admin':
+      return <PanelAdmin />
     case 'library':
       return <LibraryPanel />
     case 'meters':

@@ -60,6 +60,14 @@ describe('L1 — licencias, roles y permisos (integración con Postgres)', () =>
     return { send, a1, a2, rol, usuario, adminToken };
   }
 
+  it('el listado de productos incluye las acciones de cada rol (matriz del panel admin)', async () => {
+    const { send, a1, rol } = await prepararEscenario();
+    const r = await send('get', '/admin/productos');
+    const producto = r.body.productos.find((p: { id: string }) => p.id === PRODUCTO);
+    const rolListado = producto.roles.find((x: { id: string }) => x.id === rol.id);
+    expect(rolListado.acciones).toEqual([{ accionId: a1.id }]);
+  });
+
   it('un no-admin no puede usar el panel admin', async () => {
     const token = await tokenDe('persona@x.com', 'sub-x');
     const r = await request(app).get('/admin/productos').set('Authorization', `Bearer ${token}`);

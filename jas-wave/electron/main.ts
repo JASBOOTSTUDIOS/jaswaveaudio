@@ -30,6 +30,8 @@ import {
   loadRenderer,
 } from './security'
 import { escanearPaquetes } from './plugins/escaner'
+import { guardarLicenciaLocal, leerLicenciaLocal, leerTokenDispositivo } from './licencias-locales'
+import * as os from 'node:os'
 
 // ── Diagnóstico: log persistente y minidumps locales (sin envío a servidores) ──
 const logsDir = () => path.join(app.getPath('userData'), 'logs')
@@ -575,11 +577,23 @@ ipcMain.handle('known-paths', () => {
  */
 function raicesPlugins(): string[] {
   const raices = [path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'JasWave', 'plugins')]
-  if (!app.isPackaged) raices.push(path.resolve(__dirname, '..', '..', '..', 'plugins'))
+  // __dirname = jas-wave/build/electron/electron → la raíz del repo está 4 niveles arriba.
+  if (!app.isPackaged) raices.push(path.resolve(__dirname, '..', '..', '..', '..', 'plugins'))
   if (process.env.JASWAVE_PLUGINS_DIR) raices.push(path.resolve(process.env.JASWAVE_PLUGINS_DIR))
   return raices
 }
 ipcMain.handle('plugins-listar', () => escanearPaquetes(raicesPlugins()))
+
+// Licencia local compartida con los VST JasWave (L3; contrato plugins/CONTRATO-V5.md §4).
+ipcMain.handle('licencia-guardar', async (_e: IpcMainInvokeEvent, datos: unknown) => {
+  const d = (datos ?? {}) as { token?: unknown; tokenDispositivo?: unknown }
+  if (typeof d.token !== 'string' || typeof d.tokenDispositivo !== 'string') throw new Error('datos de licencia inválidos')
+  await guardarLicenciaLocal({ token: d.token, tokenDispositivo: d.tokenDispositivo })
+  return true
+})
+ipcMain.handle('licencia-leer', () => leerLicenciaLocal())
+ipcMain.handle('licencia-token-dispositivo', () => leerTokenDispositivo())
+ipcMain.handle('equipo-nombre', () => os.hostname().slice(0, 120))
 
 // Errores del renderer (window.onerror, rechazos, error boundaries) → log persistente.
 let rendererLogBudget = { windowStart: 0, count: 0 }

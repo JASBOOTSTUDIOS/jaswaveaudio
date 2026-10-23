@@ -22,6 +22,8 @@ export type ToolId =
   | 'settings'
   | 'progress'
   | 'project-files'
+  | 'cuenta'
+  | 'admin'
 
 export interface ToolDefinitionUI {
   id: ToolId
@@ -30,6 +32,8 @@ export interface ToolDefinitionUI {
   defaultZone: DockZone
   /** Si true, solo puede haber una instancia dockeada o undocked */
   singleton: boolean
+  /** No se coloca sola en el layout: solo aparece cuando se pide (p. ej. el panel admin). */
+  bajoDemanda?: boolean
 }
 
 export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
@@ -180,6 +184,21 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     defaultZone: 'left',
     singleton: true,
   },
+  cuenta: {
+    id: 'cuenta',
+    title: 'Cuenta',
+    description: 'Sesión, licencia de este equipo para los plugins JasWave y colaboración',
+    defaultZone: 'right',
+    singleton: true,
+  },
+  admin: {
+    id: 'admin',
+    title: 'Administración',
+    description: 'Plugins licenciables, roles, accesos por usuario, dispositivos y auditoría (solo administradores)',
+    defaultZone: 'center',
+    singleton: true,
+    bajoDemanda: true,
+  },
 }
 
 export type WorkspaceLayout = {
@@ -251,7 +270,7 @@ function ensureCatalogTools(layout: WorkspaceLayout): WorkspaceLayout {
   next.undocked = next.undocked.filter((id) => id in TOOL_CATALOG && !closedSet.has(id))
 
   for (const id of Object.keys(TOOL_CATALOG) as ToolId[]) {
-    if (closedSet.has(id)) continue
+    if (closedSet.has(id) || TOOL_CATALOG[id].bajoDemanda) continue
     if (
       next.zones.left.includes(id) ||
       next.zones.center.includes(id) ||

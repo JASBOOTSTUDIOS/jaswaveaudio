@@ -14,7 +14,7 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
-import path from 'node:path'
+import * as path from 'node:path'
 
 export type Integridad = 'verificada' | 'alterada' | 'sin-registro'
 

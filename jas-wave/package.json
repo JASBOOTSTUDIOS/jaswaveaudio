@@ -49,6 +49,7 @@
     "@jaswave/ai-harness": "file:../ai-harness",
     "@jaswave/shared": "file:../shared",
     "@playwright/test": "1.63.0",
+    "@supabase/supabase-js": "^2.118.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^24",
     "@types/react": "^19",

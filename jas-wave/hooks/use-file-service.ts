@@ -17,6 +17,10 @@ declare global {
       userDataPath?: () => Promise<string>
       knownPaths?: () => Promise<{ resourcesPath: string; localAppData: string; bundledVst3Dir: string }>
       pluginsListar?: () => Promise<import('../src/lib/plugins/registro-plugins').PaqueteRecibido[]>
+      licenciaGuardar?: (datos: { token: string; tokenDispositivo: string }) => Promise<boolean>
+      licenciaLeer?: () => Promise<string | null>
+      licenciaTokenDispositivo?: () => Promise<string | null>
+      equipoNombre?: () => Promise<string>
       onUpdateStatus?: (
         callback: (status: {
           state: 'checking' | 'available' | 'downloaded' | 'error' | 'none'
