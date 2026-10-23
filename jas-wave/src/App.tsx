@@ -17,6 +17,7 @@ import { IconRail } from '@/components/icon-rail'
 import { TransportBar } from '@/components/transport-bar'
 import { EditToolbar } from '@/components/edit-toolbar'
 import { EventToasts } from '@/components/event-toasts'
+import { PluginsNecesarios } from '@/components/plugins/plugins-necesarios'
 import { AudioDeviceBanner } from '@/components/audio-device-banner'
 import { PluginHostCrashLoopBanner } from '@/components/plugin-host-crash-loop-banner'
 import { ProjectCloseDialog } from '@/components/project-close-dialog'
@@ -314,6 +315,7 @@ function AppShell() {
     <>
       <CommandPalette />
       <EventToasts />
+      <PluginsNecesarios />
       <UpdateBanner />
       <AudioDeviceBanner />
       <PluginHostCrashLoopBanner />

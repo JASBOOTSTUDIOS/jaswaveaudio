@@ -7,6 +7,8 @@ import { crearManejadorErrores, type RegistroErrores } from './http/errores.js';
 import type { Db } from './db.js';
 import { rutasLicencias } from './license/rutas.js';
 import { rutasAdmin } from './admin/rutas.js';
+import { rutasCatalogo } from './catalog/rutas.js';
+import { rutasHandover } from './handover/rutas.js';
 import type { Reloj } from './license/servicio.js';
 
 export type OpcionesApp = {
@@ -28,6 +30,11 @@ export function crearApp(opciones: OpcionesApp): Express {
   });
   app.use(helmet());
   app.use(cors({ origin: opciones.origenesCors }));
+  // El handover lleva el proyecto completo: su propio límite (8 MB) antes del general de 256 KB.
+  if (opciones.datos) {
+    const { db, reloj } = opciones.datos;
+    app.use('/handover', rutasHandover({ db, verificar: opciones.verificar, reloj }));
+  }
   app.use(express.json({ limit: '256kb' }));
 
   app.get('/health', (_req, res) => {
@@ -42,6 +49,7 @@ export function crearApp(opciones: OpcionesApp): Express {
     const { db, clavePrivadaPem, reloj } = opciones.datos;
     app.use('/license', rutasLicencias({ db, verificar: opciones.verificar, clavePrivadaPem, reloj }));
     app.use('/admin', rutasAdmin({ db, verificar: opciones.verificar }));
+    app.use('/catalogo', rutasCatalogo({ db, verificar: opciones.verificar, clavePrivadaPem, reloj }));
   }
 
   app.use((_req, res) => {

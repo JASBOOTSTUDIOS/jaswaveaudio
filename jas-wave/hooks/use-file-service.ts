@@ -17,6 +17,11 @@ declare global {
       userDataPath?: () => Promise<string>
       knownPaths?: () => Promise<{ resourcesPath: string; localAppData: string; bundledVst3Dir: string }>
       pluginsListar?: () => Promise<import('../src/lib/plugins/registro-plugins').PaqueteRecibido[]>
+      onHandover?: (callback: (token: string) => void) => () => void
+      handoverTakePending?: () => Promise<string | null>
+      pluginsCatalogo?: (apiBase: string) => Promise<import('../src/lib/plugins/entrega').CatalogoPlugins>
+      pluginsInstalar?: (apiBase: string, id: string) => Promise<{ ok: boolean; version?: string; error?: string }>
+      onPluginsProgreso?: (callback: (p: import('../src/lib/plugins/entrega').ProgresoPlugin) => void) => () => void
       onPluginCuarentena?: (callback: (aviso: { ruta: string; motivo: string; mensaje: string }) => void) => () => void
       licenciaGuardar?: (datos: { token: string; tokenDispositivo: string }) => Promise<boolean>
       licenciaLeer?: () => Promise<string | null>

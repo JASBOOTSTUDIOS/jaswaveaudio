@@ -19,7 +19,7 @@ import { writeFileAtomic } from './atomic-write'
 import { defaultVstRoots, isAudioFile, PathAccessError, PathGrants, type AccessKind, type GrantMode } from './path-grants'
 import { buscarArchivosPorNombre, copiarMediaArchivo, moverMediaArchivo, traducirErrorDisco } from './media-service'
 import { checkHostCommand, setAnalysisRoot } from './plugin-host-guard'
-import { esRutaProyecto, rutaProyectoDeArgv } from './instancia-unica'
+import { esRutaProyecto, rutaProyectoDeArgv, tokenHandoverDeArgv } from './instancia-unica'
 import { initAutoUpdater } from './updater'
 import {
   createGuardedIpc,
@@ -31,6 +31,8 @@ import {
 } from './security'
 import { escanearPaquetes } from './plugins/escaner'
 import { crearVigilancia } from './plugins/vigilancia'
+import { instalarPaquete, obtenerCatalogo } from './plugins/instalador'
+import { CLAVE_PUBLICA_JASWAVE } from './plugins/clave-catalogo'
 import { guardarLicenciaLocal, leerLicenciaLocal, leerTokenDispositivo } from './licencias-locales'
 import * as os from 'node:os'
 
@@ -397,6 +399,11 @@ function createWindow() {
 
   mainWindow.webContents.once('did-finish-load', () => {
     rendererListo = true
+    if (handoverPendiente) {
+      const token = handoverPendiente
+      handoverPendiente = null
+      mainWindow?.webContents.send('handover-recibido', token)
+    }
     const pendiente = proyectoPendiente
     if (!pendiente) return
     proyectoPendiente = null
@@ -412,6 +419,19 @@ function createWindow() {
 
 /** Proyecto que aún no se ha podido entregar al renderer. */
 let proyectoPendiente: string | null = null
+/** Token de handover web → escritorio (H1) pendiente de entregar al renderer. */
+let handoverPendiente: string | null = null
+
+/** Entrega el enlace jaswave://abrir al renderer (o lo guarda hasta que esté listo). */
+function entregarHandover(token: string) {
+  logLine('info', 'main', 'Enlace de handover recibido desde la web')
+  if (mainWindow && !mainWindow.isDestroyed() && rendererListo) {
+    enfocarVentanaPrincipal()
+    mainWindow.webContents.send('handover-recibido', token)
+    return
+  }
+  handoverPendiente = token
+}
 /** El renderer de la ventana principal ya cargó (puede recibir mensajes). */
 let rendererListo = false
 
@@ -459,6 +479,8 @@ if (!instanciaUnica) {
     enfocarVentanaPrincipal()
     const ruta = rutaProyectoDeArgvLocal(argv)
     if (ruta) abrirProyectoEnVentana(ruta)
+    const token = tokenHandoverDeArgv(argv)
+    if (token) entregarHandover(token)
   })
   // macOS: doble clic sobre un `.jaswave` (en Windows llega por argv).
   app.on('open-file', (event: { preventDefault: () => void }, ruta: string) => {
@@ -519,6 +541,11 @@ app.whenReady().then(() => {
   // Proyecto recibido en los argumentos al arrancar (asociación de archivos).
   const rutaInicial = rutaProyectoDeArgvLocal(process.argv)
   if (rutaInicial) abrirProyectoEnVentana(rutaInicial)
+  // H1: jaswave://abrir?token=… (el instalador registra el esquema; aquí se reafirma solo empaquetada
+  // para no apuntar el registro de Windows a un build de desarrollo).
+  if (app.isPackaged) app.setAsDefaultProtocolClient('jaswave')
+  const tokenInicial = tokenHandoverDeArgv(process.argv)
+  if (tokenInicial) entregarHandover(tokenInicial)
   initAutoUpdater({
     ipc: ipcMain,
     getWindow: () => mainWindow as unknown as import('electron').BrowserWindow | null,
@@ -597,7 +624,46 @@ function carpetasVst3Plugins(): string[] {
   }
   return carpetas
 }
-ipcMain.handle('plugins-listar', () => escanearPaquetes(raicesPlugins(), carpetasVst3Plugins()))
+/** Carpeta VST3 donde el instalador deja los bundles JasWave (también la usan otros DAW). */
+function carpetaInstalacionVst3(): string {
+  return path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'Programs', 'Common', 'VST3', 'JasWave')
+}
+ipcMain.handle('plugins-listar', () => escanearPaquetes(raicesPlugins(), carpetasVst3Plugins(), carpetaInstalacionVst3()))
+
+// Instalación bajo demanda (D1): catálogo firmado, descarga verificada e instalación en VST3 de usuario.
+function apiBaseValida(v: unknown): string {
+  if (typeof v !== 'string') throw new Error('URL del servidor inválida')
+  const u = new URL(v)
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && /^(127\.0\.0\.1|localhost)$/.test(u.hostname))) {
+    throw new Error('el servidor de JasWave debe usar https')
+  }
+  return u.origin + u.pathname.replace(/\/+$/, '')
+}
+const instalacionesEnCurso = new Set<string>()
+ipcMain.handle('plugins-catalogo', async (_e: IpcMainInvokeEvent, apiBase: unknown) => obtenerCatalogo(apiBaseValida(apiBase), CLAVE_PUBLICA_JASWAVE))
+ipcMain.handle('plugins-instalar', async (e: IpcMainInvokeEvent, apiBase: unknown, id: unknown) => {
+  if (typeof id !== 'string') throw new Error('id de plugin inválido')
+  if (instalacionesEnCurso.has(id)) return { ok: false, error: 'ya se está instalando' }
+  instalacionesEnCurso.add(id)
+  try {
+    // El catálogo se vuelve a pedir y verificar aquí: el renderer solo elige qué id instalar.
+    const catalogo = await obtenerCatalogo(apiBaseValida(apiBase), CLAVE_PUBLICA_JASWAVE)
+    const entrada = catalogo.paquetes.find((p) => p.id === id)
+    if (!entrada) return { ok: false, error: 'el plugin no está en el catálogo' }
+    const ruta = await instalarPaquete(entrada, {
+      carpetaPaquetes: path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'JasWave', 'plugins'),
+      carpetaVst3: carpetaInstalacionVst3(),
+      alProgreso: (p) => { if (!e.sender.isDestroyed()) e.sender.send('plugins-progreso', p) },
+    })
+    logLine('info', 'plugins', `instalado ${entrada.id}@${entrada.version} en ${ruta}`)
+    return { ok: true, version: entrada.version }
+  } catch (err) {
+    logLine('warn', 'plugins', `instalación fallida ${id}`, err)
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  } finally {
+    instalacionesEnCurso.delete(id)
+  }
+})
 
 // Licencia local compartida con los VST JasWave (L3; contrato plugins/CONTRATO-V5.md §4).
 ipcMain.handle('licencia-guardar', async (_e: IpcMainInvokeEvent, datos: unknown) => {
@@ -917,6 +983,12 @@ ipcMain.handle('dialog-open-directory', async () => {
     })
 
     // Proyecto que llegó antes de que el renderer estuviera listo (U7).
+    ipcMain.handle('handover-take-pending', () => {
+      const token = handoverPendiente
+      handoverPendiente = null
+      return token
+    })
+
     ipcMain.handle('project-take-pending', () => {
       const pendiente = proyectoPendiente
       proyectoPendiente = null

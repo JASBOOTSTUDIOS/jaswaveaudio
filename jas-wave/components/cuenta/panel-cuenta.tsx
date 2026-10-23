@@ -10,6 +10,7 @@ import { msHastaRenovar, puertoEscritorio, renovarLicenciaEquipo, type EstadoLic
 import { requestOpenTool } from '@/src/workspace/types'
 import { pluginsActivos } from '@/src/lib/plugins/registro-plugins'
 import { FormularioLogin } from './formulario-login'
+import { CatalogoPluginsCuenta } from './catalogo-plugins'
 import { Aviso, Boton, Seccion } from './ui'
 
 /** Mantiene la licencia del equipo renovada mientras haya sesión. */
@@ -123,6 +124,8 @@ export function PanelCuenta() {
           </>
         )}
       </Seccion>
+
+      <CatalogoPluginsCuenta />
 
       {sesion.identidad?.esAdmin ? (
         <Boton primario onClick={() => requestOpenTool('admin')}>

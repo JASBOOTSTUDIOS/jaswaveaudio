@@ -40,3 +40,25 @@ export function rutaProyectoDeArgv(
   }
   return null
 }
+
+/**
+ * Enlace profundo de handover web → escritorio (H1): `jaswave://abrir?token=<token>`.
+ * Devuelve el token si el enlace es exactamente ese (esquema, acción y formato del token); cualquier
+ * otra cosa se ignora para que un enlace malicioso no pueda pedir acciones arbitrarias a la app.
+ */
+export function tokenHandoverDeArgv(argv: readonly string[]): string | null {
+  for (const arg of argv) {
+    if (typeof arg !== 'string' || !/^jaswave:/i.test(arg)) continue
+    let url: URL
+    try {
+      url = new URL(arg)
+    } catch {
+      continue
+    }
+    const accion = (url.hostname || url.pathname.replace(/^\/+/, '')).replace(/\/+$/, '').toLowerCase()
+    if (url.protocol !== 'jaswave:' || accion !== 'abrir') continue
+    const token = url.searchParams.get('token') ?? ''
+    if (/^[A-Za-z0-9_-]{40,60}$/.test(token)) return token
+  }
+  return null
+}

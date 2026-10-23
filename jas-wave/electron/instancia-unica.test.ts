@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { esRutaProyecto, rutaProyectoDeArgv } from './instancia-unica'
+import { esRutaProyecto, rutaProyectoDeArgv, tokenHandoverDeArgv } from './instancia-unica'
 
 describe('instancia-unica (U7)', () => {
   it('reconoce la extensión de proyecto', () => {
@@ -38,5 +38,20 @@ describe('instancia-unica (U7)', () => {
   it('devuelve la primera ruta válida', () => {
     const argv = ['C:/proyectos/a.jaswave', 'C:/proyectos/b.jaswave']
     assert.equal(rutaProyectoDeArgv(argv), 'C:/proyectos/a.jaswave')
+  })
+})
+
+describe('tokenHandoverDeArgv (H1)', () => {
+  const tok = 'A'.repeat(43)
+  it('extrae el token de jaswave://abrir', () => {
+    assert.equal(tokenHandoverDeArgv(['C:\JasWave.exe', `jaswave://abrir?token=${tok}`]), tok)
+    assert.equal(tokenHandoverDeArgv([`jaswave://abrir/?token=${tok}`]), tok)
+  })
+  it('ignora otras acciones, otros esquemas y tokens mal formados', () => {
+    assert.equal(tokenHandoverDeArgv([`jaswave://borrar?token=${tok}`]), null)
+    assert.equal(tokenHandoverDeArgv([`https://abrir?token=${tok}`]), null)
+    assert.equal(tokenHandoverDeArgv(['jaswave://abrir?token=corto']), null)
+    assert.equal(tokenHandoverDeArgv([`jaswave://abrir?token=${tok}%22%20--inject`]), null)
+    assert.equal(tokenHandoverDeArgv(['C:\proyecto.jaswave']), null)
   })
 })

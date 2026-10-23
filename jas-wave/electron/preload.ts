@@ -11,6 +11,21 @@ contextBridge.exposeInMainWorld('electron', {
   knownPaths: () => ipcRenderer.invoke('known-paths'),
   /** Paquetes de plugins JasWave encontrados (manifiesto sin validar + integridad). */
   pluginsListar: () => ipcRenderer.invoke('plugins-listar'),
+  /** H1: enlace jaswave://abrir?token=… recibido desde la web. */
+  onHandover: (callback: (token: string) => void) => {
+    const handler = (_event: unknown, token: string) => callback(token)
+    ipcRenderer.on('handover-recibido', handler)
+    return () => ipcRenderer.removeListener('handover-recibido', handler)
+  },
+  handoverTakePending: () => ipcRenderer.invoke('handover-take-pending'),
+  /** Catálogo firmado de plugins descargables (verificado en main). */
+  pluginsCatalogo: (apiBase: string) => ipcRenderer.invoke('plugins-catalogo', apiBase),
+  pluginsInstalar: (apiBase: string, id: string) => ipcRenderer.invoke('plugins-instalar', apiBase, id),
+  onPluginsProgreso: (callback: (p: { id: string; fase: string; recibidos?: number; total?: number; mensaje?: string }) => void) => {
+    const handler = (_event: unknown, p: { id: string; fase: string; recibidos?: number; total?: number; mensaje?: string }) => callback(p)
+    ipcRenderer.on('plugins-progreso', handler)
+    return () => ipcRenderer.removeListener('plugins-progreso', handler)
+  },
   /** El watchdog apartó un plugin (bypass + cuarentena). */
   onPluginCuarentena: (callback: (aviso: { ruta: string; motivo: string; mensaje: string }) => void) => {
     const handler = (_event: unknown, aviso: { ruta: string; motivo: string; mensaje: string }) => callback(aviso)

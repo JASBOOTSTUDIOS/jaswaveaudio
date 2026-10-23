@@ -1,76 +1,111 @@
 /**
- * Script de empaquetado, versionado y distribución de plugins VST3 independientes de JasWave.
+ * Empaqueta los plugins VST3 independientes de plugins/ para la entrega bajo demanda (D1).
  *
- * Estructura generada por plugin:
- *   plugins/{id}/
- *     ├── jaswave-plugin.json
- *     ├── bin/{Plugin}.vst3/              <- Versión actual para pruebas locales y Reaper
- *     ├── v1.0.0/                         <- Carpeta fija de versión con su bundle y ZIP distribuible
- *     │    ├── {Plugin}.vst3/
- *     │    └── {id}-v1.0.0.zip
- *     └── src/                            <- Código fuente C++ / DSP autónomo
+ *   node native/scripts/package-plugins.mjs [--config Release] [--base-url <url>] [--salida <dir>]
+ *
+ * Por cada plugins/com.jaswave.plugin.* genera <salida>/<id>-<version>.zip con:
+ *   jaswave-plugin.json
+ *   vst3/<Bundle>.vst3/...     (desde plugins/build/VST3/<Config>, compilar antes con build-plugins.mjs)
+ * y <salida>/catalogo.json con { id, nombre, version, url, sha256, sizeBytes } por paquete.
+ *
+ * No publica nada: subir los zip a GitHub Releases y registrar el catálogo en el backend son pasos
+ * explícitos (ver instrucciones que imprime al final).
  */
 
-import * as fs from 'node:fs'
-import * as path from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const here = path.dirname(fileURLToPath(import.meta.url))
-const root = path.resolve(here, '../..')
-const pluginsDir = path.join(root, 'plugins')
+const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+const args = process.argv.slice(2)
+const opcion = (nombre, porDefecto) => {
+  const i = args.indexOf(nombre)
+  return i >= 0 && args[i + 1] ? args[i + 1] : porDefecto
+}
+const config = opcion('--config', 'Release')
+const salida = path.resolve(opcion('--salida', path.join(raiz, 'plugins', 'dist')))
+const baseUrl = opcion('--base-url', '').replace(/\/+$/, '')
+const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+const carpetaBundles = path.join(raiz, 'plugins', 'build', 'VST3', config)
 
-async function packageAllPlugins() {
-  console.log('📦 Iniciando empaquetado y versionado de plugins VST3 modulares...')
-  if (!fs.existsSync(pluginsDir)) {
-    console.error(`No existe el directorio de plugins en ${pluginsDir}`)
-    process.exit(1)
-  }
-
-  const dirs = fs.readdirSync(pluginsDir, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && d.name.startsWith('com.jaswave.plugin.'))
-
-  console.log(`Se encontraron ${dirs.length} plugins modulares para empaquetar:\n`)
-
-  for (const d of dirs) {
-    const pluginFolder = path.join(pluginsDir, d.name)
-    const manifestPath = path.join(pluginFolder, 'jaswave-plugin.json')
-
-    if (!fs.existsSync(manifestPath)) {
-      console.warn(`⚠️ Omitiendo ${d.name}: no tiene jaswave-plugin.json`)
-      continue
-    }
-
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
-    const version = manifest.version || '1.0.0'
-    console.log(`🚀 Versionando [${manifest.name}] (${manifest.id}) -> versión v${version}`)
-
-    // 1. Asegurar estructura VST3 actual en bin/ (para Reaper y JasWave local)
-    const vst3BundleCurrent = path.join(pluginFolder, manifest.entrypoints.vst3Bundle, '..')
-    fs.mkdirSync(vst3BundleCurrent, { recursive: true })
-
-    // 2. Crear carpeta de versión dedicada v{version}/ (distribuible independiente)
-    const versionDir = path.join(pluginFolder, `v${version}`)
-    const versionVst3Dir = path.join(versionDir, path.basename(manifest.entrypoints.vst3), 'Contents', 'x86_64-win')
-    fs.mkdirSync(versionVst3Dir, { recursive: true })
-
-    // 3. Crear archivo de distribución listo para GitHub Releases
-    const releaseReadme = path.join(versionDir, 'RELEASE-INFO.md')
-    fs.writeFileSync(
-      releaseReadme,
-      `# ${manifest.name} — Versión ${version}\n\n` +
-      `- **Plugin ID:** \`${manifest.id}\`\n` +
-      `- **Categoría:** ${manifest.category} (${manifest.subCategory})\n` +
-      `- **Compatibilidad:** Reaper >= 6.0, JasWave >= 4.0, VST 3.7.0\n` +
-      `- **Estructura Bundle:** \`${path.basename(manifest.entrypoints.vst3)}\`\n` +
-      `- **Instalación en Reaper / Windows:** Copiar el bundle a \`%LOCALAPPDATA%\\Programs\\Common\\VST3\` o \`C:\\Program Files\\Common Files\\VST3\`\n`,
-      'utf8'
-    )
-
-    console.log(`   ✓ Versión actual en bin/: ${path.relative(root, vst3BundleCurrent)}`)
-    console.log(`   ✓ Carpeta de versión distribuible: ${path.relative(root, versionDir)}`)
-  }
-
-  console.log('\n✅ Todos los plugins VST3 están estructurados con código fuente, UI moderna, binarios actuales y carpetas versionadas para distribución.')
+if (process.platform !== 'win32') {
+  console.error('[package-plugins] los paquetes de VST3 JasWave se generan en Windows.')
+  process.exit(1)
 }
 
-void packageAllPlugins()
+const sha256 = (ruta) => createHash('sha256').update(fs.readFileSync(ruta)).digest('hex')
+
+function copiarDirectorio(origen, destino) {
+  fs.mkdirSync(destino, { recursive: true })
+  for (const e of fs.readdirSync(origen, { withFileTypes: true })) {
+    const a = path.join(origen, e.name)
+    const b = path.join(destino, e.name)
+    if (e.isDirectory()) copiarDirectorio(a, b)
+    else if (e.isFile()) fs.copyFileSync(a, b)
+  }
+}
+
+fs.mkdirSync(salida, { recursive: true })
+const catalogo = []
+const problemas = []
+
+for (const nombre of fs.readdirSync(path.join(raiz, 'plugins')).sort()) {
+  const dir = path.join(raiz, 'plugins', nombre)
+  const rutaManifiesto = path.join(dir, 'jaswave-plugin.json')
+  if (!nombre.startsWith('com.jaswave.plugin.') || !fs.existsSync(rutaManifiesto)) continue
+  const manifiesto = JSON.parse(fs.readFileSync(rutaManifiesto, 'utf8'))
+  const entrada = manifiesto.entrypoints?.dspDesktop
+  if (!entrada) {
+    problemas.push(`${nombre}: sin entrypoints.dspDesktop`)
+    continue
+  }
+  const bundle = path.basename(entrada)
+  const origenBundle = path.join(carpetaBundles, bundle)
+  if (!fs.existsSync(origenBundle)) {
+    problemas.push(`${nombre}: falta ${origenBundle} (ejecuta node native/scripts/build-plugins.mjs)`)
+    continue
+  }
+
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), `jw-pkg-${manifiesto.id}-`))
+  try {
+    fs.copyFileSync(rutaManifiesto, path.join(staging, 'jaswave-plugin.json'))
+    copiarDirectorio(origenBundle, path.join(staging, 'vst3', bundle))
+    const archivo = `${manifiesto.id}-${manifiesto.version}.zip`
+    const destino = path.join(salida, archivo)
+    fs.rmSync(destino, { force: true })
+    // bsdtar de Windows: -a elige el formato por la extensión (.zip).
+    execFileSync(tar, ['-a', '-c', '-f', destino, '-C', staging, 'jaswave-plugin.json', 'vst3'], { stdio: 'inherit' })
+    const tamano = fs.statSync(destino).size
+    catalogo.push({
+      id: manifiesto.id,
+      nombre: manifiesto.name,
+      version: manifiesto.version,
+      url: baseUrl ? `${baseUrl}/${archivo}` : archivo,
+      sha256: sha256(destino),
+      sizeBytes: tamano,
+    })
+    console.log(`[package-plugins] ${archivo}  ${(tamano / 1024).toFixed(0)} KB`)
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true })
+  }
+}
+
+fs.writeFileSync(path.join(salida, 'catalogo.json'), JSON.stringify({ paquetes: catalogo }, null, 2) + '\n')
+console.log(`[package-plugins] ${catalogo.length} paquetes → ${salida}`)
+for (const p of problemas) console.warn(`[package-plugins] AVISO ${p}`)
+if (!baseUrl) {
+  console.log('[package-plugins] Sin --base-url: las URL del catálogo son relativas (solo para pruebas locales).')
+}
+console.log(
+  [
+    '',
+    'Publicación (pasos explícitos, no automáticos):',
+    `  1. gh release create plugins-<version> ${path.join(salida, '*.zip')} --draft   # o gh release upload`,
+    '  2. Regenera el catálogo con --base-url https://github.com/<org>/<repo>/releases/download/plugins-<version>',
+    '  3. POST <backend>/catalogo con el contenido de catalogo.json (token de administrador)',
+  ].join('\n'),
+)
+if (problemas.length) process.exit(1)

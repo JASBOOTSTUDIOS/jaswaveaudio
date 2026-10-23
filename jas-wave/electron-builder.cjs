@@ -66,7 +66,12 @@ const config = {
     },
   ],
   win: {
-    target: [{ target: 'nsis', arch: ['x64'] }],
+    // nsis: instalador completo. nsis-web: stub mínimo que descarga el paquete de la app (V5 §6.1, <40 MB);
+    // los plugins JasWave no van en ninguno de los dos: se instalan bajo demanda (D1).
+    target: [
+      { target: 'nsis', arch: ['x64'] },
+      { target: 'nsis-web', arch: ['x64'] },
+    ],
     icon: 'build-resources/icon.png',
     artifactName: 'JasWave-Setup-${version}.${ext}',
     signAndEditExecutable: true,
@@ -96,6 +101,20 @@ const config = {
     perMachine: false,
     license: 'build-resources/eula.txt',
   },
+  nsisWeb: {
+    oneClick: false,
+    allowToChangeInstallationDirectory: true,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    shortcutName: 'JasWave',
+    perMachine: false,
+    license: 'build-resources/eula.txt',
+    artifactName: 'JasWave-WebSetup-${version}.${ext}',
+  },
+  // Solo los idiomas de la app: Chromium trae ~50 .pak que no se usan (reduce el paquete descargable).
+  electronLanguages: ['es', 'es-419', 'en-US'],
+  // Enlaces profundos web → escritorio (H1): jaswave://abrir?token=…
+  protocols: [{ name: 'JasWave', schemes: ['jaswave'] }],
   electronFuses: {
     runAsNode: true,
     enableCookieEncryption: true,

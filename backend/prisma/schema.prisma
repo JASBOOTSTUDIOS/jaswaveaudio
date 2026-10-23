@@ -211,3 +211,32 @@ model ComandoSala {
 
   @@unique([salaId, seq])
 }
+
+// ---------- Catálogo de paquetes de plugins (D1) ----------
+
+/// Versión publicada de un paquete descargable (zip en GitHub Releases).
+model PaquetePlugin {
+  id          String
+  version     String
+  nombre      String
+  url         String
+  sha256      String
+  sizeBytes   Int
+  publicadoEn DateTime @default(now())
+
+  @@id([id, version])
+}
+
+// ---------- Handover web → escritorio (H1) ----------
+
+/// Token de un solo uso (60 s). `hash` = SHA-256 del token; `cifrado` = datos + sesión con AES-256-GCM
+/// usando una clave derivada del propio token: la base de datos sola no puede leerlos.
+model TokenHandover {
+  hash      String   @id
+  usuarioId String
+  cifrado   Bytes
+  caducaEn  DateTime
+  creadoEn  DateTime @default(now())
+
+  @@index([caducaEn])
+}
