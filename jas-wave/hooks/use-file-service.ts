@@ -17,6 +17,7 @@ declare global {
       userDataPath?: () => Promise<string>
       knownPaths?: () => Promise<{ resourcesPath: string; localAppData: string; bundledVst3Dir: string }>
       pluginsListar?: () => Promise<import('../src/lib/plugins/registro-plugins').PaqueteRecibido[]>
+      onPluginCuarentena?: (callback: (aviso: { ruta: string; motivo: string; mensaje: string }) => void) => () => void
       licenciaGuardar?: (datos: { token: string; tokenDispositivo: string }) => Promise<boolean>
       licenciaLeer?: () => Promise<string | null>
       licenciaTokenDispositivo?: () => Promise<string | null>

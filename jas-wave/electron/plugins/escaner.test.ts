@@ -7,7 +7,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { after, before, describe, it } from 'node:test'
-import { escanearPaquetes, rutaDentroDe } from './escaner'
+import { escanearPaquetes, resolverRutaDsp, rutaDentroDe } from './escaner'
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
 
@@ -65,5 +65,35 @@ describe('P1 — escáner de paquetes', () => {
     assert.equal(rutaDentroDe(base, '/etc/passwd'), null)
     assert.equal(rutaDentroDe(base, ''), null)
     assert.equal(rutaDentroDe(base, 'bin/a.vst3'), path.join(base, 'bin', 'a.vst3'))
+  })
+})
+
+describe('P1/K1 — resolución del binario del plugin', () => {
+  let base: string
+  before(async () => {
+    base = await mkdtemp(path.join(os.tmpdir(), 'jw-dsp-'))
+    await mkdir(path.join(base, 'paquete', 'bin', 'Dentro.vst3'), { recursive: true })
+    await mkdir(path.join(base, 'vst3', 'Fuera.vst3'), { recursive: true })
+  })
+  after(async () => {
+    await rm(base, { recursive: true, force: true })
+  })
+
+  it('prefiere las carpetas VST3 y si no está ahí usa el binario del paquete', async () => {
+    const dir = path.join(base, 'paquete')
+    const vst3 = [path.join(base, 'vst3')]
+    assert.equal(await resolverRutaDsp(dir, { entrypoints: { dspDesktop: 'bin/Dentro.vst3' } }, vst3), path.join(dir, 'bin', 'Dentro.vst3'))
+    await mkdir(path.join(base, 'vst3', 'Dentro.vst3'), { recursive: true })
+    assert.equal(await resolverRutaDsp(dir, { entrypoints: { dspDesktop: 'bin/Dentro.vst3' } }, vst3), path.join(base, 'vst3', 'Dentro.vst3'))
+    assert.equal(await resolverRutaDsp(dir, { entrypoints: { dspDesktop: 'bin/Fuera.vst3' } }, vst3), path.join(base, 'vst3', 'Fuera.vst3'))
+    assert.equal(await resolverRutaDsp(dir, { entrypoints: { dspDesktop: 'bin/NoExiste.vst3' } }, vst3), undefined)
+  })
+
+  it('no acepta rutas fuera del paquete ni nombres que no sean .vst3', async () => {
+    const dir = path.join(base, 'paquete')
+    const vst3 = [path.join(base, 'vst3')]
+    assert.equal(await resolverRutaDsp(dir, { entrypoints: { dspDesktop: '../vst3/Fuera.vst3' } }, vst3), undefined)
+    assert.equal(await resolverRutaDsp(dir, { entrypoints: { dspDesktop: 'bin/Fuera.vst3x' } }, vst3), undefined)
+    assert.equal(await resolverRutaDsp(dir, { entrypoints: {} }, vst3), undefined)
   })
 })

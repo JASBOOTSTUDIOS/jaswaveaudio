@@ -10,17 +10,16 @@
 Parser zod del esquema V5 §2.2 + extensiones; verificación SHA-256; watchdog ⇒ cuarentena (reutiliza `quarantine.ts`); worker_threads para aiSkill con permisos aplicados; tests `node:test`.
 
 ## Checklist
-- [x] Implementación (manifiesto, escáner, integridad, registro de herramientas, watchdog puro)
-- [x] Tests automatizados
-- [ ] Cargador de aiSkill en worker y módulos UI (pendiente)
-- [ ] Watchdog conectado al host (pendiente de getSlotStats en native/plugin-host)
+- [x] Manifiesto V5 (zod), escáner con integridad, herramientas IA, catálogo del DAW
+- [x] Watchdog conectado: vigilancia en main con getSlotStats (bypass + cuarentena + aviso)
+- [x] Tests (unitarios, integración del escáner, e2e en Electron real)
+- [ ] Cargador de aiSkill en Web Worker y módulos UI (ningún plugin actual los declara; queda para cuando exista uno)
 
 ## Verificación
 `npm run verify` en raíz; tests específicos del workstream (ver criterios).
 
 ## Notas de traspaso
-- shared/src/plugins: esquema V5 (zod) y herramientas IA derivadas del manifiesto (describir/ajustar con vstParamId).
-- electron/plugins/escaner.ts: paquetes en %LOCALAPPDATA%/JasWave/plugins (+ plugins/ del repo en dev, + JASWAVE_PLUGINS_DIR); integridad SHA-256 contra instalacion.json; IPC plugins-listar.
-- El main no valida el esquema (shared es fuente TS no ejecutable en main): lo hace el renderer (registro-plugins.ts).
-- electron/plugins/watchdog.ts: lógica pura (saturación 5 muestras > 0.9, 3 excepciones/60 s). Falta el comando getSlotStats del host (encargado al agente nativo) y el bucle de sondeo.
-- Pendiente: aiSkill en Web Worker con permisos; módulos UI por protocolo jaswave-plugin://; los manifiestos de plugins/ aún usan el esquema previo (los migra V1) y hoy se rechazan como inválidos.
+- electron/plugins/vigilancia.ts sondea getSlotStats (reset) cada 1 s solo con host nativo; acumula excepciones; decide con watchdog.ts; setBypass en todas las instancias, ponerPluginEnCuarentena y evento plugin-cuarentena al renderer (desactiva herramientas IA y muestra aviso).
+- getSlotStats no está en el allowlist del renderer (solo main lo usa); e2e lo comprueba.
+- Los 7 manifiestos reales validan con el esquema V5 (guarda en src/lib/plugins/manifiestos-repo.test.ts).
+- Pendiente honesto: aiSkill/ui por worker y protocolo jaswave-plugin:// — ningún plugin actual declara esos entrypoints.

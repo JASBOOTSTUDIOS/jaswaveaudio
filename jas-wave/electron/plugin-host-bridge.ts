@@ -596,8 +596,25 @@ function getQuarantine(): Set<string> {
   return quarantinedPlugins
 }
 
+/** Aparta un plugin vivo que el watchdog detectó inestable (próximas cargas se rechazan). */
+export function ponerPluginEnCuarentena(ruta: string): void {
+  const clave = pluginKey(ruta)
+  if (!clave) return
+  const q = getQuarantine()
+  q.add(clave)
+  saveQuarantine(q)
+}
+
+const alLimpiarCuarentena = new Set<() => void>()
+/** Avisa cuando el usuario limpia la cuarentena (la vigilancia vuelve a empezar de cero). */
+export function suscribirLimpiezaCuarentena(cb: () => void): () => void {
+  alLimpiarCuarentena.add(cb)
+  return () => alLimpiarCuarentena.delete(cb)
+}
+
 /** Limpia cuarentena en RAM + disco (reintento de VST tras crash). */
 export function clearPluginQuarantine(): { cleared: number } {
+  for (const cb of alLimpiarCuarentena) cb()
   const n = getQuarantine().size
   quarantinedPlugins = new Set()
   quarantineFileMtime = 0

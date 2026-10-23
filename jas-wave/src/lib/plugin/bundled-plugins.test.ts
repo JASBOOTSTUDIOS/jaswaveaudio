@@ -7,7 +7,6 @@ import {
   isBundledJasWavePath,
   JASWAVE_ROLES_BUNDLE,
   pickJasWavePluginPath,
-  defaultJasWaveFxPath,
   isJasWaveFxDescriptor,
   isJasWaveFxPlugin,
   JASWAVE_FX_EQ,
@@ -60,19 +59,13 @@ describe('setBundledVst3SearchDir', () => {
   })
 })
 
-describe('defaultJasWaveFxPath', () => {
-  it('devuelve una ruta absoluta bajo LOCALAPPDATA cuando existe', () => {
-    const p = defaultJasWaveFxPath()
-    assert.ok(p.endsWith('\\JasWaveFx.vst3') || p.endsWith('/JasWaveFx.vst3'))
-    assert.ok(p.includes('Common\\VST3\\JasWave') || p.includes('Common/VST3/JasWave'))
-  })
-})
-
 describe('isJasWaveFxDescriptor', () => {
   it('reconoce nombre JasWave FX', () => {
     assert.ok(isJasWaveFxDescriptor({ name: 'JasWave EQ', vendor: 'JasWave' }))
     assert.ok(isJasWaveFxDescriptor({ name: 'JasWave Compresor', vendor: 'JasWave' }))
-    assert.ok(isJasWaveFxDescriptor({ path: 'C:\\x\\JasWaveFx.vst3' }))
+    assert.ok(isJasWaveFxDescriptor({ name: 'JasWave EQ Parametric Pro', vendor: 'JasWave Audio' }))
+    assert.ok(isJasWaveFxDescriptor({ name: 'JasWave True-Peak Limiter Pro', vendor: 'JasWave Audio' }))
+    assert.ok(isJasWaveFxDescriptor({ pluginId: 'jaswave:com.jaswave.plugin.smart-deesser' }))
   })
   it('no reconoce roles ni piano', () => {
     assert.ok(!isJasWaveFxDescriptor({ name: 'JasWave Roles', vendor: 'JasWave' }))
@@ -88,6 +81,8 @@ describe('isJasWaveFxPlugin', () => {
     assert.ok(isJasWaveFxPlugin({ nombre: 'JasWave Limitador' }))
     assert.ok(isJasWaveFxPlugin({ nombre: 'JasWave Utility' }))
     assert.ok(isJasWaveFxPlugin({ nombre: 'JasWave De-esser' }))
+    assert.ok(isJasWaveFxPlugin({ nombre: 'JasWave Bus Compressor', vendor: 'JasWave Audio' }))
+    assert.ok(isJasWaveFxPlugin({ nombre: 'JasWave Utility & Phase Tool' }))
     assert.ok(isJasWaveFxPlugin({ nombre: 'JasWave Roles', vendor: 'JasWave', category: 'efecto' }))
   })
   it('rechaza no-FX', () => {

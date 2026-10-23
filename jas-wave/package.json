@@ -33,7 +33,7 @@
     "cli:soak-host": "node cli/_soak-host.mjs",
     "cli:soak-host:30": "cross-env SOAK_MINUTES=30 node cli/_soak-host.mjs",
     "cli:soak-host:4h": "cross-env SOAK_MINUTES=240 node cli/_soak-host.mjs",
-    "native:roles-vst": "cmake -B ../native/jaswave-roles-vst/build -S ../native/jaswave-roles-vst -G \"Visual Studio 17 2022\" -A x64 && cmake --build ../native/jaswave-roles-vst/build --config Release --target JasWaveRoles",
+    "native:plugins": "node ../native/scripts/build-plugins.mjs",
     "stage:host:strict": "node scripts/stage-plugin-host.mjs --strict",
     "electron:dir": "npm run build && npm run stage:host && electron-builder --win dir --publish never",
     "release:win": "npm run build && npm run stage:host:strict && electron-builder --win nsis --publish always"

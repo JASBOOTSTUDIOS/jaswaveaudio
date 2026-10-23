@@ -23,6 +23,7 @@ const EVENT_TOAST_MAP: Record<string, { message: string; type: Toast['type'] }> 
   'comando.fallido': { message: 'Acción fallida', type: 'warning' },
   'validacion.advertencia': { message: 'Advertencia de validación', type: 'warning' },
   'sistema.error': { message: 'Error del sistema', type: 'warning' },
+  'plugin.cuarentena': { message: 'Plugin apartado por inestable', type: 'warning' },
   'portapapeles.copiado': { message: 'Clip copiado', type: 'success' },
   'portapapeles.pegado': { message: 'Clip pegado', type: 'success' },
 }
@@ -45,6 +46,11 @@ export function EventToasts() {
     Object.entries(EVENT_TOAST_MAP).map(([nombre, config]) => ({
       nombre,
       manejador: (payload: unknown) => {
+        if (nombre === 'plugin.cuarentena') {
+          const p = payload as { mensaje?: string }
+          addToast(p.mensaje ?? config.message, config.type)
+          return
+        }
         if (nombre === 'comando.fallido') {
           const p = payload as { error?: string; type?: string }
           addToast(p.error ? `${config.message}: ${p.error}` : config.message, config.type)

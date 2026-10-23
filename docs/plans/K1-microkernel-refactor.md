@@ -10,11 +10,10 @@
 El núcleo compila y arranca sin ningún plugin concreto presente; los plugins se resuelven desde el registro de manifiestos; build nativo del host verde.
 
 ## Checklist
-- [x] (nativo) `native/plugin-host/CMakeLists.txt` ya no compila el piano; `VST3_SDK_DIR` cacheable
-- [x] (nativo) `native/scripts/build-native.mjs` solo compila el núcleo; `build-plugins.mjs` compila los plugins
-- [x] (nativo) `jas-wave/scripts/stage-plugin-host.mjs` deja de empaquetar VST3
-- [x] (nativo) comando `getSlotStats` para el watchdog de cuarentena (V5 §2.4)
-- [ ] (TS) registro de manifiestos y `bundled-plugins.ts` sin dependencias estáticas — otro agente
+- [x] Parte nativa (agente nativo): host sin plugins, build-native solo núcleo, JasWaveFx retirado
+- [x] Parte TS: FX por id de manifiesto, catálogo desde manifiestos, sin bundle único ni rutas fijas
+- [x] Proyectos antiguos con JasWaveFx.vst3 se cargan con el plugin independiente equivalente
+- [x] Instalador sin plugins incluidos; e2e 15 en Electron real
 
 ## Verificación
 ```bat
@@ -24,11 +23,7 @@ node native/plugin-host/scripts/slot-stats-test.cjs <host.exe> <plugin.vst3>   :
 ```
 
 ## Notas de traspaso
-- 2026-10-23 · Claude Opus 5.5: parte nativa hecha; build del host verificado (VS 2026, SDK del checkout principal).
-- `getSlotStats` (`{"type":"getSlotStats","reset":true?}`) → `{"ok":true,"slots":[{"slot","path","blocks","avgLoad",
-  "maxLoad","overruns","exceptions","bypassed"}]}`. load = tiempo de process() / (frames/sampleRate), medido con
-  QueryPerformanceCounter en `HostedSlot::process` con contadores atómicos. process() de VST3 protegido con SEH
-  (como VST2): al fallar, bypass silencioso y `exceptions` +1. La ruta de excepción no se ejercitó con un plugin que falle.
-- Pendiente para jas-wave: `electron-builder.cjs` aún declara `resources/vst3/JasWave` (el stage la deja vacía),
-  `bundled-plugins.ts`/`jaswave-roles.ts` mencionan rutas antiguas, `jas-wave/package.json` script `native:roles-vst`.
-- Nota: `Vst3Slot::process` asigna vectores en el hilo de audio (cola MIDI/parámetros); conviene preasignarlos.
+- El DAW resuelve cada plugin por su manifiesto: escáner en main (rutaDsp: carpetas VST3 primero; en dev plugins/build/VST3/Release con lectura concedida) y catálogo en el renderer (registro-plugins.ts, id jaswave:<id>).
+- jaswave-fx-mix.ts: FX_PLUGIN_ID por tipo; processor-profiles.json se mantiene para rangos (mismos ParamID).
+- plugin-info-adapter: rutaSustitutoFxLegado migra al cargar los FX guardados con JasWaveFx.vst3.
+- e2e/15-plugins-manifiesto.spec.ts: 7 paquetes, binarios resueltos y carga real en el host.

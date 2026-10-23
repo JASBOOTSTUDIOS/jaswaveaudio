@@ -30,6 +30,7 @@ import {
   loadRenderer,
 } from './security'
 import { escanearPaquetes } from './plugins/escaner'
+import { crearVigilancia } from './plugins/vigilancia'
 import { guardarLicenciaLocal, leerLicenciaLocal, leerTokenDispositivo } from './licencias-locales'
 import * as os from 'node:os'
 
@@ -582,7 +583,21 @@ function raicesPlugins(): string[] {
   if (process.env.JASWAVE_PLUGINS_DIR) raices.push(path.resolve(process.env.JASWAVE_PLUGINS_DIR))
   return raices
 }
-ipcMain.handle('plugins-listar', () => escanearPaquetes(raicesPlugins()))
+/** Carpetas VST3 donde buscar los binarios de los plugins JasWave (y, en desarrollo, su build). */
+function carpetasVst3Plugins(): string[] {
+  const local = process.env.LOCALAPPDATA || ''
+  const carpetas = local ? [path.join(local, 'Programs', 'Common', 'VST3', 'JasWave'), path.join(local, 'Programs', 'Common', 'VST3')] : []
+  if (process.env.CommonProgramFiles) carpetas.push(path.join(process.env.CommonProgramFiles, 'VST3', 'JasWave'))
+  if (!app.isPackaged) {
+    // En desarrollo, los VST recién compilados del repositorio tienen prioridad sobre instalaciones previas.
+    const build = path.resolve(__dirname, '..', '..', '..', '..', 'plugins', 'build', 'VST3', 'Release')
+    carpetas.unshift(build)
+    // Solo en desarrollo: el host puede cargar los VST recién compilados del repositorio.
+    pathGrants.grant(build, 'read')
+  }
+  return carpetas
+}
+ipcMain.handle('plugins-listar', () => escanearPaquetes(raicesPlugins(), carpetasVst3Plugins()))
 
 // Licencia local compartida con los VST JasWave (L3; contrato plugins/CONTRATO-V5.md §4).
 ipcMain.handle('licencia-guardar', async (_e: IpcMainInvokeEvent, datos: unknown) => {
@@ -1115,8 +1130,24 @@ const {
   setPluginHostAudioDevice,
   subscribeNativeMidi,
   resetPluginHost,
+  ponerPluginEnCuarentena,
+  suscribirLimpiezaCuarentena,
 } = require('./plugin-host-bridge')
 
+// Watchdog de plugins vivos (V5 §2.4): saturación sostenida o fallos recurrentes → bypass + cuarentena.
+const vigilanciaPlugins = crearVigilancia({
+  enviar: (cmd) => sendPluginHostCommand(cmd, 5_000) as Promise<{ ok?: boolean; slots?: unknown }>,
+  activo: () => getPluginHostStatus().backend === 'native' && getPluginHostStatus().vst3HostProcessAvailable,
+  apartar: (ruta) => ponerPluginEnCuarentena(ruta),
+  notificar: (decision, mensaje) => {
+    logLine('warn', 'plugin-watchdog', mensaje)
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('plugin-cuarentena', { ruta: decision.plugin, motivo: decision.motivo, mensaje })
+    }
+  },
+})
+suscribirLimpiezaCuarentena(() => vigilanciaPlugins.rehabilitar())
+app.on('will-quit', () => vigilanciaPlugins.detener())
 subscribeNativeMidi((msg: { id: string; data: number[] }) => {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send('native-midi', msg)

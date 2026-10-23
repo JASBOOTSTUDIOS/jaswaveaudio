@@ -109,3 +109,46 @@ describe('plugins activos (P1/P2 en el DAW)', () => {
     assert.deepEqual(await cargarPluginsInstalados(undefined), { activos: [], rechazados: [] })
   })
 })
+
+describe('K1 — catálogo del DAW desde manifiestos', () => {
+  afterEach(() => _reiniciarPluginsParaPruebas())
+
+  it('un plugin con binario aparece en el catálogo con los datos del manifiesto y sustituye la entrada heredada', async () => {
+    const { pluginRegistry } = await import('../plugin/registry')
+    pluginRegistry.register({
+      pluginId: 'vst3.legado',
+      format: 'vst3',
+      vendor: 'JasWave',
+      name: 'JasWave EQ',
+      version: '0.9.0',
+      path: 'C:/viejo/JasWaveFx.vst3',
+      category: 'efecto',
+      isInstrument: false,
+      isEffect: true,
+      supportsMidiInput: false,
+      supportsMidiOutput: false,
+      supportsAudioInput: true,
+      supportsAudioOutput: true,
+      supportsSidechain: false,
+      supportsEditor: true,
+      parameterCount: 42,
+      scanStatus: 'ok',
+      hostReady: true,
+      isolation: 'out-of-process',
+    })
+    activarPaquetes([paquete({ rutaDsp: 'C:/VST3/JasWaveParamEq.vst3' })])
+    const d = pluginRegistry.findById('jaswave:com.jaswave.plugin.param-eq')
+    assert.equal(d?.path, 'C:/VST3/JasWaveParamEq.vst3')
+    assert.equal(d?.isEffect, true)
+    assert.equal(d?.uniqueId, '{4A15A3A0-3C1A-4C4F-B19A-8E40280D5E01}')
+    assert.equal(pluginRegistry.findById('vst3.legado'), undefined)
+    desactivarPlugin('com.jaswave.plugin.param-eq')
+    assert.equal(pluginRegistry.findById('jaswave:com.jaswave.plugin.param-eq'), undefined)
+  })
+
+  it('sin binario disponible no se añade al catálogo (pero sí sus herramientas de IA)', async () => {
+    const { pluginRegistry } = await import('../plugin/registry')
+    activarPaquetes([paquete()])
+    assert.equal(pluginRegistry.findById('jaswave:com.jaswave.plugin.param-eq'), undefined)
+  })
+})

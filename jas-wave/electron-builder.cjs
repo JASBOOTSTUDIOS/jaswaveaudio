@@ -52,8 +52,7 @@ const config = {
   ],
   extraResources: [
     { from: 'resources/plugin-host', to: 'plugin-host' },
-    // Plugins propios (los copia scripts/stage-plugin-host.mjs); la app los usa si no hay instalación de usuario.
-    { from: 'resources/vst3/JasWave', to: 'vst3/JasWave' },
+    // Los plugins JasWave no van en el instalador: son VST3 independientes que se descargan bajo demanda (D1).
     { from: 'public/jaswave-icono-con-frecuencia.png', to: 'jaswave-icono-con-frecuencia.png' },
     { from: '../THIRD_PARTY_NOTICES.md', to: 'THIRD_PARTY_NOTICES.md' },
   ],

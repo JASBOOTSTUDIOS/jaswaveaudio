@@ -70,8 +70,6 @@ if (fs.existsSync(staleVst3Dir) && fs.readdirSync(staleVst3Dir).length > 0) {
   fs.rmSync(staleVst3Dir, { recursive: true, force: true })
   console.log('[stage-plugin-host] eliminada copia antigua de plugins en', staleVst3Dir)
 }
-// Carpeta vacía: electron-builder.cjs aún declara extraResources resources/vst3/JasWave (lo retira el agente de jas-wave)
-fs.mkdirSync(staleVst3Dir, { recursive: true })
 
 if (problems.length > 0 && strict) {
   console.error(`[stage-plugin-host] ${problems.length} binario(s) nativo(s) faltan; modo estricto (CI/--strict) → abortando.`)

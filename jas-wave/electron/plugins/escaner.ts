@@ -27,6 +27,8 @@ export type PaqueteEncontrado = {
   /** Archivos cuyo hash no coincide o que faltan (si `alterada`). */
   discrepancias: string[]
   errores: string[]
+  /** Ruta real del binario VST3 (`entrypoints.dspDesktop`) si existe en el paquete o en una carpeta VST3. */
+  rutaDsp?: string
 }
 
 const MAX_MANIFIESTO_BYTES = 256 * 1024
@@ -84,8 +86,36 @@ export async function verificarIntegridad(dir: string): Promise<{ integridad: In
   return { integridad: discrepancias.length ? 'alterada' : 'verificada', discrepancias }
 }
 
+async function existe(ruta: string): Promise<boolean> {
+  try {
+    await stat(ruta)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Localiza el binario del plugin: primero por su nombre de bundle en las carpetas VST3 (donde lo instala
+ * el instalador modular, lo encuentra cualquier DAW y el host tiene permiso) y, si no, dentro del paquete.
+ * Nunca acepta rutas que escapen del paquete.
+ */
+export async function resolverRutaDsp(dir: string, manifiesto: unknown, carpetasVst3: string[]): Promise<string | undefined> {
+  const entrada = (manifiesto as { entrypoints?: { dspDesktop?: unknown } } | null)?.entrypoints?.dspDesktop
+  if (typeof entrada !== 'string') return undefined
+  const enPaquete = rutaDentroDe(dir, entrada)
+  if (!enPaquete) return undefined
+  const bundle = path.basename(enPaquete)
+  if (!/^[A-Za-z0-9 ._&()-]+\.vst3$/i.test(bundle)) return undefined
+  for (const carpeta of carpetasVst3) {
+    const candidato = path.join(carpeta, bundle)
+    if (await existe(candidato)) return candidato
+  }
+  return (await existe(enPaquete)) ? enPaquete : undefined
+}
+
 /** Busca paquetes en cada raíz (un nivel: <raíz>/<carpeta>/jaswave-plugin.json). */
-export async function escanearPaquetes(raices: string[]): Promise<PaqueteEncontrado[]> {
+export async function escanearPaquetes(raices: string[], carpetasVst3: string[] = []): Promise<PaqueteEncontrado[]> {
   const out: PaqueteEncontrado[] = []
   for (const raiz of raices) {
     let carpetas: string[]
@@ -106,7 +136,8 @@ export async function escanearPaquetes(raices: string[]): Promise<PaqueteEncontr
         continue
       }
       const { integridad, discrepancias } = await verificarIntegridad(dir)
-      out.push({ dir, manifiesto, integridad, discrepancias, errores: [] })
+      const rutaDsp = await resolverRutaDsp(dir, manifiesto, carpetasVst3)
+      out.push({ dir, manifiesto, integridad, discrepancias, errores: [], ...(rutaDsp ? { rutaDsp } : {}) })
     }
   }
   return out

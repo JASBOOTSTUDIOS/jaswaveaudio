@@ -55,13 +55,38 @@ export function extractHostPluginPath(descripcion: string, pluginId?: string): s
  * Ruta hosteable desde PluginInfo. Si descripcion/id no traen path,
  * busca en el catálogo por pluginId o nombre (inserts viejos sin ruta).
  */
+/**
+ * Proyectos anteriores guardan los FX del bundle único JasWaveFx.vst3 (retirado). Cada uno se sustituye
+ * por su plugin independiente (mismos ParamID; el estado guardado se convierte al cargar).
+ */
+const FX_LEGADO: ReadonlyArray<[RegExp, string]> = [
+  [/jaswave\s*eq\b/i, 'com.jaswave.plugin.param-eq'],
+  [/compresor/i, 'com.jaswave.plugin.bus-compressor'],
+  [/limitador/i, 'com.jaswave.plugin.truepeak-limiter'],
+  [/utility/i, 'com.jaswave.plugin.utility-tool'],
+  [/de-?esser/i, 'com.jaswave.plugin.smart-deesser'],
+]
+
+export function rutaSustitutoFxLegado(
+  nombre: string,
+  catalog: Array<{ pluginId: string; path?: string }>,
+): string {
+  const par = FX_LEGADO.find(([re]) => re.test(nombre))
+  if (!par) return ''
+  return catalog.find((d) => d.pluginId === `jaswave:${par[1]}` && !!d.path)?.path ?? ''
+}
+
 export function resolveHostPluginPath(
   plugin: Pick<PluginInfo, 'descripcion' | 'id' | 'nombre'>,
   catalog?: Array<{ pluginId: string; name: string; path?: string }>,
 ): string {
-  const direct = extractHostPluginPath(plugin.descripcion ?? '', plugin.id)
-  if (direct) return direct
   const list = catalog ?? pluginRegistry.list()
+  const direct = extractHostPluginPath(plugin.descripcion ?? '', plugin.id)
+  if (direct && /jaswavefx\.vst3$/i.test(direct)) {
+    const sustituto = rutaSustitutoFxLegado(plugin.nombre ?? '', list)
+    if (sustituto) return sustituto
+  }
+  if (direct) return direct
   const name = (plugin.nombre || '').trim().toLowerCase()
   const queries = plugin.nombre
     ? expandPluginNameQueries(plugin.nombre).map((q) => q.toLowerCase())
@@ -106,15 +131,6 @@ export function resolveHostPluginPath(
         (
           globalThis as unknown as { __jaswaveRolesPath?: () => string }
         ).__jaswaveRolesPath?.() || ''
-      )
-    } catch {
-      return ''
-    }
-  }
-  if (/jaswave\s*fx|jaswavefx/i.test(name)) {
-    try {
-      return (
-        (globalThis as unknown as { __jaswaveFxPath?: () => string }).__jaswaveFxPath?.() || ''
       )
     } catch {
       return ''

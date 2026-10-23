@@ -11,6 +11,12 @@ contextBridge.exposeInMainWorld('electron', {
   knownPaths: () => ipcRenderer.invoke('known-paths'),
   /** Paquetes de plugins JasWave encontrados (manifiesto sin validar + integridad). */
   pluginsListar: () => ipcRenderer.invoke('plugins-listar'),
+  /** El watchdog apartó un plugin (bypass + cuarentena). */
+  onPluginCuarentena: (callback: (aviso: { ruta: string; motivo: string; mensaje: string }) => void) => {
+    const handler = (_event: unknown, aviso: { ruta: string; motivo: string; mensaje: string }) => callback(aviso)
+    ipcRenderer.on('plugin-cuarentena', handler)
+    return () => ipcRenderer.removeListener('plugin-cuarentena', handler)
+  },
   /** Licencia local compartida con los VST (license.jwl + device.bin con DPAPI). */
   licenciaGuardar: (datos: { token: string; tokenDispositivo: string }) => ipcRenderer.invoke('licencia-guardar', datos),
   licenciaLeer: () => ipcRenderer.invoke('licencia-leer'),

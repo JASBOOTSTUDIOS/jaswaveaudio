@@ -42,7 +42,11 @@ export class Watchdog {
   private readonly estado = new Map<string, EstadoSlot>()
   private readonly apartados = new Set<string>()
 
-  constructor(private readonly umbrales: UmbralesWatchdog = UMBRALES_POR_DEFECTO) {}
+  constructor(
+    private readonly umbrales: UmbralesWatchdog = UMBRALES_POR_DEFECTO,
+    /** true si el contador de excepciones empieza en 0 (quien llama acumula); false = ignorar lo previo. */
+    private readonly contadoresDesdeCero = false,
+  ) {}
 
   /** Procesa una tanda de muestras; devuelve los plugins que deben ir a cuarentena (una vez cada uno). */
   evaluar(muestras: MuestraSlot[], ahora: number): DecisionWatchdog[] {
@@ -51,7 +55,11 @@ export class Watchdog {
     for (const m of muestras) {
       if (!m.path || this.apartados.has(m.path)) continue
       vistos.add(m.path)
-      const e = this.estado.get(m.path) ?? { saturadasSeguidas: 0, excepcionesPrevias: m.exceptions, marcasExcepcion: [] }
+      const e = this.estado.get(m.path) ?? {
+        saturadasSeguidas: 0,
+        excepcionesPrevias: this.contadoresDesdeCero ? 0 : m.exceptions,
+        marcasExcepcion: [],
+      }
 
       const saturada = m.avgLoad > this.umbrales.cargaMaxima || m.overruns > 0
       e.saturadasSeguidas = saturada ? e.saturadasSeguidas + 1 : 0

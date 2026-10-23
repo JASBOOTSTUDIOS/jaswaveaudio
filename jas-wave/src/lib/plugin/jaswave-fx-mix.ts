@@ -11,17 +11,34 @@ import type { TiendaDAW } from '../../../../shared/src/state/tienda'
 import type { DAWState } from '../../../../shared/src/types/state'
 import type { PluginDescriptor } from './types'
 import { pluginRegistry } from './registry'
-import {
-  ensureJasWaveFxRegistered,
-  JASWAVE_FX_EQ,
-} from './bundled-plugins'
+import { JASWAVE_FX_EQ } from './bundled-plugins'
+import { descriptorDePlugin } from '../plugins/registro-plugins'
 import { setSlotParameter, ensureTrackVstPlugin, slotIdForTrackPlugin } from './track-vst-runtime'
 import { descriptorToPluginInfo } from './plugin-info-adapter'
 import profiles from './processor-profiles.json'
 
 export type FxKind = 'eq' | 'comp' | 'limiter' | 'utility' | 'deesser'
 
-const FX_NAME_BY_KIND: Record<FxKind, string> = {
+/** Plugin independiente (id de manifiesto) que implementa cada tipo de FX. */
+export const FX_PLUGIN_ID: Record<FxKind, string> = {
+  eq: 'com.jaswave.plugin.param-eq',
+  comp: 'com.jaswave.plugin.bus-compressor',
+  limiter: 'com.jaswave.plugin.truepeak-limiter',
+  utility: 'com.jaswave.plugin.utility-tool',
+  deesser: 'com.jaswave.plugin.smart-deesser',
+}
+
+/** Nombre del plugin cuando no está instalado (el real llega del manifiesto). */
+const FX_NOMBRE_POR_DEFECTO: Record<FxKind, string> = {
+  eq: 'JasWave EQ Parametric Pro',
+  comp: 'JasWave Bus Compressor',
+  limiter: 'JasWave True-Peak Limiter Pro',
+  utility: 'JasWave Utility & Phase Tool',
+  deesser: 'JasWave Smart De-Esser',
+}
+
+/** Clave de cada FX en processor-profiles.json (rangos e ids; los ParamID no cambiaron). */
+const PERFIL_POR_TIPO: Record<FxKind, string> = {
   eq: 'JasWave EQ',
   comp: 'JasWave Compresor',
   limiter: 'JasWave Limitador',
@@ -30,7 +47,7 @@ const FX_NAME_BY_KIND: Record<FxKind, string> = {
 }
 
 export function fxDescriptorName(kind: FxKind): string {
-  return FX_NAME_BY_KIND[kind]
+  return descriptorDePlugin(FX_PLUGIN_ID[kind])?.name ?? FX_NOMBRE_POR_DEFECTO[kind]
 }
 
 type ProfileParam = {
@@ -57,8 +74,13 @@ type Profiles = { plugin: Record<string, ProfilePlugin> }
 
 const PROFILES = profiles as unknown as Profiles
 
+/** Parámetros (id, rango, unidad) del FX según processor-profiles.json. */
+export function perfilParametros(kind: FxKind): ProfileParam[] {
+  return profileFor(kind)?.parameters ?? []
+}
+
 function profileFor(kind: FxKind): ProfilePlugin | undefined {
-  return PROFILES.plugin[FX_NAME_BY_KIND[kind]]
+  return PROFILES.plugin[PERFIL_POR_TIPO[kind]]
 }
 
 function profileParam(kind: FxKind, nameOrId: string | number): ProfileParam | undefined {
@@ -101,15 +123,12 @@ export function normalizedFor(
   return Math.max(0, Math.min(1, n))
 }
 
-/** Descriptor JasWave FX del tipo indicado (registra si falta). */
+/** Descriptor del FX JasWave del tipo indicado (plugin instalado por manifiesto), o undefined si falta. */
 export function findJasWaveFxDescriptor(kind: FxKind): PluginDescriptor | undefined {
-  const name = FX_NAME_BY_KIND[kind]
-  let hit = pluginRegistry.findByName(name).find((d) => d.hostReady && !!d.path)
-  if (!hit) {
-    const r = ensureJasWaveFxRegistered()
-    hit = r ? r.descriptor : undefined
-  }
-  return hit
+  const d =
+    descriptorDePlugin(FX_PLUGIN_ID[kind]) ??
+    pluginRegistry.findByName(FX_NOMBRE_POR_DEFECTO[kind]).find((x) => !!x.path)
+  return d?.hostReady && d.path ? d : undefined
 }
 
 /** Ids de parámetro de una banda del EQ (1-based). */

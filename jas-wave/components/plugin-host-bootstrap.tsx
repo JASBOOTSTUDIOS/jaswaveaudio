@@ -32,13 +32,20 @@ import {
   pickJasWavePluginPath,
 } from '@/src/lib/plugin/bundled-plugins'
 import { setBundledVst3SearchDir } from '@/src/lib/plugin/search-paths'
-import { cargarPluginsInstalados } from '@/src/lib/plugins/registro-plugins'
+import { cargarPluginsInstalados, desactivarPlugin, pluginPorRuta } from '@/src/lib/plugins/registro-plugins'
+import { getSharedStore } from '@/src/context/daw-context'
 
 export function PluginHostBootstrap() {
   useEffect(() => {
     hydratePluginCatalog()
     // Plugins JasWave por manifiesto (P1): valida, descarta alterados y registra sus herramientas IA.
     void cargarPluginsInstalados().catch((e) => console.warn('[plugins] no se pudieron cargar los paquetes', e))
+    // Watchdog: un plugin apartado deja de ofrecer herramientas al agente y se avisa al usuario.
+    const dejarDeOirCuarentena = window.electron?.onPluginCuarentena?.((aviso) => {
+      const plugin = pluginPorRuta(aviso.ruta)
+      if (plugin) desactivarPlugin(plugin.manifiesto.id)
+      getSharedStore().busEventos.emit('plugin.cuarentena', { mensaje: aviso.mensaje, motivo: aviso.motivo })
+    })
     pluginManager.ensureBuiltins()
     void window.electron?.localAppData?.().then(async (p: string) => {
       if (p) setLocalAppDataHint(p)
@@ -66,7 +73,7 @@ export function PluginHostBootstrap() {
     if (isUndockWindow()) {
       reportProjectHost(true, 'undock', gen)
       reportProjectDevice(true, 'undock', gen)
-      return
+      return () => dejarDeOirCuarentena?.()
     }
     void refreshPluginHostAvailability()
       .then((ok) => {
@@ -110,6 +117,7 @@ export function PluginHostBootstrap() {
     return () => {
       offExit?.()
       offRestart?.()
+      dejarDeOirCuarentena?.()
     }
   }, [])
   return null

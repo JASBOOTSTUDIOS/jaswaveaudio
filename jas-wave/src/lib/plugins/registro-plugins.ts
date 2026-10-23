@@ -16,6 +16,8 @@ import {
   validarManifiesto,
   type ManifiestoPlugin,
 } from '@jaswave/shared'
+import { pluginRegistry } from '../plugin/registry'
+import type { PluginDescriptor } from '../plugin/types'
 
 export type PaqueteRecibido = {
   dir: string
@@ -23,12 +25,48 @@ export type PaqueteRecibido = {
   integridad: 'verificada' | 'alterada' | 'sin-registro'
   discrepancias?: string[]
   errores?: string[]
+  /** Ruta del binario VST3 resuelta por el proceso main (paquete o carpeta VST3). */
+  rutaDsp?: string
 }
 
 export type PluginActivo = {
   manifiesto: ManifiestoPlugin
   dir: string
   integridad: 'verificada' | 'sin-registro'
+  rutaDsp?: string
+}
+
+/** Id del catálogo del DAW para un plugin JasWave (estable: deriva del id del manifiesto). */
+export function idCatalogo(m: Pick<ManifiestoPlugin, 'id'>): string {
+  return `jaswave:${m.id}`
+}
+
+/** Descriptor del catálogo del DAW construido a partir del manifiesto (K1: sin nombres fijos en el núcleo). */
+export function descriptorDesdeManifiesto(m: ManifiestoPlugin, rutaDsp: string): PluginDescriptor {
+  const instrumento = m.category === 'instrument' || m.category === 'instrument-bundle'
+  return {
+    pluginId: idCatalogo(m),
+    format: 'vst3',
+    vendor: m.vendor,
+    name: m.name,
+    version: m.version,
+    ...(m.vst3?.classId ? { uniqueId: m.vst3.classId } : {}),
+    path: rutaDsp,
+    architecture: 'x64',
+    category: instrumento ? 'instrumento' : 'efecto',
+    isInstrument: instrumento,
+    isEffect: !instrumento,
+    supportsMidiInput: instrumento,
+    supportsMidiOutput: false,
+    supportsAudioInput: !instrumento,
+    supportsAudioOutput: true,
+    supportsSidechain: /sidechain|sc-?hpf|filtro-sc/i.test(JSON.stringify(m.ai?.parameters ?? [])),
+    supportsEditor: true,
+    parameterCount: m.ai?.parameters.length ?? 0,
+    scanStatus: 'ok',
+    hostReady: true,
+    isolation: 'out-of-process',
+  }
 }
 
 export type PluginRechazado = { dir: string; motivo: string }
@@ -68,10 +106,14 @@ export function activarPaquetes(paquetes: PaqueteRecibido[]): { activos: PluginA
       rechazados.push({ dir: p.dir, motivo: `id duplicado: ${r.manifiesto.id}` })
       continue
     }
-    nuevos.set(r.manifiesto.id, { manifiesto: r.manifiesto, dir: p.dir, integridad: p.integridad })
+    nuevos.set(r.manifiesto.id, { manifiesto: r.manifiesto, dir: p.dir, integridad: p.integridad, ...(p.rutaDsp ? { rutaDsp: p.rutaDsp } : {}) })
   }
 
-  for (const id of activos.keys()) if (!nuevos.has(id)) registroHerramientasPlugins.quitar(id)
+  for (const [id, previo] of activos) {
+    if (nuevos.has(id)) continue
+    registroHerramientasPlugins.quitar(id)
+    pluginRegistry.unregister(idCatalogo(previo.manifiesto))
+  }
   activos.clear()
   porAlias.clear()
   for (const [id, plugin] of nuevos) {
@@ -90,6 +132,13 @@ export function activarPaquetes(paquetes: PaqueteRecibido[]): { activos: PluginA
     }
     activos.set(id, plugin)
     porAlias.set(aliasPlugin(m), id)
+    if (plugin.rutaDsp && m.entrypoints.dspDesktop) {
+      // Las entradas heredadas (registro manual de Roles/Piano) se sustituyen por la del manifiesto.
+      for (const previo of pluginRegistry.findByName(m.name)) {
+        if (previo.pluginId !== idCatalogo(m)) pluginRegistry.unregister(previo.pluginId)
+      }
+      pluginRegistry.register(descriptorDesdeManifiesto(m, plugin.rutaDsp))
+    }
   }
   return { activos: [...activos.values()], rechazados }
 }
@@ -98,6 +147,7 @@ export function activarPaquetes(paquetes: PaqueteRecibido[]): { activos: PluginA
 export function desactivarPlugin(pluginId: string): void {
   if (!activos.has(pluginId)) return
   registroHerramientasPlugins.quitar(pluginId)
+  pluginRegistry.unregister(idCatalogo(activos.get(pluginId)!.manifiesto))
   const alias = aliasPlugin(activos.get(pluginId)!.manifiesto)
   porAlias.delete(alias)
   activos.delete(pluginId)
@@ -105,6 +155,18 @@ export function desactivarPlugin(pluginId: string): void {
 
 export function pluginsActivos(): PluginActivo[] {
   return [...activos.values()]
+}
+
+/** Plugin JasWave activo cuyo binario está en `ruta` (comparación sin distinguir mayúsculas ni barras). */
+export function pluginPorRuta(ruta: string): PluginActivo | undefined {
+  const norm = (r: string) => r.replace(/\\/g, '/').toLowerCase()
+  return [...activos.values()].find((p) => p.rutaDsp && norm(p.rutaDsp) === norm(ruta))
+}
+
+/** Descriptor del catálogo de un plugin JasWave activo (si su binario está disponible). */
+export function descriptorDePlugin(pluginId: string): PluginDescriptor | undefined {
+  const p = activos.get(pluginId)
+  return p ? pluginRegistry.findById(idCatalogo(p.manifiesto)) : undefined
 }
 
 export function esHerramientaDePlugin(nombre: string): boolean {
@@ -142,7 +204,10 @@ export function planificarHerramientaPlugin(nombre: string, args: Record<string,
 
 /** Solo para pruebas: vacía el estado del módulo. */
 export function _reiniciarPluginsParaPruebas(): void {
-  for (const id of activos.keys()) registroHerramientasPlugins.quitar(id)
+  for (const [id, p] of activos) {
+    registroHerramientasPlugins.quitar(id)
+    pluginRegistry.unregister(idCatalogo(p.manifiesto))
+  }
   activos.clear()
   porAlias.clear()
   accionesConcedidas = () => undefined

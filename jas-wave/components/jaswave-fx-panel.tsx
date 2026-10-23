@@ -11,10 +11,9 @@ import { useDAW } from '@/src/context/daw-context'
 import {
   applyMixOnTrack,
   eqBandParamIds,
-  fxDescriptorName,
+  perfilParametros,
 } from '@/src/lib/plugin/jaswave-fx-mix'
 import { setSlotParameter, slotIdForTrackPlugin } from '@/src/lib/plugin/track-vst-runtime'
-import profiles from '@/src/lib/plugin/processor-profiles.json'
 
 type FxKind = 'eq' | 'comp' | 'limiter' | 'utility' | 'deesser'
 
@@ -26,28 +25,10 @@ const KIND_LABELS: Record<FxKind, string> = {
   deesser: 'De-esser',
 }
 
-type ProfilePlugin = {
-  name: string
-  parameterCount: number
-  parameters: Array<{
-    id: number
-    name: string
-    kind: string
-    min: number
-    max: number
-    default: number
-    scale?: 'log' | 'linear'
-    enumValues?: string[]
-    readOnly?: boolean
-  }>
-}
-
-type Profiles = { plugin: Record<string, ProfilePlugin> }
-
-const PROFILES = profiles as unknown as Profiles
+type ProfilePlugin = { parameters: ReturnType<typeof perfilParametros> }
 
 function paramsFor(kind: FxKind): ProfilePlugin['parameters'] {
-  return PROFILES.plugin[fxDescriptorName(kind)]?.parameters ?? []
+  return perfilParametros(kind)
 }
 
 type Props = {

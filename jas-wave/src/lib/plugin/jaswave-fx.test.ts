@@ -11,11 +11,11 @@ import {
 
 describe('jaswave-fx-mix', () => {
   it('fxDescriptorName por kind', () => {
-    assert.equal(fxDescriptorName('eq'), 'JasWave EQ')
-    assert.equal(fxDescriptorName('comp'), 'JasWave Compresor')
-    assert.equal(fxDescriptorName('limiter'), 'JasWave Limitador')
-    assert.equal(fxDescriptorName('utility'), 'JasWave Utility')
-    assert.equal(fxDescriptorName('deesser'), 'JasWave De-esser')
+    assert.equal(fxDescriptorName('eq'), 'JasWave EQ Parametric Pro')
+    assert.equal(fxDescriptorName('comp'), 'JasWave Bus Compressor')
+    assert.equal(fxDescriptorName('limiter'), 'JasWave True-Peak Limiter Pro')
+    assert.equal(fxDescriptorName('utility'), 'JasWave Utility & Phase Tool')
+    assert.equal(fxDescriptorName('deesser'), 'JasWave Smart De-Esser')
   })
 
   it('eqBandParamIds: banda 1 base 1 stride 5; banda 8 base 36', () => {
