@@ -7,7 +7,7 @@
  *   backend al almacén cifrado de main (ver catalogo-ia.ts) y main la inyecta por `providerId`.
  */
 
-import { puenteIAEscritorio } from '@jaswave/host-sdk'
+import { backendConfigurado, configBackend, puenteIAEscritorio } from '@jaswave/host-sdk'
 
 import type { AiChatRequest, AiChatResult, AiErrorCode, AiHealthResult } from '../motor/ai-settings'
 import { esProveedorLocal, prepararCredencialLocal, proveedorDelCatalogo } from './catalogo-ia'
@@ -159,12 +159,10 @@ export function fijarTransporteIA(t: TransporteIA | null | undefined): void {
 
 function transporteWeb(): TransporteIA | null {
   if (backend) return backend
-  // Import diferido de la sesión (Supabase) para no cargarla en escritorio ni en pruebas.
-  const env = ((import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {})
-  if (!env.VITE_SUPABASE_ANON_KEY) return null
-  const base = (env.VITE_API_URL || 'http://127.0.0.1:8787').replace(/\/+$/, '')
+  // La configuración del backend es del DAW (se fija al compilarlo): el módulo la pide por el SDK.
+  if (!backendConfigurado()) return null
   backend = crearTransporteBackend({
-    base,
+    base: configBackend().apiUrl,
     token: async () => (await import('@jaswave/host-sdk')).tokenSesion(),
   })
   return backend

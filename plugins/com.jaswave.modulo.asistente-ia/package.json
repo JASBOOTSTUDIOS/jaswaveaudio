@@ -1,6 +1,6 @@
 {
   "name": "@jaswave/modulo-asistente-ia",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Módulo de JasWave: asistente coproductor con IA (chat, agente, plan y progreso).",
   "type": "module",

@@ -52,6 +52,8 @@ const modulos = fs.readdirSync(PLUGINS, { withFileTypes: true }).filter((d) => d
 for (const m of modulos) {
   const raiz = path.join(PLUGINS, m.name)
   for (const f of archivos(path.join(raiz, 'src'))) {
+    // La configuración de compilación (import.meta.env) es del DAW: los módulos la piden por el SDK.
+    if (/import\.meta\.env|\(import\.meta as/.test(fs.readFileSync(f, 'utf8'))) violaciones.push(`${rel(f)} lee import.meta.env (usa configBackend() de @jaswave/host-sdk)`)
     // La API privada del escritorio es del DAW: los módulos usan la del SDK (archivos, diálogos…).
     if (/\bwindow\.electron\b/.test(fs.readFileSync(f, 'utf8'))) violaciones.push(`${rel(f)} usa window.electron (usa la API de @jaswave/host-sdk)`)
     for (const esp of importsDe(f)) {

@@ -127,3 +127,6 @@ export { fijarConversacionActiva } from '../lib/conversacion-activa'
 export { almacenEjecucionesAgente, puenteIAEscritorio, registrarError } from './api-escritorio-ia'
 export type { AlmacenEjecucionesAgente, EventoStreamEscritorio, MetaEjecucionAgente, PuenteIAEscritorio } from './api-escritorio-ia'
 export { publishMidiProposalFromMdPreview } from '../lib/ai-midi-proposal-store'
+
+// Configuración del backend del DAW (los módulos no tienen variables de compilación propias)
+export { backendConfigurado, configBackend } from '../lib/backend/config'

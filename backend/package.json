@@ -23,7 +23,8 @@
     "db:studio": "prisma studio",
     "licencias:generar-claves": "tsx scripts/generar-claves-licencia.ts",
     "ia:generar-clave": "tsx scripts/generar-clave-ia.ts",
-    "ia:importar-entorno": "tsx --env-file=.env scripts/importar-ia-entorno.ts"
+    "ia:importar-entorno": "tsx --env-file=.env scripts/importar-ia-entorno.ts",
+    "ia:proveedor-pruebas": "tsx --env-file=.env scripts/alta-proveedor-pruebas.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",

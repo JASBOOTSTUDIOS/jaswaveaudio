@@ -17,7 +17,7 @@ const Logo = ({ className }: { className?: string }) => <JasWaveLogo className={
 export default definirModulo({
   id: 'com.jaswave.modulo.asistente-ia',
   nombre: 'Asistente Jas (IA)',
-  version: '1.0.0',
+  version: '1.0.1',
   sdk: VERSION_SDK,
   herramientas: [
     { id: 'coproducer', titulo: 'Asistente Jas', descripcion: 'Asistente JasWave', zona: 'left', icono: Logo, destacada: true },
