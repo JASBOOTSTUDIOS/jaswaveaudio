@@ -13,6 +13,7 @@ import {
   panADisplay,
 } from '@/lib/audio-conversions'
 import { FaderControl, KnobControl, LevelMeterBarHorizontal } from './ui/controls'
+import { useElementSize } from '@/hooks/use-element-size'
 import { ChannelFxBank } from '@/components/channel-fx-bank'
 import { TrackMidiInput } from '@/components/track-midi-input'
 import { TrackAudioInput } from '@/components/track-audio-input'
@@ -119,7 +120,15 @@ export function Mixer() {
   const tracks = useDAWState((s: DAWState) => s.project?.tracks ?? [])
   const master = useDAWState((s: DAWState) => s.project?.master)
   const routing = useDAWState((s: DAWState) => s.project?.routing)
-  const collapsed = useDAWState((s: DAWState) => s.ui?.estadoMezcladorUI?.colapsado ?? false)
+  const collapsedUser = useDAWState((s: DAWState) => s.ui?.estadoMezcladorUI?.colapsado ?? false)
+  // Si el panel es bajo, el mixer pasa solo a modo compacto: el fader tiene prioridad sobre los extras
+  const stripsRef = useRef<HTMLDivElement>(null)
+  const { height: stripsH } = useElementSize(stripsRef)
+  // Niveles según el alto disponible (sin scroll vertical: se ocultan controles en vez de aplastarlos)
+  const tier = stripsH <= 0 ? 0 : stripsH < 150 ? 3 : stripsH < 250 ? 2 : stripsH < 380 ? 1 : 0
+  const collapsed = collapsedUser || tier >= 1
+  const mini = tier >= 2   // sin perilla de pan ni IN/rec
+  const micro = tier >= 3  // solo nombre, M/S y un medidor
   const selectedTrackId = useDAWState((s: DAWState) => getSelectedTrackId(s))
   const stripRefs = useRef(new Map<string, HTMLDivElement | null>())
   const [meters, setMeters] = useState<Record<string, number>>({})
@@ -259,8 +268,8 @@ export function Mixer() {
         <button
           type="button"
           aria-label="Colapsar mixer"
-          onClick={() => tienda.establecerEstado((s) => ({ ...s, ui: { ...s.ui, estadoMezcladorUI: { ...s.ui?.estadoMezcladorUI, canalesVisibles: s.ui?.estadoMezcladorUI?.canalesVisibles ?? [], nivelMaster: s.ui?.estadoMezcladorUI?.nivelMaster ?? 0, seleccionando: s.ui?.estadoMezcladorUI?.seleccionando ?? false, seleccionInicio: s.ui?.estadoMezcladorUI?.seleccionInicio ?? 0, seleccionFin: s.ui?.estadoMezcladorUI?.seleccionFin ?? 0, colapsado: !collapsed } } }))}
-          className={`flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-panel-raised hover:text-foreground ${collapsed ? 'bg-panel-raised text-foreground' : ''}`}
+          onClick={() => tienda.establecerEstado((s) => ({ ...s, ui: { ...s.ui, estadoMezcladorUI: { ...s.ui?.estadoMezcladorUI, canalesVisibles: s.ui?.estadoMezcladorUI?.canalesVisibles ?? [], nivelMaster: s.ui?.estadoMezcladorUI?.nivelMaster ?? 0, seleccionando: s.ui?.estadoMezcladorUI?.seleccionando ?? false, seleccionInicio: s.ui?.estadoMezcladorUI?.seleccionInicio ?? 0, seleccionFin: s.ui?.estadoMezcladorUI?.seleccionFin ?? 0, colapsado: !collapsedUser } } }))}
+          className={`flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-panel-raised hover:text-foreground ${collapsedUser ? 'bg-panel-raised text-foreground' : ''}`}
         >
           <Minus className="size-4" />
         </button>
@@ -292,7 +301,7 @@ export function Mixer() {
       </div>
 
       {/* Tiras de canal */}
-      <div className="flex min-h-0 flex-1 overflow-x-auto overflow-y-hidden bg-panel">
+      <div ref={stripsRef} className="jw-scrollbar flex min-h-0 flex-1 overflow-x-auto overflow-y-hidden bg-panel">
         {trackList.map((track, trackIndex) => (
           <div
             key={track.id}
@@ -354,12 +363,12 @@ export function Mixer() {
                 {track.name}
               </p>
             </div>
-            {(track.tipo === 'midi' || track.tipo === 'instrumento') && (
+            {!mini && (track.tipo === 'midi' || track.tipo === 'instrumento') && (
               <p className="mb-1 text-center text-[8px] font-semibold uppercase tracking-wider text-accent-amber">
                 MIDI
               </p>
             )}
-            {track.tipo === 'audio' && (
+            {!mini && track.tipo === 'audio' && (
               <p className="mb-1 text-center text-[8px] font-semibold uppercase tracking-wider text-muted-foreground">
                 AUDIO+MIDI
               </p>
@@ -384,6 +393,8 @@ export function Mixer() {
               </TrackButton>
             </div>
 
+            {!mini && (
+            <>
             {/* IN / rec */}
             <div className="mb-1 flex items-center justify-center gap-1">
               <TrackButton
@@ -404,6 +415,8 @@ export function Mixer() {
                 />
               </TrackButton>
             </div>
+            </>
+            )}
             {(track.tipo === 'midi' || track.tipo === 'instrumento' || track.tipo === 'audio') && !collapsed ? (
               <div className="mb-1">
                 <TrackMidiInput trackId={track.id} assignedId={track.entrada} compact />
@@ -443,7 +456,7 @@ export function Mixer() {
             ) : null}
 
             {/* Knob de balance */}
-            <KnobControl value={track.pan} color={track.color} onChange={(pan, gestureId) => handleChangePan(track.id, pan, gestureId)} size="size-9" />
+            {!mini && <KnobControl value={track.pan} color={track.color} onChange={(pan, gestureId) => handleChangePan(track.id, pan, gestureId)} size="size-9" />}
 
             {/* Sends post-fader (MVP) */}
             {!collapsed && (routing?.buses?.length ?? 0) > 0 ? (
@@ -483,8 +496,14 @@ export function Mixer() {
               </div>
             ) : null}
 
+            {micro ? (
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-panel-raised" title="Nivel">
+                <LevelMeterBarHorizontal level={meters[track.id] ?? 0} alwaysShowRail />
+              </div>
+            ) : (
+              <>
             {/* Fader */}
-            <div className="mt-2 flex-1" data-testid={`mixer-fader-${track.id}`}>
+            <div className="mt-2 min-h-[56px] flex-1" data-testid={`mixer-fader-${track.id}`}>
               <FaderControl db={track.db} color={track.color} meter={meters[track.id] ?? 0} onChange={(db, gestureId) => handleChangeDb(track.id, db, gestureId)} showScale />
             </div>
 
@@ -501,6 +520,8 @@ export function Mixer() {
                 opacity: track.muted ? 0.25 : 1,
               }}
             />
+              </>
+            )}
           </div>
         ))}
         <div key={masterTrack.id} className="flex w-[124px] shrink-0 flex-col border-r border-border px-2 py-2">
@@ -513,13 +534,13 @@ export function Mixer() {
           >
             <LevelMeterBarHorizontal level={meters.master ?? 0} alwaysShowRail />
           </div>
-          <div className="mb-1">
+          {!mini && <div className="mb-1">
             <ChannelFxBank
               trackId="master"
               trackName="Master"
               plugins={master?.plugins ?? []}
             />
-          </div>
+          </div>}
 
           <div className="mb-1 flex items-center justify-center gap-1">
             <TrackButton label={`Silenciar Master`} active={Boolean(master?.muted)} onClick={() => {
@@ -529,11 +550,13 @@ export function Mixer() {
             </TrackButton>
           </div>
 
-          <KnobControl value={masterTrack.pan} color={masterTrack.color} onChange={(pan, gestureId) => {
+          {!mini && <KnobControl value={masterTrack.pan} color={masterTrack.color} onChange={(pan, gestureId) => {
             void tienda.executor.execute('master.update', { datos: { paneo: pan / 100 } }, 'user', undefined, opcionesGesto('mixer.paneo:master', gestureId))
-          }} />
+          }} />}
 
-          <div className="mt-2 flex-1">
+          {!micro && (
+          <>
+          <div className="mt-2 min-h-[104px] flex-1">
             <FaderControl
               db={masterTrack.db}
               color={masterTrack.color}
@@ -568,6 +591,8 @@ export function Mixer() {
               opacity: master?.muted ? 0.25 : 1,
             }}
           />
+          </>
+          )}
         </div>
 
         {/* Espacio en blanco: doble clic → nueva pista */}

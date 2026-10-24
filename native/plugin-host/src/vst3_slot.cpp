@@ -2,6 +2,7 @@
  * VST3 slot: Module + PlugProvider + process + editor HWND (hijo de Electron).
  */
 
+#include <atomic>
 #include "vst3_slot.h"
 
 #include <algorithm>
@@ -47,6 +48,8 @@ void ensureHostContext() {
 
 #ifdef _WIN32
 static const wchar_t* kEmbedClass = L"JasWaveVstEmbedHost";
+/** Editores flotantes abiertos (para escalonar la posición de cada ventana nueva). */
+static std::atomic<int> gFloatingEditors{0};
 
 struct PlugFrame; 
 
@@ -127,6 +130,23 @@ struct PlugFrame : public IPlugFrame {
 };
 
 LRESULT CALLBACK EmbedWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+  if (msg == WM_CLOSE) {
+    // El usuario cerró la ventana flotante con la X: se libera la vista y el slot queda sin editor
+    // (antes quedaba un HWND destruido y hasEditor() seguía devolviendo true).
+    auto* st = reinterpret_cast<EmbedState*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
+    if (st && st->topLevel && !st->embedded && st->hwnd == hWnd) {
+      if (st->view) {
+        st->view->setFrame(nullptr);
+        st->view->removed();
+        st->view = nullptr;
+      }
+      st->hwnd = nullptr;
+      st->topLevel = false;
+      gFloatingEditors.fetch_sub(1);
+      DestroyWindow(hWnd);
+      return 0;
+    }
+  }
   if (msg == WM_SIZE) {
     auto* st = reinterpret_cast<EmbedState*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
     if (st && st->view && st->embedded) {
@@ -812,6 +832,13 @@ void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* o
 
 bool Vst3Slot::openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h, std::string& err) {
 #ifdef _WIN32
+  // Ya hay una ventana flotante de este plugin: se restaura y se trae al frente (varios plugins abiertos a la vez)
+  if (impl_->embed.hwnd && impl_->embed.topLevel && !impl_->embed.embedded && IsWindow(impl_->embed.hwnd)) {
+    ShowWindow(impl_->embed.hwnd, SW_RESTORE);
+    SetWindowPos(impl_->embed.hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    SetForegroundWindow(impl_->embed.hwnd);
+    return true;
+  }
   closeEditor();
   if (!impl_->controller) {
     err = "Sin EditController";
@@ -859,6 +886,12 @@ bool Vst3Slot::openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h,
     sx = std::max(40, (sw - vw) / 2);
     sy = std::max(40, (sh - vh) / 2);
   }
+  // Cascada: cada ventana nueva se desplaza para no tapar a las abiertas
+  {
+    const int k = gFloatingEditors.load() % 8;
+    sx += 38 * k;
+    sy += 32 * k;
+  }
   // Evitar ventana fuera de pantalla / tamaño cero
   if (sx < -100 || sy < -100 || sx > GetSystemMetrics(SM_CXSCREEN) - 80) {
     sx = 80;
@@ -868,10 +901,19 @@ bool Vst3Slot::openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h,
   if (vh < 150) vh = 500;
 
   // Ventana flotante con título (usuario puede moverla / cerrarla).
+  std::wstring titleW = L"JasWave Plugin";
+  if (!editorTitle_.empty()) {
+    const int n = MultiByteToWideChar(CP_UTF8, 0, editorTitle_.c_str(), -1, nullptr, 0);
+    if (n > 1) {
+      titleW.assign(static_cast<size_t>(n), L' ');
+      MultiByteToWideChar(CP_UTF8, 0, editorTitle_.c_str(), -1, titleW.data(), n);
+      titleW.resize(static_cast<size_t>(n - 1));
+    }
+  }
   HWND hwnd = CreateWindowExW(
       WS_EX_APPWINDOW,
       kEmbedClass,
-      L"JasWave Plugin",
+      titleW.c_str(),
       WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_VISIBLE |
           WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
       sx, sy, vw + 16, vh + 40,
@@ -905,6 +947,7 @@ bool Vst3Slot::openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h,
   SetWindowPos(hwnd, HWND_TOP, sx, sy, vw + 16, vh + 40, SWP_SHOWWINDOW);
   ShowWindow(hwnd, SW_SHOW);
   SetForegroundWindow(hwnd);
+  gFloatingEditors.fetch_add(1);
   return true;
 #else
   (void)parentHwnd;
@@ -1036,9 +1079,11 @@ void Vst3Slot::closeEditor() {
     impl_->embed.view = nullptr;
   }
   if (impl_->embed.hwnd) {
+    if (impl_->embed.topLevel && !impl_->embed.embedded) gFloatingEditors.fetch_sub(1);
     DestroyWindow(impl_->embed.hwnd);
     impl_->embed.hwnd = nullptr;
   }
+  impl_->embed.topLevel = false;
   impl_->embed.embedded = false;
 #endif
 }

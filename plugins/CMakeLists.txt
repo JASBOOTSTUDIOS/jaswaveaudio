@@ -14,7 +14,8 @@ set(JW_PLUGIN_DIRS
   com.jaswave.plugin.smart-deesser
   com.jaswave.plugin.utility-tool
   com.jaswave.plugin.piano-synth
-  com.jaswave.plugin.roles-vst)
+  com.jaswave.plugin.roles-vst
+  com.jaswave.plugin.sampler)
 foreach(_d ${JW_PLUGIN_DIRS})
   add_subdirectory(${_d})
 endforeach()

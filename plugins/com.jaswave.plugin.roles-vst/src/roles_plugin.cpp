@@ -96,6 +96,7 @@ protected:
     template <class T>
     void renderT(T* oL, T* oR, int n, int offset, ProcessData& data) {
         if (offset == 0 && data.processContext) {
+            if (data.processContext->state & ProcessContext::kTempoValid) engine_.setTempo(data.processContext->tempo);
             const bool playing = (data.processContext->state & ProcessContext::kPlaying) != 0;
             if (wasPlaying_ && !playing) engine_.panicAll();   // stop del transporte: panic una vez
             wasPlaying_ = playing;

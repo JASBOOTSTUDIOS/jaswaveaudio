@@ -1477,6 +1477,7 @@ static void executeUiJob(UiJob& job) {
       job.ok = true;
       return;
     }
+    slot->setEditorTitle(getStringField(json, "title"));
     if (!slot->openEditor(parent, x, y, w, h, err)) {
       job.ok = false;
       job.err = err;
@@ -2410,6 +2411,24 @@ static void handleLine(const std::string& line) {
     replyOk("\"latencySamples\":" + std::to_string(lat) +
             ",\"graphDelaySamples\":" +
             std::to_string(gRtMaxDelay[gRtBuf.load(std::memory_order_acquire)]));
+    return;
+  }
+  if (type == "getOpenEditors") {
+    // Editores con ventana abierta (flotante o embebida): la UI los muestra para poder tener varios a la vez.
+    std::ostringstream js;
+    js << "\"editors\":[";
+    {
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      bool first = true;
+      for (auto& [id, slot] : gSlots) {
+        if (!slot || !slot->hasEditor()) continue;
+        if (!first) js << ",";
+        first = false;
+        js << "{\"slot\":\"" << jsonEscape(id) << "\",\"embedded\":" << (slot->editorEmbedded() ? "true" : "false") << "}";
+      }
+    }
+    js << "]";
+    replyOk(js.str());
     return;
   }
   if (type == "getSlotStats") {

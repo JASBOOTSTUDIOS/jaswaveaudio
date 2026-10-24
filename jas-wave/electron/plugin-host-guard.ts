@@ -48,6 +48,7 @@ export const ALLOWED_HOST_COMMANDS = new Set([
   'getMixMeters',
   'resetMasterLoudness',
   'getMasterSpectrum',
+  'getOpenEditors',
   'getMixBufferStats',
   'listAudioDevices',
   'getAudioDevice',

@@ -19,7 +19,7 @@ import { PanelModulos } from '@/components/modulos/panel-modulos'
 import { panelDeHerramienta } from '@/src/modulos/registro-modulos'
 import { useVersionModulos } from '@/src/modulos/use-modulos'
 import { useDAWState } from '@/src/context/daw-context'
-import type { ToolId } from '@/src/workspace/types'
+import { tamanoMinimoHerramienta, type ToolId } from '@/src/workspace/types'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 import { AppErrorBoundary } from '@/components/app-error-boundary'
 
@@ -37,9 +37,18 @@ function _PlaceholderTool({ title }: { title: string }) {
 
 /** Cada panel tiene su boundary: un fallo en uno no tumba el DAW ni el audio. */
 export function ToolHost({ toolId }: { toolId: ToolId }) {
+  const min = tamanoMinimoHerramienta(toolId)
   return (
     <AppErrorBoundary key={toolId} area={toolId} compact>
-      <ToolContent toolId={toolId} />
+      {/*
+        Visor con tamaño mínimo: si la zona se hace más pequeña que el panel, este contenedor hace scroll y el
+        contenido mantiene sus proporciones (nada de faders aplastados ni controles superpuestos).
+      */}
+      <div className="jw-scrollbar relative h-full w-full overflow-auto" data-tool-viewport={toolId}>
+        <div className="h-full w-full" style={{ minWidth: min.w, minHeight: min.h }}>
+          <ToolContent toolId={toolId} />
+        </div>
+      </div>
     </AppErrorBoundary>
   )
 }

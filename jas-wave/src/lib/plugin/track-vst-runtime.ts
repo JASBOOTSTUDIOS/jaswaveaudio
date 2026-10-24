@@ -102,6 +102,9 @@ const byTrack = g.__jaswaveVstRuntime.byTrack
 /** Todos los slots VST cargados (instrumento + efecto). */
 const bySlot = g.__jaswaveVstRuntime.bySlot
 const loadPromises = new Map<string, Promise<boolean>>()
+/** Cargas fallidas recientes por ruta (evita reintentos en bucle). */
+const loadFailCache = new Map<string, { until: number; msg: string }>()
+const loadFailLogged = new Set<string>()
 const runtimeListeners = new Set<() => void>()
 let runtimeGeneration = 0
 let lastVstLoadError = ''
@@ -412,6 +415,15 @@ export async function ensureTrackVstPlugin(
   const pending = loadPromises.get(slotId)
   if (pending) return pending
 
+  // Un plugin que acaba de fallar no se reintenta en bucle (varios disparadores lo pedían a la vez y
+  // saturaban el host y la consola): se espera un tiempo antes de volver a intentarlo.
+  const failKey = path.replace(/\//g, '\\').toLowerCase()
+  const failed = loadFailCache.get(failKey)
+  if (failed && Date.now() < failed.until) {
+    lastVstLoadError = failed.msg
+    return false
+  }
+
   const work = (async () => {
     try {
       if (!window.electron?.pluginHostEnsure || !window.electron.pluginHostSend) return false
@@ -447,9 +459,11 @@ export async function ensureTrackVstPlugin(
             quarantineWarned.add(key)
             console.warn('[track-vst] skip (cuarentena)', path)
           }
-        } else {
+        } else if (!loadFailLogged.has(failKey)) {
+          loadFailLogged.add(failKey)
           console.error('[track-vst] load failed', path, msg)
         }
+        loadFailCache.set(failKey, { until: Date.now() + (isQuarantineLoadError(msg) ? 60_000 : 15_000), msg })
         // Conservar slot previo si el re-load falla (evita silenciar MIDI mid-play).
         if (existing) {
           if (instrument) byTrack.set(trackId, existing)

@@ -168,6 +168,8 @@ public:
     else vst3_->closeEditor();
   }
   bool hasEditor() const { return vst2_ ? vst2_->hasEditor() : vst3_->hasEditor(); }
+  bool editorEmbedded() const { return vst3_ && vst3_->editorEmbedded(); }
+  void setEditorTitle(const std::string& utf8) { if (vst3_) vst3_->setEditorTitle(utf8); }
 
   bool getStateChunk(std::vector<uint8_t>& out, std::string& err) {
     if (vst2_) return vst2_->getStateChunk(out, err);

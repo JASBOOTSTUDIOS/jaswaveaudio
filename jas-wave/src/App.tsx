@@ -29,6 +29,8 @@ import { AppCloseGuard } from '@/components/app-close-guard'
 import { OpenProjectRequest } from '@/components/open-project-request'
 import { DockZonePanel } from '@/components/workspace/ide-shell'
 import { ToolHost } from '@/components/workspace/tool-host'
+import { LayoutLab } from '@/components/workspace/layout-lab'
+import { PluginWindowsBar } from '@/components/plugin-windows-bar'
 import {
   WorkspaceProvider,
   useWorkspace,
@@ -334,6 +336,7 @@ function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) 
       <AppCloseGuard />
       <OpenProjectRequest />
       <ComponentesDeModulos />
+      <LayoutLab />
       <InstaladorExtensiones />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} dispatcher={dispatcher} />
       <ExportBounceDialog open={exportOpen} onClose={() => setExportOpen(false)} />
@@ -436,6 +439,7 @@ function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) 
               <PanelBottom className="size-3" /> Inferior
             </button>
           )}
+          <PluginWindowsBar />
           <span className="ml-auto text-[10px] text-muted-foreground/70">
             Ventanas · + en pestañas · clic en el rail para recuperar
           </span>

@@ -43,6 +43,42 @@ export interface ToolDefinitionUI {
   moduloId?: string
   /** Al colocarse por primera vez queda como pestaña activa de su zona. */
   destacada?: boolean
+  /** Tamaño mínimo (px) con el que el panel se ve y se usa bien; por debajo aparece scroll en vez de deformarse. */
+  minW?: number
+  minH?: number
+}
+
+/**
+ * Tamaño mínimo utilizable por herramienta. Si la zona donde está acoplada se hace más pequeña, el panel
+ * conserva este tamaño y se desplaza (scroll) en vez de aplastar controles, faders o teclados.
+ */
+const TAMANO_MINIMO: Record<string, { w: number; h: number }> = {
+  arrange: { w: 420, h: 220 },
+  mixer: { w: 160, h: 70 },
+  'piano-roll': { w: 380, h: 240 },
+  library: { w: 220, h: 200 },
+  'track-detail': { w: 250, h: 260 },
+  meters: { w: 270, h: 340 },
+  routing: { w: 240, h: 180 },
+  instruments: { w: 240, h: 240 },
+  'fx-chain': { w: 250, h: 240 },
+  automation: { w: 320, h: 170 },
+  'plugin-editor': { w: 420, h: 300 },
+  'midi-map': { w: 280, h: 200 },
+  terminal: { w: 260, h: 140 },
+  settings: { w: 300, h: 260 },
+  'project-files': { w: 200, h: 160 },
+  cuenta: { w: 260, h: 240 },
+  admin: { w: 320, h: 260 },
+  modulos: { w: 280, h: 240 },
+}
+const TAMANO_MINIMO_DEFECTO = { w: 240, h: 160 }
+
+/** Tamaño mínimo de una herramienta (núcleo o módulo; los módulos pueden declarar minW/minH). */
+export function tamanoMinimoHerramienta(id: ToolId): { w: number; h: number } {
+  const def = (TOOL_CATALOG as Record<string, ToolDefinitionUI | undefined>)[id]
+  const base = TAMANO_MINIMO[id] ?? TAMANO_MINIMO_DEFECTO
+  return { w: def?.minW ?? base.w, h: def?.minH ?? base.h }
 }
 
 /** Herramientas disponibles: las del núcleo + las de los módulos activos (mutable en tiempo de ejecución). */

@@ -1,5 +1,5 @@
 import { PanelRightOpen, X, Plus } from 'lucide-react'
-import { useEffect, useRef, useState, type WheelEvent as ReactWheelEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useWorkspace } from '@/src/workspace/workspace-context'
 import { TOOL_CATALOG, type DockZone, type ToolId } from '@/src/workspace/types'
 import { herramientasDisponibles } from '@/src/modulos/herramientas'
@@ -87,12 +87,23 @@ function AddToolButton({ zone }: { zone: DockZone }) {
   )
 }
 
-function onTabsWheel(e: ReactWheelEvent<HTMLDivElement>) {
-  const el = e.currentTarget
-  if (el.scrollWidth <= el.clientWidth) return
-  if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
-  e.preventDefault()
-  el.scrollLeft += e.deltaY
+/**
+ * La rueda sobre las pestañas desplaza en horizontal. Se registra como listener nativo no pasivo:
+ * el onWheel de React es pasivo y `preventDefault` falla («Unable to preventDefault inside passive…»).
+ */
+function useTabsWheel(ref: React.RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth) return
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
+      e.preventDefault()
+      el.scrollLeft += e.deltaY
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [ref])
 }
 
 export function DockZonePanel({
@@ -104,6 +115,8 @@ export function DockZonePanel({
 }) {
   const { layout, toolsInZone, setActiveTab, moveTool, undockTool, toggleZone, closeTool } =
     useWorkspace()
+  const tabsRef = useRef<HTMLDivElement>(null)
+  useTabsWheel(tabsRef)
   const tools = toolsInZone(zone)
   const active = layout.activeTab[zone]
   const visibleTool = active && tools.includes(active) ? active : tools[0] ?? null
@@ -176,8 +189,8 @@ export function DockZonePanel({
     >
       <div className="flex h-8 shrink-0 items-center gap-0.5 border-b border-border bg-panel-raised/40 px-1">
         <div
+          ref={tabsRef}
           className="jw-scrollbar flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
-          onWheel={onTabsWheel}
         >
           {tools.map((toolId) => {
             const meta = TOOL_CATALOG[toolId]

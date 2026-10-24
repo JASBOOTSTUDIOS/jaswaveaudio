@@ -85,14 +85,22 @@ export function subscribePluginEditorFocus(listener: Listener): () => void {
   }
 }
 
-/** Abre / enfoca el editor de un plugin en el workspace. */
+/**
+ * Abre el editor de un plugin. Por defecto en su propia ventana (se pueden tener varios abiertos a la vez);
+ * con `docked: true` usa el panel acoplable `plugin-editor` (un solo plugin, dentro del workspace).
+ */
 export function openPluginEditor(args: {
   trackId: string
   pluginId: string
   pluginName: string
   pluginSnapshot?: PluginInfo
   zone?: 'left' | 'right' | 'bottom' | 'center'
+  docked?: boolean
 }): void {
+  if (!args.docked) {
+    void abrirEnVentana(args)
+    return
+  }
   setPluginEditorFocus({
     trackId: args.trackId,
     pluginId: args.pluginId,
@@ -105,4 +113,26 @@ export function openPluginEditor(args: {
       detail: { toolId: 'plugin-editor', zone: args.zone ?? 'right' },
     }),
   )
+}
+
+async function abrirEnVentana(args: { trackId: string; pluginId: string; pluginName: string; pluginSnapshot?: PluginInfo }): Promise<void> {
+  const { openPluginWindow } = await import('./plugin-windows')
+  const snap = args.pluginSnapshot ?? (await buscarPlugin(args.trackId, args.pluginId))
+  if (!snap) return
+  const r = await openPluginWindow({ trackId: args.trackId, plugin: snap, trackName: await nombrePista(args.trackId) })
+  if (!r.ok) console.warn('[plugin-editor] no se pudo abrir la ventana:', r.message)
+}
+
+type EstadoMin = { project?: { tracks?: Array<{ id: string; nombre?: string; plugins?: PluginInfo[] }> } }
+let obtenerEstado: (() => EstadoMin) | null = null
+/** El árbol de React registra cómo leer el proyecto (para resolver el plugin y la pista al abrir su ventana). */
+export function registrarLectorProyecto(fn: (() => EstadoMin) | null): void {
+  obtenerEstado = fn
+}
+async function buscarPlugin(trackId: string, pluginId: string): Promise<PluginInfo | null> {
+  const t = obtenerEstado?.().project?.tracks?.find((x) => x.id === trackId)
+  return t?.plugins?.find((p) => p.id === pluginId) ?? null
+}
+async function nombrePista(trackId: string): Promise<string> {
+  return obtenerEstado?.().project?.tracks?.find((x) => x.id === trackId)?.nombre ?? ''
 }

@@ -92,6 +92,8 @@ public:
   bool editorEmbedded() const;
   void closeEditor();
   bool hasEditor() const;
+  /** Título de la ventana flotante del editor (UTF-8), p. ej. «Piano · Sampler». */
+  void setEditorTitle(const std::string& utf8) { editorTitle_ = utf8; }
 
   /** Persistencia IComponent::getState / setState (y controller si aplica). */
   bool getStateChunk(std::vector<uint8_t>& out, std::string& err);
@@ -113,6 +115,7 @@ private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
   std::string path_;
+  std::string editorTitle_;
   std::string slotId_;
   std::atomic<bool> prepared_{false};
   std::atomic<bool> inProcess_{false};
