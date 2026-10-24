@@ -607,6 +607,8 @@ export function syncReaperTrackGraph(
   },
 ): void {
   const anySolo = tracks.some((t) => t.soloActiva)
+  // Buses/returns no se silencian por el solo de otra pista (si no, los sends a reverb desaparecen).
+  const busIds = new Set((routing?.buses ?? []).map((b) => b.id))
 
   const stemByTrackId = new Map(tracks.map((t, i) => [t.id, i]))
   for (const b of routing?.buses ?? []) {
@@ -646,7 +648,7 @@ export function syncReaperTrackGraph(
   const graphTracks = tracks.map((t, stemIndex) => {
     const previewId = getEditorPreviewTrackId()
     const muted =
-      previewId === t.id ? false : anySolo ? !t.soloActiva : Boolean(t.silenciada)
+      previewId === t.id ? false : anySolo ? !t.soloActiva && !busIds.has(t.id) : Boolean(t.silenciada)
     const slots: Array<{ slotId: string; instrument: boolean; bypass: boolean }> = []
     for (const p of t.plugins ?? []) {
       // VST3 con ruta: nunca tratar como builtin (licencia «JasWave» ≠ in-process).
@@ -911,18 +913,25 @@ async function readLivePluginSnapshot(
   previous?: PluginInfo,
 ): Promise<PluginSnapshotFields | null> {
   if (!bySlot.has(slotId)) return null
-  const rawParams = await listSlotParameters(slotId)
-  const parametros = rawParams.map((rp) => ({
-    id: String(rp.parameterId),
-    nombre: rp.name || String(rp.parameterId),
-    valor: Number(rp.normalizedValue) || 0,
-    minimo: 0,
-    maximo: 1,
-    paso: 0.001,
-    unidad: '',
-    etiqueta: rp.name || String(rp.parameterId),
-  }))
+  // Chunk primero: si no cambió respecto al guardado, se reutilizan los parámetros previos y se evita
+  // listParameters (hasta 400 params con el mutex del host tomado) en cada autosave.
   const chunk = await getSlotPluginStateBase64(slotId)
+  let parametros: PluginSnapshotFields['parametros']
+  if (chunk && previous?.estadoPluginBase64 === chunk && previous.parametros?.length) {
+    parametros = previous.parametros
+  } else {
+    const rawParams = await listSlotParameters(slotId)
+    parametros = rawParams.map((rp) => ({
+      id: String(rp.parameterId),
+      nombre: rp.name || String(rp.parameterId),
+      valor: Number(rp.normalizedValue) || 0,
+      minimo: 0,
+      maximo: 1,
+      paso: 0.001,
+      unidad: '',
+      etiqueta: rp.name || String(rp.parameterId),
+    }))
+  }
   if (!chunk) {
     console.warn('[track-vst] snapshot sin chunk para', slotId, '— se conserva estado previo si existe')
   }

@@ -52,7 +52,17 @@ type Entrada = { slotId: string; ventana: VentanaEditor; panel: PanelEmbebido }
  */
 export class EditoresEmbebidos {
   private porSlot = new Map<string, Entrada>()
-  constructor(private readonly enviar: (cmd: Record<string, unknown>) => void) {}
+  private ultimo = new Map<string, { clave: string; t: number }>()
+  private diferido = new Map<string, ReturnType<typeof setTimeout>>()
+  /**
+   * `minIntervaloMs` limita setEditorBounds por slot (mover/redimensionar la ventana dispara decenas de
+   * eventos por segundo y cada uno es un RPC serializado + SetWindowPos en el hilo UI del host).
+   * El último valor siempre se envía (trailing).
+   */
+  constructor(
+    private readonly enviar: (cmd: Record<string, unknown>) => void,
+    private readonly minIntervaloMs = 0,
+  ) {}
 
   /** Comando openEditor con `embed`: devuelve el comando listo para el host (x/y/w/h físicos). */
   abrir(slotId: string, ventana: VentanaEditor, panel: PanelEmbebido, cmd: Record<string, unknown>): Record<string, unknown> {
@@ -73,6 +83,10 @@ export class EditoresEmbebidos {
 
   cerrar(slotId: string): void {
     this.porSlot.delete(slotId)
+    this.ultimo.delete(slotId)
+    const t = this.diferido.get(slotId)
+    if (t) clearTimeout(t)
+    this.diferido.delete(slotId)
   }
 
   /** Eventos de la ventana: reposiciona (y sube encima del DAW si `raise`) sus editores. */
@@ -99,6 +113,25 @@ export class EditoresEmbebidos {
     }
     const visible = e.panel.visible && !e.ventana.isMinimized() && e.ventana.isVisible()
     const r = this.rectFisico(e.ventana, e.panel)
-    this.enviar({ type: 'setEditorBounds', slotId: e.slotId, embedded: true, visible, raise, x: r.x, y: r.y, w: r.width, h: r.height })
+    const cmd = { type: 'setEditorBounds', slotId: e.slotId, embedded: true, visible, raise, x: r.x, y: r.y, w: r.width, h: r.height }
+    if (this.minIntervaloMs <= 0) {
+      this.enviar(cmd)
+      return
+    }
+    const clave = JSON.stringify(cmd)
+    const prev = this.ultimo.get(e.slotId)
+    if (prev && prev.clave === clave && !raise) return
+    const ahora = Date.now()
+    const espera = prev ? this.minIntervaloMs - (ahora - prev.t) : 0
+    const emitir = () => {
+      this.diferido.delete(e.slotId)
+      if (!this.porSlot.has(e.slotId)) return
+      this.ultimo.set(e.slotId, { clave, t: Date.now() })
+      this.enviar(cmd)
+    }
+    const pendiente = this.diferido.get(e.slotId)
+    if (pendiente) clearTimeout(pendiente)
+    if (espera <= 0) emitir()
+    else this.diferido.set(e.slotId, setTimeout(emitir, espera))
   }
 }

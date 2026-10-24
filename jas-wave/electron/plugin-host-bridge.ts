@@ -113,6 +113,7 @@ let child: ChildProcessWithoutNullStreams | null = null
 let buffer = ''
 let pending: Pending | null = null
 const queue: QueuedCmd[] = []
+const sondeosEnCurso = new Map<string, Promise<PluginHostRpcResult>>()
 let started = false
 let backend: 'native' | 'node' | 'none' = 'none'
 let startPromise: Promise<boolean> | null = null
@@ -1619,6 +1620,12 @@ export function sendPluginHostCommand(
     type === 'listAudioDevices' ||
     type === 'ensureAudio' ||
     type === 'listParameters' ||
+    // Estado/parámetros de samplers pesados: un timeout corto mataba el host y todos los plugins.
+    type === 'getPluginState' ||
+    type === 'setPluginState' ||
+    type === 'setParameter' ||
+    type === 'getSlotStats' ||
+    type === 'unload' ||
     type === 'openEditor' ||
     type === 'clip.load' ||
     type === 'clip.loadEnd'
@@ -1641,11 +1648,23 @@ export function sendPluginHostCommand(
     return Promise.resolve({ ok: true, processId: 'jaswave-plugin-host' })
   }
 
-  const enqueue = () =>
+  const enqueueRaw = () =>
     new Promise<PluginHostRpcResult>((resolve) => {
       queue.push({ cmd, timeoutMs: long, resolve })
       pumpQueue()
     })
+  // Sondeos (reloj, medidores): si ya hay uno igual en cola o en vuelo se comparte su respuesta, así no
+  // se acumulan detrás de una operación lenta (load, getPluginState…) ni retrasan el resto de la cola.
+  const sondeo = type === 'getTransportClock' || type === 'getMixMeters'
+  const sondeoKey = sondeo ? JSON.stringify(cmd) : ''
+  const enqueue = () => {
+    if (!sondeo) return enqueueRaw()
+    const previo = sondeosEnCurso.get(sondeoKey)
+    if (previo) return previo
+    const p = enqueueRaw().finally(() => sondeosEnCurso.delete(sondeoKey))
+    sondeosEnCurso.set(sondeoKey, p)
+    return p
+  }
 
   // U7: marcar la carga en vuelo (para saber a quién culpar si el host muere).
   if (type === 'load' || type === 'prepare') {

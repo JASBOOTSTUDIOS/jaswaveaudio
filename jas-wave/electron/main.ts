@@ -1407,7 +1407,7 @@ ipcMain.handle('plugin-host-midi', async (e: IpcMainInvokeEvent, cmd: unknown) =
 // V4: editor nativo embebido en el panel del DAW (popup del host alineado al panel; ver editor-embebido.ts)
 const editoresEmbebidos = new EditoresEmbebidos((cmd) => {
   void sendPluginHostCommand(cmd, 5_000).catch(() => undefined)
-})
+}, 33)
 function ventanaEditor(win: InstanceType<typeof BrowserWindow>): VentanaEditor {
   const { screen } = require('electron')
   return {

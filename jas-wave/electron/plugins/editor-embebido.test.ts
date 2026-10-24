@@ -78,4 +78,21 @@ describe('editor nativo embebido en el panel (V4)', () => {
     ed.ventanaCerrada(8)
     assert.deepEqual(ed.abiertos(), [])
   })
+
+  it('con límite de frecuencia colapsa las ráfagas y envía siempre el último valor', async () => {
+    const enviados: Record<string, unknown>[] = []
+    const ed = new EditoresEmbebidos((c) => enviados.push(c), 40)
+    const estado = { x: 100 }
+    ed.abrir('s1', ventana(7, estado), { x: 0, y: 0, w: 400, h: 300, visible: true }, { type: 'openEditor', slotId: 's1' })
+    for (let x = 110; x <= 200; x += 10) {
+      estado.x = x
+      ed.ventanaCambio(7)
+    }
+    assert.equal(enviados.length, 1, 'solo el primero sale de inmediato')
+    await new Promise((r) => setTimeout(r, 80))
+    assert.equal(enviados.length, 2, 'el último valor llega al final de la ráfaga')
+    assert.equal(enviados[1]!.x, Math.round(200 * 1.5))
+    ed.ventanaCambio(7)
+    assert.equal(enviados.length, 2, 'sin cambios no se reenvía')
+  })
 })
