@@ -696,9 +696,12 @@ bool dumpEditorLayout(JasWaveVst::JwController* controller, const wchar_t* path)
         if (id >= 0) {
             o += ", \"param\": " + std::to_string(id);
             if (const JasWaveVst::ParamDef* d = core.access().def(static_cast<uint32_t>(id))) {
-                char b[256];
-                std::snprintf(b, sizeof b, ", \"min\": %.10g, \"max\": %.10g, \"defecto\": %.10g, \"pasos\": %d, \"escala\": \"%s\"", d->minV, d->maxV, d->defV,
-                              d->steps, d->map == JasWaveVst::Map::Log ? "log" : d->map == JasWaveVst::Map::Stepped ? "stepped" : "linear");
+                char b[320];
+                std::snprintf(b, sizeof b,
+                              ", \"min\": %.10g, \"max\": %.10g, \"defecto\": %.10g, \"pasos\": %d, \"escala\": \"%s\", \"decimales\": %d, \"bipolar\": %s, \"bypass\": %s",
+                              d->minV, d->maxV, d->defV, d->steps,
+                              d->map == JasWaveVst::Map::Log ? "log" : d->map == JasWaveVst::Map::Stepped ? "stepped" : "linear", d->decimals,
+                              d->bipolar ? "true" : "false", d->bypass ? "true" : "false");
                 o += b;
                 o += ", \"nombre\": " + jsonStr(d->name ? d->name : "") + ", \"unidad\": " + jsonStr(d->units ? d->units : "");
                 if (d->feature >= 0 && d->feature < desc.featureCount) o += ", \"feature\": " + jsonStr(desc.features[d->feature].key);

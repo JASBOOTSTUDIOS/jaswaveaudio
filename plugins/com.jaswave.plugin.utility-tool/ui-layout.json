@@ -97,6 +97,9 @@
       "defecto": 0,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 2,
+      "bipolar": true,
+      "bypass": false,
       "nombre": "Balance",
       "unidad": ""
     },
@@ -116,6 +119,9 @@
       "defecto": 100,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Width",
       "unidad": "%",
       "feature": "utilidad.ancho-estereo"
@@ -136,6 +142,9 @@
       "defecto": 0,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Mono Below",
       "unidad": "Hz",
       "feature": "utilidad.mono-graves"
@@ -155,6 +164,9 @@
       "defecto": 0,
       "pasos": 1,
       "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Mono",
       "unidad": "",
       "opciones": [
@@ -177,6 +189,9 @@
       "defecto": 0,
       "pasos": 1,
       "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Invert L",
       "unidad": "",
       "opciones": [
@@ -199,6 +214,9 @@
       "defecto": 0,
       "pasos": 1,
       "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Invert R",
       "unidad": "",
       "opciones": [
@@ -221,6 +239,9 @@
       "defecto": 0,
       "pasos": 1,
       "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": true,
       "nombre": "Bypass",
       "unidad": "",
       "opciones": [
@@ -243,6 +264,9 @@
       "defecto": 0,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
       "nombre": "Gain",
       "unidad": "dB"
     },
@@ -261,6 +285,9 @@
       "defecto": 0,
       "pasos": 1,
       "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Swap L/R",
       "unidad": "",
       "opciones": [
@@ -283,6 +310,9 @@
       "defecto": 0,
       "pasos": 1,
       "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "DC Filter",
       "unidad": "",
       "opciones": [

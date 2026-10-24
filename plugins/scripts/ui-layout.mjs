@@ -74,6 +74,34 @@ export function validarLayout(l, referencia) {
   return p
 }
 
+const MODULO_WEB = path.join(root, 'com.jaswave.modulo.editores-vst', 'src', 'generado')
+
+/** Escribe (o comprueba) los layouts con el nombre de cada plugin y el isotipo para el módulo web. */
+function generarParaModulo(layouts, soloComprobar) {
+  if (!fs.existsSync(path.dirname(MODULO_WEB))) return 0
+  const nombres = Object.fromEntries(
+    PLUGINS.map((p) => [JSON.parse(fs.readFileSync(path.join(root, p.dir, 'jaswave-plugin.json'), 'utf8')).id, JSON.parse(fs.readFileSync(path.join(root, p.dir, 'jaswave-plugin.json'), 'utf8')).name]),
+  )
+  const archivos = {
+    'layouts.json': JSON.stringify(layouts.map((layout) => ({ nombre: nombres[layout.productId], layout })), null, 2) + '\n',
+    'isotipo.ts':
+      '// Generado por plugins/scripts/ui-layout.mjs desde plugins/shared-ui/recursos/jaswave-isotipo.png (no editar)\n' +
+      `export const ISOTIPO = 'data:image/png;base64,${fs.readFileSync(path.join(root, 'shared-ui', 'recursos', 'jaswave-isotipo.png')).toString('base64')}'\n`,
+  }
+  let fallos = 0
+  fs.mkdirSync(MODULO_WEB, { recursive: true })
+  for (const [nombre, texto] of Object.entries(archivos)) {
+    const ruta = path.join(MODULO_WEB, nombre)
+    if (soloComprobar) {
+      if (!fs.existsSync(ruta) || fs.readFileSync(ruta, 'utf8').replace(/\r\n/g, '\n') !== texto) {
+        console.error(`${path.relative(root, ruta)} no está al día (ejecuta node plugins/scripts/ui-layout.mjs)`)
+        fallos++
+      }
+    } else fs.writeFileSync(ruta, texto)
+  }
+  return fallos
+}
+
 function volcar(p, destino) {
   const exe = path.join(build, 'tools', config, `${p.target}_snapshot.exe`)
   if (!fs.existsSync(exe)) { console.error(`falta ${exe}: compila los plugins (cmake --build plugins/build --config ${config})`); process.exit(2) }
@@ -111,6 +139,8 @@ function main() {
   for (const l of layouts) {
     for (const e of validarLayout(l, layouts[0])) { console.error('  - ' + e); fallos++ }
   }
+  // Copia para la réplica web (módulo independiente: no puede importar fuera de su paquete)
+  if (layouts.length === PLUGINS.length) fallos += generarParaModulo(layouts, check || soloValidar)
   fs.rmSync(tmp, { recursive: true, force: true })
   if (fallos) { console.error(`ui-layout: ${fallos} problemas`); process.exit(1) }
   console.log(`ui-layout OK (${layouts.length} editores con la misma plantilla)`)

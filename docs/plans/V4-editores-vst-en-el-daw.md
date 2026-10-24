@@ -47,13 +47,29 @@ borde, sin padre ni owner** que main mantiene superpuesto al panel.
   cualquier ventana nativa embebida).
 - VST2 de terceros: siguen en ventana flotante.
 
-## Web — pendiente
+## Web — hecho
 
-1. `plugins/lib/ui-cyber` (`@jaswave/ui-cyber`): tokens idénticos a `Pal`, widgets (perilla, fader,
-   toggle, desplegable, secciones), espectro dual y vectorscopio en Canvas, dibujados desde
-   `ui-layout.json`; balística de 14 dB/s; breakpoints y pestañas en móvil; táctil (`touch-action:
-   none`, 44 px, pulsación larga = teclado numérico); 30 fps en ahorro de energía.
-2. Módulo `com.jaswave.modulo.editores-vst` (contribución «Editor de plugin» solo en la web):
-   parámetros por `plugin.setParameter` (undo y auditoría), espectro IN/OUT con `AnalyserNode`, aviso de
-   que el DSP del VST no corre en la web.
-3. Evento `plugin.parametro.cambiado` en el bus del DAW (escritorio y web).
+| Pieza | Archivo | Qué hace |
+|---|---|---|
+| Librería | `plugins/lib/ui-cyber` (`@jaswave/ui-cyber`) | Editor cyber en Canvas desde `ui-layout.json`: mismos tokens, geometría y controles que `shared-ui`; valores y texto idénticos a `jw_params.h`; espectro −120..0 dBFS con balística de 14 dB/s; arrastre (Mayús = fino), doble clic = defecto, rueda, píldoras, desplegables, pulsación larga / clic derecho = valor numérico; táctil (`touch-action: none`, área de 44 px) |
+| Responsivo | `disposicion.ts` | ≥ 1024 px completo 16:9 · 640–1023 compacto · < 640 pestañas ESPECTRO · CONTROLES · MEDICIÓN |
+| Módulo | `plugins/com.jaswave.modulo.editores-vst` (solo web) | Servicio `editorPlugin` del SDK: el panel «Editor de plugin» lo usa en la web; gestos = un `plugin.setParameter` (deshacer, auditoría, evento `plugin.parametro.cambiado`); 30 fps con ahorro de energía; aviso de que el DSP del VST no corre en la web |
+| Datos | `plugins/scripts/ui-layout.mjs` | Genera en el módulo `src/generado/layouts.json` (con el nombre de cada plugin) e `isotipo.ts`; `--check`/`--validar` comprueban que están al día |
+| Espectro | `jas-wave/src/modulos/api-espectro.ts` (`espectroDePista` en el SDK) | AnalyserNode de 8192 puntos colgado de la pista solo mientras el editor está abierto |
+| Núcleo | `jas-wave/components/plugin-editor-panel.tsx` | Escritorio: editor nativo; web: `servicioDeModulo('editorPlugin')` o aviso con enlace a Módulos |
+
+Demostración sin el DAW (revisión de diseño): `npx vite plugins/lib/ui-cyber/demo`.
+
+### Verificación (web)
+
+- `plugins/lib/ui-cyber/test` (10): mapeo y texto como el VST en los 7 layouts, interpretar valores escritos,
+  escalas, columnas desde bins, balística (14 dB/s, igual a 30 y 15 fps), breakpoints, hit-test táctil y dibujo
+  de los 7 editores.
+- `plugins/com.jaswave.modulo.editores-vst/test` (2): reconoce los 7 VST por su nombre actual y los históricos.
+- En Chromium (demo): 1280 px completo 16:9, 800 px compacto, 390 px (iPhone 13, táctil) en pestañas; gesto de
+  ratón y de dedo inicio → cambio… → fin, rueda y píldora de bypass.
+
+## Pendiente
+
+- Escritorio: reflejar en el proyecto, en vivo, los cambios hechos en el editor nativo (hoy se toman al cerrar
+  el editor con `snapshotTrackPluginIntoProject`).

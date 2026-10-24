@@ -97,6 +97,9 @@
       "defecto": 50,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Brightness",
       "unidad": "%"
     },
@@ -116,6 +119,9 @@
       "defecto": 50,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Hammer Hardness",
       "unidad": "%"
     },
@@ -135,6 +141,9 @@
       "defecto": 45,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Decay",
       "unidad": "%"
     },
@@ -154,6 +163,9 @@
       "defecto": 70,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Velocity Sens",
       "unidad": "%"
     },
@@ -173,6 +185,9 @@
       "defecto": 0.4,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 2,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Release",
       "unidad": "s"
     },
@@ -192,6 +207,9 @@
       "defecto": 440,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Tune A4",
       "unidad": "Hz"
     },
@@ -210,6 +228,9 @@
       "defecto": 0,
       "pasos": 1,
       "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": true,
       "nombre": "Bypass",
       "unidad": "",
       "opciones": [
@@ -232,6 +253,9 @@
       "defecto": 0,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
       "nombre": "Volume",
       "unidad": "dB"
     },
@@ -251,6 +275,9 @@
       "defecto": 30,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Stereo Width",
       "unidad": "%",
       "feature": "piano.imagen-estereo"
@@ -270,6 +297,9 @@
       "defecto": 0,
       "pasos": 1,
       "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Sustain Pedal",
       "unidad": "",
       "opciones": [

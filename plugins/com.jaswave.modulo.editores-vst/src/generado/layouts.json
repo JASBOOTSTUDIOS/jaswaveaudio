@@ -1,0 +1,2519 @@
+[
+  {
+    "nombre": "JasWave EQ Parametric Pro",
+    "layout": {
+      "productId": "com.jaswave.plugin.param-eq",
+      "titulo": "PARAMETRIC EQ",
+      "subtitulo": "8 BANDAS · FASE MÍNIMA · LATENCIA 0",
+      "instrumento": false,
+      "visualizador": "espectro-dual",
+      "acento": "#2FD6F2",
+      "base": {
+        "ancho": 1100,
+        "alto": 620
+      },
+      "zonas": {
+        "pantalla": [
+          34,
+          34,
+          1066,
+          586
+        ],
+        "visualizador": [
+          52,
+          92,
+          652,
+          404
+        ],
+        "espectro": [
+          66,
+          124,
+          612,
+          382
+        ],
+        "miniPanel": [
+          52,
+          418,
+          652,
+          556
+        ],
+        "controles": [
+          666,
+          92,
+          1048,
+          404
+        ],
+        "salida": [
+          666,
+          418,
+          1048,
+          556
+        ],
+        "fader": [
+          680,
+          440,
+          724,
+          552
+        ],
+        "medidores": {
+          "x": 976,
+          "arriba": 446,
+          "abajo": 528
+        }
+      },
+      "escalas": {
+        "frecuencia": [
+          20,
+          20000
+        ],
+        "dbfs": [
+          -120,
+          0
+        ],
+        "caidaDbS": 14
+      },
+      "modoParam": null,
+      "widgets": [
+        {
+          "tipo": "section",
+          "rect": [
+            666,
+            92,
+            1048,
+            404
+          ],
+          "etiqueta": "BANDA 1",
+          "param": 5,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Band 1 On",
+          "unidad": "",
+          "opciones": [
+            "Off",
+            "On"
+          ]
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            704,
+            140,
+            780,
+            234
+          ],
+          "etiqueta": "FRECUENCIA",
+          "tamano": 64,
+          "param": 2,
+          "min": 20,
+          "max": 20000,
+          "defecto": 30,
+          "pasos": 0,
+          "escala": "log",
+          "decimales": 1,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Band 1 Freq",
+          "unidad": "Hz"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            819,
+            140,
+            895,
+            234
+          ],
+          "etiqueta": "GANANCIA",
+          "tamano": 64,
+          "param": 3,
+          "min": -24,
+          "max": 24,
+          "defecto": 0,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": true,
+          "bypass": false,
+          "nombre": "Band 1 Gain",
+          "unidad": "dB"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            934,
+            140,
+            1010,
+            234
+          ],
+          "etiqueta": "Q",
+          "tamano": 64,
+          "param": 4,
+          "min": 0.1,
+          "max": 18,
+          "defecto": 0.71,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 2,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Band 1 Q",
+          "unidad": ""
+        },
+        {
+          "tipo": "dropdown",
+          "rect": [
+            690,
+            294,
+            909,
+            314
+          ],
+          "etiqueta": "TIPO",
+          "param": 1,
+          "min": 0,
+          "max": 5,
+          "defecto": 0,
+          "pasos": 5,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Band 1 Type",
+          "unidad": "",
+          "opciones": [
+            "HPF",
+            "Low Shelf",
+            "Peak",
+            "High Shelf",
+            "LPF",
+            "Notch"
+          ]
+        },
+        {
+          "tipo": "section",
+          "rect": [
+            666,
+            418,
+            1048,
+            556
+          ],
+          "etiqueta": "SALIDA",
+          "param": 0,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": true,
+          "nombre": "Bypass",
+          "unidad": "",
+          "opciones": [
+            "Active",
+            "Bypass"
+          ]
+        },
+        {
+          "tipo": "fader",
+          "rect": [
+            680,
+            440,
+            724,
+            552
+          ],
+          "etiqueta": "OUT",
+          "param": 41,
+          "min": -24,
+          "max": 24,
+          "defecto": 0,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": true,
+          "bypass": false,
+          "nombre": "Output",
+          "unidad": "dB"
+        },
+        {
+          "tipo": "dropdown",
+          "rect": [
+            743,
+            456,
+            959,
+            476
+          ],
+          "etiqueta": "PENDIENTE",
+          "param": 42,
+          "min": 0,
+          "max": 3,
+          "defecto": 0,
+          "pasos": 3,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "HP/LP Slope",
+          "unidad": "",
+          "feature": "eq.pendientes-altas",
+          "opciones": [
+            "12 dB/oct",
+            "24 dB/oct",
+            "36 dB/oct",
+            "48 dB/oct"
+          ]
+        },
+        {
+          "tipo": "dropdown",
+          "rect": [
+            743,
+            512,
+            959,
+            532
+          ],
+          "etiqueta": "ANALIZADOR",
+          "param": 43,
+          "min": 0,
+          "max": 2,
+          "defecto": 1,
+          "pasos": 2,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Analyzer",
+          "unidad": "",
+          "feature": "eq.analizador",
+          "opciones": [
+            "Off",
+            "Post",
+            "Pre+Post"
+          ]
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            976,
+            446,
+            985,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            990,
+            446,
+            999,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            1020,
+            446,
+            1029,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            1034,
+            446,
+            1043,
+            528
+          ],
+          "etiqueta": ""
+        }
+      ]
+    }
+  },
+  {
+    "nombre": "JasWave Bus Compressor",
+    "layout": {
+      "productId": "com.jaswave.plugin.bus-compressor",
+      "titulo": "BUS COMPRESSOR",
+      "subtitulo": "VCA FEED-FORWARD · SOFT-KNEE · ENLACE ESTÉREO",
+      "instrumento": false,
+      "visualizador": "espectro-dual",
+      "acento": "#F2B544",
+      "base": {
+        "ancho": 1100,
+        "alto": 620
+      },
+      "zonas": {
+        "pantalla": [
+          34,
+          34,
+          1066,
+          586
+        ],
+        "visualizador": [
+          52,
+          92,
+          652,
+          404
+        ],
+        "espectro": [
+          66,
+          124,
+          612,
+          382
+        ],
+        "miniPanel": [
+          52,
+          418,
+          652,
+          556
+        ],
+        "controles": [
+          666,
+          92,
+          1048,
+          404
+        ],
+        "salida": [
+          666,
+          418,
+          1048,
+          556
+        ],
+        "fader": [
+          680,
+          440,
+          724,
+          552
+        ],
+        "medidores": {
+          "x": 976,
+          "arriba": 446,
+          "abajo": 528
+        }
+      },
+      "escalas": {
+        "frecuencia": [
+          20,
+          20000
+        ],
+        "dbfs": [
+          -120,
+          0
+        ],
+        "caidaDbS": 14
+      },
+      "modoParam": null,
+      "widgets": [
+        {
+          "tipo": "section",
+          "rect": [
+            666,
+            92,
+            1048,
+            404
+          ],
+          "etiqueta": "COMPRESOR"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            704,
+            140,
+            780,
+            234
+          ],
+          "etiqueta": "UMBRAL",
+          "tamano": 64,
+          "param": 1,
+          "min": -60,
+          "max": 0,
+          "defecto": -20,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Threshold",
+          "unidad": "dB"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            819,
+            140,
+            895,
+            234
+          ],
+          "etiqueta": "RATIO",
+          "tamano": 64,
+          "param": 2,
+          "min": 1,
+          "max": 20,
+          "defecto": 4,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Ratio",
+          "unidad": ":1"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            934,
+            140,
+            1010,
+            234
+          ],
+          "etiqueta": "RODILLA",
+          "tamano": 64,
+          "param": 5,
+          "min": 0,
+          "max": 24,
+          "defecto": 6,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Knee",
+          "unidad": "dB"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            714,
+            278,
+            770,
+            352
+          ],
+          "etiqueta": "ATAQUE",
+          "tamano": 44,
+          "param": 3,
+          "min": 0.1,
+          "max": 200,
+          "defecto": 10,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Attack",
+          "unidad": "ms"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            829,
+            278,
+            885,
+            352
+          ],
+          "etiqueta": "RELEASE",
+          "tamano": 44,
+          "param": 4,
+          "min": 5,
+          "max": 2000,
+          "defecto": 100,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Release",
+          "unidad": "ms"
+        },
+        {
+          "tipo": "dropdown",
+          "rect": [
+            920,
+            294,
+            1024,
+            314
+          ],
+          "etiqueta": "DET",
+          "param": 9,
+          "min": 0,
+          "max": 1,
+          "defecto": 1,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Detector",
+          "unidad": "",
+          "opciones": [
+            "Peak",
+            "RMS"
+          ]
+        },
+        {
+          "tipo": "section",
+          "rect": [
+            666,
+            418,
+            1048,
+            556
+          ],
+          "etiqueta": "SALIDA",
+          "param": 0,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": true,
+          "nombre": "Bypass",
+          "unidad": "",
+          "opciones": [
+            "Active",
+            "Bypass"
+          ]
+        },
+        {
+          "tipo": "fader",
+          "rect": [
+            680,
+            440,
+            724,
+            552
+          ],
+          "etiqueta": "MAKEUP",
+          "param": 6,
+          "min": -24,
+          "max": 24,
+          "defecto": 0,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": true,
+          "bypass": false,
+          "nombre": "Makeup",
+          "unidad": "dB"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            749,
+            458,
+            805,
+            532
+          ],
+          "etiqueta": "MEZCLA",
+          "tamano": 44,
+          "param": 7,
+          "min": 0,
+          "max": 100,
+          "defecto": 100,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Mix",
+          "unidad": "%",
+          "feature": "comp.mezcla-paralela"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            823,
+            458,
+            879,
+            532
+          ],
+          "etiqueta": "SC HPF",
+          "tamano": 44,
+          "param": 8,
+          "min": 0,
+          "max": 500,
+          "defecto": 0,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Sidechain HP",
+          "unidad": "Hz",
+          "feature": "comp.filtro-sidechain"
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            976,
+            446,
+            985,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            990,
+            446,
+            999,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            1020,
+            446,
+            1029,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            1034,
+            446,
+            1043,
+            528
+          ],
+          "etiqueta": ""
+        }
+      ]
+    }
+  },
+  {
+    "nombre": "JasWave True-Peak Limiter Pro",
+    "layout": {
+      "productId": "com.jaswave.plugin.truepeak-limiter",
+      "titulo": "TRUE-PEAK LIMITER",
+      "subtitulo": "DETECCIÓN TRUE-PEAK · MEDICIÓN BS.1770-4 · LOOKAHEAD",
+      "instrumento": false,
+      "visualizador": "espectro-dual",
+      "acento": "#F5E347",
+      "base": {
+        "ancho": 1100,
+        "alto": 620
+      },
+      "zonas": {
+        "pantalla": [
+          34,
+          34,
+          1066,
+          586
+        ],
+        "visualizador": [
+          52,
+          92,
+          652,
+          404
+        ],
+        "espectro": [
+          66,
+          124,
+          612,
+          382
+        ],
+        "miniPanel": [
+          52,
+          418,
+          652,
+          556
+        ],
+        "controles": [
+          666,
+          92,
+          1048,
+          404
+        ],
+        "salida": [
+          666,
+          418,
+          1048,
+          556
+        ],
+        "fader": [
+          680,
+          440,
+          724,
+          552
+        ],
+        "medidores": {
+          "x": 976,
+          "arriba": 446,
+          "abajo": 528
+        }
+      },
+      "escalas": {
+        "frecuencia": [
+          20,
+          20000
+        ],
+        "dbfs": [
+          -120,
+          0
+        ],
+        "caidaDbS": 14
+      },
+      "modoParam": null,
+      "widgets": [
+        {
+          "tipo": "section",
+          "rect": [
+            666,
+            92,
+            1048,
+            404
+          ],
+          "etiqueta": "LIMITADOR"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            704,
+            140,
+            780,
+            234
+          ],
+          "etiqueta": "GANANCIA",
+          "tamano": 64,
+          "param": 2,
+          "min": 0,
+          "max": 24,
+          "defecto": 0,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Input Gain",
+          "unidad": "dB"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            819,
+            140,
+            895,
+            234
+          ],
+          "etiqueta": "RELEASE",
+          "tamano": 64,
+          "param": 3,
+          "min": 1,
+          "max": 1000,
+          "defecto": 100,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Release",
+          "unidad": "ms"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            934,
+            140,
+            1010,
+            234
+          ],
+          "etiqueta": "LOOKAHEAD",
+          "tamano": 64,
+          "param": 4,
+          "min": 0,
+          "max": 10,
+          "defecto": 2,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Lookahead",
+          "unidad": "ms"
+        },
+        {
+          "tipo": "dropdown",
+          "rect": [
+            690,
+            294,
+            1024,
+            314
+          ],
+          "etiqueta": "DITHER",
+          "param": 5,
+          "min": 0,
+          "max": 2,
+          "defecto": 0,
+          "pasos": 2,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Dither",
+          "unidad": "",
+          "feature": "limitador.dither",
+          "opciones": [
+            "Off",
+            "24 bit",
+            "16 bit"
+          ]
+        },
+        {
+          "tipo": "section",
+          "rect": [
+            666,
+            418,
+            1048,
+            556
+          ],
+          "etiqueta": "SALIDA",
+          "param": 0,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": true,
+          "nombre": "Bypass",
+          "unidad": "",
+          "opciones": [
+            "Active",
+            "Bypass"
+          ]
+        },
+        {
+          "tipo": "fader",
+          "rect": [
+            680,
+            440,
+            724,
+            552
+          ],
+          "etiqueta": "TECHO",
+          "param": 1,
+          "min": -12,
+          "max": 0,
+          "defecto": -1,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Ceiling",
+          "unidad": "dBTP"
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            771,
+            446,
+            783,
+            544
+          ],
+          "etiqueta": "GR"
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            845,
+            446,
+            857,
+            544
+          ],
+          "etiqueta": "TP"
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            976,
+            446,
+            985,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            990,
+            446,
+            999,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            1020,
+            446,
+            1029,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            1034,
+            446,
+            1043,
+            528
+          ],
+          "etiqueta": ""
+        }
+      ]
+    }
+  },
+  {
+    "nombre": "JasWave Smart De-Esser",
+    "layout": {
+      "productId": "com.jaswave.plugin.smart-deesser",
+      "titulo": "SMART DE-ESSER",
+      "subtitulo": "BANDA DIVIDIDA LR4 · SIDECHAIN FILTRADO",
+      "instrumento": false,
+      "visualizador": "espectro-dual",
+      "acento": "#3DF5C0",
+      "base": {
+        "ancho": 1100,
+        "alto": 620
+      },
+      "zonas": {
+        "pantalla": [
+          34,
+          34,
+          1066,
+          586
+        ],
+        "visualizador": [
+          52,
+          92,
+          652,
+          404
+        ],
+        "espectro": [
+          66,
+          124,
+          612,
+          382
+        ],
+        "miniPanel": [
+          52,
+          418,
+          652,
+          556
+        ],
+        "controles": [
+          666,
+          92,
+          1048,
+          404
+        ],
+        "salida": [
+          666,
+          418,
+          1048,
+          556
+        ],
+        "fader": [
+          680,
+          440,
+          724,
+          552
+        ],
+        "medidores": {
+          "x": 976,
+          "arriba": 446,
+          "abajo": 528
+        }
+      },
+      "escalas": {
+        "frecuencia": [
+          20,
+          20000
+        ],
+        "dbfs": [
+          -120,
+          0
+        ],
+        "caidaDbS": 14
+      },
+      "modoParam": 4,
+      "widgets": [
+        {
+          "tipo": "section",
+          "rect": [
+            666,
+            92,
+            1048,
+            404
+          ],
+          "etiqueta": "DE-ESSER"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            704,
+            140,
+            780,
+            234
+          ],
+          "etiqueta": "FRECUENCIA",
+          "tamano": 64,
+          "param": 1,
+          "min": 3000,
+          "max": 12000,
+          "defecto": 6000,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Freq",
+          "unidad": "Hz"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            819,
+            140,
+            895,
+            234
+          ],
+          "etiqueta": "UMBRAL",
+          "tamano": 64,
+          "param": 2,
+          "min": -60,
+          "max": 0,
+          "defecto": -20,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Threshold",
+          "unidad": "dB"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            934,
+            140,
+            1010,
+            234
+          ],
+          "etiqueta": "RANGO",
+          "tamano": 64,
+          "param": 3,
+          "min": 0,
+          "max": 24,
+          "defecto": 12,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Range",
+          "unidad": "dB"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            714,
+            278,
+            770,
+            352
+          ],
+          "etiqueta": "RELEASE",
+          "tamano": 44,
+          "param": 8,
+          "min": 20,
+          "max": 300,
+          "defecto": 80,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Release",
+          "unidad": "ms"
+        },
+        {
+          "tipo": "dropdown",
+          "rect": [
+            805,
+            294,
+            1024,
+            314
+          ],
+          "etiqueta": "FILTRO SC",
+          "param": 7,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "SC Filter",
+          "unidad": "",
+          "opciones": [
+            "High-pass",
+            "Band-pass"
+          ]
+        },
+        {
+          "tipo": "section",
+          "rect": [
+            666,
+            418,
+            1048,
+            556
+          ],
+          "etiqueta": "SALIDA · DETECCIÓN",
+          "param": 0,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": true,
+          "nombre": "Bypass",
+          "unidad": "",
+          "opciones": [
+            "Active",
+            "Bypass"
+          ]
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            696,
+            446,
+            708,
+            544
+          ],
+          "etiqueta": "GR"
+        },
+        {
+          "tipo": "toggle",
+          "rect": [
+            743,
+            454,
+            959,
+            478
+          ],
+          "etiqueta": "ESCUCHAR SC",
+          "param": 5,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Listen Sidechain",
+          "unidad": "",
+          "feature": "deesser.escucha-sidechain",
+          "opciones": [
+            "Off",
+            "On"
+          ]
+        },
+        {
+          "tipo": "dropdown",
+          "rect": [
+            743,
+            512,
+            959,
+            532
+          ],
+          "etiqueta": "DETECCIÓN",
+          "param": 6,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Detection",
+          "unidad": "",
+          "feature": "deesser.deteccion-relativa",
+          "opciones": [
+            "Absolute",
+            "Relative"
+          ]
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            976,
+            446,
+            985,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            990,
+            446,
+            999,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            1020,
+            446,
+            1029,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            1034,
+            446,
+            1043,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "dropdown",
+          "rect": [
+            690,
+            48,
+            846,
+            68
+          ],
+          "etiqueta": "MODO",
+          "param": 4,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Mode",
+          "unidad": "",
+          "opciones": [
+            "Split",
+            "Wide"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "nombre": "JasWave Utility & Phase Tool",
+    "layout": {
+      "productId": "com.jaswave.plugin.utility-tool",
+      "titulo": "CHANNEL UTILITY",
+      "subtitulo": "GANANCIA · FASE · ANCHO M/S · MONO-GRAVES",
+      "instrumento": false,
+      "visualizador": "vectorscopio",
+      "acento": "#2FD6F2",
+      "base": {
+        "ancho": 1100,
+        "alto": 620
+      },
+      "zonas": {
+        "pantalla": [
+          34,
+          34,
+          1066,
+          586
+        ],
+        "visualizador": [
+          52,
+          92,
+          652,
+          404
+        ],
+        "espectro": [
+          66,
+          124,
+          612,
+          382
+        ],
+        "miniPanel": [
+          52,
+          418,
+          652,
+          556
+        ],
+        "controles": [
+          666,
+          92,
+          1048,
+          404
+        ],
+        "salida": [
+          666,
+          418,
+          1048,
+          556
+        ],
+        "fader": [
+          680,
+          440,
+          724,
+          552
+        ],
+        "medidores": {
+          "x": 976,
+          "arriba": 446,
+          "abajo": 528
+        }
+      },
+      "escalas": {
+        "frecuencia": [
+          20,
+          20000
+        ],
+        "dbfs": [
+          -120,
+          0
+        ],
+        "caidaDbS": 14
+      },
+      "modoParam": null,
+      "widgets": [
+        {
+          "tipo": "section",
+          "rect": [
+            666,
+            92,
+            1048,
+            404
+          ],
+          "etiqueta": "IMAGEN ESTÉREO"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            704,
+            140,
+            780,
+            234
+          ],
+          "etiqueta": "BALANCE",
+          "tamano": 64,
+          "param": 6,
+          "min": -1,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 2,
+          "bipolar": true,
+          "bypass": false,
+          "nombre": "Balance",
+          "unidad": ""
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            819,
+            140,
+            895,
+            234
+          ],
+          "etiqueta": "ANCHO",
+          "tamano": 64,
+          "param": 2,
+          "min": 0,
+          "max": 200,
+          "defecto": 100,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Width",
+          "unidad": "%",
+          "feature": "utilidad.ancho-estereo"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            934,
+            140,
+            1010,
+            234
+          ],
+          "etiqueta": "MONO <",
+          "tamano": 64,
+          "param": 3,
+          "min": 0,
+          "max": 200,
+          "defecto": 0,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Mono Below",
+          "unidad": "Hz",
+          "feature": "utilidad.mono-graves"
+        },
+        {
+          "tipo": "toggle",
+          "rect": [
+            690,
+            292,
+            794,
+            316
+          ],
+          "etiqueta": "MONO",
+          "param": 9,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Mono",
+          "unidad": "",
+          "opciones": [
+            "Off",
+            "On"
+          ]
+        },
+        {
+          "tipo": "toggle",
+          "rect": [
+            805,
+            292,
+            909,
+            316
+          ],
+          "etiqueta": "Ø L",
+          "param": 4,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Invert L",
+          "unidad": "",
+          "opciones": [
+            "Off",
+            "On"
+          ]
+        },
+        {
+          "tipo": "toggle",
+          "rect": [
+            920,
+            292,
+            1024,
+            316
+          ],
+          "etiqueta": "Ø R",
+          "param": 5,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Invert R",
+          "unidad": "",
+          "opciones": [
+            "Off",
+            "On"
+          ]
+        },
+        {
+          "tipo": "section",
+          "rect": [
+            666,
+            418,
+            1048,
+            556
+          ],
+          "etiqueta": "SALIDA",
+          "param": 0,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": true,
+          "nombre": "Bypass",
+          "unidad": "",
+          "opciones": [
+            "Active",
+            "Bypass"
+          ]
+        },
+        {
+          "tipo": "fader",
+          "rect": [
+            680,
+            440,
+            724,
+            552
+          ],
+          "etiqueta": "GANANCIA",
+          "param": 1,
+          "min": -24,
+          "max": 24,
+          "defecto": 0,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": true,
+          "bypass": false,
+          "nombre": "Gain",
+          "unidad": "dB"
+        },
+        {
+          "tipo": "toggle",
+          "rect": [
+            743,
+            454,
+            811,
+            478
+          ],
+          "etiqueta": "L ⇄ R",
+          "param": 8,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Swap L/R",
+          "unidad": "",
+          "opciones": [
+            "Off",
+            "On"
+          ]
+        },
+        {
+          "tipo": "toggle",
+          "rect": [
+            817,
+            454,
+            885,
+            478
+          ],
+          "etiqueta": "DC",
+          "param": 7,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "DC Filter",
+          "unidad": "",
+          "opciones": [
+            "Off",
+            "On"
+          ]
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            976,
+            446,
+            985,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            990,
+            446,
+            999,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            1020,
+            446,
+            1029,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            1034,
+            446,
+            1043,
+            528
+          ],
+          "etiqueta": ""
+        }
+      ]
+    }
+  },
+  {
+    "nombre": "JasWave Piano Synth",
+    "layout": {
+      "productId": "com.jaswave.plugin.piano-synth",
+      "titulo": "PIANO SYNTH",
+      "subtitulo": "SÍNTESIS MODAL · CUERDAS AL UNÍSONO · 88 TECLAS",
+      "instrumento": true,
+      "visualizador": "espectro-instrumento",
+      "acento": "#2FD6F2",
+      "base": {
+        "ancho": 1100,
+        "alto": 620
+      },
+      "zonas": {
+        "pantalla": [
+          34,
+          34,
+          1066,
+          586
+        ],
+        "visualizador": [
+          52,
+          92,
+          652,
+          404
+        ],
+        "espectro": [
+          66,
+          124,
+          612,
+          382
+        ],
+        "miniPanel": [
+          52,
+          418,
+          652,
+          556
+        ],
+        "controles": [
+          666,
+          92,
+          1048,
+          404
+        ],
+        "salida": [
+          666,
+          418,
+          1048,
+          556
+        ],
+        "fader": [
+          680,
+          440,
+          724,
+          552
+        ],
+        "medidores": {
+          "x": 976,
+          "arriba": 446,
+          "abajo": 528
+        }
+      },
+      "escalas": {
+        "frecuencia": [
+          20,
+          20000
+        ],
+        "dbfs": [
+          -120,
+          0
+        ],
+        "caidaDbS": 14
+      },
+      "modoParam": null,
+      "widgets": [
+        {
+          "tipo": "section",
+          "rect": [
+            666,
+            92,
+            1048,
+            404
+          ],
+          "etiqueta": "MARTILLO · CUERDA"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            704,
+            140,
+            780,
+            234
+          ],
+          "etiqueta": "BRILLO",
+          "tamano": 64,
+          "param": 1,
+          "min": 0,
+          "max": 100,
+          "defecto": 50,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Brightness",
+          "unidad": "%"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            819,
+            140,
+            895,
+            234
+          ],
+          "etiqueta": "DUREZA",
+          "tamano": 64,
+          "param": 8,
+          "min": 0,
+          "max": 100,
+          "defecto": 50,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Hammer Hardness",
+          "unidad": "%"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            934,
+            140,
+            1010,
+            234
+          ],
+          "etiqueta": "DECAY",
+          "tamano": 64,
+          "param": 2,
+          "min": 0,
+          "max": 100,
+          "defecto": 45,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Decay",
+          "unidad": "%"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            714,
+            278,
+            770,
+            352
+          ],
+          "etiqueta": "VELOCIDAD",
+          "tamano": 44,
+          "param": 0,
+          "min": 0,
+          "max": 100,
+          "defecto": 70,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Velocity Sens",
+          "unidad": "%"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            829,
+            278,
+            885,
+            352
+          ],
+          "etiqueta": "RELEASE",
+          "tamano": 44,
+          "param": 3,
+          "min": 0.05,
+          "max": 3,
+          "defecto": 0.4,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 2,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Release",
+          "unidad": "s"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            944,
+            278,
+            1000,
+            352
+          ],
+          "etiqueta": "LA4",
+          "tamano": 44,
+          "param": 7,
+          "min": 430,
+          "max": 450,
+          "defecto": 440,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Tune A4",
+          "unidad": "Hz"
+        },
+        {
+          "tipo": "section",
+          "rect": [
+            666,
+            418,
+            1048,
+            556
+          ],
+          "etiqueta": "SALIDA",
+          "param": 5,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": true,
+          "nombre": "Bypass",
+          "unidad": "",
+          "opciones": [
+            "Active",
+            "Bypass"
+          ]
+        },
+        {
+          "tipo": "fader",
+          "rect": [
+            680,
+            440,
+            724,
+            552
+          ],
+          "etiqueta": "VOLUMEN",
+          "param": 6,
+          "min": -24,
+          "max": 6,
+          "defecto": 0,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 1,
+          "bipolar": true,
+          "bypass": false,
+          "nombre": "Volume",
+          "unidad": "dB"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            749,
+            458,
+            805,
+            532
+          ],
+          "etiqueta": "ESTÉREO",
+          "tamano": 44,
+          "param": 4,
+          "min": 0,
+          "max": 100,
+          "defecto": 30,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Stereo Width",
+          "unidad": "%",
+          "feature": "piano.imagen-estereo"
+        },
+        {
+          "tipo": "toggle",
+          "rect": [
+            817,
+            454,
+            959,
+            478
+          ],
+          "etiqueta": "SUSTAIN",
+          "param": 9,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Sustain Pedal",
+          "unidad": "",
+          "opciones": [
+            "Off",
+            "On"
+          ]
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            976,
+            446,
+            985,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            990,
+            446,
+            999,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            1020,
+            446,
+            1029,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            1034,
+            446,
+            1043,
+            528
+          ],
+          "etiqueta": ""
+        }
+      ]
+    }
+  },
+  {
+    "nombre": "JasWave Roles",
+    "layout": {
+      "productId": "com.jaswave.plugin.roles-vst",
+      "titulo": "ROLES",
+      "subtitulo": "INSTRUMENTO POR ROL MUSICAL · 13 ROLES",
+      "instrumento": true,
+      "visualizador": "espectro-instrumento",
+      "acento": "#A77BFF",
+      "base": {
+        "ancho": 1100,
+        "alto": 620
+      },
+      "zonas": {
+        "pantalla": [
+          34,
+          34,
+          1066,
+          586
+        ],
+        "visualizador": [
+          52,
+          92,
+          652,
+          404
+        ],
+        "espectro": [
+          66,
+          124,
+          612,
+          382
+        ],
+        "miniPanel": [
+          52,
+          418,
+          652,
+          556
+        ],
+        "controles": [
+          666,
+          92,
+          1048,
+          404
+        ],
+        "salida": [
+          666,
+          418,
+          1048,
+          556
+        ],
+        "fader": [
+          680,
+          440,
+          724,
+          552
+        ],
+        "medidores": {
+          "x": 976,
+          "arriba": 446,
+          "abajo": 528
+        }
+      },
+      "escalas": {
+        "frecuencia": [
+          20,
+          20000
+        ],
+        "dbfs": [
+          -120,
+          0
+        ],
+        "caidaDbS": 14
+      },
+      "modoParam": 0,
+      "widgets": [
+        {
+          "tipo": "section",
+          "rect": [
+            666,
+            92,
+            1048,
+            404
+          ],
+          "etiqueta": "ENVOLVENTE · FILTRO"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            704,
+            140,
+            780,
+            234
+          ],
+          "etiqueta": "ATAQUE",
+          "tamano": 64,
+          "param": 1,
+          "min": 0,
+          "max": 100,
+          "defecto": 35,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Attack",
+          "unidad": "%"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            819,
+            140,
+            895,
+            234
+          ],
+          "etiqueta": "RELEASE",
+          "tamano": 64,
+          "param": 2,
+          "min": 0,
+          "max": 100,
+          "defecto": 40,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Release",
+          "unidad": "%"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            934,
+            140,
+            1010,
+            234
+          ],
+          "etiqueta": "CORTE",
+          "tamano": 64,
+          "param": 3,
+          "min": 0,
+          "max": 100,
+          "defecto": 55,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Cutoff",
+          "unidad": "%"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            714,
+            278,
+            770,
+            352
+          ],
+          "etiqueta": "RESONANCIA",
+          "tamano": 44,
+          "param": 4,
+          "min": 0,
+          "max": 100,
+          "defecto": 25,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Resonance",
+          "unidad": "%"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            829,
+            278,
+            885,
+            352
+          ],
+          "etiqueta": "DRIVE",
+          "tamano": 44,
+          "param": 7,
+          "min": 0,
+          "max": 100,
+          "defecto": 15,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Drive",
+          "unidad": "%"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            944,
+            278,
+            1000,
+            352
+          ],
+          "etiqueta": "VOCES",
+          "tamano": 44,
+          "param": 6,
+          "min": 0,
+          "max": 100,
+          "defecto": 50,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Voices",
+          "unidad": "%"
+        },
+        {
+          "tipo": "section",
+          "rect": [
+            666,
+            418,
+            1048,
+            556
+          ],
+          "etiqueta": "SALIDA · EFECTOS"
+        },
+        {
+          "tipo": "fader",
+          "rect": [
+            680,
+            440,
+            724,
+            552
+          ],
+          "etiqueta": "NIVEL",
+          "param": 5,
+          "min": 0,
+          "max": 100,
+          "defecto": 70,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Gain",
+          "unidad": "%"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            756,
+            439,
+            798,
+            499
+          ],
+          "etiqueta": "CHORUS",
+          "tamano": 30,
+          "param": 9,
+          "min": 0,
+          "max": 100,
+          "defecto": 20,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Chorus",
+          "unidad": "%",
+          "feature": "roles.efectos"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            830,
+            439,
+            872,
+            499
+          ],
+          "etiqueta": "DELAY",
+          "tamano": 30,
+          "param": 10,
+          "min": 0,
+          "max": 100,
+          "defecto": 15,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Delay",
+          "unidad": "%",
+          "feature": "roles.efectos"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            904,
+            439,
+            946,
+            499
+          ],
+          "etiqueta": "REVERB",
+          "tamano": 30,
+          "param": 11,
+          "min": 0,
+          "max": 100,
+          "defecto": 25,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Reverb",
+          "unidad": "%",
+          "feature": "roles.efectos"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            756,
+            495,
+            798,
+            555
+          ],
+          "etiqueta": "GRAVES",
+          "tamano": 30,
+          "param": 12,
+          "min": 0,
+          "max": 100,
+          "defecto": 50,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "EQ Low",
+          "unidad": "%"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            830,
+            495,
+            872,
+            555
+          ],
+          "etiqueta": "AGUDOS",
+          "tamano": 30,
+          "param": 13,
+          "min": 0,
+          "max": 100,
+          "defecto": 50,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "EQ High",
+          "unidad": "%"
+        },
+        {
+          "tipo": "knob",
+          "rect": [
+            904,
+            495,
+            946,
+            555
+          ],
+          "etiqueta": "GATE",
+          "tamano": 30,
+          "param": 8,
+          "min": 0,
+          "max": 100,
+          "defecto": 0,
+          "pasos": 0,
+          "escala": "linear",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Gate",
+          "unidad": "%"
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            976,
+            446,
+            985,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            990,
+            446,
+            999,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            1020,
+            446,
+            1029,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "meter",
+          "rect": [
+            1034,
+            446,
+            1043,
+            528
+          ],
+          "etiqueta": ""
+        },
+        {
+          "tipo": "dropdown",
+          "rect": [
+            690,
+            48,
+            846,
+            68
+          ],
+          "etiqueta": "MODO",
+          "param": 0,
+          "min": 0,
+          "max": 12,
+          "defecto": 5,
+          "pasos": 12,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Role",
+          "unidad": "",
+          "opciones": [
+            "Bateria",
+            "Bajo",
+            "Guitarra",
+            "Piano",
+            "Teclas",
+            "Pad",
+            "Cuerdas",
+            "Coro",
+            "Lead",
+            "Metales",
+            "Synth",
+            "Percusion",
+            "Default"
+          ]
+        }
+      ]
+    }
+  }
+]

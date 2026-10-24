@@ -3,6 +3,7 @@
  * Escritorio: SIEMPRE el editor nativo del VST (misma instancia que el audio en el plugin-host),
  * embebido en el panel (V4). Los VST de JasWave muestran aquí su editor cyber; no hay paneles web
  * distintos. Si el plugin no admite el modo embebido, se abre en ventana flotante.
+ * Web: la réplica del mismo editor que aporta el módulo «Editores de VST» (servicio `editorPlugin`).
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -31,6 +32,8 @@ import { requestOpenTool } from '@/src/workspace/types'
 import { JASWAVE_ROLES_NAME } from '@/src/lib/plugin/jaswave-roles'
 import { isJasWaveFxPlugin } from '@/src/lib/plugin/bundled-plugins'
 import type { EditorEmbedRect } from '@/src/lib/plugin/types'
+import { servicioDeModulo } from '@/src/modulos/contribuciones'
+import { useVersionModulos } from '@/src/modulos/use-modulos'
 
 function useEditorFocus() {
   return useSyncExternalStore(subscribePluginEditorFocus, getPluginEditorFocus, () => null)
@@ -357,6 +360,25 @@ function VstNativeEditor({
   )
 }
 
+/** Web: no hay plugin-host; el editor lo pone un módulo (réplica del editor nativo) si lo soporta. */
+function EditorPluginWeb({ plugin, trackId }: { plugin: PluginInfo; trackId: string }) {
+  useVersionModulos()
+  const servicio = servicioDeModulo('editorPlugin')
+  if (servicio?.soporta({ nombre: plugin.nombre })) {
+    const Componente = servicio.Componente
+    return <Componente trackId={trackId} pluginInstanceId={plugin.id} />
+  }
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-[11px] text-muted-foreground">
+      <p>El editor de «{plugin.nombre}» está disponible en la app de escritorio.</p>
+      <p className="text-[10px]">Los VST de JasWave también se editan aquí con el módulo «Editores de VST» (Módulos).</p>
+      <button type="button" onClick={() => requestOpenTool('modulos')} className="text-[11px] text-accent-amber hover:underline">
+        Ir a Módulos
+      </button>
+    </div>
+  )
+}
+
 export function PluginEditorPanel() {
   const focus = useEditorFocus()
   const tienda = useDAW()
@@ -432,7 +454,11 @@ export function PluginEditorPanel() {
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
-        <VstNativeEditor plugin={plugin} trackId={focus.trackId} />
+        {typeof window !== 'undefined' && window.electron?.pluginsListar ? (
+          <VstNativeEditor plugin={plugin} trackId={focus.trackId} />
+        ) : (
+          <EditorPluginWeb plugin={plugin} trackId={focus.trackId} />
+        )}
       </div>
     </div>
   )

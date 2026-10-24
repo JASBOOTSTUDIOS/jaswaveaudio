@@ -57,6 +57,14 @@ export type ServiciosModulo = {
     exportarClipPdf: (tienda: unknown, pistaId: string, clipId: string) => Promise<{ ok: boolean; message: string }>
     exportarProyecto: (tienda: unknown, carpeta: string, incluirProyecto: boolean) => Promise<{ ok: boolean; message: string; count: number }>
   }
+  /**
+   * Editor de un plugin en la web (V4): el panel «Editor de plugin» lo usa cuando no hay editor nativo
+   * (en escritorio siempre se muestra el del VST). `soporta` recibe el nombre del plugin insertado.
+   */
+  editorPlugin?: {
+    soporta: (plugin: { nombre: string }) => boolean
+    Componente: ComponentType<{ trackId: string; pluginInstanceId: string }>
+  }
 }
 
 export type ModuloActivo = {

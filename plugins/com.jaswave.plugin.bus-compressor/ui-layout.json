@@ -97,6 +97,9 @@
       "defecto": -20,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Threshold",
       "unidad": "dB"
     },
@@ -116,6 +119,9 @@
       "defecto": 4,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Ratio",
       "unidad": ":1"
     },
@@ -135,6 +141,9 @@
       "defecto": 6,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Knee",
       "unidad": "dB"
     },
@@ -154,6 +163,9 @@
       "defecto": 10,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Attack",
       "unidad": "ms"
     },
@@ -173,6 +185,9 @@
       "defecto": 100,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Release",
       "unidad": "ms"
     },
@@ -191,6 +206,9 @@
       "defecto": 1,
       "pasos": 1,
       "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Detector",
       "unidad": "",
       "opciones": [
@@ -213,6 +231,9 @@
       "defecto": 0,
       "pasos": 1,
       "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": true,
       "nombre": "Bypass",
       "unidad": "",
       "opciones": [
@@ -235,6 +256,9 @@
       "defecto": 0,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
       "nombre": "Makeup",
       "unidad": "dB"
     },
@@ -254,6 +278,9 @@
       "defecto": 100,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Mix",
       "unidad": "%",
       "feature": "comp.mezcla-paralela"
@@ -274,6 +301,9 @@
       "defecto": 0,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Sidechain HP",
       "unidad": "Hz",
       "feature": "comp.filtro-sidechain"

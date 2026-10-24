@@ -97,6 +97,9 @@
       "defecto": 35,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Attack",
       "unidad": "%"
     },
@@ -116,6 +119,9 @@
       "defecto": 40,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Release",
       "unidad": "%"
     },
@@ -135,6 +141,9 @@
       "defecto": 55,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Cutoff",
       "unidad": "%"
     },
@@ -154,6 +163,9 @@
       "defecto": 25,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Resonance",
       "unidad": "%"
     },
@@ -173,6 +185,9 @@
       "defecto": 15,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Drive",
       "unidad": "%"
     },
@@ -192,6 +207,9 @@
       "defecto": 50,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Voices",
       "unidad": "%"
     },
@@ -220,6 +238,9 @@
       "defecto": 70,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Gain",
       "unidad": "%"
     },
@@ -239,6 +260,9 @@
       "defecto": 20,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Chorus",
       "unidad": "%",
       "feature": "roles.efectos"
@@ -259,6 +283,9 @@
       "defecto": 15,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Delay",
       "unidad": "%",
       "feature": "roles.efectos"
@@ -279,6 +306,9 @@
       "defecto": 25,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Reverb",
       "unidad": "%",
       "feature": "roles.efectos"
@@ -299,6 +329,9 @@
       "defecto": 50,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "EQ Low",
       "unidad": "%"
     },
@@ -318,6 +351,9 @@
       "defecto": 50,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "EQ High",
       "unidad": "%"
     },
@@ -337,6 +373,9 @@
       "defecto": 0,
       "pasos": 0,
       "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Gate",
       "unidad": "%"
     },
@@ -395,6 +434,9 @@
       "defecto": 5,
       "pasos": 12,
       "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
       "nombre": "Role",
       "unidad": "",
       "opciones": [
