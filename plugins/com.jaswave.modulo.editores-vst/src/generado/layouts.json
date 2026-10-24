@@ -4,7 +4,7 @@
     "layout": {
       "productId": "com.jaswave.plugin.param-eq",
       "titulo": "PARAMETRIC EQ",
-      "subtitulo": "8 BANDAS · FASE MÍNIMA · LATENCIA 0",
+      "subtitulo": "HASTA 24 BANDAS · FASE MÍNIMA · LATENCIA 0",
       "instrumento": false,
       "visualizador": "espectro-dual",
       "acento": "#2FD6F2",
@@ -176,9 +176,9 @@
           "etiqueta": "TIPO",
           "param": 1,
           "min": 0,
-          "max": 5,
+          "max": 6,
           "defecto": 0,
-          "pasos": 5,
+          "pasos": 6,
           "escala": "stepped",
           "decimales": 0,
           "bipolar": false,
@@ -191,7 +191,89 @@
             "Peak",
             "High Shelf",
             "LPF",
-            "Notch"
+            "Notch",
+            "Band Pass"
+          ]
+        },
+        {
+          "tipo": "toggle",
+          "rect": [
+            920,
+            292,
+            1024,
+            316
+          ],
+          "etiqueta": "SOLO",
+          "param": 103,
+          "min": 0,
+          "max": 1,
+          "defecto": 0,
+          "pasos": 1,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Band 1 Solo",
+          "unidad": "",
+          "opciones": [
+            "Off",
+            "On"
+          ]
+        },
+        {
+          "tipo": "dropdown",
+          "rect": [
+            690,
+            350,
+            909,
+            370
+          ],
+          "etiqueta": "MODO",
+          "param": 102,
+          "min": 0,
+          "max": 4,
+          "defecto": 0,
+          "pasos": 4,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Band 1 Mode",
+          "unidad": "",
+          "opciones": [
+            "Stereo",
+            "Mid",
+            "Side",
+            "Left",
+            "Right"
+          ]
+        },
+        {
+          "tipo": "dropdown",
+          "rect": [
+            920,
+            350,
+            1024,
+            370
+          ],
+          "etiqueta": "PEND.",
+          "param": 101,
+          "min": 0,
+          "max": 4,
+          "defecto": 0,
+          "pasos": 4,
+          "escala": "stepped",
+          "decimales": 0,
+          "bipolar": false,
+          "bypass": false,
+          "nombre": "Band 1 Slope",
+          "unidad": "",
+          "opciones": [
+            "Global",
+            "12 dB/oct",
+            "24 dB/oct",
+            "36 dB/oct",
+            "48 dB/oct"
           ]
         },
         {
@@ -334,6 +416,46 @@
             528
           ],
           "etiqueta": ""
+        },
+        {
+          "tipo": "button",
+          "rect": [
+            690,
+            378,
+            786,
+            398
+          ],
+          "etiqueta": "+ BANDA"
+        },
+        {
+          "tipo": "button",
+          "rect": [
+            792,
+            378,
+            888,
+            398
+          ],
+          "etiqueta": "− BANDA"
+        },
+        {
+          "tipo": "button",
+          "rect": [
+            894,
+            378,
+            934,
+            398
+          ],
+          "etiqueta": "◀"
+        },
+        {
+          "tipo": "button",
+          "rect": [
+            940,
+            378,
+            980,
+            398
+          ],
+          "etiqueta": "▶"
         }
       ]
     }

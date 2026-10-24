@@ -207,6 +207,125 @@ static void testEq() {
     CHECK(g_allocs.load() == allocs0, "EQ: 0 asignaciones de memoria en process (%lld)", g_allocs.load() - allocs0);
 }
 
+// Bandas dinámicas (pool de 24 slots), modos M/S/L/R, pendiente por banda, solo y medición por banda
+static void testEqDinamico() {
+    std::printf("\n[EQ] bandas dinámicas, modos, pendiente por banda, solo y medición por banda\n");
+    using namespace JasWaveEq;
+    const double sr = 48000.0;
+    const int n = 48000;
+    auto gainAt = [&](EqEngine& e, const Buf& xl, const Buf& xr, double f, bool right = false) {
+        Buf yl, yr;
+        e.reset();
+        runFx(e, static_cast<EqBus*>(nullptr), xl, xr, yl, yr, 512);
+        const double in = toneAmp(right ? xr : xl, n / 2, n, f, sr);
+        return db(toneAmp(right ? yr : yl, n / 2, n, f, sr) / std::max(in, 1e-9));
+    };
+    auto flat = [] {
+        EqSettings s;
+        for (auto& b : s.band) { b.on = false; b.used = false; }
+        s.analyzer = 0;
+        return s;
+    };
+    // 1) un slot alto (13) usado funciona; sin usar no suena
+    {
+        EqSettings s = flat();
+        s.band[12] = { tPeak, 1000.0, 6.0, 1.0, true, true, 0, mStereo, false };
+        EqEngine e; e.setSettings(s); e.prepare(sr, 512);
+        const Buf x = sine(1000, 0.25, sr, n);
+        const double on = gainAt(e, x, x, 1000);
+        s.band[12].used = false;
+        e.setSettings(s); e.snap();
+        const double off = gainAt(e, x, x, 1000);
+        CHECK(std::fabs(on - 6.0) < 0.1 && std::fabs(off) < 0.05, "slot 13 usado: %+.3f dB (esperado +6); sin usar: %+.3f dB (esperado 0)", on, off);
+    }
+    // 2) las 24 bandas usadas a la vez (+1 dB c/u en 1 kHz) suman como en la fórmula
+    {
+        EqSettings s = flat();
+        for (int b = 0; b < kBands; ++b) s.band[static_cast<size_t>(b)] = { tPeak, 1000.0, 1.0, 1.0, true, true, 0, mStereo, false };
+        EqEngine e; e.setSettings(s); e.prepare(sr, 512);
+        const Buf x = sine(1000, 0.05, sr, n);
+        const double g = gainAt(e, x, x, 1000);
+        CHECK(std::fabs(g - 24.0) < 0.2, "24 bandas × +1 dB en 1 kHz = %+.3f dB (esperado +24)", g);
+    }
+    // 3) modos Mid / Side / Left / Right
+    {
+        const Buf m = sine(1000, 0.25, sr, n);
+        Buf neg(m.size());
+        for (size_t i = 0; i < m.size(); ++i) neg[i] = -m[i];
+        auto modeGain = [&](int mode, const Buf& xl, const Buf& xr, bool rightCh) {
+            EqSettings s = flat();
+            s.band[0] = { tPeak, 1000.0, 6.0, 1.0, true, true, 0, mode, false };
+            EqEngine e; e.setSettings(s); e.prepare(sr, 512);
+            return gainAt(e, xl, xr, 1000, rightCh);
+        };
+        CHECK(std::fabs(modeGain(mMid, m, m, false) - 6.0) < 0.1 && std::fabs(modeGain(mMid, m, neg, false)) < 0.1,
+              "modo Mid: +6 dB solo sobre el centro (L=R) y 0 dB sobre el lateral (L=-R)");
+        CHECK(std::fabs(modeGain(mSide, m, neg, false) - 6.0) < 0.1 && std::fabs(modeGain(mSide, m, m, false)) < 0.1,
+              "modo Side: +6 dB solo sobre el lateral y 0 dB sobre el centro");
+        CHECK(std::fabs(modeGain(mLeft, m, m, false) - 6.0) < 0.1 && std::fabs(modeGain(mLeft, m, m, true)) < 0.05,
+              "modo Left: sube L (+6) y deja R intacto");
+        CHECK(std::fabs(modeGain(mRight, m, m, true) - 6.0) < 0.1 && std::fabs(modeGain(mRight, m, m, false)) < 0.05,
+              "modo Right: sube R (+6) y deja L intacto");
+    }
+    // 4) pendiente propia de la banda (48 dB/oct) frente a la global (12 dB/oct)
+    {
+        EqSettings s = flat();
+        s.band[0] = { tHpf, 200.0, 0.0, 0.71, true, true, 4, mStereo, false };   // slope 4 = 48 dB/oct propia
+        s.slopeIdx = 0;                                                       // global 12 dB/oct
+        EqEngine e; e.setSettings(s); e.prepare(sr, 512);
+        const Buf x = sine(100.0, 0.25, sr, 2 * n);
+        Buf yl, yr;
+        e.reset();
+        runFx(e, static_cast<EqBus*>(nullptr), x, x, yl, yr, 256);
+        const double meas = db(toneAmp(yl, n, 2 * n, 100.0, sr) / 0.25);
+        const double fw = std::tan(kPi * 100.0 / sr), cw = std::tan(kPi * 200.0 / sr);
+        const double ref = -10.0 * std::log10(1.0 + std::pow(cw / fw, 16.0));
+        CHECK(std::fabs(meas - ref) < 0.1, "HPF con pendiente propia de 48 dB/oct a 100 Hz: %.2f dB (analítico %.2f)", meas, ref);
+    }
+    // 5) solo: se escucha solo la región de la banda
+    {
+        EqSettings s = flat();
+        s.band[3] = { tPeak, 1000.0, 0.0, 1.0, true, true, 0, mStereo, true };
+        EqEngine e; e.setSettings(s); e.prepare(sr, 512);
+        const double at1k = gainAt(e, sine(1000, 0.25, sr, n), sine(1000, 0.25, sr, n), 1000);
+        const double at100 = gainAt(e, sine(100, 0.25, sr, n), sine(100, 0.25, sr, n), 100);
+        CHECK(std::fabs(at1k) < 0.5 && at100 < -15.0, "solo: 1 kHz pasa (%.2f dB) y 100 Hz se atenúa (%.1f dB)", at1k, at100);
+    }
+    // 6) medición por banda: salida − entrada = aporte real de la banda; sin asignaciones en process
+    {
+        EqSettings s = flat();
+        s.band[0] = { tPeak, 1000.0, 6.0, 1.0, true, true, 0, mStereo, false };
+        s.band[1] = { tPeak, 6000.0, -9.0, 1.0, true, true, 0, mStereo, false };
+        s.analyzer = 0;
+        EqEngine e; e.setSettings(s); e.prepare(sr, 512);
+        auto bus = std::make_unique<EqBus>();
+        bus->editoresAbiertos.store(1);
+        const Buf x = sine(1000, 0.25, sr, n);
+        Buf yl, yr;
+        const long long a0 = g_allocs.load();
+        runFx(e, bus.get(), x, x, yl, yr, 512);
+        const long long allocs = g_allocs.load() - a0;
+        const float in0 = bus->bandInDb[0].load(), out0 = bus->bandOutDb[0].load();
+        const float in1 = bus->bandInDb[1].load(), out1 = bus->bandOutDb[1].load();
+        const float in2 = bus->bandInDb[2].load();
+        CHECK(std::fabs((out0 - in0) - 6.0f) < 0.5f, "medición banda 1 (+6 dB en 1 kHz): aporte medido %+.2f dB", out0 - in0);
+        CHECK(in0 > -40.0f && in1 < in0 - 8.0f, "señal real por banda: banda 1 ve el tono (%.1f dB) y banda 2 (6 kHz) bastante menos (%.1f dB)", in0, in1);
+        CHECK(std::fabs(out1 - in1) < 1.5f || in1 < -60.0f, "banda 2 sin señal relevante: aporte %+.2f dB", out1 - in1);
+        CHECK(in2 <= kBandFloorDb + 0.01f, "banda sin usar/apagada: medición en el piso (%.0f dB)", in2);
+        CHECK(allocs == 0, "EQ con medición por banda: 0 asignaciones en process (%lld)", allocs);
+    }
+    // 7) los IDs de las 8 bandas heredadas no cambian y los nuevos no colisionan
+    {
+        bool legacy = bandParam(0, fType) == 1u && bandParam(7, fOn) == 40u && kOutput == 41u && kSlope == 42u && kAnalyzer == 43u;
+        std::vector<uint32_t> ids;
+        for (const auto& d : paramDefs()) ids.push_back(d.id);
+        std::sort(ids.begin(), ids.end());
+        const bool unique = std::adjacent_find(ids.begin(), ids.end()) == ids.end();
+        CHECK(legacy, "IDs heredados intactos (banda 1 = 1..5, banda 8 = 36..40, out 41, pendiente 42, analizador 43)");
+        CHECK(unique && static_cast<int>(ids.size()) == 1 + 5 * kBands + 3 + 4 * kBands, "%zu parámetros, todos con ID único", ids.size());
+    }
+}
+
 static void testComp() {
     std::printf("\n[COMPRESOR] curva estática (umbral/ratio/rodilla)\n");
     using namespace JasWaveComp;
@@ -699,6 +818,7 @@ int main() {
     std::printf("JasWave DSP selftest\n");
     testV3Visualizacion();
     testEq();
+    testEqDinamico();
     testComp();
     testLimiter();
     testDeEsser();

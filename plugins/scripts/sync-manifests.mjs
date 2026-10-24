@@ -23,9 +23,22 @@ const fuid = (a, b, c, d) => {
 }
 const band = (n) => [`b${n}.tipo`, `b${n}.freq`, `b${n}.ganancia`, `b${n}.q`, `b${n}.activa`]
 const bandNames = (n) => [`Banda ${n} Tipo`, `Banda ${n} Frecuencia`, `Banda ${n} Ganancia`, `Banda ${n} Q`, `Banda ${n} Activa`]
+// EQ dinámico: pool de 24 slots con IDs estables (param_eq_dsp.h: bandParam / extParam).
+//   bandas 1..8  -> 1 + (b-1)*5 + campo            (IDs heredados, compatibles con JasWaveFx)
+//   bandas 9..24 -> 400 + (b-9)*5 + campo
+//   extra por banda (usada, pendiente propia, modo, solo) -> 100 + (b-1)*8 + campo
+const EQ_BANDS = 24
 const eqIds = {}
 eqIds[0] = ['bypass', 'Bypass']
-for (let b = 1; b <= 8; b++) band(b).forEach((id, k) => (eqIds[1 + (b - 1) * 5 + k] = [id, bandNames(b)[k]]))
+for (let b = 1; b <= EQ_BANDS; b++) {
+  const base = b <= 8 ? 1 + (b - 1) * 5 : 400 + (b - 9) * 5
+  band(b).forEach((id, k) => (eqIds[base + k] = [id, bandNames(b)[k]]))
+  const ext = 100 + (b - 1) * 8
+  eqIds[ext] = [`b${b}.usada`, `Banda ${b} Usada (alta/baja de la banda)`]
+  eqIds[ext + 1] = [`b${b}.pendiente`, `Banda ${b} Pendiente propia (Global/12/24/36/48 dB/oct)`]
+  eqIds[ext + 2] = [`b${b}.modo`, `Banda ${b} Modo (Stereo/Mid/Side/Left/Right)`]
+  eqIds[ext + 3] = [`b${b}.solo`, `Banda ${b} Solo (escucha de la región de la banda)`]
+}
 eqIds[41] = ['salida', 'Ganancia de salida']
 eqIds[42] = ['pendiente', 'Pendiente HPF/LPF']
 eqIds[43] = ['analizador', 'Analizador de espectro']
@@ -33,9 +46,9 @@ eqIds[43] = ['analizador', 'Analizador de espectro']
 const PLUGINS = [
   {
     dir: 'com.jaswave.plugin.param-eq', target: 'JasWaveParamEq', name: 'JasWave EQ Parametric Pro', category: 'audio-effect',
-    description: 'Ecualizador paramétrico de 8 bandas de tipo seleccionable (HPF, shelving, peak, notch, LPF), fase mínima y latencia 0.',
+    description: 'Ecualizador paramétrico dinámico de hasta 24 bandas de tipo seleccionable (HPF, shelving, peak, notch, LPF, band-pass) con modos estéreo/mid/side/L/R, pendiente y solo por banda, medición de la señal por banda, fase mínima y latencia 0.',
     classId: fuid(0x4A617357, 0x46584551, 0x50726F63, 0x56335431), sub: 'Fx|EQ', roles: ['mezcla', 'mastering', 'qa'],
-    summary: 'Ecualizador paramétrico de 8 bandas para corrección y color (RBJ, 12–48 dB/oct en los cortes).',
+    summary: 'Ecualizador paramétrico de hasta 24 bandas dinámicas (activar/desactivar slots) para corrección y color (RBJ, 12–48 dB/oct en los cortes).',
     intents: ['cortar-graves', 'realzar-presencia', 'eliminar-resonancia', 'suavizar-agudos', 'dar-cuerpo'],
     ids: eqIds,
   },

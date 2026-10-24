@@ -120,7 +120,7 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
   {
     type: 'pista.eq.agregar',
     kind: 'agent',
-    description: 'Añade/actualiza un ecualizador con bandas reales (freq Hz, gain dB, q, type)',
+    description: 'Añade/actualiza un ecualizador con hasta 24 bandas reales (freq Hz, gain dB, q, type: bell|lowShelf|highShelf|lowCut|highCut|notch|bandPass; opcionales slope, mode, solo)',
     examplePayload: { trackId: '…', bandas: [{ freq: 100, gain: 3, q: 1.4, type: 'bell', enabled: true }] },
   },
   {
@@ -134,6 +134,25 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     kind: 'agent',
     description: 'Quita el ecualizador de una pista',
     examplePayload: { trackId: '…' },
+  },
+  {
+    type: 'pista.eq.banda.agregar',
+    kind: 'agent',
+    description:
+      'Agrega UNA banda al ecualizador de la pista (hasta 24; crea el EQ si falta). Tipos: bell, lowShelf, highShelf, lowCut, highCut, notch, bandPass. Opcionales: slope 12|24|36|48 (cortes), mode stereo|mid|side|left|right, solo',
+    examplePayload: { trackId: '…', banda: { freq: 300, gain: -3, q: 2, type: 'bell', enabled: true, mode: 'stereo' } },
+  },
+  {
+    type: 'pista.eq.banda.editar',
+    kind: 'agent',
+    description: 'Cambia solo los campos indicados de una banda del EQ (indice 0-based) y deja el resto igual',
+    examplePayload: { trackId: '…', indice: 0, cambios: { gain: -4, q: 3 } },
+  },
+  {
+    type: 'pista.eq.banda.quitar',
+    kind: 'agent',
+    description: 'Quita UNA banda del EQ de la pista (indice 0-based)',
+    examplePayload: { trackId: '…', indice: 2 },
   },
   {
     type: 'pista.compresor.agregar',
@@ -162,8 +181,9 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
   {
     type: 'mix.eq',
     kind: 'agent',
-    description: 'Inserta/usa el EQ JasWave de 8 bandas en una pista y fija parámetros reales (freq Hz, gain dB, q, tipo, on, output).',
-    examplePayload: { trackId: '…', banda: 1, freq: 3000, gain: -6, q: 1.4, output: 0 },
+    description:
+      'Inserta/usa el EQ JasWave (hasta 24 bandas dinámicas) en una pista y fija parámetros reales (banda 1..24, freq Hz, gain dB, q, tipo, on, pendiente, modo, solo, output). accion: ajustar (por defecto) | agregarBanda | quitarBanda | estado (lista las bandas en uso).',
+    examplePayload: { trackId: '…', accion: 'agregarBanda', freq: 3000, gain: -6, q: 1.4, tipo: 'bell' },
   },
   {
     type: 'mix.compress',
@@ -687,6 +707,9 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'pista.eq.agregar',
   'pista.eq.editar',
   'pista.eq.quitar',
+  'pista.eq.banda.agregar',
+  'pista.eq.banda.editar',
+  'pista.eq.banda.quitar',
   'pista.compresor.agregar',
   'pista.compresor.editar',
   'pista.compresor.quitar',

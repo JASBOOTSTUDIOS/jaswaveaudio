@@ -312,6 +312,129 @@ describe('comandos de actuación con valores reales (A7c)', () => {
       await exec.undo()
       expect(pistaEstado(exec.obtenerEstado(), 't-bajo').plugins.find((p) => p.tipo === 'eq')).toBeDefined()
     })
+
+    const eqDe = (exec: ReturnType<typeof crearExecutor>) =>
+      pistaEstado(exec.obtenerEstado(), 't-bajo').plugins.find((p) => p.tipo === 'eq')
+    const valor = (exec: ReturnType<typeof crearExecutor>, id: string) =>
+      eqDe(exec)?.parametros.find((x) => x.id === id)?.valor
+
+    it('eq.agregar sobre un EQ existente: deshacer RESTAURA las bandas previas (antes quitaba el EQ)', async () => {
+      const exec = crearExecutor(estado)
+      await exec.execute('pista.eq.agregar', { trackId: 't-bajo', bandas: [bandaBajo] }, 'ai')
+      await exec.execute('pista.eq.agregar', { trackId: 't-bajo', bandas: [{ ...bandaBajo, gain: -5, freq: 250 }] }, 'ai')
+      expect(valor(exec, 'eq.band.0.gain')).toBe(-5)
+      await exec.undo()
+      expect(eqDe(exec)).toBeDefined()
+      expect(valor(exec, 'eq.band.0.gain')).toBe(3)
+      expect(valor(exec, 'eq.band.0.freq')).toBe(100)
+    })
+
+    it('admite hasta 24 bandas y rechaza la 25ª con un error claro', async () => {
+      const exec = crearExecutor(estado)
+      const muchas = Array.from({ length: 24 }, (_, i) => ({ ...bandaBajo, freq: 100 + i * 100 }))
+      expect((await exec.execute('pista.eq.agregar', { trackId: 't-bajo', bandas: muchas }, 'ai')).success).toBe(true)
+      const r = await exec.execute('pista.eq.agregar', { trackId: 't-bajo', bandas: [...muchas, bandaBajo] }, 'ai')
+      expect(r.success).toBe(false)
+      expect(JSON.stringify(r.error)).toMatch(/24/)
+    })
+
+    it('tipos nuevos (notch, bandPass), alias de la IA y parámetros extra por banda', async () => {
+      const exec = crearExecutor(estado)
+      const r = await exec.execute(
+        'pista.eq.agregar',
+        {
+          trackId: 't-bajo',
+          bandas: [
+            { freq: 60, gain: 0, q: 0.7, type: 'hpf', enabled: true, slope: 48 },
+            { freq: 2000, gain: 0, q: 6, type: 'notch', enabled: true, mode: 'mid' },
+            { freq: 5000, gain: 0, q: 1, type: 'bandPass', enabled: true, solo: true },
+          ],
+        },
+        'ai',
+      )
+      expect(r.success).toBe(true)
+      expect(valor(exec, 'eq.band.0.type')).toBe(0) // hpf → lowCut = código 0 del VST
+      expect(valor(exec, 'eq.band.0.slope')).toBe(48)
+      expect(valor(exec, 'eq.band.1.type')).toBe(5)
+      expect(valor(exec, 'eq.band.1.mode')).toBe(1)
+      expect(valor(exec, 'eq.band.2.type')).toBe(6)
+      expect(valor(exec, 'eq.band.2.solo')).toBe(1)
+    })
+
+    it('un tipo desconocido falla con un mensaje que dice qué usar', async () => {
+      const exec = crearExecutor(estado)
+      const r = await exec.execute('pista.eq.agregar', { trackId: 't-bajo', bandas: [{ ...bandaBajo, type: 'raro' }] }, 'ai')
+      expect(r.success).toBe(false)
+      expect(JSON.stringify(r.error)).toMatch(/bandPass/)
+    })
+
+    it('eq.banda.agregar / editar / quitar: una banda a la vez, con undo', async () => {
+      const exec = crearExecutor(estado)
+      // crea el EQ con la primera banda
+      expect((await exec.execute('pista.eq.banda.agregar', { trackId: 't-bajo', banda: bandaBajo }, 'ai')).success).toBe(true)
+      expect(valor(exec, 'eq.band.0.freq')).toBe(100)
+      // segunda banda
+      await exec.execute('pista.eq.banda.agregar', { trackId: 't-bajo', banda: { ...bandaBajo, freq: 3000, gain: -2 } }, 'ai')
+      expect(valor(exec, 'eq.band.1.freq')).toBe(3000)
+      // editar solo la ganancia de la segunda
+      await exec.execute('pista.eq.banda.editar', { trackId: 't-bajo', indice: 1, cambios: { gain: -6 } }, 'ai')
+      expect(valor(exec, 'eq.band.1.gain')).toBe(-6)
+      expect(valor(exec, 'eq.band.1.freq')).toBe(3000) // el resto intacto
+      expect(valor(exec, 'eq.band.0.gain')).toBe(3)
+      // quitar la primera
+      await exec.execute('pista.eq.banda.quitar', { trackId: 't-bajo', indice: 0 }, 'ai')
+      expect(valor(exec, 'eq.band.0.freq')).toBe(3000)
+      expect(valor(exec, 'eq.band.1.freq')).toBeUndefined()
+
+      // deshacer paso a paso
+      await exec.undo()
+      expect(valor(exec, 'eq.band.1.freq')).toBe(3000)
+      expect(valor(exec, 'eq.band.0.freq')).toBe(100)
+      await exec.undo()
+      expect(valor(exec, 'eq.band.1.gain')).toBe(-2)
+      await exec.undo()
+      expect(valor(exec, 'eq.band.1.freq')).toBeUndefined()
+      await exec.undo()
+      expect(eqDe(exec)).toBeUndefined() // el EQ lo creó el primer comando: se retira
+
+      // errores accionables
+      const sinEq = await exec.execute('pista.eq.banda.editar', { trackId: 't-bajo', indice: 0, cambios: { gain: 1 } }, 'ai')
+      expect(sinEq.success).toBe(false)
+    })
+
+    it('eq.banda.editar con índice inexistente falla indicando cuántas bandas hay', async () => {
+      const exec = crearExecutor(estado)
+      await exec.execute('pista.eq.banda.agregar', { trackId: 't-bajo', banda: bandaBajo }, 'ai')
+      const r = await exec.execute('pista.eq.banda.editar', { trackId: 't-bajo', indice: 5, cambios: { gain: 1 } }, 'ai')
+      expect(r.success).toBe(false)
+      expect(JSON.stringify(r.error)).toMatch(/hay 1/)
+    })
+
+    it('lee proyectos con el esquema anterior (códigos de tipo heredados) y los migra', async () => {
+      const exec = crearExecutor(estado)
+      await exec.execute('pista.eq.agregar', { trackId: 't-bajo', bandas: [bandaBajo] }, 'ai')
+      // simula un proyecto antiguo: sin eq.version y con tipo highShelf = 2 (esquema 1)
+      const viejo = eqDe(exec)!
+      const parametros = viejo.parametros
+        .filter((x) => x.id !== 'eq.version')
+        .map((x) => (x.id === 'eq.band.0.type' ? { ...x, valor: 2 } : x))
+      const est = exec.obtenerEstado()
+      const nuevoEstado = {
+        ...est,
+        project: {
+          ...est.project,
+          tracks: est.project.tracks.map((t) =>
+            t.id === 't-bajo' ? { ...t, plugins: t.plugins.map((p) => (p.tipo === 'eq' ? { ...p, parametros } : p)) } : t,
+          ),
+        },
+      }
+      const exec2 = crearExecutor(nuevoEstado as typeof estado)
+      await exec2.execute('pista.eq.banda.editar', { trackId: 't-bajo', indice: 0, cambios: { gain: 1 } }, 'ai')
+      const tras = pistaEstado(exec2.obtenerEstado(), 't-bajo').plugins.find((p) => p.tipo === 'eq')!
+      // el esquema 1 con código 2 = highShelf → en el esquema nuevo es el código 3
+      expect(tras.parametros.find((x) => x.id === 'eq.band.0.type')!.valor).toBe(3)
+      expect(tras.parametros.find((x) => x.id === 'eq.version')!.valor).toBe(2)
+    })
   })
 
   describe('pista.compresor.*', () => {

@@ -22,6 +22,10 @@ export const JASWAVE_PIANO_BUNDLE = 'JasWavePiano.vst3'
  * IDs de parámetro de los FX JasWave (EQ, compresor, limitador, utility, de-esser): ParamID VST3 de los
  * plugins independientes de plugins/ (estables; ver vstParamId en cada jaswave-plugin.json).
  */
+/**
+ * Solo las 8 bandas HEREDADAS (ids 1..40) siguen la fórmula base+stride. El EQ dinámico tiene hasta 24 slots con
+ * ids extra: la fuente de verdad es shared/src/audio/eq-dinamico.ts (eqParamId), no estas constantes.
+ */
 export const JASWAVE_FX_EQ = {
   bypass: 0,
   output: 41,

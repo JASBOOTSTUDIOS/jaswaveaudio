@@ -11,9 +11,26 @@ import type { TiendaDAW } from '../../../../shared/src/state/tienda'
 import type { DAWState } from '../../../../shared/src/types/state'
 import type { PluginDescriptor } from './types'
 import { pluginRegistry } from './registry'
-import { JASWAVE_FX_EQ } from './bundled-plugins'
 import { descriptorDePlugin } from '../plugins/registro-plugins'
-import { setSlotParameter, ensureTrackVstPlugin, slotIdForTrackPlugin } from './track-vst-runtime'
+import { setSlotParameter, listSlotParameters, ensureTrackVstPlugin, slotIdForTrackPlugin } from './track-vst-runtime'
+import {
+  EQ_MAX_BANDAS,
+  EQ_PRIMERA_BANDA_AVANZADA,
+  eqAjustesABandas,
+  eqBandasAAjustes,
+  eqDiferencias,
+  eqFrecuenciaLibre,
+  eqNombreParametro,
+  eqParamId,
+  eqPerfilParametros,
+  eqPrimerSlotLibre,
+  eqResumenCambios,
+  eqValorANormalizado,
+  normalizarTipoEq,
+  type BandaEq,
+  type CambioEq,
+} from '../../../../shared/src/audio/eq-dinamico'
+import { EventosMezcla } from '../../../../shared/src/constants/nombres-eventos'
 import { descriptorToPluginInfo } from './plugin-info-adapter'
 import profiles from './processor-profiles.json'
 
@@ -79,7 +96,17 @@ export function perfilParametros(kind: FxKind): ProfileParam[] {
   return profileFor(kind)?.parameters ?? []
 }
 
+/** El perfil del EQ sale del contrato de shared/ (24 bandas + parámetros extra), no de processor-profiles.json. */
+let perfilEq: ProfilePlugin | undefined
 function profileFor(kind: FxKind): ProfilePlugin | undefined {
+  if (kind === 'eq') {
+    perfilEq ??= {
+      name: 'JasWave EQ',
+      parameterCount: eqPerfilParametros().length,
+      parameters: eqPerfilParametros() as ProfileParam[],
+    }
+    return perfilEq
+  }
   return PROFILES.plugin[PERFIL_POR_TIPO[kind]]
 }
 
@@ -139,14 +166,13 @@ export function eqBandParamIds(band1: number): {
   q: number
   on: number
 } {
-  const b = Math.max(1, Math.min(8, band1))
-  const base = JASWAVE_FX_EQ.bandBase + (b - 1) * JASWAVE_FX_EQ.bandStride
+  const slot = Math.max(1, Math.min(EQ_MAX_BANDAS, Math.round(band1))) - 1
   return {
-    type: base + JASWAVE_FX_EQ.bandType,
-    freq: base + JASWAVE_FX_EQ.bandFreq,
-    gain: base + JASWAVE_FX_EQ.bandGain,
-    q: base + JASWAVE_FX_EQ.bandQ,
-    on: base + JASWAVE_FX_EQ.bandOn,
+    type: eqParamId(slot, 'type'),
+    freq: eqParamId(slot, 'freq'),
+    gain: eqParamId(slot, 'gain'),
+    q: eqParamId(slot, 'q'),
+    on: eqParamId(slot, 'enabled'),
   }
 }
 
@@ -184,6 +210,16 @@ export async function ensureJasWaveFxOnTrack(
   }
 }
 
+/** Resuelve un nombre del perfil ("Banda 3 Freq") o un id numérico al id de parámetro del VST. */
+export function resolveParamId(kind: FxKind, nameOrId: string | number): number | undefined {
+  if (typeof nameOrId === 'number') return Number.isFinite(nameOrId) ? nameOrId : undefined
+  const texto = String(nameOrId).trim()
+  if (/^\d+$/.test(texto)) return Number(texto)
+  const norm = (x: string) => x.toLowerCase().replace(/\s+/g, ' ')
+  const p = profileFor(kind)?.parameters.find((q) => norm(q.name) === norm(texto))
+  return p?.id
+}
+
 /** Seta varios parámetros del slot (normalizados). */
 export async function setMixParams(
   slotId: string,
@@ -210,8 +246,9 @@ export async function applyMixOnTrack(
   const applied: Record<number, boolean> = {}
   const skipped: string[] = []
   for (const [rawId, value] of Object.entries(values)) {
-    const id = Number(rawId)
-    if (!Number.isFinite(id)) { skipped.push(String(rawId)); continue }
+    // Antes solo se aceptaban ids numéricos y toda clave por nombre ("Banda 1 Freq") se descartaba en silencio.
+    const id = resolveParamId(kind, rawId)
+    if (id === undefined) { skipped.push(String(rawId)); continue }
     const n = normalizedFor(kind, id, value)
     if (n === undefined) { skipped.push(String(rawId)); continue }
     applied[id] = await setSlotParameter(ensured.slotId, id, n)
@@ -219,3 +256,175 @@ export async function applyMixOnTrack(
   return { slotId: ensured.slotId, applied, skipped }
 }
 
+
+// ── EQ dinámico: estado, alta y baja de bandas (slots del VST) con auditoría ──────────────────
+
+/** Lee del host las bandas USADAS del EQ (y los slots usados). */
+export async function leerBandasEq(slotId: string): Promise<{ bandas: BandaEq[]; usados: number[]; leido: boolean }> {
+  const params = await listSlotParameters(slotId)
+  if (params.length === 0) return { bandas: [], usados: [], leido: false }
+  const valores = new Map<number, number>()
+  for (const p of params) {
+    const id = Number(p.parameterId)
+    if (Number.isFinite(id)) valores.set(id, Number(p.normalizedValue))
+  }
+  const bandas = eqAjustesABandas((id) => valores.get(id))
+  return { bandas, usados: bandas.map((b) => b.slot!), leido: true }
+}
+
+/** Registra en el bus de eventos el cambio de EQ (auditoría): quién, qué banda, qué parámetro, antes → después. */
+export function auditarCambiosEq(
+  tienda: TiendaDAW,
+  trackId: string,
+  cambios: CambioEq[],
+  origen: 'ia' | 'usuario',
+): string[] {
+  const resumen = eqResumenCambios(cambios)
+  if (cambios.length === 0) return resumen
+  tienda.busEventos.emit(EventosMezcla.eqCambiado, {
+    trackId,
+    origen,
+    cambios,
+    resumen,
+  } as never)
+  return resumen
+}
+
+export type ResultadoBandaEq = {
+  ok: boolean
+  slotId?: string
+  slot?: number
+  mensaje: string
+  cambios: CambioEq[]
+  bandas: BandaEq[]
+}
+
+/** Ajustes reales (Hz/dB/Q…) que la IA puede pedir para una banda; todos opcionales salvo al agregar. */
+export type CambiosBandaEq = Partial<Pick<BandaEq, 'freq' | 'gain' | 'q' | 'enabled' | 'slope' | 'mode' | 'solo'>> & { type?: string }
+
+async function aplicarAjustes(slotId: string, ajustes: ReturnType<typeof eqBandasAAjustes>): Promise<boolean> {
+  let todos = true
+  for (const a of ajustes) todos = (await setSlotParameter(slotId, a.paramId, a.normalizado)) && todos
+  return todos
+}
+
+/** Agrega una banda al EQ JasWave de la pista (primer slot libre) y la audita. `slot` fuerza el slot. */
+export async function agregarBandaEq(
+  tienda: TiendaDAW,
+  trackId: string,
+  cambios: CambiosBandaEq,
+  opts: { slot?: number; origen?: 'ia' | 'usuario'; bandasAvanzadas?: boolean } = {},
+): Promise<ResultadoBandaEq> {
+  const ensured = await ensureJasWaveFxOnTrack(tienda, trackId, 'eq')
+  if (!ensured) return { ok: false, mensaje: 'No se pudo insertar/cargar JasWave EQ', cambios: [], bandas: [] }
+  const antes = await leerBandasEq(ensured.slotId)
+  const slot = opts.slot ?? eqPrimerSlotLibre(antes.usados, opts.bandasAvanzadas ?? true)
+  if (slot === undefined) {
+    return {
+      ok: false,
+      slotId: ensured.slotId,
+      mensaje: `El EQ ya tiene ${antes.usados.length} bandas: no quedan slots libres${opts.bandasAvanzadas === false ? ` (sin la licencia de bandas avanzadas el máximo es ${EQ_PRIMERA_BANDA_AVANZADA})` : ''}`,
+      cambios: [],
+      bandas: antes.bandas,
+    }
+  }
+  if (antes.usados.includes(slot)) {
+    return { ok: false, slotId: ensured.slotId, mensaje: `La banda ${slot + 1} ya existe: usa editar`, cambios: [], bandas: antes.bandas }
+  }
+  const tipo = cambios.type === undefined ? 'bell' : normalizarTipoEq(cambios.type)
+  if (!tipo) return { ok: false, slotId: ensured.slotId, mensaje: `Tipo "${String(cambios.type)}" desconocido (bell, lowShelf, highShelf, lowCut, highCut, notch, bandPass)`, cambios: [], bandas: antes.bandas }
+  const banda: BandaEq = {
+    slot,
+    type: tipo,
+    freq: cambios.freq ?? eqFrecuenciaLibre(antes.bandas),
+    gain: cambios.gain ?? 0,
+    q: cambios.q ?? 1,
+    enabled: cambios.enabled ?? true,
+    ...(cambios.slope ? { slope: cambios.slope } : {}),
+    mode: cambios.mode ?? 'stereo',
+    solo: cambios.solo ?? false,
+  }
+  const ajustes = eqBandasAAjustes([banda])
+  const ok = await aplicarAjustes(ensured.slotId, ajustes)
+  const despues = [...antes.bandas, banda].sort((a, b) => a.slot! - b.slot!)
+  const registro = eqDiferencias(antes.bandas, despues)
+  auditarCambiosEq(tienda, trackId, registro, opts.origen ?? 'ia')
+  return {
+    ok,
+    slotId: ensured.slotId,
+    slot,
+    mensaje: ok ? `Banda ${slot + 1} agregada (${tipo} ${Math.round(banda.freq)} Hz, ${banda.gain} dB, Q ${banda.q})` : 'El host rechazó algún parámetro de la banda',
+    cambios: registro,
+    bandas: despues,
+  }
+}
+
+/** Da de baja una banda (slot) del EQ JasWave de la pista y lo audita. */
+export async function quitarBandaEq(
+  tienda: TiendaDAW,
+  trackId: string,
+  banda1: number,
+  opts: { origen?: 'ia' | 'usuario' } = {},
+): Promise<ResultadoBandaEq> {
+  const ensured = await ensureJasWaveFxOnTrack(tienda, trackId, 'eq')
+  if (!ensured) return { ok: false, mensaje: 'No se pudo insertar/cargar JasWave EQ', cambios: [], bandas: [] }
+  const slot = Math.round(banda1) - 1
+  const antes = await leerBandasEq(ensured.slotId)
+  if (!antes.usados.includes(slot)) {
+    return { ok: false, slotId: ensured.slotId, slot, mensaje: `La banda ${banda1} no existe (en uso: ${antes.usados.map((x) => x + 1).join(', ') || 'ninguna'})`, cambios: [], bandas: antes.bandas }
+  }
+  const ok =
+    (await setSlotParameter(ensured.slotId, eqParamId(slot, 'solo'), 0)) &&
+    (await setSlotParameter(ensured.slotId, eqParamId(slot, 'used'), 0))
+  const despues = antes.bandas.filter((b) => b.slot !== slot)
+  const registro = eqDiferencias(antes.bandas, despues)
+  auditarCambiosEq(tienda, trackId, registro, opts.origen ?? 'ia')
+  return { ok, slotId: ensured.slotId, slot, mensaje: ok ? `Banda ${banda1} quitada` : 'El host rechazó el cambio', cambios: registro, bandas: despues }
+}
+
+/** Edita una banda existente (solo los campos dados), con auditoría antes → después. */
+export async function editarBandaEq(
+  tienda: TiendaDAW,
+  trackId: string,
+  banda1: number,
+  cambios: CambiosBandaEq,
+  opts: { origen?: 'ia' | 'usuario' } = {},
+): Promise<ResultadoBandaEq> {
+  const ensured = await ensureJasWaveFxOnTrack(tienda, trackId, 'eq')
+  if (!ensured) return { ok: false, mensaje: 'No se pudo insertar/cargar JasWave EQ', cambios: [], bandas: [] }
+  const slot = Math.round(banda1) - 1
+  const antes = await leerBandasEq(ensured.slotId)
+  const actual = antes.bandas.find((b) => b.slot === slot)
+  if (!actual) {
+    return { ok: false, slotId: ensured.slotId, slot, mensaje: `La banda ${banda1} no existe (en uso: ${antes.usados.map((x) => x + 1).join(', ') || 'ninguna'}); usa agregarBanda`, cambios: [], bandas: antes.bandas }
+  }
+  const tipo = cambios.type === undefined ? actual.type : normalizarTipoEq(cambios.type)
+  if (!tipo) return { ok: false, slotId: ensured.slotId, slot, mensaje: `Tipo "${String(cambios.type)}" desconocido`, cambios: [], bandas: antes.bandas }
+  const { type: _t, ...resto } = cambios
+  const nueva: BandaEq = { ...actual, ...resto, type: tipo }
+  if (cambios.slope === undefined && 'slope' in cambios) delete nueva.slope
+  const ajustes = eqBandasAAjustes([nueva]).filter((a) => a.campo !== 'used')
+  const ok = await aplicarAjustes(ensured.slotId, ajustes)
+  const despues = antes.bandas.map((b) => (b.slot === slot ? nueva : b))
+  const registro = eqDiferencias(antes.bandas, despues)
+  auditarCambiosEq(tienda, trackId, registro, opts.origen ?? 'ia')
+  return { ok, slotId: ensured.slotId, slot, mensaje: ok ? `Banda ${banda1} actualizada` : 'El host rechazó algún parámetro', cambios: registro, bandas: despues }
+}
+
+/** Estado actual del EQ para la IA: bandas en uso con valores reales. */
+export async function estadoEq(
+  tienda: TiendaDAW,
+  trackId: string,
+): Promise<{ ok: boolean; slotId?: string; bandas: BandaEq[]; mensaje: string }> {
+  const ensured = await ensureJasWaveFxOnTrack(tienda, trackId, 'eq')
+  if (!ensured) return { ok: false, bandas: [], mensaje: 'No se pudo insertar/cargar JasWave EQ' }
+  const { bandas, leido } = await leerBandasEq(ensured.slotId)
+  return {
+    ok: leido,
+    slotId: ensured.slotId,
+    bandas,
+    mensaje: leido ? `${bandas.length} banda(s) en uso de ${EQ_MAX_BANDAS}` : 'El host no devolvió los parámetros del EQ',
+  }
+}
+
+export { eqNombreParametro, eqValorANormalizado }

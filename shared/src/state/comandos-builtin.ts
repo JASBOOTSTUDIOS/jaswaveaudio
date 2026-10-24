@@ -145,6 +145,9 @@ import {
   crearComandoPistaEqAgregar,
   crearComandoPistaEqEditar,
   crearComandoPistaEqQuitar,
+  crearComandoPistaEqBandaAgregar,
+  crearComandoPistaEqBandaEditar,
+  crearComandoPistaEqBandaQuitar,
   crearComandoPistaCompresorAgregar,
   crearComandoPistaCompresorEditar,
   crearComandoPistaCompresorQuitar,
@@ -308,6 +311,9 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoPistaEqAgregar(), registry);
   registrar(crearComandoPistaEqEditar(), registry);
   registrar(crearComandoPistaEqQuitar(), registry);
+  registrar(crearComandoPistaEqBandaAgregar(), registry);
+  registrar(crearComandoPistaEqBandaEditar(), registry);
+  registrar(crearComandoPistaEqBandaQuitar(), registry);
   registrar(crearComandoPistaCompresorAgregar(), registry);
   registrar(crearComandoPistaCompresorEditar(), registry);
   registrar(crearComandoPistaCompresorQuitar(), registry);

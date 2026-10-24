@@ -35,6 +35,19 @@ import type { MedidaPista } from '../audio/diagnosis';
 import { getStateRevision } from '../state/state-revision';
 import { EventosTrack, EventosMezcla, EventosPlugin } from '../constants/nombres-eventos';
 import { entorno } from '../state/entorno-determinista';
+import {
+  EQ_MAX_BANDAS,
+  EQ_RANGOS,
+  MODOS_BANDA_EQ,
+  codigoEqATipo,
+  eqDiferencias,
+  eqResumenCambios,
+  normalizarTipoEq,
+  tipoEqACodigo,
+  type BandaEq,
+  type CambioEq,
+  type PendienteEq,
+} from '../audio/eq-dinamico';
 
 function generarId(): string {
   return `${entorno.ahora().toString(36)}-${entorno.aleatorio().toString(36).slice(2, 7)}`;
@@ -46,20 +59,13 @@ const ID_EQ = (trackId: string) => `eq-${trackId}`;
 const ID_COMP = (trackId: string) => `comp-${trackId}`;
 const ID_LIMIT = (trackId: string) => `limit-${trackId}`;
 
-type EqBand = {
-  /** Frecuencia central en Hz (medida real del espectro 1/3 octava). */
-  freq: number;
-  /** Ganancia en dB. */
-  gain: number;
-  /** Q / ancho de banda. */
-  q: number;
-  /** Tipo de filtro. */
-  type: 'bell' | 'lowShelf' | 'highShelf' | 'lowCut' | 'highCut';
-  /** Banda habilitada. */
-  enabled: boolean;
-};
+/** Banda del EQ: modelo único (ver audio/eq-dinamico.ts); `slot` es el slot del VST cuando se conoce. */
+type EqBand = BandaEq;
 
 type EqPayload = { trackId: string; bandas: EqBand[]; pluginInstanceId?: string };
+type EqBandaAgregarPayload = { trackId: string; banda: EqBand; pluginInstanceId?: string };
+type EqBandaEditarPayload = { trackId: string; indice: number; cambios: Partial<EqBand>; pluginInstanceId?: string };
+type EqBandaQuitarPayload = { trackId: string; indice: number; pluginInstanceId?: string };
 type CompPayload = {
   trackId: string;
   threshold?: number; // dB
@@ -153,20 +159,52 @@ function procesadorInfo(
   } as PluginInfo;
 }
 
+/** Versión del esquema de parámetros del EQ de dominio: 2 = códigos de tipo del VST + parámetros extra por banda. */
+const EQ_VERSION_ESQUEMA = 2;
+
 function bandasEqAParametros(bandas: EqBand[]): ParametroPluginOpciones[] {
-  const out: ParametroPluginOpciones[] = [];
+  const out: ParametroPluginOpciones[] = [parametro('eq.version', 'Versión del esquema', EQ_VERSION_ESQUEMA, 1, 99, 1, '')];
   for (let i = 0; i < bandas.length; i++) {
     const b = bandas[i]!;
     const pref = `eq.band.${i}`;
-    const codigoTipo =
-      b.type === 'bell' ? 0 : b.type === 'lowShelf' ? 1 : b.type === 'highShelf' ? 2 : b.type === 'lowCut' ? 3 : 4;
     out.push(parametro(`${pref}.freq`, 'Frecuencia', b.freq, 20, 20_000, 1, 'Hz'));
     out.push(parametro(`${pref}.gain`, 'Ganancia', b.gain, -24, 24, 0.1, 'dB'));
-    out.push(parametro(`${pref}.q`, 'Q', b.q, 0.1, 10, 0.1, ''));
-    out.push(parametro(`${pref}.type`, 'Tipo', codigoTipo, 0, 4, 1, '', b.type));
+    out.push(parametro(`${pref}.q`, 'Q', b.q, 0.1, 18, 0.1, ''));
+    out.push(parametro(`${pref}.type`, 'Tipo', tipoEqACodigo(b.type), 0, 6, 1, '', b.type));
     out.push(parametro(`${pref}.enabled`, 'Habilitada', b.enabled ? 1 : 0, 0, 1, 1, ''));
+    out.push(parametro(`${pref}.slope`, 'Pendiente (dB/oct, 0 = global)', b.slope ?? 0, 0, 48, 12, 'dB/oct'));
+    out.push(parametro(`${pref}.mode`, 'Modo', Math.max(0, MODOS_BANDA_EQ.indexOf(b.mode ?? 'stereo')), 0, 4, 1, '', b.mode ?? 'stereo'));
+    out.push(parametro(`${pref}.solo`, 'Solo', b.solo ? 1 : 0, 0, 1, 1, ''));
   }
   return out;
+}
+
+/**
+ * Valida y normaliza las bandas de un payload (la IA puede mandar alias como "peak"/"hpf"):
+ * tipo conocido, máximo de bandas y valores dentro de rango. Lanza con un mensaje accionable.
+ */
+function normalizarBandasEq(bandas: EqBand[]): EqBand[] {
+  if (bandas.length > EQ_MAX_BANDAS) {
+    throw new Error(`El ecualizador admite como máximo ${EQ_MAX_BANDAS} bandas (recibidas ${bandas.length})`);
+  }
+  const limitar = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+  return bandas.map((b, i) => {
+    const type = normalizarTipoEq(b.type);
+    if (!type) throw new Error(`Banda ${i + 1}: tipo "${String(b.type)}" desconocido (usa bell, lowShelf, highShelf, lowCut, highCut, notch o bandPass)`);
+    const modo = b.mode ?? 'stereo';
+    if (!MODOS_BANDA_EQ.includes(modo)) throw new Error(`Banda ${i + 1}: modo "${String(modo)}" desconocido (stereo, mid, side, left, right)`);
+    if (b.slope !== undefined && ![12, 24, 36, 48].includes(b.slope)) throw new Error(`Banda ${i + 1}: pendiente ${String(b.slope)} no válida (12, 24, 36 o 48 dB/oct)`);
+    for (const campo of ['freq', 'gain', 'q'] as const) {
+      if (!Number.isFinite(b[campo])) throw new Error(`Banda ${i + 1}: ${campo} debe ser un número`);
+    }
+    return {
+      ...b,
+      type,
+      freq: limitar(b.freq, EQ_RANGOS.freq.min, EQ_RANGOS.freq.max),
+      gain: limitar(b.gain, EQ_RANGOS.gain.min, EQ_RANGOS.gain.max),
+      q: limitar(b.q, EQ_RANGOS.q.min, EQ_RANGOS.q.max),
+    };
+  });
 }
 
 function aplicarBandasEq(plugin: PluginInfo, bandas: EqBand[]): PluginInfo {
@@ -335,6 +373,9 @@ export function crearComandoPistaEqAgregar(): CommandDefinition<EqPayload> {
               q: { type: 'number' },
               type: { type: 'string' },
               enabled: { type: 'boolean' },
+              slope: { type: 'number' },
+              mode: { type: 'string' },
+              solo: { type: 'boolean' },
             },
             required: ['freq', 'gain', 'q', 'type', 'enabled'],
             additionalProperties: false,
@@ -350,11 +391,13 @@ export function crearComandoPistaEqAgregar(): CommandDefinition<EqPayload> {
       const medida = await obtenerMedida(estado, payload.trackId);
       const id = payload.pluginInstanceId ?? idProcesador(pista.id, 'eq');
       const existente = encontrarProcesador(pista.plugins, 'eq');
+      const bandasNorm = normalizarBandasEq(payload.bandas);
+      const prevBandas = existente ? bandasDePlugin(existente) : [];
       const plugin = procesadorInfo(
         id,
         'EQ (JasWave)',
         'eq',
-        aplicarBandasEq(existente ?? ({} as PluginInfo), payload.bandas).parametros,
+        aplicarBandasEq(existente ?? ({} as PluginInfo), bandasNorm).parametros,
       );
       // Si ya existía un EQ, sustituye sus parámetros conservando el id (redo determinista).
       const plugins = existente
@@ -373,7 +416,8 @@ export function crearComandoPistaEqAgregar(): CommandDefinition<EqPayload> {
               trackId: pista.id,
               pluginInstanceId: id,
               creado: !existente,
-              bandas: payload.bandas,
+              bandas: bandasNorm,
+              cambios: eqDiferencias(prevBandas.map(conSlot), bandasNorm.map(conSlot)),
               medidaAntes: medidaJSON(medida),
             },
           },
@@ -386,20 +430,12 @@ export function crearComandoPistaEqAgregar(): CommandDefinition<EqPayload> {
           },
         ],
         result: payload,
+        // Si ya había EQ, deshacer RESTAURA las bandas previas (editar); si no, lo quita.
+        inverseType: existente ? 'pista.eq.editar' : 'pista.eq.quitar',
         inversePayload: {
           trackId: pista.id,
           pluginInstanceId: id,
-          bandas: existente
-            ? existente.parametros
-                .filter((x) => x.id.startsWith('eq.band.'))
-                .map((x) => ({
-                  freq: Number(x.id.endsWith('.freq') ? x.valor : 0),
-                  gain: Number(x.id.endsWith('.gain') ? x.valor : 0),
-                  q: 1,
-                  type: 'bell',
-                  enabled: true,
-                }))
-            : [],
+          bandas: prevBandas,
         },
       };
     },
@@ -427,6 +463,9 @@ export function crearComandoPistaEqEditar(): CommandDefinition<EqPayload> {
               q: { type: 'number' },
               type: { type: 'string' },
               enabled: { type: 'boolean' },
+              slope: { type: 'number' },
+              mode: { type: 'string' },
+              solo: { type: 'boolean' },
             },
             required: ['freq', 'gain', 'q', 'type', 'enabled'],
             additionalProperties: false,
@@ -446,7 +485,8 @@ export function crearComandoPistaEqEditar(): CommandDefinition<EqPayload> {
       if (!objetivo) {
         throw new Error(`No hay ecualizador en la pista ${pista.id}`);
       }
-      const plugin = aplicarBandasEq(objetivo, payload.bandas);
+      const bandasNorm = normalizarBandasEq(payload.bandas);
+      const plugin = aplicarBandasEq(objetivo, bandasNorm);
       const plugins = pista.plugins.map((p) => (p.id === objetivo.id ? plugin : p));
       const proyecto = actualizarPlugins(estado, pista.id, plugins);
       const prevBandas = bandasDePlugin(objetivo);
@@ -462,7 +502,8 @@ export function crearComandoPistaEqEditar(): CommandDefinition<EqPayload> {
               trackId: pista.id,
               pluginInstanceId: objetivo.id,
               creado: false,
-              bandas: payload.bandas,
+              bandas: bandasNorm,
+              cambios: eqDiferencias(prevBandas.map(conSlot), bandasNorm.map(conSlot)),
               medidaAntes: medidaJSON(medida),
             },
           },
@@ -518,6 +559,154 @@ export function crearComandoPistaEqQuitar(): CommandDefinition<EqPayload> {
           bandas: bandasDePlugin(existente),
         },
       };
+    },
+  };
+}
+
+// ── pista.eq.banda.* (alta/baja/edición de UNA banda: auditable e incremental) ─────────────
+
+const ESQUEMA_BANDA = {
+  type: 'object',
+  properties: {
+    freq: { type: 'number' },
+    gain: { type: 'number' },
+    q: { type: 'number' },
+    type: { type: 'string' },
+    enabled: { type: 'boolean' },
+    slope: { type: 'number' },
+    mode: { type: 'string' },
+    solo: { type: 'boolean' },
+  },
+  required: ['freq', 'gain', 'q', 'type', 'enabled'],
+  additionalProperties: false,
+} as const;
+
+/** Aplica un cambio de bandas sobre el EQ de la pista (lo crea si falta) y devuelve la transición con auditoría. */
+function transicionEqBandas(
+  estado: DAWState,
+  payload: { trackId: string; pluginInstanceId?: string },
+  bandasNuevas: EqBand[],
+  crear: boolean,
+  medida: MedidaPista | undefined,
+  extra: Record<string, unknown>,
+): StateTransition<unknown> {
+  const pista = trackDeEstado(estado, payload.trackId);
+  const id = payload.pluginInstanceId ?? idProcesador(pista.id, 'eq');
+  const existente = encontrarProcesador(pista.plugins, 'eq');
+  if (!existente && !crear) throw new Error(`No hay ecualizador en la pista ${pista.id}`);
+  const normalizadas = normalizarBandasEq(bandasNuevas);
+  const prev = existente ? bandasDePlugin(existente) : [];
+  const plugin = procesadorInfo(existente?.id ?? id, 'EQ (JasWave)', 'eq', bandasEqAParametros(normalizadas));
+  const plugins = existente ? pista.plugins.map((p) => (p.id === existente.id ? plugin : p)) : [...pista.plugins, plugin];
+  const cambios: CambioEq[] = eqDiferencias(prev.map(conSlot), normalizadas.map(conSlot));
+  return {
+    state: { ...estado, project: actualizarPlugins(estado, pista.id, plugins) },
+    events: [
+      {
+        nombre: EventosMezcla.eqCambiado,
+        version: 1,
+        marcaTiempo: entorno.ahora(),
+        fuente: 'actuacion-commands',
+        payload: {
+          trackId: pista.id,
+          pluginInstanceId: plugin.id,
+          creado: !existente,
+          bandas: normalizadas,
+          cambios,
+          resumen: eqResumenCambios(cambios),
+          medidaAntes: medidaJSON(medida),
+          ...extra,
+        },
+      },
+    ],
+    result: { trackId: pista.id, bandas: normalizadas.length, ...extra },
+    // Deshacer restaura el conjunto completo de bandas previo (o quita el EQ si lo creó este comando)
+    inverseType: existente ? 'pista.eq.editar' : 'pista.eq.quitar',
+    inversePayload: { trackId: pista.id, pluginInstanceId: plugin.id, bandas: prev },
+  };
+}
+
+export function crearComandoPistaEqBandaAgregar(): CommandDefinition<EqBandaAgregarPayload> {
+  return {
+    type: 'pista.eq.banda.agregar',
+    replicacion: 'resultado',
+    inverseType: 'pista.eq.editar',
+    description: `Agrega UNA banda al ecualizador de la pista (lo crea si falta; hasta ${EQ_MAX_BANDAS} bandas)`,
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: { trackId: { type: 'string' }, banda: ESQUEMA_BANDA, pluginInstanceId: { type: 'string' } },
+      required: ['trackId', 'banda'],
+      additionalProperties: false,
+    },
+    handler: async (estado, payload) => {
+      const pista = trackDeEstado(estado, payload.trackId);
+      const existente = encontrarProcesador(pista.plugins, 'eq');
+      const actuales = existente ? bandasDePlugin(existente) : [];
+      const medida = await obtenerMedida(estado, payload.trackId);
+      const t = transicionEqBandas(estado, payload, [...actuales, payload.banda], true, medida, { indice: actuales.length });
+      return t as StateTransition<EqBandaAgregarPayload>;
+    },
+  };
+}
+
+export function crearComandoPistaEqBandaEditar(): CommandDefinition<EqBandaEditarPayload> {
+  return {
+    type: 'pista.eq.banda.editar',
+    replicacion: 'resultado',
+    inverseType: 'pista.eq.editar',
+    description: 'Cambia solo los campos indicados de una banda del ecualizador (indice 0-based)',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        trackId: { type: 'string' },
+        indice: { type: 'number' },
+        cambios: { type: 'object' },
+        pluginInstanceId: { type: 'string' },
+      },
+      required: ['trackId', 'indice', 'cambios'],
+      additionalProperties: false,
+    },
+    handler: async (estado, payload) => {
+      const pista = trackDeEstado(estado, payload.trackId);
+      const existente = encontrarProcesador(pista.plugins, 'eq');
+      if (!existente) throw new Error(`No hay ecualizador en la pista ${pista.id}`);
+      const actuales = bandasDePlugin(existente);
+      if (!Number.isInteger(payload.indice) || payload.indice < 0 || payload.indice >= actuales.length) {
+        throw new Error(`La banda ${payload.indice} no existe (hay ${actuales.length})`);
+      }
+      const medida = await obtenerMedida(estado, payload.trackId);
+      const nuevas = actuales.map((b, i) => (i === payload.indice ? { ...b, ...payload.cambios } : b));
+      return transicionEqBandas(estado, payload, nuevas, false, medida, { indice: payload.indice }) as StateTransition<EqBandaEditarPayload>;
+    },
+  };
+}
+
+export function crearComandoPistaEqBandaQuitar(): CommandDefinition<EqBandaQuitarPayload> {
+  return {
+    type: 'pista.eq.banda.quitar',
+    replicacion: 'resultado',
+    inverseType: 'pista.eq.editar',
+    description: 'Quita UNA banda del ecualizador de la pista (indice 0-based); las demás conservan su orden',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: { trackId: { type: 'string' }, indice: { type: 'number' }, pluginInstanceId: { type: 'string' } },
+      required: ['trackId', 'indice'],
+      additionalProperties: false,
+    },
+    handler: async (estado, payload) => {
+      const pista = trackDeEstado(estado, payload.trackId);
+      const existente = encontrarProcesador(pista.plugins, 'eq');
+      if (!existente) throw new Error(`No hay ecualizador en la pista ${pista.id}`);
+      const actuales = bandasDePlugin(existente);
+      if (!Number.isInteger(payload.indice) || payload.indice < 0 || payload.indice >= actuales.length) {
+        throw new Error(`La banda ${payload.indice} no existe (hay ${actuales.length})`);
+      }
+      const medida = await obtenerMedida(estado, payload.trackId);
+      const nuevas = actuales.filter((_, i) => i !== payload.indice);
+      return transicionEqBandas(estado, payload, nuevas, false, medida, { indice: payload.indice, removida: true }) as StateTransition<EqBandaQuitarPayload>;
     },
   };
 }
@@ -812,27 +1001,38 @@ export function crearComandoMasterNormalizar(): CommandDefinition<NormalizarPayl
 
 // ── Utilidades internas ────────────────────────────────────────────────────
 
+/** Asigna el slot por posición (las bandas del EQ de dominio se numeran 0..n-1) para compararlas. */
+function conSlot(b: EqBand, i: number): EqBand {
+  return { ...b, slot: b.slot ?? i };
+}
+
 function bandasDePlugin(plugin: PluginInfo): EqBand[] {
   const bandas: EqBand[] = [];
   const indices = new Set<number>();
   for (const p of plugin.parametros) {
-    const m = /^eq\.band\.(\d+)\.(freq|gain|q|type|enabled)$/.exec(p.id);
+    const m = /^eq\.band\.(\d+)\.(freq|gain|q|type|enabled|slope|mode|solo)$/.exec(p.id);
     if (m) indices.add(Number(m[1]));
   }
+  // Esquema 1 (proyectos anteriores): códigos de tipo bell=0, lowShelf=1, highShelf=2, lowCut=3, highCut=4.
+  const esquema = Number(plugin.parametros.find((x) => x.id === 'eq.version')?.valor ?? 1);
+  const tipoHeredado: EqBand['type'][] = ['bell', 'lowShelf', 'highShelf', 'lowCut', 'highCut'];
   for (const i of [...indices].sort((a, b) => a - b)) {
     const get = (sufijo: string) => {
       const p = plugin.parametros.find((x) => x.id === `eq.band.${i}.${sufijo}`);
       return p ? p.valor : undefined;
     };
-    const typeCod = get('type');
-    const type: EqBand['type'] =
-      typeCod === 1 ? 'lowShelf' : typeCod === 2 ? 'highShelf' : typeCod === 3 ? 'lowCut' : typeCod === 4 ? 'highCut' : 'bell';
+    const cod = Number(get('type') ?? 0);
+    const type: EqBand['type'] = esquema >= 2 ? codigoEqATipo(cod) : (tipoHeredado[cod] ?? 'bell');
+    const pendiente = Number(get('slope') ?? 0);
     bandas.push({
       freq: Number(get('freq') ?? 0),
       gain: Number(get('gain') ?? 0),
       q: Number(get('q') ?? 1),
       type,
       enabled: (get('enabled') ?? 1) !== 0,
+      ...(pendiente > 0 ? { slope: pendiente as PendienteEq } : {}),
+      ...(esquema >= 2 ? { mode: MODOS_BANDA_EQ[Number(get('mode') ?? 0)] ?? 'stereo' } : {}),
+      ...(Number(get('solo') ?? 0) !== 0 ? { solo: true } : {}),
     });
   }
   return bandas;

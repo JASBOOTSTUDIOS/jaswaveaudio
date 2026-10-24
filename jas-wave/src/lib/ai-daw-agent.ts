@@ -33,7 +33,16 @@ import {
   searchParameters,
   summarizeParametersForAi,
 } from './plugin/plugin-parameter-intel'
-import { applyMixOnTrack } from './plugin/jaswave-fx-mix'
+import {
+  agregarBandaEq,
+  applyMixOnTrack,
+  editarBandaEq,
+  estadoEq,
+  quitarBandaEq,
+  type CambiosBandaEq,
+  type ResultadoBandaEq,
+} from './plugin/jaswave-fx-mix'
+import { eqResumenCambios } from '../../../shared/src/audio/eq-dinamico'
 import { modePromptBlock, workingMode, type AgentMode } from './ai-modes'
 import {
   isMidiClipEditIntent,
@@ -2742,14 +2751,60 @@ export async function executeDawActions(
             results.push({ type: action.type, success: false, message: 'Falta trackId (usa track.list / selection.get)' })
             break
           }
-          const banda = p.banda != null ? Number(p.banda) : 1
+          const accion = String(p.accion ?? 'ajustar')
+          const banda = p.banda != null ? Number(p.banda) : undefined
+          // Campos reales de una banda (acepta los nombres en español e inglés que usa la IA)
+          const cambiosBanda: CambiosBandaEq = {}
+          if (p.freq != null) cambiosBanda.freq = Number(p.freq)
+          if (p.gain != null) cambiosBanda.gain = Number(p.gain)
+          if (p.q != null) cambiosBanda.q = Number(p.q)
+          if ((p.type ?? p.tipo) != null) cambiosBanda.type = String(p.type ?? p.tipo)
+          if ((p.on ?? p.enabled) != null) cambiosBanda.enabled = Boolean(p.on ?? p.enabled)
+          if ((p.pendiente ?? p.slope) != null) cambiosBanda.slope = Number(p.pendiente ?? p.slope) as CambiosBandaEq['slope']
+          if ((p.modo ?? p.mode) != null) cambiosBanda.mode = String(p.modo ?? p.mode) as CambiosBandaEq['mode']
+          if (p.solo != null) cambiosBanda.solo = Boolean(p.solo)
+          const respuestaBanda = (r: ResultadoBandaEq) =>
+            results.push({
+              type: action.type,
+              success: r.ok,
+              message: r.mensaje,
+              data: { trackId, slotId: r.slotId, banda: r.slot !== undefined ? r.slot + 1 : undefined, cambios: eqResumenCambios(r.cambios), bandas: r.bandas },
+            })
+          if (accion === 'estado') {
+            const e = await estadoEq(tienda, trackId)
+            results.push({ type: action.type, success: e.ok, message: e.mensaje, data: { trackId, slotId: e.slotId, bandas: e.bandas } })
+            break
+          }
+          if (accion === 'agregarBanda') {
+            respuestaBanda(await agregarBandaEq(tienda, trackId, cambiosBanda, { slot: banda != null ? banda - 1 : undefined, origen: 'ia' }))
+            break
+          }
+          if (accion === 'quitarBanda') {
+            if (banda == null) {
+              results.push({ type: action.type, success: false, message: 'quitarBanda requiere banda (1..24); usa accion:"estado" para ver las bandas en uso' })
+              break
+            }
+            respuestaBanda(await quitarBandaEq(tienda, trackId, banda, { origen: 'ia' }))
+            break
+          }
+          if (accion !== 'ajustar') {
+            results.push({ type: action.type, success: false, message: `accion "${accion}" desconocida (ajustar, agregarBanda, quitarBanda, estado)` })
+            break
+          }
+          // ajustar: una banda concreta (editada con antes → después auditados) y/o parámetros globales
+          const hayCambiosBanda = Object.keys(cambiosBanda).length > 0
+          if (hayCambiosBanda && p.bypass == null && p.output == null) {
+            const n = banda ?? 1
+            const ya = (await estadoEq(tienda, trackId)).bandas.some((b) => b.slot === n - 1)
+            respuestaBanda(
+              ya
+                ? await editarBandaEq(tienda, trackId, n, cambiosBanda, { origen: 'ia' })
+                : await agregarBandaEq(tienda, trackId, cambiosBanda, { slot: n - 1, origen: 'ia' }),
+            )
+            break
+          }
           const values: Record<string | number, unknown> = {}
           if (p.bypass != null) values['Bypass'] = p.bypass
-          if (p.freq != null) values[`Banda ${banda} Freq`] = p.freq
-          if (p.gain != null) values[`Banda ${banda} Gain`] = p.gain
-          if (p.q != null) values[`Banda ${banda} Q`] = p.q
-          if (p.type != null) values[`Banda ${banda} Tipo`] = p.type
-          if (p.on != null) values[`Banda ${banda} On`] = p.on
           if (p.output != null) values['Output'] = p.output
           const res = await applyMixOnTrack(tienda, trackId, 'eq', values)
           results.push({

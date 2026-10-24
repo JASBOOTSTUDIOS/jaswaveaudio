@@ -18,13 +18,17 @@ describe('jaswave-fx-mix', () => {
     assert.equal(fxDescriptorName('deesser'), 'JasWave Smart De-Esser')
   })
 
-  it('eqBandParamIds: banda 1 base 1 stride 5; banda 8 base 36', () => {
+  it('eqBandParamIds: bandas 1..8 heredadas (base 1, stride 5) y 9..24 en el bloque nuevo', () => {
     const b1 = eqBandParamIds(1)
     assert.deepEqual(b1, { type: 1, freq: 2, gain: 3, q: 4, on: 5 })
     const b8 = eqBandParamIds(8)
     assert.deepEqual(b8, { type: 36, freq: 37, gain: 38, q: 39, on: 40 })
-    const b10 = eqBandParamIds(10) // clampa a 8
-    assert.deepEqual(b10, { type: 36, freq: 37, gain: 38, q: 39, on: 40 })
+    const b9 = eqBandParamIds(9)
+    assert.deepEqual(b9, { type: 400, freq: 401, gain: 402, q: 403, on: 404 })
+    const b24 = eqBandParamIds(24)
+    assert.deepEqual(b24, { type: 475, freq: 476, gain: 477, q: 478, on: 479 })
+    const b30 = eqBandParamIds(30) // clampa a 24
+    assert.deepEqual(b30, b24)
     const b0 = eqBandParamIds(0) // clampa a 1
     assert.deepEqual(b0, { type: 1, freq: 2, gain: 3, q: 4, on: 5 })
   })
