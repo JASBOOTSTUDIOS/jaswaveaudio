@@ -24,6 +24,7 @@
     "licencias:generar-claves": "tsx scripts/generar-claves-licencia.ts",
     "ia:generar-clave": "tsx scripts/generar-clave-ia.ts",
     "ia:importar-entorno": "tsx --env-file=.env scripts/importar-ia-entorno.ts",
+    "admin:seed": "tsx --env-file=.env scripts/seed-admin.ts",
     "ia:proveedor-pruebas": "tsx --env-file=.env scripts/alta-proveedor-pruebas.ts"
   },
   "dependencies": {
