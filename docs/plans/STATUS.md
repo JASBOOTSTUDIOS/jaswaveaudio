@@ -49,5 +49,7 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | M5 | Partitura y MIDI·MD como paquetes | M3 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | E1 | Motor de audio estable (carga por trozos, avisos, host) | — | hecho (web sin Electron pendiente) | Claude Sonnet 5.5 · 2026-10-24 | (ver git log) |
 | E2 | Instalador autónomo (host sin VC++ runtime) | E1 | hecho (sin firma; ffmpeg no incluido) | Claude Sonnet 5.5 · 2026-10-24 | (ver git log) |
+| E3 | EQ dinámico (24 bandas, parámetros por banda, medición, IA) | E1 | hecho (réplica web del EQ y evento host→app pendientes) | Claude Sonnet 5.5 · 2026-10-24 | 37c6496 |
+| E4 | Diseño cyber galáctico con paleta del logo | E3 | hecho | Claude Sonnet 5.5 · 2026-10-24 | 3a116b8 |
 
 Estados: `pendiente` · `en curso` · `bloqueado (motivo)` · `hecho`.
