@@ -1,9 +1,14 @@
 /**
  * Empaqueta los plugins VST3 y los módulos del DAW de plugins/ para la entrega bajo demanda (D1/M3).
  *
- *   node native/scripts/package-plugins.mjs [--config Release] [--base-url <url>] [--salida <dir>]
+ *   node native/scripts/package-plugins.mjs [--config Release] [--base-url <url>] [--salida <dir>] [--firmar --api <backend>]
  *
- * Por cada plugins/com.jaswave.plugin.* genera <salida>/<id>-<version>.zip con:
+ * Cada paquete es una extensión `.jwx` (X1): un zip que el DAW instala también desde archivo (doble clic,
+ * arrastrar o «Instalar desde archivo…», como un .vsix de VS Code). Con --firmar se añade
+ * `jaswave-firma.json`, firmado por el backend (token de administrador en JASWAVE_ADMIN_TOKEN); sin firma
+ * solo se instala desde archivo con el Modo desarrollador.
+ *
+ * Por cada plugins/com.jaswave.plugin.* genera <salida>/<id>-<version>.jwx con:
  *   jaswave-plugin.json
  *   vst3/<Bundle>.vst3/...     (desde plugins/build/VST3/<Config>, compilar antes con build-plugins.mjs)
  * Por cada plugins/com.jaswave.modulo.* (compilar antes con `npm run build:modulos`):
@@ -17,12 +22,12 @@
  * explícitos (ver instrucciones que imprime al final).
  */
 
-import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { comprimirJwx, firmarCarpeta } from '../../plugins/scripts/firmar-jwx.mjs'
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const args = process.argv.slice(2)
@@ -33,7 +38,18 @@ const opcion = (nombre, porDefecto) => {
 const config = opcion('--config', 'Release')
 const salida = path.resolve(opcion('--salida', path.join(raiz, 'plugins', 'dist')))
 const baseUrl = opcion('--base-url', '').replace(/\/+$/, '')
-const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+const firmar = args.includes('--firmar')
+const api = opcion('--api', process.env.JASWAVE_API_URL || '')
+if (firmar && (!api || !process.env.JASWAVE_ADMIN_TOKEN)) {
+  console.error('[package-plugins] --firmar necesita --api <backend> y JASWAVE_ADMIN_TOKEN (administrador).')
+  process.exit(2)
+}
+
+/** Firma (si se pidió) y comprime la carpeta de staging como .jwx. */
+async function empaquetar(staging, destino) {
+  if (firmar) await firmarCarpeta(staging, { api, token: process.env.JASWAVE_ADMIN_TOKEN })
+  return comprimirJwx(staging, destino)
+}
 const carpetaBundles = path.join(raiz, 'plugins', 'build', 'VST3', config)
 
 if (process.platform !== 'win32') {
@@ -79,10 +95,9 @@ for (const nombre of fs.readdirSync(path.join(raiz, 'plugins')).sort()) {
     try {
       fs.copyFileSync(rutaManifiesto, path.join(staging, 'jaswave-plugin.json'))
       copiarDirectorio(dist, path.join(staging, 'dist'))
-      const archivo = `${manifiesto.id}-${manifiesto.version}.zip`
+      const archivo = `${manifiesto.id}-${manifiesto.version}.jwx`
       const destino = path.join(salida, archivo)
-      fs.rmSync(destino, { force: true })
-      execFileSync(tar, ['-a', '-c', '-f', destino, '-C', staging, 'jaswave-plugin.json', 'dist'], { stdio: 'inherit' })
+      await empaquetar(staging, destino)
       const tamano = fs.statSync(destino).size
       catalogo.push({
         id: manifiesto.id,
@@ -100,7 +115,7 @@ for (const nombre of fs.readdirSync(path.join(raiz, 'plugins')).sort()) {
         fs.rmSync(web, { recursive: true, force: true })
         copiarDirectorio(dist, path.join(web, 'dist'))
       }
-      console.log(`[package-plugins] ${archivo}  ${(tamano / 1024).toFixed(0)} KB (módulo)`)
+      console.log(`[package-plugins] ${archivo}  ${(tamano / 1024).toFixed(0)} KB (módulo${firmar ? ', firmado' : ', sin firmar'})`)
     } finally {
       fs.rmSync(staging, { recursive: true, force: true })
     }
@@ -122,11 +137,9 @@ for (const nombre of fs.readdirSync(path.join(raiz, 'plugins')).sort()) {
   try {
     fs.copyFileSync(rutaManifiesto, path.join(staging, 'jaswave-plugin.json'))
     copiarDirectorio(origenBundle, path.join(staging, 'vst3', bundle))
-    const archivo = `${manifiesto.id}-${manifiesto.version}.zip`
+    const archivo = `${manifiesto.id}-${manifiesto.version}.jwx`
     const destino = path.join(salida, archivo)
-    fs.rmSync(destino, { force: true })
-    // bsdtar de Windows: -a elige el formato por la extensión (.zip).
-    execFileSync(tar, ['-a', '-c', '-f', destino, '-C', staging, 'jaswave-plugin.json', 'vst3'], { stdio: 'inherit' })
+    await empaquetar(staging, destino)
     const tamano = fs.statSync(destino).size
     catalogo.push({
       id: manifiesto.id,
@@ -137,7 +150,7 @@ for (const nombre of fs.readdirSync(path.join(raiz, 'plugins')).sort()) {
       sizeBytes: tamano,
       ...comunes,
     })
-    console.log(`[package-plugins] ${archivo}  ${(tamano / 1024).toFixed(0)} KB`)
+    console.log(`[package-plugins] ${archivo}  ${(tamano / 1024).toFixed(0)} KB${firmar ? ' (firmado)' : ' (sin firmar)'}`)
   } finally {
     fs.rmSync(staging, { recursive: true, force: true })
   }
@@ -153,7 +166,7 @@ console.log(
   [
     '',
     'Publicación (pasos explícitos, no automáticos):',
-    `  1. gh release create plugins-<version> ${path.join(salida, '*.zip')} --draft   # o gh release upload`,
+    `  1. gh release create plugins-<version> ${path.join(salida, '*.jwx')} --draft   # o gh release upload`,
     '  2. Regenera el catálogo con --base-url https://github.com/<org>/<repo>/releases/download/plugins-<version>',
     '  3. POST <backend>/catalogo con el contenido de catalogo.json (token de administrador)',
     '  4. Módulos web: node plugins/scripts/publicar-modulos-web.mjs --api <backend> (token de administrador)',

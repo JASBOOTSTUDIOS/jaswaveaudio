@@ -29,6 +29,8 @@ export type PaqueteEncontrado = {
   errores: string[]
   /** Ruta real del binario VST3 (`entrypoints.dspDesktop`) si existe en el paquete o en una carpeta VST3. */
   rutaDsp?: string
+  /** De dónde salió la instalación (instalacion.json): catálogo, archivo .jwx firmado o desarrollo. */
+  origen?: 'catalogo' | 'archivo-firmado' | 'desarrollo'
 }
 
 const MAX_MANIFIESTO_BYTES = 256 * 1024
@@ -81,8 +83,8 @@ async function compararHashes(base: string, archivos: Record<string, unknown>, p
 export async function verificarIntegridad(
   dir: string,
   carpetaInstalacionVst3?: string,
-): Promise<{ integridad: Integridad; discrepancias: string[] }> {
-  let registro: { archivos?: Record<string, unknown>; vst3?: { bundle?: unknown; archivos?: Record<string, unknown> } }
+): Promise<{ integridad: Integridad; discrepancias: string[]; origen?: PaqueteEncontrado['origen'] }> {
+  let registro: { archivos?: Record<string, unknown>; vst3?: { bundle?: unknown; archivos?: Record<string, unknown> }; origen?: unknown }
   try {
     registro = JSON.parse(await leerAcotado(path.join(dir, 'instalacion.json'), MAX_REGISTRO_BYTES))
   } catch {
@@ -108,7 +110,9 @@ export async function verificarIntegridad(
       await compararHashes(path.join(carpetaInstalacionVst3, bundle), archivosVst3, `vst3/${bundle}/`, discrepancias)
     }
   }
-  return { integridad: discrepancias.length ? 'alterada' : 'verificada', discrepancias }
+  // Instalaciones anteriores a X1 no guardaban el origen: venían del catálogo.
+  const origen = registro.origen === 'archivo-firmado' || registro.origen === 'desarrollo' ? registro.origen : 'catalogo'
+  return { integridad: discrepancias.length ? 'alterada' : 'verificada', discrepancias, origen }
 }
 
 async function existe(ruta: string): Promise<boolean> {
@@ -165,9 +169,9 @@ export async function escanearPaquetes(
         out.push({ dir, manifiesto: null, integridad: 'sin-registro', discrepancias: [], errores: [`manifiesto ilegible: ${(e as Error).message}`] })
         continue
       }
-      const { integridad, discrepancias } = await verificarIntegridad(dir, carpetaInstalacionVst3)
+      const { integridad, discrepancias, origen } = await verificarIntegridad(dir, carpetaInstalacionVst3)
       const rutaDsp = await resolverRutaDsp(dir, manifiesto, carpetasVst3)
-      out.push({ dir, manifiesto, integridad, discrepancias, errores: [], ...(rutaDsp ? { rutaDsp } : {}) })
+      out.push({ dir, manifiesto, integridad, discrepancias, errores: [], ...(rutaDsp ? { rutaDsp } : {}), ...(origen ? { origen } : {}) })
     }
   }
   return out

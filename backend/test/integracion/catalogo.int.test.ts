@@ -130,4 +130,42 @@ describe('D1 — catálogo firmado de paquetes de plugins', () => {
       expect(r.status).toBe(400);
     });
   });
+
+  describe('X1 — firma de paquetes .jwx', () => {
+    const firmar = async (cuerpo: object, email = ADMIN) =>
+      request(app)
+        .post('/catalogo/firmar-paquete')
+        .set('Authorization', `Bearer ${await emisor.emitir({ sub: 'sub-' + email, email })}`)
+        .send(cuerpo);
+    const archivos = {
+      'jaswave-plugin.json': sha('1'),
+      'vst3/JasWave Utility.vst3/Contents/x86_64-win/JasWave Utility.vst3': sha('2'),
+      'dist/chunks/a.js': sha('3'),
+    };
+
+    it('el admin obtiene jaswave-firma.json; la firma verifica con la clave pública y queda auditada', async () => {
+      const r = await firmar({ id: 'com.jaswave.plugin.utility-tool', version: '1.2.0', archivos });
+      expect(r.status).toBe(200);
+      const f = r.body.firma;
+      expect(f).toMatchObject({ version: 1, id: 'com.jaswave.plugin.utility-tool', versionPaquete: '1.2.0', archivos });
+      const ordenados = Object.fromEntries(Object.keys(archivos).sort().map((k) => [k, archivos[k as keyof typeof archivos]]));
+      const mensaje = Buffer.from(`jwx1.${JSON.stringify({ id: f.id, version: '1.2.0', archivos: ordenados })}`);
+      expect(verify(null, mensaje, createPublicKey(claves.publica), Buffer.from(f.firma, 'base64url'))).toBe(true);
+      const audit = await db.registroAuditoria.findFirst({ where: { accion: 'catalogo.firmar-paquete' } });
+      expect(audit?.objetivo).toBe('com.jaswave.plugin.utility-tool@1.2.0');
+    });
+
+    it('solo admin; rechaza rutas peligrosas, hashes inválidos, firmar la propia firma o sin manifiesto', async () => {
+      expect((await firmar({ id: 'com.jaswave.plugin.x', version: '1.0.0', archivos }, 'musico@jaswave.test')).status).toBe(403);
+      for (const malos of [
+        { ...archivos, '../fuera.dll': sha('4') },
+        { ...archivos, '/abs.dll': sha('4') },
+        { ...archivos, 'dist/x.js': 'no-es-hash' },
+        { ...archivos, 'jaswave-firma.json': sha('4') },
+        { 'dist/a.js': sha('4') },
+      ]) {
+        expect((await firmar({ id: 'com.jaswave.plugin.utility-tool', version: '1.0.0', archivos: malos })).status).toBe(400);
+      }
+    });
+  });
 });

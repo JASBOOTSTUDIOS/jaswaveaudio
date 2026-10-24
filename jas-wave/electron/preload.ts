@@ -21,6 +21,22 @@ contextBridge.exposeInMainWorld('electron', {
   /** Catálogo firmado de plugins descargables (verificado en main). */
   pluginsCatalogo: (apiBase: string) => ipcRenderer.invoke('plugins-catalogo', apiBase),
   pluginsInstalar: (apiBase: string, id: string) => ipcRenderer.invoke('plugins-instalar', apiBase, id),
+  /** X1: extensiones .jwx desde archivo (como los .vsix de VS Code). */
+  pluginsElegirJwx: () => ipcRenderer.invoke('plugins-elegir-jwx'),
+  pluginsInspeccionarArchivo: (ruta: string) => ipcRenderer.invoke('plugins-inspeccionar-archivo', ruta),
+  pluginsInstalarArchivo: (ruta: string, opciones?: { aceptarSinFirma?: boolean }) => ipcRenderer.invoke('plugins-instalar-archivo', ruta, opciones ?? {}),
+  pluginsDesinstalar: (id: string) => ipcRenderer.invoke('plugins-desinstalar', id),
+  /** Ruta en disco de un archivo soltado en la ventana (arrastrar un .jwx). */
+  rutaDeArchivo: (archivo: File) => webUtils.getPathForFile(archivo),
+  /** .jwx abierto con doble clic: llega por evento o queda pendiente hasta que el DAW lo pida. */
+  onExtensionSolicitada: (callback: (ruta: string) => void) => {
+    const handler = (_event: unknown, ruta: string) => callback(ruta)
+    ipcRenderer.on('extension-abrir-solicitada', handler)
+    return () => ipcRenderer.removeListener('extension-abrir-solicitada', handler)
+  },
+  extensionPendiente: () => ipcRenderer.invoke('extension-pendiente'),
+  modoDesarrollador: () => ipcRenderer.invoke('ajustes-modo-desarrollador'),
+  fijarModoDesarrollador: (activo: boolean) => ipcRenderer.invoke('ajustes-fijar-modo-desarrollador', activo),
   onPluginsProgreso: (callback: (p: { id: string; fase: string; recibidos?: number; total?: number; mensaje?: string }) => void) => {
     const handler = (_event: unknown, p: { id: string; fase: string; recibidos?: number; total?: number; mensaje?: string }) => callback(p)
     ipcRenderer.on('plugins-progreso', handler)

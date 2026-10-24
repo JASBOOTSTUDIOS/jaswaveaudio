@@ -17,6 +17,7 @@ import type { VerificadorJwt } from '../auth/verificador-jwt.js';
 import { exigirAdmin, exigirAutenticacion } from '../http/auth-middleware.js';
 import { auditar, type Reloj } from '../license/servicio.js';
 import { ErrorApi } from '../http/errores.js';
+import { firmarPaquete } from './firma-paquete.js';
 
 export type EntradaCatalogo = {
   id: string;
@@ -61,6 +62,13 @@ const rutaArchivo = z
   .string()
   .max(240)
   .regex(/^[A-Za-z0-9_][A-Za-z0-9_\-./]*$/, 'ruta inválida')
+  .refine((r) => !r.split('/').includes('..') && !r.includes('//'), 'ruta inválida');
+
+/** Rutas de un .jwx que se pueden firmar: como rutaArchivo, más espacios y &() de los bundles VST3. */
+const rutaFirmable = z
+  .string()
+  .max(240)
+  .regex(/^[A-Za-z0-9_][A-Za-z0-9 _\-.&()/]*$/, 'ruta inválida')
   .refine((r) => !r.split('/').includes('..') && !r.includes('//'), 'ruta inválida');
 
 const TIPOS: Record<string, string> = {
@@ -150,6 +158,27 @@ export function rutasCatalogo({ db, verificar, clavePrivadaPem, reloj }: Opcione
     }
     await auditar(db, req.identidad!.userId, 'catalogo.publicar', paquetes.map((p) => `${p.id}@${p.version}`).join(','));
     res.json({ publicados: paquetes.length });
+  });
+
+  /**
+   * Firma un paquete `.jwx` (X1, solo admin): recibe el manifiesto de archivos (ruta → SHA-256) y devuelve
+   * `jaswave-firma.json`. La clave privada nunca sale del servidor; la operación queda auditada.
+   */
+  r.post('/firmar-paquete', exigirAutenticacion(verificar), exigirAdmin, async (req, res) => {
+    const { id, version, archivos } = z
+      .object({
+        id: paqueteEsquema.shape.id,
+        version: paqueteEsquema.shape.version,
+        archivos: z
+          .record(rutaFirmable, z.string().regex(/^[a-f0-9]{64}$/))
+          .refine((a) => Object.keys(a).length > 0 && Object.keys(a).length <= 5000, 'entre 1 y 5000 archivos')
+          .refine((a) => 'jaswave-plugin.json' in a, 'falta jaswave-plugin.json')
+          .refine((a) => !('jaswave-firma.json' in a), 'la firma no se firma a sí misma'),
+      })
+      .parse(req.body);
+    const firma = firmarPaquete(id, version, archivos, clavePrivadaPem);
+    await auditar(db, req.identidad!.userId, 'catalogo.firmar-paquete', `${id}@${version}`, { archivos: Object.keys(archivos).length });
+    res.json({ firma });
   });
 
   /**

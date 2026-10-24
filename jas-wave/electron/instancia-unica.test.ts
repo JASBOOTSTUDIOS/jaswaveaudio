@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { esRutaProyecto, rutaProyectoDeArgv, tokenHandoverDeArgv } from './instancia-unica'
+import { esRutaProyecto, rutaExtensionDeArgv, rutaProyectoDeArgv, tokenHandoverDeArgv } from './instancia-unica'
 
 describe('instancia-unica (U7)', () => {
   it('reconoce la extensión de proyecto', () => {
@@ -53,5 +53,21 @@ describe('tokenHandoverDeArgv (H1)', () => {
     assert.equal(tokenHandoverDeArgv(['jaswave://abrir?token=corto']), null)
     assert.equal(tokenHandoverDeArgv([`jaswave://abrir?token=${tok}%22%20--inject`]), null)
     assert.equal(tokenHandoverDeArgv(['C:\\proyecto.jaswave']), null)
+  })
+})
+
+describe('rutaExtensionDeArgv (X1)', () => {
+  it('devuelve la extensión .jwx de los argumentos (doble clic)', () => {
+    assert.equal(rutaExtensionDeArgv(['C:/JasWave.exe', 'C:/descargas/mi-modulo-1.0.0.JWX']), 'C:/descargas/mi-modulo-1.0.0.JWX')
+  })
+  it('ignora proyectos, enlaces y archivos que no existen', () => {
+    assert.equal(rutaExtensionDeArgv(['C:/p.jaswave', 'jaswave://abrir?token=x']), null)
+    assert.equal(rutaExtensionDeArgv(['C:/no-existe.jwx'], () => false), null)
+    assert.equal(
+      rutaExtensionDeArgv(['C:/x.jwx'], () => {
+        throw new Error('EACCES')
+      }),
+      null,
+    )
   })
 })

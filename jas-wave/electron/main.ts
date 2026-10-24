@@ -20,7 +20,7 @@ import { writeFileAtomic } from './atomic-write'
 import { defaultVstRoots, isAudioFile, PathAccessError, PathGrants, type AccessKind, type GrantMode } from './path-grants'
 import { buscarArchivosPorNombre, copiarMediaArchivo, moverMediaArchivo, traducirErrorDisco } from './media-service'
 import { checkHostCommand, setAnalysisRoot } from './plugin-host-guard'
-import { esRutaProyecto, rutaProyectoDeArgv, tokenHandoverDeArgv } from './instancia-unica'
+import { esRutaProyecto, rutaExtensionDeArgv, rutaProyectoDeArgv, tokenHandoverDeArgv } from './instancia-unica'
 import { initAutoUpdater } from './updater'
 import {
   createGuardedIpc,
@@ -32,7 +32,7 @@ import {
 } from './security'
 import { escanearPaquetes } from './plugins/escaner'
 import { crearVigilancia } from './plugins/vigilancia'
-import { instalarPaquete, obtenerCatalogo } from './plugins/instalador'
+import { desinstalarPaquete, inspeccionarArchivo, instalarArchivo, instalarPaquete, obtenerCatalogo } from './plugins/instalador'
 import { CLAVE_PUBLICA_JASWAVE } from './plugins/clave-catalogo'
 import { crearManejadorModulos, ESQUEMA_MODULOS } from './plugins/protocolo-modulos'
 import { EditoresEmbebidos, panelDesdeComando, type VentanaEditor } from './plugins/editor-embebido'
@@ -119,7 +119,7 @@ function withStoredApiKey<T extends { apiKey?: string; providerId?: string }>(re
 }
 
 // ── Ajustes del proceso main (userData/jaswave-settings.json) ───────────────
-type MainSettings = { agentBridgeEnabled?: boolean }
+type MainSettings = { agentBridgeEnabled?: boolean; /** X1: permite instalar extensiones .jwx sin firma (con aviso). */ modoDesarrollador?: boolean }
 const settingsFile = () => path.join(app.getPath('userData'), 'jaswave-settings.json')
 function readMainSettings(): MainSettings {
   try {
@@ -422,6 +422,20 @@ function createWindow() {
 
 /** Proyecto que aún no se ha podido entregar al renderer. */
 let proyectoPendiente: string | null = null
+/** X1: extensión .jwx abierta con doble clic, pendiente de que el usuario confirme su instalación. */
+let extensionPendiente: string | null = null
+
+/** Pide al renderer que muestre la confirmación de instalación del .jwx (nunca instala sin el usuario). */
+function entregarExtension(ruta: string) {
+  const abs = path.resolve(ruta)
+  logLine('info', 'plugins', `extensión recibida para instalar: ${path.basename(abs)}`)
+  if (mainWindow && !mainWindow.isDestroyed() && rendererListo) {
+    enfocarVentanaPrincipal()
+    mainWindow.webContents.send('extension-abrir-solicitada', abs)
+    return
+  }
+  extensionPendiente = abs
+}
 /** Token de handover web → escritorio (H1) pendiente de entregar al renderer. */
 let handoverPendiente: string | null = null
 
@@ -437,6 +451,17 @@ function entregarHandover(token: string) {
 }
 /** El renderer de la ventana principal ya cargó (puede recibir mensajes). */
 let rendererListo = false
+
+/** Primera extensión `.jwx` existente en los argumentos (doble clic sobre el archivo). */
+function rutaExtensionDeArgvLocal(argv: string[]): string | null {
+  return rutaExtensionDeArgv(argv, (ruta) => {
+    try {
+      return fsSync.statSync(ruta).isFile()
+    } catch {
+      return false
+    }
+  })
+}
 
 /** Extrae la primera ruta `.jaswave` válida de los argumentos de la app. */
 function rutaProyectoDeArgvLocal(argv: string[]): string | null {
@@ -484,11 +509,14 @@ if (!instanciaUnica) {
     if (ruta) abrirProyectoEnVentana(ruta)
     const token = tokenHandoverDeArgv(argv)
     if (token) entregarHandover(token)
+    const extension = rutaExtensionDeArgvLocal(argv)
+    if (extension) entregarExtension(extension)
   })
-  // macOS: doble clic sobre un `.jaswave` (en Windows llega por argv).
+  // macOS: doble clic sobre un `.jaswave` o un `.jwx` (en Windows llega por argv).
   app.on('open-file', (event: { preventDefault: () => void }, ruta: string) => {
     event.preventDefault()
-    abrirProyectoEnVentana(ruta)
+    if (/\.jwx$/i.test(ruta)) entregarExtension(ruta)
+    else abrirProyectoEnVentana(ruta)
   })
 }
 
@@ -563,6 +591,8 @@ app.whenReady().then(() => {
   if (app.isPackaged) app.setAsDefaultProtocolClient('jaswave')
   const tokenInicial = tokenHandoverDeArgv(process.argv)
   if (tokenInicial) entregarHandover(tokenInicial)
+  const extensionInicial = rutaExtensionDeArgvLocal(process.argv)
+  if (extensionInicial) entregarExtension(extensionInicial)
   initAutoUpdater({
     ipc: ipcMain,
     getWindow: () => mainWindow as unknown as import('electron').BrowserWindow | null,
@@ -645,7 +675,15 @@ function carpetasVst3Plugins(): string[] {
 function carpetaInstalacionVst3(): string {
   return path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'Programs', 'Common', 'VST3', 'JasWave')
 }
-ipcMain.handle('plugins-listar', () => escanearPaquetes(raicesPlugins(), carpetasVst3Plugins(), carpetaInstalacionVst3()))
+/** Carpeta de paquetes de esta cuenta de usuario (la única de la que se puede desinstalar). */
+function carpetaPaquetesUsuario(): string {
+  return path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'JasWave', 'plugins')
+}
+ipcMain.handle('plugins-listar', async () => {
+  const usuario = path.resolve(carpetaPaquetesUsuario()) + path.sep
+  const paquetes = await escanearPaquetes(raicesPlugins(), carpetasVst3Plugins(), carpetaInstalacionVst3())
+  return paquetes.map((p) => ({ ...p, desinstalable: path.resolve(p.dir).startsWith(usuario) }))
+})
 
 // Instalación bajo demanda (D1): catálogo firmado, descarga verificada e instalación en VST3 de usuario.
 function apiBaseValida(v: unknown): string {
@@ -680,6 +718,94 @@ ipcMain.handle('plugins-instalar', async (e: IpcMainInvokeEvent, apiBase: unknow
   } finally {
     instalacionesEnCurso.delete(id)
   }
+})
+
+// ── Extensiones .jwx desde archivo (X1, como los .vsix de VS Code) ─────────────
+/** Claves que firman paquetes: la de JasWave y, solo en desarrollo (nunca empaquetada), una de pruebas. */
+function clavesPaquetes(): string[] {
+  const claves = [CLAVE_PUBLICA_JASWAVE]
+  if (!app.isPackaged && process.env.JASWAVE_PRUEBAS_CLAVE_PUBLICA) claves.push(process.env.JASWAVE_PRUEBAS_CLAVE_PUBLICA)
+  return claves
+}
+ipcMain.handle('plugins-elegir-jwx', async (e: IpcMainInvokeEvent) => {
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Instalar extensión de JasWave',
+    filters: [{ name: 'Extensión de JasWave', extensions: ['jwx'] }],
+    properties: ['openFile'],
+  })
+  return r.canceled || !r.filePaths[0] ? null : r.filePaths[0]
+})
+ipcMain.handle('plugins-inspeccionar-archivo', async (_e: IpcMainInvokeEvent, ruta: unknown) => {
+  try {
+    return { ok: true, paquete: await inspeccionarArchivo(String(ruta), { clavesPublicas: clavesPaquetes() }) }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+ipcMain.handle('plugins-instalar-archivo', async (e: IpcMainInvokeEvent, ruta: unknown, opciones: unknown) => {
+  if (!isMainWindowSender(e)) return { ok: false, error: 'Solo la ventana principal puede instalar extensiones' }
+  const clave = `archivo:${String(ruta)}`
+  if (instalacionesEnCurso.has(clave)) return { ok: false, error: 'ya se está instalando' }
+  instalacionesEnCurso.add(clave)
+  try {
+    const aceptarSinFirma = !!(opciones && typeof opciones === 'object' && (opciones as { aceptarSinFirma?: unknown }).aceptarSinFirma === true)
+    const r = await instalarArchivo(
+      String(ruta),
+      { modoDesarrollador: !!readMainSettings().modoDesarrollador, aceptarSinFirma },
+      {
+        carpetaPaquetes: carpetaPaquetesUsuario(),
+        carpetaVst3: carpetaInstalacionVst3(),
+        clavesPublicas: clavesPaquetes(),
+        alProgreso: (p) => { if (!e.sender.isDestroyed()) e.sender.send('plugins-progreso', p) },
+      },
+    )
+    if (r.ok) logLine('info', 'plugins', `instalado desde archivo ${r.paquete.id}@${r.paquete.version} (${r.origen})`)
+    else logLine('warn', 'plugins', `instalación desde archivo rechazada: ${r.error}`)
+    return r
+  } catch (err) {
+    logLine('warn', 'plugins', 'instalación desde archivo fallida', err)
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  } finally {
+    instalacionesEnCurso.delete(clave)
+  }
+})
+ipcMain.handle('plugins-desinstalar', async (e: IpcMainInvokeEvent, id: unknown) => {
+  if (!isMainWindowSender(e)) return { ok: false, error: 'Solo la ventana principal puede desinstalar extensiones' }
+  try {
+    const r = await desinstalarPaquete(String(id), { carpetaPaquetes: carpetaPaquetesUsuario(), carpetaVst3: carpetaInstalacionVst3() })
+    logLine('info', 'plugins', `desinstalado ${String(id)}${r.bundle ? ` (y ${r.bundle})` : ''}`)
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+ipcMain.handle('extension-pendiente', () => {
+  const r = extensionPendiente
+  extensionPendiente = null
+  return r
+})
+ipcMain.handle('ajustes-modo-desarrollador', () => !!readMainSettings().modoDesarrollador)
+// Activarlo exige confirmar en un diálogo nativo: ningún código del renderer (ni un módulo) puede hacerlo solo.
+ipcMain.handle('ajustes-fijar-modo-desarrollador', async (e: IpcMainInvokeEvent, activo: unknown) => {
+  if (!isMainWindowSender(e)) return !!readMainSettings().modoDesarrollador
+  if (activo === true) {
+    const r = await dialog.showMessageBox(BrowserWindow.fromWebContents(e.sender), {
+      type: 'warning',
+      buttons: ['Activar', 'Cancelar'],
+      defaultId: 1,
+      cancelId: 1,
+      title: 'Modo desarrollador',
+      message: '¿Activar el Modo desarrollador?',
+      detail:
+        'Podrás instalar extensiones .jwx que no están firmadas por JasWave (se marcarán como «sin firmar»). ' +
+        'El código de una extensión se ejecuta dentro del DAW: instala solo paquetes de quien confíes.',
+    })
+    if (r.response !== 0) return !!readMainSettings().modoDesarrollador
+  }
+  await writeMainSettings({ modoDesarrollador: activo === true })
+  logLine('info', 'main', `Modo desarrollador ${activo === true ? 'activado' : 'desactivado'}`)
+  return activo === true
 })
 
 // Licencia local compartida con los VST JasWave (L3; contrato plugins/CONTRATO-V5.md §4).

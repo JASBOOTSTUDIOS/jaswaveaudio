@@ -21,6 +21,18 @@ declare global {
       handoverTakePending?: () => Promise<string | null>
       pluginsCatalogo?: (apiBase: string) => Promise<import('../src/lib/plugins/entrega').CatalogoPlugins>
       pluginsInstalar?: (apiBase: string, id: string) => Promise<{ ok: boolean; version?: string; error?: string }>
+      /** X1: extensiones .jwx desde archivo */
+      pluginsElegirJwx?: () => Promise<string | null>
+      pluginsInspeccionarArchivo?: (
+        ruta: string,
+      ) => Promise<{ ok: true; paquete: import('../src/lib/plugins/extensiones').InspeccionJwx } | { ok: false; error: string }>
+      pluginsInstalarArchivo?: (ruta: string, opciones?: { aceptarSinFirma?: boolean }) => Promise<import('../src/lib/plugins/extensiones').ResultadoInstalacionJwx>
+      pluginsDesinstalar?: (id: string) => Promise<{ ok: boolean; error?: string }>
+      rutaDeArchivo?: (archivo: File) => string
+      onExtensionSolicitada?: (callback: (ruta: string) => void) => () => void
+      extensionPendiente?: () => Promise<string | null>
+      modoDesarrollador?: () => Promise<boolean>
+      fijarModoDesarrollador?: (activo: boolean) => Promise<boolean>
       onPluginsProgreso?: (callback: (p: import('../src/lib/plugins/entrega').ProgresoPlugin) => void) => () => void
       onPluginCuarentena?: (callback: (aviso: { ruta: string; motivo: string; mensaje: string }) => void) => () => void
       licenciaGuardar?: (datos: { token: string; tokenDispositivo: string }) => Promise<boolean>

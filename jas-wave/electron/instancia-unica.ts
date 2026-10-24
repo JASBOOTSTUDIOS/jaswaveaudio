@@ -41,6 +41,26 @@ export function rutaProyectoDeArgv(
   return null
 }
 
+/** Extensión de los paquetes instalables (X1, como los `.vsix` de VS Code). */
+export const EXTENSION_PAQUETE = '.jwx'
+
+/**
+ * Primera extensión `.jwx` de los argumentos (doble clic sobre el archivo con la asociación de
+ * archivos). Solo se devuelve la ruta: instalar siempre lo confirma el usuario en el DAW.
+ */
+export function rutaExtensionDeArgv(argv: readonly string[], existe: (ruta: string) => boolean = () => true): string | null {
+  for (const arg of argv) {
+    if (typeof arg !== 'string' || !arg.trim().toLowerCase().endsWith(EXTENSION_PAQUETE)) continue
+    const abs = arg.trim()
+    try {
+      if (existe(abs)) return abs
+    } catch {
+      /* ruta ilegible: se ignora */
+    }
+  }
+  return null
+}
+
 /**
  * Enlace profundo de handover web → escritorio (H1): `jaswave://abrir?token=<token>`.
  * Devuelve el token si el enlace es exactamente ese (esquema, acción y formato del token); cualquier

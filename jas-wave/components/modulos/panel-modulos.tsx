@@ -1,7 +1,7 @@
 /**
  * Módulos del DAW: los instalados (escritorio) o disponibles (web) y su estado. Activar descarga y
  * carga el módulo; desactivar quita sus herramientas y contribuciones sin tocar el proyecto ni el audio.
- * La instalación desde el catálogo firmado está en CatalogoModulos.
+ * La instalación desde el catálogo firmado está en CatalogoModulos; desde archivo .jwx, en ExtensionesInstaladas.
  */
 
 import { Boxes, Loader2, RefreshCw } from 'lucide-react'
@@ -10,6 +10,7 @@ import { useVersionModulos } from '@/src/modulos/use-modulos'
 import { TOOL_CATALOG, requestOpenTool } from '@/src/workspace/types'
 import { Aviso, Boton, Seccion } from '@/components/cuenta/ui'
 import { CatalogoModulos } from './catalogo-modulos'
+import { ExtensionesInstaladas } from './extensiones-instaladas'
 
 export function PanelModulos() {
   useVersionModulos()
@@ -75,6 +76,7 @@ export function PanelModulos() {
           ) : null}
         </Seccion>
       ))}
+      <ExtensionesInstaladas />
       <CatalogoModulos />
     </div>
   )

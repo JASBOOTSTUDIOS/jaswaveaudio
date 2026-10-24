@@ -115,6 +115,12 @@ const config = {
   electronLanguages: ['es', 'es-419', 'en-US'],
   // Enlaces profundos web → escritorio (H1): jaswave://abrir?token=…
   protocols: [{ name: 'JasWave', schemes: ['jaswave'] }],
+  // Doble clic: proyectos (U7) y extensiones instalables (X1, como los .vsix de VS Code). La ruta llega en
+  // argv; instalar una extensión siempre lo confirma el usuario dentro del DAW.
+  fileAssociations: [
+    { ext: 'jaswave', name: 'Proyecto de JasWave', description: 'Proyecto de JasWave', role: 'Editor' },
+    { ext: 'jwx', name: 'Extensión de JasWave', description: 'Plugin o módulo instalable de JasWave', role: 'Viewer' },
+  ],
   electronFuses: {
     runAsNode: true,
     enableCookieEncryption: true,

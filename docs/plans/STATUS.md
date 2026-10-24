@@ -37,7 +37,7 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | V2 | Rediseño UI cyber y calidad DSP | V1 | hecho | Claude Opus 5.5 · 2026-10-23 | ae53d2c |
 | V3 | Diseño unificado futurista, espectro dual y sincronización | V2 | hecho (nativo; réplica web en V4) | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | V4 | Mismo diseño de VST en el DAW: nativo embebido y réplica web | V3 | en curso (escritorio hecho; réplica web pendiente) | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
-| X1 | Extensiones .jwx instalables desde archivo (estilo VS Code) | M3 | pendiente | | |
+| X1 | Extensiones .jwx instalables desde archivo (estilo VS Code) | M3 | hecho (escritorio; subida web pendiente) | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | W1 | Cliente web | B0, K1 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | W2 | WebSynth y stem freezing | W1 | en curso (WebSynth hecho; stem freezing pendiente) | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | H1 | Handover web → desktop | S1, W1 | hecho (unión automática a sala pendiente) | Claude Opus 5.5 · 2026-10-23 | (ver git log) |

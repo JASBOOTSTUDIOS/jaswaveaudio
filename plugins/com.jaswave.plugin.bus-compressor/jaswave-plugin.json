@@ -180,7 +180,7 @@
     ]
   },
   "download": {
-    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.bus-compressor-1.0.0.zip",
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.bus-compressor-1.0.0.jwx",
     "sha256": "",
     "sizeBytes": 0
   },

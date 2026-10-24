@@ -121,7 +121,7 @@ for (const p of PLUGINS) {
     rolesAllowed: p.roles,
     license: { productId: p.dir, features },
     ai: { summary: p.summary, intents: p.intents, parameters },
-    download: { url: `https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/${p.dir}-1.0.0.zip`, sha256: '', sizeBytes: 0 },
+    download: { url: `https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/${p.dir}-1.0.0.jwx`, sha256: '', sizeBytes: 0 },
     checksum: 'SHA256:',
   }
   const file = path.join(root, p.dir, 'jaswave-plugin.json')

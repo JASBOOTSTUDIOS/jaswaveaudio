@@ -50,6 +50,7 @@ import { AgentAuditHost, AGENT_BRIDGE_REV } from '@/src/lib/agent-audit-bridge'
 import { PanelLeft, PanelRight, PanelBottom, Plus, X } from 'lucide-react'
 import { JasWaveAppIcon } from '@/components/brand'
 import { ComponentesDeModulos } from '@/components/modulos/componentes-de-modulos'
+import { InstaladorExtensiones } from '@/components/modulos/instalador-extensiones'
 
 function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
   useShortcutDispatcher()
@@ -332,6 +333,7 @@ function AppShell() {
       <AppCloseGuard />
       <OpenProjectRequest />
       <ComponentesDeModulos />
+      <InstaladorExtensiones />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} dispatcher={dispatcher} />
       <ExportBounceDialog open={exportOpen} onClose={() => setExportOpen(false)} />
       <main className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground">

@@ -28,6 +28,9 @@ export type PaqueteRecibido = {
   errores?: string[]
   /** Ruta del binario VST3 resuelta por el proceso main (paquete o carpeta VST3). */
   rutaDsp?: string
+  /** X1: de dónde salió la instalación y si es de esta cuenta de usuario (se puede desinstalar). */
+  origen?: 'catalogo' | 'archivo-firmado' | 'desarrollo'
+  desinstalable?: boolean
 }
 
 export type PluginActivo = {
@@ -35,6 +38,8 @@ export type PluginActivo = {
   dir: string
   integridad: 'verificada' | 'sin-registro'
   rutaDsp?: string
+  origen?: PaqueteRecibido['origen']
+  desinstalable?: boolean
 }
 
 /** Id del catálogo del DAW para un plugin JasWave (estable: deriva del id del manifiesto). */
@@ -107,7 +112,14 @@ export function activarPaquetes(paquetes: PaqueteRecibido[]): { activos: PluginA
       rechazados.push({ dir: p.dir, motivo: `id duplicado: ${r.manifiesto.id}` })
       continue
     }
-    nuevos.set(r.manifiesto.id, { manifiesto: r.manifiesto, dir: p.dir, integridad: p.integridad, ...(p.rutaDsp ? { rutaDsp: p.rutaDsp } : {}) })
+    nuevos.set(r.manifiesto.id, {
+      manifiesto: r.manifiesto,
+      dir: p.dir,
+      integridad: p.integridad,
+      ...(p.rutaDsp ? { rutaDsp: p.rutaDsp } : {}),
+      ...(p.origen ? { origen: p.origen } : {}),
+      ...(p.desinstalable ? { desinstalable: true } : {}),
+    })
   }
 
   for (const [id, previo] of activos) {
@@ -223,5 +235,9 @@ export async function cargarPluginsInstalados(
   for (const r of resultado.rechazados) console.warn(`[plugins] paquete rechazado (${r.dir}): ${r.motivo}`)
   // Módulos del DAW (asistente IA, partitura…): paquetes con entrypoints.ui.
   sincronizarModulosInstalados(resultado.activos)
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(EVENTO_PLUGINS_CAMBIADOS))
   return resultado
 }
+
+/** Se emite en `window` cada vez que cambia el conjunto de paquetes instalados (instalar, desinstalar…). */
+export const EVENTO_PLUGINS_CAMBIADOS = 'jaswave-plugins-cambiados'
