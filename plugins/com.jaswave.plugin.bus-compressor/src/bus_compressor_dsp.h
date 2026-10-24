@@ -58,7 +58,6 @@ inline double staticOutDb(double x, double thr, double ratio, double knee) {
 }
 
 struct CompBus : MeterBusBase {
-    SpectrumTap pre, post;
     PeakMeter inPk[2], outPk[2];
     PeakMeter grMax;                         // dB (>=0), máximo desde la última lectura
     std::atomic<float> detLevelDb{-100.0f};  // último nivel del detector
@@ -99,6 +98,8 @@ public:
 
     template <class T>
     void process(const T* inL, const T* inR, T* outL, T* outR, int n, CompBus* bus) {
+        if (bus) bus->entrada(inL, inR, n);
+        const bool vista = bus && bus->vistaAbierta();   // scope solo con el editor abierto
         int pos = 0;
         float pkIn[2] = { 0, 0 }, pkOut[2] = { 0, 0 };
         double grMax = 0.0, lastLev = -100.0;
@@ -136,7 +137,7 @@ public:
                     pkOut[0] = std::max(pkOut[0], static_cast<float>(std::fabs(ol))); pkOut[1] = std::max(pkOut[1], static_cast<float>(std::fabs(orr)));
                     const float ain = static_cast<float>(std::max(std::fabs(xl), std::fabs(xr)));
                     const float aout = static_cast<float>(std::max(std::fabs(ol), std::fabs(orr)));
-                    accum_.push(bus->scope, ain, aout, static_cast<float>(gr_ * w));
+                    if (vista) accum_.push(bus->scope, ain, aout, static_cast<float>(gr_ * w));
                 }
                 grMax = std::max(grMax, gr_ * w);
                 lastLev = lev;
@@ -144,6 +145,7 @@ public:
             pos += m;
         }
         if (bus) {
+            bus->salida(outL, outR, n);
             bus->inPk[0].update(pkIn[0]); bus->inPk[1].update(pkIn[1]);
             bus->outPk[0].update(pkOut[0]); bus->outPk[1].update(pkOut[1]);
             bus->grMax.update(static_cast<float>(grMax));

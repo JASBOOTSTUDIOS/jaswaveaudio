@@ -53,7 +53,8 @@ node plugins/scripts/validate-plugins.mjs --pluginval <ruta a pluginval.exe>
 node plugins/scripts/sync-manifests.mjs --check
 ```
 
-Capturas: `plugins/build/tools/Release/<Nombre>_snapshot.exe --out plugins/docs/capturas --name <id>`.
+Capturas (7 editores × 5 estados de licencia) y layout común (`<plugin>/ui-layout.json`, fuente de la réplica web):
+`node plugins/scripts/ui-layout.mjs --capturas`. Una sola: `plugins/build/tools/Release/<Nombre>_snapshot.exe --out plugins/docs/capturas --name <id>`.
 Para probar en un DAW sin instalar en carpetas del sistema: `powershell -File plugins/deploy_vst3.ps1`.
 
 ## Compatibilidad con proyectos previos

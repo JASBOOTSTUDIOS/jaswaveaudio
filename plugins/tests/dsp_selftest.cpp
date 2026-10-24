@@ -608,8 +608,96 @@ static void testInvariance() {
     CHECK(g_allocs.load() == allocs0, "total en secciones process: %lld asignaciones", g_allocs.load() - allocs0);
 }
 
+// =====================================================================================
+//  V3: espectro IN/OUT solo con el editor abierto, balística de 14 dB/s y 0 asignaciones con taps
+// =====================================================================================
+static void testV3Visualizacion() {
+    std::printf("\n[V3] taps IN/OUT, coste cero con el editor cerrado y balística por tiempo\n");
+    const Buf x = sine(1000, 0.5, 48000, 16384);
+    Buf yl, yr;
+    // 1) editor cerrado: el procesador no escribe en los taps (ni scope ni vectorscopio)
+    {
+        auto bus = std::make_unique<JasWaveComp::CompBus>();
+        auto ut = std::make_unique<JasWaveUtility::UtilityBus>();
+        JasWaveComp::CompressorEngine cp; cp.prepare(48000, 512);
+        JasWaveUtility::UtilityEngine u; u.prepare(48000, 512);
+        runFx(cp, bus.get(), x, x, yl, yr, 512);
+        runFx(u, ut.get(), x, x, yl, yr, 512);
+        CHECK(bus->espIn.escritas() == 0 && bus->espOut.escritas() == 0 && ut->espIn.escritas() == 0,
+              "editor cerrado: taps IN/OUT sin alimentar (comp %llu/%llu, utility %llu)", static_cast<unsigned long long>(bus->espIn.escritas()),
+              static_cast<unsigned long long>(bus->espOut.escritas()), static_cast<unsigned long long>(ut->espIn.escritas()));
+        // 2) editor abierto: entrada y salida reciben exactamente las muestras procesadas, sin asignar memoria
+        bus->editoresAbiertos.store(1);
+        ut->editoresAbiertos.store(1);
+        const long long before = g_allocs.load();
+        runFx(cp, bus.get(), x, x, yl, yr, 512);
+        runFx(u, ut.get(), x, x, yl, yr, 512);
+        CHECK(bus->espIn.escritas() == x.size() && bus->espOut.escritas() == x.size() && ut->espOut.escritas() == x.size(),
+              "editor abierto: taps IN y OUT con %zu muestras cada uno", x.size());
+        CHECK(g_allocs.load() == before, "process con taps IN/OUT activos: 0 asignaciones (%lld)", g_allocs.load() - before);
+        bus->editoresAbiertos.store(0);
+        const uint64_t w = bus->espIn.escritas();
+        runFx(cp, bus.get(), x, x, yl, yr, 512);
+        CHECK(bus->espIn.escritas() == w, "al cerrar el editor los taps dejan de alimentarse");
+    }
+    // 3) los 7 procesadores publican IN y OUT (los instrumentos, OUT y la velocidad MIDI)
+    {
+        auto eqB = std::make_unique<JasWaveEq::EqBus>();
+        auto limB = std::make_unique<JasWaveLimiter::LimiterBus>();
+        auto deB = std::make_unique<JasWaveDeEsser::DeEsserBus>();
+        auto pnB = std::make_unique<JasWavePiano::PianoBus>();
+        for (JasWaveDsp::MeterBusBase* b : { static_cast<JasWaveDsp::MeterBusBase*>(eqB.get()), static_cast<JasWaveDsp::MeterBusBase*>(limB.get()),
+                                             static_cast<JasWaveDsp::MeterBusBase*>(deB.get()), static_cast<JasWaveDsp::MeterBusBase*>(pnB.get()) })
+            b->editoresAbiertos.store(1);
+        limB->loudness.prepare(48000.0);
+        JasWaveEq::EqEngine eq; eq.prepare(48000, 512);
+        JasWaveEq::EqSettings es; es.analyzer = 2; eq.setSettings(es);
+        JasWaveLimiter::LimiterEngine lm; lm.prepare(48000, 512);
+        JasWaveDeEsser::DeEsserEngine de; de.prepare(48000, 512);
+        runFx(eq, eqB.get(), x, x, yl, yr, 512);
+        runFx(lm, limB.get(), x, x, yl, yr, 512);
+        runFx(de, deB.get(), x, x, yl, yr, 512);
+        JasWavePiano::PianoEngine pn; pn.prepare(48000, 512);
+        Buf L(512, 0.0), R(512, 0.0);
+        pn.noteOn(60, 0.8f);
+        for (int b = 0; b < 4; ++b) pn.render(L.data(), R.data(), 512, pnB.get());
+        CHECK(eqB->espIn.escritas() > 0 && eqB->espOut.escritas() > 0 && limB->espIn.escritas() > 0 && limB->espOut.escritas() > 0 &&
+                  deB->espIn.escritas() > 0 && deB->espOut.escritas() > 0 && pnB->espOut.escritas() == 2048,
+              "EQ, limitador, de-esser y piano publican el espectro IN/OUT con el editor abierto");
+    }
+    // 4) balística: ataque instantáneo y caída de 14 dB/s (independiente de los fps)
+    {
+        JasWaveDsp::SpectrumTap tap;
+        std::vector<float> s(8192);
+        for (int i = 0; i < 8192; ++i) s[static_cast<size_t>(i)] = static_cast<float>(0.5 * std::sin(2.0 * 3.14159265358979 * 1500.0 * i / 48000.0));
+        tap.push(s.data(), nullptr, 8192);
+        JasWaveDsp::SpectrumAnalyzer an;
+        std::vector<float> c0, c1, c2;
+        an.updateBalistica(tap, 48000.0, 1.0f / 60.0f, 14.0f);
+        an.columns(c0, 64, 20.0, 20000.0, 0.0);
+        const auto peak = [](const std::vector<float>& v) { float m = -400.0f; for (float d : v) m = std::max(m, d); return m; };
+        const float p0 = peak(c0);
+        // sin audio nuevo: 0.25 s (el dt máximo admitido) → −3.5 dB; 2 frames de 30 fps (=1/15 s) → −0.933 dB; igual a 1 frame de 1/15 s
+        an.updateBalistica(tap, 48000.0, 0.25f, 14.0f);
+        an.columns(c1, 64, 20.0, 20000.0, 0.0);
+        JasWaveDsp::SpectrumAnalyzer a30, a15;
+        a30.updateBalistica(tap, 48000.0, 0.0f, 14.0f);
+        a15.updateBalistica(tap, 48000.0, 0.0f, 14.0f);
+        a30.updateBalistica(tap, 48000.0, 1.0f / 30.0f, 14.0f);
+        a30.updateBalistica(tap, 48000.0, 1.0f / 30.0f, 14.0f);
+        a15.updateBalistica(tap, 48000.0, 1.0f / 15.0f, 14.0f);
+        std::vector<float> d30, d15;
+        a30.columns(d30, 64, 20.0, 20000.0, 0.0);
+        a15.columns(d15, 64, 20.0, 20000.0, 0.0);
+        CHECK(p0 > -12.0f, "ataque instantáneo: pico del seno a %.2f dBFS en el primer frame", p0);
+        CHECK(std::fabs((p0 - peak(c1)) - 3.5f) < 0.01f, "caída sin señal: %.3f dB en 0.25 s (14 dB/s → 3.5 dB)", p0 - peak(c1));
+        CHECK(std::fabs(peak(d30) - peak(d15)) < 0.01f, "misma caída a 30 fps que a 15 fps (%.3f vs %.3f dBFS)", peak(d30), peak(d15));
+    }
+}
+
 int main() {
     std::printf("JasWave DSP selftest\n");
+    testV3Visualizacion();
     testEq();
     testComp();
     testLimiter();

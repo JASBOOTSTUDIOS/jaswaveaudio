@@ -3,6 +3,7 @@
 #include "jw_vst3.h"
 #include "jw_ui.h"
 #include "jw_ui_kit.h"
+#include "jw_ui_plantilla.h"
 
 #include "public.sdk/source/main/pluginfactory.h"
 
@@ -64,28 +65,29 @@ private:
 class Editor : public JasWaveUI::PluginEditor {
 public:
     const wchar_t* title() const override { return L"TRUE-PEAK LIMITER"; }
-    const wchar_t* subtitle() const override { return L"DETECCIÓN TRUE-PEAK 8× · MEDICIÓN BS.1770-4 · LOOKAHEAD"; }
+    const wchar_t* subtitle() const override { return L"DETECCIÓN TRUE-PEAK · MEDICIÓN BS.1770-4 · LOOKAHEAD"; }
+    JasWaveUI::Color accent() const override { return JasWaveUI::Pal::acentoAmarillo; }
     void build(JasWaveUI::EditorContext& c) override {
-        using namespace JasWaveUI;
-        c.section({ 666, 92, 1048, 404 }, L"LIMITADOR", kBypass, true);
-        c.knob(kCeiling, 760, 176, KnobSize::Main, L"TECHO");
-        c.knob(kGain, 954, 176, KnobSize::Main, L"GANANCIA");
-        c.knob(kRelease, 760, 304, KnobSize::Normal, L"RELEASE");
-        c.knob(kLookahead, 857, 304, KnobSize::Normal, L"LOOKAHEAD");
-        c.dropdown(kDither, { 920, 294, 1036, 314 }, L"DITHER");
-        c.section({ 666, 418, 1048, 556 }, L"MEDIDORES");
-        meters_.build(c, 690.0f, 446.0f, 528.0f);
-        gr_ = c.meter({ 774, 446, 786, 528 }, nullptr, 0.0f, 24.0f, true);
-        tp_ = c.meter({ 800, 446, 812, 528 }, nullptr, -60.0f, 6.0f);
+        namespace P = JasWaveUI::Plantilla;
+        P::controles(c, L"LIMITADOR");
+        P::principal(c, 0, kGain, L"GANANCIA");
+        P::principal(c, 1, kRelease, L"RELEASE");
+        P::principal(c, 2, kLookahead, L"LOOKAHEAD");
+        P::selector(c, 0, 3, kDither, L"DITHER");
+        P::salida(c, kBypass);
+        P::fader(c, kCeiling, L"TECHO");
+        gr_ = P::medidorCelda(c, 0, L"GR", 0.0f, 24.0f, true);
+        tp_ = P::medidorCelda(c, 1, L"TP", -60.0f, 6.0f, false);
+        P::medidores(c, meters_);
     }
     void tick(JasWaveUI::EditorContext& c) override {
         bus_ = std::dynamic_pointer_cast<LimiterBus>(c.params.bus());
         if (!bus_) return;
-        meters_.update(bus_->inPk, bus_->outPk);
-        bus_->scope.snapshot(snap_, 1000);
-        grF_.push(std::pow(10.0f, bus_->grMax.take() / 20.0f));
+        meters_.update(bus_->inPk, bus_->outPk, c.dt);
+        espectro_.actualizar(*bus_, c.dt);
+        grF_.push(std::pow(10.0f, bus_->grMax.take() / 20.0f), c.dt);
         const float tp = bus_->tpOut.take();
-        tpF_.push(tp);
+        tpF_.push(tp, c.dt);
         tpHold_ = std::max(tpHold_, tp <= 1e-6f ? -120.0f : 20.0f * std::log10(tp));
         gr_->set(grF_.db, grF_.peak);
         tp_->set(tpF_.db, tpF_.peak);
@@ -96,61 +98,40 @@ public:
         lat_ = bus_->latency.load(std::memory_order_relaxed);
         sr_ = bus_->sampleRate.load(std::memory_order_relaxed);
     }
-    float outputLevel() const override { return std::clamp((tpF_.db + 48.0f) / 54.0f, 0.0f, 1.0f); }
+    float outputLevel() const override { return meters_.level(); }
     void drawPanels(JasWaveUI::Gfx& g, JasWaveUI::EditorContext& c) override {
         using namespace JasWaveUI;
-        const Rect v = Layout::kVisualizer;
-        Kit::panel(g, v, L"FORMA DE ONDA · TRUE-PEAK");
-        const Rect h{ v.l + 14, v.t + 34, v.r - 40, v.b - 16 };
-        const float mid = h.cy();
+        namespace P = Plantilla;
+        const Color ac = accent();
+        P::panelVisual(g, L"ESPECTRO IN / OUT · TECHO");
+        meters_.drawLabels(g);
+        const Rect a = P::areaEspectro();
+        espectro_.dibujar(g, a);
+        // techo de limitación (acento amarillo) sobre la escala dBFS
         const double ceil = c.params.plain(kCeiling);
-        const float ceilLin = static_cast<float>(std::pow(10.0, ceil / 20.0));
-        const float yC = mid - ceilLin * h.h() * 0.5f;
-        const int n = snap_.count;
-        if (n > 1) {
-            for (int i = 0; i < n; ++i) {
-                const float x = h.l + h.w() * i / (n - 1);
-                const float a = std::min(1.0f, snap_.inAbs[static_cast<size_t>(i)] * static_cast<float>(std::pow(10.0, c.params.plain(kGain) / 20.0)));
-                g.line(x, mid - a * h.h() * 0.5f, x, mid + a * h.h() * 0.5f, Pal::textoTenue.withAlpha(0.35f), 1.0f);
-            }
-            for (int i = 0; i < n; ++i) {
-                const float x = h.l + h.w() * i / (n - 1);
-                const float a = std::min(1.0f, snap_.outAbs[static_cast<size_t>(i)]);
-                g.line(x, mid - a * h.h() * 0.5f, x, mid + a * h.h() * 0.5f, Pal::cian.withAlpha(0.55f), 1.0f);
-                pts_[static_cast<size_t>(i)] = { x, mid - a * h.h() * 0.5f };
-            }
-            Kit::wireTrace(g, pts_.data(), n, Pal::cian, mid, false);
-            for (int i = 0; i < n; ++i)
-                pts_[static_cast<size_t>(i)].y = h.t + std::clamp(snap_.grDb[static_cast<size_t>(i)] / 12.0f, 0.0f, 1.0f) * h.h() * 0.45f;
-            g.glowPolyline(pts_.data(), n, Pal::alerta.withAlpha(0.85f), 1.3f);
-        }
-        g.line(h.l, mid, h.r, mid, Pal::cian.withAlpha(0.4f), 1.0f);
-        g.glowLine(h.l, yC, h.r, yC, Pal::alerta.withAlpha(0.8f), 1.0f);
-        g.line(h.l, 2 * mid - yC, h.r, 2 * mid - yC, Pal::alerta.withAlpha(0.35f), 1.0f);
+        const float yC = P::yDbfs(a, static_cast<float>(ceil));
+        g.fillRect({ a.l, a.t, a.r, yC }, ac.withAlpha(0.05f));
+        g.glowLine(a.l, yC, a.r, yC, ac.withAlpha(0.9f), 1.2f);
         wchar_t buf[48];
-        swprintf_s(buf, L"%.1f dBTP", ceil);
-        g.text(buf, { h.r - 120, yC - 18, h.r, yC - 2 }, Font::ValueSmall, Pal::alerta, Align::Right);
-        // mini-panel: sonoridad y true-peak
-        const Rect m = Layout::kMiniPanel;
-        Kit::panel(g, m, L"SONORIDAD · BS.1770");
+        swprintf_s(buf, L"TECHO %.1f dBTP", ceil);
+        g.text(buf, { a.l + 6, yC + 3, a.l + 220, yC + 19 }, Font::ValueSmall, ac, Align::Left);
+        // mini-panel: sonoridad y true-peak (lecturas de alta visibilidad en el acento)
+        P::panelMedicion(g, L"SONORIDAD · BS.1770");
+        const Rect m = P::kMini;
         const bool lufsLocked = !c.params.featureGranted(kFeatLoudness);
         auto lufs = [&](float v, wchar_t* b) { if (lufsLocked || !lufsOn_ || v <= -119.0f) swprintf_s(b, 32, L"--.-"); else swprintf_s(b, 32, L"%.1f", v); };
         wchar_t bm[32], bs[32], bi[32], btp[32], blat[48];
         lufs(lm_, bm); lufs(ls_, bs); lufs(li_, bi);
         swprintf_s(btp, L"%.2f", tpHold_ < -119.0f ? -120.0f : tpHold_);
         swprintf_s(blat, L"%u smp · %.1f ms", lat_, sr_ > 0 ? lat_ * 1000.0 / sr_ : 0.0);
-        const Color lc = lufsLocked ? Pal::bloqueado : Pal::textoValor;
-        bigReadout(g, m.l + 24, m.t + 40, L"MOMENTÁNEA", bm, L"LUFS", lc);
-        bigReadout(g, m.l + 150, m.t + 40, L"CORTO PLAZO", bs, L"LUFS", lc);
-        bigReadout(g, m.l + 276, m.t + 40, L"INTEGRADA", bi, L"LUFS", lc);
-        bigReadout(g, m.l + 410, m.t + 40, L"TRUE-PEAK MÁX", btp, L"dBTP", tpHold_ > ceil + 0.01 ? Pal::alerta : Pal::textoValor);
-        if (lufsLocked) { Chrome::drawLock(g, m.l + 380, m.t + 15, 9.0f, Pal::bloqueado); }
-        g.text(L"LATENCIA", { m.l + 24, m.b - 30, m.l + 110, m.b - 16 }, Font::Label, Pal::textoTenue, Align::Left, true);
-        g.text(blat, { m.l + 110, m.b - 31, m.l + 330, m.b - 15 }, Font::ValueSmall, Pal::textoValor, Align::Left);
-        // etiquetas de medidores
-        meters_.drawLabels(g);
-        g.text(L"GR", { 764, 532, 796, 546 }, Font::Label, Pal::textoEtiqueta, Align::Center, true);
-        g.text(L"TP", { 790, 532, 822, 546 }, Font::Label, Pal::textoEtiqueta, Align::Center, true);
+        const Color lc = lufsLocked ? Pal::bloqueado : ac;
+        bigReadout(g, m.l + 24, m.t + 34, L"MOMENTÁNEA", bm, L"LUFS", lc);
+        bigReadout(g, m.l + 150, m.t + 34, L"CORTO PLAZO", bs, L"LUFS", lc);
+        bigReadout(g, m.l + 276, m.t + 34, L"INTEGRADA", bi, L"LUFS", lc);
+        bigReadout(g, m.l + 410, m.t + 34, L"TRUE-PEAK MÁX", btp, L"dBTP", tpHold_ > ceil + 0.01 ? Pal::alerta : Pal::textoValor);
+        if (lufsLocked) Chrome::drawLock(g, m.l + 380, m.t + 15, 9.0f, Pal::bloqueado);
+        g.text(L"LATENCIA", { m.l + 24, m.b - 26, m.l + 110, m.b - 12 }, Font::Label, Pal::textoTenue, Align::Left, true);
+        g.text(blat, { m.l + 110, m.b - 27, m.l + 330, m.b - 11 }, Font::ValueSmall, Pal::textoValor, Align::Left);
     }
     const wchar_t* footerId() const override { return L"com.jaswave.plugin.truepeak-limiter"; }
 
@@ -163,10 +144,9 @@ private:
     }
     std::shared_ptr<LimiterBus> bus_;
     JasWaveUI::Kit::StereoMeters meters_;
+    JasWaveUI::Plantilla::EspectroDual espectro_;
     JasWaveUI::Kit::PeakFollower grF_, tpF_;
     JasWaveUI::Meter *gr_{nullptr}, *tp_{nullptr};
-    JasWaveDsp::ScopeSnapshot snap_;
-    std::array<JasWaveUI::Pt, 1024> pts_{};
     float tpHold_{-120.0f}, lm_{-120}, ls_{-120}, li_{-120};
     bool lufsOn_{false};
     uint32_t lat_{0};

@@ -1,5 +1,8 @@
 // JasWave UI – Gfx (Direct2D / DirectWrite)
 #include "jw_ui.h"
+#include "jw_recursos.h"
+
+#include <wincodec.h>
 
 #include <algorithm>
 #include <cmath>
@@ -7,6 +10,7 @@
 
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
+#pragma comment(lib, "windowscodecs.lib")
 
 namespace JasWaveUI {
 
@@ -16,6 +20,20 @@ void safeRelease(T*& p) {
     if (p) { p->Release(); p = nullptr; }
 }
 inline D2D1_COLOR_F d2c(Color c) { return D2D1::ColorF(c.r, c.g, c.b, c.a); }
+
+// FNV-1a de 64 bits: clave de caché de layouts de texto sin construir cadenas por frame
+inline uint64_t fnv(uint64_t h, const void* data, size_t n) {
+    const auto* p = static_cast<const unsigned char*>(data);
+    for (size_t i = 0; i < n; ++i) { h ^= p[i]; h *= 1099511628211ull; }
+    return h;
+}
+
+HMODULE thisModule() {
+    HMODULE h = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCWSTR>(&thisModule), &h);
+    return h;
+}
 constexpr float kPi = 3.14159265358979f;
 
 struct FontSpec { const wchar_t* family; DWRITE_FONT_WEIGHT weight; DWRITE_FONT_STRETCH stretch; float size; };
@@ -49,7 +67,13 @@ struct Gfx::Impl {
     std::vector<RadEntry> rads;
 
     struct LayoutEntry { IDWriteTextLayout* layout; };
-    std::unordered_map<std::wstring, LayoutEntry> layouts;
+    std::unordered_map<uint64_t, LayoutEntry> layouts;
+
+    // Isotipo: fuente WIC (independiente del destino) y bitmap D2D del destino actual
+    IWICImagingFactory* wic{nullptr};
+    IWICFormatConverter* logoWic{nullptr};
+    ID2D1Bitmap* logoBitmap{nullptr};
+    bool logoFailed{false};
 
     ID2D1BitmapRenderTarget* bgRt{nullptr};
     ID2D1Bitmap* bgBitmap{nullptr};
@@ -61,6 +85,8 @@ struct Gfx::Impl {
         for (auto& e : geoms) safeRelease(e.g);
         for (auto& f : formats) for (auto*& x : f) safeRelease(x);
         releaseRtResources();
+        safeRelease(logoWic);
+        safeRelease(wic);
         safeRelease(hwndRt);
         safeRelease(dwrite);
         safeRelease(factory);
@@ -77,6 +103,7 @@ struct Gfx::Impl {
         rads.clear();
         safeRelease(bgBitmap);
         safeRelease(bgRt);
+        safeRelease(logoBitmap);
         bgSize = { 0, 0 };
         brushOwner = nullptr;
     }
@@ -249,16 +276,70 @@ void Gfx::glowLine(float x0, float y0, float x1, float y1, Color c, float w) {
     line(x0, y0, x1, y1, c.withAlpha(c.a * 0.22f), w + 2.0f);
     line(x0, y0, x1, y1, c, w);
 }
+namespace {
+// Una sola geometría por curva: un DrawGeometry en lugar de N DrawLine (y uniones limpias)
+ID2D1PathGeometry* pathOf(ID2D1Factory* f, const Pt* p, int n) {
+    static_assert(sizeof(Pt) == sizeof(D2D1_POINT_2F), "Pt y D2D1_POINT_2F deben coincidir");
+    if (!f || n < 2) return nullptr;
+    ID2D1PathGeometry* g = nullptr;
+    if (FAILED(f->CreatePathGeometry(&g))) return nullptr;
+    ID2D1GeometrySink* s = nullptr;
+    if (FAILED(g->Open(&s))) { g->Release(); return nullptr; }
+    s->BeginFigure(D2D1::Point2F(p[0].x, p[0].y), D2D1_FIGURE_BEGIN_HOLLOW);
+    s->AddLines(reinterpret_cast<const D2D1_POINT_2F*>(p + 1), static_cast<UINT32>(n - 1));
+    s->EndFigure(D2D1_FIGURE_END_OPEN);
+    s->Close();
+    s->Release();
+    return g;
+}
+} // namespace
+
 void Gfx::polyline(const Pt* p, int n, Color c, float w) {
     auto* b = brush(c);
-    if (!b) return;
-    for (int i = 1; i < n; ++i) rt_->DrawLine(D2D1::Point2F(p[i - 1].x, p[i - 1].y), D2D1::Point2F(p[i].x, p[i].y), b, w);
+    if (!b || n < 2) return;
+    if (n == 2) { rt_->DrawLine(D2D1::Point2F(p[0].x, p[0].y), D2D1::Point2F(p[1].x, p[1].y), b, w); return; }
+    if (ID2D1PathGeometry* g = pathOf(d_->factory, p, n)) { rt_->DrawGeometry(g, b, w); g->Release(); }
 }
 void Gfx::glowPolyline(const Pt* p, int n, Color c, float w) {
-    polyline(p, n, c.withAlpha(c.a * 0.06f), w + 8.0f);
-    polyline(p, n, c.withAlpha(c.a * 0.11f), w + 4.5f);
-    polyline(p, n, c.withAlpha(c.a * 0.22f), w + 2.0f);
-    polyline(p, n, c, w);
+    if (n < 2 || !rt_) return;
+    ID2D1PathGeometry* g = pathOf(d_->factory, p, n);
+    if (!g) return;
+    const float alphas[4] = { 0.06f, 0.11f, 0.22f, 1.0f };
+    const float widths[4] = { w + 8.0f, w + 4.5f, w + 2.0f, w };
+    for (int i = 0; i < 4; ++i)
+        if (auto* b = brush(c.withAlpha(c.a * alphas[i]))) rt_->DrawGeometry(g, b, widths[i]);
+    g->Release();
+}
+
+void Gfx::logo(const Rect& r, float opacity) {
+    if (!rt_ || d_->logoFailed) return;
+    if (!d_->logoWic) {
+        d_->logoFailed = true;
+        HMODULE mod = thisModule();
+        HRSRC res = FindResourceW(mod, MAKEINTRESOURCEW(IDR_JASWAVE_LOGO), MAKEINTRESOURCEW(10) /* RT_RCDATA */);
+        HGLOBAL h = res ? LoadResource(mod, res) : nullptr;
+        const void* data = h ? LockResource(h) : nullptr;
+        const DWORD size = res ? SizeofResource(mod, res) : 0;
+        if (!data || !size) return;
+        if (!d_->wic && FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&d_->wic)))) return;
+        IWICStream* stream = nullptr;
+        IWICBitmapDecoder* dec = nullptr;
+        IWICBitmapFrameDecode* frame = nullptr;
+        if (SUCCEEDED(d_->wic->CreateStream(&stream)) &&
+            SUCCEEDED(stream->InitializeFromMemory(static_cast<BYTE*>(const_cast<void*>(data)), size)) &&
+            SUCCEEDED(d_->wic->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnLoad, &dec)) &&
+            SUCCEEDED(dec->GetFrame(0, &frame)) && SUCCEEDED(d_->wic->CreateFormatConverter(&d_->logoWic)) &&
+            SUCCEEDED(d_->logoWic->Initialize(frame, GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.0,
+                                              WICBitmapPaletteTypeCustom)))
+            d_->logoFailed = false;
+        else safeRelease(d_->logoWic);
+        if (frame) frame->Release();
+        if (dec) dec->Release();
+        if (stream) stream->Release();
+        if (d_->logoFailed) return;
+    }
+    if (!d_->logoBitmap && FAILED(rt_->CreateBitmapFromWicBitmap(d_->logoWic, nullptr, &d_->logoBitmap))) return;
+    rt_->DrawBitmap(d_->logoBitmap, D2D1::RectF(r.l, r.t, r.r, r.b), opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 void Gfx::fillUnder(const Pt* p, int n, float baseY, Color c) {
     auto* b = brush(c);
@@ -332,29 +413,29 @@ void Gfx::text(const wchar_t* s, const Rect& r, Font f, Color c, Align a, bool s
     if (!rt_ || !s || !*s) return;
     IDWriteTextFormat* fmt = format(f, a);
     if (!fmt) return;
-    // Clave: texto + fuente + alineación + espaciado + caja (las etiquetas son estáticas)
-    wchar_t keyBuf[96];
-    swprintf_s(keyBuf, L"|%d|%d|%d|%.1f|%.1f", static_cast<int>(f), static_cast<int>(a), spaced ? 1 : 0, r.w(), r.h());
-    std::wstring key;
-    key.reserve(64);
-    key.append(s);
-    key.append(keyBuf);
+    // Clave: hash del texto + fuente + alineación + espaciado + caja (sin asignaciones por frame)
+    const size_t len = wcslen(s);
+    const int meta[3] = { static_cast<int>(f), static_cast<int>(a), spaced ? 1 : 0 };
+    const float box[2] = { std::round(r.w() * 10.0f), std::round(r.h() * 10.0f) };
+    uint64_t key = fnv(1469598103934665603ull, s, len * sizeof(wchar_t));
+    key = fnv(key, meta, sizeof meta);
+    key = fnv(key, box, sizeof box);
     auto it = d_->layouts.find(key);
     IDWriteTextLayout* layout = nullptr;
     if (it != d_->layouts.end()) layout = it->second.layout;
     else {
         if (d_->layouts.size() > 1500) d_->clearLayouts();
-        if (FAILED(d_->dwrite->CreateTextLayout(s, static_cast<UINT32>(wcslen(s)), fmt, std::max(1.0f, r.w()), std::max(1.0f, r.h()), &layout)))
+        if (FAILED(d_->dwrite->CreateTextLayout(s, static_cast<UINT32>(len), fmt, std::max(1.0f, r.w()), std::max(1.0f, r.h()), &layout)))
             return;
         if (spaced) {
             IDWriteTextLayout1* l1 = nullptr;
             if (SUCCEEDED(layout->QueryInterface(__uuidof(IDWriteTextLayout1), reinterpret_cast<void**>(&l1)))) {
                 const float sp = kFonts[static_cast<int>(f)].size * 0.12f;
-                l1->SetCharacterSpacing(0.0f, sp, 0.0f, DWRITE_TEXT_RANGE{ 0, static_cast<UINT32>(wcslen(s)) });
+                l1->SetCharacterSpacing(0.0f, sp, 0.0f, DWRITE_TEXT_RANGE{ 0, static_cast<UINT32>(len) });
                 l1->Release();
             }
         }
-        d_->layouts.emplace(std::move(key), Impl::LayoutEntry{ layout });
+        d_->layouts.emplace(key, Impl::LayoutEntry{ layout });
     }
     if (auto* b = brush(c)) rt_->DrawTextLayout(D2D1::Point2F(r.l, r.t), layout, b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }

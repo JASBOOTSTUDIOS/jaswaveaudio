@@ -3,6 +3,7 @@
 #include "jw_vst3.h"
 #include "jw_ui.h"
 #include "jw_ui_kit.h"
+#include "jw_ui_plantilla.h"
 
 #include "public.sdk/source/main/pluginfactory.h"
 
@@ -68,57 +69,46 @@ class Editor : public JasWaveUI::PluginEditor {
 public:
     const wchar_t* title() const override { return L"BUS COMPRESSOR"; }
     const wchar_t* subtitle() const override { return L"VCA FEED-FORWARD · SOFT-KNEE · ENLACE ESTÉREO"; }
+    JasWaveUI::Color accent() const override { return JasWaveUI::Pal::acentoAmbar; }
     void build(JasWaveUI::EditorContext& c) override {
-        using namespace JasWaveUI;
-        c.section({ 666, 92, 1048, 404 }, L"COMPRESOR", kBypass, true);
-        c.knob(kThreshold, 742, 172, KnobSize::Main, L"UMBRAL");
-        c.knob(kRatio, 857, 172, KnobSize::Main, L"RATIO");
-        c.knob(kKnee, 972, 172, KnobSize::Main, L"RODILLA");
-        c.knob(kAttack, 742, 300, KnobSize::Normal, L"ATAQUE");
-        c.knob(kRelease, 857, 300, KnobSize::Normal, L"RELEASE");
-        c.dropdown(kDetector, { 930, 290, 1036, 310 }, L"DET");
-        c.section({ 666, 418, 1048, 556 }, L"SALIDA · SIDECHAIN");
-        c.fader(kMakeup, { 680, 440, 724, 552 }, L"MAKEUP");
-        c.knob(kMix, 772, 482, KnobSize::Normal, L"MEZCLA");
-        c.knob(kScHpf, 868, 482, KnobSize::Normal, L"SC HPF");
-        meters_.build(c, 976.0f, 446.0f, 528.0f);
+        namespace P = JasWaveUI::Plantilla;
+        P::controles(c, L"COMPRESOR");
+        P::principal(c, 0, kThreshold, L"UMBRAL");
+        P::principal(c, 1, kRatio, L"RATIO");
+        P::principal(c, 2, kKnee, L"RODILLA");
+        P::secundaria(c, 0, kAttack, L"ATAQUE");
+        P::secundaria(c, 1, kRelease, L"RELEASE");
+        P::selector(c, 2, 1, kDetector, L"DET");
+        P::salida(c, kBypass);
+        P::fader(c, kMakeup, L"MAKEUP");
+        P::perillaSalida(c, 0, kMix, L"MEZCLA");
+        P::perillaSalida(c, 1, kScHpf, L"SC HPF");
+        P::medidores(c, meters_);
     }
     void tick(JasWaveUI::EditorContext& c) override {
         bus_ = std::dynamic_pointer_cast<CompBus>(c.params.bus());
         if (!bus_) return;
-        meters_.update(bus_->inPk, bus_->outPk);
+        meters_.update(bus_->inPk, bus_->outPk, c.dt);
+        espectro_.actualizar(*bus_, c.dt);
         bus_->scope.snapshot(snap_, 1000);
+        historial_.cargar(snap_.grDb.data(), snap_.count);
         const float g = bus_->grMax.take();
-        grNow_ += (bus_->grNow.load(std::memory_order_relaxed) - grNow_) * 0.35f;
-        grPeak_ = std::max(grPeak_ * 0.995f, g);
+        grNow_ += (bus_->grNow.load(std::memory_order_relaxed) - grNow_) * std::min(1.0f, c.dt * 20.0f);
+        grPeak_ = std::max(grPeak_ - JasWaveUI::Kit::kCaidaDbS * c.dt, g);
         det_ = bus_->detLevelDb.load(std::memory_order_relaxed);
     }
     float outputLevel() const override { return meters_.level(); }
     void drawPanels(JasWaveUI::Gfx& g, JasWaveUI::EditorContext& c) override {
         using namespace JasWaveUI;
-        const Rect v = Layout::kVisualizer;
-        Kit::panel(g, v, L"HISTORIAL · REDUCCIÓN DE GANANCIA");
+        namespace P = Plantilla;
+        const Color ac = accent();
+        P::panelVisual(g, L"ESPECTRO IN / OUT · CURVA ESTÁTICA");
         meters_.drawLabels(g);
-        // historial (izquierda): entrada (tenue), salida (cian) y GR desde arriba
-        const Rect h{ v.l + 14, v.t + 34, v.l + 400, v.b - 16 };
-        Chrome::drawGrid(g, h, 22.0f, false);
-        const int n = snap_.count;
-        if (n > 1) {
-            auto yLev = [&](float a) { const float db = a <= 1e-5f ? -60.0f : 20.0f * std::log10(a); return h.b - std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f) * h.h(); };
-            for (int i = 0; i < n; ++i) pts_[static_cast<size_t>(i)] = { h.l + h.w() * i / (n - 1), yLev(snap_.inAbs[static_cast<size_t>(i)]) };
-            g.fillUnder(pts_.data(), n, h.b, Pal::textoTenue.withAlpha(0.18f));
-            for (int i = 0; i < n; ++i) pts_[static_cast<size_t>(i)].y = yLev(snap_.outAbs[static_cast<size_t>(i)]);
-            Kit::wireTrace(g, pts_.data(), n, Pal::cian, h.b, true);
-            for (int i = 0; i < n; ++i)
-                pts_[static_cast<size_t>(i)].y = h.t + std::clamp(snap_.grDb[static_cast<size_t>(i)] / 24.0f, 0.0f, 1.0f) * h.h();
-            g.glowPolyline(pts_.data(), n, Pal::alerta.withAlpha(0.9f), 1.4f);
-        }
-        g.text(L"GR", { h.l + 4, h.t + 2, h.l + 40, h.t + 16 }, Font::Label, Pal::alerta, Align::Left, true);
-        g.text(L"0", { h.r + 2, h.t - 6, h.r + 30, h.t + 8 }, Font::ValueSmall, Pal::textoTenue);
-        g.text(L"-24", { h.r + 2, h.b - 8, h.r + 30, h.b + 6 }, Font::ValueSmall, Pal::textoTenue);
-        // curva estática (derecha)
-        const Rect cr{ v.r - 190, v.t + 46, v.r - 26, v.t + 46 + 164 };
-        g.fillRect(cr, hex(0x03080C, 0.6f));
+        const Rect a = P::areaEspectro();
+        espectro_.dibujar(g, a);
+        // curva estática entrada → salida (inserto arriba a la derecha, donde el espectro de agudos es bajo)
+        const Rect cr{ a.r - 166, a.t + 22, a.r - 10, a.t + 22 + 156 };
+        g.fillRect(cr, hex(0x03080C, 0.78f));
         g.strokeRect(cr, Pal::panelBorde, 1.0f);
         for (int i = 1; i < 6; ++i) {
             const float x = cr.l + cr.w() * i / 6.0f, y = cr.t + cr.h() * i / 6.0f;
@@ -133,45 +123,37 @@ public:
             const double y = staticOutDb(x, thr, ratio, knee);
             curve_[static_cast<size_t>(i)] = { cr.l + cr.w() * static_cast<float>((x + 60.0) / 60.0), cr.b - cr.h() * static_cast<float>(std::clamp((y + 60.0) / 60.0, 0.0, 1.0)) };
         }
-        g.glowPolyline(curve_.data(), kN, Pal::cian, 1.5f);
+        g.glowPolyline(curve_.data(), kN, ac, 1.5f);
         const float tx = cr.l + cr.w() * static_cast<float>((thr + 60.0) / 60.0);
-        g.line(tx, cr.t, tx, cr.b, Pal::cian.withAlpha(0.3f), 1.0f);
+        g.line(tx, cr.t, tx, cr.b, ac.withAlpha(0.3f), 1.0f);
         if (det_ > -60.0f) {
             const double y = staticOutDb(det_, thr, ratio, knee);
             g.glowDot(cr.l + cr.w() * (det_ + 60.0f) / 60.0f, cr.b - cr.h() * static_cast<float>(std::clamp((y + 60.0) / 60.0, 0.0, 1.0)), 3.0f, Pal::cianNucleo);
         }
-        g.text(L"ENTRADA → SALIDA", { cr.l, cr.b + 4, cr.r, cr.b + 18 }, Font::Label, Pal::textoTenue, Align::Center, true);
-        // mini-panel: medidor horizontal de GR + lecturas
-        const Rect m = Layout::kMiniPanel;
-        Kit::panel(g, m, L"REDUCCIÓN DE GANANCIA");
-        const Rect bar{ m.l + 20, m.t + 46, m.r - 160, m.t + 66 };
-        const int segs = 48;
-        for (int i = 0; i < segs; ++i) {
-            const float x0 = bar.r - (i + 1) * bar.w() / segs;
-            const bool on = grNow_ >= (i + 0.5f) * 24.0f / segs;
-            const bool pk = std::fabs(grPeak_ - (i + 0.5f) * 24.0f / segs) < 0.25f;
-            g.fillRect({ x0 + 1, bar.t, x0 + bar.w() / segs - 1, bar.b }, on ? Pal::alerta : pk ? Pal::alerta.withAlpha(0.6f) : Pal::alerta.withAlpha(0.08f));
-        }
-        static const wchar_t* lab[] = { L"0", L"-6", L"-12", L"-18", L"-24" };
-        for (int i = 0; i <= 4; ++i) {
-            const float x = bar.r - bar.w() * i / 4.0f;
-            g.text(lab[i], { x - 20, bar.b + 4, x + 20, bar.b + 18 }, Font::ValueSmall, Pal::textoTenue, Align::Center);
-        }
-        wchar_t b1[32], b2[32], b3[32];
+        g.text(L"ENTRADA → SALIDA", { cr.l, cr.b + 2, cr.r, cr.b + 16 }, Font::Label, Pal::textoTenue, Align::Center, true);
+        // mini-panel: historial de GR en cascada + vúmetro horizontal + lecturas
+        P::panelMedicion(g, L"REDUCCIÓN DE GANANCIA · HISTORIAL");
+        const Rect h{ P::kMiniGrafico.l, P::kMiniGrafico.t, P::kMiniGrafico.r - 26, P::kMiniGrafico.b - 20 };
+        historial_.dibujar(g, h, ac);
+        P::barraGR(g, { h.l, h.b + 8, h.r, h.b + 18 }, grNow_, grPeak_, ac);
+        wchar_t b1[32], b2[32], b3[32], b4[32];
         swprintf_s(b1, L"%.1f dB", -grNow_);
         swprintf_s(b2, L"%.1f dB", -grPeak_);
         swprintf_s(b3, L"%.1f dB", std::max(det_, -99.0f));
-        Kit::readout(g, m.r - 140, m.t + 32, L"GR", b1, Pal::alerta);
-        Kit::readout(g, m.r - 140, m.t + 66, L"PICO GR", b2);
-        Kit::readout(g, m.r - 70, m.t + 32, L"DETECTOR", b3);
+        swprintf_s(b4, L"%.1f:1", ratio);
+        P::lectura(g, 0, 0, L"GR", b1, ac);
+        P::lectura(g, 1, 0, L"PICO GR", b2);
+        P::lectura(g, 0, 1, L"DETECTOR", b3);
+        P::lectura(g, 1, 1, L"RATIO", b4);
     }
     const wchar_t* footerId() const override { return L"com.jaswave.plugin.bus-compressor"; }
 
 private:
     std::shared_ptr<CompBus> bus_;
     JasWaveUI::Kit::StereoMeters meters_;
+    JasWaveUI::Plantilla::EspectroDual espectro_;
+    JasWaveUI::Plantilla::HistorialGR historial_;
     JasWaveDsp::ScopeSnapshot snap_;
-    std::array<JasWaveUI::Pt, 1024> pts_{};
     std::array<JasWaveUI::Pt, 64> curve_{};
     float grNow_{0}, grPeak_{0}, det_{-100};
 };

@@ -65,8 +65,10 @@ function(jaswave_add_vst3)
   endif()
 
   set(_libs sdk jw_ui d2d1 dwrite windowscodecs user32 gdi32 ole32 shell32 comctl32)
-  add_library(${T} MODULE $<TARGET_OBJECTS:${T}_obj> "${JW_VST3_SDK_DIR}/public.sdk/source/main/dllmain.cpp")
-  target_include_directories(${T} PRIVATE "${JW_VST3_SDK_DIR}")
+  # Recursos comunes (isotipo de la cabecera, V3): en el .vst3 y en la herramienta de capturas
+  set(_rc "${JW_PLUGINS_ROOT}/shared-ui/jaswave_resources.rc")
+  add_library(${T} MODULE $<TARGET_OBJECTS:${T}_obj> "${JW_VST3_SDK_DIR}/public.sdk/source/main/dllmain.cpp" "${_rc}")
+  target_include_directories(${T} PRIVATE "${JW_VST3_SDK_DIR}" "${JW_PLUGINS_ROOT}/shared-ui")
   target_link_libraries(${T} PRIVATE ${_libs} jw_license)
   target_compile_definitions(${T} PRIVATE $<$<CONFIG:Debug>:DEVELOPMENT=1> $<$<NOT:$<CONFIG:Debug>>:RELEASE=1>)
   set(_bundle "${CMAKE_BINARY_DIR}/VST3/$<CONFIG>/${T}.vst3")
@@ -85,7 +87,7 @@ function(jaswave_add_vst3)
   endif()
 
   add_executable(${T}_snapshot "${JW_PLUGINS_ROOT}/shared-ui/jw_snapshot_main.cpp" $<TARGET_OBJECTS:${T}_obj> ${JW_SNAPSHOT_HOST_SOURCES}
-                 "${JW_VST3_SDK_DIR}/public.sdk/source/main/dllmain.cpp")
+                 "${JW_VST3_SDK_DIR}/public.sdk/source/main/dllmain.cpp" "${_rc}")
   target_include_directories(${T}_snapshot PRIVATE "${JW_PLUGINS_ROOT}/shared-dsp" "${JW_PLUGINS_ROOT}/shared-ui" "${JW_VST3_SDK_DIR}")
   target_link_libraries(${T}_snapshot PRIVATE ${_libs} jw_license_testing)
   target_compile_definitions(${T}_snapshot PRIVATE NOMINMAX UNICODE _UNICODE

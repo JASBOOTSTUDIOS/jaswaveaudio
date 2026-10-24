@@ -20,10 +20,15 @@ std::wstring widen(const std::string& s) {
     return w;
 }
 
-std::wstring valueText(ParamAccess& p, uint32_t id) {
+const std::wstring& valueText(ParamAccess& p, uint32_t id, Widget::ValueCache& c) {
     const JasWaveVst::ParamDef* d = p.def(id);
-    if (!d) return std::wstring();
-    return widen(JasWaveVst::formatValue(*d, p.plain(id), true));
+    const double v = p.plain(id);
+    if (c.id != id || c.plain != v) {
+        c.id = id;
+        c.plain = v;
+        c.s = d ? widen(JasWaveVst::formatValue(*d, v, true)) : std::wstring();
+    }
+    return c.s;
 }
 
 uint32_t lcg(uint32_t& s) { s = s * 1664525u + 1013904223u; return s >> 8; }
@@ -132,18 +137,24 @@ void drawStaticBackground(Gfx& g) {
     g.strokeChamfer(sc, 14.0f, Pal::cian.withAlpha(0.35f), 1.0f);
 }
 
-void drawHeader(Gfx& g, const wchar_t* title, const wchar_t* subtitle, bool expiringSoon, bool licensed) {
-    const Rect tr{ 58.0f, 42.0f, 520.0f, 74.0f };
+void drawHeader(Gfx& g, const wchar_t* title, const wchar_t* subtitle, bool expiringSoon, bool licensed, Color accent) {
+    // isotipo JasWave embebido (28 px) + acento del plugin bajo el título
+    g.logo({ 52.0f, 42.0f, 80.0f, 70.0f });
+    g.fillRect({ 90.0f, 87.0f, 138.0f, 88.5f }, accent.withAlpha(0.85f));
+    const Rect tr{ 90.0f, 42.0f, 560.0f, 74.0f };
     // glow sutil del título
     g.text(title, { tr.l + 0.8f, tr.t + 0.8f, tr.r + 0.8f, tr.b + 0.8f }, Font::Title, Pal::cian.withAlpha(0.18f), Align::Left, true);
     g.text(title, { tr.l - 0.8f, tr.t - 0.4f, tr.r - 0.8f, tr.b - 0.4f }, Font::Title, Pal::cian.withAlpha(0.12f), Align::Left, true);
     g.text(title, tr, Font::Title, Pal::textoTitulo, Align::Left, true);
-    if (subtitle && *subtitle) g.text(subtitle, { 58.0f, 70.0f, 520.0f, 86.0f }, Font::Label, Pal::textoTenue, Align::Left, true);
+    if (subtitle && *subtitle) g.text(subtitle, { 90.0f, 70.0f, 520.0f, 86.0f }, Font::Label, Pal::textoTenue, Align::Left, true);
     // indicador central "·  ●  ·"
     const float cx = 600.0f, cy = 58.0f;
     g.fillCircle(cx - 16.0f, cy, 1.4f, Pal::cian.withAlpha(0.5f));
     g.fillCircle(cx + 16.0f, cy, 1.4f, Pal::cian.withAlpha(0.5f));
-    if (expiringSoon) g.glowDot(cx, cy, 3.6f, Pal::alerta);
+    if (expiringSoon) {
+        g.glowDot(cx, cy, 3.6f, Pal::alerta);
+        g.text(L"LICENCIA POR VENCER", { cx - 70.0f, cy + 9.0f, cx + 70.0f, cy + 23.0f }, Font::Label, Pal::alerta, Align::Center, true);
+    }
     else if (licensed) g.glowDot(cx, cy, 3.6f, Pal::cian);
     else g.fillCircle(cx, cy, 3.6f, Pal::bloqueado);
     // marca
@@ -164,8 +175,8 @@ void drawFrameLeds(Gfx& g, float level) {
 }
 
 void drawFooter(Gfx& g, const wchar_t* id) {
-    std::wstring s = L"jaswave · ";
-    s += id ? id : L"";
+    wchar_t s[160];
+    swprintf_s(s, L"jaswave · %ls", id ? id : L"");
     g.text(s, { 600.0f, 562.0f, 1046.0f, 580.0f }, Font::ValueSmall, Pal::textoTenue, Align::Right);
 }
 
@@ -177,7 +188,7 @@ void drawFooter(Gfx& g, const wchar_t* id) {
 Knob::Knob(uint32_t id, float cx, float cy, KnobSize size, const wchar_t* label)
     : Widget({ cx - static_cast<float>(size) * 0.5f - 6.0f, cy - static_cast<float>(size) * 0.5f - 4.0f,
                cx + static_cast<float>(size) * 0.5f + 6.0f, cy + static_cast<float>(size) * 0.5f + 26.0f }),
-      id_(id), cx_(cx), cy_(cy), radius_(static_cast<float>(size) * 0.5f), label_(label ? label : L"") {}
+      id_(id), size_(size), cx_(cx), cy_(cy), radius_(static_cast<float>(size) * 0.5f), label_(label ? label : L"") {}
 
 void Knob::draw(Gfx& g, ParamAccess& p, bool hover) {
     const bool locked = p.locked(id_);
@@ -209,7 +220,7 @@ void Knob::draw(Gfx& g, ParamAccess& p, bool hover) {
     if (locked) Chrome::drawLock(g, cx_, cy_ - 2.0f, std::max(9.0f, r * 0.42f), Pal::bloqueado);
     // etiqueta (valor al pasar el ratón / arrastrar)
     const Rect lr{ cx_ - 60.0f, cy_ + r + 2.0f, cx_ + 60.0f, cy_ + r + 18.0f };
-    if ((hover || dragging_) && !locked) g.text(valueText(p, id_), lr, Font::Value, Pal::textoValor, Align::Center);
+    if ((hover || dragging_) && !locked) g.text(valueText(p, id_, valueCache), lr, Font::Value, Pal::textoValor, Align::Center);
     else g.text(label_, lr, Font::Label, locked ? Pal::bloqueado : Pal::textoEtiqueta, Align::Center, true);
 }
 
@@ -274,7 +285,7 @@ void Fader::draw(Gfx& g, ParamAccess& p, bool hover) {
     if (locked) g.line(cap.l + 2, capY, cap.r - 2, capY, Pal::bloqueado, 1.5f);
     else g.glowLine(cap.l + 2, capY, cap.r - 2, capY, Pal::cian, 1.4f);
     const Color vc = locked ? Pal::bloqueado : Pal::textoValor;
-    g.text(valueText(p, id_), { rect.l - 14.0f, rect.b - 32.0f, rect.r + 14.0f, rect.b - 18.0f }, Font::ValueSmall, vc, Align::Center);
+    g.text(valueText(p, id_, valueCache), { rect.l - 14.0f, rect.b - 32.0f, rect.r + 14.0f, rect.b - 18.0f }, Font::ValueSmall, vc, Align::Center);
     g.text(label_, { rect.l - 14.0f, rect.b - 17.0f, rect.r + 14.0f, rect.b - 2.0f }, Font::Label, locked ? Pal::bloqueado : Pal::textoEtiqueta,
            Align::Center, true);
     if (locked) Chrome::drawLock(g, s.cx() + 13.0f, s.t + 6.0f, 9.0f, Pal::bloqueado);
@@ -354,7 +365,7 @@ void Dropdown::draw(Gfx& g, ParamAccess& p, bool hover) {
     const Rect box{ bx, rect.t + 1.0f, rect.r, rect.b - 1.0f };
     g.fillRect(box, hex(0x07121A));
     g.strokeRect(box, hover && !locked ? Pal::cian.withAlpha(0.7f) : Pal::panelBorde, 1.0f);
-    g.text(valueText(p, id_), { box.l + 6.0f, box.t, box.r - 16.0f, box.b }, Font::ValueSmall, locked ? Pal::bloqueado : Pal::textoValor, Align::Left);
+    g.text(valueText(p, id_, valueCache), { box.l + 6.0f, box.t, box.r - 16.0f, box.b }, Font::ValueSmall, locked ? Pal::bloqueado : Pal::textoValor, Align::Left);
     // chevron
     const float cx = box.r - 9.0f, cy = box.cy();
     const Color cc = locked ? Pal::bloqueado : Pal::cian;
@@ -424,12 +435,12 @@ void Meter::draw(Gfx& g, ParamAccess&, bool) {
     if (!label_.empty()) g.text(label_, { rect.l - 12.0f, rect.b - 15.0f, rect.r + 12.0f, rect.b }, Font::Label, Pal::textoEtiqueta, Align::Center, true);
 }
 
-Button::Button(Rect r, const wchar_t* t, std::function<void()> action) : Widget(r), text(t ? t : L""), action_(std::move(action)) {}
+Button::Button(Rect r, const wchar_t* t, std::function<void()> action) : Widget(r), caption(t ? t : L""), action_(std::move(action)) {}
 void Button::draw(Gfx& g, ParamAccess&, bool hover) {
     const float rad = rect.h() * 0.5f;
     g.fillRound(rect.inset(-4.0f), rad + 4.0f, Pal::cianGlow.withAlpha(hover ? 0.3f : 0.16f));
     g.fillRound(rect, rad, hover ? hex(0x5BE4F8) : Pal::cian);
-    g.text(text, rect, Font::Section, hex(0x031018), Align::Center, true);
+    g.text(caption, rect, Font::Section, hex(0x031018), Align::Center, true);
 }
 bool Button::onDown(const MouseEvent&, ParamAccess&) {
     if (action_) action_();

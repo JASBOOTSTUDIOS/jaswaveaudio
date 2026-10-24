@@ -1,5 +1,6 @@
 // JasWave UI – vista VST3 (HWND), núcleo de pintado compartido con las capturas PNG y overlay de licencia
 #include "jw_ui.h"
+#include "jw_ui_plantilla.h"
 #include "jw_vst3.h"
 
 #include "public.sdk/source/common/pluginview.h"
@@ -11,6 +12,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <string>
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "windowscodecs.lib")
@@ -27,6 +30,32 @@ std::wstring widen(const std::string& s) {
     std::wstring w(static_cast<size_t>(std::max(0, n)), L'\0');
     if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), &w[0], n);
     return w;
+}
+std::string utf8(const wchar_t* w) {
+    if (!w || !*w) return std::string();
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+    std::string s(static_cast<size_t>(std::max(0, n - 1)), '\0');
+    if (n > 1) WideCharToMultiByte(CP_UTF8, 0, w, -1, &s[0], n, nullptr, nullptr);
+    return s;
+}
+std::string jsonStr(const std::string& v) {
+    std::string o = "\"";
+    for (const char ch : v) {
+        if (ch == '"' || ch == '\\') o.push_back('\\');
+        o.push_back(ch);
+    }
+    return o + "\"";
+}
+std::string jsonRect(const Rect& r) {
+    char b[96];
+    std::snprintf(b, sizeof b, "[%.1f,%.1f,%.1f,%.1f]", r.l, r.t, r.r, r.b);
+    return b;
+}
+std::string jsonColor(Color c) {
+    char b[16];
+    std::snprintf(b, sizeof b, "#%02X%02X%02X", static_cast<int>(std::lround(c.r * 255.0f)), static_cast<int>(std::lround(c.g * 255.0f)),
+                  static_cast<int>(std::lround(c.b * 255.0f)));
+    return jsonStr(b);
 }
 HINSTANCE moduleInstance() {
     HMODULE h = nullptr;
@@ -68,6 +97,7 @@ private:
 class EditorCore {
 public:
     explicit EditorCore(JasWaveVst::JwController* c) : access_(c), ctx_(access_), ctl_(c), editor_(c->createEditor()) {
+        QueryPerformanceFrequency(&freq_);
         if (editor_) {
             editor_->build(ctx_);
             if (editor_->modeParam() >= 0) mode_ = ctx_.dropdown(static_cast<uint32_t>(editor_->modeParam()), { 690.0f, 48.0f, 846.0f, 68.0f }, L"MODO");
@@ -79,7 +109,21 @@ public:
                                            [] { JasWaveLicense::Manager::instance().cancelActivation(); });
     }
 
+    ~EditorCore() {
+        // la vista se cierra: el procesador deja de alimentar los taps del espectro (coste cero)
+        if (bus_) bus_->editoresAbiertos.fetch_sub(1, std::memory_order_relaxed);
+    }
+
     void tick() {
+        if (!bus_) {
+            bus_ = access_.bus();
+            if (bus_) bus_->editoresAbiertos.fetch_add(1, std::memory_order_relaxed);
+        }
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        ctx_.dt = last_.QuadPart ? static_cast<float>(static_cast<double>(now.QuadPart - last_.QuadPart) / static_cast<double>(freq_.QuadPart))
+                                 : 1.0f / 60.0f;
+        last_ = now;
         if (editor_) editor_->tick(ctx_);
         const uint32_t s = JasWaveLicense::Manager::instance().serial();
         if (s != licSerial_) { licSerial_ = s; lic_ = JasWaveLicense::Manager::instance().uiStatus(); }
@@ -89,7 +133,8 @@ public:
         g.drawCachedBackground([](Gfx& gg) { Chrome::drawStaticBackground(gg); });
         const bool licensed = JasWaveLicense::isLicensed(lic_.state);
         const bool expiring = (lic_.state & JasWaveLicense::StateBits::kExpiringSoon) != 0;
-        Chrome::drawHeader(g, editor_ ? editor_->title() : L"JASWAVE", editor_ ? editor_->subtitle() : L"", expiring, licensed);
+        Chrome::drawHeader(g, editor_ ? editor_->title() : L"JASWAVE", editor_ ? editor_->subtitle() : L"", expiring, licensed,
+                           editor_ ? editor_->accent() : Pal::acentoCian);
         if (editor_) editor_->drawPanels(g, ctx_);
         for (auto& w : ctx_.widgets) if (w->visible) w->draw(g, access_, w.get() == hover_ && !overlayActive());
         Chrome::drawFrameLeds(g, editor_ ? editor_->outputLevel() : 0.0f);
@@ -150,9 +195,26 @@ public:
             if ((*it)->visible && (*it)->hit(x, y)) return it->get();
         return nullptr;
     }
+    // Táctil: área mínima de 44 px de diseño alrededor de cada control (V3 §4.5)
+    Widget* widgetNear(float x, float y) {
+        if (Widget* w = widgetAt(x, y)) return w;
+        Widget* best = nullptr;
+        float bestD = 1.0e9f;
+        for (auto& w : ctx_.widgets) {
+            if (!w->visible || dynamic_cast<Section*>(w.get())) continue;
+            const Rect& r = w->rect;
+            const float padX = std::max(0.0f, (44.0f - r.w()) * 0.5f), padY = std::max(0.0f, (44.0f - r.h()) * 0.5f);
+            if (!Rect{ r.l - padX, r.t - padY, r.r + padX, r.b + padY }.contains(x, y)) continue;
+            const float d = std::fabs(r.cx() - x) + std::fabs(r.cy() - y);
+            if (d < bestD) { bestD = d; best = w.get(); }
+        }
+        return best;
+    }
 
     ParamAccess& access() { return access_; }
     JasWaveVst::JwController* controller() { return ctl_; }
+    PluginEditor* editor() { return editor_.get(); }
+    EditorContext& context() { return ctx_; }
 
 private:
     Button* activeOverlayButton() {
@@ -204,6 +266,8 @@ private:
     EditorContext ctx_;
     JasWaveVst::JwController* ctl_;
     std::unique_ptr<PluginEditor> editor_;
+    std::shared_ptr<JasWaveDsp::MeterBusBase> bus_;
+    LARGE_INTEGER freq_{}, last_{};
     Dropdown* mode_{nullptr};
     std::wstring footer_;
     std::unique_ptr<Button> login_, cancel_;
@@ -280,6 +344,39 @@ public:
 
 private:
     static constexpr UINT_PTR kTimer = 0x4A57;
+    static constexpr UINT_PTR kLongPress = 0x4A58;
+
+    // Táctil: arrastre como el ratón y pulsación larga = escribir el valor
+    void touchDown(float x, float y) {
+        if (edit_) commitValueEditor(true);
+        touchStart_ = { x, y };
+        touchWidget_ = core_->overlayActive() ? nullptr : core_->widgetNear(x, y);
+        MouseEvent e{ x, y, false, false, 0 };
+        if (touchWidget_ && !touchWidget_->rect.contains(x, y))   // dentro del área de 44 px: se lleva al control
+            e = { std::clamp(x, touchWidget_->rect.l + 1.0f, touchWidget_->rect.r - 1.0f), std::clamp(y, touchWidget_->rect.t + 1.0f, touchWidget_->rect.b - 1.0f), false, false, 0 };
+        touchOffset_ = { e.x - x, e.y - y };
+        const int menu = core_->mouseDown(e);
+        if (menu >= 0) { touchWidget_ = nullptr; openMenu(menu); return; }
+        if (touchWidget_ && touchWidget_->paramId() >= 0) SetTimer(hwnd_, kLongPress, 550, nullptr);
+    }
+    void touchMove(float x, float y) {
+        if (touchWidget_ && std::fabs(x - touchStart_.x) + std::fabs(y - touchStart_.y) > 8.0f) KillTimer(hwnd_, kLongPress);
+        core_->mouseMove({ x + touchOffset_.x, y + touchOffset_.y, false, false, 0 });
+    }
+    void touchUp(float x, float y) {
+        KillTimer(hwnd_, kLongPress);
+        core_->mouseUp({ x + touchOffset_.x, y + touchOffset_.y, false, false, 0 });
+        core_->mouseLeave();
+        touchWidget_ = nullptr;
+    }
+    void longPress() {
+        KillTimer(hwnd_, kLongPress);
+        Widget* w = touchWidget_;
+        touchWidget_ = nullptr;
+        if (!w) return;
+        core_->mouseUp({ touchStart_.x, touchStart_.y, false, false, 0 });   // el valor no cambia: se escribe
+        openValueEditor(w);
+    }
 
     void createWindow(HWND parent) {
         if (hwnd_ || !parent) return;
@@ -306,8 +403,10 @@ private:
     }
     void destroyWindow() {
         if (edit_) { DestroyWindow(edit_); edit_ = nullptr; }
+        touchWidget_ = nullptr;
         if (hwnd_) {
             KillTimer(hwnd_, kTimer);
+            KillTimer(hwnd_, kLongPress);
             SetWindowLongPtrW(hwnd_, GWLP_USERDATA, 0);
             DestroyWindow(hwnd_);
             hwnd_ = nullptr;
@@ -423,6 +522,30 @@ private:
                 return 0;
             case WM_TIMER:
                 if (wp == kTimer) { self->core_->tick(); InvalidateRect(hwnd, nullptr, FALSE); }
+                else if (wp == kLongPress) self->longPress();
+                return 0;
+            case WM_POINTERDOWN:
+            case WM_POINTERUPDATE:
+            case WM_POINTERUP: {
+                // Solo el dedo: ratón y lápiz siguen por los mensajes de ratón (promoción por defecto)
+                POINTER_INPUT_TYPE type = PT_POINTER;
+                if (!GetPointerType(GET_POINTERID_WPARAM(wp), &type) || type != PT_TOUCH) break;
+                POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+                ScreenToClient(hwnd, &pt);
+                const float s = self->designScale();
+                const float x = pt.x / s, y = pt.y / s;
+                if (msg == WM_POINTERDOWN) { SetFocus(hwnd); self->touchDown(x, y); }
+                else if (msg == WM_POINTERUPDATE) { if (IS_POINTER_INCONTACT_WPARAM(wp)) self->touchMove(x, y); }
+                else self->touchUp(x, y);
+                return 0;
+            }
+            case WM_DPICHANGED_AFTERPARENT:
+            case WM_DPICHANGED:
+                // DPI dinámico: el destino se reescala en el siguiente frame y el fondo se regenera
+                self->scaleFactor_ = std::max(1.0f, GetDpiForWindow(hwnd) / 96.0f);
+                if (self->gfx_) self->gfx_->invalidateBackground();
+                InvalidateRect(hwnd, nullptr, FALSE);
+                if (msg == WM_DPICHANGED) break;
                 return 0;
             case WM_LBUTTONDOWN: {
                 SetFocus(hwnd);
@@ -471,6 +594,8 @@ private:
     JasWaveVst::JwController* ctl_;
     std::unique_ptr<EditorCore> core_;
     std::unique_ptr<Gfx> gfx_;
+    Widget* touchWidget_{nullptr};
+    Pt touchStart_{ 0, 0 }, touchOffset_{ 0, 0 };
     HWND hwnd_{nullptr};
     HWND edit_{nullptr};
     int editParam_{-1};
@@ -526,6 +651,70 @@ bool renderEditorToPng(JasWaveVst::JwController* controller, const wchar_t* path
         }
     }
     if (SUCCEEDED(coHr)) CoUninitialize();
+    return ok;
+}
+
+// ---------------------------------------------------------------------------------
+//  Volcado del layout (fuente única de la réplica web, V4): zonas, widgets y parámetros
+// ---------------------------------------------------------------------------------
+bool dumpEditorLayout(JasWaveVst::JwController* controller, const wchar_t* path) {
+    EditorCore core(controller);
+    PluginEditor* ed = core.editor();
+    if (!ed) return false;
+    const auto& desc = controller->descriptor();
+    std::string o = "{\n";
+    o += "  \"productId\": " + jsonStr(desc.productId) + ",\n";
+    o += "  \"titulo\": " + jsonStr(utf8(ed->title())) + ",\n";
+    o += "  \"subtitulo\": " + jsonStr(utf8(ed->subtitle())) + ",\n";
+    o += "  \"instrumento\": " + std::string(desc.instrument ? "true" : "false") + ",\n";
+    o += "  \"visualizador\": " + jsonStr(ed->visualizer()) + ",\n";
+    o += "  \"acento\": " + jsonColor(ed->accent()) + ",\n";
+    o += "  \"base\": { \"ancho\": 1100, \"alto\": 620 },\n";
+    o += "  \"zonas\": {\n";
+    o += "    \"pantalla\": " + jsonRect(Layout::kScreen) + ",\n";
+    o += "    \"visualizador\": " + jsonRect(Plantilla::kVisual) + ",\n";
+    o += "    \"espectro\": " + jsonRect(Plantilla::areaEspectro()) + ",\n";
+    o += "    \"miniPanel\": " + jsonRect(Plantilla::kMini) + ",\n";
+    o += "    \"controles\": " + jsonRect(Plantilla::kControles) + ",\n";
+    o += "    \"salida\": " + jsonRect(Plantilla::kSalida) + ",\n";
+    o += "    \"fader\": " + jsonRect(Plantilla::kFader) + ",\n";
+    char med[128];
+    std::snprintf(med, sizeof med, "{ \"x\": %.1f, \"arriba\": %.1f, \"abajo\": %.1f }", Plantilla::kMedidoresX, Plantilla::kMedidoresArriba,
+                  Plantilla::kMedidoresAbajo);
+    o += std::string("    \"medidores\": ") + med + "\n  },\n";
+    o += "  \"escalas\": { \"frecuencia\": [20, 20000], \"dbfs\": [-120, 0], \"caidaDbS\": 14 },\n";
+    o += "  \"modoParam\": " + (ed->modeParam() >= 0 ? std::to_string(ed->modeParam()) : std::string("null")) + ",\n";
+    o += "  \"widgets\": [\n";
+    bool first = true;
+    for (auto& w : core.context().widgets) {
+        o += first ? "    {" : ",\n    {";
+        first = false;
+        o += " \"tipo\": " + jsonStr(w->kind()) + ", \"rect\": " + jsonRect(w->rect) + ", \"etiqueta\": " + jsonStr(utf8(w->text()));
+        if (auto* k = dynamic_cast<Knob*>(w.get())) o += ", \"tamano\": " + std::to_string(static_cast<int>(k->size()));
+        const int id = w->paramId();
+        if (id >= 0) {
+            o += ", \"param\": " + std::to_string(id);
+            if (const JasWaveVst::ParamDef* d = core.access().def(static_cast<uint32_t>(id))) {
+                char b[256];
+                std::snprintf(b, sizeof b, ", \"min\": %.10g, \"max\": %.10g, \"defecto\": %.10g, \"pasos\": %d, \"escala\": \"%s\"", d->minV, d->maxV, d->defV,
+                              d->steps, d->map == JasWaveVst::Map::Log ? "log" : d->map == JasWaveVst::Map::Stepped ? "stepped" : "linear");
+                o += b;
+                o += ", \"nombre\": " + jsonStr(d->name ? d->name : "") + ", \"unidad\": " + jsonStr(d->units ? d->units : "");
+                if (d->feature >= 0 && d->feature < desc.featureCount) o += ", \"feature\": " + jsonStr(desc.features[d->feature].key);
+                if (d->labels) {
+                    o += ", \"opciones\": [";
+                    for (int i = 0; i <= d->steps; ++i) o += (i ? "," : "") + jsonStr(d->labels[i]);
+                    o += "]";
+                }
+            }
+        }
+        o += " }";
+    }
+    o += "\n  ]\n}\n";
+    FILE* fp = nullptr;
+    if (_wfopen_s(&fp, path, L"wb") != 0 || !fp) return false;
+    const bool ok = std::fwrite(o.data(), 1, o.size(), fp) == o.size();
+    std::fclose(fp);
     return ok;
 }
 

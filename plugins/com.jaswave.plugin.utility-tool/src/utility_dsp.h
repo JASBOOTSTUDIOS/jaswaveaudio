@@ -116,6 +116,8 @@ public:
 
     template <class T>
     void process(const T* inL, const T* inR, T* outL, T* outR, int n, UtilityBus* bus) {
+        if (bus) bus->entrada(inL, inR, n);
+        const bool vista = bus && bus->vistaAbierta();   // vectorscopio solo con el editor abierto
         float pin[2] = { 0, 0 }, pout[2] = { 0, 0 };
         int pos = 0;
         while (pos < n) {
@@ -176,12 +178,13 @@ public:
                     const double om = 0.5 * (ol + orr), os = 0.5 * (ol - orr);
                     mEn_ += corrCoef_ * (om * om - mEn_);
                     sEn_ += corrCoef_ * (os * os - sEn_);
-                    if (++decCnt_ >= decim_) { decCnt_ = 0; bus->xy.push(static_cast<float>(ol), static_cast<float>(orr)); }
+                    if (vista && ++decCnt_ >= decim_) { decCnt_ = 0; bus->xy.push(static_cast<float>(ol), static_cast<float>(orr)); }
                 }
             }
             pos += m;
         }
         if (bus) {
+            bus->salida(outL, outR, n);
             bus->inPk[0].update(pin[0]); bus->inPk[1].update(pin[1]);
             bus->outPk[0].update(pout[0]); bus->outPk[1].update(pout[1]);
             const double den = std::sqrt(cLL_ * cRR_);

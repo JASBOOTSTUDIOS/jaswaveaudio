@@ -52,7 +52,6 @@ struct PianoSettings {
 };
 
 struct PianoBus : MeterBusBase {
-    SpectrumTap out;
     PeakMeter outPk[2];
     std::atomic<int> activeVoices{0};
     std::atomic<uint64_t> keys[2]{};   // teclas sonando (MIDI 0..127)
@@ -175,7 +174,7 @@ public:
             pk[1] = std::max(pk[1], static_cast<float>(std::fabs(static_cast<double>(outR[i]))));
         }
         if (bus) {
-            bus->out.pushT(outL, outR, n);
+            bus->salida(outL, outR, n);
             bus->outPk[0].update(pk[0]);
             bus->outPk[1].update(pk[1]);
             uint64_t k0 = 0, k1 = 0;

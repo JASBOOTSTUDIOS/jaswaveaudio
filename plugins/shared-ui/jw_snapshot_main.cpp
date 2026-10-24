@@ -1,9 +1,11 @@
 // Herramienta de capturas / volcado de parámetros (solo pruebas; enlaza jw_license_testing).
 //   <Plugin>_snapshot --out <dir> --name <base> [--width 1100] [--height 620]
 //   <Plugin>_snapshot --dump-params <archivo.json>
+//   <Plugin>_snapshot --dump-layout <ui-layout.json>
 // Instancia el plugin con su propia factoría, procesa ~3 s de señal de prueba (audio o MIDI)
 // con el procesador y el controlador conectados, y renderiza el editor real a PNG con
-// Direct2D/WIC en tres estados de licencia: completa, básica (sin features) y sin licencia.
+// Direct2D/WIC en cinco estados de licencia: completa, por vencer, básica (sin features),
+// sin licencia y activando. --dump-layout vuelca el layout del editor (réplica web, V4).
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -104,7 +106,7 @@ std::string jsonEsc(const char* s) {
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
-    std::wstring outDir = L".", base = L"plugin", dump;
+    std::wstring outDir = L".", base = L"plugin", dump, dumpLayout;
     UINT W = 1100, H = 620;
     for (int i = 1; i < argc; ++i) {
         const std::wstring a = argv[i];
@@ -113,6 +115,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--width" && i + 1 < argc) W = static_cast<UINT>(_wtoi(argv[++i]));
         else if (a == L"--height" && i + 1 < argc) H = static_cast<UINT>(_wtoi(argv[++i]));
         else if (a == L"--dump-params" && i + 1 < argc) dump = argv[++i];
+        else if (a == L"--dump-layout" && i + 1 < argc) dumpLayout = argv[++i];
     }
 
     IPluginFactory* f = GetPluginFactory();
@@ -167,6 +170,14 @@ int wmain(int argc, wchar_t** argv) {
         return 0;
     }
 
+    if (!dumpLayout.empty()) {
+        const bool ok = JasWaveUI::dumpEditorLayout(ctl, dumpLayout.c_str());
+        std::wprintf(L"%ls %ls\n", ok ? L"OK   " : L"FALLO", dumpLayout.c_str());
+        comp->terminate();
+        ctrlIface->terminate();
+        return ok ? 0 : 1;
+    }
+
     // Conexión procesador <-> controlador (telemetría)
     Vst::IConnectionPoint* cpP = nullptr;
     Vst::IConnectionPoint* cpC = nullptr;
@@ -180,6 +191,9 @@ int wmain(int argc, wchar_t** argv) {
     proc->setupProcessing(setup);
     comp->setActive(true);
     proc->setProcessing(true);
+    // El editor "está abierto" durante la captura: el procesador alimenta los taps del espectro
+    std::shared_ptr<JasWaveDsp::MeterBusBase> bus = ctl->bus();
+    if (bus) bus->editoresAbiertos.fetch_add(1);
 
     // Estado de licencia completo para los visualizadores
     const auto& desc = ctl->descriptor();
@@ -210,50 +224,67 @@ int wmain(int argc, wchar_t** argv) {
     EventList events;
     Rng rng;
     const auto sig = ctl->demoSignal();
-    const int total = static_cast<int>(kSr * 3.2);
-    for (int pos = 0; pos < total; pos += kBlock) {
-        ProcessData data{};
-        data.processMode = kRealtime;
-        data.symbolicSampleSize = kSample32;
-        data.numSamples = kBlock;
-        data.numOutputs = 1;
-        data.outputs = &outBus;
-        data.inputParameterChanges = pos == 0 ? &changes : nullptr;
-        events.clear();
-        if (sig == JasWaveVst::JwController::DemoSignal::Midi) {
-            data.numInputs = 0;
-            // acorde sostenido + arpegio
-            const int notes[] = { 48, 55, 60, 64, 67, 72, 76 };
-            for (int k = 0; k < 7; ++k) {
-                const int onAt = static_cast<int>(k * 0.18 * kSr);
-                if (onAt >= pos && onAt < pos + kBlock) {
-                    Event e{};
-                    e.type = Event::kNoteOnEvent;
-                    e.sampleOffset = onAt - pos;
-                    e.noteOn.pitch = static_cast<int16>(notes[k]);
-                    e.noteOn.velocity = 0.55f + 0.06f * k;
-                    e.noteOn.noteId = -1;
-                    events.addEvent(e);
+    // Alimenta `seconds` de señal de prueba; en los instrumentos, el acorde se dispara al inicio de cada tramo
+    int pos = 0;
+    auto feed = [&](double seconds) {
+        const int from = pos, end = pos + static_cast<int>(kSr * seconds);
+        for (; pos < end; pos += kBlock) {
+            ProcessData data{};
+            data.processMode = kRealtime;
+            data.symbolicSampleSize = kSample32;
+            data.numSamples = kBlock;
+            data.numOutputs = 1;
+            data.outputs = &outBus;
+            data.inputParameterChanges = pos == 0 ? &changes : nullptr;
+            events.clear();
+            if (sig == JasWaveVst::JwController::DemoSignal::Midi) {
+                data.numInputs = 0;
+                // acorde sostenido + arpegio; al empezar un tramo nuevo se apagan las notas del anterior
+                const int notes[] = { 48, 55, 60, 64, 67, 72, 76 };
+                if (pos == from && from > 0)
+                    for (const int nt : notes) {
+                        Event e{};
+                        e.type = Event::kNoteOffEvent;
+                        e.noteOff.pitch = static_cast<int16>(nt);
+                        e.noteOff.noteId = -1;
+                        events.addEvent(e);
+                    }
+                for (int k = 0; k < 7; ++k) {
+                    const int onAt = from + static_cast<int>(k * 0.18 * kSr);
+                    if (onAt >= pos && onAt < pos + kBlock) {
+                        Event e{};
+                        e.type = Event::kNoteOnEvent;
+                        e.sampleOffset = onAt - pos;
+                        e.noteOn.pitch = static_cast<int16>(notes[k]);
+                        e.noteOn.velocity = 0.55f + 0.06f * k;
+                        e.noteOn.noteId = -1;
+                        events.addEvent(e);
+                    }
                 }
+                data.inputEvents = &events;
+            } else {
+                data.numInputs = 1;
+                data.inputs = &inBus;
+                if (sig == JasWaveVst::JwController::DemoSignal::Vocal) genVocal(inL, inR, pos, kBlock, rng);
+                else genMusic(inL, inR, pos, kBlock, rng);
             }
-            data.inputEvents = &events;
-        } else {
-            data.numInputs = 1;
-            data.inputs = &inBus;
-            if (sig == JasWaveVst::JwController::DemoSignal::Vocal) genVocal(inL, inR, pos, kBlock, rng);
-            else genMusic(inL, inR, pos, kBlock, rng);
+            proc->process(data);
         }
-        proc->process(data);
-    }
+    };
+    feed(3.2);
 
     CreateDirectoryW(outDir.c_str(), nullptr);
     auto shot = [&](const std::wstring& suffix) {
+        if (!suffix.empty()) feed(0.8);   // cada estado se captura con medidores vivos
         const std::wstring path = outDir + L"\\" + base + suffix + L".png";
         const bool ok = JasWaveUI::renderEditorToPng(ctl, path.c_str(), W, H, 40);
         std::wprintf(L"%ls %ls\n", ok ? L"OK   " : L"FALLO", path.c_str());
         return ok;
     };
     bool ok = shot(L"");
+    // Licencia completa a punto de vencer: aviso en la cabecera
+    JasWaveLicense::Manager::instance().testOverride(all | JasWaveLicense::StateBits::kExpiringSoon, st);
+    ok = shot(L"-por-vencer") && ok;
     // Licencia básica: controles de features con candado
     JasWaveLicense::Manager::instance().testOverride(JasWaveLicense::StateBits::kLicensed, st);
     ok = shot(L"-basica") && ok;
@@ -269,6 +300,7 @@ int wmain(int argc, wchar_t** argv) {
     JasWaveLicense::Manager::instance().testOverride(0, wait);
     ok = shot(L"-activando") && ok;
 
+    if (bus) bus->editoresAbiertos.fetch_sub(1);
     proc->setProcessing(false);
     comp->setActive(false);
     if (cpP && cpC) { cpP->disconnect(cpC); cpC->disconnect(cpP); }

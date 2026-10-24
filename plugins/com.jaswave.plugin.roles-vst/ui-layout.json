@@ -1,0 +1,417 @@
+{
+  "productId": "com.jaswave.plugin.roles-vst",
+  "titulo": "ROLES",
+  "subtitulo": "INSTRUMENTO POR ROL MUSICAL · 13 ROLES",
+  "instrumento": true,
+  "visualizador": "espectro-instrumento",
+  "acento": "#A77BFF",
+  "base": {
+    "ancho": 1100,
+    "alto": 620
+  },
+  "zonas": {
+    "pantalla": [
+      34,
+      34,
+      1066,
+      586
+    ],
+    "visualizador": [
+      52,
+      92,
+      652,
+      404
+    ],
+    "espectro": [
+      66,
+      124,
+      612,
+      382
+    ],
+    "miniPanel": [
+      52,
+      418,
+      652,
+      556
+    ],
+    "controles": [
+      666,
+      92,
+      1048,
+      404
+    ],
+    "salida": [
+      666,
+      418,
+      1048,
+      556
+    ],
+    "fader": [
+      680,
+      440,
+      724,
+      552
+    ],
+    "medidores": {
+      "x": 976,
+      "arriba": 446,
+      "abajo": 528
+    }
+  },
+  "escalas": {
+    "frecuencia": [
+      20,
+      20000
+    ],
+    "dbfs": [
+      -120,
+      0
+    ],
+    "caidaDbS": 14
+  },
+  "modoParam": 0,
+  "widgets": [
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        92,
+        1048,
+        404
+      ],
+      "etiqueta": "ENVOLVENTE · FILTRO"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        704,
+        140,
+        780,
+        234
+      ],
+      "etiqueta": "ATAQUE",
+      "tamano": 64,
+      "param": 1,
+      "min": 0,
+      "max": 100,
+      "defecto": 35,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "Attack",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        819,
+        140,
+        895,
+        234
+      ],
+      "etiqueta": "RELEASE",
+      "tamano": 64,
+      "param": 2,
+      "min": 0,
+      "max": 100,
+      "defecto": 40,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "Release",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        934,
+        140,
+        1010,
+        234
+      ],
+      "etiqueta": "CORTE",
+      "tamano": 64,
+      "param": 3,
+      "min": 0,
+      "max": 100,
+      "defecto": 55,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "Cutoff",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        714,
+        278,
+        770,
+        352
+      ],
+      "etiqueta": "RESONANCIA",
+      "tamano": 44,
+      "param": 4,
+      "min": 0,
+      "max": 100,
+      "defecto": 25,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "Resonance",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        829,
+        278,
+        885,
+        352
+      ],
+      "etiqueta": "DRIVE",
+      "tamano": 44,
+      "param": 7,
+      "min": 0,
+      "max": 100,
+      "defecto": 15,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "Drive",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        944,
+        278,
+        1000,
+        352
+      ],
+      "etiqueta": "VOCES",
+      "tamano": 44,
+      "param": 6,
+      "min": 0,
+      "max": 100,
+      "defecto": 50,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "Voices",
+      "unidad": "%"
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        418,
+        1048,
+        556
+      ],
+      "etiqueta": "SALIDA · EFECTOS"
+    },
+    {
+      "tipo": "fader",
+      "rect": [
+        680,
+        440,
+        724,
+        552
+      ],
+      "etiqueta": "NIVEL",
+      "param": 5,
+      "min": 0,
+      "max": 100,
+      "defecto": 70,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "Gain",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        756,
+        439,
+        798,
+        499
+      ],
+      "etiqueta": "CHORUS",
+      "tamano": 30,
+      "param": 9,
+      "min": 0,
+      "max": 100,
+      "defecto": 20,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "Chorus",
+      "unidad": "%",
+      "feature": "roles.efectos"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        830,
+        439,
+        872,
+        499
+      ],
+      "etiqueta": "DELAY",
+      "tamano": 30,
+      "param": 10,
+      "min": 0,
+      "max": 100,
+      "defecto": 15,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "Delay",
+      "unidad": "%",
+      "feature": "roles.efectos"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        904,
+        439,
+        946,
+        499
+      ],
+      "etiqueta": "REVERB",
+      "tamano": 30,
+      "param": 11,
+      "min": 0,
+      "max": 100,
+      "defecto": 25,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "Reverb",
+      "unidad": "%",
+      "feature": "roles.efectos"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        756,
+        495,
+        798,
+        555
+      ],
+      "etiqueta": "GRAVES",
+      "tamano": 30,
+      "param": 12,
+      "min": 0,
+      "max": 100,
+      "defecto": 50,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "EQ Low",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        830,
+        495,
+        872,
+        555
+      ],
+      "etiqueta": "AGUDOS",
+      "tamano": 30,
+      "param": 13,
+      "min": 0,
+      "max": 100,
+      "defecto": 50,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "EQ High",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        904,
+        495,
+        946,
+        555
+      ],
+      "etiqueta": "GATE",
+      "tamano": 30,
+      "param": 8,
+      "min": 0,
+      "max": 100,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "Gate",
+      "unidad": "%"
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        976,
+        446,
+        985,
+        528
+      ],
+      "etiqueta": ""
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        990,
+        446,
+        999,
+        528
+      ],
+      "etiqueta": ""
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1020,
+        446,
+        1029,
+        528
+      ],
+      "etiqueta": ""
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1034,
+        446,
+        1043,
+        528
+      ],
+      "etiqueta": ""
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        690,
+        48,
+        846,
+        68
+      ],
+      "etiqueta": "MODO",
+      "param": 0,
+      "min": 0,
+      "max": 12,
+      "defecto": 5,
+      "pasos": 12,
+      "escala": "stepped",
+      "nombre": "Role",
+      "unidad": "",
+      "opciones": [
+        "Bateria",
+        "Bajo",
+        "Guitarra",
+        "Piano",
+        "Teclas",
+        "Pad",
+        "Cuerdas",
+        "Coro",
+        "Lead",
+        "Metales",
+        "Synth",
+        "Percusion",
+        "Default"
+      ]
+    }
+  ]
+}

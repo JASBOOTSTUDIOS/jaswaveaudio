@@ -3,6 +3,30 @@
 **Depende de:** V1, V2, L2  
 **Fuente:** [DESIGN.md](file:///c:/src/jaswave-ia/plugins/shared-ui/DESIGN.md), Documento Maestro V5 y auditoría exhaustiva del repositorio JasWave (2026-10-23).
 
+## Estado de implementación (2026-10-23)
+
+**Parte nativa (Windows): hecha.** La parte web (réplica Canvas responsiva y táctil, sincronización
+`plugin.parametro.cambiado`) es el workstream **V4**.
+
+| Requisito | Dónde | Verificación |
+|---|---|---|
+| Plantilla única: zonas, rejilla 3×2, SALIDA con bypass en la píldora, fader y medidores IN/OUT en x=976 | `plugins/shared-ui/jw_ui_plantilla.h` | `node plugins/scripts/ui-layout.mjs` (7 layouts idénticos en zonas) |
+| Logo embebido (RCDATA + WIC, 28 px) | `shared-ui/jaswave_resources.rc`, `Gfx::logo` | capturas |
+| Espectro IN/OUT en los 5 efectos y OUT + MIDI en los 2 instrumentos | `MeterBusBase::espIn/espOut`, `entrada()/salida()` | `jw_dsp_selftest` [V3] |
+| Coste cero con el editor cerrado (taps, scope y vectorscopio) | `MeterBusBase::editoresAbiertos` | `jw_dsp_selftest` [V3] |
+| Balística 14 dB/s por tiempo real (espectros y medidores) | `SpectrumAnalyzer::updateBalistica`, `Kit::PeakFollower` | `jw_dsp_selftest` [V3] |
+| Escala −120..0 dBFS, 20 Hz–20 kHz, IN 1 px + 8 %, OUT 1.8 px con halo + 15 % | `Plantilla::EspectroDual` | capturas |
+| Acentos: ámbar (comp), amarillo (limiter), verde-cian (de-esser), violeta (roles), cian (resto) | `PluginEditor::accent()` | `ui-layout.json` → `acento` |
+| Sin cadenas por frame (claves de texto por hash, valores cacheados) y polilíneas en una geometría | `jw_ui_gfx.cpp`, `jw_ui_widgets.cpp` | revisión |
+| Táctil (WM_POINTER, área 44 px, pulsación larga = valor numérico) y DPI dinámico | `jw_ui_view.cpp` | manual (pantalla táctil) |
+| 5 estados de licencia en capturas: válida, por vencer, básica, sin licencia, activando | `jw_snapshot_main.cpp` | `plugins/docs/capturas` (35 PNG) |
+| Layout exportable para la réplica web | `<Target>_snapshot.exe --dump-layout` → `plugins/<id>/ui-layout.json` | `ui-layout.mjs --check` / `--validar` |
+
+Correcciones a este documento: el ejecutable de capturas es `<Target>_snapshot.exe` (no existe
+`jw_snapshot_main.exe`); el despliegue de desarrollo va a `%LOCALAPPDATA%\Programs\Common\VST3\JasWave`;
+el generador por defecto es Visual Studio 2022 (2026 opcional). Pendiente fuera de V3: `pluginval`
+(no instalado en esta máquina) y la réplica web (V4).
+
 ---
 
 ## 1. Resumen Ejecutivo
@@ -76,7 +100,7 @@ Para garantizar que la implementación sea robusta, inmune a fallos en DAWs exte
 ### 4.2 Desacoplamiento y Cero Costo de CPU para el Espectro con Editor Cerrado
 * **Problema:** En proyectos con decenas de pistas y múltiples instancias de plugins, calcular FFTs continuamente en segundo plano agota la CPU innecesariamente.
 * **Solución Arquitectónica:**
-  1. Bandera atómica de visibilidad: `std::atomic<bool> editorIsOpen{false}` administrada estrictamente por `attached()` y `removed()` de la vista del plugin.
+  1. Contador atómico de vistas abiertas: `MeterBusBase::editoresAbiertos` (`std::atomic<int>`), que suma la vista al crearse y resta al cerrarse (`removed()`); con dos editores abiertos del mismo plugin, cerrar uno no apaga el espectro del otro.
   2. Cuando `editorIsOpen == false`:
      * El método `process()` omite la copia de audio hacia los `SpectrumTap`.
      * Se desactiva el timer de renderizado UI (sin ticks de Direct2D a 60 fps).
@@ -260,18 +284,23 @@ Cada plugin debe cumplir con la siguiente lista de verificación:
 ## 8. Comandos de Certificación y Despliegue
 
 ```powershell
-# 1. Compilación del conjunto de plugins con CMake y Visual Studio 2026
-cmake -S plugins -B plugins/build -G "Visual Studio 18 2026" -A x64
+# 1. Compilación del conjunto de plugins (generador por defecto: Visual Studio 2022;
+#    con VS 2026: -G "Visual Studio 18 2026", o JASWAVE_CMAKE_GENERATOR en los scripts nativos)
+cmake -S plugins -B plugins/build -A x64
 cmake --build plugins/build --config Release --parallel
 
 # 2. Ejecución de pruebas unitarias DSP y validación de licencias
 .\plugins\build\tests\Release\jw_dsp_selftest.exe
 .\plugins\build\tests\Release\jw_license_tests.exe
 
-# 3. Generación de snapshots visuales de certificación
-.\plugins\build\tools\Release\jw_snapshot_main.exe --out plugins/docs/capturas
+# 3. Layout (ui-layout.json), comprobación de la plantilla común y capturas de los 7 × 5 estados
+#    (cada plugin tiene su herramienta <Target>_snapshot.exe en plugins\build\tools\Release)
+node plugins/scripts/ui-layout.mjs --capturas
 
-# 4. Despliegue de binarios VST3 en el DAW
+# 4. Validador oficial del SDK (47/47 por plugin) y despliegue de desarrollo
+#    (%LOCALAPPDATA%\Programs\Common\VST3\JasWave, sin tocar C:\Program Files)
+cmake --build plugins/build/_vst3sdk/public.sdk/samples/vst-hosting/validator --config Release --target validator
+node plugins/scripts/validate-plugins.mjs
 .\plugins\deploy_vst3.ps1
 
 # 5. Verificación integral de la solución en la raíz

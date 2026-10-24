@@ -107,7 +107,6 @@ inline double bandResponseDb(const BandCoefs& bc, double sr, double f) {
 }
 
 struct EqBus : MeterBusBase {
-    SpectrumTap pre, post;
     PeakMeter inPk[2], outPk[2];
     std::atomic<int> analyzer{1};
 };
@@ -156,8 +155,9 @@ public:
 
     template <class T>
     void process(const T* inL, const T* inR, T* outL, T* outR, int n, EqBus* bus) {
+        // El analizador (0 apagado, 1 salida, 2 entrada+salida) solo decide qué dibuja el editor.
         const bool tap = bus && s_.analyzer > 0;
-        if (tap && s_.analyzer >= 2) bus->pre.pushT(inL, inR, n);
+        if (tap && s_.analyzer >= 2) bus->entrada(inL, inR, n);
         float pin[2] = { 0, 0 }, pout[2] = { 0, 0 };
         int pos = 0;
         while (pos < n) {
@@ -219,7 +219,7 @@ public:
             pos += m;
         }
         if (bus) {
-            if (tap) bus->post.pushT(outL, outR, n);
+            if (tap) bus->salida(outL, outR, n);
             bus->inPk[0].update(pin[0]); bus->inPk[1].update(pin[1]);
             bus->outPk[0].update(pout[0]); bus->outPk[1].update(pout[1]);
             bus->analyzer.store(s_.analyzer, std::memory_order_relaxed);

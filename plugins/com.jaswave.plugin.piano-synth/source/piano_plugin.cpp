@@ -3,6 +3,7 @@
 #include "jw_vst3.h"
 #include "jw_ui.h"
 #include "jw_ui_kit.h"
+#include "jw_ui_plantilla.h"
 
 #include "public.sdk/source/main/pluginfactory.h"
 
@@ -63,8 +64,10 @@ protected:
             }
             if (at > pos) { engine_.render(oL + pos, oR + pos, at - pos, pbus_.get()); pos = at; }
             if (i == count) break;
-            if (e.type == Event::kNoteOnEvent) engine_.noteOn(e.noteOn.pitch, e.noteOn.velocity);
-            else if (e.type == Event::kNoteOffEvent) engine_.noteOff(e.noteOff.pitch);
+            if (e.type == Event::kNoteOnEvent) {
+                engine_.noteOn(e.noteOn.pitch, e.noteOn.velocity);
+                pbus_->velocidadMidi.update(e.noteOn.velocity);
+            } else if (e.type == Event::kNoteOffEvent) engine_.noteOff(e.noteOff.pitch);
         }
         if (pos < n) engine_.render(oL + pos, oR + pos, n - pos, pbus_.get());
     }
@@ -100,110 +103,66 @@ class Editor : public JasWaveUI::PluginEditor {
 public:
     const wchar_t* title() const override { return L"PIANO SYNTH"; }
     const wchar_t* subtitle() const override { return L"SÍNTESIS MODAL · CUERDAS AL UNÍSONO · 88 TECLAS"; }
+    const char* visualizer() const override { return "espectro-instrumento"; }
     void build(JasWaveUI::EditorContext& c) override {
-        using namespace JasWaveUI;
-        c.section({ 666, 92, 1048, 404 }, L"MARTILLO · CUERDA");
-        c.knob(kBrightness, 742, 176, KnobSize::Main, L"BRILLO");
-        c.knob(kHardness, 857, 176, KnobSize::Main, L"DUREZA");
-        c.knob(kDecay, 972, 176, KnobSize::Main, L"DECAY");
-        c.knob(kVelocity, 742, 304, KnobSize::Normal, L"VELOCIDAD");
-        c.knob(kRelease, 857, 304, KnobSize::Normal, L"RELEASE");
-        c.knob(kTune, 972, 304, KnobSize::Normal, L"LA4");
-        c.section({ 666, 418, 1048, 556 }, L"SALIDA", kBypass, true);
-        c.fader(kVolume, { 680, 440, 724, 552 }, L"VOLUMEN");
-        c.knob(kStereo, 790, 482, KnobSize::Normal, L"ESTÉREO");
-        c.toggle(kSustain, { 850, 470, 950, 496 }, L"SUSTAIN");
-        meters_.build(c, 1000.0f, 446.0f, 528.0f);
+        namespace P = JasWaveUI::Plantilla;
+        P::controles(c, L"MARTILLO · CUERDA");
+        P::principal(c, 0, kBrightness, L"BRILLO");
+        P::principal(c, 1, kHardness, L"DUREZA");
+        P::principal(c, 2, kDecay, L"DECAY");
+        P::secundaria(c, 0, kVelocity, L"VELOCIDAD");
+        P::secundaria(c, 1, kRelease, L"RELEASE");
+        P::secundaria(c, 2, kTune, L"LA4");
+        P::salida(c, kBypass);
+        P::fader(c, kVolume, L"VOLUMEN");
+        P::perillaSalida(c, 0, kStereo, L"ESTÉREO");
+        P::interruptorSalida(c, 1, 0, 2, kSustain, L"SUSTAIN");
+        P::medidores(c, meters_);
     }
     void tick(JasWaveUI::EditorContext& c) override {
         bus_ = std::dynamic_pointer_cast<PianoBus>(c.params.bus());
         if (!bus_) return;
-        static JasWaveDsp::PeakMeter none[2];
-        meters_.update(none, bus_->outPk);
-        an_.update(bus_->out, bus_->sampleRate.load(std::memory_order_relaxed));
-        an_.columns(cols_, kCols, 25.0, 16000.0, 4.5);
-        keys_[0] = bus_->keys[0].load(std::memory_order_relaxed);
-        keys_[1] = bus_->keys[1].load(std::memory_order_relaxed);
+        meters_.updateInstrumento(bus_->velocidadMidi, bus_->outPk, c.dt);
+        espectro_.actualizar(*bus_, c.dt, false, true);
+        teclado_.actualizar(bus_->keys[0].load(std::memory_order_relaxed), bus_->keys[1].load(std::memory_order_relaxed), c.dt);
         voices_ = bus_->activeVoices.load(std::memory_order_relaxed);
         maxVoices_ = bus_->maxVoices.load(std::memory_order_relaxed);
-        for (int k = 0; k < 128; ++k) {
-            const bool on = k < 64 ? ((keys_[0] >> k) & 1) != 0 : ((keys_[1] >> (k - 64)) & 1) != 0;
-            glow_[static_cast<size_t>(k)] = on ? 1.0f : glow_[static_cast<size_t>(k)] * 0.85f;
-        }
         hist_[static_cast<size_t>(histPos_)] = static_cast<float>(voices_);
         histPos_ = (histPos_ + 1) % kHist;
     }
     float outputLevel() const override { return meters_.level(); }
     void drawPanels(JasWaveUI::Gfx& g, JasWaveUI::EditorContext&) override {
         using namespace JasWaveUI;
-        const Rect v = Layout::kVisualizer;
-        Kit::panel(g, v, L"ARMÓNICOS · TECLADO");
-        g.text(L"OUT", { 1000, 532, 1040, 546 }, Font::Label, Pal::textoEtiqueta, Align::Center, true);
-        const Rect sp{ v.l + 14, v.t + 34, v.r - 14, v.t + 200 };
-        if (cols_.size() == static_cast<size_t>(kCols)) {
-            for (int i = 0; i < kCols; ++i)
-                pts_[static_cast<size_t>(i)] = { sp.l + sp.w() * (i + 0.5f) / kCols, sp.b - std::clamp((cols_[static_cast<size_t>(i)] + 96.0f) / 90.0f, 0.0f, 1.0f) * sp.h() };
-            Kit::wireTrace(g, pts_.data(), kCols, Pal::cian, sp.b, true);
-        }
-        // teclado de 88 teclas (A0..C8)
-        const Rect kb{ v.l + 14, v.b - 90, v.r - 14, v.b - 14 };
-        int whites = 0;
-        for (int n = 21; n <= 108; ++n) if (!isBlack(n)) ++whites;
-        const float ww = kb.w() / whites;
-        int wi = 0;
-        for (int n = 21; n <= 108; ++n) {
-            if (isBlack(n)) continue;
-            const Rect r{ kb.l + wi * ww + 0.6f, kb.t, kb.l + (wi + 1) * ww - 0.6f, kb.b };
-            const float gl = glow_[static_cast<size_t>(n)];
-            g.fillRect(r, gl > 0.02f ? Pal::cian.withAlpha(0.25f + 0.65f * gl) : hex(0x0F1E28));
-            g.strokeRect(r, Pal::panelBorde, 0.8f);
-            ++wi;
-        }
-        wi = 0;
-        for (int n = 21; n <= 108; ++n) {
-            if (!isBlack(n)) { ++wi; continue; }
-            const float x = kb.l + wi * ww;
-            const Rect r{ x - ww * 0.32f, kb.t, x + ww * 0.32f, kb.t + kb.h() * 0.6f };
-            const float gl = glow_[static_cast<size_t>(n)];
-            g.fillRect(r, gl > 0.02f ? Pal::cianNucleo.withAlpha(0.3f + 0.6f * gl) : hex(0x03080C));
-            g.strokeRect(r, Pal::panelBorde, 0.8f);
-        }
-        for (int n = 21; n <= 108; ++n) if (glow_[static_cast<size_t>(n)] > 0.5f) {
-            int w2 = 0;
-            for (int m = 21; m < n; ++m) if (!isBlack(m)) ++w2;
-            const float x = kb.l + w2 * ww + (isBlack(n) ? 0.0f : ww * 0.5f);
-            g.glowDot(x, kb.t - 6.0f, 2.0f, Pal::cian);
-        }
-        // mini-panel: voces
-        const Rect m = Layout::kMiniPanel;
-        Kit::panel(g, m, L"POLIFONÍA");
-        const Rect h{ m.l + 14, m.t + 34, m.r - 150, m.b - 12 };
+        namespace P = Plantilla;
+        const Rect v = P::kVisual;
+        P::panelVisual(g, L"ESPECTRO OUT · TECLADO");
+        meters_.drawLabels(g);
+        espectro_.dibujar(g, { v.l + 14.0f, v.t + 32.0f, v.r - 40.0f, v.b - 112.0f });
+        teclado_.dibujar(g, { v.l + 14.0f, v.b - 84.0f, v.r - 14.0f, v.b - 14.0f }, accent());
+        // mini-panel: polifonía
+        P::panelMedicion(g, L"POLIFONÍA");
+        const Rect h = P::kMiniGrafico;
         const float maxV = static_cast<float>(std::max(1, maxVoices_));
         for (int i = 0; i < kHist; ++i) {
             const float val = hist_[static_cast<size_t>((histPos_ + i) % kHist)];
             hpts_[static_cast<size_t>(i)] = { h.l + h.w() * i / (kHist - 1), h.b - std::clamp(val / maxV, 0.0f, 1.0f) * h.h() };
         }
-        Kit::wireTrace(g, hpts_.data(), kHist, Pal::cian, h.b, true);
+        Kit::wireTrace(g, hpts_.data(), kHist, accent(), h.b, true);
         wchar_t buf[32];
         swprintf_s(buf, L"%d / %d", voices_, maxVoices_);
-        Kit::readout(g, m.r - 130, m.t + 34, L"VOCES", buf);
-        Kit::readout(g, m.r - 130, m.t + 72, L"POLIFONÍA", maxVoices_ >= kMaxVoices ? L"EXTENDIDA" : L"BÁSICA");
+        P::lectura(g, 0, 0, L"VOCES", buf, accent());
+        P::lectura(g, 0, 1, L"POLIFONÍA", maxVoices_ >= kMaxVoices ? L"EXTENDIDA" : L"BÁSICA");
     }
     const wchar_t* footerId() const override { return L"com.jaswave.plugin.piano-synth"; }
 
 private:
-    static bool isBlack(int n) { const int p = n % 12; return p == 1 || p == 3 || p == 6 || p == 8 || p == 10; }
-    static constexpr int kCols = 200;
     static constexpr int kHist = 240;
     std::shared_ptr<PianoBus> bus_;
     JasWaveUI::Kit::StereoMeters meters_;
-    JasWaveDsp::SpectrumAnalyzer an_;
-    std::vector<float> cols_;
-    std::array<JasWaveUI::Pt, kCols> pts_{};
+    JasWaveUI::Plantilla::EspectroDual espectro_;
+    JasWaveUI::Plantilla::Teclado88 teclado_;
     std::array<JasWaveUI::Pt, kHist> hpts_{};
     std::array<float, kHist> hist_{};
-    std::array<float, 128> glow_{};
-    uint64_t keys_[2] = {};
     int voices_{0}, maxVoices_{kMaxVoices}, histPos_{0};
 };
 

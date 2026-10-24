@@ -21,7 +21,7 @@
     "pack:win": "npm run pack:win --prefix jas-wave",
     "release:win": "npm run release:win --prefix jas-wave",
     "e2e": "npm run e2e --prefix jas-wave",
-    "verify:modulos": "node jas-wave/scripts/generar-sdk.mjs --comprobar && npm run typecheck --prefix plugins && npm test --prefix plugins && node plugins/scripts/verificar-independencia.mjs",
+    "verify:modulos": "node jas-wave/scripts/generar-sdk.mjs --comprobar && npm run typecheck --prefix plugins && npm test --prefix plugins && node plugins/scripts/verificar-independencia.mjs && node plugins/scripts/ui-layout.mjs --validar",
     "build:modulos": "npm run build:modulos --prefix plugins"
   },
   "engines": {

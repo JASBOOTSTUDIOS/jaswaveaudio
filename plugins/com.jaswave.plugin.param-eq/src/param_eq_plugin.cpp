@@ -3,6 +3,7 @@
 #include "jw_vst3.h"
 #include "jw_ui.h"
 #include "jw_ui_kit.h"
+#include "jw_ui_plantilla.h"
 
 #include "public.sdk/source/main/pluginfactory.h"
 
@@ -68,53 +69,40 @@ public:
     const wchar_t* subtitle() const override { return L"8 BANDAS · FASE MÍNIMA · LATENCIA 0"; }
 
     void build(JasWaveUI::EditorContext& c) override {
-        using namespace JasWaveUI;
-        band_ = c.section({ 666, 92, 1048, 404 }, L"BANDA 1", static_cast<int>(bandParam(0, fOn)));
-        kFreq_ = c.knob(bandParam(0, fFreq), 742, 178, KnobSize::Main, L"FRECUENCIA");
-        kGain_ = c.knob(bandParam(0, fGain), 857, 178, KnobSize::Main, L"GANANCIA");
-        kQ_ = c.knob(bandParam(0, fQ), 972, 178, KnobSize::Main, L"Q");
-        type_ = c.dropdown(bandParam(0, fType), { 690, 290, 900, 312 }, L"TIPO");
-        c.section({ 666, 418, 1048, 556 }, L"SALIDA", kBypass, true);
-        c.fader(kOutput, { 682, 440, 730, 552 }, L"OUT");
-        c.dropdown(kSlope, { 748, 456, 960, 476 }, L"PENDIENTE");
-        c.dropdown(kAnalyzer, { 748, 490, 960, 510 }, L"ANALIZADOR");
-        meters_.build(c, 976.0f, 446.0f, 528.0f);
+        namespace P = JasWaveUI::Plantilla;
+        band_ = P::controles(c, L"BANDA 1", static_cast<int>(bandParam(0, fOn)));
+        kFreq_ = P::principal(c, 0, bandParam(0, fFreq), L"FRECUENCIA");
+        kGain_ = P::principal(c, 1, bandParam(0, fGain), L"GANANCIA");
+        kQ_ = P::principal(c, 2, bandParam(0, fQ), L"Q");
+        type_ = P::selector(c, 0, 2, bandParam(0, fType), L"TIPO");
+        P::salida(c, kBypass);
+        P::fader(c, kOutput, L"OUT");
+        P::selectorSalida(c, 0, kSlope, L"PENDIENTE");
+        P::selectorSalida(c, 1, kAnalyzer, L"ANALIZADOR");
+        P::medidores(c, meters_);
         select(0);
     }
     void tick(JasWaveUI::EditorContext& c) override {
         bus_ = std::dynamic_pointer_cast<EqBus>(c.params.bus());
         if (!bus_) return;
         sr_ = bus_->sampleRate.load(std::memory_order_relaxed);
-        meters_.update(bus_->inPk, bus_->outPk);
+        meters_.update(bus_->inPk, bus_->outPk, c.dt);
         const int an = bus_->analyzer.load(std::memory_order_relaxed);
         analyzerOn_ = an > 0 && c.params.featureGranted(kFeatAnalyzer);
         preOn_ = analyzerOn_ && an >= 2;
-        if (analyzerOn_) {
-            post_.update(bus_->post, sr_);
-            post_.columns(colsPost_, kCols, 20.0, 20000.0, 4.5);
-            if (preOn_) { pre_.update(bus_->pre, sr_); pre_.columns(colsPre_, kCols, 20.0, 20000.0, 4.5); }
-        }
+        if (analyzerOn_) espectro_.actualizar(*bus_, c.dt, preOn_, true);
     }
     float outputLevel() const override { return meters_.level(); }
 
     void drawPanels(JasWaveUI::Gfx& g, JasWaveUI::EditorContext& c) override {
         using namespace JasWaveUI;
-        const Rect v = Layout::kVisualizer;
-        Kit::panel(g, v, L"RESPUESTA · ANALIZADOR");
+        Plantilla::panelVisual(g, L"RESPUESTA · ESPECTRO IN / OUT");
         meters_.drawLabels(g);
         const Rect pr = plotRect();
+        // ejes: frecuencia común y dB de la curva (±18); el espectro usa la escala dBFS común sin rótulos
         Kit::freqAxis(g, pr);
         Kit::dbAxis(g, pr, -kDbRange, kDbRange, 6.0);
-        // analizador
-        if (analyzerOn_ && colsPost_.size() == static_cast<size_t>(kCols)) {
-            if (preOn_ && colsPre_.size() == static_cast<size_t>(kCols)) {
-                for (int i = 0; i < kCols; ++i) pts_[static_cast<size_t>(i)] = { pr.l + pr.w() * (i + 0.5f) / kCols, specY(pr, colsPre_[static_cast<size_t>(i)]) };
-                g.polyline(pts_.data(), kCols, Pal::textoTenue.withAlpha(0.7f), 1.0f);
-            }
-            for (int i = 0; i < kCols; ++i) pts_[static_cast<size_t>(i)] = { pr.l + pr.w() * (i + 0.5f) / kCols, specY(pr, colsPost_[static_cast<size_t>(i)]) };
-            g.fillUnder(pts_.data(), kCols, pr.b, Pal::cian.withAlpha(0.08f));
-            g.polyline(pts_.data(), kCols, Pal::cian.withAlpha(0.35f), 1.0f);
-        }
+        if (analyzerOn_) espectro_.dibujar(g, pr, false, false, 0.45f);   // la curva domina (V3 §5.1)
         // curvas: banda seleccionada (relleno) y total (hilo con glow + ecos)
         BandCoefs bc[kBands];
         bool active[kBands];
@@ -211,18 +199,14 @@ public:
     const wchar_t* footerId() const override { return L"com.jaswave.plugin.param-eq"; }
 
 private:
-    static constexpr int kCols = 220;
     static constexpr int kCurve = 300;
     static constexpr double kDbRange = 18.0;
 
-    JasWaveUI::Rect plotRect() const { const auto v = JasWaveUI::Layout::kVisualizer; return { v.l + 14, v.t + 32, v.r - 40, v.b - 22 }; }
+    JasWaveUI::Rect plotRect() const { return JasWaveUI::Plantilla::areaEspectro(); }
     JasWaveUI::Rect cellRect(int b) const {
         const auto m = JasWaveUI::Layout::kMiniPanel;
         const float w = (m.w() - 24.0f) / kBands;
         return { m.l + 12 + b * w + 2, m.t + 34, m.l + 12 + (b + 1) * w - 2, m.b - 12 };
-    }
-    float specY(const JasWaveUI::Rect& pr, float db) const {
-        return pr.b - std::clamp((db + 90.0f) / 84.0f, 0.0f, 1.0f) * pr.h();
     }
     JasWaveUI::Pt nodePos(JasWaveUI::EditorContext& c, int b) const {
         const JasWaveUI::Rect pr = plotRect();
@@ -252,8 +236,7 @@ private:
     }
     void drawStrip(JasWaveUI::Gfx& g, JasWaveUI::EditorContext& c) {
         using namespace JasWaveUI;
-        const Rect m = Layout::kMiniPanel;
-        Kit::panel(g, m, L"BANDAS");
+        Plantilla::panelMedicion(g, L"BANDAS");
         static const wchar_t* kShort[] = { L"HPF", L"LOW SH", L"PEAK", L"HIGH SH", L"LPF", L"NOTCH" };
         for (int b = 0; b < kBands; ++b) {
             const Rect r = cellRect(b);
@@ -282,9 +265,7 @@ private:
 
     std::shared_ptr<EqBus> bus_;
     JasWaveUI::Kit::StereoMeters meters_;
-    JasWaveDsp::SpectrumAnalyzer post_, pre_;
-    std::vector<float> colsPost_, colsPre_;
-    std::array<JasWaveUI::Pt, kCols> pts_{};
+    JasWaveUI::Plantilla::EspectroDual espectro_;
     std::array<JasWaveUI::Pt, kCurve> curve_{}, selCurve_{};
     JasWaveUI::Section* band_{nullptr};
     JasWaveUI::Knob *kFreq_{nullptr}, *kGain_{nullptr}, *kQ_{nullptr};

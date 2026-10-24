@@ -3,6 +3,7 @@
 #include "jw_vst3.h"
 #include "jw_ui.h"
 #include "jw_ui_kit.h"
+#include "jw_ui_plantilla.h"
 
 #include "public.sdk/source/main/pluginfactory.h"
 
@@ -63,48 +64,50 @@ class Editor : public JasWaveUI::PluginEditor {
 public:
     const wchar_t* title() const override { return L"CHANNEL UTILITY"; }
     const wchar_t* subtitle() const override { return L"GANANCIA · FASE · ANCHO M/S · MONO-GRAVES"; }
+    const char* visualizer() const override { return "vectorscopio"; }
     void build(JasWaveUI::EditorContext& c) override {
-        using namespace JasWaveUI;
-        c.section({ 666, 92, 852, 404 }, L"GANANCIA", kBypass, true);
-        c.knob(kGain, 759, 180, KnobSize::Main, L"GANANCIA");
-        c.knob(kBalance, 759, 300, KnobSize::Normal, L"BALANCE");
-        c.section({ 862, 92, 1048, 404 }, L"ESTÉREO M/S", -1, false, kFeatWidth);
-        c.knob(kWidth, 955, 180, KnobSize::Main, L"ANCHO");
-        c.knob(kMonoBelow, 912, 300, KnobSize::Normal, L"MONO <");
-        c.toggle(kMono, { 966, 288, 1032, 312 }, L"MONO");
-        c.section({ 666, 418, 1048, 556 }, L"FASE · CANAL");
-        c.toggle(kInvertL, { 682, 458, 750, 484 }, L"Ø L");
-        c.toggle(kInvertR, { 758, 458, 826, 484 }, L"Ø R");
-        c.toggle(kSwap, { 682, 496, 750, 522 }, L"L ⇄ R");
-        c.toggle(kDcFilter, { 758, 496, 826, 522 }, L"DC");
-        meters_.build(c, 850.0f, 446.0f, 528.0f);
+        namespace P = JasWaveUI::Plantilla;
+        P::controles(c, L"IMAGEN ESTÉREO");
+        P::principal(c, 0, kBalance, L"BALANCE");
+        P::principal(c, 1, kWidth, L"ANCHO");
+        P::principal(c, 2, kMonoBelow, L"MONO <");
+        P::interruptor(c, 0, 1, kMono, L"MONO");
+        P::interruptor(c, 1, 1, kInvertL, L"Ø L");
+        P::interruptor(c, 2, 1, kInvertR, L"Ø R");
+        P::salida(c, kBypass);
+        P::fader(c, kGain, L"GANANCIA");
+        P::interruptorSalida(c, 0, 0, 1, kSwap, L"L ⇄ R");
+        P::interruptorSalida(c, 1, 0, 1, kDcFilter, L"DC");
+        P::medidores(c, meters_);
     }
     void tick(JasWaveUI::EditorContext& c) override {
-        auto b = c.params.bus();
-        bus_ = std::dynamic_pointer_cast<UtilityBus>(b);
+        bus_ = std::dynamic_pointer_cast<UtilityBus>(c.params.bus());
         if (!bus_) return;
-        meters_.update(bus_->inPk, bus_->outPk);
-        corr_ += (bus_->correlation.load(std::memory_order_relaxed) - corr_) * 0.25f;
-        side_ += (bus_->sideDb.load(std::memory_order_relaxed) - side_) * 0.2f;
+        meters_.update(bus_->inPk, bus_->outPk, c.dt);
+        espectro_.actualizar(*bus_, c.dt);
+        const float k = std::min(1.0f, c.dt * 15.0f);
+        corr_ += (bus_->correlation.load(std::memory_order_relaxed) - corr_) * k;
+        side_ += (bus_->sideDb.load(std::memory_order_relaxed) - side_) * k;
         nxy_ = bus_->xy.snapshot(xl_.data(), xr_.data(), static_cast<int>(xl_.size()));
     }
     float outputLevel() const override { return meters_.level(); }
     void drawPanels(JasWaveUI::Gfx& g, JasWaveUI::EditorContext&) override {
         using namespace JasWaveUI;
-        const Rect v = Layout::kVisualizer;
-        Kit::panel(g, v, L"GONIÓMETRO · VECTORSCOPIO");
+        namespace P = Plantilla;
+        const Rect v = P::kVisual;
+        P::panelVisual(g, L"VECTORSCOPIO · ESPECTRO IN / OUT");
         meters_.drawLabels(g);
-        const float cx = v.cx(), cy = v.cy() + 10.0f, R = 128.0f;
-        // ejes en rombo (L/R a 45°, M vertical, S horizontal)
-        const Pt dia[5] = { { cx, cy - R }, { cx + R, cy }, { cx, cy + R }, { cx - R, cy }, { cx, cy - R } };
-        g.polyline(dia, 5, Pal::cian.withAlpha(0.25f), 1.0f);
+        // vectorscopio circular con retícula a 45° (izquierda)
+        const float cx = v.l + 152.0f, cy = v.cy() + 12.0f, R = 116.0f;
+        g.circle(cx, cy, R, Pal::cian.withAlpha(0.25f), 1.0f);
+        g.circle(cx, cy, R * 0.5f, Pal::cian.withAlpha(0.10f), 1.0f);
         g.line(cx, cy - R - 6, cx, cy + R + 6, Pal::cian.withAlpha(0.4f), 1.0f);
         g.line(cx - R - 6, cy, cx + R + 6, cy, Pal::cian.withAlpha(0.2f), 1.0f);
-        g.line(cx - R * 0.7f, cy - R * 0.7f, cx + R * 0.7f, cy + R * 0.7f, Pal::cian.withAlpha(0.15f), 1.0f);
-        g.line(cx + R * 0.7f, cy - R * 0.7f, cx - R * 0.7f, cy + R * 0.7f, Pal::cian.withAlpha(0.15f), 1.0f);
-        g.text(L"M", { cx - 10, cy - R - 24, cx + 10, cy - R - 8 }, Font::Label, Pal::textoEtiqueta, Align::Center);
-        g.text(L"+S", { cx + R + 8, cy - 8, cx + R + 34, cy + 8 }, Font::Label, Pal::textoTenue, Align::Left);
-        g.text(L"−S", { cx - R - 34, cy - 8, cx - R - 8, cy + 8 }, Font::Label, Pal::textoTenue, Align::Right);
+        g.line(cx - R * 0.7071f, cy - R * 0.7071f, cx + R * 0.7071f, cy + R * 0.7071f, Pal::cian.withAlpha(0.15f), 1.0f);
+        g.line(cx + R * 0.7071f, cy - R * 0.7071f, cx - R * 0.7071f, cy + R * 0.7071f, Pal::cian.withAlpha(0.15f), 1.0f);
+        g.text(L"M", { cx - 10, cy - R - 22, cx + 10, cy - R - 6 }, Font::Label, Pal::textoEtiqueta, Align::Center);
+        g.text(L"+S", { cx + R + 6, cy - 8, cx + R + 32, cy + 8 }, Font::Label, Pal::textoTenue, Align::Left);
+        g.text(L"−S", { cx - R - 32, cy - 8, cx - R - 6, cy + 8 }, Font::Label, Pal::textoTenue, Align::Right);
         g.text(L"L", { cx - R * 0.78f - 16, cy - R * 0.78f - 16, cx - R * 0.78f, cy - R * 0.78f }, Font::Label, Pal::textoEtiqueta, Align::Center);
         g.text(L"R", { cx + R * 0.78f, cy - R * 0.78f - 16, cx + R * 0.78f + 16, cy - R * 0.78f }, Font::Label, Pal::textoEtiqueta, Align::Center);
         for (int i = 0; i < nxy_; ++i) {
@@ -114,14 +117,13 @@ public:
             const float age = static_cast<float>(i) / std::max(1, nxy_);
             g.fillRect({ px - 0.8f, py - 0.8f, px + 0.8f, py + 0.8f }, Pal::cianNucleo.withAlpha(0.15f + 0.55f * age));
         }
-        // lecturas
-        wchar_t buf[64];
-        swprintf_s(buf, L"S/M %+.1f dB", side_);
-        g.text(buf, { v.r - 170, v.b - 30, v.r - 14, v.b - 12 }, Font::Value, Pal::textoValor, Align::Right);
-        // mini-panel: correlación
-        const Rect m = Layout::kMiniPanel;
-        Kit::panel(g, m, L"CORRELACIÓN DE FASE");
-        const Rect bar{ m.l + 40, m.t + 66, m.r - 40, m.t + 82 };
+        // espectro IN / OUT (derecha)
+        const Rect a{ v.l + 310.0f, v.t + 32.0f, v.r - 40.0f, v.b - 22.0f };
+        espectro_.dibujar(g, a);
+        // mini-panel: correlación de fase
+        P::panelMedicion(g, L"CORRELACIÓN DE FASE");
+        const Rect m = P::kMini;
+        const Rect bar{ P::kMiniGrafico.l + 26, m.t + 62, P::kMiniGrafico.r - 10, m.t + 78 };
         g.fillRect(bar, hex(0x03080C));
         g.strokeRect(bar, Pal::panelBorde, 1.0f);
         for (int i = 0; i <= 8; ++i) {
@@ -135,14 +137,18 @@ public:
         g.text(L"−1", { bar.l - 30, bar.b + 6, bar.l + 30, bar.b + 22 }, Font::ValueSmall, Pal::textoTenue, Align::Center);
         g.text(L"0", { zx - 30, bar.b + 6, zx + 30, bar.b + 22 }, Font::ValueSmall, Pal::textoTenue, Align::Center);
         g.text(L"+1", { bar.r - 30, bar.b + 6, bar.r + 30, bar.b + 22 }, Font::ValueSmall, Pal::textoTenue, Align::Center);
-        swprintf_s(buf, L"%+.2f", corr_);
-        g.text(buf, { m.r - 120, m.t + 34, m.r - 40, m.t + 56 }, Font::Value, cc, Align::Right);
+        wchar_t b1[32], b2[32];
+        swprintf_s(b1, L"%+.2f", corr_);
+        swprintf_s(b2, L"%+.1f dB", side_);
+        P::lectura(g, 0, 0, L"CORRELACIÓN", b1, cc);
+        P::lectura(g, 0, 1, L"S / M", b2);
     }
     const wchar_t* footerId() const override { return L"com.jaswave.plugin.utility-tool"; }
 
 private:
     std::shared_ptr<UtilityBus> bus_;
     JasWaveUI::Kit::StereoMeters meters_;
+    JasWaveUI::Plantilla::EspectroDual espectro_;
     std::array<float, 1024> xl_{}, xr_{};
     int nxy_{0};
     float corr_{1.0f}, side_{-60.0f};

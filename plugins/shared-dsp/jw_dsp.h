@@ -219,11 +219,6 @@ private:
 // -------------------------------------------------------------------------------------
 //  Telemetría lock-free (audio thread = único escritor, UI thread = lector)
 // -------------------------------------------------------------------------------------
-struct MeterBusBase {
-    virtual ~MeterBusBase() = default;
-    std::atomic<double> sampleRate{48000.0};
-};
-
 // Pico "desde la última lectura" (lineal)
 struct PeakMeter {
     std::atomic<float> v{0.0f};
@@ -261,11 +256,28 @@ public:
         for (size_t i = 0; i < count; ++i) dst[i] = buf_[(start + i) & (N - 1)].load(std::memory_order_relaxed);
         return true;
     }
+    uint64_t escritas() const { return w_.load(std::memory_order_acquire); }
 private:
     std::array<std::atomic<float>, N> buf_;
     std::atomic<uint64_t> w_{0};
 };
-using SpectrumTap = AudioTap<32768>;
+// 8192 muestras = una ventana de la FFT del analizador (V3 §4.2)
+using SpectrumTap = AudioTap<8192>;
+
+// Telemetría compartida procesador ↔ editor (V3). Todos los plugins publican el espectro de entrada y
+// de salida; el procesador solo los alimenta mientras el editor está abierto (coste cero cerrado).
+struct MeterBusBase {
+    virtual ~MeterBusBase() = default;
+    std::atomic<double> sampleRate{48000.0};
+    std::atomic<int> editoresAbiertos{0};   // vistas abiertas (las cuenta la vista del editor al crearse/cerrarse)
+    SpectrumTap espIn, espOut;
+    PeakMeter velocidadMidi;                // instrumentos: velocidad de las notas (medidor de entrada)
+    bool vistaAbierta() const { return editoresAbiertos.load(std::memory_order_relaxed) > 0; }
+    template <class T>
+    void entrada(const T* l, const T* r, int n) { if (vistaAbierta()) espIn.pushT(l, r, n); }
+    template <class T>
+    void salida(const T* l, const T* r, int n) { if (vistaAbierta()) espOut.pushT(l, r, n); }
+};
 
 // Anillo de scope: 1 entrada por ~1 ms con min/max de dos señales (a = entrada, b = salida) y GR
 struct ScopeEntry { float aMin, aMax, bMin, bMax, gr; };
@@ -389,6 +401,28 @@ public:
     }
     void reset() { std::fill(db_.begin(), db_.end(), -140.0f); }
 
+    // Balística por tiempo (V3 §4.3): ataque instantáneo y caída a `caidaDbS` dB/s con el dt real del
+    // frame, idéntica para la entrada y la salida. Si el tap no recibe audio nuevo, el espectro cae.
+    template <class Tap>
+    void updateBalistica(const Tap& tap, double sampleRate, float dtSeg, float caidaDbS = 14.0f) {
+        sr_ = sampleRate > 0 ? sampleRate : 48000.0;
+        const float caida = caidaDbS * clampT(dtSeg, 0.0f, 0.25f);
+        const uint64_t w = tap.escritas();
+        const bool nuevo = w != ultimaEscritura_ && tap.snapshot(buf_.data(), kN);
+        ultimaEscritura_ = w;
+        if (!nuevo) {
+            for (int k = 0; k < kBins; ++k) db_[k] = std::max(-140.0f, db_[k] - caida);
+            return;
+        }
+        for (int i = 0; i < kN; ++i) { re_[i] = buf_[i] * win_[i]; im_[i] = 0.0f; }
+        fft_.forward(re_.data(), im_.data());
+        for (int k = 0; k < kBins; ++k) {
+            const float m = std::sqrt(re_[k] * re_[k] + im_[k] * im_[k]) * norm_;
+            const float d = m <= 1.0e-7f ? -140.0f : 20.0f * std::log10(m);
+            db_[k] = d >= db_[k] ? d : std::max(d, db_[k] - caida);
+        }
+    }
+
     // attack/release por llamada (UI ~30 fps)
     template <class Tap>
     void update(const Tap& tap, double sampleRate, float attack = 0.65f, float release = 0.14f) {
@@ -435,6 +469,7 @@ private:
     std::vector<float> win_, buf_, re_, im_, db_;
     float norm_{1.0f};
     double sr_{48000.0};
+    uint64_t ultimaEscritura_{~0ull};
 };
 
 // -------------------------------------------------------------------------------------

@@ -1,0 +1,309 @@
+{
+  "productId": "com.jaswave.plugin.param-eq",
+  "titulo": "PARAMETRIC EQ",
+  "subtitulo": "8 BANDAS · FASE MÍNIMA · LATENCIA 0",
+  "instrumento": false,
+  "visualizador": "espectro-dual",
+  "acento": "#2FD6F2",
+  "base": {
+    "ancho": 1100,
+    "alto": 620
+  },
+  "zonas": {
+    "pantalla": [
+      34,
+      34,
+      1066,
+      586
+    ],
+    "visualizador": [
+      52,
+      92,
+      652,
+      404
+    ],
+    "espectro": [
+      66,
+      124,
+      612,
+      382
+    ],
+    "miniPanel": [
+      52,
+      418,
+      652,
+      556
+    ],
+    "controles": [
+      666,
+      92,
+      1048,
+      404
+    ],
+    "salida": [
+      666,
+      418,
+      1048,
+      556
+    ],
+    "fader": [
+      680,
+      440,
+      724,
+      552
+    ],
+    "medidores": {
+      "x": 976,
+      "arriba": 446,
+      "abajo": 528
+    }
+  },
+  "escalas": {
+    "frecuencia": [
+      20,
+      20000
+    ],
+    "dbfs": [
+      -120,
+      0
+    ],
+    "caidaDbS": 14
+  },
+  "modoParam": null,
+  "widgets": [
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        92,
+        1048,
+        404
+      ],
+      "etiqueta": "BANDA 1",
+      "param": 5,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "nombre": "Band 1 On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        704,
+        140,
+        780,
+        234
+      ],
+      "etiqueta": "FRECUENCIA",
+      "tamano": 64,
+      "param": 2,
+      "min": 20,
+      "max": 20000,
+      "defecto": 30,
+      "pasos": 0,
+      "escala": "log",
+      "nombre": "Band 1 Freq",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        819,
+        140,
+        895,
+        234
+      ],
+      "etiqueta": "GANANCIA",
+      "tamano": 64,
+      "param": 3,
+      "min": -24,
+      "max": 24,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "Band 1 Gain",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        934,
+        140,
+        1010,
+        234
+      ],
+      "etiqueta": "Q",
+      "tamano": 64,
+      "param": 4,
+      "min": 0.1,
+      "max": 18,
+      "defecto": 0.71,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "Band 1 Q",
+      "unidad": ""
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        690,
+        294,
+        909,
+        314
+      ],
+      "etiqueta": "TIPO",
+      "param": 1,
+      "min": 0,
+      "max": 5,
+      "defecto": 0,
+      "pasos": 5,
+      "escala": "stepped",
+      "nombre": "Band 1 Type",
+      "unidad": "",
+      "opciones": [
+        "HPF",
+        "Low Shelf",
+        "Peak",
+        "High Shelf",
+        "LPF",
+        "Notch"
+      ]
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        418,
+        1048,
+        556
+      ],
+      "etiqueta": "SALIDA",
+      "param": 0,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "nombre": "Bypass",
+      "unidad": "",
+      "opciones": [
+        "Active",
+        "Bypass"
+      ]
+    },
+    {
+      "tipo": "fader",
+      "rect": [
+        680,
+        440,
+        724,
+        552
+      ],
+      "etiqueta": "OUT",
+      "param": 41,
+      "min": -24,
+      "max": 24,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "nombre": "Output",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        743,
+        456,
+        959,
+        476
+      ],
+      "etiqueta": "PENDIENTE",
+      "param": 42,
+      "min": 0,
+      "max": 3,
+      "defecto": 0,
+      "pasos": 3,
+      "escala": "stepped",
+      "nombre": "HP/LP Slope",
+      "unidad": "",
+      "feature": "eq.pendientes-altas",
+      "opciones": [
+        "12 dB/oct",
+        "24 dB/oct",
+        "36 dB/oct",
+        "48 dB/oct"
+      ]
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        743,
+        512,
+        959,
+        532
+      ],
+      "etiqueta": "ANALIZADOR",
+      "param": 43,
+      "min": 0,
+      "max": 2,
+      "defecto": 1,
+      "pasos": 2,
+      "escala": "stepped",
+      "nombre": "Analyzer",
+      "unidad": "",
+      "feature": "eq.analizador",
+      "opciones": [
+        "Off",
+        "Post",
+        "Pre+Post"
+      ]
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        976,
+        446,
+        985,
+        528
+      ],
+      "etiqueta": ""
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        990,
+        446,
+        999,
+        528
+      ],
+      "etiqueta": ""
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1020,
+        446,
+        1029,
+        528
+      ],
+      "etiqueta": ""
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1034,
+        446,
+        1043,
+        528
+      ],
+      "etiqueta": ""
+    }
+  ]
+}

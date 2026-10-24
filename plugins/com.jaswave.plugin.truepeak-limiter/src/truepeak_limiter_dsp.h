@@ -114,6 +114,8 @@ public:
 
     template <class T>
     void process(const T* inL, const T* inR, T* outL, T* outR, int n, LimiterBus* bus) {
+        if (bus) bus->entrada(inL, inR, n);
+        const bool vista = bus && bus->vistaAbierta();   // scope solo con el editor abierto
         const T* in[2] = { inL, inR };
         T* out[2] = { outL, outR };
         float pkIn[2] = { 0, 0 }, pkOut[2] = { 0, 0 };
@@ -189,13 +191,14 @@ public:
                     grMaxDb = std::max(grMaxDb, grDb * w);
                     const float a = std::fabs(oDriven[0]) > std::fabs(oDriven[1]) ? oDriven[0] : oDriven[1];
                     const float b = std::fabs(y[0]) > std::fabs(y[1]) ? y[0] : y[1];
-                    accum_.push(bus->scope, a, b, static_cast<float>(grDb * w));
+                    if (vista) accum_.push(bus->scope, a, b, static_cast<float>(grDb * w));
                 }
             }
             prevGain_ = gNow; prevWet_ = wNow;
             pos += m;
         }
         if (bus) {
+            bus->salida(outL, outR, n);
             bus->inPk[0].update(pkIn[0]); bus->inPk[1].update(pkIn[1]);
             bus->outPk[0].update(pkOut[0]); bus->outPk[1].update(pkOut[1]);
             bus->tpOut.update(tpMax);

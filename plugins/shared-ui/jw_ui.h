@@ -57,6 +57,10 @@ constexpr Color cian = hex(0x2FD6F2), cianNucleo = hex(0xBFF6FF), cianGlow = hex
 constexpr Color textoTitulo = hex(0x7FE3F5), textoEtiqueta = hex(0x8FB4BF), textoValor = hex(0xA8EEFA), textoTenue = hex(0x4F6B75);
 constexpr Color bloqueado = hex(0x5A6870), alerta = hex(0xF2B544);
 constexpr Color perillaCuerpo = hex(0x0E1A22), perillaPista = hex(0x1A2C36);
+// V3 §3.1 / §4.3: espectro de entrada (tenue) y de salida (cian), y acentos por plugin
+constexpr Color espectroIn = hex(0x588B9E, 0.65f), espectroOut = cian;
+constexpr Color acentoCian = cian, acentoAmbar = hex(0xF2B544), acentoAmarillo = hex(0xF5E347);
+constexpr Color acentoVerdeCian = hex(0x3DF5C0), acentoVioleta = hex(0xA77BFF);
 }
 
 enum class Font : uint8_t {
@@ -127,6 +131,7 @@ public:
     void glowArc(float cx, float cy, float r, float a0, float a1, Color c, float w);
     void glowRect(const Rect& r, Color c, float spread);
     void hexagon(float cx, float cy, float r, Color c, float w = 1.0f);
+    void logo(const Rect& r, float opacity = 1.0f);   // isotipo JasWave embebido (recurso IDR_JASWAVE_LOGO)
 
     // Texto: las etiquetas estáticas usan layouts cacheados (espaciado +12 %)
     void text(const std::wstring& s, const Rect& r, Font f, Color c, Align a = Align::Left, bool spaced = false);
@@ -188,9 +193,14 @@ public:
     virtual void onDouble(const MouseEvent&, ParamAccess&) {}
     virtual void onWheel(const MouseEvent&, ParamAccess&) {}
     virtual int paramId() const { return -1; }            // para clic derecho = escribir valor / menú
+    virtual const char* kind() const = 0;                 // tipo para el volcado de layout (ui-layout.json)
+    virtual const wchar_t* text() const { return L""; }   // etiqueta visible
     virtual bool isLocked(ParamAccess& p) const { const int id = paramId(); return id >= 0 && p.locked(static_cast<uint32_t>(id)); }
     Rect rect;
     bool visible{true};
+    // Texto del valor: se formatea solo cuando cambia (sin cadenas nuevas por frame)
+    struct ValueCache { uint32_t id{~0u}; double plain{0.0}; std::wstring s; };
+    ValueCache valueCache;
 };
 
 enum class KnobSize : uint8_t { Small = 30, Normal = 44, Main = 64 };
@@ -205,9 +215,13 @@ public:
     void onDouble(const MouseEvent& e, ParamAccess& p) override;
     void onWheel(const MouseEvent& e, ParamAccess& p) override;
     int paramId() const override { return static_cast<int>(id_); }
+    const char* kind() const override { return "knob"; }
+    const wchar_t* text() const override { return label_.c_str(); }
+    KnobSize size() const { return size_; }
     void setParam(uint32_t id, const wchar_t* label = nullptr) { id_ = id; if (label) label_ = label; }
 private:
     uint32_t id_;
+    KnobSize size_;
     float cx_, cy_, radius_;
     std::wstring label_;
     float dragY_{0}, dragStart_{0};
@@ -224,6 +238,8 @@ public:
     void onDouble(const MouseEvent& e, ParamAccess& p) override;
     void onWheel(const MouseEvent& e, ParamAccess& p) override;
     int paramId() const override { return static_cast<int>(id_); }
+    const char* kind() const override { return "fader"; }
+    const wchar_t* text() const override { return label_.c_str(); }
 private:
     Rect slot() const;
     uint32_t id_;
@@ -239,6 +255,8 @@ public:
     void draw(Gfx& g, ParamAccess& p, bool hover) override;
     bool onDown(const MouseEvent& e, ParamAccess& p) override;
     int paramId() const override { return static_cast<int>(id_); }
+    const char* kind() const override { return "toggle"; }
+    const wchar_t* text() const override { return label_.c_str(); }
     void setParam(uint32_t id) { id_ = id; }
 private:
     uint32_t id_;
@@ -253,6 +271,8 @@ public:
     void draw(Gfx& g, ParamAccess& p, bool hover) override;
     int paramId() const override { return static_cast<int>(id_); }
     bool onDown(const MouseEvent& e, ParamAccess& p) override;   // la vista abre el menú (paramId)
+    const char* kind() const override { return "dropdown"; }
+    const wchar_t* text() const override { return label_.c_str(); }
     const std::wstring& label() const { return label_; }
     void setParam(uint32_t id) { id_ = id; }
 private:
@@ -268,6 +288,8 @@ public:
     bool hit(float x, float y) const override;
     bool onDown(const MouseEvent& e, ParamAccess& p) override;
     int paramId() const override { return toggle_; }
+    const char* kind() const override { return "section"; }
+    const wchar_t* text() const override { return title_.c_str(); }
     bool isLocked(ParamAccess& p) const override;
     Rect pillRect() const;
     void setTitle(const wchar_t* t) { title_ = t; }
@@ -286,6 +308,8 @@ public:
     Meter(Rect r, const wchar_t* label, float minDb = -60.0f, float maxDb = 6.0f, bool inverted = false);
     void draw(Gfx& g, ParamAccess& p, bool hover) override;
     void set(float db, float peakDb) { db_ = db; peak_ = peakDb; }
+    const char* kind() const override { return "meter"; }
+    const wchar_t* text() const override { return label_.c_str(); }
 private:
     std::wstring label_;
     float minDb_, maxDb_;
@@ -299,7 +323,9 @@ public:
     Button(Rect r, const wchar_t* text, std::function<void()> action);
     void draw(Gfx& g, ParamAccess& p, bool hover) override;
     bool onDown(const MouseEvent& e, ParamAccess& p) override;
-    std::wstring text;
+    const char* kind() const override { return "button"; }
+    const wchar_t* text() const override { return caption.c_str(); }
+    std::wstring caption;
 private:
     std::function<void()> action_;
 };
@@ -312,6 +338,7 @@ public:
     explicit EditorContext(ParamAccess& p) : params(p) {}
     ParamAccess& params;
     std::vector<std::unique_ptr<Widget>> widgets;
+    float dt{1.0f / 60.0f};   // segundos desde el tick anterior (balística por tiempo, V3 §4.3)
     Knob* knob(uint32_t id, float cx, float cy, KnobSize s, const wchar_t* label);
     Fader* fader(uint32_t id, Rect r, const wchar_t* label);
     Toggle* toggle(uint32_t id, Rect r, const wchar_t* label, bool invert = false);
@@ -347,12 +374,15 @@ public:
     virtual void vizWheel(const MouseEvent&, EditorContext&) {}
     virtual void vizDouble(const MouseEvent&, EditorContext&) {}
     virtual const wchar_t* footerId() const { return L""; }   // "com.jaswave.plugin.x" (pie)
+    // V3: tipo de visualizador ("espectro-dual", "espectro-instrumento", "vectorscopio") y acento del plugin
+    virtual const char* visualizer() const { return "espectro-dual"; }
+    virtual Color accent() const { return Pal::acentoCian; }
 };
 
 // Dibujo compartido del marco, cabecera y overlay de licencia
 namespace Chrome {
 void drawStaticBackground(Gfx& g);                                       // marco, pantalla, retícula, hexágonos, partículas
-void drawHeader(Gfx& g, const wchar_t* title, const wchar_t* subtitle, bool expiringSoon, bool licensed);
+void drawHeader(Gfx& g, const wchar_t* title, const wchar_t* subtitle, bool expiringSoon, bool licensed, Color accent = Pal::acentoCian);
 void drawFrameLeds(Gfx& g, float level);
 void drawFooter(Gfx& g, const wchar_t* id);
 void drawGrid(Gfx& g, const Rect& r, float step, bool nodes);
@@ -362,5 +392,7 @@ void drawLock(Gfx& g, float x, float y, float s, Color c);
 
 // Renderiza un editor completo (sin ventana) en un PNG. Ver jw_snapshot_main.cpp.
 bool renderEditorToPng(JasWaveVst::JwController* controller, const wchar_t* path, UINT pxW, UINT pxH, int warmupFrames);
+// Vuelca el layout del editor (zonas, widgets, parámetros, visualizador y acento) en JSON. Ver ui-layout.json.
+bool dumpEditorLayout(JasWaveVst::JwController* controller, const wchar_t* path);
 
 } // namespace JasWaveUI

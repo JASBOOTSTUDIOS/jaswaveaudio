@@ -1,0 +1,4 @@
+// Recursos comunes de los VST JasWave: isotipo de la cabecera (V3 4.1), cargado con WIC desde el propio modulo.
+#include "jw_recursos.h"
+
+IDR_JASWAVE_LOGO RCDATA "recursos/jaswave-isotipo.png"

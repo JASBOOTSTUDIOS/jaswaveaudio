@@ -17,15 +17,20 @@ inline void panel(Gfx& g, const Rect& r, const wchar_t* title) {
     if (title && *title) g.text(title, { r.l + 12.0f, r.t + 4.0f, r.r - 12.0f, r.t + 24.0f }, Font::Section, Pal::textoTitulo, Align::Left, true);
 }
 
-// Nivel con caída (dB) y pico retenido
+// Balística común de medidores y espectros (V3 §4.3): ataque instantáneo, caída de 14 dB/s
+constexpr float kCaidaDbS = 14.0f;
+constexpr float kRetencionPicoS = 1.5f;
+
+// Nivel con caída (dB) y pico retenido, por tiempo real (dt del frame), no por frames
 struct PeakFollower {
     float db{-120.0f}, peak{-120.0f};
-    int hold{0};
-    void push(float lin) {
+    float hold{0.0f};
+    void push(float lin, float dt) {
         const float d = lin <= 1.0e-6f ? -120.0f : 20.0f * std::log10(lin);
-        db = d > db ? d : std::max(d, db - 0.45f);          // ~27 dB/s a 60 fps
-        if (d >= peak) { peak = d; hold = 90; }
-        else if (--hold < 0) peak = std::max(d, peak - 0.6f);
+        const float caida = kCaidaDbS * std::clamp(dt, 0.0f, 0.25f);
+        db = d >= db ? d : std::max(d, db - caida);
+        if (d >= peak) { peak = d; hold = kRetencionPicoS; }
+        else if ((hold -= dt) < 0.0f) peak = std::max(d, peak - caida);
     }
 };
 
@@ -42,21 +47,30 @@ public:
         labelX_ = x;
         labelY_ = bottom;
     }
-    void update(JasWaveDsp::PeakMeter* in, JasWaveDsp::PeakMeter* out) {
-        f_[0].push(in[0].take()); f_[1].push(in[1].take());
-        f_[2].push(out[0].take()); f_[3].push(out[1].take());
+    void update(JasWaveDsp::PeakMeter* in, JasWaveDsp::PeakMeter* out, float dt) {
+        f_[0].push(in[0].take(), dt); f_[1].push(in[1].take(), dt);
+        f_[2].push(out[0].take(), dt); f_[3].push(out[1].take(), dt);
         for (int i = 0; i < 4; ++i) if (m_[i]) m_[i]->set(f_[i].db, f_[i].peak);
+    }
+    // Instrumentos: la entrada es MIDI; los dos medidores IN muestran la velocidad de las notas
+    void updateInstrumento(JasWaveDsp::PeakMeter& velocidad, JasWaveDsp::PeakMeter* out, float dt) {
+        const float v = velocidad.take();
+        f_[0].push(v, dt); f_[1].push(v, dt);
+        f_[2].push(out[0].take(), dt); f_[3].push(out[1].take(), dt);
+        for (int i = 0; i < 4; ++i) if (m_[i]) m_[i]->set(f_[i].db, f_[i].peak);
+        instrumento_ = true;
     }
     float level() const { return std::clamp((std::max(f_[2].db, f_[3].db) + 48.0f) / 54.0f, 0.0f, 1.0f); }
     float outDb() const { return std::max(f_[2].db, f_[3].db); }
     void drawLabels(Gfx& g) const {
-        g.text(L"IN", { labelX_ - 6, labelY_ + 2, labelX_ + 30, labelY_ + 16 }, Font::Label, Pal::textoEtiqueta, Align::Center, true);
+        g.text(instrumento_ ? L"MIDI" : L"IN", { labelX_ - 6, labelY_ + 2, labelX_ + 30, labelY_ + 16 }, Font::Label, Pal::textoEtiqueta, Align::Center, true);
         g.text(L"OUT", { labelX_ + 38, labelY_ + 2, labelX_ + 76, labelY_ + 16 }, Font::Label, Pal::textoEtiqueta, Align::Center, true);
     }
 private:
     Meter* m_[4] = {};
     PeakFollower f_[4];
     float labelX_{0}, labelY_{0};
+    bool instrumento_{false};
 };
 
 // Eje logarítmico de frecuencia

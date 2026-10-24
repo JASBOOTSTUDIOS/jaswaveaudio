@@ -96,6 +96,8 @@ public:
 
     template <class T>
     void process(const T* inL, const T* inR, T* outL, T* outR, int n, DeEsserBus* bus) {
+        if (bus) bus->entrada(inL, inR, n);
+        const bool vista = bus && bus->vistaAbierta();   // scope solo con el editor abierto
         float pin[2] = { 0, 0 }, pout[2] = { 0, 0 };
         double grMax = 0.0, scPk = 0.0;
         int pos = 0;
@@ -149,16 +151,17 @@ public:
                 if (bus) {
                     pin[0] = std::max(pin[0], static_cast<float>(std::fabs(x[0]))); pin[1] = std::max(pin[1], static_cast<float>(std::fabs(x[1])));
                     pout[0] = std::max(pout[0], static_cast<float>(std::fabs(y[0]))); pout[1] = std::max(pout[1], static_cast<float>(std::fabs(y[1])));
-                    accum_.push(bus->scope, static_cast<float>(aFull), static_cast<float>(aSc), static_cast<float>(gr_ * wt));
+                    if (vista) accum_.push(bus->scope, static_cast<float>(aFull), static_cast<float>(aSc), static_cast<float>(gr_ * wt));
                     scPk = std::max(scPk, envSc_);
                 }
                 grMax = std::max(grMax, gr_ * wt);
                 scBuf_[static_cast<size_t>(i)] = static_cast<float>(0.5 * (sc[0] + sc[1]));
             }
-            if (bus) bus->sc.push(scBuf_.data(), nullptr, m);
+            if (vista) bus->sc.push(scBuf_.data(), nullptr, m);
             pos += m;
         }
         if (bus) {
+            bus->salida(outL, outR, n);
             bus->inPk[0].update(pin[0]); bus->inPk[1].update(pin[1]);
             bus->outPk[0].update(pout[0]); bus->outPk[1].update(pout[1]);
             bus->grMax.update(static_cast<float>(grMax));

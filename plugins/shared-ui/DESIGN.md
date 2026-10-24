@@ -98,3 +98,8 @@ DPI de la ventana), sin asignaciones de memoria por frame, refresco de visualiza
 - Escala: todos los tamaños se multiplican por `escala = dpi / 96 × (ancho_actual / 1100)`.
 - Sin texto rasterizado por plugin: DirectWrite con caché de `IDWriteTextLayout` por etiqueta.
 - El hilo de UI nunca bloquea el de audio: la telemetría llega por el bus existente (`MeterBus`) sin locks en `process`.
+- **Plantilla única (V3)**: ningún editor coloca controles con coordenadas propias. Todos usan
+  `jw_ui_plantilla.h`: sección de controles (rejilla 3×2), sección SALIDA (bypass en la píldora, fader en
+  `kFader`, celdas y medidores IN/OUT en x=976), espectro dual IN/OUT (−120..0 dBFS, 14 dB/s), teclado de
+  88 teclas, historial de GR y lecturas del mini-panel. Cada plugin solo elige su acento (`accent()`) y su
+  contenido propio dentro de esas zonas. `node plugins/scripts/ui-layout.mjs` comprueba que se cumple.
