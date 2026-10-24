@@ -170,36 +170,116 @@ export async function hostClipLoadPath(clipId: string, path: string): Promise<bo
   }
 }
 
-export async function hostClipLoadPcm(
+/** Frames por trozo de subida (estéreo f32 ≈ 1 MB → ~1,4 MB en base64): mensajes pequeños, UI fluida. */
+export const CLIP_UPLOAD_CHUNK_FRAMES = 131_072
+
+function f32ToBase64(samples: Float32Array): string {
+  const bytes = new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength)
+  const parts: string[] = []
+  const step = 0x8000
+  for (let i = 0; i < bytes.length; i += step) {
+    parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + step) as unknown as number[]))
+  }
+  return btoa(parts.join(''))
+}
+
+const yieldToUi = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+/**
+ * Sube PCM al host por trozos (`clip.loadBegin` → `clip.loadChunk`* → `clip.loadEnd`).
+ * `fill` escribe en `dst` (interleaved, `channels` canales) los frames [offset, offset+n).
+ * Nunca construye un mensaje del tamaño del clip entero: un clip largo ya no congela la UI ni
+ * supera el límite de string de V8 (antes el RangeError se tragaba y el clip no sonaba).
+ */
+async function uploadPcmChunked(
+  clipId: string,
+  frames: number,
+  channels: number,
+  sampleRate: number,
+  fill: (offset: number, n: number, dst: Float32Array) => void,
+): Promise<boolean> {
+  const api = electronApi()
+  if (!api?.pluginHostSend || frames <= 0) return false
+  const send = async (cmd: Record<string, unknown>) =>
+    (await api.pluginHostSend!(cmd as never)) as { ok?: boolean }
+  try {
+    if (!(await send({ type: 'clip.loadBegin', clipId, frames, channels, sampleRate }))?.ok) return false
+    const buf = new Float32Array(CLIP_UPLOAD_CHUNK_FRAMES * channels)
+    for (let offset = 0; offset < frames; offset += CLIP_UPLOAD_CHUNK_FRAMES) {
+      const n = Math.min(CLIP_UPLOAD_CHUNK_FRAMES, frames - offset)
+      const view = n === CLIP_UPLOAD_CHUNK_FRAMES ? buf : buf.subarray(0, n * channels)
+      fill(offset, n, view)
+      const r = await send({
+        type: 'clip.loadChunk',
+        clipId,
+        offsetFrames: offset,
+        frames: n,
+        pcmBase64: f32ToBase64(view),
+      })
+      if (!r?.ok) throw new Error('clip.loadChunk rechazado')
+      await yieldToUi()
+    }
+    return !!(await send({ type: 'clip.loadEnd', clipId }))?.ok
+  } catch (err) {
+    console.warn('[host-transport] subida de clip fallida', clipId, err)
+    try {
+      await api.pluginHostSend({ type: 'clip.unload', clipId })
+    } catch {
+      /* ignore */
+    }
+    return false
+  }
+}
+
+export function hostClipLoadPcm(
   clipId: string,
   interleaved: Float32Array,
   frames: number,
   channels: number,
   sampleRate: number,
 ): Promise<boolean> {
-  try {
+  return uploadPcmChunked(clipId, frames, channels, sampleRate, (offset, n, dst) => {
+    dst.set(interleaved.subarray(offset * channels, (offset + n) * channels))
+  })
+}
+
+/** Qué AudioBuffer subimos ya a cada clipId (evita reenviar el clip entero en cada play/seek). */
+const uploadedBuffers = new Map<string, WeakRef<AudioBuffer>>()
+const uploadsInFlight = new Map<string, Promise<boolean>>()
+
+/**
+ * Garantiza que el clip esté cargado en el host y devuelve true si se puede programar.
+ * Reutiliza lo ya cargado (pregunta al host con `clip.has`, así un reinicio del host fuerza resubida).
+ */
+export function hostClipEnsureBuffer(clipId: string, buffer: AudioBuffer): Promise<boolean> {
+  const pendiente = uploadsInFlight.get(clipId)
+  if (pendiente) return pendiente
+  const p = (async () => {
     const api = electronApi()
     if (!api?.pluginHostSend) return false
-    // base64 without Buffer (renderer)
-    const bytes = new Uint8Array(interleaved.buffer, interleaved.byteOffset, interleaved.byteLength)
-    let bin = ''
-    const chunk = 0x8000
-    for (let i = 0; i < bytes.length; i += chunk) {
-      bin += String.fromCharCode(...bytes.subarray(i, i + chunk))
+    if (uploadedBuffers.get(clipId)?.deref() === buffer) {
+      try {
+        const has = (await api.pluginHostSend({ type: 'clip.has', clipId })) as { ok?: boolean; loaded?: boolean }
+        if (has?.ok && has.loaded) return true
+      } catch {
+        /* se resube */
+      }
     }
-    const pcmBase64 = btoa(bin)
-    const raw = (await api.pluginHostSend({
-      type: 'clip.load',
-      clipId,
-      pcmBase64,
-      frames,
-      channels,
-      sampleRate,
-    })) as { ok?: boolean }
-    return !!raw?.ok
-  } catch {
-    return false
-  }
+    const ch = Math.min(2, buffer.numberOfChannels)
+    const L = buffer.getChannelData(0)
+    const R = ch > 1 ? buffer.getChannelData(1) : L
+    const ok = await uploadPcmChunked(clipId, buffer.length, 2, buffer.sampleRate, (offset, n, dst) => {
+      for (let i = 0; i < n; i++) {
+        dst[i * 2] = L[offset + i] ?? 0
+        dst[i * 2 + 1] = R[offset + i] ?? 0
+      }
+    })
+    if (ok) uploadedBuffers.set(clipId, new WeakRef(buffer))
+    else uploadedBuffers.delete(clipId)
+    return ok
+  })().finally(() => uploadsInFlight.delete(clipId))
+  uploadsInFlight.set(clipId, p)
+  return p
 }
 
 export function hostClipSchedule(opts: {

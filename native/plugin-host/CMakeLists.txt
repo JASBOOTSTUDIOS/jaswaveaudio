@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.25)
+
+# Runtime de C++ enlazado de forma estatica (/MT): el instalador no puede depender de que la PC destino
+# tenga el redistribuible de Visual C++ (sin VCRUNTIME140/MSVCP140 el host no arranca y no hay audio).
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+set(SMTG_USE_STATIC_CRT ON CACHE BOOL "" FORCE)
+
 project(jaswave_plugin_host LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)

@@ -121,11 +121,42 @@ static double getNumberField(const std::string& json, const char* key, double fa
   if (pos == std::string::npos) return fallback;
   ++pos;
   while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) ++pos;
-  try {
-    return std::stod(json.substr(pos));
-  } catch (...) {
-    return fallback;
+  // strtod directo sobre el buffer: `substr` copiaba el resto de la linea (puede ser PCM base64 de cientos de MB).
+  const char* begin = json.c_str() + pos;
+  char* end = nullptr;
+  const double v = std::strtod(begin, &end);
+  return end == begin ? fallback : v;
+}
+
+/** Base64 -> floats f32 LE. false si el tamano decodificado no es multiplo de 4 bytes o esta vacio. */
+static bool decodeF32Base64(const std::string& b64, std::vector<float>& out) {
+  auto val = [](unsigned char c) -> int {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+  };
+  std::vector<uint8_t> bytes;
+  bytes.reserve(b64.size() / 4 * 3 + 3);
+  uint32_t acc = 0;
+  int bits = -8;
+  for (unsigned char c : b64) {
+    if (c == '=') break;
+    const int d = val(c);
+    if (d < 0) continue;
+    acc = (acc << 6) | static_cast<uint32_t>(d);
+    bits += 6;
+    if (bits >= 0) {
+      bytes.push_back(static_cast<uint8_t>((acc >> bits) & 0xFF));
+      bits -= 8;
+    }
   }
+  if (bytes.empty()) return false;
+  out.resize(bytes.size() / sizeof(float));
+  std::memcpy(out.data(), bytes.data(), out.size() * sizeof(float));
+  return !out.empty();
 }
 
 static bool getBoolField(const std::string& json, const char* key, bool fallback = false) {
@@ -2052,42 +2083,70 @@ static void handleLine(const std::string& line) {
         replyFail("BadRequest", "clip.load requiere path o pcmBase64+frames");
         return;
       }
-      // Decode base64 inline (minimal)
-      auto b64val = [](char c) -> int {
-        if (c >= 'A' && c <= 'Z') return c - 'A';
-        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-        if (c >= '0' && c <= '9') return c - '0' + 52;
-        if (c == '+') return 62;
-        if (c == '/') return 63;
-        return -1;
-      };
-      std::vector<uint8_t> bytes;
-      bytes.reserve(b64.size() * 3 / 4);
-      int val = 0, valb = -8;
-      for (unsigned char c : b64) {
-        if (c == '=') break;
-        const int d = b64val(static_cast<char>(c));
-        if (d < 0) continue;
-        val = (val << 6) + d;
-        valb += 6;
-        if (valb >= 0) {
-          bytes.push_back(static_cast<uint8_t>((val >> valb) & 0xFF));
-          valb -= 8;
-        }
-      }
-      const size_t need = static_cast<size_t>(frames) * std::max(1u, channels) * sizeof(float);
-      if (bytes.size() < need) {
+      std::vector<float> pcm;
+      if (!decodeF32Base64(b64, pcm) ||
+          pcm.size() < static_cast<size_t>(frames) * std::max(1u, channels)) {
         replyFail("BadRequest", "pcmBase64 corto");
         return;
       }
-      ok = jaswave::clip_load_pcm(clipId, reinterpret_cast<const float*>(bytes.data()), frames,
-                                  channels, sr, err);
+      ok = jaswave::clip_load_pcm(clipId, pcm.data(), frames, channels, sr, err);
     }
     if (!ok) {
       replyFail("ClipLoadFailed", err.empty() ? "clip.load falló" : err);
       return;
     }
     replyOk("\"clipId\":\"" + jsonEscape(clipId) + "\"");
+    return;
+  }
+  // Subida por trozos para clips largos: begin -> chunk* -> end (cada mensaje es pequeno).
+  if (type == "clip.loadBegin") {
+    const std::string clipId = getStringField(line, "clipId");
+    std::string err;
+    if (!jaswave::clip_load_begin(clipId, static_cast<uint32_t>(getNumberField(line, "frames", 0)),
+                                  static_cast<uint32_t>(getNumberField(line, "channels", 2)),
+                                  static_cast<uint32_t>(getNumberField(line, "sampleRate", currentSampleRate())),
+                                  err)) {
+      replyFail("ClipLoadFailed", err);
+      return;
+    }
+    replyOk("\"clipId\":\"" + jsonEscape(clipId) + "\"");
+    return;
+  }
+  if (type == "clip.loadChunk") {
+    const std::string clipId = getStringField(line, "clipId");
+    const uint32_t offset = static_cast<uint32_t>(getNumberField(line, "offsetFrames", 0));
+    const uint32_t frames = static_cast<uint32_t>(getNumberField(line, "frames", 0));
+    std::vector<float> pcm;
+    std::string err;
+    if (!decodeF32Base64(getStringField(line, "pcmBase64"), pcm)) {
+      jaswave::clip_load_abort(clipId);
+      replyFail("BadRequest", "pcmBase64 invalido");
+      return;
+    }
+    // El host conoce los canales de la subida (loadBegin): valida que el trozo traiga frames*channels floats.
+    if (!jaswave::clip_load_chunk(clipId, offset, pcm.data(), pcm.size(), frames, err)) {
+      replyFail("ClipLoadFailed", err);
+      return;
+    }
+    replyOk();
+    return;
+  }
+  if (type == "clip.loadEnd") {
+    const std::string clipId = getStringField(line, "clipId");
+    std::string err;
+    if (!jaswave::clip_load_end(clipId, err)) {
+      replyFail("ClipLoadFailed", err);
+      return;
+    }
+    replyOk("\"clipId\":\"" + jsonEscape(clipId) + "\"");
+    return;
+  }
+  if (type == "clip.has") {
+    const std::string clipId = getStringField(line, "clipId");
+    uint32_t frames = 0, sr = 0;
+    const bool has = jaswave::clip_has(clipId, frames, sr);
+    replyOk(std::string("\"loaded\":") + (has ? "true" : "false") + ",\"frames\":" + std::to_string(frames) +
+            ",\"sampleRate\":" + std::to_string(sr));
     return;
   }
   if (type == "clip.schedule") {

@@ -20,7 +20,7 @@ import {
   getCachedHostTransportClock,
   isHostTransportClockStalled,
   hostClipLoadPath,
-  hostClipLoadPcm,
+  hostClipEnsureBuffer,
   hostClipSchedule,
   hostClipStopAll,
   sendHostMetronomeSet,
@@ -134,6 +134,8 @@ export class WebAudioEngine {
   private dawBusSilent: GainNode | null = null
   private stemScratch = new Map<string, Float32Array>()
   private audioBuffers = new Map<string, AudioBuffer>()
+  /** Aviso a la UI cuando un clip no se pudo cargar en el host (antes fallaba en silencio). */
+  public onClipLoadFailed?: (clipId: string) => void
   private activeSources = new Map<string, AudioBufferSourceNode>()
   private midiScheduleTimer: ReturnType<typeof setInterval> | null = null
   /** W2: sintetizador de respaldo en la web (sin plugin host). */
@@ -882,27 +884,20 @@ export class WebAudioEngine {
           const remainingDuration = Math.max(0, clipDuration - consumed)
           if (remainingDuration <= 0.001) continue
 
-          const pathLike =
-            clip.sourcePathOrId.includes('\\') ||
-            clip.sourcePathOrId.includes('/') ||
-            /\.(wav|flac|mp3|ogg|aiff?)$/i.test(clip.sourcePathOrId)
+          // Con el audio ya decodificado se sube por trozos y se reutiliza entre play/seek (sin base64
+          // gigante). Solo se pide al host que lea el archivo si no hay buffer y la ruta es absoluta
+          // (una ruta relativa `media/x.wav` el host no la resuelve).
           let loaded = false
-          if (pathLike) {
+          if (buffer) {
+            loaded = await hostClipEnsureBuffer(clip.id, buffer)
+          } else if (/^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(clip.sourcePathOrId)) {
             loaded = await hostClipLoadPath(clip.id, clip.sourcePathOrId)
           }
-          if (!loaded && buffer) {
-            const ch = Math.min(2, buffer.numberOfChannels)
-            const frames = buffer.length
-            const interleaved = new Float32Array(frames * 2)
-            const L = buffer.getChannelData(0)
-            const R = ch > 1 ? buffer.getChannelData(1) : L
-            for (let i = 0; i < frames; i++) {
-              interleaved[i * 2] = L[i] ?? 0
-              interleaved[i * 2 + 1] = R[i] ?? 0
-            }
-            loaded = await hostClipLoadPcm(clip.id, interleaved, frames, 2, buffer.sampleRate)
+          if (!loaded) {
+            console.warn('[audio-engine] el clip no se pudo cargar en el host', clip.id)
+            this.onClipLoadFailed?.(clip.id)
+            continue
           }
-          if (!loaded) continue
 
           const stem = cfg?.stemIndex ?? 0
           const startSample = Math.round((this.playheadStartSec + delay) * sr)

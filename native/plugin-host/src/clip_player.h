@@ -12,6 +12,15 @@ namespace jaswave {
 bool clip_load_path(const std::string& clipId, const std::string& path, std::string& err);
 bool clip_load_pcm(const std::string& clipId, const float* interleaved, uint32_t frames,
                    uint32_t channels, uint32_t sampleRate, std::string& err);
+/** Subida por trozos de PCM f32 interleaved (clips largos): begin -> chunk* (en orden) -> end. */
+bool clip_load_begin(const std::string& clipId, uint32_t frames, uint32_t channels,
+                     uint32_t sampleRate, std::string& err);
+bool clip_load_chunk(const std::string& clipId, uint32_t offsetFrames, const float* interleaved, size_t floatCount,
+                     uint32_t frames, std::string& err);
+bool clip_load_end(const std::string& clipId, std::string& err);
+void clip_load_abort(const std::string& clipId);
+/** true si el clip ya esta cargado en el host (frames/sampleRate del buffer del host). */
+bool clip_has(const std::string& clipId, uint32_t& frames, uint32_t& sampleRate);
 void clip_unload(const std::string& clipId);
 void clip_unload_all();
 

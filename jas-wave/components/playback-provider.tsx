@@ -202,6 +202,22 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     return startVstRuntimeWindowSync(satellite ? 'satellite' : 'primary')
   }, [satellite])
 
+  // Si un clip no llega al motor nativo, se avisa (una vez por clip) en lugar de dejarlo mudo sin explicación.
+  useEffect(() => {
+    const avisados = new Set<string>()
+    audioEngine.onClipLoadFailed = (clipId) => {
+      if (avisados.has(clipId)) return
+      avisados.add(clipId)
+      tienda.busEventos.emit('comando.fallido', {
+        type: 'audio.playback',
+        error: 'No se pudo cargar un clip de audio en el motor nativo; ese clip no sonará. Revisa el log del motor.',
+      })
+    }
+    return () => {
+      audioEngine.onClipLoadFailed = undefined
+    }
+  }, [tienda])
+
   useEffect(() => {
     if (satellite) return
     const stopFocus = startEditorPreviewFocusBridge()
@@ -722,7 +738,12 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       armed = await audioEngine.armNativeMixOutput()
     }
     if (!armed) {
-      console.warn('[playback] native mix not armed', audioEngine.getTimingDiagnostics().lastArmError)
+      const motivo = audioEngine.getTimingDiagnostics().lastArmError
+      console.warn('[playback] native mix not armed', motivo)
+      tienda.busEventos.emit('comando.fallido', {
+        type: 'audio.engine',
+        error: `El motor de audio nativo no está disponible${motivo ? ` (${String(motivo)})` : ''}. No habrá sonido hasta que arranque.`,
+      })
     }
     // Esperar load breve para tener slots antes del primer lookahead MIDI.
     // Si ya hay slots, no re-ensure (load/getLatency en play congela stdin → silencio).
@@ -1417,6 +1438,13 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         // el proyecto siga funcionando en otra carpeta o en otro equipo.
         importProgress.setProgress(0.85, 'copying')
         const copia = await copiarAudioAlProyecto(file, projectRuta)
+        if (copia.error && !copia.rutaRelativa) {
+          // Antes se ignoraba: el clip quedaba solo en memoria y se perdía al reabrir el proyecto.
+          tienda.busEventos.emit('comando.fallido', {
+            type: 'audio.import',
+            error: `${file.name}: no se pudo copiar al proyecto (${copia.error}). El audio solo estará disponible en esta sesión.`,
+          })
+        }
 
         importProgress.setProgress(0.9, 'creating')
         const res = await tienda.executor.execute('clip.create', {

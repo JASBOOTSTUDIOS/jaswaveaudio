@@ -963,7 +963,13 @@ function pumpQueue() {
       type === 'getAudioDevice' ||
       type === 'testTone' ||
       type === 'ensureAudio' ||
-      type === 'asioControlPanel'
+      type === 'asioControlPanel' ||
+      // Cargar un clip largo (remuestreo) puede tardar: un timeout no debe matar el host ni cortar el audio.
+      type === 'clip.load' ||
+      type === 'clip.loadBegin' ||
+      type === 'clip.loadChunk' ||
+      type === 'clip.loadEnd' ||
+      type === 'clip.has'
     lastError = soft
       ? `Timeout Plugin Host (${type}). El host sigue vivo.`
       : 'Timeout Plugin Host (posible freeze). Proceso de audio detenido; el siguiente ping puede reiniciar.'
@@ -1613,7 +1619,9 @@ export function sendPluginHostCommand(
     type === 'listAudioDevices' ||
     type === 'ensureAudio' ||
     type === 'listParameters' ||
-    type === 'openEditor'
+    type === 'openEditor' ||
+    type === 'clip.load' ||
+    type === 'clip.loadEnd'
       ? Math.max(timeoutMs, 90_000)
       : timeoutMs
 

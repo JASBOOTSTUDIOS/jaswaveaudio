@@ -260,7 +260,13 @@ export function ArrangementView() {
   }
 
   const handleImportToTrack = async (trackId: string, file: File) => {
-    await addClipFromFile(trackId, file, 0)
+    try {
+      await addClipFromFile(trackId, file, 0)
+    } catch (err) {
+      // Antes el rechazo quedaba como unhandledrejection y el usuario no veía nada.
+      const msg = err instanceof Error ? err.message : String(err)
+      tienda.busEventos.emit('comando.fallido', { type: 'audio.import', error: `${file.name}: ${msg}` })
+    }
   }
 
   const openTrackMenu = useCallback((trackId: string, clientX: number, clientY: number) => {
@@ -1254,7 +1260,7 @@ export function ArrangementView() {
       <input
         type="file"
         ref={addTrackFileRef}
-        accept="audio/*,.wav,.mp3,.ogg,.webm,.flac"
+        accept="audio/*,.wav,.mp3,.ogg,.webm,.flac,.m4a,.aif,.aiff"
         className="hidden"
         onChange={async (e) => {
           const file = e.target.files?.[0]

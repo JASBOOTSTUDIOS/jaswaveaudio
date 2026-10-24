@@ -175,6 +175,10 @@ export type PluginHostProcessCommand =
       channels?: number
       sampleRate?: number
     }
+  | { type: 'clip.loadBegin'; clipId: string; frames: number; channels: number; sampleRate: number }
+  | { type: 'clip.loadChunk'; clipId: string; offsetFrames: number; frames: number; pcmBase64: string }
+  | { type: 'clip.loadEnd'; clipId: string }
+  | { type: 'clip.has'; clipId: string }
   | {
       type: 'clip.schedule'
       clipId: string
