@@ -47,5 +47,7 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | M3 | SDK de host y carga de módulos en runtime | M1, D1 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | M4 | Asistente IA como paquete independiente | M2, M3 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
 | M5 | Partitura y MIDI·MD como paquetes | M3 | hecho | Claude Opus 5.5 · 2026-10-23 | (ver git log) |
+| E1 | Motor de audio estable (carga por trozos, avisos, host) | — | hecho (web sin Electron pendiente) | Claude Sonnet 5.5 · 2026-10-24 | (ver git log) |
+| E2 | Instalador autónomo (host sin VC++ runtime) | E1 | hecho (sin firma; ffmpeg no incluido) | Claude Sonnet 5.5 · 2026-10-24 | (ver git log) |
 
 Estados: `pendiente` · `en curso` · `bloqueado (motivo)` · `hecho`.

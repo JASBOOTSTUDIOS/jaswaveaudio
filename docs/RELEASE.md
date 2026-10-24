@@ -65,10 +65,10 @@ clientes solo ven releases publicadas (no borradores).
 
 El instalador incluye en `resources/`:
 
-- `plugin-host/jaswave-plugin-host.exe` (+ `node-host.cjs` de respaldo);
-- `vst3/JasWave/JasWaveRoles.vst3` y `vst3/JasWave/JasWavePiano.vst3`. La app usa la instalación
-  de usuario (`%LOCALAPPDATA%\Programs\Common\VST3\JasWave\`) si existe y, si no, estos bundles
-  (IPC `known-paths` → `bundledVst3Dir`).
+- `plugin-host/jaswave-plugin-host.exe` (+ `node-host.cjs` de respaldo). El host se enlaza con `/MT`
+  (runtime de C++ estático): **no requiere** el redistribuible de Visual C++ en la PC destino. Comprobar con
+  `dumpbin /dependents` que solo aparecen DLLs del sistema antes de publicar.
+- Los VST3 de JasWave **no** van en el instalador (D1): se descargan bajo demanda o se instalan desde paquetes `.jwx`.
 
 `native/audio-engine` (addon N-API, stub detrás de `JASWAVE_NATIVE_AUDIO=1`) **no** forma parte
 del release.
