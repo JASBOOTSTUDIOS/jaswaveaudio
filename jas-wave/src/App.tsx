@@ -47,10 +47,11 @@ import { PluginHostLifecycle } from '@/components/plugin-host-lifecycle'
 import { MidiControllerHost } from '@/components/midi-controller-host'
 import { AgentAuditHost, AGENT_BRIDGE_REV } from '@/src/lib/agent-audit-bridge'
 // bridge rev consumed as <AgentAuditHost key={AGENT_BRIDGE_REV} />
-import { PanelLeft, PanelRight, PanelBottom, Plus, X } from 'lucide-react'
+import { PanelLeft, PanelRight, PanelBottom, Plus, X, Home } from 'lucide-react'
 import { JasWaveAppIcon } from '@/components/brand'
 import { ComponentesDeModulos } from '@/components/modulos/componentes-de-modulos'
 import { InstaladorExtensiones } from '@/components/modulos/instalador-extensiones'
+import { PortalCatalogoPWA } from '@/components/portal/portal-pwa'
 
 function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
   useShortcutDispatcher()
@@ -210,7 +211,7 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
   )
 }
 
-function AppShell() {
+function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) {
   const dispatcher = useShortcutDispatcher()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
@@ -408,6 +409,16 @@ function AppShell() {
 
         {/* Barra de workspace: reabrir paneles + menú Ventanas */}
         <div className="flex h-7 items-center gap-1 border-t border-border bg-panel px-2">
+          {onVolverAlPortal && (
+            <button
+              type="button"
+              className="flex items-center gap-1 rounded px-1.5 text-[10px] text-muted-foreground hover:bg-panel-raised hover:text-[#2FD6F2]"
+              onClick={onVolverAlPortal}
+              title="Volver al Portal y Catálogo PWA"
+            >
+              <Home className="size-3 text-[#2FD6F2]" /> Portal
+            </button>
+          )}
           <WorkspaceMenu />
           <div className="mx-1 h-3 w-px bg-border" />
           {!leftVisible && (
@@ -436,6 +447,40 @@ function AppShell() {
 
 export default function App() {
   const undockId = getUndockToolIdFromUrl()
+  const [entrarStudio, setEntrarStudio] = useState<boolean>(() => {
+    if (undockId) return true
+    try {
+      const p = new URLSearchParams(window.location.search)
+      if (p.has('daw') || p.get('studio') === '1') return true
+      return sessionStorage.getItem('jaswave_entrar_studio') === '1'
+    } catch {
+      return false
+    }
+  })
+
+  if (!entrarStudio && !undockId) {
+    return (
+      <PortalCatalogoPWA
+        onEntrarAlDaw={() => {
+          try {
+            sessionStorage.setItem('jaswave_entrar_studio', '1')
+          } catch {
+            /* ignore */
+          }
+          setEntrarStudio(true)
+        }}
+      />
+    )
+  }
+
+  const volverAlPortal = () => {
+    try {
+      sessionStorage.removeItem('jaswave_entrar_studio')
+    } catch {
+      /* ignore */
+    }
+    setEntrarStudio(false)
+  }
 
   return (
     <DAWProvider>
@@ -455,7 +500,7 @@ export default function App() {
                 <PluginHostLifecycle />
                 <MidiControllerHost />
                 <AgentAuditHost key={AGENT_BRIDGE_REV} />
-                <AppShell />
+                <AppShell onVolverAlPortal={volverAlPortal} />
               </WorkspaceProvider>
             )}
           </PlaybackProvider>
