@@ -13,7 +13,7 @@ import {
   panADisplay,
 } from '@/lib/audio-conversions'
 import { FaderControl, KnobControl, LevelMeterBarHorizontal } from './ui/controls'
-import { useElementSize } from '@/hooks/use-element-size'
+import { useElementSize, useTierConHisteresis } from '@/hooks/use-element-size'
 import { ChannelFxBank } from '@/components/channel-fx-bank'
 import { TrackMidiInput } from '@/components/track-midi-input'
 import { TrackAudioInput } from '@/components/track-audio-input'
@@ -115,17 +115,22 @@ function TrackButton({
   )
 }
 
+/** Altos (px) a partir de los cuales el mixer pasa a cada nivel de detalle (de menor a mayor). */
+const UMBRALES_MIXER = [150, 250, 380] as const
+
 export function Mixer() {
   const tienda = useDAW()
   const tracks = useDAWState((s: DAWState) => s.project?.tracks ?? [])
   const master = useDAWState((s: DAWState) => s.project?.master)
   const routing = useDAWState((s: DAWState) => s.project?.routing)
   const collapsedUser = useDAWState((s: DAWState) => s.ui?.estadoMezcladorUI?.colapsado ?? false)
-  // Si el panel es bajo, el mixer pasa solo a modo compacto: el fader tiene prioridad sobre los extras
+  // Si el panel es bajo, el mixer pasa solo a modo compacto: el fader tiene prioridad sobre los extras.
+  // Se mide el contenedor EXTERIOR (su alto no cambia si aparece la barra de scroll horizontal) y el nivel
+  // usa histéresis: sin esto, al aparecer/desaparecer la barra el alto oscilaba y el mixer parpadeaba.
   const stripsRef = useRef<HTMLDivElement>(null)
   const { height: stripsH } = useElementSize(stripsRef)
-  // Niveles según el alto disponible (sin scroll vertical: se ocultan controles en vez de aplastarlos)
-  const tier = stripsH <= 0 ? 0 : stripsH < 150 ? 3 : stripsH < 250 ? 2 : stripsH < 380 ? 1 : 0
+  const dens = useTierConHisteresis(stripsH, UMBRALES_MIXER)   // 0 = micro, 1 = mini, 2 = compacto, 3 = completo
+  const tier = 3 - dens
   const collapsed = collapsedUser || tier >= 1
   const mini = tier >= 2   // sin perilla de pan ni IN/rec
   const micro = tier >= 3  // solo nombre, M/S y un medidor
@@ -301,7 +306,8 @@ export function Mixer() {
       </div>
 
       {/* Tiras de canal */}
-      <div ref={stripsRef} className="jw-scrollbar flex min-h-0 flex-1 overflow-x-auto overflow-y-hidden bg-panel">
+      <div ref={stripsRef} className="relative min-h-0 flex-1 bg-panel">
+      <div className="jw-scrollbar absolute inset-0 flex overflow-x-auto overflow-y-hidden">
         {trackList.map((track, trackIndex) => (
           <div
             key={track.id}
@@ -607,6 +613,7 @@ export function Mixer() {
             })
           }}
         />
+      </div>
       </div>
     </section>
   )

@@ -28,18 +28,29 @@ describe('editor nativo embebido en el panel (V4)', () => {
   })
 
   it('convierte px CSS (con zoom) a DIP de pantalla redondeando hacia fuera', () => {
-    assert.deepEqual(rectPantallaDip({ x: 100, y: 50, width: 0, height: 0 }, { x: 10.4, y: 20.6, w: 300.2, h: 200, visible: true }, 1), {
+    assert.deepEqual(rectPantallaDip({ x: 100, y: 50, width: 1600, height: 900 }, { x: 10.4, y: 20.6, w: 300.2, h: 200, visible: true }, 1), {
       x: 110,
       y: 70,
       width: 301,
       height: 201,
     })
-    assert.deepEqual(rectPantallaDip({ x: 0, y: 0, width: 0, height: 0 }, { x: 10, y: 10, w: 100, h: 50, visible: true }, 1.25), {
+    assert.deepEqual(rectPantallaDip({ x: 0, y: 0, width: 1600, height: 900 }, { x: 10, y: 10, w: 100, h: 50, visible: true }, 1.25), {
       x: 12,
       y: 12,
       width: 126,
       height: 63,
     })
+  })
+
+  it('nunca sale de la ventana del DAW (la ventana nativa del plugin no se recorta sola)', () => {
+    const ventana = { x: 200, y: 100, width: 800, height: 600 }
+    // panel que sobresale por la derecha, por abajo y por la izquierda
+    assert.deepEqual(rectPantallaDip(ventana, { x: 700, y: 500, w: 400, h: 400, visible: true }, 1), { x: 900, y: 600, width: 100, height: 100 })
+    assert.deepEqual(rectPantallaDip(ventana, { x: -50, y: -30, w: 100, h: 100, visible: true }, 1), { x: 200, y: 100, width: 50, height: 70 })
+    // completamente fuera: área vacía
+    const fuera = rectPantallaDip(ventana, { x: 2000, y: 2000, w: 100, h: 100, visible: true }, 1)
+    assert.equal(fuera.width, 0)
+    assert.equal(fuera.height, 0)
   })
 
   it('abre en píxeles físicos y sin parentHwnd (nunca hijo de Electron)', () => {

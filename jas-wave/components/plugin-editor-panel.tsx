@@ -42,12 +42,29 @@ function useEditorFocus() {
 type EditorStatus = 'idle' | 'opening' | 'open' | 'error'
 type EditorMode = 'embebido' | 'flotante'
 
-/** Rectángulo del panel en px CSS; invisible si está oculto (pestaña inactiva, display:none…). */
-function embedRectOf(el: HTMLElement | null): EditorEmbedRect {
+/**
+ * Rectángulo VISIBLE del panel en px CSS: la caja del elemento recortada por todos los contenedores con
+ * overflow (zonas con scroll, paneles aplastados) y por la ventana. La ventana nativa del plugin no la
+ * recorta nadie, así que si usáramos la caja completa se desbordaría fuera del panel y de la app.
+ * Invisible si está oculto o si lo que queda a la vista es demasiado pequeño para ser útil.
+ */
+export function embedRectOf(el: HTMLElement | null): EditorEmbedRect {
   if (!el || !el.isConnected) return { x: 0, y: 0, w: 0, h: 0, visible: false }
   const r = el.getBoundingClientRect()
-  const visible = r.width >= 1 && r.height >= 1 && document.visibilityState === 'visible' && el.offsetParent !== null
-  return { x: r.left, y: r.top, w: r.width, h: r.height, visible }
+  let left = r.left, top = r.top, right = r.right, bottom = r.bottom
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const cs = getComputedStyle(p)
+    if (/(hidden|auto|scroll|clip)/.test(cs.overflowX) || /(hidden|auto|scroll|clip)/.test(cs.overflowY)) {
+      const pr = p.getBoundingClientRect()
+      if (/(hidden|auto|scroll|clip)/.test(cs.overflowX)) { left = Math.max(left, pr.left); right = Math.min(right, pr.right) }
+      if (/(hidden|auto|scroll|clip)/.test(cs.overflowY)) { top = Math.max(top, pr.top); bottom = Math.min(bottom, pr.bottom) }
+    }
+  }
+  left = Math.max(left, 0); top = Math.max(top, 0)
+  right = Math.min(right, window.innerWidth); bottom = Math.min(bottom, window.innerHeight)
+  const w = Math.max(0, right - left), h = Math.max(0, bottom - top)
+  const visible = w >= 40 && h >= 40 && document.visibilityState === 'visible' && el.offsetParent !== null
+  return { x: left, y: top, w, h, visible }
 }
 
 function VstNativeEditor({

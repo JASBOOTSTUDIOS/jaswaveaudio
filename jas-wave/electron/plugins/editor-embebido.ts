@@ -28,8 +28,13 @@ export function panelDesdeComando(cmd: Record<string, unknown>): PanelEmbebido |
  */
 export function rectPantallaDip(contenido: Rect, panel: PanelEmbebido, zoom: number): Rect {
   const z = zoom > 0 ? zoom : 1
-  const x0 = contenido.x + panel.x * z, y0 = contenido.y + panel.y * z
-  const x1 = contenido.x + (panel.x + panel.w) * z, y1 = contenido.y + (panel.y + panel.h) * z
+  let x0 = contenido.x + panel.x * z, y0 = contenido.y + panel.y * z
+  let x1 = contenido.x + (panel.x + panel.w) * z, y1 = contenido.y + (panel.y + panel.h) * z
+  // Nunca fuera de la ventana del DAW: la ventana nativa del plugin no se recorta sola
+  x0 = Math.max(x0, contenido.x); y0 = Math.max(y0, contenido.y)
+  x1 = Math.min(x1, contenido.x + contenido.width); y1 = Math.min(y1, contenido.y + contenido.height)
+  if (x1 < x0) x1 = x0
+  if (y1 < y0) y1 = y0
   return { x: Math.floor(x0), y: Math.floor(y0), width: Math.ceil(x1) - Math.floor(x0), height: Math.ceil(y1) - Math.floor(y0) }
 }
 
@@ -111,8 +116,9 @@ export class EditoresEmbebidos {
       this.porSlot.delete(e.slotId)
       return
     }
-    const visible = e.panel.visible && !e.ventana.isMinimized() && e.ventana.isVisible()
     const r = this.rectFisico(e.ventana, e.panel)
+    // sin área visible útil (panel recortado o fuera de la ventana) el popup se oculta en vez de desbordarse
+    const visible = e.panel.visible && !e.ventana.isMinimized() && e.ventana.isVisible() && r.width >= 24 && r.height >= 24
     const cmd = { type: 'setEditorBounds', slotId: e.slotId, embedded: true, visible, raise, x: r.x, y: r.y, w: r.width, h: r.height }
     if (this.minIntervaloMs <= 0) {
       this.enviar(cmd)

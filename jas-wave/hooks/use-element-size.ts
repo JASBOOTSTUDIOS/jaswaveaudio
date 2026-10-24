@@ -18,3 +18,30 @@ export function useElementSize<T extends HTMLElement>(ref: RefObject<T | null>):
   }, [ref])
   return size
 }
+
+/**
+ * Nivel de densidad según una medida con histéresis: no cambia de nivel hasta rebasar el umbral por un
+ * margen, así un valor que oscila unos píxeles en el límite no hace parpadear la interfaz entre modos.
+ * `umbrales` en orden ascendente; devuelve 0..umbrales.length (0 = el espacio más holgado... ver uso).
+ */
+export function useTierConHisteresis(valor: number, umbrales: readonly number[], margen = 14): number {
+  const [tier, setTier] = useState(() => calcTier(valor, umbrales))
+  useEffect(() => {
+    setTier((prev) => {
+      if (valor <= 0) return 0
+      // subir de nivel (más espacio) exige superar el umbral + margen; bajar, quedar por debajo del umbral
+      let t = prev
+      while (t < umbrales.length && valor >= umbrales[t]! + margen) t++
+      while (t > 0 && valor < umbrales[t - 1]!) t--
+      return t
+    })
+  }, [valor, umbrales, margen])
+  return tier
+}
+
+function calcTier(valor: number, umbrales: readonly number[]): number {
+  if (valor <= 0) return 0
+  let t = 0
+  while (t < umbrales.length && valor >= umbrales[t]!) t++
+  return t
+}

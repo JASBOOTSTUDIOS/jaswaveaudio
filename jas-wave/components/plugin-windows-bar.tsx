@@ -19,6 +19,8 @@ export function PluginWindowsBar() {
   // Siempre montada: permite resolver plugin y pista cuando cualquier panel pide abrir un editor
   useEffect(() => {
     registrarLectorProyecto(() => tienda.obtenerEstado() as never)
+    // Gancho de pruebas (solo desarrollo): permite abrir editores desde un script sin pasar por los paneles
+    if (import.meta.env.DEV) (window as unknown as { __jwOpenPluginEditor?: typeof openPluginEditor }).__jwOpenPluginEditor = openPluginEditor
     return () => registrarLectorProyecto(null)
   }, [tienda])
   if (windows.length === 0) return null
