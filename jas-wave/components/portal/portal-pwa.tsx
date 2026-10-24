@@ -18,6 +18,8 @@ import {
   ShieldAlert,
   Settings,
   X,
+  Eye,
+  EyeOff,
 } from 'lucide-react'
 import { JasWaveAppIcon } from '@/components/brand'
 import { useSesion, cerrarSesion, iniciarSesion, clienteSupabase } from '@/src/lib/backend/sesion'
@@ -36,6 +38,7 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
   const [modoAuth, setModoAuth] = useState<'login' | 'registro'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [mostrarPassword, setMostrarPassword] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
   const [authEnviando, setAuthEnviando] = useState(false)
   const [filtroCategoria, setFiltroCategoria] = useState<'todos' | 'efectos' | 'instrumentos'>('todos')
@@ -536,14 +539,24 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
 
               <div>
                 <label className="block text-[11px] font-mono text-[#A8EEFA] mb-1">Contraseña</label>
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full rounded border border-[#1E4656] bg-[#050D14] px-3 py-2 text-xs text-white placeholder-[#4F6B75] focus:border-[#2FD6F2] focus:outline-none"
-                />
+                <div className="relative">
+                  <input
+                    type={mostrarPassword ? 'text' : 'password'}
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full rounded border border-[#1E4656] bg-[#050D14] pl-3 pr-10 py-2 text-xs text-white placeholder-[#4F6B75] focus:border-[#2FD6F2] focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setMostrarPassword((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-[#8FB4BF] hover:text-[#2FD6F2] transition-colors"
+                    title={mostrarPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                  >
+                    {mostrarPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                </div>
               </div>
 
               {authError && (

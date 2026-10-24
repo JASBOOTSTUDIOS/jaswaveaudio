@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { LogIn } from 'lucide-react'
+import { LogIn, Eye, EyeOff } from 'lucide-react'
 import { configBackend } from '@/src/lib/backend/config'
 import { iniciarConProveedor, iniciarSesion } from '@/src/lib/backend/sesion'
 import { Aviso, Boton, Campo } from './ui'
@@ -8,6 +8,7 @@ import { Aviso, Boton, Campo } from './ui'
 export function FormularioLogin() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [mostrarPassword, setMostrarPassword] = useState(false)
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const proveedores = configBackend().proveedoresOAuth
@@ -30,14 +31,27 @@ export function FormularioLogin() {
   return (
     <form onSubmit={enviar} className="flex flex-col gap-3" aria-label="Iniciar sesión en JasWave">
       <Campo etiqueta="Correo" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-      <Campo
-        etiqueta="Contraseña"
-        type="password"
-        autoComplete="current-password"
-        required
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-      />
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-muted-foreground">Contraseña</span>
+        <div className="relative">
+          <input
+            type={mostrarPassword ? 'text' : 'password'}
+            autoComplete="current-password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full rounded-md border border-border bg-panel-raised pl-2.5 pr-8 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
+          />
+          <button
+            type="button"
+            onClick={() => setMostrarPassword((v) => !v)}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            title={mostrarPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+          >
+            {mostrarPassword ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+          </button>
+        </div>
+      </label>
       {error ? <Aviso tipo="error">{error}</Aviso> : null}
       <Boton primario type="submit" disabled={enviando} className="flex items-center justify-center gap-1.5">
         <LogIn className="size-3.5" />
