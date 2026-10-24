@@ -151,6 +151,18 @@ public:
     if (vst2_) vst2_->setEditorBounds(x, y, w, h);
     else vst3_->setEditorBounds(x, y, w, h);
   }
+  /** Solo VST3 (los VST propios de JasWave); VST2 sigue en ventana flotante. */
+  bool supportsEmbeddedEditor() const { return vst3_ != nullptr; }
+  bool openEditorEmbedded(int x, int y, int w, int h, std::string& err) {
+    if (!vst3_) {
+      err = "editor embebido solo para VST3";
+      return false;
+    }
+    return vst3_->openEditorEmbedded(x, y, w, h, err);
+  }
+  void setEmbeddedBounds(int x, int y, int w, int h, bool visible, bool raise) {
+    if (vst3_) vst3_->setEmbeddedBounds(x, y, w, h, visible, raise);
+  }
   void closeEditor() {
     if (vst2_) vst2_->closeEditor();
     else vst3_->closeEditor();

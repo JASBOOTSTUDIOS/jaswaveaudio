@@ -57,7 +57,54 @@ struct EmbedState {
   PlugFrame* frame{nullptr};
   bool registered{false};
   bool topLevel{false};
+  bool embedded{false};   // popup alineado al panel del DAW (ver openEditorEmbedded)
 };
+
+// DPI por monitor solo en el hilo de UI del editor embebido (los editores flotantes de terceros
+// conservan el comportamiento de siempre). Se resuelve en tiempo de ejecución (Windows 10 1607+).
+struct ThreadDpiScope {
+  using SetCtx = DPI_AWARENESS_CONTEXT(WINAPI*)(DPI_AWARENESS_CONTEXT);
+  SetCtx set{nullptr};
+  DPI_AWARENESS_CONTEXT prev{nullptr};
+  ThreadDpiScope() {
+    if (HMODULE u = GetModuleHandleW(L"user32.dll"))
+      set = reinterpret_cast<SetCtx>(GetProcAddress(u, "SetThreadDpiAwarenessContext"));
+    if (set) prev = set(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+  }
+  ~ThreadDpiScope() {
+    if (set && prev) set(prev);
+  }
+};
+
+// Ajusta el view al cliente de la ventana embebida respetando su proporción y lo centra.
+void fitEmbeddedView(HWND hwnd, IPlugView* view) {
+  RECT rc{};
+  GetClientRect(hwnd, &rc);
+  const int cw = rc.right - rc.left, ch = rc.bottom - rc.top;
+  if (cw <= 0 || ch <= 0 || !view) return;
+  ViewRect vr{};
+  if (view->canResize() == kResultTrue) {
+    ViewRect cur{};
+    double aspect = 0.0;
+    if (view->getSize(&cur) == kResultTrue && cur.getHeight() > 0) aspect = static_cast<double>(cur.getWidth()) / cur.getHeight();
+    int w = cw;
+    int h = aspect > 0.0 ? static_cast<int>(w / aspect) : ch;
+    if (h > ch && aspect > 0.0) {
+      h = ch;
+      w = static_cast<int>(h * aspect);
+    }
+    vr.right = w;
+    vr.bottom = h;
+    // si el plugin impone un mínimo mayor que el panel se respeta (sin deformarlo): queda anclado arriba a la izquierda
+    view->checkSizeConstraint(&vr);
+    view->onSize(&vr);
+  } else if (view->getSize(&vr) != kResultTrue) {
+    return;
+  }
+  const int vw = vr.getWidth(), vh = vr.getHeight();
+  if (HWND child = GetWindow(hwnd, GW_CHILD))
+    SetWindowPos(child, nullptr, std::max(0, (cw - vw) / 2), std::max(0, (ch - vh) / 2), vw, vh, SWP_NOZORDER | SWP_NOACTIVATE);
+}
 
 struct PlugFrame : public IPlugFrame {
   EmbedState* st{nullptr};
@@ -82,7 +129,9 @@ struct PlugFrame : public IPlugFrame {
 LRESULT CALLBACK EmbedWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   if (msg == WM_SIZE) {
     auto* st = reinterpret_cast<EmbedState*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
-    if (st && st->view) {
+    if (st && st->view && st->embedded) {
+      fitEmbeddedView(hWnd, st->view);
+    } else if (st && st->view) {
       RECT rc{};
       GetClientRect(hWnd, &rc);
       ViewRect vr{};
@@ -91,7 +140,17 @@ LRESULT CALLBACK EmbedWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
       st->view->onSize(&vr);
     }
   }
-  if (msg == WM_ERASEBKGND) return 1;
+  if (msg == WM_ERASEBKGND) {
+    // márgenes del editor ajustado (embebido) en negro, como el panel del DAW
+    RECT rc{};
+    GetClientRect(hWnd, &rc);
+    FillRect(reinterpret_cast<HDC>(wParam), &rc, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+    return 1;
+  }
+  if (msg == WM_MOUSEACTIVATE) {
+    auto* st = reinterpret_cast<EmbedState*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
+    if (st && st->embedded) return MA_ACTIVATE;
+  }
   return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
@@ -858,6 +917,90 @@ bool Vst3Slot::openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h,
 #endif
 }
 
+bool Vst3Slot::openEditorEmbedded(int x, int y, int w, int h, std::string& err) {
+#ifdef _WIN32
+  closeEditor();
+  if (!impl_->controller) {
+    err = "Sin EditController";
+    return false;
+  }
+  ThreadDpiScope dpi;   // x/y/w/h llegan en píxeles físicos (screen.dipToScreenRect en Electron)
+  IPtr<IPlugView> view = owned(impl_->controller->createView(ViewType::kEditor));
+  if (!view) {
+    err = "createView(kEditor) falló";
+    return false;
+  }
+  if (view->isPlatformTypeSupported(kPlatformTypeHWND) != kResultTrue) {
+    err = "El plugin no soporta HWND";
+    return false;
+  }
+  HINSTANCE inst = GetModuleHandleW(nullptr);
+  registerEmbedClass(inst);
+  // Popup sin borde, sin barra de tareas y SIN owner: nada de SendMessage entre procesos.
+  HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, kEmbedClass, L"JasWave Plugin",
+                              WS_POPUP | WS_CLIPSIBLINGS | WS_CLIPCHILDREN, x, y, std::max(1, w), std::max(1, h), nullptr, nullptr, inst,
+                              nullptr);
+  if (!hwnd) {
+    err = "CreateWindowEx falló (GetLastError=" + std::to_string(GetLastError()) + ")";
+    return false;
+  }
+  impl_->embed.hwnd = hwnd;
+  impl_->embed.owner = nullptr;
+  impl_->embed.topLevel = true;
+  impl_->embed.embedded = true;
+  impl_->embed.view = view;
+  SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&impl_->embed));
+  view->setFrame(&impl_->plugFrame);
+  if (view->attached(hwnd, kPlatformTypeHWND) != kResultTrue) {
+    err = "IPlugView::attached falló";
+    DestroyWindow(hwnd);
+    impl_->embed.hwnd = nullptr;
+    impl_->embed.view = nullptr;
+    impl_->embed.embedded = false;
+    return false;
+  }
+  fitEmbeddedView(hwnd, view);
+  SetWindowPos(hwnd, HWND_TOP, x, y, std::max(1, w), std::max(1, h), SWP_SHOWWINDOW | SWP_NOACTIVATE);
+  return true;
+#else
+  (void)x;
+  (void)y;
+  (void)w;
+  (void)h;
+  err = "Editor embebido solo en Windows";
+  return false;
+#endif
+}
+
+bool Vst3Slot::editorEmbedded() const {
+#ifdef _WIN32
+  return impl_->embed.hwnd && impl_->embed.embedded;
+#else
+  return false;
+#endif
+}
+
+void Vst3Slot::setEmbeddedBounds(int x, int y, int w, int h, bool visible, bool raise) {
+#ifdef _WIN32
+  if (!impl_->embed.hwnd || !impl_->embed.embedded) return;
+  ThreadDpiScope dpi;
+  if (!visible || w <= 0 || h <= 0) {
+    ShowWindow(impl_->embed.hwnd, SW_HIDE);
+    return;
+  }
+  // HWND_TOP sin activar: por encima de la ventana del DAW cuando esta vuelve al frente
+  SetWindowPos(impl_->embed.hwnd, raise ? HWND_TOP : nullptr, x, y, w, h,
+               SWP_NOACTIVATE | SWP_SHOWWINDOW | (raise ? 0 : SWP_NOZORDER));
+#else
+  (void)x;
+  (void)y;
+  (void)w;
+  (void)h;
+  (void)visible;
+  (void)raise;
+#endif
+}
+
 void Vst3Slot::setEditorBounds(int x, int y, int w, int h) {
 #ifdef _WIN32
   if (!impl_->embed.hwnd) return;
@@ -896,6 +1039,7 @@ void Vst3Slot::closeEditor() {
     DestroyWindow(impl_->embed.hwnd);
     impl_->embed.hwnd = nullptr;
   }
+  impl_->embed.embedded = false;
 #endif
 }
 

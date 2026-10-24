@@ -1385,6 +1385,17 @@ static void executeUiJob(UiJob& job) {
       return;
     }
     // Sin mutex: CreateWindow/attached no deben bloquear el audio thread.
+    // embedded: popup alineado al panel del DAW (x/y/w/h en píxeles físicos de pantalla).
+    if (getBoolField(json, "embedded", false) && slot->supportsEmbeddedEditor()) {
+      if (!slot->openEditorEmbedded(x, y, w, h, err)) {
+        job.ok = false;
+        job.err = err;
+        return;
+      }
+      gActiveSlot = slotId;
+      job.ok = true;
+      return;
+    }
     if (!slot->openEditor(parent, x, y, w, h, err)) {
       job.ok = false;
       job.err = err;
@@ -1407,7 +1418,10 @@ static void executeUiJob(UiJob& job) {
       job.err = "slot no encontrado";
       return;
     }
-    slot->setEditorBounds(x, y, w, h);
+    if (getBoolField(json, "embedded", false))
+      slot->setEmbeddedBounds(x, y, w, h, getBoolField(json, "visible", true), getBoolField(json, "raise", false));
+    else
+      slot->setEditorBounds(x, y, w, h);
     job.ok = true;
     return;
   }

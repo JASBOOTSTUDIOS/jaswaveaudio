@@ -299,7 +299,8 @@ public:
     tresult PLUGIN_API canResize() SMTG_OVERRIDE { return kResultTrue; }
     tresult PLUGIN_API checkSizeConstraint(ViewRect* r) SMTG_OVERRIDE {
         if (!r) return kInvalidArgument;
-        const float minW = kBaseW * 0.6f * scaleFactor_;
+        // mínimo de 300 px: cabe entero en el panel lateral del DAW (editor embebido, V4)
+        const float minW = 300.0f;
         int32 w = std::max<int32>(r->getWidth(), static_cast<int32>(minW));
         int32 h = static_cast<int32>(std::lround(w * kBaseH / kBaseW));
         // si el host fija la altura, se respeta la proporción 16:9 aprox. desde la altura

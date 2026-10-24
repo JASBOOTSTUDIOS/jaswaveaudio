@@ -1,10 +1,12 @@
 /**
  * Panel IU de plugin (workspace tab `plugin-editor`).
- * VST3/Roles: misma instancia (createView + process) en plugin-host.
+ * Escritorio: SIEMPRE el editor nativo del VST (misma instancia que el audio en el plugin-host),
+ * embebido en el panel (V4). Los VST de JasWave muestran aquí su editor cyber; no hay paneles web
+ * distintos. Si el plugin no admite el modo embebido, se abre en ventana flotante.
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { ExternalLink, Piano, RefreshCw, Sparkles, Waves, X } from 'lucide-react'
+import { AppWindow, ExternalLink, PanelTop, Piano, RefreshCw, Sparkles, Waves, X } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import type { DAWState } from '../../shared/src/types/state'
 import type { PluginInfo } from '../../shared/src/types/entidades'
@@ -27,15 +29,23 @@ import {
 } from '@/src/lib/plugin/track-vst-runtime'
 import { requestOpenTool } from '@/src/workspace/types'
 import { JASWAVE_ROLES_NAME } from '@/src/lib/plugin/jaswave-roles'
-import { JasWaveRolesPanel } from '@/components/jaswave-roles-panel'
 import { isJasWaveFxPlugin } from '@/src/lib/plugin/bundled-plugins'
-import { JasWaveFxPanel } from '@/components/jaswave-fx-panel'
+import type { EditorEmbedRect } from '@/src/lib/plugin/types'
 
 function useEditorFocus() {
   return useSyncExternalStore(subscribePluginEditorFocus, getPluginEditorFocus, () => null)
 }
 
 type EditorStatus = 'idle' | 'opening' | 'open' | 'error'
+type EditorMode = 'embebido' | 'flotante'
+
+/** Rectángulo del panel en px CSS; invisible si está oculto (pestaña inactiva, display:none…). */
+function embedRectOf(el: HTMLElement | null): EditorEmbedRect {
+  if (!el || !el.isConnected) return { x: 0, y: 0, w: 0, h: 0, visible: false }
+  const r = el.getBoundingClientRect()
+  const visible = r.width >= 1 && r.height >= 1 && document.visibilityState === 'visible' && el.offsetParent !== null
+  return { x: r.left, y: r.top, w: r.width, h: r.height, visible }
+}
 
 function VstNativeEditor({
   plugin,
@@ -53,6 +63,8 @@ function VstNativeEditor({
   const pitches = [60, 62, 64, 65, 67, 69, 71, 72]
   const isRoles = plugin.nombre.includes(JASWAVE_ROLES_NAME) || /jaswave\s*roles/i.test(plugin.nombre)
   const openedOnce = useRef(false)
+  const [mode, setMode] = useState<EditorMode>('embebido')
+  const modeRef = useRef<EditorMode>('embebido')
   const [clearingQuarantine, setClearingQuarantine] = useState(false)
   const quarantineBlocked = status === 'error' && isVstQuarantineError(message)
 
@@ -89,7 +101,9 @@ function VstNativeEditor({
     })
   }
 
-  async function openEditor() {
+  async function openEditor(nextMode: EditorMode = modeRef.current) {
+    modeRef.current = nextMode
+    setMode(nextMode)
     const path = resolveHostPluginPath(plugin)
     if (!path) {
       setStatus('error')
@@ -112,12 +126,14 @@ function VstNativeEditor({
     }
     setMessage('Abriendo UI nativa…')
     const bridge = createElectronPluginHostBridge()
-    const reply = await bridge.send({
-      type: 'openEditor',
-      path,
-      slotId,
-      pluginId: plugin.id,
-    })
+    const embed = nextMode === 'embebido' ? embedRectOf(hostRef.current) : undefined
+    let reply = await bridge.send({ type: 'openEditor', path, slotId, pluginId: plugin.id, ...(embed ? { embed } : {}) })
+    if (!reply.ok && embed) {
+      // el plugin no admite el modo embebido (p. ej. VST2): ventana flotante
+      modeRef.current = 'flotante'
+      setMode('flotante')
+      reply = await bridge.send({ type: 'openEditor', path, slotId, pluginId: plugin.id })
+    }
     if (reply.ok) {
       setStatus('open')
       setMessage(
@@ -128,6 +144,44 @@ function VstNativeEditor({
       setMessage(reply.message || 'No se pudo abrir el editor VST')
     }
   }
+
+  // Mantiene el editor embebido alineado con el panel (tamaño, scroll, pestaña oculta, zoom)
+  useEffect(() => {
+    if (status !== 'open' || mode !== 'embebido') return
+    const el = hostRef.current
+    if (!el) return
+    const bridge = createElectronPluginHostBridge()
+    let frame = 0
+    let last = ''
+    const sync = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        const embed = embedRectOf(el)
+        const key = `${Math.round(embed.x)},${Math.round(embed.y)},${Math.round(embed.w)},${Math.round(embed.h)},${embed.visible}`
+        if (key === last) return
+        last = key
+        void bridge.send({ type: 'setEditorBounds', slotId, embed })
+      })
+    }
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    const io = new IntersectionObserver(sync)
+    io.observe(el)
+    window.addEventListener('resize', sync)
+    window.addEventListener('scroll', sync, true)
+    document.addEventListener('visibilitychange', sync)
+    const poll = window.setInterval(sync, 500) // el layout puede mover el panel sin cambiar su tamaño
+    sync()
+    return () => {
+      cancelAnimationFrame(frame)
+      ro.disconnect()
+      io.disconnect()
+      window.removeEventListener('resize', sync)
+      window.removeEventListener('scroll', sync, true)
+      document.removeEventListener('visibilitychange', sync)
+      window.clearInterval(poll)
+    }
+  }, [status, mode, slotId])
 
   async function closeEditor() {
     try {
@@ -201,7 +255,9 @@ function VstNativeEditor({
           <div className="truncate text-[12px] font-semibold text-foreground">{plugin.nombre}</div>
           <div className="truncate text-[9px] text-muted-foreground">
             {status === 'open'
-              ? 'UI nativa · misma instancia que el audio'
+              ? mode === 'embebido'
+                ? 'UI nativa embebida · misma instancia que el audio'
+                : 'UI nativa en ventana · misma instancia que el audio'
               : status === 'opening'
                 ? 'Abriendo…'
                 : status === 'error'
@@ -218,6 +274,15 @@ function VstNativeEditor({
         >
           <RefreshCw className="size-3" />
           Reabrir
+        </button>
+        <button
+          type="button"
+          title={mode === 'embebido' ? 'Abrir el editor en una ventana aparte' : 'Volver a mostrar el editor dentro del panel'}
+          onClick={() => void openEditor(mode === 'embebido' ? 'flotante' : 'embebido')}
+          className="inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] text-muted-foreground ring-1 ring-border hover:text-foreground"
+        >
+          {mode === 'embebido' ? <AppWindow className="size-3" /> : <PanelTop className="size-3" />}
+          {mode === 'embebido' ? 'En ventana' : 'En el panel'}
         </button>
         <button
           type="button"
@@ -276,11 +341,11 @@ function VstNativeEditor({
               </div>
             ) : null}
           </div>
-        ) : (
+        ) : mode === 'flotante' ? (
           <div className="flex h-full items-center justify-center px-4 text-center text-[11px] text-muted-foreground/80">
             UI nativa abierta en ventana flotante (mismo VST que el audio).
           </div>
-        )}
+        ) : null}
       </div>
 
       {pluginPath ? (
@@ -326,7 +391,7 @@ export function PluginEditorPanel() {
 
   const isRoles =
     plugin.nombre.includes(JASWAVE_ROLES_NAME) || /jaswave\s*roles/i.test(plugin.nombre)
-  const isFx = isJasWaveFxPlugin(plugin)
+  const isJasWave = isRoles || isJasWaveFxPlugin(plugin)
 
   return (
     <div className="flex h-full flex-col bg-panel">
@@ -340,7 +405,7 @@ export function PluginEditorPanel() {
               : focus.trackId.startsWith('__')
                 ? 'Audición de vista previa'
                 : 'Editor de plugin'}
-            {isRoles ? ' · Roles VST3 (UI JasWave)' : isFx ? ' · FX propio JasWave' : ' · UI+audio misma instancia'}
+            {isJasWave ? ' · VST3 JasWave (editor cyber nativo)' : ' · UI+audio misma instancia'}
           </div>
         </div>
         <button
@@ -367,13 +432,7 @@ export function PluginEditorPanel() {
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
-        {isRoles ? (
-          <JasWaveRolesPanel trackId={focus.trackId} plugin={plugin} initialRole={trackName ?? undefined} />
-        ) : isFx ? (
-          <JasWaveFxPanel trackId={focus.trackId} plugin={plugin} />
-        ) : (
-          <VstNativeEditor plugin={plugin} trackId={focus.trackId} />
-        )}
+        <VstNativeEditor plugin={plugin} trackId={focus.trackId} />
       </div>
     </div>
   )

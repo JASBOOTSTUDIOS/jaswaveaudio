@@ -81,7 +81,15 @@ public:
   void clearSidechainInput();
 
   bool openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h, std::string& err);
+  /**
+   * Editor "embebido" en el panel del DAW: ventana popup sin borde ni padre/owner (un hijo u owned de
+   * otro proceso bloquea con SendMessage), en píxeles físicos de pantalla, que main mantiene alineada
+   * con el panel. El view se ajusta al área (proporción del plugin) y se centra.
+   */
+  bool openEditorEmbedded(int x, int y, int w, int h, std::string& err);
   void setEditorBounds(int x, int y, int w, int h);
+  void setEmbeddedBounds(int x, int y, int w, int h, bool visible, bool raise);
+  bool editorEmbedded() const;
   void closeEditor();
   bool hasEditor() const;
 

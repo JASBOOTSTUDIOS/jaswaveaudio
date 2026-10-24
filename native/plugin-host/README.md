@@ -55,4 +55,10 @@ Instala en `%LOCALAPPDATA%\Programs\Common\VST3\JasWave\JasWaveRoles.vst3`.
 
 `ping`, `discover`, `load`, `prepare`, `unload`, `noteOn`, `noteOff`, `openEditor` (parentHwnd+bounds), `setEditorBounds`, `closeEditor`.
 
+Editor embebido en el panel del DAW (V4, solo VST3): `openEditor {embedded:true, x, y, w, h}` abre un popup
+sin borde y **sin padre/owner** (una ventana hija de otro proceso bloquea con `SendMessage`) en píxeles
+físicos de pantalla; el view se ajusta a su proporción y se centra. `setEditorBounds {embedded:true, x, y,
+w, h, visible, raise}` lo mueve, oculta o sube encima del DAW sin activarlo. Lo coordina
+`jas-wave/electron/plugins/editor-embebido.ts`.
+
 Fallback sin SDK: `node-host.cjs` (solo discovery).

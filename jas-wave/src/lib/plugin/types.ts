@@ -121,6 +121,9 @@ export class PluginHostError extends Error {
 }
 
 /** Contrato IPC conceptual hacia el Plugin Host Process (sin payloads de audio). */
+/** Rectángulo del panel del editor (px CSS relativos al viewport) y si está visible. */
+export type EditorEmbedRect = { x: number; y: number; w: number; h: number; visible: boolean }
+
 export type PluginHostProcessCommand =
   | { type: 'ping' }
   | { type: 'discover'; path: string }
@@ -130,10 +133,22 @@ export type PluginHostProcessCommand =
   | { type: 'setBypass'; slotId: string; bypass: boolean }
   | { type: 'getLatency'; slotId: string }
   | { type: 'crashReport'; slotId: string }
-  | { type: 'openEditor'; path: string; slotId: string; pluginId?: string; parentHwnd?: string; x?: number; y?: number; w?: number; h?: number }
+  | {
+      type: 'openEditor'
+      path: string
+      slotId: string
+      pluginId?: string
+      parentHwnd?: string
+      x?: number
+      y?: number
+      w?: number
+      h?: number
+      /** V4: rectángulo del panel (px CSS del viewport) donde main alinea el editor nativo */
+      embed?: EditorEmbedRect
+    }
   | { type: 'closeEditor'; slotId: string }
   | { type: 'focusEditor'; slotId: string; path?: string }
-  | { type: 'setEditorBounds'; slotId: string; x: number; y: number; w: number; h: number }
+  | { type: 'setEditorBounds'; slotId: string; x?: number; y?: number; w?: number; h?: number; embed?: EditorEmbedRect }
   | { type: 'noteOn'; slotId: string; pitch: number; velocity: number }
   | { type: 'noteOff'; slotId: string; pitch: number }
   | { type: 'allNotesOff'; slotId?: string }

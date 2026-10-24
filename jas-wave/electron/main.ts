@@ -35,6 +35,7 @@ import { crearVigilancia } from './plugins/vigilancia'
 import { instalarPaquete, obtenerCatalogo } from './plugins/instalador'
 import { CLAVE_PUBLICA_JASWAVE } from './plugins/clave-catalogo'
 import { crearManejadorModulos, ESQUEMA_MODULOS } from './plugins/protocolo-modulos'
+import { EditoresEmbebidos, panelDesdeComando, type VentanaEditor } from './plugins/editor-embebido'
 import { guardarLicenciaLocal, leerLicenciaLocal, leerTokenDispositivo } from './licencias-locales'
 import * as os from 'node:os'
 
@@ -1277,8 +1278,34 @@ ipcMain.handle('plugin-host-midi', async (e: IpcMainInvokeEvent, cmd: unknown) =
   sendPluginHostMidi(record)
   return { ok: true }
 })
+// V4: editor nativo embebido en el panel del DAW (popup del host alineado al panel; ver editor-embebido.ts)
+const editoresEmbebidos = new EditoresEmbebidos((cmd) => {
+  void sendPluginHostCommand(cmd, 5_000).catch(() => undefined)
+})
+function ventanaEditor(win: InstanceType<typeof BrowserWindow>): VentanaEditor {
+  const { screen } = require('electron')
+  return {
+    id: win.id,
+    isDestroyed: () => win.isDestroyed(),
+    isMinimized: () => win.isMinimized(),
+    isVisible: () => win.isVisible(),
+    getContentBounds: () => win.getContentBounds(),
+    zoom: () => win.webContents.getZoomFactor(),
+    aPantalla: (r) => (process.platform === 'win32' ? screen.dipToScreenRect(win, r) : r),
+  }
+}
+app.on('browser-window-created', (_ev: unknown, win: InstanceType<typeof BrowserWindow>) => {
+  const id = win.id
+  const seguir = (raise: boolean) => () => editoresEmbebidos.ventanaCambio(id, raise)
+  for (const evento of ['move', 'resize', 'minimize', 'maximize', 'unmaximize', 'hide', 'enter-full-screen', 'leave-full-screen'])
+    win.on(evento as 'move', seguir(false))
+  // al volver al frente, el DAW tapa el popup del host: se sube encima sin activarlo
+  for (const evento of ['focus', 'restore', 'show']) win.on(evento as 'focus', seguir(true))
+  win.on('closed', () => editoresEmbebidos.ventanaCerrada(id))
+})
+
 ipcMain.handle('plugin-host-send', async (e: IpcMainInvokeEvent, cmd: unknown) => {
-  const record = (cmd && typeof cmd === 'object' ? cmd : {}) as Record<string, unknown>
+  let record = (cmd && typeof cmd === 'object' ? cmd : {}) as Record<string, unknown>
   const type = typeof record.type === 'string' ? record.type : ''
 
   const allowed = checkHostCommand(record, pathGrants)
@@ -1288,7 +1315,18 @@ ipcMain.handle('plugin-host-send', async (e: IpcMainInvokeEvent, cmd: unknown) =
     await ensurePluginHostStarted()
   }
 
-  if (type === 'openEditor' || type === 'setEditorBounds') {
+  const panelEmbebido = type === 'openEditor' || type === 'setEditorBounds' ? panelDesdeComando(record) : null
+  // cerrar, o reabrir en ventana flotante: main deja de seguir ese editor
+  if (type === 'closeEditor' || (type === 'openEditor' && !panelEmbebido)) editoresEmbebidos.cerrar(String(record.slotId ?? ''))
+  const ventanaPanel = panelEmbebido ? BrowserWindow.fromWebContents(e.sender) : null
+  if (panelEmbebido && ventanaPanel && !ventanaPanel.isDestroyed()) {
+    const slotId = String(record.slotId ?? '')
+    if (type === 'setEditorBounds') {
+      editoresEmbebidos.actualizar(slotId, panelEmbebido)
+      return { ok: true }
+    }
+    record = editoresEmbebidos.abrir(slotId, ventanaEditor(ventanaPanel), panelEmbebido, record)
+  } else if (type === 'openEditor' || type === 'setEditorBounds') {
     // openEditor: ventana top-level centrada (sin parent Electron → sin deadlock).
     if (type === 'openEditor') {
       delete record.parentHwnd
