@@ -24,16 +24,17 @@ import {
   subscribeFxChainFocus,
 } from '@/src/lib/plugin/fx-chain-store'
 import { openPluginEditor } from '@/src/lib/plugin/plugin-editor-store'
+import { PluginPicker } from '@/components/plugin-picker'
+import { insertPluginOnTrack } from '@/src/lib/plugin/insert-plugin'
 import { selectTrackPayload } from '@/src/lib/selection-helpers'
 import { requestOpenTool } from '@/src/workspace/types'
 import { hydratePluginCatalog } from '@/src/lib/plugin/catalog-store'
-import { pluginManager, catalogPluginInsertable } from '@/src/lib/plugin-host'
+import { pluginManager } from '@/src/lib/plugin-host'
 import {
   descriptorToPluginInfo,
   extractHostPluginPath,
   isBuiltinPlugin,
   pluginRuntimeCaption,
-  VST2_NOT_HOSTED_MSG,
 } from '@/src/lib/plugin/plugin-info-adapter'
 import type { PluginDescriptor } from '@/src/lib/plugin/types'
 import {
@@ -142,30 +143,11 @@ export function FxChainPanel() {
 
   const insertSelected = async () => {
     const d = catalog.find((x) => x.pluginId === pickId)
-    const rolesInfo =
-      d && isJasWaveRolesDescriptor(d) ? jasWaveRolesPluginInfo() : null
-    const info = rolesInfo ?? (d ? descriptorToPluginInfo(d) : null)
-    if (!info) return
-    if (d && !catalogPluginInsertable(d)) {
-      setMsg(
-        d.format === 'vst2' && !d.hostReady
-          ? VST2_NOT_HOSTED_MSG
-          : 'Este plugin no está listo para el host de audio.',
-      )
-      return
-    }
+    if (!d) return
     setBusy(true)
     try {
-      await tienda.executor.execute('plugin.insert', {
-        trackId,
-        plugin: info,
-      })
-      openPluginEditor({
-        trackId,
-        pluginId: info.id,
-        pluginName: info.nombre,
-        zone: 'right',
-      })
+      const r = await insertPluginOnTrack(tienda, trackId, d)
+      setMsg(r.ok ? `«${r.info.nombre}» añadido. Haz clic en él para abrir su editor.` : r.message)
     } finally {
       setBusy(false)
     }
@@ -436,18 +418,7 @@ export function FxChainPanel() {
           </div>
         ) : null}
         <div className="flex gap-1">
-          <select
-            value={pickId}
-            onChange={(e) => setPickId(e.target.value)}
-            className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1.5 text-[11px] text-foreground"
-          >
-            {catalog.map((d) => (
-              <option key={d.pluginId} value={d.pluginId}>
-                {d.name}
-                {d.format === 'vst3' ? ' (VST3)' : d.format === 'vst2' ? ' (VST2)' : ''}
-              </option>
-            ))}
-          </select>
+          <PluginPicker catalog={catalog} value={pickId} onChange={setPickId} />
           <button
             type="button"
             disabled={busy}

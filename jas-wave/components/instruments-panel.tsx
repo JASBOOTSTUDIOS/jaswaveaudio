@@ -29,8 +29,7 @@ import {
   hydratePluginCatalog,
   promoteCachedVst3WhenHostReady,
 } from '@/src/lib/plugin/catalog-store'
-import { descriptorToPluginInfo, VST2_NOT_HOSTED_MSG } from '@/src/lib/plugin/plugin-info-adapter'
-import { openPluginEditor } from '@/src/lib/plugin/plugin-editor-store'
+import { insertPluginOnTrack, resolverPistaDestino } from '@/src/lib/plugin/insert-plugin'
 import {
   addCustomScanFolder,
   listScanFolders,
@@ -42,9 +41,8 @@ import {
   applyJasWaveRolesParameter,
   findJasWaveRolesDescriptor,
   inferRoleFromTrack,
-  jasWaveRolesPluginInfo,
+  isJasWaveRolesDescriptor,
 } from '@/src/lib/plugin/jaswave-roles'
-import { ensureTrackVstInstrument } from '@/src/lib/plugin/track-vst-runtime'
 import { inferPluginRole, type InstrumentRole } from '@/src/lib/plugin-knowledge'
 import {
   ASSIGNABLE_INSTRUMENT_ROLES,
@@ -187,42 +185,15 @@ export function InstrumentsPanel() {
   }
 
   const insertJasWaveRoles = async () => {
-    if (!selectedTrackId) {
-      setScanMsg('Selecciona una pista en el arrangement (icono piano en la cabecera).')
-      return
-    }
-    const info = jasWaveRolesPluginInfo()
-    if (!info) {
+    const rolesDesc = pluginManager.listAvailable().find((d) => isJasWaveRolesDescriptor(d))
+    if (!rolesDesc) {
       setScanMsg('Roles.vst3 no está instalado / no aparece en el catálogo. Escanea carpetas VST3.')
       return
     }
-    const track = tienda.obtenerEstado().project?.tracks?.find((t) => t.id === selectedTrackId)
-    if (!track) return
-    await tienda.executor.execute('plugin.insert', {
-      trackId: track.id,
-      plugin: info,
-    })
-    try {
-      await ensureTrackVstInstrument(track.id, info)
-      await applyJasWaveRolesParameter(track.id, info, inferRoleFromTrack(track))
-    } catch {
-      /* host opcional */
-    }
-    setScanMsg(`«${info.nombre}» añadido · rol ${inferRoleFromTrack(track)} · cargando en Plugin Host…`)
-    openPluginEditor({
-      trackId: track.id,
-      pluginId: info.id,
-      pluginName: info.nombre,
-      zone: 'right',
-    })
-    refreshCatalogUi()
+    await addToSelectedTrack(rolesDesc)
   }
 
   const addToSelectedTrack = async (d: PluginDescriptor) => {
-    if (!selectedTrackId) {
-      setScanMsg('Selecciona una pista en el arrangement (icono piano en la cabecera).')
-      return
-    }
     let plugin = d
     if (!catalogPluginInsertable(plugin)) {
       if (plugin.format === 'vst3' && plugin.path) {
@@ -233,29 +204,26 @@ export function InstrumentsPanel() {
         if (refreshed && catalogPluginInsertable(refreshed)) plugin = refreshed
       }
     }
-    if (!catalogPluginInsertable(plugin)) {
-      setScanMsg(
-        plugin.format === 'vst2' && !plugin.hostReady
-          ? `«${plugin.name}»: ${VST2_NOT_HOSTED_MSG}`
-          : `«${plugin.name}» no está listo para audio (host no disponible). Escanea de nuevo con el host en marcha.`,
-      )
+    // Sin pista seleccionada se crea una nueva: insertar siempre funciona en un paso.
+    const trackId = await resolverPistaDestino(tienda, selectedTrackId, plugin)
+    if (!trackId) {
+      setScanMsg('No se pudo crear la pista para el plugin.')
       return
     }
-    const track = tienda.obtenerEstado().project?.tracks?.find((t) => t.id === selectedTrackId)
-    if (!track) return
-    const info = descriptorToPluginInfo(plugin)
-    await tienda.executor.execute('plugin.insert', {
-      trackId: track.id,
-      plugin: info,
-    })
-    void ensureTrackVstInstrument(track.id, info)
-    setScanMsg(`«${info.nombre}» añadido · cargando audio en el Plugin Host…`)
-    openPluginEditor({
-      trackId: track.id,
-      pluginId: info.id,
-      pluginName: info.nombre,
-      zone: 'right',
-    })
+    const r = await insertPluginOnTrack(tienda, trackId, plugin)
+    if (!r.ok) {
+      setScanMsg(r.message)
+      return
+    }
+    const track = tienda.obtenerEstado().project?.tracks?.find((t) => t.id === trackId)
+    if (isJasWaveRolesDescriptor(plugin) && track) {
+      try {
+        await applyJasWaveRolesParameter(trackId, r.info, inferRoleFromTrack(track))
+      } catch {
+        /* host opcional */
+      }
+    }
+    setScanMsg(`«${r.info.nombre}» añadido a «${track?.nombre ?? 'la pista'}». Haz clic en el plugin de la pista para abrir su editor.`)
     refreshCatalogUi()
   }
 

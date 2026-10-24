@@ -29,16 +29,16 @@ import { ConfirmDialog } from './ui/confirm-dialog'
 import { requestOpenTool } from '@/src/workspace/types'
 import { audioEngine } from '@/lib/audio-engine'
 import { hydratePluginCatalog } from '@/src/lib/plugin/catalog-store'
-import { pluginManager, catalogPluginInsertable } from '@/src/lib/plugin-host'
-import { descriptorToPluginInfo } from '@/src/lib/plugin/plugin-info-adapter'
+import { pluginManager } from '@/src/lib/plugin-host'
 import { openPluginEditor } from '@/src/lib/plugin/plugin-editor-store'
+import { PluginPicker } from '@/components/plugin-picker'
+import { insertPluginOnTrack } from '@/src/lib/plugin/insert-plugin'
 import { openFxChain } from '@/src/lib/plugin/fx-chain-store'
 import { TrackMidiInput } from '@/components/track-midi-input'
 import { TrackAudioInput } from '@/components/track-audio-input'
 import type { PluginDescriptor } from '@/src/lib/plugin/types'
 import {
   isJasWaveRolesDescriptor,
-  jasWaveRolesPluginInfo,
 } from '@/src/lib/plugin/jaswave-roles'
 
 const TRACK_COLORS = [
@@ -437,46 +437,12 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 Añadir del catálogo
               </span>
               <div className="flex gap-1">
-                <select
-                  value={pickId}
-                  onChange={(e) => setPickId(e.target.value)}
-                  className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1.5 text-[11px] text-foreground"
-                >
-                  {catalog.map((d) => (
-                    <option key={d.pluginId} value={d.pluginId}>
-                      {d.name}
-                      {d.format === 'vst3' ? ' (VST3)' : d.format === 'vst2' ? ' (VST2)' : ''}
-                      {d.format === 'vst2'
-                        ? d.hostReady
-                          ? ''
-                          : ' · no hosteable'
-                        : !d.hostReady && d.format !== 'builtin'
-                          ? ' · pendiente'
-                          : ''}
-                    </option>
-                  ))}
-                </select>
+                <PluginPicker catalog={catalog} value={pickId} onChange={setPickId} />
                 <button
                   type="button"
                   onClick={() => {
-                    void (async () => {
-                      const d = catalog.find((x) => x.pluginId === pickId)
-                      if (d && !catalogPluginInsertable(d)) return
-                      const rolesInfo =
-                        d && isJasWaveRolesDescriptor(d) ? jasWaveRolesPluginInfo() : null
-                      const info = rolesInfo ?? (d ? descriptorToPluginInfo(d) : null)
-                      if (!info) return
-                      await tienda.executor.execute('plugin.insert', {
-                        trackId: track.id,
-                        plugin: info,
-                      })
-                      openPluginEditor({
-                        trackId: track.id,
-                        pluginId: info.id,
-                        pluginName: info.nombre,
-                        zone: 'right',
-                      })
-                    })()
+                    const d = catalog.find((x) => x.pluginId === pickId)
+                    if (d) void insertPluginOnTrack(tienda, track.id, d)
                   }}
                   className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-amber/15 px-2 py-1 text-[10px] font-semibold text-accent-amber hover:bg-accent-amber/25"
                 >
