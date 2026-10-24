@@ -161,14 +161,14 @@ public:
             if (negra(n)) continue;
             const Rect& r = teclas_[static_cast<size_t>(n)];
             const float b = brillo_[static_cast<size_t>(n)];
-            g.fillRect(r, b > 0.02f ? acento.withAlpha(0.25f + 0.65f * b) : hex(0x0F1E28));
+            g.fillRect(r, b > 0.02f ? acento.withAlpha(0.25f + 0.65f * b) : hex(0x12143A));
             g.strokeRect(r, Pal::panelBorde, 0.8f);
         }
         for (int n = 21; n <= 108; ++n) {
             if (!negra(n)) continue;
             const Rect& r = teclas_[static_cast<size_t>(n)];
             const float b = brillo_[static_cast<size_t>(n)];
-            g.fillRect(r, b > 0.02f ? Pal::cianNucleo.withAlpha(0.3f + 0.6f * b) : hex(0x03080C));
+            g.fillRect(r, b > 0.02f ? Pal::cianNucleo.withAlpha(0.3f + 0.6f * b) : hex(0x03030F));
             g.strokeRect(r, Pal::panelBorde, 0.8f);
         }
         for (int n = 21; n <= 108; ++n)

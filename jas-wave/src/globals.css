@@ -5,121 +5,137 @@
 
 :root {
   color-scheme: dark;
-  --background: oklch(0.16 0.004 260);
-  --foreground: oklch(0.96 0 0);
-  --card: oklch(0.2 0.004 260);
-  --card-foreground: oklch(0.96 0 0);
-  --popover: oklch(0.2 0.004 260);
-  --popover-foreground: oklch(0.96 0 0);
-  --primary: oklch(0.96 0 0);
-  --primary-foreground: oklch(0.2 0 0);
-  --secondary: oklch(0.26 0.004 260);
-  --secondary-foreground: oklch(0.96 0 0);
-  --muted: oklch(0.24 0.004 260);
-  --muted-foreground: oklch(0.62 0.006 260);
-  --accent: oklch(0.28 0.004 260);
-  --accent-foreground: oklch(0.96 0 0);
-  --destructive: oklch(0.62 0.22 25);
-  --border: oklch(1 0 0 / 8%);
-  --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.55 0 0);
+  /* V6 · paleta del logo de JasWave (medida sobre jaswavelogo.png): negro profundo, violeta, azul eléctrico, cian y plata */
+  --background: oklch(0.135 0.03 275);
+  --foreground: oklch(0.96 0.012 275);
+  --card: oklch(0.18 0.045 275);
+  --card-foreground: oklch(0.96 0.012 275);
+  --popover: oklch(0.18 0.045 275);
+  --popover-foreground: oklch(0.96 0.012 275);
+  --primary: oklch(0.6 0.23 280);
+  --primary-foreground: oklch(0.985 0.005 275);
+  --secondary: oklch(0.25 0.06 275);
+  --secondary-foreground: oklch(0.96 0.012 275);
+  --muted: oklch(0.23 0.05 275);
+  --muted-foreground: oklch(0.7 0.06 275);
+  --accent: oklch(0.3 0.09 275);
+  --accent-foreground: oklch(0.97 0.01 275);
+  --destructive: oklch(0.66 0.24 8);
+  --border: oklch(0.7 0.12 280 / 20%);
+  --input: oklch(0.7 0.12 280 / 24%);
+  --ring: oklch(0.82 0.15 213);
+  --chart-1: oklch(0.82 0.15 213);
+  --chart-2: oklch(0.6 0.24 292);
+  --chart-3: oklch(0.55 0.24 268);
+  --chart-4: oklch(0.65 0.25 330);
+  --chart-5: oklch(0.75 0.06 275);
+  --sidebar: oklch(0.115 0.03 275);
+  --sidebar-foreground: oklch(0.96 0.012 275);
+  --sidebar-primary: oklch(0.6 0.23 280);
+  --sidebar-primary-foreground: oklch(0.985 0.005 275);
+  --sidebar-accent: oklch(0.3 0.09 275);
+  --sidebar-accent-foreground: oklch(0.97 0.01 275);
+  --sidebar-border: oklch(0.7 0.12 280 / 18%);
+  --sidebar-ring: oklch(0.82 0.15 213);
   --radius: 0.5rem;
 
   /* Panels específicos del DAW */
-  --panel: oklch(0.185 0.004 260);
-  --panel-raised: oklch(0.23 0.004 260);
-  --rail: oklch(0.14 0.004 260);
-  --track-lane: oklch(0.19 0.004 260);
-  --grid-line: oklch(1 0 0 / 14%);
+  --panel: oklch(0.17 0.045 275);
+  --panel-raised: oklch(0.22 0.055 275);
+  --rail: oklch(0.115 0.03 275);
+  --track-lane: oklch(0.155 0.04 275);
+  --grid-line: oklch(0.75 0.1 280 / 14%);
 
-  /* Colores de pista */
-  --track-vocals: oklch(0.72 0.13 210);
-  --track-drums: oklch(46.14% 0.25959 281.34);
-  --track-bass: oklch(0.6 0.18 295);
-  --track-guitar: oklch(0.6 0.2 22);
-  --track-piano: oklch(47.239% 0.24727 283.693);
-  --track-fx: oklch(0.62 0.16 150);
-  --accent-amber: oklch(0.82 0.15 85);
+  /* Marca: degradado violeta → azul → cian (como "WAVE" del logo) y plata ("JAS") */
+  --brand-violet: oklch(0.6 0.25 292);
+  --brand-blue: oklch(0.55 0.24 270);
+  --brand-cyan: oklch(0.82 0.15 213);
+  --brand-silver: oklch(0.88 0.015 275);
+  --brand-gradient: linear-gradient(90deg, var(--brand-violet), var(--brand-blue) 50%, var(--brand-cyan));
+  --accent-cyan: var(--brand-cyan);
 
-  --sidebar: oklch(0.14 0.004 260);
-  --sidebar-foreground: oklch(0.96 0 0);
-  --sidebar-primary: oklch(0.96 0 0);
-  --sidebar-primary-foreground: oklch(0.2 0 0);
-  --sidebar-accent: oklch(0.28 0.004 260);
-  --sidebar-accent-foreground: oklch(0.96 0 0);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.55 0 0);
+  /* Colores de pista (familia del logo) */
+  --track-vocals: oklch(0.8 0.14 213);
+  --track-drums: oklch(0.6 0.24 292);
+  --track-bass: oklch(0.56 0.22 268);
+  --track-guitar: oklch(0.66 0.25 330);
+  --track-piano: oklch(0.58 0.22 280);
+  --track-fx: oklch(0.72 0.14 235);
+  /* Nombre histórico (scrollbars y acentos): ahora es el cian de marca */
+  --accent-amber: oklch(0.82 0.15 213);
 }
 
 .dark {
   color-scheme: dark;
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* V6 · paleta del logo de JasWave (medida sobre jaswavelogo.png): negro profundo, violeta, azul eléctrico, cian y plata */
+  --background: oklch(0.135 0.03 275);
+  --foreground: oklch(0.96 0.012 275);
+  --card: oklch(0.18 0.045 275);
+  --card-foreground: oklch(0.96 0.012 275);
+  --popover: oklch(0.18 0.045 275);
+  --popover-foreground: oklch(0.96 0.012 275);
+  --primary: oklch(0.6 0.23 280);
+  --primary-foreground: oklch(0.985 0.005 275);
+  --secondary: oklch(0.25 0.06 275);
+  --secondary-foreground: oklch(0.96 0.012 275);
+  --muted: oklch(0.23 0.05 275);
+  --muted-foreground: oklch(0.7 0.06 275);
+  --accent: oklch(0.3 0.09 275);
+  --accent-foreground: oklch(0.97 0.01 275);
+  --destructive: oklch(0.66 0.24 8);
+  --border: oklch(0.7 0.12 280 / 20%);
+  --input: oklch(0.7 0.12 280 / 24%);
+  --ring: oklch(0.82 0.15 213);
+  --chart-1: oklch(0.82 0.15 213);
+  --chart-2: oklch(0.6 0.24 292);
+  --chart-3: oklch(0.55 0.24 268);
+  --chart-4: oklch(0.65 0.25 330);
+  --chart-5: oklch(0.75 0.06 275);
+  --sidebar: oklch(0.115 0.03 275);
+  --sidebar-foreground: oklch(0.96 0.012 275);
+  --sidebar-primary: oklch(0.6 0.23 280);
+  --sidebar-primary-foreground: oklch(0.985 0.005 275);
+  --sidebar-accent: oklch(0.3 0.09 275);
+  --sidebar-accent-foreground: oklch(0.97 0.01 275);
+  --sidebar-border: oklch(0.7 0.12 280 / 18%);
+  --sidebar-ring: oklch(0.82 0.15 213);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
     color-scheme: dark;
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    /* V6 · paleta del logo de JasWave (medida sobre jaswavelogo.png): negro profundo, violeta, azul eléctrico, cian y plata */
+    --background: oklch(0.135 0.03 275);
+    --foreground: oklch(0.96 0.012 275);
+    --card: oklch(0.18 0.045 275);
+    --card-foreground: oklch(0.96 0.012 275);
+    --popover: oklch(0.18 0.045 275);
+    --popover-foreground: oklch(0.96 0.012 275);
+    --primary: oklch(0.6 0.23 280);
+    --primary-foreground: oklch(0.985 0.005 275);
+    --secondary: oklch(0.25 0.06 275);
+    --secondary-foreground: oklch(0.96 0.012 275);
+    --muted: oklch(0.23 0.05 275);
+    --muted-foreground: oklch(0.7 0.06 275);
+    --accent: oklch(0.3 0.09 275);
+    --accent-foreground: oklch(0.97 0.01 275);
+    --destructive: oklch(0.66 0.24 8);
+    --border: oklch(0.7 0.12 280 / 20%);
+    --input: oklch(0.7 0.12 280 / 24%);
+    --ring: oklch(0.82 0.15 213);
+    --chart-1: oklch(0.82 0.15 213);
+    --chart-2: oklch(0.6 0.24 292);
+    --chart-3: oklch(0.55 0.24 268);
+    --chart-4: oklch(0.65 0.25 330);
+    --chart-5: oklch(0.75 0.06 275);
+    --sidebar: oklch(0.115 0.03 275);
+    --sidebar-foreground: oklch(0.96 0.012 275);
+    --sidebar-primary: oklch(0.6 0.23 280);
+    --sidebar-primary-foreground: oklch(0.985 0.005 275);
+    --sidebar-accent: oklch(0.3 0.09 275);
+    --sidebar-accent-foreground: oklch(0.97 0.01 275);
+    --sidebar-border: oklch(0.7 0.12 280 / 18%);
+    --sidebar-ring: oklch(0.82 0.15 213);
   }
 }
 
@@ -129,7 +145,40 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* galaxia: nebulosas violeta / cian / azul (halo del logo) + campo de estrellas en tres capas */
+    background-image:
+      radial-gradient(1px 1px at 20px 30px, rgb(255 255 255 / 55%), transparent),
+      radial-gradient(1px 1px at 95px 125px, rgb(201 184 255 / 60%), transparent),
+      radial-gradient(1.5px 1.5px at 165px 62px, rgb(198 247 255 / 55%), transparent),
+      radial-gradient(1px 1px at 140px 170px, rgb(255 255 255 / 40%), transparent),
+      radial-gradient(70rem 46rem at 0% 0%, color-mix(in oklch, var(--brand-violet) 22%, transparent), transparent 70%),
+      radial-gradient(70rem 46rem at 100% 100%, color-mix(in oklch, var(--brand-cyan) 15%, transparent), transparent 70%),
+      radial-gradient(60rem 30rem at 50% 105%, color-mix(in oklch, var(--brand-blue) 18%, transparent), transparent 70%);
+    background-size: 190px 190px, 230px 230px, 310px 310px, 270px 270px, auto, auto, auto;
+    background-attachment: fixed;
   }
+}
+
+/* Utilidades de marca (diseño cyber con los colores del logo) */
+.jw-brand-text {
+  background: var(--brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.jw-brand-line {
+  height: 1px;
+  background: var(--brand-gradient);
+  opacity: 0.7;
+}
+.jw-cyber-panel {
+  background: color-mix(in oklch, var(--panel) 92%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--brand-blue) 10%, transparent), 0 0 24px -12px var(--brand-violet);
+}
+.jw-glow-cyan {
+  box-shadow: 0 0 14px -2px color-mix(in oklch, var(--brand-cyan) 55%, transparent);
 }
 
 /* Scrollbars futuristas / minimalistas (DAW) */

@@ -65,7 +65,7 @@ public:
     const wchar_t* title() const override { return L"SMART DE-ESSER"; }
     const wchar_t* subtitle() const override { return L"BANDA DIVIDIDA LR4 · SIDECHAIN FILTRADO"; }
     int modeParam() const override { return kMode; }
-    JasWaveUI::Color accent() const override { return JasWaveUI::Pal::acentoVerdeCian; }
+    JasWaveUI::Color accent() const override { return JasWaveUI::Pal::acentoAzul; }
     void build(JasWaveUI::EditorContext& c) override {
         namespace P = JasWaveUI::Plantilla;
         P::controles(c, L"DE-ESSER");

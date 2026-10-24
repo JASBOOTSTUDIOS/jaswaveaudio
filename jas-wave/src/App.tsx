@@ -412,11 +412,11 @@ function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) 
           {onVolverAlPortal && (
             <button
               type="button"
-              className="flex items-center gap-1 rounded px-1.5 text-[10px] text-muted-foreground hover:bg-panel-raised hover:text-[#2FD6F2]"
+              className="flex items-center gap-1 rounded px-1.5 text-[10px] text-muted-foreground hover:bg-panel-raised hover:text-[#19D9FF]"
               onClick={onVolverAlPortal}
               title="Volver al Portal y Catálogo PWA"
             >
-              <Home className="size-3 text-[#2FD6F2]" /> Portal
+              <Home className="size-3 text-[#19D9FF]" /> Portal
             </button>
           )}
           <WorkspaceMenu />

@@ -21,7 +21,7 @@ import {
   Eye,
   EyeOff,
 } from 'lucide-react'
-import { JasWaveAppIcon } from '@/components/brand'
+import { JasWaveAppIcon, JasWaveLogo } from '@/components/brand'
 import { useSesion, cerrarSesion, iniciarSesion, clienteSupabase } from '@/src/lib/backend/sesion'
 import { configBackend } from '@/src/lib/backend/config'
 import { PanelAdmin } from '@/components/admin/panel-admin'
@@ -92,10 +92,10 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
       id: 'com.jaswave.plugin.param-eq',
       nombre: 'JasWave Param-EQ',
       categoria: 'efectos',
-      tipo: 'Ecualizador Quirúrgico 8 Bandas',
+      tipo: 'Ecualizador Dinámico hasta 24 Bandas',
       desc: 'Ecualizador de fase lineal con doble analizador FFT en tiempo real, 6 tipos de filtro por banda y visualizador CRT.',
       icono: Sliders,
-      badges: ['8 Bandas', 'FFT Pre/Post', 'Linear Phase'],
+      badges: ['24 Bandas', 'FFT Pre/Post', 'Fase mínima'],
       incluidoEn: 'Gratuito',
     },
     {
@@ -166,67 +166,86 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
   })
 
   return (
-    <div className="relative min-h-screen bg-[#050D14] text-slate-100 font-sans selection:bg-[#2FD6F2]/30 selection:text-white">
+    <div className="relative min-h-screen bg-[#05060F] text-slate-100 font-sans selection:bg-[#19D9FF]/30 selection:text-white">
       {/* Fondo con viñeta cibernética y retícula Direct2D */}
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-[#0A1822]/80 via-[#050D14] to-[#03080D]" />
+      <div
+        className="pointer-events-none fixed inset-0"
+        style={{
+          // galaxia: nebulosas violeta / cian / azul del logo + campo de estrellas
+          backgroundImage: [
+            'radial-gradient(1px 1px at 20px 30px, rgba(255,255,255,0.55), transparent)',
+            'radial-gradient(1px 1px at 95px 125px, rgba(201,184,255,0.6), transparent)',
+            'radial-gradient(1.5px 1.5px at 165px 62px, rgba(198,247,255,0.55), transparent)',
+            'radial-gradient(1px 1px at 140px 170px, rgba(255,255,255,0.4), transparent)',
+            'radial-gradient(70rem 46rem at 0% 0%, rgba(138,77,255,0.30), transparent 70%)',
+            'radial-gradient(70rem 46rem at 100% 100%, rgba(25,217,255,0.20), transparent 70%)',
+            'radial-gradient(60rem 30rem at 50% 105%, rgba(61,91,255,0.24), transparent 70%)',
+            'radial-gradient(ellipse at top, rgba(13,15,44,0.8), #05060F 60%, #03030F)',
+          ].join(','),
+          backgroundSize: '190px 190px, 230px 230px, 310px 310px, 270px 270px, auto, auto, auto, auto',
+        }}
+      />
       <div
         className="pointer-events-none fixed inset-0 opacity-[0.04]"
         style={{
-          backgroundImage: `linear-gradient(#2FD6F2 1px, transparent 1px), linear-gradient(90deg, #2FD6F2 1px, transparent 1px)`,
+          backgroundImage: `linear-gradient(#19D9FF 1px, transparent 1px), linear-gradient(90deg, #19D9FF 1px, transparent 1px)`,
           backgroundSize: '44px 44px',
         }}
       />
 
       {/* Barra de Navegación Superior */}
-      <header className="relative z-20 flex h-16 items-center justify-between border-b border-[#1E4656]/60 bg-[#0B1823]/80 px-6 backdrop-blur-md">
+      <header className="relative z-20 flex h-16 items-center justify-between border-b border-[#2D3375]/60 bg-[#0B0D27]/80 px-6 backdrop-blur-md">
         <div className="flex items-center gap-3">
-          <div className="flex size-9 items-center justify-center rounded-lg border border-[#2FD6F2]/40 bg-[#050D14] shadow-[0_0_15px_rgba(47,214,242,0.25)]">
-            <JasWaveAppIcon className="size-5 text-[#2FD6F2]" />
+          <div className="flex size-9 items-center justify-center rounded-lg border border-[#19D9FF]/40 bg-[#05060F] shadow-[0_0_15px_rgba(25,217,255,0.25)]">
+            <JasWaveAppIcon className="size-5 text-[#19D9FF]" />
           </div>
           <div>
-            <span className="text-sm font-bold tracking-widest text-[#7FE3F5] uppercase">JASWAVE</span>
-            <span className="ml-2 rounded border border-[#2FD6F2]/30 bg-[#2FD6F2]/10 px-1.5 py-0.5 text-[9px] font-mono tracking-wider text-[#2FD6F2]">
+            <span className="text-sm font-bold tracking-widest uppercase">
+              <span className="text-[#D6D9EE]">JAS</span>
+              <span className="bg-gradient-to-r from-[#8A4DFF] via-[#3D5BFF] to-[#19D9FF] bg-clip-text text-transparent">WAVE</span>
+            </span>
+            <span className="ml-2 rounded border border-[#19D9FF]/30 bg-[#19D9FF]/10 px-1.5 py-0.5 text-[9px] font-mono tracking-wider text-[#19D9FF]">
               STUDIO PWA
             </span>
           </div>
         </div>
 
-        <nav className="hidden md:flex items-center gap-6 text-xs text-[#8FB4BF]">
-          <a href="#catalogo" className="transition-colors hover:text-[#2FD6F2]">
+        <nav className="hidden md:flex items-center gap-6 text-xs text-[#9AA3DA]">
+          <a href="#catalogo" className="transition-colors hover:text-[#19D9FF]">
             Catálogo VSTs
           </a>
-          <a href="#planes" className="transition-colors hover:text-[#2FD6F2]">
+          <a href="#planes" className="transition-colors hover:text-[#19D9FF]">
             Planes & Licencias
           </a>
-          <a href="#compatibilidad" className="transition-colors hover:text-[#2FD6F2]">
+          <a href="#compatibilidad" className="transition-colors hover:text-[#19D9FF]">
             Reaper & DAW Host
           </a>
         </nav>
 
         <div className="flex items-center gap-3">
           {cargando ? (
-            <span className="text-xs text-[#4F6B75]">Verificando sesión…</span>
+            <span className="text-xs text-[#5C6399]">Verificando sesión…</span>
           ) : session ? (
             <div className="flex items-center gap-2">
               {esAdmin && (
                 <button
                   type="button"
                   onClick={() => setModalAdminAbierto(true)}
-                  className="flex items-center gap-1 rounded border border-amber-500/50 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.2)] hover:bg-amber-500/20"
+                  className="flex items-center gap-1 rounded border border-fuchsia-500/50 bg-fuchsia-500/10 px-2.5 py-1 text-xs font-semibold text-fuchsia-300 shadow-[0_0_10px_rgba(224,82,255,0.25)] hover:bg-fuchsia-500/20"
                 >
                   <Settings className="size-3" />
                   Admin
                 </button>
               )}
               <div className="hidden sm:flex flex-col text-right">
-                <span className="text-xs font-medium text-[#A8EEFA] truncate max-w-[140px]">{session.user.email}</span>
-                <span className="text-[10px] text-[#2FD6F2] font-mono">{nivelLicencia}</span>
+                <span className="text-xs font-medium text-[#B6E8FF] truncate max-w-[140px]">{session.user.email}</span>
+                <span className="text-[10px] text-[#19D9FF] font-mono">{nivelLicencia}</span>
               </div>
               <button
                 type="button"
                 onClick={() => void cerrarSesion()}
                 title="Cerrar sesión"
-                className="rounded-md border border-[#1E4656] bg-[#050D14] p-1.5 text-[#8FB4BF] hover:border-red-500/50 hover:text-red-400"
+                className="rounded-md border border-[#2D3375] bg-[#05060F] p-1.5 text-[#9AA3DA] hover:border-red-500/50 hover:text-red-400"
               >
                 <LogOut className="size-3.5" />
               </button>
@@ -238,7 +257,7 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
                 setModoAuth('login')
                 setModalAuthAbierto(true)
               }}
-              className="flex items-center gap-1.5 rounded border border-[#2FD6F2]/50 bg-[#2FD6F2]/10 px-3 py-1.5 text-xs font-medium text-[#2FD6F2] transition-all hover:bg-[#2FD6F2]/20 hover:shadow-[0_0_12px_rgba(47,214,242,0.3)]"
+              className="flex items-center gap-1.5 rounded border border-[#19D9FF]/50 bg-[#19D9FF]/10 px-3 py-1.5 text-xs font-medium text-[#19D9FF] transition-all hover:bg-[#19D9FF]/20 hover:shadow-[0_0_12px_rgba(25,217,255,0.3)]"
             >
               <LogIn className="size-3.5" />
               Iniciar Sesión
@@ -248,7 +267,7 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
           <button
             type="button"
             onClick={manejarClickEntrar}
-            className="flex items-center gap-1.5 rounded bg-gradient-to-r from-[#2FD6F2] to-[#1AB0CE] px-4 py-1.5 text-xs font-semibold text-[#050D14] shadow-[0_0_15px_rgba(47,214,242,0.4)] transition-all hover:brightness-110 active:scale-95"
+            className="flex items-center gap-1.5 rounded bg-gradient-to-r from-[#8A4DFF] via-[#3D5BFF] to-[#19D9FF] px-4 py-1.5 text-xs font-semibold text-white shadow-[0_0_15px_rgba(61,91,255,0.5)] transition-all hover:brightness-110 active:scale-95"
           >
             Ir al DAW
             <ArrowRight className="size-3.5" />
@@ -258,19 +277,20 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
 
       {/* Hero Section */}
       <section className="relative z-10 mx-auto max-w-5xl px-6 pt-16 pb-12 text-center md:pt-24">
-        <div className="inline-flex items-center gap-2 rounded-full border border-[#2FD6F2]/30 bg-[#0B1823]/90 px-3 py-1 text-xs text-[#7FE3F5] mb-6 backdrop-blur-sm">
-          <Zap className="size-3.5 text-[#2FD6F2]" />
+        <JasWaveLogo className="mx-auto mb-4 h-40 w-auto max-w-full mix-blend-screen sm:h-52" alt="JasWave · AI Music Production DAW" />
+        <div className="inline-flex items-center gap-2 rounded-full border border-[#19D9FF]/30 bg-[#0B0D27]/90 px-3 py-1 text-xs text-[#DCE0FA] mb-6 backdrop-blur-sm">
+          <Zap className="size-3.5 text-[#19D9FF]" />
           <span>Arquitectura Híbrida: Direct2D C++ Nativo + WebAudio PWA</span>
         </div>
 
         <h1 className="text-4xl font-extrabold tracking-tight text-white sm:text-6xl sm:leading-none">
           CREA MÚSICA SIN LÍMITES EN{' '}
-          <span className="bg-gradient-to-r from-[#2FD6F2] via-[#7FE3F5] to-[#BFF6FF] bg-clip-text text-transparent drop-shadow-[0_0_30px_rgba(47,214,242,0.4)]">
+          <span className="bg-gradient-to-r from-[#8A4DFF] via-[#3D5BFF] to-[#19D9FF] bg-clip-text text-transparent drop-shadow-[0_0_30px_rgba(61,91,255,0.5)]">
             JASWAVE STUDIO
           </span>
         </h1>
 
-        <p className="mx-auto mt-6 max-w-2xl text-sm leading-relaxed text-[#8FB4BF] sm:text-base">
+        <p className="mx-auto mt-6 max-w-2xl text-sm leading-relaxed text-[#9AA3DA] sm:text-base">
           El primer DAW modular futurista con suite de plugins VST3 unificada. Diseñado para ejecutarse en tu navegador
           con latencia cero o como plugins nativos dentro de Reaper, Ableton Live y FL Studio.
         </p>
@@ -279,7 +299,7 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
           <button
             type="button"
             onClick={manejarClickEntrar}
-            className="flex items-center gap-2 rounded-lg bg-[#2FD6F2] px-6 py-3 text-sm font-bold text-[#050D14] shadow-[0_0_25px_rgba(47,214,242,0.5)] transition-all hover:bg-[#7FE3F5] hover:scale-105 active:scale-95"
+            className="flex items-center gap-2 rounded-lg bg-[#19D9FF] px-6 py-3 text-sm font-bold text-[#05060F] shadow-[0_0_25px_rgba(25,217,255,0.5)] transition-all hover:bg-[#DCE0FA] hover:scale-105 active:scale-95"
           >
             <Music4 className="size-4" />
             Entrar al Estudio (DAW)
@@ -287,14 +307,14 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
 
           <a
             href="#catalogo"
-            className="flex items-center gap-2 rounded-lg border border-[#1E4656] bg-[#0B1823]/80 px-6 py-3 text-sm font-medium text-[#A8EEFA] transition-all hover:border-[#2FD6F2]/50 hover:bg-[#0B1823]"
+            className="flex items-center gap-2 rounded-lg border border-[#2D3375] bg-[#0B0D27]/80 px-6 py-3 text-sm font-medium text-[#B6E8FF] transition-all hover:border-[#19D9FF]/50 hover:bg-[#0B0D27]"
           >
             Explorar Catálogo VST3
           </a>
         </div>
 
         {/* Estado de acceso */}
-        <div className="mt-6 text-xs text-[#4F6B75]">
+        <div className="mt-6 text-xs text-[#5C6399]">
           {session ? (
             <span className="text-emerald-400">● Conectado como {session.user.email} (Acceso Autorizado)</span>
           ) : (
@@ -305,10 +325,10 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
 
       {/* Sección Catálogo de Plugins */}
       <section id="catalogo" className="relative z-10 mx-auto max-w-6xl px-6 py-12">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-[#1E4656] pb-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-[#2D3375] pb-4">
           <div>
-            <h2 className="text-xl font-bold tracking-wider text-[#7FE3F5] uppercase">Catálogo de Plugins VST3</h2>
-            <p className="text-xs text-[#8FB4BF]">Plugins nativos y módulos web listos para producción profesional.</p>
+            <h2 className="text-xl font-bold tracking-wider text-[#DCE0FA] uppercase">Catálogo de Plugins VST3</h2>
+            <p className="text-xs text-[#9AA3DA]">Plugins nativos y módulos web listos para producción profesional.</p>
           </div>
 
           <div className="flex gap-2">
@@ -319,8 +339,8 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
                 onClick={() => setFiltroCategoria(cat)}
                 className={`rounded px-3 py-1 text-xs font-medium uppercase transition-colors ${
                   filtroCategoria === cat
-                    ? 'border border-[#2FD6F2]/60 bg-[#2FD6F2]/20 text-[#2FD6F2]'
-                    : 'border border-transparent text-[#8FB4BF] hover:text-[#A8EEFA]'
+                    ? 'border border-[#19D9FF]/60 bg-[#19D9FF]/20 text-[#19D9FF]'
+                    : 'border border-transparent text-[#9AA3DA] hover:text-[#B6E8FF]'
                 }`}
               >
                 {cat}
@@ -335,29 +355,29 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
             return (
               <div
                 key={plugin.id}
-                className="group relative flex flex-col justify-between rounded-xl border border-[#1E4656] bg-[#0B1823]/90 p-5 shadow-lg transition-all hover:border-[#2FD6F2]/60 hover:shadow-[0_0_20px_rgba(47,214,242,0.15)]"
+                className="group relative flex flex-col justify-between rounded-xl border border-[#2D3375] bg-[#0B0D27]/90 p-5 shadow-lg transition-all hover:border-[#19D9FF]/60 hover:shadow-[0_0_20px_rgba(25,217,255,0.15)]"
               >
                 <div>
                   <div className="flex items-center justify-between">
-                    <div className="flex size-10 items-center justify-center rounded-lg border border-[#2FD6F2]/30 bg-[#050D14] text-[#2FD6F2] group-hover:shadow-[0_0_12px_rgba(47,214,242,0.3)]">
+                    <div className="flex size-10 items-center justify-center rounded-lg border border-[#19D9FF]/30 bg-[#05060F] text-[#19D9FF] group-hover:shadow-[0_0_12px_rgba(25,217,255,0.3)]">
                       <Icono className="size-5" />
                     </div>
-                    <span className="rounded border border-[#1E4656] bg-[#050D14] px-2 py-0.5 text-[10px] font-mono text-[#7FE3F5]">
+                    <span className="rounded border border-[#2D3375] bg-[#05060F] px-2 py-0.5 text-[10px] font-mono text-[#DCE0FA]">
                       {plugin.incluidoEn}
                     </span>
                   </div>
 
-                  <h3 className="mt-4 text-base font-bold text-white group-hover:text-[#7FE3F5] transition-colors">
+                  <h3 className="mt-4 text-base font-bold text-white group-hover:text-[#DCE0FA] transition-colors">
                     {plugin.nombre}
                   </h3>
-                  <p className="text-[11px] font-mono text-[#2FD6F2]">{plugin.tipo}</p>
-                  <p className="mt-2 text-xs leading-relaxed text-[#8FB4BF]">{plugin.desc}</p>
+                  <p className="text-[11px] font-mono text-[#19D9FF]">{plugin.tipo}</p>
+                  <p className="mt-2 text-xs leading-relaxed text-[#9AA3DA]">{plugin.desc}</p>
                 </div>
 
-                <div className="mt-4 pt-4 border-t border-[#1E4656]/50">
+                <div className="mt-4 pt-4 border-t border-[#2D3375]/50">
                   <div className="flex flex-wrap gap-1.5">
                     {plugin.badges.map((b) => (
-                      <span key={b} className="rounded bg-[#050D14] px-2 py-0.5 text-[9px] text-[#A8EEFA]">
+                      <span key={b} className="rounded bg-[#05060F] px-2 py-0.5 text-[9px] text-[#B6E8FF]">
                         {b}
                       </span>
                     ))}
@@ -372,33 +392,33 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
       {/* Sección Planes de Membresía */}
       <section id="planes" className="relative z-10 mx-auto max-w-5xl px-6 py-16">
         <div className="text-center mb-12">
-          <h2 className="text-2xl font-bold tracking-wider text-[#7FE3F5] uppercase">Planes y Licencias JasWave</h2>
-          <p className="mt-2 text-xs text-[#8FB4BF]">
+          <h2 className="text-2xl font-bold tracking-wider text-[#DCE0FA] uppercase">Planes y Licencias JasWave</h2>
+          <p className="mt-2 text-xs text-[#9AA3DA]">
             Elige el nivel de potencia adecuado para tu estudio. Todos los planes incluyen acceso completo al DAW Web.
           </p>
         </div>
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
           {/* Plan Gratuito */}
-          <div className="flex flex-col justify-between rounded-xl border border-[#1E4656] bg-[#0B1823]/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-col justify-between rounded-xl border border-[#2D3375] bg-[#0B0D27]/80 p-6 backdrop-blur-sm">
             <div>
-              <span className="text-xs font-mono text-[#8FB4BF] uppercase">Comunidad</span>
+              <span className="text-xs font-mono text-[#9AA3DA] uppercase">Comunidad</span>
               <h3 className="text-xl font-bold text-white mt-1">Gratuita</h3>
-              <div className="mt-3 text-2xl font-extrabold text-[#7FE3F5]">$0</div>
-              <p className="mt-2 text-xs text-[#8FB4BF]">Para productores que inician en el ecosistema JasWave.</p>
+              <div className="mt-3 text-2xl font-extrabold text-[#DCE0FA]">$0</div>
+              <p className="mt-2 text-xs text-[#9AA3DA]">Para productores que inician en el ecosistema JasWave.</p>
 
               <ul className="mt-6 space-y-2 text-xs text-slate-300">
                 <li className="flex items-center gap-2">
-                  <Check className="size-3.5 text-[#2FD6F2]" /> Acceso completo al DAW Web y Desktop
+                  <Check className="size-3.5 text-[#19D9FF]" /> Acceso completo al DAW Web y Desktop
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="size-3.5 text-[#2FD6F2]" /> EQ Paramétrico (4 bandas)
+                  <Check className="size-3.5 text-[#19D9FF]" /> EQ Paramétrico (4 bandas)
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="size-3.5 text-[#2FD6F2]" /> Compresor de canal básico
+                  <Check className="size-3.5 text-[#19D9FF]" /> Compresor de canal básico
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="size-3.5 text-[#2FD6F2]" /> Piano Synth acústico (16 voces)
+                  <Check className="size-3.5 text-[#19D9FF]" /> Piano Synth acústico (16 voces)
                 </li>
               </ul>
             </div>
@@ -406,40 +426,40 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
             <button
               type="button"
               onClick={manejarClickEntrar}
-              className="mt-8 w-full rounded border border-[#2FD6F2]/50 bg-[#2FD6F2]/10 py-2.5 text-xs font-semibold text-[#2FD6F2] hover:bg-[#2FD6F2]/20"
+              className="mt-8 w-full rounded border border-[#19D9FF]/50 bg-[#19D9FF]/10 py-2.5 text-xs font-semibold text-[#19D9FF] hover:bg-[#19D9FF]/20"
             >
               Comenzar Gratis
             </button>
           </div>
 
           {/* Plan Pro */}
-          <div className="relative flex flex-col justify-between rounded-xl border-2 border-[#2FD6F2] bg-[#0B1823] p-6 shadow-[0_0_30px_rgba(47,214,242,0.2)]">
-            <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full border border-[#2FD6F2] bg-[#050D14] px-3 py-0.5 text-[10px] font-bold text-[#2FD6F2] uppercase">
+          <div className="relative flex flex-col justify-between rounded-xl border-2 border-[#19D9FF] bg-[#0B0D27] p-6 shadow-[0_0_30px_rgba(25,217,255,0.2)]">
+            <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full border border-[#19D9FF] bg-[#05060F] px-3 py-0.5 text-[10px] font-bold text-[#19D9FF] uppercase">
               Más Popular
             </div>
             <div>
-              <span className="text-xs font-mono text-[#2FD6F2] uppercase">Estudio</span>
+              <span className="text-xs font-mono text-[#19D9FF] uppercase">Estudio</span>
               <h3 className="text-xl font-bold text-white mt-1">Pro Creator</h3>
-              <div className="mt-3 text-2xl font-extrabold text-[#7FE3F5]">
-                $9.99 <span className="text-xs font-normal text-[#8FB4BF]">/ mes</span>
+              <div className="mt-3 text-2xl font-extrabold text-[#DCE0FA]">
+                $9.99 <span className="text-xs font-normal text-[#9AA3DA]">/ mes</span>
               </div>
-              <p className="mt-2 text-xs text-[#8FB4BF]">Para mezcla profesional, masterización y streaming.</p>
+              <p className="mt-2 text-xs text-[#9AA3DA]">Para mezcla profesional, masterización y streaming.</p>
 
               <ul className="mt-6 space-y-2 text-xs text-slate-300">
                 <li className="flex items-center gap-2">
-                  <Check className="size-3.5 text-[#2FD6F2]" /> Todo lo incluido en Gratuita
+                  <Check className="size-3.5 text-[#19D9FF]" /> Todo lo incluido en Gratuita
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="size-3.5 text-[#2FD6F2]" /> EQ 8 bandas quirúrgico completo
+                  <Check className="size-3.5 text-[#19D9FF]" /> EQ dinámico de hasta 24 bandas
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="size-3.5 text-[#2FD6F2]" /> Bus Compressor VCA + Sidechain HPF
+                  <Check className="size-3.5 text-[#19D9FF]" /> Bus Compressor VCA + Sidechain HPF
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="size-3.5 text-[#2FD6F2]" /> TruePeak Limiter 8× + LUFS
+                  <Check className="size-3.5 text-[#19D9FF]" /> TruePeak Limiter 8× + LUFS
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="size-3.5 text-[#2FD6F2]" /> Guardado y sincronización en la nube
+                  <Check className="size-3.5 text-[#19D9FF]" /> Guardado y sincronización en la nube
                 </li>
               </ul>
             </div>
@@ -447,21 +467,21 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
             <button
               type="button"
               onClick={manejarClickEntrar}
-              className="mt-8 w-full rounded bg-[#2FD6F2] py-2.5 text-xs font-bold text-[#050D14] shadow-[0_0_15px_rgba(47,214,242,0.4)] hover:bg-[#7FE3F5]"
+              className="mt-8 w-full rounded bg-[#19D9FF] py-2.5 text-xs font-bold text-[#05060F] shadow-[0_0_15px_rgba(25,217,255,0.4)] hover:bg-[#DCE0FA]"
             >
               Obtener Pro
             </button>
           </div>
 
           {/* Plan Ultra */}
-          <div className="flex flex-col justify-between rounded-xl border border-[#1E4656] bg-[#0B1823]/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-col justify-between rounded-xl border border-[#2D3375] bg-[#0B0D27]/80 p-6 backdrop-blur-sm">
             <div>
               <span className="text-xs font-mono text-purple-400 uppercase">Suite Completa</span>
               <h3 className="text-xl font-bold text-white mt-1">Ultra Suite</h3>
-              <div className="mt-3 text-2xl font-extrabold text-[#7FE3F5]">
-                $19.99 <span className="text-xs font-normal text-[#8FB4BF]">/ mes</span>
+              <div className="mt-3 text-2xl font-extrabold text-[#DCE0FA]">
+                $19.99 <span className="text-xs font-normal text-[#9AA3DA]">/ mes</span>
               </div>
-              <p className="mt-2 text-xs text-[#8FB4BF]">Acceso sin restricciones para DAWs externos y masterización.</p>
+              <p className="mt-2 text-xs text-[#9AA3DA]">Acceso sin restricciones para DAWs externos y masterización.</p>
 
               <ul className="mt-6 space-y-2 text-xs text-slate-300">
                 <li className="flex items-center gap-2">
@@ -494,7 +514,7 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
       </section>
 
       {/* Footer */}
-      <footer className="relative z-10 border-t border-[#1E4656]/50 bg-[#03080D] px-6 py-8 text-center text-xs text-[#4F6B75]">
+      <footer className="relative z-10 border-t border-[#2D3375]/50 bg-[#03030F] px-6 py-8 text-center text-xs text-[#5C6399]">
         <p>© 2026 JasWave Audio Workstation. Desarrollado con Direct2D C++, WebAudio y Supabase.</p>
         <p className="mt-1 text-[10px]">Todos los plugins VST3 son marcas registradas de JasWave Audio Technologies.</p>
       </footer>
@@ -502,23 +522,23 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
       {/* Modal de Autenticación (Login / Registro) */}
       {modalAuthAbierto && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
-          <div className="relative w-full max-w-sm rounded-xl border border-[#2FD6F2]/40 bg-[#0B1823] p-6 shadow-[0_0_40px_rgba(47,214,242,0.2)]">
+          <div className="relative w-full max-w-sm rounded-xl border border-[#19D9FF]/40 bg-[#0B0D27] p-6 shadow-[0_0_40px_rgba(25,217,255,0.2)]">
             <button
               type="button"
               onClick={() => setModalAuthAbierto(false)}
-              className="absolute top-4 right-4 text-[#8FB4BF] hover:text-white"
+              className="absolute top-4 right-4 text-[#9AA3DA] hover:text-white"
             >
               <X className="size-4" />
             </button>
 
             <div className="flex items-center gap-2 mb-4">
-              <JasWaveAppIcon className="size-5 text-[#2FD6F2]" />
+              <JasWaveAppIcon className="size-5 text-[#19D9FF]" />
               <h3 className="text-base font-bold text-white uppercase tracking-wider">
                 {modoAuth === 'login' ? 'Iniciar Sesión' : 'Crear Cuenta'}
               </h3>
             </div>
 
-            <p className="text-xs text-[#8FB4BF] mb-4">
+            <p className="text-xs text-[#9AA3DA] mb-4">
               {modoAuth === 'login'
                 ? 'Ingresa tus credenciales para acceder a tu estudio y activar tus plugins VST3.'
                 : 'Crea tu cuenta gratuita de JasWave para acceder al DAW y obtener tu licencia base.'}
@@ -526,19 +546,19 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
 
             <form onSubmit={manejarAuth} className="space-y-3">
               <div>
-                <label className="block text-[11px] font-mono text-[#A8EEFA] mb-1">Correo Electrónico</label>
+                <label className="block text-[11px] font-mono text-[#B6E8FF] mb-1">Correo Electrónico</label>
                 <input
                   type="email"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="usuario@ejemplo.com"
-                  className="w-full rounded border border-[#1E4656] bg-[#050D14] px-3 py-2 text-xs text-white placeholder-[#4F6B75] focus:border-[#2FD6F2] focus:outline-none"
+                  className="w-full rounded border border-[#2D3375] bg-[#05060F] px-3 py-2 text-xs text-white placeholder-[#5C6399] focus:border-[#19D9FF] focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-mono text-[#A8EEFA] mb-1">Contraseña</label>
+                <label className="block text-[11px] font-mono text-[#B6E8FF] mb-1">Contraseña</label>
                 <div className="relative">
                   <input
                     type={mostrarPassword ? 'text' : 'password'}
@@ -546,12 +566,12 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full rounded border border-[#1E4656] bg-[#050D14] pl-3 pr-10 py-2 text-xs text-white placeholder-[#4F6B75] focus:border-[#2FD6F2] focus:outline-none"
+                    className="w-full rounded border border-[#2D3375] bg-[#05060F] pl-3 pr-10 py-2 text-xs text-white placeholder-[#5C6399] focus:border-[#19D9FF] focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={() => setMostrarPassword((v) => !v)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-[#8FB4BF] hover:text-[#2FD6F2] transition-colors"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-[#9AA3DA] hover:text-[#19D9FF] transition-colors"
                     title={mostrarPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
                   >
                     {mostrarPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
@@ -568,7 +588,7 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
               <button
                 type="submit"
                 disabled={authEnviando}
-                className="w-full rounded bg-[#2FD6F2] py-2 text-xs font-bold text-[#050D14] shadow-[0_0_15px_rgba(47,214,242,0.3)] hover:bg-[#7FE3F5] transition-all disabled:opacity-50"
+                className="w-full rounded bg-[#19D9FF] py-2 text-xs font-bold text-[#05060F] shadow-[0_0_15px_rgba(25,217,255,0.3)] hover:bg-[#DCE0FA] transition-all disabled:opacity-50"
               >
                 {authEnviando ? 'Verificando…' : modoAuth === 'login' ? 'Entrar' : 'Registrarse'}
               </button>
@@ -581,7 +601,7 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
                   setModoAuth(modoAuth === 'login' ? 'registro' : 'login')
                   setAuthError(null)
                 }}
-                className="text-xs text-[#2FD6F2] hover:underline"
+                className="text-xs text-[#19D9FF] hover:underline"
               >
                 {modoAuth === 'login' ? '¿No tienes cuenta? Regístrate aquí' : '¿Ya tienes cuenta? Inicia sesión'}
               </button>
@@ -593,7 +613,7 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
       {/* Modal Admin */}
       {modalAdminAbierto && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
-          <div className="relative w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-xl border border-amber-500/50 bg-[#0B1823] p-6 shadow-2xl">
+          <div className="relative w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-xl border border-fuchsia-500/50 bg-[#0B0D27] p-6 shadow-2xl">
             <button
               type="button"
               onClick={() => setModalAdminAbierto(false)}
@@ -602,7 +622,7 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
               <X className="size-5" />
             </button>
             <div className="flex items-center gap-2 mb-4">
-              <Settings className="size-5 text-amber-400" />
+              <Settings className="size-5 text-fuchsia-400" />
               <h3 className="text-lg font-bold text-white uppercase tracking-wider">
                 Panel Maestro de Administración
               </h3>

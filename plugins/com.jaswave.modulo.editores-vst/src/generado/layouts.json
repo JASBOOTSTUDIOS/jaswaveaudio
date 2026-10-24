@@ -7,7 +7,7 @@
       "subtitulo": "HASTA 24 BANDAS · FASE MÍNIMA · LATENCIA 0",
       "instrumento": false,
       "visualizador": "espectro-dual",
-      "acento": "#2FD6F2",
+      "acento": "#19D9FF",
       "base": {
         "ancho": 1100,
         "alto": 620
@@ -468,7 +468,7 @@
       "subtitulo": "VCA FEED-FORWARD · SOFT-KNEE · ENLACE ESTÉREO",
       "instrumento": false,
       "visualizador": "espectro-dual",
-      "acento": "#F2B544",
+      "acento": "#9560FF",
       "base": {
         "ancho": 1100,
         "alto": 620
@@ -823,7 +823,7 @@
       "subtitulo": "DETECCIÓN TRUE-PEAK · MEDICIÓN BS.1770-4 · LOOKAHEAD",
       "instrumento": false,
       "visualizador": "espectro-dual",
-      "acento": "#F5E347",
+      "acento": "#E052FF",
       "base": {
         "ancho": 1100,
         "alto": 620
@@ -1110,7 +1110,7 @@
       "subtitulo": "BANDA DIVIDIDA LR4 · SIDECHAIN FILTRADO",
       "instrumento": false,
       "visualizador": "espectro-dual",
-      "acento": "#3DF5C0",
+      "acento": "#4D7CFF",
       "base": {
         "ancho": 1100,
         "alto": 620
@@ -1463,7 +1463,7 @@
       "subtitulo": "GANANCIA · FASE · ANCHO M/S · MONO-GRAVES",
       "instrumento": false,
       "visualizador": "vectorscopio",
-      "acento": "#2FD6F2",
+      "acento": "#19D9FF",
       "base": {
         "ancho": 1100,
         "alto": 620
@@ -1830,7 +1830,7 @@
       "subtitulo": "SÍNTESIS MODAL · CUERDAS AL UNÍSONO · 88 TECLAS",
       "instrumento": true,
       "visualizador": "espectro-instrumento",
-      "acento": "#2FD6F2",
+      "acento": "#19D9FF",
       "base": {
         "ancho": 1100,
         "alto": 620
@@ -2184,7 +2184,7 @@
       "subtitulo": "INSTRUMENTO POR ROL MUSICAL · 13 ROLES",
       "instrumento": true,
       "visualizador": "espectro-instrumento",
-      "acento": "#A77BFF",
+      "acento": "#B59BFF",
       "base": {
         "ancho": 1100,
         "alto": 620

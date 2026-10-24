@@ -225,7 +225,7 @@ private:
         g.fillChamfer(Layout::kScreen, 14.0f, hex(0x000000, 0.70f));
         const Rect card{ 320.0f, 196.0f, 780.0f, 436.0f };
         g.fillChamfer(card.inset(-3.0f), 9.0f, Pal::cianGlow.withAlpha(0.08f));
-        g.fillChamfer(card, 6.0f, hex(0x0B1823, 0.97f));
+        g.fillChamfer(card, 6.0f, hex(0x0B0D27, 0.97f));
         g.strokeChamfer(card, 6.0f, Pal::cian.withAlpha(0.55f), 1.0f);
         g.text(L"ACTIVAR JASWAVE", { card.l, card.t + 16.0f, card.r, card.t + 44.0f }, Font::Title, Pal::textoTitulo, Align::Center, true);
         g.line(card.l + 40.0f, card.t + 52.0f, card.r - 40.0f, card.t + 52.0f, Pal::panelBorde, 1.0f);
@@ -257,7 +257,7 @@ private:
         float x = std::min(mouse_.x + 12.0f, Layout::kScreen.r - w - 4.0f);
         float y = std::max(mouse_.y - 28.0f, Layout::kScreen.t + 4.0f);
         const Rect r{ x, y, x + w, y + 20.0f };
-        g.fillRect(r, hex(0x08131B, 0.96f));
+        g.fillRect(r, hex(0x0A0C26, 0.96f));
         g.strokeRect(r, Pal::bloqueado, 1.0f);
         g.text(text, r, Font::Label, Pal::textoEtiqueta, Align::Center);
     }

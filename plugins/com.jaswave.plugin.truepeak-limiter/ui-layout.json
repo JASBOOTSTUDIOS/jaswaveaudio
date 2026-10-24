@@ -4,7 +4,7 @@
   "subtitulo": "DETECCIÓN TRUE-PEAK · MEDICIÓN BS.1770-4 · LOOKAHEAD",
   "instrumento": false,
   "visualizador": "espectro-dual",
-  "acento": "#F5E347",
+  "acento": "#E052FF",
   "base": {
     "ancho": 1100,
     "alto": 620

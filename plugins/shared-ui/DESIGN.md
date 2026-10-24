@@ -33,24 +33,31 @@ DPI de la ventana), sin asignaciones de memoria por frame, refresco de visualiza
 
 ## 2. Paleta (tokens)
 
+V6: la paleta sale del logo de JasWave (`jas-wave/public/jaswavelogo.png`, valores medidos sobre el PNG): negro profundo,
+violeta, azul eléctrico, cian y plata cromada. "JAS" va en plata y "WAVE" con el degradado violeta → azul → cian; ese mismo
+degradado (`gradienteMarca`) se usa en la marca, el borde de la pantalla y los LEDs (violeta a la izquierda, cian a la derecha).
+
 | Token | Valor | Uso |
 |---|---|---|
-| `metal.alto` / `metal.bajo` | `#3A4148` / `#15191D` | gradiente del marco |
-| `metal.brillo` / `metal.sombra` | `#5C666F` / `#0A0C0E` | bisel |
-| `pantalla.fondo` | `#050D14` → `#0A1822` | gradiente radial (centro más claro, viñeta en bordes) |
-| `panel.fondo` | `#0B1823` al 88 % | cajas de sección |
-| `panel.borde` | `#1E4656` | contorno 1 px de secciones |
-| `reticula` | `#163543` al 55 % | líneas de grid cada 44 px |
-| `reticula.nodo` | `#3FB8D0` | puntos en algunas intersecciones (brillo suave) |
-| `cian` | `#2FD6F2` | arcos de perilla, trazos activos, LEDs |
-| `cian.nucleo` | `#BFF6FF` | centro de LEDs y punto del indicador |
-| `cian.glow` | `#2FD6F2` al 35 % | resplandor (blur 6–10 px) |
-| `texto.titulo` | `#7FE3F5` | nombre del plugin y marca |
-| `texto.etiqueta` | `#8FB4BF` | etiquetas de control |
-| `texto.valor` | `#A8EEFA` | lecturas numéricas |
-| `texto.tenue` | `#4F6B75` | pie, unidades, ejes |
-| `bloqueado` | `#5A6870` + candado | controles sin licencia/feature |
-| `alerta` | `#F2B544` | clip, true-peak sobre techo |
+| `metal.alto` / `metal.bajo` | `#3A3F5E` / `#14152B` | gradiente del marco |
+| `metal.brillo` / `metal.sombra` | `#6A70A6` / `#08081A` | bisel |
+| `pantalla.fondo` | `#05060F` → `#0D0F2C` | gradiente radial (centro más claro, viñeta en bordes) |
+| `panel.fondo` | `#0B0D27` al 62 % | cajas de sección |
+| `panel.borde` | `#2D3375` | contorno 1 px de secciones |
+| `reticula` | `#1E2260` al 55 % | líneas de grid cada 44 px |
+| `reticula.nodo` | `#7C86FF` | puntos en algunas intersecciones (brillo suave) |
+| `cian` | `#19D9FF` | arcos de perilla, trazos activos, LEDs, espectro de salida |
+| `cian.nucleo` | `#C6F7FF` | centro de LEDs y punto del indicador |
+| `cian.glow` | `#19D9FF` al 35 % | resplandor (blur 6–10 px) |
+| `violeta` / `azul` / `plata` | `#8A4DFF` / `#3D5BFF` / `#D6D9EE` | marca (degradado violeta → azul → cian), LED izquierdo / inferior, "JAS" |
+| `texto.titulo` | `#DCE0FA` | nombre del plugin (plata) |
+| `texto.etiqueta` | `#9AA3DA` | etiquetas de control |
+| `texto.valor` | `#B6E8FF` | lecturas numéricas |
+| `texto.tenue` | `#5C6399` | pie, unidades, ejes |
+| `espectro.in` | `#8F83FF` al 65 % | espectro de entrada |
+| `bloqueado` | `#5D6288` + candado | controles sin licencia/feature |
+| `alerta` | `#FF4FC3` | clip, true-peak sobre techo |
+| `acento` por plugin | EQ/Utility/Piano `#19D9FF` · Compresor `#9560FF` · Limitador `#E052FF` · De-esser `#4D7CFF` · Roles `#B59BFF` | detalles propios de cada plugin dentro de la familia del logo |
 
 ## 3. Tipografía
 

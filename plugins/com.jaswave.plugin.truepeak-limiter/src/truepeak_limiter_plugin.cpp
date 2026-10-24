@@ -66,7 +66,7 @@ class Editor : public JasWaveUI::PluginEditor {
 public:
     const wchar_t* title() const override { return L"TRUE-PEAK LIMITER"; }
     const wchar_t* subtitle() const override { return L"DETECCIÓN TRUE-PEAK · MEDICIÓN BS.1770-4 · LOOKAHEAD"; }
-    JasWaveUI::Color accent() const override { return JasWaveUI::Pal::acentoAmarillo; }
+    JasWaveUI::Color accent() const override { return JasWaveUI::Pal::acentoMagenta; }
     void build(JasWaveUI::EditorContext& c) override {
         namespace P = JasWaveUI::Plantilla;
         P::controles(c, L"LIMITADOR");
@@ -107,7 +107,7 @@ public:
         meters_.drawLabels(g);
         const Rect a = P::areaEspectro();
         espectro_.dibujar(g, a);
-        // techo de limitación (acento amarillo) sobre la escala dBFS
+        // techo de limitación (acento magenta) sobre la escala dBFS
         const double ceil = c.params.plain(kCeiling);
         const float yC = P::yDbfs(a, static_cast<float>(ceil));
         g.fillRect({ a.l, a.t, a.r, yC }, ac.withAlpha(0.05f));

@@ -170,7 +170,7 @@ public:
     const wchar_t* subtitle() const override { return L"INSTRUMENTO POR ROL MUSICAL · 13 ROLES"; }
     int modeParam() const override { return kParamRoleId; }
     const char* visualizer() const override { return "espectro-instrumento"; }
-    JasWaveUI::Color accent() const override { return JasWaveUI::Pal::acentoVioleta; }
+    JasWaveUI::Color accent() const override { return JasWaveUI::Pal::acentoLila; }
     void build(JasWaveUI::EditorContext& c) override {
         namespace P = JasWaveUI::Plantilla;
         P::controles(c, L"ENVOLVENTE · FILTRO");
@@ -218,7 +218,7 @@ public:
             const Rect r = cellRect(i);
             const bool locked = drumsLocked && (i == 0 || i == 11);
             const bool on = i == sel;
-            g.fillRect(r, on ? ac.withAlpha(0.16f) : hex(0x08131B, 0.85f));
+            g.fillRect(r, on ? ac.withAlpha(0.16f) : hex(0x0A0C26, 0.85f));
             g.strokeRect(r, locked ? Pal::bloqueado.withAlpha(0.6f) : on ? ac : Pal::panelBorde, 1.0f);
             if (on && !locked) g.glowLine(r.l + 4, r.b - 3, r.r - 4, r.b - 3, ac, 1.5f);
             if (locked) Chrome::drawLock(g, r.cx(), r.t + 12, 8.0f, Pal::bloqueado);

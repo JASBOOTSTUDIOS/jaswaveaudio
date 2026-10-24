@@ -124,7 +124,7 @@ public:
         P::panelMedicion(g, L"CORRELACIÓN DE FASE");
         const Rect m = P::kMini;
         const Rect bar{ P::kMiniGrafico.l + 26, m.t + 62, P::kMiniGrafico.r - 10, m.t + 78 };
-        g.fillRect(bar, hex(0x03080C));
+        g.fillRect(bar, hex(0x03030F));
         g.strokeRect(bar, Pal::panelBorde, 1.0f);
         for (int i = 0; i <= 8; ++i) {
             const float x = bar.l + bar.w() * i / 8.0f;

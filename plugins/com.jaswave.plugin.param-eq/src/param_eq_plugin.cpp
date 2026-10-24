@@ -175,7 +175,7 @@ public:
             const Color col = locked ? Pal::bloqueado : Pal::cian;
             if (b == sel_ && !locked) { g.circle(p.x, p.y, 11.0f, Pal::cianGlow, 4.0f); g.circle(p.x, p.y, 9.0f, Pal::cian, 1.0f); }
             if (on && !locked) { g.glowDot(p.x, p.y, 6.0f, col.withAlpha(0.9f)); g.fillCircle(p.x, p.y, 2.6f, Pal::cianNucleo); }
-            else { g.fillCircle(p.x, p.y, 6.0f, hex(0x07121A)); g.circle(p.x, p.y, 6.0f, col.withAlpha(0.7f), 1.2f); }
+            else { g.fillCircle(p.x, p.y, 6.0f, hex(0x090B24)); g.circle(p.x, p.y, 6.0f, col.withAlpha(0.7f), 1.2f); }
             wchar_t n[4];
             swprintf_s(n, L"%d", b + 1);
             g.text(n, { p.x + 7, p.y - 18, p.x + 24, p.y - 6 }, Font::ValueSmall, locked ? Pal::bloqueado : Pal::textoValor, Align::Left);
@@ -384,7 +384,7 @@ private:
         const bool hay = in > -100.0f;
         wchar_t buf[160];
         const Rect r{ pr.l + 6, pr.t + 4, pr.l + 330, pr.t + 40 };
-        g.fillRect(r, hex(0x07121A, 0.72f));
+        g.fillRect(r, hex(0x090B24, 0.72f));
         g.strokeRect(r, Pal::panelBorde, 1.0f);
         if (hay) swprintf_s(buf, L"B%d  IN %.1f dB  OUT %.1f dB  APORTE %+.1f dB", sel_ + 1, in, out, out - in);
         else swprintf_s(buf, L"B%d  sin señal en la banda", sel_ + 1);
@@ -409,7 +409,7 @@ private:
             const bool locked = c.params.locked(bandParam(b, fOn));
             const bool on = c.params.plain(bandParam(b, fOn)) >= 0.5;
             const bool sel = b == sel_;
-            g.fillChamfer(r, 4.0f, sel ? hex(0x0E2C38, 0.9f) : hex(0x08131B, 0.85f));
+            g.fillChamfer(r, 4.0f, sel ? hex(0x1A1F5C, 0.9f) : hex(0x0A0C26, 0.85f));
             g.strokeChamfer(r, 4.0f, locked ? Pal::bloqueado.withAlpha(0.6f) : sel ? Pal::cian : Pal::panelBorde, 1.0f);
             wchar_t buf[32];
             swprintf_s(buf, L"%d", b + 1);

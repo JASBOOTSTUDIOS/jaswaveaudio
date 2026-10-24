@@ -12,7 +12,7 @@ namespace Kit {
 
 // Caja de panel (visualizador / mini-panel): deja ver la retícula
 inline void panel(Gfx& g, const Rect& r, const wchar_t* title) {
-    g.fillChamfer(r, 6.0f, hex(0x07121A, 0.55f));
+    g.fillChamfer(r, 6.0f, hex(0x090B24, 0.55f));
     g.strokeChamfer(r, 6.0f, Pal::panelBorde, 1.0f);
     if (title && *title) g.text(title, { r.l + 12.0f, r.t + 4.0f, r.r - 12.0f, r.t + 24.0f }, Font::Section, Pal::textoTitulo, Align::Left, true);
 }

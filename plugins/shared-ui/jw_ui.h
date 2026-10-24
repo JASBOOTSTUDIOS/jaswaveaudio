@@ -48,19 +48,30 @@ constexpr Color hex(uint32_t rgb, float a = 1.0f) {
     return { ((rgb >> 16) & 0xFF) / 255.0f, ((rgb >> 8) & 0xFF) / 255.0f, (rgb & 0xFF) / 255.0f, a };
 }
 namespace Pal {
-constexpr Color metalAlto = hex(0x3A4148), metalBajo = hex(0x15191D);
-constexpr Color metalBrillo = hex(0x5C666F), metalSombra = hex(0x0A0C0E);
-constexpr Color pantallaCentro = hex(0x0A1822), pantallaBorde = hex(0x050D14);
-constexpr Color panelFondo = hex(0x0B1823, 0.88f), panelBorde = hex(0x1E4656);
-constexpr Color reticula = hex(0x163543, 0.55f), reticulaNodo = hex(0x3FB8D0);
-constexpr Color cian = hex(0x2FD6F2), cianNucleo = hex(0xBFF6FF), cianGlow = hex(0x2FD6F2, 0.35f);
-constexpr Color textoTitulo = hex(0x7FE3F5), textoEtiqueta = hex(0x8FB4BF), textoValor = hex(0xA8EEFA), textoTenue = hex(0x4F6B75);
-constexpr Color bloqueado = hex(0x5A6870), alerta = hex(0xF2B544);
-constexpr Color perillaCuerpo = hex(0x0E1A22), perillaPista = hex(0x1A2C36);
-// V3 §3.1 / §4.3: espectro de entrada (tenue) y de salida (cian), y acentos por plugin
-constexpr Color espectroIn = hex(0x588B9E, 0.65f), espectroOut = cian;
-constexpr Color acentoCian = cian, acentoAmbar = hex(0xF2B544), acentoAmarillo = hex(0xF5E347);
-constexpr Color acentoVerdeCian = hex(0x3DF5C0), acentoVioleta = hex(0xA77BFF);
+// V6: paleta del logo de JasWave (medida sobre jaswavelogo.png): negro profundo, violeta, azul eléctrico, cian y plata cromada.
+constexpr Color metalAlto = hex(0x3A3F5E), metalBajo = hex(0x14152B);
+constexpr Color metalBrillo = hex(0x6A70A6), metalSombra = hex(0x08081A);
+constexpr Color pantallaCentro = hex(0x0D0F2C), pantallaBorde = hex(0x05060F);
+constexpr Color panelFondo = hex(0x0B0D27, 0.62f), panelBorde = hex(0x2D3375);
+constexpr Color reticula = hex(0x1E2260, 0.55f), reticulaNodo = hex(0x7C86FF);
+constexpr Color cian = hex(0x19D9FF), cianNucleo = hex(0xC6F7FF), cianGlow = hex(0x19D9FF, 0.35f);
+// marca: gradiente violeta → azul → cian (como "WAVE" del logo) y plata cromada ("JAS")
+constexpr Color violeta = hex(0x8A4DFF), azul = hex(0x3D5BFF), plata = hex(0xD6D9EE);
+constexpr Color textoTitulo = hex(0xDCE0FA), textoEtiqueta = hex(0x9AA3DA), textoValor = hex(0xB6E8FF), textoTenue = hex(0x5C6399);
+constexpr Color bloqueado = hex(0x5D6288), alerta = hex(0xFF4FC3);
+constexpr Color perillaCuerpo = hex(0x0F1131), perillaPista = hex(0x1D2152);
+// V3 §3.1 / §4.3: espectro de entrada (tenue, violeta) y de salida (cian), y acentos por plugin
+constexpr Color espectroIn = hex(0x8F83FF, 0.65f), espectroOut = cian;
+constexpr Color acentoCian = cian, acentoVioleta = hex(0x9560FF), acentoMagenta = hex(0xE052FF);
+constexpr Color acentoAzul = hex(0x4D7CFF), acentoLila = hex(0xB59BFF);
+}
+
+// Degradado de marca (violeta → azul → cian) para t en [0,1]
+inline Color gradienteMarca(float t) {
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    const Color a = t < 0.5f ? Pal::violeta : Pal::azul, b = t < 0.5f ? Pal::azul : Pal::cian;
+    const float u = t < 0.5f ? t * 2.0f : (t - 0.5f) * 2.0f;
+    return { a.r + (b.r - a.r) * u, a.g + (b.g - a.g) * u, a.b + (b.b - a.b) * u, 1.0f };
 }
 
 enum class Font : uint8_t {

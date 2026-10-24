@@ -69,7 +69,7 @@ class Editor : public JasWaveUI::PluginEditor {
 public:
     const wchar_t* title() const override { return L"BUS COMPRESSOR"; }
     const wchar_t* subtitle() const override { return L"VCA FEED-FORWARD · SOFT-KNEE · ENLACE ESTÉREO"; }
-    JasWaveUI::Color accent() const override { return JasWaveUI::Pal::acentoAmbar; }
+    JasWaveUI::Color accent() const override { return JasWaveUI::Pal::acentoVioleta; }
     void build(JasWaveUI::EditorContext& c) override {
         namespace P = JasWaveUI::Plantilla;
         P::controles(c, L"COMPRESOR");
@@ -108,7 +108,7 @@ public:
         espectro_.dibujar(g, a);
         // curva estática entrada → salida (inserto arriba a la derecha, donde el espectro de agudos es bajo)
         const Rect cr{ a.r - 166, a.t + 22, a.r - 10, a.t + 22 + 156 };
-        g.fillRect(cr, hex(0x03080C, 0.78f));
+        g.fillRect(cr, hex(0x03030F, 0.78f));
         g.strokeRect(cr, Pal::panelBorde, 1.0f);
         for (int i = 1; i < 6; ++i) {
             const float x = cr.l + cr.w() * i / 6.0f, y = cr.t + cr.h() * i / 6.0f;

@@ -11,28 +11,41 @@ import { aPlano, defDe, formatear } from './valores'
 
 /** Tokens de V3 §3.1 (idénticos a Pal en jw_ui.h). */
 export const PAL = {
-  metalAlto: '#3A4148',
-  metalBajo: '#15191D',
-  metalBrillo: '#5C666F',
-  metalSombra: '#0A0C0E',
-  pantallaCentro: '#0A1822',
-  pantallaBorde: '#050D14',
-  panelFondo: 'rgba(11,24,35,0.88)',
-  panelBorde: '#1E4656',
-  reticula: 'rgba(22,53,67,0.55)',
-  cian: '#2FD6F2',
-  cianNucleo: '#BFF6FF',
-  cianGlow: 'rgba(47,214,242,0.35)',
-  espectroIn: 'rgba(88,139,158,0.65)',
-  textoTitulo: '#7FE3F5',
-  textoEtiqueta: '#8FB4BF',
-  textoValor: '#A8EEFA',
-  textoTenue: '#4F6B75',
-  alerta: '#F2B544',
-  bloqueado: '#5A6870',
-  perillaCuerpo: '#0E1A22',
-  perillaPista: '#1A2C36',
+  metalAlto: '#3A3F5E',
+  metalBajo: '#14152B',
+  metalBrillo: '#6A70A6',
+  metalSombra: '#08081A',
+  pantallaCentro: '#0D0F2C',
+  pantallaBorde: '#05060F',
+  panelFondo: 'rgba(11,13,39,0.62)',
+  panelBorde: '#2D3375',
+  reticula: 'rgba(30,34,96,0.55)',
+  cian: '#19D9FF',
+  cianNucleo: '#C6F7FF',
+  cianGlow: 'rgba(25,217,255,0.35)',
+  // marca (logo): violeta → azul → cian y plata cromada
+  violeta: '#8A4DFF',
+  azul: '#3D5BFF',
+  plata: '#D6D9EE',
+  espectroIn: 'rgba(143,131,255,0.65)',
+  textoTitulo: '#DCE0FA',
+  textoEtiqueta: '#9AA3DA',
+  textoValor: '#B6E8FF',
+  textoTenue: '#5C6399',
+  alerta: '#FF4FC3',
+  bloqueado: '#5D6288',
+  perillaCuerpo: '#0F1131',
+  perillaPista: '#1D2152',
 } as const
+
+/** Degradado de marca violeta → azul → cian (t en 0..1), idéntico a gradienteMarca() de jw_ui.h. */
+export function gradienteMarca(t: number): string {
+  const u = Math.max(0, Math.min(1, t))
+  const A = u < 0.5 ? [0x8A, 0x4D, 0xFF] : [0x3D, 0x5B, 0xFF]
+  const B = u < 0.5 ? [0x3D, 0x5B, 0xFF] : [0x19, 0xD9, 0xFF]
+  const k = u < 0.5 ? u * 2 : (u - 0.5) * 2
+  return `rgb(${A.map((c, i) => Math.round(c + (B[i]! - c) * k)).join(',')})`
+}
 
 const SANS = 'Bahnschrift, "DIN Alternate", "Barlow Semi Condensed", "Segoe UI", system-ui, sans-serif'
 const MONO = 'Consolas, "JetBrains Mono", "Cascadia Mono", ui-monospace, monospace'
@@ -89,6 +102,15 @@ function texto(ctx: Ctx, s: string, x: number, y: number, fuente: string, color:
   conEspaciado(ctx, false, 11)
 }
 
+/** Ancho de un texto con la fuente de marca y el espaciado de las etiquetas (para pintar letra a letra). */
+function anchoTexto(ctx: Ctx, s: string): number {
+  ctx.font = FUENTE.marca
+  conEspaciado(ctx, true, tamanoDe(FUENTE.marca))
+  const w = ctx.measureText(s).width
+  conEspaciado(ctx, false, 11)
+  return w
+}
+
 function chaflan(ctx: Ctx, r: Rect4, ch: number) {
   const [l, t, rr, b] = r
   ch = Math.min(ch, 0.5 * Math.min(rr - l, b - t))
@@ -126,7 +148,7 @@ function linea(ctx: Ctx, x0: number, y0: number, x1: number, y1: number, color: 
 // ---------------------------------------------------------------------------------
 function fondo(ctx: Ctx, layout: UiLayout) {
   const W = layout.base.ancho, H = layout.base.alto
-  ctx.fillStyle = '#06080A'
+  ctx.fillStyle = '#05050F'
   ctx.fillRect(0, 0, W, H)
   const marco: Rect4 = [0, 10, W, H - 10]
   const g = ctx.createLinearGradient(0, marco[1], 0, marco[3])
@@ -138,9 +160,14 @@ function fondo(ctx: Ctx, layout: UiLayout) {
   linea(ctx, 26, 11, W - 26, 11, PAL.metalBrillo)
   linea(ctx, 26, H - 11, W - 26, H - 11, PAL.metalSombra)
   // LEDs laterales
-  for (const x of [15, W - 15]) brillo(ctx, PAL.cian, 10, () => {
-    ctx.fillStyle = 'rgba(191,246,255,0.8)'
+  // violeta a la izquierda y cian a la derecha, como las ondas del logo
+  for (const [x, color, nucleo] of [[15, PAL.violeta, 'rgba(220,203,255,0.85)'], [W - 15, PAL.cian, 'rgba(198,247,255,0.8)']] as const) brillo(ctx, color, 10, () => {
+    ctx.fillStyle = nucleo
     ctx.fillRect(x - 0.8, H / 2 - 33, 1.6, 66)
+  })
+  brillo(ctx, PAL.azul, 10, () => {
+    ctx.fillStyle = 'rgba(201,214,255,0.85)'
+    ctx.fillRect(W / 2 - 28, H - 11.8, 56, 1.6)
   })
   // pantalla
   const p = layout.zonas.pantalla
@@ -150,6 +177,38 @@ function fondo(ctx: Ctx, layout: UiLayout) {
   chaflan(ctx, p, 14)
   ctx.fillStyle = rg
   ctx.fill()
+  // galaxia: nebulosas violeta / cian / azul y campo de estrellas (determinista), recortado a la pantalla
+  ctx.save()
+  chaflan(ctx, p, 14)
+  ctx.clip()
+  const nebulosa = (cx: number, cy: number, r: number, rgb: string, a: number) => {
+    const n = ctx.createRadialGradient(cx, cy, 0, cx, cy, r)
+    n.addColorStop(0, `rgba(${rgb},${a})`)
+    n.addColorStop(1, `rgba(${rgb},0)`)
+    ctx.fillStyle = n
+    ctx.fillRect(p[0], p[1], p[2] - p[0], p[3] - p[1])
+  }
+  nebulosa(p[0] + 220, p[1] + 190, 380, '138,77,255', 0.34)
+  nebulosa(p[2] - 220, p[3] - 200, 380, '25,217,255', 0.22)
+  nebulosa((p[0] + p[2]) / 2, p[3] - 40, 330, '61,91,255', 0.24)
+  nebulosa(p[2] - 260, p[1] + 20, 260, '194,75,255', 0.07)
+  let semilla = 0xc0ffee
+  const azar = () => ((semilla = (Math.imul(semilla, 1664525) + 1013904223) >>> 0) / 4294967296)
+  for (let i = 0; i < 170; i++) {
+    const x = p[0] + 10 + azar() * (p[2] - p[0] - 20), y = p[1] + 10 + azar() * (p[3] - p[1] - 20)
+    const m = azar()
+    const rgb = m < 0.4 ? '201,184,255' : m < 0.7 ? '198,247,255' : '255,255,255'
+    ctx.fillStyle = `rgba(${rgb},${0.15 + 0.5 * azar()})`
+    ctx.beginPath()
+    ctx.arc(x, y, 0.45 + 0.5 * azar(), 0, Math.PI * 2)
+    ctx.fill()
+    if (i % 17 === 0) {
+      brillo(ctx, `rgb(${rgb})`, 6, () => ctx.fillRect(x - 0.8, y - 0.8, 1.6, 1.6))
+      linea(ctx, x - 4, y, x + 4, y, `rgba(${rgb},0.25)`, 0.8)
+      linea(ctx, x, y - 4, x, y + 4, `rgba(${rgb},0.25)`, 0.8)
+    }
+  }
+  ctx.restore()
   // retícula cada 44 px
   ctx.save()
   chaflan(ctx, p, 14)
@@ -168,14 +227,20 @@ function fondo(ctx: Ctx, layout: UiLayout) {
   ctx.stroke()
   ctx.restore()
   chaflan(ctx, p, 14)
-  ctx.strokeStyle = 'rgba(47,214,242,0.35)'
+  ctx.strokeStyle = 'rgba(61,91,255,0.28)'
   ctx.stroke()
+  // borde superior/inferior con el degradado de marca
+  for (let i = 0; i < 24; i++) {
+    const x0 = p[0] + 14 + ((p[2] - p[0] - 28) * i) / 24, x1 = p[0] + 14 + ((p[2] - p[0] - 28) * (i + 1)) / 24
+    linea(ctx, x0, p[1], x1, p[1], gradienteMarca(i / 23), 1.2)
+    linea(ctx, x0, p[3], x1, p[3], gradienteMarca(i / 23), 1)
+  }
 }
 
 function cabecera(ctx: Ctx, e: EstadoDibujo) {
   const L = e.layout
   if (e.logo) ctx.drawImage(e.logo, 52, 42, 28, 28)
-  brillo(ctx, PAL.cianGlow, 6, () => texto(ctx, L.titulo, 90, 58, FUENTE.titulo, PAL.textoTitulo, 'left', true))
+  brillo(ctx, 'rgba(61,91,255,0.45)', 6, () => texto(ctx, L.titulo, 90, 58, FUENTE.titulo, PAL.textoTitulo, 'left', true))
   texto(ctx, L.subtitulo, 90, 78, FUENTE.etiqueta, PAL.textoTenue, 'left', true)
   ctx.fillStyle = L.acento
   ctx.globalAlpha = 0.85
@@ -187,8 +252,20 @@ function cabecera(ctx: Ctx, e: EstadoDibujo) {
     ctx.arc(600, 58, 3.6, 0, Math.PI * 2)
     ctx.fill()
   })
-  texto(ctx, 'JASWAVE', 1046, 56, FUENTE.marca, PAL.textoTitulo, 'right', true)
-  linea(ctx, 918, 74, 1046, 74, 'rgba(47,214,242,0.4)')
+  // "JAS" en plata cromada y "WAVE" con el degradado del logo
+  {
+    ctx.font = FUENTE.marca
+    const palabra = 'JASWAVE'
+    const total = anchoTexto(ctx, palabra)
+    const x0 = 1046 - total
+    const col = [PAL.plata, PAL.plata, '#B8BBD6', '#8A4DFF', '#5A55FF', '#2F7BFF', '#19D9FF']
+    for (let i = 0; i < palabra.length; i++) {
+      const xi = x0 + (i ? anchoTexto(ctx, palabra.slice(0, i)) : 0)
+      if (i >= 3) brillo(ctx, col[i]!, 8, () => texto(ctx, palabra[i]!, xi, 56, FUENTE.marca, col[i]!, 'left', true))
+      else texto(ctx, palabra[i]!, xi, 56, FUENTE.marca, col[i]!, 'left', true)
+    }
+  }
+  for (let i = 0; i < 32; i++) linea(ctx, 918 + (128 * i) / 32, 74, 918 + (128 * (i + 1)) / 32, 74, gradienteMarca(i / 31), 1.2)
   texto(ctx, `jaswave · ${L.productId}`, 1046, 571, FUENTE.valorPeq, PAL.textoTenue, 'right')
 }
 
@@ -207,7 +284,7 @@ function seccion(ctx: Ctx, w: WidgetLayout, e: EstadoDibujo) {
   ctx.strokeStyle = PAL.panelBorde
   ctx.lineWidth = 1
   ctx.stroke()
-  linea(ctx, w.rect[0] + 8, w.rect[1] + 26, w.rect[2] - 8, w.rect[1] + 26, 'rgba(30,70,86,0.6)')
+  linea(ctx, w.rect[0] + 8, w.rect[1] + 26, w.rect[2] - 8, w.rect[1] + 26, 'rgba(45,51,117,0.6)')
   texto(ctx, w.etiqueta, w.rect[0] + 10, w.rect[1] + 14, FUENTE.seccion, PAL.textoTitulo, 'left', true)
   if (w.param === undefined) return
   // la píldora del bypass está encendida cuando el plugin procesa (bypass = 0)
@@ -225,7 +302,7 @@ function pildoraOn(ctx: Ctx, p: Rect4, on: boolean) {
       ctx.fill()
     })
   } else {
-    ctx.strokeStyle = 'rgba(47,214,242,0.45)'
+    ctx.strokeStyle = 'rgba(25,217,255,0.45)'
     ctx.lineWidth = 1
     ctx.stroke()
   }
@@ -240,7 +317,7 @@ function perilla(ctx: Ctx, w: WidgetLayout, e: EstadoDibujo) {
   ctx.beginPath()
   ctx.arc(cx, cy, r - 5, 0, Math.PI * 2)
   ctx.fill()
-  ctx.strokeStyle = 'rgba(92,102,111,0.75)'
+  ctx.strokeStyle = 'rgba(106,112,166,0.75)'
   ctx.lineWidth = 1.5
   ctx.stroke()
   const tw = r >= 30 ? 3.5 : 3
@@ -285,17 +362,17 @@ function fader(ctx: Ctx, w: WidgetLayout, e: EstadoDibujo) {
   const capY = s[3] - n * (s[3] - s[1])
   for (let i = 0; i <= 10; i++) {
     const y = s[1] + ((s[3] - s[1]) * i) / 10
-    linea(ctx, s[0] - (i % 5 === 0 ? 9 : 6), y, s[0] - 3, y, 'rgba(79,107,117,0.7)')
+    linea(ctx, s[0] - (i % 5 === 0 ? 9 : 6), y, s[0] - 3, y, 'rgba(92,99,153,0.7)')
   }
-  ctx.fillStyle = '#020507'
+  ctx.fillStyle = '#020208'
   ctx.fillRect(s[0] - 1, s[1] - 1, s[2] - s[0] + 2, s[3] - s[1] + 2)
   ctx.strokeStyle = PAL.panelBorde
   ctx.strokeRect(s[0], s[1], s[2] - s[0], s[3] - s[1])
-  ctx.fillStyle = 'rgba(47,214,242,0.32)'
+  ctx.fillStyle = 'rgba(25,217,255,0.32)'
   ctx.fillRect(s[0] + 1, capY, s[2] - s[0] - 2, s[3] - capY - 0.5)
   const g = ctx.createLinearGradient(0, capY - 5, 0, capY + 5)
-  g.addColorStop(0, '#6A747E')
-  g.addColorStop(1, '#2A3036')
+  g.addColorStop(0, '#7479AE')
+  g.addColorStop(1, '#2B2E52')
   ctx.fillStyle = g
   ctx.fillRect(cx - 11, capY - 5, 22, 10)
   ctx.strokeStyle = PAL.metalSombra
@@ -310,16 +387,16 @@ function interruptor(ctx: Ctx, w: WidgetLayout, e: EstadoDibujo) {
   const r = w.rect
   if (on) brillo(ctx, PAL.cianGlow, 8, () => {
     chaflan(ctx, r, 4)
-    ctx.fillStyle = '#0E2C38'
+    ctx.fillStyle = '#1A1F5C'
     ctx.fill()
   })
   else {
     chaflan(ctx, r, 4)
-    ctx.fillStyle = '#08131B'
+    ctx.fillStyle = '#0A0C26'
     ctx.fill()
   }
   chaflan(ctx, r, 4)
-  ctx.strokeStyle = on ? PAL.cian : 'rgba(30,70,86,0.8)'
+  ctx.strokeStyle = on ? PAL.cian : 'rgba(45,51,117,0.8)'
   ctx.lineWidth = 1
   ctx.stroke()
   texto(ctx, w.etiqueta, (r[0] + r[2]) / 2, (r[1] + r[3]) / 2, FUENTE.etiqueta, on ? PAL.cianNucleo : PAL.textoEtiqueta, 'center', true)
@@ -337,9 +414,9 @@ function desplegable(ctx: Ctx, w: WidgetLayout, e: EstadoDibujo) {
     bx = r[0] + lw
   }
   const caja: Rect4 = [bx, r[1] + 1, r[2], r[3] - 1]
-  ctx.fillStyle = '#07121A'
+  ctx.fillStyle = '#090B24'
   ctx.fillRect(caja[0], caja[1], caja[2] - caja[0], caja[3] - caja[1])
-  ctx.strokeStyle = e.activo === w ? 'rgba(47,214,242,0.7)' : PAL.panelBorde
+  ctx.strokeStyle = e.activo === w ? 'rgba(25,217,255,0.7)' : PAL.panelBorde
   ctx.strokeRect(caja[0], caja[1], caja[2] - caja[0], caja[3] - caja[1])
   ctx.save()
   ctx.beginPath()
@@ -358,12 +435,12 @@ function medidor(ctx: Ctx, w: WidgetLayout, m: Medidor | null, minDb = -60, maxD
   const segs = Math.max(4, Math.floor((bar[3] - bar[1]) / 5))
   const segH = (bar[3] - bar[1]) / segs
   const lit = m ? Math.round(Math.min(1, Math.max(0, (m.db - minDb) / (maxDb - minDb))) * segs) : 0
-  ctx.fillStyle = '#03080C'
+  ctx.fillStyle = '#03030F'
   ctx.fillRect(bar[0] - 1, bar[1] - 1, bar[2] - bar[0] + 2, bar[3] - bar[1] + 2)
   for (let i = 0; i < segs; i++) {
     const y0 = bar[3] - (i + 1) * segH
     const top = i === segs - 1
-    ctx.fillStyle = i < lit ? (top ? PAL.alerta : PAL.cian) : top ? 'rgba(242,181,68,0.08)' : 'rgba(47,214,242,0.08)'
+    ctx.fillStyle = i < lit ? (top ? PAL.alerta : PAL.cian) : top ? 'rgba(255,79,195,0.08)' : 'rgba(25,217,255,0.08)'
     ctx.fillRect(bar[0], y0 + 0.8, bar[2] - bar[0], segH - 1.6)
   }
   if (conEtiqueta) texto(ctx, w.etiqueta, (w.rect[0] + w.rect[2]) / 2, w.rect[3] - 7.5, FUENTE.etiqueta, PAL.textoEtiqueta, 'center', true)
@@ -374,7 +451,7 @@ function medidor(ctx: Ctx, w: WidgetLayout, m: Medidor | null, minDb = -60, maxD
 // ---------------------------------------------------------------------------------
 function panel(ctx: Ctx, r: Rect4, titulo: string) {
   chaflan(ctx, r, 6)
-  ctx.fillStyle = 'rgba(7,18,26,0.55)'
+  ctx.fillStyle = 'rgba(9,11,36,0.55)'
   ctx.fill()
   ctx.strokeStyle = PAL.panelBorde
   ctx.lineWidth = 1
@@ -397,12 +474,12 @@ function espectro(ctx: Ctx, a: Rect4, e: EstadoDibujo) {
   const ancho = a[2] - a[0], alto = a[3] - a[1]
   for (const [f, et] of FRECUENCIAS) {
     const x = xDeFrecuencia(a[0], ancho, f)
-    linea(ctx, x, a[1], x, a[3], 'rgba(47,214,242,0.07)')
+    linea(ctx, x, a[1], x, a[3], 'rgba(25,217,255,0.07)')
     texto(ctx, et, x, a[3] + 9, FUENTE.valorPeq, PAL.textoTenue, 'center')
   }
   for (let d = DB_MIN; d <= DB_MAX; d += 24) {
     const y = yDeDbfs(a[1], alto, d)
-    linea(ctx, a[0], y, a[2], y, d === 0 ? 'rgba(47,214,242,0.4)' : 'rgba(47,214,242,0.07)')
+    linea(ctx, a[0], y, a[2], y, d === 0 ? 'rgba(25,217,255,0.4)' : 'rgba(25,217,255,0.07)')
     texto(ctx, d === 0 ? '+0' : String(d), a[2] + 2, y, FUENTE.valorPeq, PAL.textoTenue)
   }
   const traza = (cols: ArrayLike<number>, color: string, relleno: string, grosor: number, halo: boolean) => {
@@ -427,8 +504,8 @@ function espectro(ctx: Ctx, a: Rect4, e: EstadoDibujo) {
   }
   const inn = e.espectro?.in
   const out = e.espectro?.out
-  if (inn) traza(inn, PAL.espectroIn, 'rgba(88,139,158,0.08)', 1, false)
-  if (out) traza(out, PAL.cian, 'rgba(47,214,242,0.15)', 1.8, true)
+  if (inn) traza(inn, PAL.espectroIn, 'rgba(143,131,255,0.08)', 1, false)
+  if (out) traza(out, PAL.cian, 'rgba(25,217,255,0.15)', 1.8, true)
   if (inn) {
     ctx.fillStyle = PAL.espectroIn
     ctx.fillRect(a[2] - 92, a[1] + 8, 12, 1.5)
@@ -451,14 +528,14 @@ function teclado(ctx: Ctx, kb: Rect4) {
       negras.push(kb[0] + wi * ww)
       continue
     }
-    ctx.fillStyle = '#0F1E28'
+    ctx.fillStyle = '#12143A'
     ctx.fillRect(kb[0] + wi * ww + 0.6, kb[1], ww - 1.2, kb[3] - kb[1])
     ctx.strokeStyle = PAL.panelBorde
     ctx.strokeRect(kb[0] + wi * ww + 0.6, kb[1], ww - 1.2, kb[3] - kb[1])
     wi++
   }
   for (const x of negras) {
-    ctx.fillStyle = '#03080C'
+    ctx.fillStyle = '#03030F'
     ctx.fillRect(x - ww * 0.32, kb[1], ww * 0.64, (kb[3] - kb[1]) * 0.6)
     ctx.strokeStyle = PAL.panelBorde
     ctx.strokeRect(x - ww * 0.32, kb[1], ww * 0.64, (kb[3] - kb[1]) * 0.6)
@@ -467,19 +544,19 @@ function teclado(ctx: Ctx, kb: Rect4) {
 
 function vectorscopio(ctx: Ctx, v: Rect4) {
   const cx = v[0] + 152, cy = (v[1] + v[3]) / 2 + 12, R = 116
-  ctx.strokeStyle = 'rgba(47,214,242,0.25)'
+  ctx.strokeStyle = 'rgba(25,217,255,0.25)'
   ctx.beginPath()
   ctx.arc(cx, cy, R, 0, Math.PI * 2)
   ctx.stroke()
-  ctx.strokeStyle = 'rgba(47,214,242,0.10)'
+  ctx.strokeStyle = 'rgba(25,217,255,0.10)'
   ctx.beginPath()
   ctx.arc(cx, cy, R / 2, 0, Math.PI * 2)
   ctx.stroke()
-  linea(ctx, cx, cy - R - 6, cx, cy + R + 6, 'rgba(47,214,242,0.4)')
-  linea(ctx, cx - R - 6, cy, cx + R + 6, cy, 'rgba(47,214,242,0.2)')
+  linea(ctx, cx, cy - R - 6, cx, cy + R + 6, 'rgba(25,217,255,0.4)')
+  linea(ctx, cx - R - 6, cy, cx + R + 6, cy, 'rgba(25,217,255,0.2)')
   const k = R * 0.7071
-  linea(ctx, cx - k, cy - k, cx + k, cy + k, 'rgba(47,214,242,0.15)')
-  linea(ctx, cx + k, cy - k, cx - k, cy + k, 'rgba(47,214,242,0.15)')
+  linea(ctx, cx - k, cy - k, cx + k, cy + k, 'rgba(25,217,255,0.15)')
+  linea(ctx, cx + k, cy - k, cx - k, cy + k, 'rgba(25,217,255,0.15)')
   texto(ctx, 'M', cx, cy - R - 14, FUENTE.etiqueta, PAL.textoEtiqueta, 'center')
   texto(ctx, '+S', cx + R + 8, cy, FUENTE.etiqueta, PAL.textoTenue)
   texto(ctx, '−S', cx - R - 8, cy, FUENTE.etiqueta, PAL.textoTenue, 'right')

@@ -76,13 +76,13 @@ void drawPanelBox(Gfx& g, const Rect& r, const wchar_t* title) {
 }
 
 void drawStaticBackground(Gfx& g) {
-    g.clear(hex(0x06080A));
+    g.clear(hex(0x05050F));
     // --- marco metálico cepillado con pestañas ---
     const Rect frame{ 0.0f, 10.0f, kBaseW, kBaseH - 10.0f };
     const Rect tabTop{ 420.0f, 0.0f, 680.0f, 40.0f };
     const Rect tabBot{ 420.0f, kBaseH - 40.0f, 680.0f, kBaseH };
-    g.fillChamferGradient(tabTop, 10.0f, hex(0x46505A), Pal::metalAlto);
-    g.fillChamferGradient(tabBot, 10.0f, hex(0x262C32), Pal::metalBajo);
+    g.fillChamferGradient(tabTop, 10.0f, hex(0x4A4F78), Pal::metalAlto);
+    g.fillChamferGradient(tabBot, 10.0f, hex(0x25284A), Pal::metalBajo);
     g.fillChamferGradient(frame, 26.0f, Pal::metalAlto, Pal::metalBajo);
     // ruido horizontal (cepillado) al 4 %
     uint32_t seed = 0xB12A5EDu;
@@ -102,39 +102,61 @@ void drawStaticBackground(Gfx& g) {
     // tornillos decorativos en las esquinas
     const Pt screws[4] = { { 30, 26 }, { kBaseW - 30, 26 }, { 30, kBaseH - 26 }, { kBaseW - 30, kBaseH - 26 } };
     for (const Pt& s : screws) {
-        g.fillCircle(s.x, s.y, 4.0f, hex(0x22282E));
+        g.fillCircle(s.x, s.y, 4.0f, hex(0x23254A));
         g.circle(s.x, s.y, 4.0f, Pal::metalBrillo.withAlpha(0.6f), 0.8f);
         g.line(s.x - 2.5f, s.y - 2.5f, s.x + 2.5f, s.y + 2.5f, Pal::metalSombra, 1.0f);
     }
     // LEDs laterales verticales (4×70) con resplandor y LED inferior (60×4)
     const float midY = kBaseH * 0.5f;
-    g.glowRect({ 13.0f, midY - 35.0f, 17.0f, midY + 35.0f }, Pal::cian, 10.0f);
-    g.fillRect({ 14.2f, midY - 33.0f, 15.8f, midY + 33.0f }, Pal::cianNucleo.withAlpha(0.8f));
+    g.glowRect({ 13.0f, midY - 35.0f, 17.0f, midY + 35.0f }, Pal::violeta, 10.0f);
+    g.fillRect({ 14.2f, midY - 33.0f, 15.8f, midY + 33.0f }, hex(0xDCCBFF, 0.85f));
     g.glowRect({ kBaseW - 17.0f, midY - 35.0f, kBaseW - 13.0f, midY + 35.0f }, Pal::cian, 10.0f);
     g.fillRect({ kBaseW - 15.8f, midY - 33.0f, kBaseW - 14.2f, midY + 33.0f }, Pal::cianNucleo.withAlpha(0.8f));
-    g.glowRect({ 520.0f, kBaseH - 13.0f, 580.0f, kBaseH - 9.0f }, Pal::cian, 10.0f);
-    g.fillRect({ 522.0f, kBaseH - 11.8f, 578.0f, kBaseH - 10.2f }, Pal::cianNucleo.withAlpha(0.8f));
+    g.glowRect({ 520.0f, kBaseH - 13.0f, 580.0f, kBaseH - 9.0f }, Pal::azul, 10.0f);
+    g.fillRect({ 522.0f, kBaseH - 11.8f, 578.0f, kBaseH - 10.2f }, hex(0xC9D6FF, 0.85f));
 
     // --- pantalla ---
     const Rect sc = Layout::kScreen;
-    g.fillChamfer(sc.inset(-2.0f), 15.0f, hex(0x020405));
+    g.fillChamfer(sc.inset(-2.0f), 15.0f, hex(0x020208));
     g.fillChamfer(sc, 14.0f, Pal::pantallaBorde);
     g.fillRadial(sc, Pal::pantallaCentro, Pal::pantallaBorde);
+    // las nebulosas se recortan a la pantalla (no manchan el marco)
+    const auto enPantalla = [&](Rect r) { return Rect{ std::max(r.l, sc.l + 3.0f), std::max(r.t, sc.t + 3.0f), std::min(r.r, sc.r - 3.0f), std::min(r.b, sc.b - 3.0f) }; };
+    // nebulosas (galaxia): violeta a la izquierda, cian a la derecha y azul profundo abajo, como el halo del logo
+    g.fillRadial(enPantalla({ sc.l - 40.0f, sc.t - 20.0f, sc.l + 560.0f, sc.t + 420.0f }), Pal::violeta.withAlpha(0.34f), Pal::violeta.withAlpha(0.0f));
+    g.fillRadial(enPantalla({ sc.r - 560.0f, sc.b - 440.0f, sc.r + 40.0f, sc.b + 20.0f }), Pal::cian.withAlpha(0.22f), Pal::cian.withAlpha(0.0f));
+    g.fillRadial(enPantalla({ sc.l + 260.0f, sc.b - 300.0f, sc.r - 260.0f, sc.b + 120.0f }), Pal::azul.withAlpha(0.24f), Pal::azul.withAlpha(0.0f));
+    g.fillRadial(enPantalla({ sc.l + 520.0f, sc.t - 120.0f, sc.r - 120.0f, sc.t + 260.0f }), hex(0xC24BFF, 0.07f), hex(0xC24BFF, 0.0f));
     // sombra interior
     for (int i = 1; i <= 6; ++i) g.strokeChamfer(sc.inset(static_cast<float>(i)), 14.0f, hex(0x000000, 0.22f - i * 0.03f), 1.2f);
     drawGrid(g, sc.inset(3.0f), 44.0f, true);
     // hexágonos de contorno (5 %) arriba-izquierda
     for (int row = 0; row < 4; ++row)
         for (int col = 0; col < 6 - row; ++col)
-            g.hexagon(70.0f + col * 30.0f + (row & 1) * 15.0f, 108.0f + row * 26.0f, 15.0f, Pal::cian.withAlpha(0.05f), 1.0f);
-    // partículas deterministas
+            g.hexagon(70.0f + col * 30.0f + (row & 1) * 15.0f, 108.0f + row * 26.0f, 15.0f, Pal::violeta.withAlpha(0.07f), 1.0f);
+    // campo de estrellas determinista: muchas pequeñas, algunas con brillo y color (violeta/cian/blanco)
     uint32_t ps = 0xC0FFEEu;
-    for (int i = 0; i < 40; ++i) {
-        const float x = sc.l + 12.0f + frand(ps) * (sc.w() - 24.0f);
-        const float y = sc.t + 12.0f + frand(ps) * (sc.h() - 24.0f);
-        g.fillCircle(x, y, 0.6f, Pal::cianNucleo.withAlpha(0.3f));
+    for (int i = 0; i < 170; ++i) {
+        const float x = sc.l + 10.0f + frand(ps) * (sc.w() - 20.0f);
+        const float y = sc.t + 10.0f + frand(ps) * (sc.h() - 20.0f);
+        const float m = frand(ps);
+        const Color c = m < 0.4f ? hex(0xC9B8FF) : m < 0.7f ? Pal::cianNucleo : hex(0xFFFFFF);
+        const float a = 0.15f + 0.5f * frand(ps);
+        g.fillCircle(x, y, 0.45f + 0.5f * frand(ps), c.withAlpha(a));
+        if (i % 17 == 0) {
+            g.glowDot(x, y, 1.6f, c.withAlpha(0.8f));
+            g.line(x - 4.0f, y, x + 4.0f, y, c.withAlpha(0.25f), 0.8f);
+            g.line(x, y - 4.0f, x, y + 4.0f, c.withAlpha(0.25f), 0.8f);
+        }
     }
-    g.strokeChamfer(sc, 14.0f, Pal::cian.withAlpha(0.35f), 1.0f);
+    // borde de la pantalla con el degradado de marca (violeta a la izquierda, cian a la derecha, como el logo)
+    for (int i = 0; i < 24; ++i) {
+        const float t = i / 23.0f;
+        const float x0 = sc.l + 14.0f + (sc.w() - 28.0f) * i / 24.0f, x1 = sc.l + 14.0f + (sc.w() - 28.0f) * (i + 1) / 24.0f;
+        g.line(x0, sc.t, x1, sc.t, gradienteMarca(t).withAlpha(0.55f), 1.2f);
+        g.line(x0, sc.b, x1, sc.b, gradienteMarca(t).withAlpha(0.35f), 1.0f);
+    }
+    g.strokeChamfer(sc, 14.0f, Pal::azul.withAlpha(0.28f), 1.0f);
 }
 
 void drawHeader(Gfx& g, const wchar_t* title, const wchar_t* subtitle, bool expiringSoon, bool licensed, Color accent) {
@@ -143,8 +165,8 @@ void drawHeader(Gfx& g, const wchar_t* title, const wchar_t* subtitle, bool expi
     g.fillRect({ 90.0f, 87.0f, 138.0f, 88.5f }, accent.withAlpha(0.85f));
     const Rect tr{ 90.0f, 42.0f, 560.0f, 74.0f };
     // glow sutil del título
-    g.text(title, { tr.l + 0.8f, tr.t + 0.8f, tr.r + 0.8f, tr.b + 0.8f }, Font::Title, Pal::cian.withAlpha(0.18f), Align::Left, true);
-    g.text(title, { tr.l - 0.8f, tr.t - 0.4f, tr.r - 0.8f, tr.b - 0.4f }, Font::Title, Pal::cian.withAlpha(0.12f), Align::Left, true);
+    g.text(title, { tr.l + 0.8f, tr.t + 0.8f, tr.r + 0.8f, tr.b + 0.8f }, Font::Title, Pal::azul.withAlpha(0.28f), Align::Left, true);
+    g.text(title, { tr.l - 0.8f, tr.t - 0.4f, tr.r - 0.8f, tr.b - 0.4f }, Font::Title, Pal::violeta.withAlpha(0.2f), Align::Left, true);
     g.text(title, tr, Font::Title, Pal::textoTitulo, Align::Left, true);
     if (subtitle && *subtitle) g.text(subtitle, { 90.0f, 70.0f, 520.0f, 86.0f }, Font::Label, Pal::textoTenue, Align::Left, true);
     // indicador central "·  ●  ·"
@@ -158,8 +180,23 @@ void drawHeader(Gfx& g, const wchar_t* title, const wchar_t* subtitle, bool expi
     else if (licensed) g.glowDot(cx, cy, 3.6f, Pal::cian);
     else g.fillCircle(cx, cy, 3.6f, Pal::bloqueado);
     // marca
-    g.text(L"JASWAVE", { 860.0f, 40.0f, 1046.0f, 72.0f }, Font::Brand, Pal::textoTitulo, Align::Right, true);
-    g.line(918.0f, 74.0f, 1046.0f, 74.0f, Pal::cian.withAlpha(0.4f), 1.0f);
+    // "JAS" en plata cromada y "WAVE" con el degradado violeta → azul → cian, como el logotipo
+    {
+        const wchar_t* palabra = L"JASWAVE";
+        const float total = g.textWidth(palabra, Font::Brand, true);
+        const float x0 = 1046.0f - total;
+        static const Color col[7] = { Pal::plata, Pal::plata, hex(0xB8BBD6), hex(0x8A4DFF), hex(0x5A55FF), hex(0x2F7BFF), hex(0x19D9FF) };
+        for (int i = 0; i < 7; ++i) {
+            const std::wstring pre(palabra, static_cast<size_t>(i));
+            const float xi = x0 + (i ? g.textWidth(pre, Font::Brand, true) : 0.0f);
+            if (i >= 3) g.text(std::wstring(1, palabra[i]), { xi - 1.0f, 41.0f, xi + 41.0f, 73.0f }, Font::Brand, col[i].withAlpha(0.28f), Align::Left, true);
+            g.text(std::wstring(1, palabra[i]), { xi, 40.0f, xi + 40.0f, 72.0f }, Font::Brand, col[i], Align::Left, true);
+        }
+    }
+    for (int i = 0; i < 32; ++i) {
+        const float t = i / 31.0f;
+        g.line(918.0f + 128.0f * i / 32.0f, 74.0f, 918.0f + 128.0f * (i + 1) / 32.0f, 74.0f, gradienteMarca(t).withAlpha(0.7f), 1.2f);
+    }
 }
 
 void drawFrameLeds(Gfx& g, float level) {
@@ -275,12 +312,12 @@ void Fader::draw(Gfx& g, ParamAccess& p, bool hover) {
         const float y = s.t + s.h() * i / 10.0f;
         g.line(s.l - (i % 5 == 0 ? 9.0f : 6.0f), y, s.l - 3.0f, y, Pal::textoTenue.withAlpha(0.7f), 1.0f);
     }
-    g.fillRect({ s.l - 1, s.t - 1, s.r + 1, s.b + 1 }, hex(0x020507));
+    g.fillRect({ s.l - 1, s.t - 1, s.r + 1, s.b + 1 }, hex(0x020208));
     g.strokeRect(s, Pal::panelBorde, 1.0f);
     g.fillRect({ s.l + 1.0f, capY, s.r - 1.0f, s.b - 0.5f }, (locked ? Pal::bloqueado : Pal::cian).withAlpha(0.32f));
     // tapa metálica 22×10 con línea cian
     const Rect cap{ s.cx() - 11.0f, capY - 5.0f, s.cx() + 11.0f, capY + 5.0f };
-    g.fillRectGradient(cap, hex(0x6A747E), hex(0x2A3036));
+    g.fillRectGradient(cap, hex(0x7479AE), hex(0x2B2E52));
     g.strokeRect(cap, Pal::metalSombra, 1.0f);
     if (locked) g.line(cap.l + 2, capY, cap.r - 2, capY, Pal::bloqueado, 1.5f);
     else g.glowLine(cap.l + 2, capY, cap.r - 2, capY, Pal::cian, 1.4f);
@@ -341,7 +378,7 @@ void Toggle::draw(Gfx& g, ParamAccess& p, bool hover) {
     }
     const Color border = locked ? Pal::bloqueado : on ? Pal::cian : Pal::panelBorde;
     if (on && !locked) g.fillChamfer(rect.inset(-2.0f), 5.0f, Pal::cianGlow.withAlpha(0.12f));
-    g.fillChamfer(rect, 4.0f, on && !locked ? hex(0x0E2C38) : hex(0x08131B));
+    g.fillChamfer(rect, 4.0f, on && !locked ? hex(0x1A1F5C) : hex(0x0A0C26));
     g.strokeChamfer(rect, 4.0f, hover && !locked ? border.withAlpha(1.0f) : border.withAlpha(on ? 1.0f : 0.8f), 1.0f);
     g.text(label_, rect, Font::Label, locked ? Pal::bloqueado : on ? Pal::cianNucleo : Pal::textoEtiqueta, Align::Center, true);
     if (locked) Chrome::drawLock(g, rect.r - 8.0f, rect.cy() - 2.0f, 8.0f, Pal::bloqueado);
@@ -363,7 +400,7 @@ void Dropdown::draw(Gfx& g, ParamAccess& p, bool hover) {
         bx = rect.l + lw;
     }
     const Rect box{ bx, rect.t + 1.0f, rect.r, rect.b - 1.0f };
-    g.fillRect(box, hex(0x07121A));
+    g.fillRect(box, hex(0x090B24));
     g.strokeRect(box, hover && !locked ? Pal::cian.withAlpha(0.7f) : Pal::panelBorde, 1.0f);
     g.text(valueText(p, id_, valueCache), { box.l + 6.0f, box.t, box.r - 16.0f, box.b }, Font::ValueSmall, locked ? Pal::bloqueado : Pal::textoValor, Align::Left);
     // chevron
@@ -420,7 +457,7 @@ void Meter::draw(Gfx& g, ParamAccess&, bool) {
     const float pk = std::clamp((peak_ - minDb_) / (maxDb_ - minDb_), 0.0f, 1.0f);
     const int lit = static_cast<int>(std::lround(frac * segs));
     const int pkSeg = static_cast<int>(std::lround(pk * segs));
-    g.fillRect(bar.inset(-1.0f), hex(0x03080C));
+    g.fillRect(bar.inset(-1.0f), hex(0x03030F));
     for (int i = 0; i < segs; ++i) {
         // i = 0 abajo (o arriba si inverted)
         const float y0 = inverted_ ? bar.t + i * segH : bar.b - (i + 1) * segH;
@@ -439,8 +476,8 @@ Button::Button(Rect r, const wchar_t* t, std::function<void()> action) : Widget(
 void Button::draw(Gfx& g, ParamAccess&, bool hover) {
     const float rad = rect.h() * 0.5f;
     g.fillRound(rect.inset(-4.0f), rad + 4.0f, Pal::cianGlow.withAlpha(hover ? 0.3f : 0.16f));
-    g.fillRound(rect, rad, hover ? hex(0x5BE4F8) : Pal::cian);
-    g.text(caption, rect, Font::Section, hex(0x031018), Align::Center, true);
+    g.fillRound(rect, rad, hover ? hex(0x6FE8FF) : Pal::cian);
+    g.text(caption, rect, Font::Section, hex(0x03041A), Align::Center, true);
 }
 bool Button::onDown(const MouseEvent&, ParamAccess&) {
     if (action_) action_();
