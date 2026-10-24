@@ -41,6 +41,7 @@
 #include "transport_clock.h"
 #include "native_metronome.h"
 #include "clip_player.h"
+#include "jw_dsp.h"   // plugins/shared-dsp: LoudnessMeter BS.1770 compartido con los plugins
 #endif
 #ifdef _WIN32
 #include "asio_output.h"
@@ -472,6 +473,7 @@ static void applyLiveMidiFromWinmm() {
 static std::string gMixPipeName;
 static std::atomic<float> gMasterGain{1.f};
 static std::atomic<bool> gMasterMuted{false};
+static std::atomic<float> gMasterPan{0.f};
 static float gMixL[8192];
 static float gMixR[8192];
 static float gTmpL[8192];
@@ -554,6 +556,16 @@ static std::atomic<float> gMeterStemPeak[kMaxGraphTracks]{};
 static std::atomic<float> gMeterSidechainPeak[kMaxGraphTracks]{};
 static std::atomic<float> gMeterMasterPeak{0.f};
 static constexpr float kMeterDecay = 0.92f;
+/** Medición del master (hilo de audio escribe, control lee): L/R, RMS, correlación y sonoridad BS.1770. */
+static std::atomic<float> gMeterMasterPeakL{0.f}, gMeterMasterPeakR{0.f};
+static std::atomic<float> gMeterMasterRmsL{0.f}, gMeterMasterRmsR{0.f};
+static std::atomic<float> gMeterMasterCorr{1.f};
+static JasWaveDsp::LoudnessMeter gMasterLoudness;
+static uint32_t gMasterLoudnessSr = 0;
+static JasWaveDsp::SpectrumTap gMasterTap;   // mono (L+R)/2 de la salida, para el espectro del master
+static float gMasterTapL[8192], gMasterTapR[8192];
+static std::atomic<bool> gMasterLoudnessReset{false};
+static double currentSampleRate();
 static char gMeterTrackOrder[kMaxGraphTracks][kSlotIdLen]{};
 static uint8_t gMeterTrackOrderN = 0;
 
@@ -1143,9 +1155,14 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
   const float masterG = (gMasterMuted.load(std::memory_order_relaxed)
                             ? 0.f
                             : gMasterGain.load(std::memory_order_relaxed)) * 1.35f;
+  // Pan del master: ley de potencia constante, 0 dB al centro (como el pan por pista).
+  const float masterPan = std::max(-1.f, std::min(1.f, gMasterPan.load(std::memory_order_relaxed)));
+  const float panAng = (masterPan + 1.f) * 0.78539816339f;
+  const float panL = std::cos(panAng) * 1.41421356237f;
+  const float panR = std::sin(panAng) * 1.41421356237f;
   for (int i = 0; i < frames; ++i) {
-    interleaved[i * 2 + 0] = softLimitSample(gMixL[i] * masterG);
-    interleaved[i * 2 + 1] = softLimitSample(gMixR[i] * masterG);
+    interleaved[i * 2 + 0] = softLimitSample(gMixL[i] * masterG * panL);
+    interleaved[i * 2 + 1] = softLimitSample(gMixR[i] * masterG * panR);
   }
   // Legacy Chromium/Soft Pad bus: skip when Reaper graph owns all track audio.
   if (!useGraph) {
@@ -1171,6 +1188,39 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
       if (b > mp) mp = b;
     }
     meterUpdatePeak(gMeterMasterPeak, mp > 1.f ? 1.f : mp);
+    // Medición completa del master (post-fader, post-limitador, con metrónomo: lo que sale al dispositivo)
+    float pl = 0.f, pr = 0.f;
+    double sl = 0.0, sr2 = 0.0, slr = 0.0;
+    for (int i = 0; i < frames; ++i) {
+      const float l = interleaved[i * 2], r = interleaved[i * 2 + 1];
+      pl = std::max(pl, std::fabs(l));
+      pr = std::max(pr, std::fabs(r));
+      sl += static_cast<double>(l) * l;
+      sr2 += static_cast<double>(r) * r;
+      slr += static_cast<double>(l) * r;
+    }
+    meterUpdatePeak(gMeterMasterPeakL, pl > 1.f ? 1.f : pl);
+    meterUpdatePeak(gMeterMasterPeakR, pr > 1.f ? 1.f : pr);
+    const float n = frames > 0 ? static_cast<float>(frames) : 1.f;
+    const float rmsL = std::sqrt(static_cast<float>(sl) / n), rmsR = std::sqrt(static_cast<float>(sr2) / n);
+    gMeterMasterRmsL.store(rmsL, std::memory_order_relaxed);
+    gMeterMasterRmsR.store(rmsR, std::memory_order_relaxed);
+    const double den = std::sqrt(sl * sr2);
+    const float corrBlock = den > 1e-12 ? static_cast<float>(slr / den) : 1.f;
+    const float corrPrev = gMeterMasterCorr.load(std::memory_order_relaxed);
+    gMeterMasterCorr.store(corrPrev + (corrBlock - corrPrev) * 0.2f, std::memory_order_relaxed);
+    const uint32_t srNow = static_cast<uint32_t>(currentSampleRate());
+    if (srNow != gMasterLoudnessSr) {
+      gMasterLoudness.prepare(static_cast<double>(srNow));
+      gMasterLoudnessSr = srNow;
+    }
+    if (gMasterLoudnessReset.exchange(false, std::memory_order_relaxed)) gMasterLoudness.reset();
+    for (int i = 0; i < frames; ++i) gMasterLoudness.processSample(interleaved[i * 2], interleaved[i * 2 + 1]);
+    {
+      const int m = frames > 8192 ? 8192 : frames;
+      for (int i = 0; i < m; ++i) { gMasterTapL[i] = interleaved[i * 2]; gMasterTapR[i] = interleaved[i * 2 + 1]; }
+      gMasterTap.push(gMasterTapL, gMasterTapR, m);
+    }
   }
   jaswave::transport_clock_advance(static_cast<uint32_t>(frames));
 }
@@ -1779,6 +1829,8 @@ static void handleLine(const std::string& line) {
       const float g = static_cast<float>(getNumberField(line, "gain", 1));
       gMasterGain.store(std::max(0.f, std::min(4.f, g)), std::memory_order_relaxed);
       gMasterMuted.store(getBoolField(line, "muted", false), std::memory_order_relaxed);
+      const float mpan = static_cast<float>(getNumberField(line, "pan", 0));
+      gMasterPan.store(std::max(-1.f, std::min(1.f, mpan)), std::memory_order_relaxed);
     } else {
       std::string slotId = getStringField(line, "slotId");
       if (slotId.empty()) slotId = gActiveSlot;
@@ -2424,10 +2476,54 @@ static void handleLine(const std::string& line) {
     }
     return;
   }
+  if (type == "getMasterSpectrum") {
+    // FFT de 8192 puntos del master (misma balística que los plugins), en columnas log 20 Hz..20 kHz (dBFS).
+    static JasWaveDsp::SpectrumAnalyzer analyzer;
+    static auto last = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    const float dt = std::chrono::duration<float>(now - last).count();
+    last = now;
+    const int count = static_cast<int>(std::max(8.0, std::min(256.0, getNumberField(line, "count", 96))));
+    analyzer.updateBalistica(gMasterTap, currentSampleRate(), dt, 14.0f);
+    std::vector<float> cols;
+    analyzer.columns(cols, count, 20.0, 20000.0, 0.0);
+    std::ostringstream js;
+    js << "\"columns\":[";
+    for (size_t i = 0; i < cols.size(); ++i) {
+      char nb[24];
+      std::snprintf(nb, sizeof(nb), "%s%.1f", i ? "," : "", static_cast<double>(cols[i] < -140.f ? -140.f : cols[i]));
+      js << nb;
+    }
+    js << "]";
+    replyOk(js.str());
+    return;
+  }
+  if (type == "resetMasterLoudness") {
+    gMasterLoudnessReset.store(true, std::memory_order_relaxed);
+    replyOk();
+    return;
+  }
   if (type == "getMixMeters") {
     std::ostringstream js;
     js << "\"masterPeak\":";
     appendJsonFloat(js, gMeterMasterPeak.load(std::memory_order_relaxed));
+    js << ",\"masterPeakL\":";
+    appendJsonFloat(js, gMeterMasterPeakL.load(std::memory_order_relaxed));
+    js << ",\"masterPeakR\":";
+    appendJsonFloat(js, gMeterMasterPeakR.load(std::memory_order_relaxed));
+    js << ",\"masterRmsL\":";
+    appendJsonFloat(js, gMeterMasterRmsL.load(std::memory_order_relaxed));
+    js << ",\"masterRmsR\":";
+    appendJsonFloat(js, gMeterMasterRmsR.load(std::memory_order_relaxed));
+    {
+      char nb[160];
+      std::snprintf(nb, sizeof(nb), ",\"masterCorrelation\":%.4f,\"lufsMomentary\":%.2f,\"lufsShort\":%.2f,\"lufsIntegrated\":%.2f",
+                    static_cast<double>(gMeterMasterCorr.load(std::memory_order_relaxed)),
+                    static_cast<double>(gMasterLoudness.momentary.load(std::memory_order_relaxed)),
+                    static_cast<double>(gMasterLoudness.shortTerm.load(std::memory_order_relaxed)),
+                    static_cast<double>(gMasterLoudness.integrated.load(std::memory_order_relaxed)));
+      js << nb;
+    }
     js << ",\"tracks\":[";
     const int idx = gRtBuf.load(std::memory_order_acquire);
     const uint8_t trackN = gRtTrackCount[idx];

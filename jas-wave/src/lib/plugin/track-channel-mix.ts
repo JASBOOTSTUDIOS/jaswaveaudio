@@ -44,7 +44,7 @@ export function syncNativeChannelMix(
     soloActiva?: boolean
     plugins?: PluginInfo[]
   }>,
-  master?: { volumen?: number; muted?: boolean; plugins?: PluginInfo[] },
+  master?: { volumen?: number; paneo?: number; muted?: boolean; plugins?: PluginInfo[] },
   routing?: MixRouting,
 ): void {
   const anySolo = tracks.some((t) => t.soloActiva)
@@ -65,6 +65,7 @@ export function syncNativeChannelMix(
       type: 'setMasterMix',
       gain: typeof master.volumen === 'number' ? master.volumen : 1,
       muted: Boolean(master.muted),
+      pan: typeof master.paneo === 'number' ? Math.max(-1, Math.min(1, master.paneo)) : 0,
     })
   }
 }

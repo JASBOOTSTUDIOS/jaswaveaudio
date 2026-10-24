@@ -527,11 +527,6 @@ export function Mixer() {
             }}>
               M
             </TrackButton>
-            <TrackButton label={`Solo Master`} active={Boolean(master?.solo)} onClick={() => {
-              void tienda.executor.execute('master.update', { datos: { solo: !master?.solo } })
-            }}>
-              S
-            </TrackButton>
           </div>
 
           <KnobControl value={masterTrack.pan} color={masterTrack.color} onChange={(pan, gestureId) => {

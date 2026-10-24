@@ -13,6 +13,7 @@ import {
   getNativeMasterPeak,
   getNativeMaxStemPeak,
   getNativeTrackPeak,
+  hasFreshNativeMeters,
   isNativeMeterHostAvailable,
   setMixMeterTrackOrder,
 } from '@/src/lib/plugin/native-mix-meters'
@@ -1208,8 +1209,9 @@ export class WebAudioEngine {
   public getMasterMeterLevel(): number {
     let native = 0
     if (isNativeMeterHostAvailable()) {
-      // Preferir pico de master; si el bus no reporta, usar el máximo de stems.
-      native = Math.max(getNativeMasterPeak(), getNativeMaxStemPeak())
+      // El master mide su propia salida (post-fader y post-mute). Solo si el host aún no reporta se
+      // recurre al máximo de stems; si no, un master silenciado se vería moviéndose.
+      native = hasFreshNativeMeters() ? getNativeMasterPeak() : getNativeMaxStemPeak()
     }
     let web = 0
     if (this.masterAnalyser && this.masterMeterData) {

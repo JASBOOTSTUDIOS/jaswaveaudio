@@ -48,6 +48,7 @@ if(HAS_VST3_SDK)
   target_include_directories(jaswave-plugin-host PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/vendor"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../plugins/shared-dsp"
     "${CMAKE_CURRENT_SOURCE_DIR}/vendor/vst2"
     "${VST3_SDK_DIR}"
   )

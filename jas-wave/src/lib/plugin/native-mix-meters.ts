@@ -13,6 +13,29 @@ type MixMetersSnapshot = {
 const byStem = new Float32Array(64)
 const sidechainByStem = new Float32Array(64)
 let masterPeak = 0
+
+/** Medición completa del master nativo (post-fader, post-limitador). Los niveles son lineales 0..1. */
+export type NativeMasterMetering = {
+  peakL: number
+  peakR: number
+  rmsL: number
+  rmsR: number
+  /** −1 (fuera de fase) … +1 (mono). */
+  correlation: number
+  lufsMomentary: number
+  lufsShort: number
+  lufsIntegrated: number
+}
+const masterMetering: NativeMasterMetering = {
+  peakL: 0,
+  peakR: 0,
+  rmsL: 0,
+  rmsR: 0,
+  correlation: 1,
+  lufsMomentary: -120,
+  lufsShort: -120,
+  lufsIntegrated: -120,
+}
 let updatedAt = 0
 let pollPromise: Promise<void> | null = null
 let stemIdOrder: string[] = []
@@ -43,6 +66,52 @@ export function getMixMeterTrackOrder(): string[] {
 
 export function getNativeMasterPeak(): number {
   return masterPeak
+}
+
+/** Espectro del master (dBFS por columna log 20 Hz–20 kHz), calculado en el host con la FFT de los plugins. */
+const MASTER_SPECTRUM_COLS = 96
+const masterSpectrum = new Float32Array(MASTER_SPECTRUM_COLS).fill(-140)
+let spectrumPoll: Promise<void> | null = null
+
+export function getNativeMasterSpectrum(): Float32Array {
+  return masterSpectrum
+}
+
+export async function refreshNativeMasterSpectrum(): Promise<void> {
+  if (spectrumPoll) return spectrumPoll
+  const api = typeof window !== 'undefined' ? window.electron : undefined
+  if (!api?.pluginHostSend) return
+  spectrumPoll = (async () => {
+    try {
+      const raw = (await Promise.race([
+        api.pluginHostSend({ type: 'getMasterSpectrum', count: MASTER_SPECTRUM_COLS }),
+        new Promise<null>((r) => setTimeout(() => r(null), 500)),
+      ])) as { ok?: boolean; columns?: number[] } | null
+      if (!raw || raw.ok === false || !Array.isArray(raw.columns)) return
+      for (let i = 0; i < MASTER_SPECTRUM_COLS; i++) {
+        const v = raw.columns[i]
+        masterSpectrum[i] = typeof v === 'number' && Number.isFinite(v) ? Math.max(-140, Math.min(0, v)) : -140
+      }
+    } catch {
+      /* host ocupado: se conserva el último espectro */
+    }
+  })().finally(() => {
+    spectrumPoll = null
+  })
+  return spectrumPoll
+}
+
+export function getNativeMasterMetering(): NativeMasterMetering {
+  return masterMetering
+}
+
+/** Reinicia la sonoridad integrada del master (p. ej. al empezar una pasada de reproducción). */
+export function resetNativeMasterLoudness(): void {
+  try {
+    void window.electron?.pluginHostSend?.({ type: 'resetMasterLoudness' })
+  } catch {
+    /* ignore */
+  }
 }
 
 export function getNativeTrackSidechainPeak(trackId: string): number | null {
@@ -92,6 +161,14 @@ export async function refreshNativeMixMeters(): Promise<void> {
       ])) as {
         ok?: boolean
         masterPeak?: number
+        masterPeakL?: number
+        masterPeakR?: number
+        masterRmsL?: number
+        masterRmsR?: number
+        masterCorrelation?: number
+        lufsMomentary?: number
+        lufsShort?: number
+        lufsIntegrated?: number
         tracks?: Array<{ index?: number; peak?: number; sidechainPeak?: number }>
       } | null
       if (!raw || raw.ok === false) return
@@ -101,6 +178,19 @@ export async function refreshNativeMixMeters(): Promise<void> {
         const next = Math.max(0, Math.min(1, raw.masterPeak))
         masterPeak = hold ? Math.max(masterPeak * 0.88, next) : next
       }
+      const lin = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0)
+      const lufs = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(-120, Math.min(12, v)) : -120)
+      masterMetering.peakL = hold ? Math.max(masterMetering.peakL * 0.88, lin(raw.masterPeakL)) : lin(raw.masterPeakL)
+      masterMetering.peakR = hold ? Math.max(masterMetering.peakR * 0.88, lin(raw.masterPeakR)) : lin(raw.masterPeakR)
+      masterMetering.rmsL = lin(raw.masterRmsL)
+      masterMetering.rmsR = lin(raw.masterRmsR)
+      masterMetering.correlation =
+        typeof raw.masterCorrelation === 'number' && Number.isFinite(raw.masterCorrelation)
+          ? Math.max(-1, Math.min(1, raw.masterCorrelation))
+          : 1
+      masterMetering.lufsMomentary = lufs(raw.lufsMomentary)
+      masterMetering.lufsShort = lufs(raw.lufsShort)
+      masterMetering.lufsIntegrated = lufs(raw.lufsIntegrated)
       const nextStem = new Float32Array(64)
       const nextSidechain = new Float32Array(64)
       for (const t of raw.tracks ?? []) {

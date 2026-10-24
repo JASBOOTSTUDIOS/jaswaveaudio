@@ -46,6 +46,8 @@ export const ALLOWED_HOST_COMMANDS = new Set([
   'setTrackGraph',
   'setMeterTrackOrder',
   'getMixMeters',
+  'resetMasterLoudness',
+  'getMasterSpectrum',
   'getMixBufferStats',
   'listAudioDevices',
   'getAudioDevice',
