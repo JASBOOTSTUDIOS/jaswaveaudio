@@ -145,6 +145,51 @@ private:
     bool hayIn_{false}, hayOut_{false};
 };
 
+// ---------------------------------------------------------------------------------
+//  Analizador de umbral: nivel en vivo con retención de pico y rango de variación reciente.
+//  Lo comparten los plugins que procesan señal (compresor, limitador, EQ por banda) para que el
+//  umbral se lea siempre contra la señal real, en la misma escala dBFS del espectro.
+// ---------------------------------------------------------------------------------
+struct NivelVivo {
+    float actual{kDbMin}, pico{kDbMin}, minimo{kDbMax}, maximo{kDbMin};
+    static constexpr float kCaidaPico = 12.0f;   // dB/s
+    static constexpr float kDerivaRango = 3.0f;  // dB/s: el rango reciente se contrae hacia el nivel actual
+    void reset() { actual = pico = kDbMin; minimo = kDbMax; maximo = kDbMin; }
+    void actualizar(float db, float dt) {
+        db = std::clamp(db, kDbMin, kDbMax);
+        const bool silencio = db <= kDbMin + 1.0f;
+        actual += (db - actual) * std::min(1.0f, dt * 25.0f);
+        pico = std::max(pico - kCaidaPico * dt, actual);
+        if (silencio) { minimo = kDbMax; maximo = kDbMin; return; }
+        maximo = std::max(maximo - kDerivaRango * dt, db);
+        minimo = std::min(minimo + kDerivaRango * dt, db);
+        if (maximo < minimo) maximo = minimo = db;
+    }
+    bool hay() const { return actual > kDbMin + 1.0f; }
+};
+
+// Línea de umbral sobre la escala dBFS: la zona por encima (donde actúa el procesador) queda sombreada
+// y, si hay señal, se marca su nivel actual y el pico retenido con la distancia al umbral.
+inline void dibujarUmbral(Gfx& g, const Rect& a, float umbralDb, const NivelVivo& nivel, Color color, const wchar_t* etiqueta, bool sombrearArriba = true) {
+    const float yT = yDbfs(a, umbralDb);
+    if (sombrearArriba) g.fillRect({ a.l, a.t, a.r, yT }, color.withAlpha(0.05f));
+    g.glowLine(a.l, yT, a.r, yT, color.withAlpha(0.85f), 1.2f);
+    wchar_t buf[64];
+    swprintf_s(buf, L"%s %.1f dB", etiqueta, umbralDb);
+    g.text(buf, { a.l + 6, yT + 3, a.l + 220, yT + 19 }, Font::ValueSmall, color, Align::Left);
+    if (!nivel.hay()) return;
+    const float yN = yDbfs(a, nivel.actual), yP = yDbfs(a, nivel.pico);
+    const float x = a.l + 12.0f;
+    g.fillRect({ x - 3.0f, std::min(yN, a.b), x + 3.0f, a.b }, (nivel.actual > umbralDb ? Pal::alerta : Pal::espectroOut).withAlpha(0.55f));
+    g.line(x - 7.0f, yP, x + 7.0f, yP, Pal::textoValor, 1.4f);
+    const float yR0 = yDbfs(a, nivel.maximo), yR1 = yDbfs(a, nivel.minimo);
+    if (yR1 - yR0 > 1.0f) g.line(x + 9.0f, yR0, x + 9.0f, yR1, Pal::cian.withAlpha(0.7f), 1.5f);
+    const float sobre = nivel.actual - umbralDb;
+    swprintf_s(buf, L"%+.1f dB %s", sobre, sobre > 0.0f ? L"SOBRE" : L"BAJO");
+    const float yL = yT + 19.0f < a.b - 16.0f ? yT + 19.0f : yT - 34.0f;
+    g.text(buf, { a.l + 6, yL, a.l + 220, yL + 16 }, Font::ValueSmall, sobre > 0.0f ? Pal::alerta : Pal::textoTenue, Align::Left);
+}
+
 // Teclado de 88 teclas (A0..C8) iluminado por las notas que suenan
 class Teclado88 {
 public:

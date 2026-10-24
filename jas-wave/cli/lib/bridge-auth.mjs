@@ -21,7 +21,17 @@ function userDataCandidates() {
     (process.platform === 'darwin'
       ? path.join(os.homedir(), 'Library', 'Application Support')
       : path.join(os.homedir(), '.config'))
-  return ['JasWave', 'jaswave'].map((n) => path.join(appData, n))
+  // En desarrollo (app sin empaquetar) Electron usa «Electron» como userData.
+  const dirs = ['JasWave', 'jaswave', 'Electron'].map((n) => path.join(appData, n))
+  const mtime = (d) => {
+    try {
+      return fs.statSync(path.join(d, 'agent-bridge.json')).mtimeMs
+    } catch {
+      return 0
+    }
+  }
+  // El bridge reescribe el archivo en cada arranque: el más reciente es el de la app abierta.
+  return dirs.sort((a, b) => mtime(b) - mtime(a))
 }
 
 export function readBridgeCredentials() {

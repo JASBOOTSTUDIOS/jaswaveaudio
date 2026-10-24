@@ -96,6 +96,7 @@ public:
         grNow_ += (bus_->grNow.load(std::memory_order_relaxed) - grNow_) * std::min(1.0f, c.dt * 20.0f);
         grPeak_ = std::max(grPeak_ - JasWaveUI::Kit::kCaidaDbS * c.dt, g);
         det_ = bus_->detLevelDb.load(std::memory_order_relaxed);
+        nivel_.actualizar(det_ > -99.0f ? det_ : JasWaveUI::Plantilla::kDbMin, c.dt);
     }
     float outputLevel() const override { return meters_.level(); }
     void drawPanels(JasWaveUI::Gfx& g, JasWaveUI::EditorContext& c) override {
@@ -106,6 +107,8 @@ public:
         meters_.drawLabels(g);
         const Rect a = P::areaEspectro();
         espectro_.dibujar(g, a);
+        // umbral contra el nivel real del detector (misma escala dBFS que el espectro)
+        P::dibujarUmbral(g, a, static_cast<float>(c.params.plain(kThreshold)), nivel_, ac, L"UMBRAL");
         // curva estática entrada → salida (inserto arriba a la derecha, donde el espectro de agudos es bajo)
         const Rect cr{ a.r - 166, a.t + 22, a.r - 10, a.t + 22 + 156 };
         g.fillRect(cr, hex(0x03030F, 0.78f));
@@ -155,6 +158,7 @@ private:
     JasWaveUI::Plantilla::HistorialGR historial_;
     JasWaveDsp::ScopeSnapshot snap_;
     std::array<JasWaveUI::Pt, 64> curve_{};
+    JasWaveUI::Plantilla::NivelVivo nivel_;
     float grNow_{0}, grPeak_{0}, det_{-100};
 };
 

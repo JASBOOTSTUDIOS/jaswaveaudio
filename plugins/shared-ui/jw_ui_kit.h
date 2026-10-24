@@ -62,6 +62,7 @@ public:
     }
     float level() const { return std::clamp((std::max(f_[2].db, f_[3].db) + 48.0f) / 54.0f, 0.0f, 1.0f); }
     float outDb() const { return std::max(f_[2].db, f_[3].db); }
+    float inDb() const { return std::max(f_[0].db, f_[1].db); }
     void drawLabels(Gfx& g) const {
         g.text(instrumento_ ? L"MIDI" : L"IN", { labelX_ - 6, labelY_ + 2, labelX_ + 30, labelY_ + 16 }, Font::Label, Pal::textoEtiqueta, Align::Center, true);
         g.text(L"OUT", { labelX_ + 38, labelY_ + 2, labelX_ + 76, labelY_ + 16 }, Font::Label, Pal::textoEtiqueta, Align::Center, true);

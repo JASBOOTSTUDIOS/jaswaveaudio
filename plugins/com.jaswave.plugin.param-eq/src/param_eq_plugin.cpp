@@ -117,6 +117,7 @@ public:
             // suavizado visual propio (los valores del DSP ya vienen con caída de ~250 ms)
             bIn_[static_cast<size_t>(b)] += (in - bIn_[static_cast<size_t>(b)]) * 0.5f;
             bOut_[static_cast<size_t>(b)] += (out - bOut_[static_cast<size_t>(b)]) * 0.5f;
+            bNivel_[static_cast<size_t>(b)].actualizar(in > -100.0f ? in : JasWaveUI::Plantilla::kDbMin, c.dt);
         }
     }
     float outputLevel() const override { return meters_.level(); }
@@ -130,6 +131,7 @@ public:
         Kit::freqAxis(g, pr);
         Kit::dbAxis(g, pr, -kDbRange, kDbRange, 6.0);
         if (analyzerOn_) espectro_.dibujar(g, pr, false, false, 0.45f);   // la curva domina (V3 §5.1)
+        drawNivelesBanda(g, c, pr);
         // curvas: banda seleccionada (relleno) y total (hilo con glow + ecos)
         BandCoefs bc[kBands];
         bool active[kBands];
@@ -377,6 +379,35 @@ private:
         return s;
     }
     // Monitor de la banda seleccionada: señal real que entra y sale de la banda (en su región) vs el aporte
+    // Nivel real de cada banda activa (misma escala dBFS que el espectro): columna en vivo, pico retenido y
+    // rango de variación reciente, anclados a la frecuencia de la banda. La seleccionada muestra su cifra.
+    void drawNivelesBanda(JasWaveUI::Gfx& g, JasWaveUI::EditorContext& c, const JasWaveUI::Rect& pr) {
+        using namespace JasWaveUI;
+        namespace P = Plantilla;
+        if (!analyzerOn_) return;
+        for (int b = 0; b < kBands; ++b) {
+            if (!isUsed(c, b) || c.params.locked(bandParam(b, fOn)) || c.params.plain(bandParam(b, fOn)) < 0.5) continue;
+            const P::NivelVivo& n = bNivel_[static_cast<size_t>(b)];
+            if (!n.hay()) continue;
+            const float x = Kit::xForFreq(pr, c.params.plain(bandParam(b, fFreq)));
+            const bool sel = b == sel_;
+            const float yN = P::yDbfs(pr, n.actual), yP = P::yDbfs(pr, n.pico);
+            const float aLpha = sel ? 1.0f : 0.6f;
+            g.fillRect({ x - 4.0f, yN, x + 4.0f, pr.b }, Pal::espectroIn.withAlpha(0.28f * aLpha));
+            g.line(x - 6.0f, yP, x + 6.0f, yP, Pal::textoValor.withAlpha(aLpha), 1.4f);
+            const float yHi = P::yDbfs(pr, n.maximo), yLo = P::yDbfs(pr, n.minimo);
+            if (yLo - yHi > 1.0f) {
+                g.line(x + 8.0f, yHi, x + 8.0f, yLo, Pal::cian.withAlpha(0.75f * aLpha), 1.6f);
+                g.line(x + 6.0f, yHi, x + 10.0f, yHi, Pal::cian.withAlpha(0.75f * aLpha), 1.2f);
+                g.line(x + 6.0f, yLo, x + 10.0f, yLo, Pal::cian.withAlpha(0.75f * aLpha), 1.2f);
+            }
+            if (sel) {
+                wchar_t buf[64];
+                swprintf_s(buf, L"%.0f dB  ±%.1f", n.actual, (n.maximo - n.minimo) * 0.5f);
+                g.text(buf, { x + 12.0f, yN - 8.0f, x + 120.0f, yN + 6.0f }, Font::ValueSmall, Pal::textoValor, Align::Left);
+            }
+        }
+    }
     void drawBandMonitor(JasWaveUI::Gfx& g, JasWaveUI::EditorContext& c, const JasWaveUI::Rect& pr) {
         using namespace JasWaveUI;
         if (!isUsed(c, sel_)) return;
@@ -447,6 +478,7 @@ private:
     JasWaveUI::Plantilla::EspectroDual espectro_;
     std::array<JasWaveUI::Pt, kCurve> curve_{}, selCurve_{};
     std::array<float, kBands> bIn_{}, bOut_{};
+    std::array<JasWaveUI::Plantilla::NivelVivo, kBands> bNivel_{};
     JasWaveUI::Section* band_{nullptr};
     JasWaveUI::Knob *kFreq_{nullptr}, *kGain_{nullptr}, *kQ_{nullptr};
     JasWaveUI::Dropdown *type_{nullptr}, *mode_{nullptr}, *slope_{nullptr};

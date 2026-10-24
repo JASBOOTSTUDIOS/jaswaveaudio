@@ -84,6 +84,7 @@ public:
         bus_ = std::dynamic_pointer_cast<LimiterBus>(c.params.bus());
         if (!bus_) return;
         meters_.update(bus_->inPk, bus_->outPk, c.dt);
+        nivel_.actualizar(meters_.inDb(), c.dt);
         espectro_.actualizar(*bus_, c.dt);
         grF_.push(std::pow(10.0f, bus_->grMax.take() / 20.0f), c.dt);
         const float tp = bus_->tpOut.take();
@@ -115,6 +116,9 @@ public:
         wchar_t buf[48];
         swprintf_s(buf, L"TECHO %.1f dBTP", ceil);
         g.text(buf, { a.l + 6, yC + 3, a.l + 220, yC + 19 }, Font::ValueSmall, ac, Align::Left);
+        // umbral de entrada: la señal que lo supera (techo − ganancia de entrada) es la que se limita
+        const float umbral = static_cast<float>(ceil - c.params.plain(kGain));
+        if (c.params.plain(kGain) > 0.05) P::dibujarUmbral(g, a, umbral, nivel_, Pal::cian, L"UMBRAL ENTRADA", false);
         // mini-panel: sonoridad y true-peak (lecturas de alta visibilidad en el acento)
         P::panelMedicion(g, L"SONORIDAD · BS.1770");
         const Rect m = P::kMini;
@@ -145,6 +149,7 @@ private:
     std::shared_ptr<LimiterBus> bus_;
     JasWaveUI::Kit::StereoMeters meters_;
     JasWaveUI::Plantilla::EspectroDual espectro_;
+    JasWaveUI::Plantilla::NivelVivo nivel_;
     JasWaveUI::Kit::PeakFollower grF_, tpF_;
     JasWaveUI::Meter *gr_{nullptr}, *tp_{nullptr};
     float tpHold_{-120.0f}, lm_{-120}, ls_{-120}, li_{-120};
