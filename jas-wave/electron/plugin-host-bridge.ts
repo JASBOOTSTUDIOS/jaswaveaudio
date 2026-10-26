@@ -297,7 +297,7 @@ function connectMixPipeOnce(name: string): Promise<boolean> {
     }
     const timer = setTimeout(() => done(false), 1500)
     try {
-      sock = fs.createWriteStream(name, { flags: 'w', autoClose: true, emitClose: true })
+      sock = fs.createWriteStream(name, { flags: 'w', autoClose: true, emitClose: true, highWaterMark: 128 * 1024 })
     } catch {
       done(false)
       return

@@ -223,8 +223,6 @@ static void listPluginsInDir(const std::string& dir, std::vector<DiscoveredPlugi
     }
     if (endsWithLower(nameLower, ".vst3")) {
       out.push_back({full, "vst3"});
-    } else if (endsWithLower(nameLower, ".dll") && !skipVst2DllName(nameLower)) {
-      out.push_back({full, "vst2"});
     }
   } while (FindNextFileA(h, &fd));
   FindClose(h);
@@ -285,19 +283,10 @@ static void handleDiscover(const std::string& json) {
     std::string name = found[i].path;
     auto slash = name.find_last_of("/\\");
     if (slash != std::string::npos) name = name.substr(slash + 1);
-    const bool vst2 = found[i].format == "vst2";
-    if (vst2 && name.size() > 4) name = name.substr(0, name.size() - 4);
-    else if (!vst2 && name.size() > 5) name = name.substr(0, name.size() - 5);
-    bool hostable = kAudioReady;
-    if (vst2) {
-#if defined(JASWAVE_HAS_VST3_SDK)
-      hostable = kAudioReady && Vst2Slot::isPe64Dll(found[i].path);
-#else
-      hostable = false;
-#endif
-    }
+    if (name.size() > 5) name = name.substr(0, name.size() - 5);
+    const bool hostable = kAudioReady;
     plugins << "{\"path\":\"" << jsonEscape(found[i].path) << "\",\"name\":\"" << jsonEscape(name)
-            << "\",\"format\":\"" << found[i].format << "\",\"hostReady\":"
+            << "\",\"format\":\"vst3\",\"hostReady\":"
             << (hostable ? "true" : "false")
             << ",\"editorReady\":" << (hostable ? "true" : "false") << "}";
   }

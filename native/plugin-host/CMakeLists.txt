@@ -32,7 +32,6 @@ if(HAS_VST3_SDK)
   add_executable(jaswave-plugin-host
     src/main.cpp
     src/vst3_slot.cpp
-    src/vst2_slot.cpp
     src/audio_output.cpp
     src/asio_output.cpp
     src/asio_com.c
@@ -49,7 +48,6 @@ if(HAS_VST3_SDK)
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/vendor"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../plugins/shared-dsp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/vendor/vst2"
     "${VST3_SDK_DIR}"
   )
   target_link_libraries(jaswave-plugin-host PRIVATE sdk_hosting)

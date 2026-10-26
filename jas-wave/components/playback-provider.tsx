@@ -36,7 +36,7 @@ import {
   saveRecordingWav,
   saveRecordingWavFallback,
 } from '@/src/lib/audio-recording-persist'
-import { cargarBytesMedia, copiarAudioAlProyecto, esRutaMediaRelativa, validarImportacionAudio } from '@/src/lib/project-media'
+import { cargarBytesMedia, copiarAudioAlProyecto, esRutaMediaRelativa, validarImportacionAudio, guardarWaveformPeak, cargarWaveformPeak } from '@/src/lib/project-media'
 import {
   cerrarFinalizacionGrabacion,
   iniciarFinalizacionGrabacion,
@@ -388,11 +388,17 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
               if (cached) {
                 waveform = cached
               } else {
+                void cargarWaveformPeak(sourceId).then((peakData) => {
+                  if (peakData && peakData.length >= 4) {
+                    peaksCacheRef.current.set(cacheKey, peakData)
+                  }
+                })
                 const buf = audioEngine.getAudioBuffer(sourceId)
                 if (buf) {
                   const buckets = Math.min(4096, Math.max(512, Math.floor(buf.duration * 80)))
                   waveform = packStereoPeaks(extractStereoPeaks(buf, buckets))
                   peaksCacheRef.current.set(cacheKey, waveform)
+                  void guardarWaveformPeak(sourceId, waveform)
                 }
               }
           }
@@ -1246,6 +1252,9 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           }
           if (sourceId !== memKey) {
             audioEngine.setAudioBuffer(sourceId, buffer)
+          }
+          if (sourceId) {
+            void guardarWaveformPeak(sourceId, waveform, projectRuta)
           }
           for (const trackId of trackIds) {
             // La pista pudo borrarse mientras se grababa: la toma no se pierde,

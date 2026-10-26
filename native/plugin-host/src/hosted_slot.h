@@ -1,6 +1,7 @@
 #pragma once
 /**
- * Slot hospedado: VST3 o VST2 detrás de la misma API usada por main.cpp.
+ * Slot hospedado exclusivo VST3 64-bit (JasWave DAW).
+ * Retiro definitivo de VST2 según el Plan Maestro (Fase 1).
  */
 
 #include <atomic>
@@ -17,94 +18,71 @@
 #include <windows.h>
 #endif
 
-#include "vst2_slot.h"
 #include "vst3_slot.h"
 
 class HostedSlot {
 public:
-  enum class Format { Vst3, Vst2 };
+  enum class Format { Vst3 };
 
-  static bool pathLooksVst2(const std::string& path) {
-    if (path.size() < 4) return false;
-    const char* e = path.c_str() + path.size() - 4;
-    return (e[0] == '.' && (e[1] == 'd' || e[1] == 'D') && (e[2] == 'l' || e[2] == 'L') &&
-            (e[3] == 'l' || e[3] == 'L'));
+  static bool pathLooksVst2(const std::string& /*path*/) {
+    return false;
   }
 
-  static std::unique_ptr<HostedSlot> createForPath(const std::string& path) {
+  static std::unique_ptr<HostedSlot> createForPath(const std::string& /*path*/) {
     auto s = std::unique_ptr<HostedSlot>(new HostedSlot());
-    if (pathLooksVst2(path)) {
-      s->format_ = Format::Vst2;
-      s->vst2_ = std::make_unique<Vst2Slot>();
-    } else {
-      s->format_ = Format::Vst3;
-      s->vst3_ = std::make_unique<Vst3Slot>();
-    }
+    s->format_ = Format::Vst3;
+    s->vst3_ = std::make_unique<Vst3Slot>();
     return s;
   }
 
   Format format() const { return format_; }
 
   bool load(const std::string& path, std::string& err) {
-    return vst2_ ? vst2_->load(path, err) : vst3_->load(path, err);
+    return vst3_ ? vst3_->load(path, err) : false;
   }
   bool prepare(double sampleRate, int32_t blockSize, std::string& err) {
     sampleRate_.store(sampleRate > 0 ? sampleRate : 48000.0, std::memory_order_relaxed);
-    return vst2_ ? vst2_->prepare(sampleRate, blockSize, err) : vst3_->prepare(sampleRate, blockSize, err);
+    return vst3_ ? vst3_->prepare(sampleRate, blockSize, err) : false;
   }
   bool reprepare(double sampleRate, int32_t blockSize, std::string& err) {
     sampleRate_.store(sampleRate > 0 ? sampleRate : 48000.0, std::memory_order_relaxed);
-    return vst2_ ? vst2_->reprepare(sampleRate, blockSize, err)
-                 : vst3_->reprepare(sampleRate, blockSize, err);
+    return vst3_ ? vst3_->reprepare(sampleRate, blockSize, err) : false;
   }
   void suspendForAudioRestart() {
-    if (vst2_) vst2_->suspendForAudioRestart();
-    else vst3_->suspendForAudioRestart();
+    if (vst3_) vst3_->suspendForAudioRestart();
   }
   void unload() {
-    if (vst2_) vst2_->unload();
-    else vst3_->unload();
+    if (vst3_) vst3_->unload();
   }
 
   void noteOn(int pitch, float velocity, int delaySamples = 0, int32_t lengthSamples = 0) {
-    if (vst2_) vst2_->noteOn(pitch, velocity, delaySamples);
-    else vst3_->noteOn(pitch, velocity, delaySamples, lengthSamples);
+    if (vst3_) vst3_->noteOn(pitch, velocity, delaySamples, lengthSamples);
   }
   void noteOff(int pitch, int delaySamples = 0) {
-    if (vst2_) vst2_->noteOff(pitch, delaySamples);
-    else vst3_->noteOff(pitch, delaySamples);
+    if (vst3_) vst3_->noteOff(pitch, delaySamples);
   }
   void midiCc(int cc, int value, int delaySamples = 0) {
-    if (vst2_) vst2_->midiCc(cc, value, delaySamples);
-    else vst3_->midiCc(cc, value, delaySamples);
+    if (vst3_) vst3_->midiCc(cc, value, delaySamples);
   }
   void allNotesOff() {
-    if (vst2_) vst2_->allNotesOff();
-    else vst3_->allNotesOff();
+    if (vst3_) vst3_->allNotesOff();
   }
   void setParameterNormalized(uint32_t paramId, double normalized) {
-    if (vst2_) vst2_->setParameterNormalized(paramId, normalized);
-    else vst3_->setParameterNormalized(paramId, normalized);
+    if (vst3_) vst3_->setParameterNormalized(paramId, normalized);
   }
   std::vector<Vst3ParamDesc> listParameters(int maxCount = 400) {
-    return vst2_ ? vst2_->listParameters(maxCount) : vst3_->listParameters(maxCount);
+    return vst3_ ? vst3_->listParameters(maxCount) : std::vector<Vst3ParamDesc>{};
   }
   void setPlaying(bool playing) {
-    if (vst2_) vst2_->setPlaying(playing);
-    else vst3_->setPlaying(playing);
+    if (vst3_) vst3_->setPlaying(playing);
   }
   void setTransport(bool playing, double tempoBpm, double ppqPos = -1.0) {
-    if (vst2_) {
-      vst2_->setTransport(playing, tempoBpm, ppqPos);
-    } else if (vst3_) {
-      vst3_->setTransport(playing, tempoBpm, ppqPos);
-    }
+    if (vst3_) vst3_->setTransport(playing, tempoBpm, ppqPos);
   }
 
   void process(const float* inL, const float* inR, float* outL, float* outR, int frames) {
     const int64_t t0 = now();
-    if (vst2_) vst2_->process(inL, inR, outL, outR, frames);
-    else vst3_->process(inL, inR, outL, outR, frames);
+    if (vst3_) vst3_->process(inL, inR, outL, outR, frames);
     recordLoad(now() - t0, frames);
   }
 
@@ -121,7 +99,7 @@ public:
     const uint64_t sum = loadSumPpm_.load(std::memory_order_relaxed);
     s.avgLoad = s.blocks ? (static_cast<double>(sum) / 1.0e6) / static_cast<double>(s.blocks) : 0.0;
     s.maxLoad = maxLoadPpm_.load(std::memory_order_relaxed) / 1.0e6;
-    s.exceptions = (vst2_ ? vst2_->processExceptions() : vst3_->processExceptions()) - exceptionsBase_.load(std::memory_order_relaxed);
+    s.exceptions = (vst3_ ? vst3_->processExceptions() : 0) - exceptionsBase_.load(std::memory_order_relaxed);
     return s;
   }
   void resetStats() {
@@ -129,7 +107,7 @@ public:
     overruns_.store(0, std::memory_order_relaxed);
     loadSumPpm_.store(0, std::memory_order_relaxed);
     maxLoadPpm_.store(0, std::memory_order_relaxed);
-    exceptionsBase_.store(vst2_ ? vst2_->processExceptions() : vst3_->processExceptions(), std::memory_order_relaxed);
+    exceptionsBase_.store(vst3_ ? vst3_->processExceptions() : 0, std::memory_order_relaxed);
   }
   void process(float* outL, float* outR, int frames) { process(nullptr, nullptr, outL, outR, frames); }
 
@@ -144,14 +122,12 @@ public:
   }
 
   bool openEditor(std::uintptr_t parentHwnd, int x, int y, int w, int h, std::string& err) {
-    return vst2_ ? vst2_->openEditor(parentHwnd, x, y, w, h, err)
-                 : vst3_->openEditor(parentHwnd, x, y, w, h, err);
+    return vst3_ ? vst3_->openEditor(parentHwnd, x, y, w, h, err) : false;
   }
   void setEditorBounds(int x, int y, int w, int h) {
-    if (vst2_) vst2_->setEditorBounds(x, y, w, h);
-    else vst3_->setEditorBounds(x, y, w, h);
+    if (vst3_) vst3_->setEditorBounds(x, y, w, h);
   }
-  /** Solo VST3 (los VST propios de JasWave); VST2 sigue en ventana flotante. */
+  /** Solo VST3 (los VST propios de JasWave y terceros VST3). */
   bool supportsEmbeddedEditor() const { return vst3_ != nullptr; }
   bool openEditorEmbedded(int x, int y, int w, int h, std::string& err) {
     if (!vst3_) {
@@ -164,51 +140,43 @@ public:
     if (vst3_) vst3_->setEmbeddedBounds(x, y, w, h, visible, raise);
   }
   void closeEditor() {
-    if (vst2_) vst2_->closeEditor();
-    else vst3_->closeEditor();
+    if (vst3_) vst3_->closeEditor();
   }
-  bool hasEditor() const { return vst2_ ? vst2_->hasEditor() : vst3_->hasEditor(); }
+  bool hasEditor() const { return vst3_ ? vst3_->hasEditor() : false; }
   bool editorEmbedded() const { return vst3_ && vst3_->editorEmbedded(); }
   void setEditorTitle(const std::string& utf8) { if (vst3_) vst3_->setEditorTitle(utf8); }
 
   bool getStateChunk(std::vector<uint8_t>& out, std::string& err) {
-    if (vst2_) return vst2_->getStateChunk(out, err);
     if (vst3_) return vst3_->getStateChunk(out, err);
-    err = "sin slot";
+    err = "sin slot VST3";
     return false;
   }
   bool setStateChunk(const uint8_t* data, size_t nbytes, std::string& err) {
-    if (vst2_) return vst2_->setStateChunk(data, nbytes, err);
     if (vst3_) return vst3_->setStateChunk(data, nbytes, err);
-    err = "sin slot";
+    err = "sin slot VST3";
     return false;
   }
 
-  const std::string& path() const { return vst2_ ? vst2_->path() : vst3_->path(); }
-  const std::string& slotId() const { return vst2_ ? vst2_->slotId() : vst3_->slotId(); }
+  const std::string& path() const { return vst3_ ? vst3_->path() : emptyPath_; }
+  const std::string& slotId() const { return vst3_ ? vst3_->slotId() : emptyPath_; }
   void setSlotId(std::string id) {
-    if (vst2_) vst2_->setSlotId(std::move(id));
-    else vst3_->setSlotId(std::move(id));
+    if (vst3_) vst3_->setSlotId(std::move(id));
   }
-  bool isPrepared() const { return vst2_ ? vst2_->isPrepared() : vst3_->isPrepared(); }
-  int latencySamples() const { return vst2_ ? vst2_->latencySamples() : vst3_->latencySamples(); }
+  bool isPrepared() const { return vst3_ ? vst3_->isPrepared() : false; }
+  int latencySamples() const { return vst3_ ? vst3_->latencySamples() : 0; }
   void waitNotProcessing() {
-    if (vst2_) vst2_->waitNotProcessing();
-    else vst3_->waitNotProcessing();
+    if (vst3_) vst3_->waitNotProcessing();
   }
   void setMix(float gain, float pan, bool muted) {
-    if (vst2_) vst2_->setMix(gain, pan, muted);
-    else vst3_->setMix(gain, pan, muted);
+    if (vst3_) vst3_->setMix(gain, pan, muted);
   }
   void applyMix(float* outL, float* outR, int frames) const {
-    if (vst2_) vst2_->applyMix(outL, outR, frames);
-    else vst3_->applyMix(outL, outR, frames);
+    if (vst3_) vst3_->applyMix(outL, outR, frames);
   }
   void setBypass(bool bypass) {
-    if (vst2_) vst2_->setBypass(bypass);
-    else vst3_->setBypass(bypass);
+    if (vst3_) vst3_->setBypass(bypass);
   }
-  bool isBypassed() const { return vst2_ ? vst2_->isBypassed() : vst3_->isBypassed(); }
+  bool isBypassed() const { return vst3_ ? vst3_->isBypassed() : false; }
 
 private:
   HostedSlot() = default;
@@ -229,7 +197,6 @@ private:
     return 1.0;
 #endif
   }
-  // load = tiempo de process() / duración real del bloque (frames / sampleRate)
   void recordLoad(int64_t ticks, int frames) {
     if (frames <= 0) return;
     const double blockSec = static_cast<double>(frames) / sampleRate_.load(std::memory_order_relaxed);
@@ -248,5 +215,5 @@ private:
   std::atomic<uint32_t> exceptionsBase_{0};
   Format format_{Format::Vst3};
   std::unique_ptr<Vst3Slot> vst3_;
-  std::unique_ptr<Vst2Slot> vst2_;
+  const std::string emptyPath_{""};
 };

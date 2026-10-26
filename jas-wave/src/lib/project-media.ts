@@ -359,3 +359,92 @@ export async function cargarBytesMedia(
     return null
   }
 }
+
+/** Cache en memoria de waveforms para renderizado inmediato (0 ms) */
+const memoriaPeakCache = new Map<string, number[]>()
+
+/** Genera la ruta del archivo .peak adyacente a un archivo de audio */
+export function rutaArchivoPeak(rutaAudio: string): string {
+  return `${rutaAudio.replace(/[/\\]+$/, '')}.peak`
+}
+
+/**
+ * Guarda los picos precalculados (waveform) en un archivo binario/texto .peak en disco
+ * y en la cache de memoria del renderer para 0 ms de latencia en posteriores accesos.
+ */
+export async function guardarWaveformPeak(
+  rutaAudio: string,
+  waveform: number[],
+  rutaProyecto?: string | null,
+): Promise<boolean> {
+  if (!rutaAudio || !waveform || waveform.length === 0) return false
+
+  memoriaPeakCache.set(rutaAudio, waveform)
+
+  const api = window.electron
+  const norm = normalizarRutaRelativa(rutaAudio)
+  const esAbsoluta = /^[a-zA-Z]:\//.test(norm) || norm.startsWith('/')
+  const absoluta = esAbsoluta ? rutaAudio : resolverRutaMedia(rutaAudio, rutaProyecto)
+
+  if (absoluta) {
+    memoriaPeakCache.set(absoluta, waveform)
+    if (api?.fileSave) {
+      try {
+        const payload = JSON.stringify(waveform)
+        await api.fileSave(rutaArchivoPeak(absoluta), payload)
+        return true
+      } catch {
+        // Fallback silencioso: se mantiene en memoria
+      }
+    }
+  }
+  return false
+}
+
+/**
+ * Carga instantáneamente los picos de forma de onda (waveform) desde la memoria
+ * o desde el archivo `.peak` en disco, evitando decodificar el audio (0 ms).
+ */
+export async function cargarWaveformPeak(
+  rutaAudio: string,
+  rutaProyecto?: string | null,
+): Promise<number[] | null> {
+  if (!rutaAudio) return null
+
+  // 1. Consulta en memoria de acceso 0 ms
+  const cached = memoriaPeakCache.get(rutaAudio)
+  if (cached && cached.length >= 4) return cached
+
+  const api = window.electron
+  const norm = normalizarRutaRelativa(rutaAudio)
+  const esAbsoluta = /^[a-zA-Z]:\//.test(norm) || norm.startsWith('/')
+  const absoluta = esAbsoluta ? rutaAudio : resolverRutaMedia(rutaAudio, rutaProyecto)
+
+  if (absoluta) {
+    const cachedAbs = memoriaPeakCache.get(absoluta)
+    if (cachedAbs && cachedAbs.length >= 4) return cachedAbs
+
+    // 2. Consulta en archivo .peak en disco
+    if (api?.fileRead && api?.fileExists) {
+      try {
+        const rutaPeak = rutaArchivoPeak(absoluta)
+        const existe = await api.fileExists(rutaPeak)
+        if (existe) {
+          const contenido = await api.fileRead(rutaPeak)
+          if (contenido) {
+            const parsed = JSON.parse(contenido)
+            if (Array.isArray(parsed) && parsed.length >= 4) {
+              memoriaPeakCache.set(rutaAudio, parsed)
+              memoriaPeakCache.set(absoluta, parsed)
+              return parsed
+            }
+          }
+        }
+      } catch {
+        // Fallback si el archivo está corrupto o inaccesible
+      }
+    }
+  }
+
+  return null
+}
