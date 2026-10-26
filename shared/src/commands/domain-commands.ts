@@ -2479,6 +2479,7 @@ export function crearComandoClipSetSource(): CommandDefinition<ClipSetSourcePayl
       const clipActualizado = {
         ...clip,
         nombre: payload.nombre ?? clip.nombre,
+        sourceId: payload.sourceId,
         source: {
           ...(clip.source ?? {}),
           ruta: payload.sourceId,

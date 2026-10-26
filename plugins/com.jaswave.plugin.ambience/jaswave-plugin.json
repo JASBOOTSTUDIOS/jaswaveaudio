@@ -1,0 +1,170 @@
+{
+  "id": "com.jaswave.plugin.ambience",
+  "name": "JasWave Ambience",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "vendor": "JasWave Audio",
+  "description": "Rack worship integral con reverb FDN modulada, delay sincronizado, shimmer, swell dinámico, chorus, saturación ADAA y EQ.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveAmbience.vst3"
+  },
+  "vst3": {
+    "classId": "{4A617357-414D-4249-5072-6F6356335431}",
+    "subCategories": "Fx|Reverb|Delay"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "productor",
+    "mezcla",
+    "mastering"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.ambience",
+    "features": [
+      {
+        "key": "ambience.reverb",
+        "description": "Reverb de hall FDN modulada con freeze infinito"
+      },
+      {
+        "key": "ambience.shimmer",
+        "description": "Shimmer granular en lazo"
+      },
+      {
+        "key": "ambience.delay",
+        "description": "Delay sincronizado ping-pong"
+      },
+      {
+        "key": "ambience.swell",
+        "description": "Envolvente automática swell para worship"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Rack worship con reverb FDN, delay, shimmer, swell, chorus, compresión y 21 presets profesionales.",
+    "intents": [
+      "crear-ambiente-worship",
+      "reverb-espacial",
+      "delay-sincronizado",
+      "shimmer-pad",
+      "swell-guitarra"
+    ],
+    "parameters": [
+      {
+        "id": "bypass",
+        "vstParamId": 0,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "ambience.rev-mix",
+        "vstParamId": 10,
+        "name": "Reverb Mix",
+        "min": 0,
+        "max": 100,
+        "default": 40,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "ambience.reverb"
+      },
+      {
+        "id": "ambience.rev-decay",
+        "vstParamId": 11,
+        "name": "Reverb Decay",
+        "min": 0.4,
+        "max": 12.0,
+        "default": 4.2,
+        "unit": "s",
+        "scale": "linear",
+        "feature": "ambience.reverb"
+      },
+      {
+        "id": "ambience.dly-mix",
+        "vstParamId": 20,
+        "name": "Delay Mix",
+        "min": 0,
+        "max": 100,
+        "default": 22,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "ambience.delay"
+      },
+      {
+        "id": "ambience.sh-mix",
+        "vstParamId": 30,
+        "name": "Shimmer Mix",
+        "min": 0,
+        "max": 100,
+        "default": 0,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "ambience.shimmer"
+      },
+      {
+        "id": "ambience.sw-depth",
+        "vstParamId": 41,
+        "name": "Swell Depth",
+        "min": 0,
+        "max": 100,
+        "default": 0,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "ambience.swell"
+      },
+      {
+        "id": "ambience.preset",
+        "vstParamId": 70,
+        "name": "Preset Worship",
+        "min": 0,
+        "max": 20,
+        "default": 1,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Room",
+          "Worship Hall",
+          "Hillsong Swell",
+          "G12 Pad",
+          "Grace Galactic",
+          "Averly Ambient",
+          "Ambient Pad",
+          "Barrack Lead",
+          "Delay + Verb",
+          "Large Hall",
+          "Slap Delay",
+          "Real Lead",
+          "Vintage Clean",
+          "Hillsong Modern",
+          "Hillsong Ambient",
+          "Hillsong Dual A",
+          "Hillsong Dual B",
+          "Piano · Sala cálida",
+          "Pad · Infinito (freeze)",
+          "Plate brillante",
+          "Guitarra · Delay punteado"
+        ]
+      }
+    ]
+  },
+  "download": {
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.ambience-1.0.0.jwx",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
+}

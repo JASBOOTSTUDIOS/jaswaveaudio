@@ -352,9 +352,9 @@ export async function cargarBytesMedia(
   try {
     const data = await api.fileReadBinary(absoluta)
     if (!data) return null
-    const out = new ArrayBuffer(data.byteLength)
-    new Uint8Array(out).set(data)
-    return out
+    const copy = new Uint8Array(data.byteLength)
+    copy.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength))
+    return copy.buffer
   } catch {
     return null
   }

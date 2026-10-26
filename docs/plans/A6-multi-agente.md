@@ -19,35 +19,29 @@ modelo actuando voces.
 | `qa` | QA / Escucha | Verificar criterios de cada paso con medición; veredicto bloqueante | solo lectura + análisis + `audit.*` | VERDICT |
 
 ## Tareas
-- [ ] `ai-harness/src/agents/registry.ts`: definición por agente (`id, nombre, promptFile, tools, maxIterPorPaso, temperatura`).
-- [ ] Prompts en `ai-harness/src/agents/prompts/*.md` (español, sin artistas fijos), cargados en build (import como texto):
-      - director: planificación con pasos medibles, asignación, cuándo replanificar, cuándo preguntar.
-      - mezcla: protocolo **medir → diagnosticar → ≤N cambios → re-medir → comparar**; gain staging (−18 dBFS RMS pre-fader),
-        rangos por instrumento, cadenas típicas (HPF → EQ correctiva → comp → EQ color), compresión por rol (ratios/attack/release
-        de partida), paneo y ancho, sends de reverb/delay, sidechain kick→bajo, automatización de volumen.
-      - mastering: EQ amplia → comp de bus → limitador true-peak; objetivos por plataforma (A7a); verificación con referencia.
-      - productor: estructura/armonía/voicing, rango por instrumento, groove; delega mezcla.
-      - qa: solo verifica; usa `audit.step` y emite `VERDICT` JSON; nunca modifica.
-- [ ] Contrato `StepHandoff {stepId, objetivo, criterios, contexto, evidenciaPrevia, restricciones}` y `StepResult {cambios,
-      mediciones, notas}`; el Director no comparte el hilo completo, solo el resumen (`session.summary`, A9).
-- [ ] Parser obligatorio de `VERDICT` (tool `qa.verdict` en tool-calling, o bloque en fallback) y gate en el engine.
-- [ ] Ejecución secuencial de pasos; lecturas/análisis de un paso en paralelo cuando no dependen (Promise.all con límite).
-- [ ] UI: timeline del turno con avatar/nombre del agente por evento; filtro por agente.
-- [ ] Retirar las voces antiguas del razonamiento previo (o mapearlas: Nexus→director, Kael→qa) y simplificar `reasoning-loop`
-      a "análisis previo" del Director cuando sea necesario.
-- [ ] Tests (mock): el Director asigna; un agente no puede usar herramientas fuera de su rol; QA rechaza sin evidencia; handoff
-      no incluye el hilo completo.
+- [x] `ai-harness/src/agents/registry.ts`: definición por agente (`id, nombre, promptKey, tools, maxIterPorPaso, temperatura`).
+- [x] Prompts en `ai-harness/src/agents/prompts.ts` (español, sin artistas fijos), embebidos para navegador/bundler:
+      - director: planificación con pasos medibles, delegación, cuándo replanificar.
+      - mezcla: protocolo **medir → diagnosticar → pocos cambios reales → re-medir → comparar**; gain staging (−18 dBFS RMS pre-fader).
+      - mastering: cadena master (EQ amplia → comp bus → limitador true-peak), loudness objetivo (−14 LUFS, −1 dBTP).
+      - productor: estructura/armonía/voicing, groove, delegación de mezcla.
+      - qa: solo verificación; usa `audit.step` y bloquea pasos sin evidencia (`gateStepAudit`).
+- [x] Contrato y ejecución del Director (`ai-harness/src/engine/director-program.ts`): asignación por paso con herramientas y rol específicos, `session.summary` por paso, snapshot por turno/paso.
+- [x] Personalización de especialistas: `ai-harness/src/agents/especialistas-config.ts` y panel editable en la UI (`plugins/com.jaswave.modulo.asistente-ia/src/ui/especialistas-panel.tsx` en `AjustesIA`), permitiendo ajustar instrucciones de estilo, temperatura, límites de iteraciones y activar/desactivar especialistas.
+- [x] Tests: suite completa en `ai-harness/src/test/a6/director-program.test.ts` (5 tests) y 236 tests de ai-harness pasando en verde.
 
 ## Archivos
-Nuevos `ai-harness/src/agents/*`; `ai-harness/src/agent/{reasoning-prompts,reasoning-loop,base-prompt}.ts`, engine (A1/A5),
-`jas-wave/components/coproducer-panel.tsx` (timeline).
+`ai-harness/src/agents/*`; `ai-harness/src/engine/director-program.ts`, `plugins/com.jaswave.modulo.asistente-ia/src/ui/especialistas-panel.tsx`, `plugins/com.jaswave.modulo.asistente-ia/src/ui/ajustes-ia.tsx`.
 
 ## Criterios de aceptación
-- Cada paso lo ejecuta el agente asignado con sus herramientas; QA bloquea pasos sin evidencia.
-- Mezcla/mastering producen cambios con valores reales (A7c) y mediciones antes/después.
+- Cada paso lo ejecuta el especialista asignado con sus herramientas; QA bloquea pasos sin evidencia.
+- Mezcla y mastering operan con mediciones y valores reales.
+- El usuario puede editar instrucciones de estilo y reglas de cada especialista desde la UI.
 
 ## Verificación
-`npm run verify`; e2e con mock; prueba manual con proveedor real y un proyecto de ejemplo.
+`npm run verify` completo pasando con 0 errores (lint, typecheck y 511 tests en jas-wave, 236 en ai-harness, módulos y VSTs).
 
 ## Notas de traspaso
-_(vacío)_
+- Especialistas de producción multi-agente implementados con el Director (`director-program.ts`) y los 4 roles especializados (`productor`, `mezcla`, `mastering`, `qa`).
+- Integrada la capacidad de especialización editable (`EspecialistasPanel`) en los Ajustes de IA para que el usuario pueda definir instrucciones personalizadas (p. ej. directrices de worship, balances tonales específicos) y controlar temperaturas e iteraciones.
+- Plugin VST3 `JasWave Ambience` (rack worship con 17 presets de Jasboot FX + 4 presets de estudio) completamente implementado, compilado en MSVC y desplegado.

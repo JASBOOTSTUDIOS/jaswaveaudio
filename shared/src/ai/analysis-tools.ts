@@ -114,6 +114,24 @@ export function registrarAnalysisTools(registry: ToolRegistry): void {
       risk: 'read',
       tags: ['analysis', 'diagnose', 'mix'],
     },
+    {
+      type: 'analysis.audioLens',
+      name: 'analysis.audioLens',
+      version: '1.0.0',
+      description: 'Extrae tonalidad, progresión de acordes, BPM, transitorios y descripción semántica de audio/voz para IA',
+      category: 'audio',
+      risk: 'read',
+      tags: ['analysis', 'audiolens', 'chords', 'key', 'beatbox', 'music'],
+    },
+    {
+      type: 'analysis.voiceToDrums',
+      name: 'analysis.voiceToDrums',
+      version: '1.0.0',
+      description: 'Convierte beatbox / percusión vocal en notas MIDI de batería alineadas al tempo del proyecto',
+      category: 'audio',
+      risk: 'write',
+      tags: ['analysis', 'voicetodrums', 'drums', 'beatbox', 'midi'],
+    },
   ]
 
   const viaCommand =

@@ -9,13 +9,9 @@ import {
   Waves,
   LogIn,
   LogOut,
-  UserCheck,
   Zap,
   ArrowRight,
   Check,
-  Lock,
-  ExternalLink,
-  ShieldAlert,
   Settings,
   X,
   Eye,
@@ -23,7 +19,6 @@ import {
 } from 'lucide-react'
 import { JasWaveAppIcon, JasWaveLogo } from '@/components/brand'
 import { useSesion, cerrarSesion, iniciarSesion, clienteSupabase } from '@/src/lib/backend/sesion'
-import { configBackend } from '@/src/lib/backend/config'
 import { PanelAdmin } from '@/components/admin/panel-admin'
 
 interface PortalCatalogoPWAProps {
@@ -47,7 +42,6 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
   // Determinar nivel de licencia aparente del usuario (Free, Pro, Ultra o Admin)
   const esAdmin = Boolean(identidad?.esAdmin)
   const roles = identidad?.roles ?? []
-  const tieneLicencia = Boolean(session) // En JasWave todo usuario registrado tiene acceso base gratuito
 
   let nivelLicencia = 'Gratuita'
   if (esAdmin) nivelLicencia = 'Admin Maestro'

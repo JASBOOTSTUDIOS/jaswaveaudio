@@ -29,7 +29,7 @@ function discoveredFormat(item: PluginHostDiscoveredPlugin): PluginDescriptor['f
 }
 
 export function catalogPluginInsertable(d: Pick<PluginDescriptor, 'format' | 'hostReady'>): boolean {
-  return (d.format === 'vst3' || d.format === 'vst2') && d.hostReady
+  return d.format === 'vst3' && Boolean(d.hostReady)
 }
 
 export function descriptorFromDiscovered(
@@ -38,11 +38,13 @@ export function descriptorFromDiscovered(
 ): PluginDescriptor {
   const pluginPath = item.path
   const format = discoveredFormat(item)
+  const isVst2 = format === 'vst2' || /\.dll$/i.test(pluginPath)
   const name =
     item.name ||
     pluginPath.replace(/^.*[/\\]/, '').replace(/\.(vst3|dll)$/i, '')
   const isInstrument = guessIsInstrument(name, pluginPath)
-  const hostReady = item.hostReady === true
+  // VST2 está descontinuado: nunca se marca hostReady para prevenir inestabilidad de audio/proceso.
+  const hostReady = !isVst2 && item.hostReady === true
   return {
     pluginId: hashId(pluginPath, format),
     format,
@@ -60,13 +62,13 @@ export function descriptorFromDiscovered(
     supportsSidechain: false,
     supportsEditor: hostReady && item.editorReady !== false,
     parameterCount: 0,
-    scanStatus: 'ok',
+    scanStatus: isVst2 ? 'blacklisted' : 'ok',
     hostReady,
     isolation: isolationForFormat(format),
-    scanError: hostReady
-      ? undefined
-      : format === 'vst2'
-        ? VST2_NOT_HOSTED_MSG
+    scanError: isVst2
+      ? VST2_NOT_HOSTED_MSG
+      : hostReady
+        ? undefined
         : 'En catálogo (disco). Audio pendiente; UI nativa si editorhost está compilado.',
   }
 }

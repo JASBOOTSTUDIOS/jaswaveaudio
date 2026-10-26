@@ -30,9 +30,15 @@ export function AudioDeviceBanner() {
 
   useEffect(() => {
     if (!reiniciado) return
-    const t = setTimeout(() => setReiniciado(false), 6000)
+    const t = setTimeout(() => setReiniciado(false), 5000)
     return () => clearTimeout(t)
   }, [reiniciado])
+
+  useEffect(() => {
+    if (!perdido) return
+    const t = setTimeout(() => setPerdido(false), 5000)
+    return () => clearTimeout(t)
+  }, [perdido])
 
   const reintentar = useCallback(async () => {
     if (!tienda) return
@@ -42,8 +48,8 @@ export function AudioDeviceBanner() {
       const res = await ensureBestAudioDevice(tienda, 'UMC')
       if (res.ok) {
         await armNativeAudioOutput()
-        setPerdido(false)
       }
+      setPerdido(false)
     } finally {
       setOcupado(false)
     }

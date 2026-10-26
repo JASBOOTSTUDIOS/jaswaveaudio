@@ -13,6 +13,8 @@ import {
   MessageSquarePlus,
   ZoomIn,
   ZoomOut,
+  Users,
+  Sparkles,
 } from 'lucide-react'
 import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 
@@ -49,6 +51,10 @@ import { MidiClipMdPreview } from './midi-clip-md-preview'
 import { ProjectPlanPreview } from './project-plan-preview'
 import { MusicBuildPreview } from './music-build-preview'
 import { AiModelPicker } from './ai-model-picker'
+import { SpeechToTextButton } from './speech-to-text-button'
+import { AudioSampleRecorder, type AttachedAudioSample } from './audio-sample-recorder'
+import { BandaLiveOrchestrator } from './banda-live-orchestrator'
+import { orquestadorBandaSingleton } from '../motor/banda-orchestrator'
 
 import { copyTextToClipboard } from '../motor/copy-text'
 import {
@@ -151,6 +157,16 @@ export function CoProducerPanel() {
   const [copiedAll, setCopiedAll] = useState(false)
   const [citedIds, setCitedIds] = useState<string[]>([])
   const [selectionLabel, setSelectionLabel] = useState(() => getMusicalSelectionAnchor()?.label ?? '')
+  const [attachedSample, setAttachedSample] = useState<AttachedAudioSample | null>(null)
+  const [mostrarBandaLive, setMostrarBandaLive] = useState(false)
+
+  useEffect(() => {
+    return orquestadorBandaSingleton.subscribe((state) => {
+      if (state.activo) {
+        setMostrarBandaLive(true)
+      }
+    })
+  }, [])
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const panelRootRef = useRef<HTMLElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -643,8 +659,32 @@ export function CoProducerPanel() {
   }
 
   const handleSendMessage = async (overrideText?: string) => {
-    const rawInput = (overrideText ?? inputMessage).trim()
+    let rawInput = (overrideText ?? inputMessage).trim()
     if (!rawInput || isGenerating) return
+
+    if (attachedSample && !rawInput.includes(`"${attachedSample.name}"`)) {
+      rawInput = `[Audio adjunto: "${attachedSample.name}" (${attachedSample.durationSec.toFixed(1)}s, ${attachedSample.sampleRate}Hz)]\n${rawInput}`
+    }
+
+    const lower = rawInput.toLowerCase()
+    const esPedidoBanda =
+      lower.startsWith('/banda') ||
+      lower.startsWith('banda:') ||
+      lower.includes('producir tema completo') ||
+      lower.includes('orquesta virtual') ||
+      lower.includes('producción completa con banda')
+
+    if (esPedidoBanda) {
+      const promptLimpio = rawInput.replace(/^\/banda\s*/i, '').replace(/^banda:\s*/i, '').trim()
+      setMostrarBandaLive(true)
+      setInputMessage('')
+      void orquestadorBandaSingleton.iniciarSesionBanda(
+        promptLimpio || 'Componer y producir canción completa con orquesta virtual y control de calidad QA',
+        dawStore,
+      )
+      return
+    }
+
     const cited = collectCitedMessages(rawInput, citedIds, dawStore.obtenerEstado(), messages)
     const turnCitedIds = citedIds
     setInputMessage('')
@@ -778,6 +818,19 @@ export function CoProducerPanel() {
             >
               <MessageSquarePlus className="size-4" />
             </button>
+            <button
+              type="button"
+              title={mostrarBandaLive ? 'Ocultar Orquesta Virtual' : 'Ver Orquesta Virtual Multi-Agente'}
+              onClick={() => setMostrarBandaLive((prev) => !prev)}
+              className={`flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors ${
+                mostrarBandaLive
+                  ? 'bg-purple-600/25 text-purple-300 ring-1 ring-purple-500/50'
+                  : 'bg-panel-raised text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Users className="size-3.5 text-purple-400" />
+              <span className="hidden sm:inline">Banda Virtual</span>
+            </button>
           </div>
         </div>
         <AiModelPicker compact />
@@ -906,6 +959,12 @@ export function CoProducerPanel() {
         </div>
       ) : null}
 
+      {mostrarBandaLive && (
+        <div className="shrink-0 border-b border-border p-2 bg-panel-base/70 max-h-[380px] overflow-y-auto">
+          <BandaLiveOrchestrator />
+        </div>
+      )}
+
       <div
         data-coproducer-chat
         data-chat-selectable
@@ -923,6 +982,7 @@ export function CoProducerPanel() {
               {[
                 'Resumen del proyecto',
                 'Haz un plan de un tema pop desde cero',
+                '/banda Componer y producir un tema Pop Rock',
                 'Crea un clip MIDI en la pista seleccionada',
               ].map((s) => (
                 <button
@@ -1322,8 +1382,30 @@ export function CoProducerPanel() {
               </button>
             </div>
           ) : null}
+          {/* Grabador / Cargador de Audio de Muestra */}
+          <AudioSampleRecorder
+            attachedSample={attachedSample}
+            onSampleAttached={setAttachedSample}
+            onInsertPromptText={(text) => {
+              setInputMessage((prev) => (prev ? `${prev}\n${text}` : text))
+              inputRef.current?.focus()
+            }}
+            disabled={isGenerating}
+          />
           <div className="flex items-end gap-2 rounded-lg bg-panel-raised px-2 py-2 ring-1 ring-border focus-within:ring-2 focus-within:ring-ring">
-          <AgentModePicker value={agentMode} onChange={setAgentMode} />
+            <AgentModePicker value={agentMode} onChange={setAgentMode} />
+            <SpeechToTextButton
+              disabled={isGenerating}
+              onTranscript={(text) => {
+                setInputMessage((prev) => {
+                  const spacer = prev && !prev.endsWith(' ') ? ' ' : ''
+                  return prev + spacer + text
+                })
+                if (inputRef.current) {
+                  inputRef.current.focus()
+                }
+              }}
+            />
           <textarea
             ref={inputRef}
             rows={1}
@@ -1359,7 +1441,7 @@ export function CoProducerPanel() {
             }}
             disabled={isGenerating}
             placeholder="Pide un clip, o @ / Ctrl+L selección… (Shift+Enter nueva línea)"
-            className="max-h-40 min-h-[2rem] flex-1 resize-none bg-transparent py-1 text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
+            className="max-h-40 min-h-8 flex-1 resize-none bg-transparent py-1 text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
           />
           {isGenerating ? (
             <button

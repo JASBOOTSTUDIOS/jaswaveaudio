@@ -23,6 +23,7 @@ import { ReceptorHandover } from '@/components/handover/receptor-handover'
 import { AudioDeviceBanner } from '@/components/audio-device-banner'
 import { PluginHostCrashLoopBanner } from '@/components/plugin-host-crash-loop-banner'
 import { ProjectCloseDialog } from '@/components/project-close-dialog'
+import { NuevoProyectoDialog } from '@/components/nuevo-proyecto-dialog'
 import { SaveConflictDialog } from '@/components/save-conflict-dialog'
 import { MediaFaltanteDialog } from '@/components/media-faltante-dialog'
 import { AppCloseGuard } from '@/components/app-close-guard'
@@ -181,7 +182,7 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
             <Plus className="size-3.5" />
           </button>
           {addOpen ? (
-            <div className="absolute right-0 top-full z-[80] mt-1 max-h-64 w-48 overflow-y-auto rounded-md border border-border bg-panel py-1 shadow-xl">
+            <div className="absolute right-0 top-full z-80 mt-1 max-h-64 w-48 overflow-y-auto rounded-md border border-border bg-panel py-1 shadow-xl">
               {herramientasDisponibles().map((id) => (
                 <button
                   key={id}
@@ -335,6 +336,7 @@ function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) 
       <MediaFaltanteDialog />
       <AppCloseGuard />
       <OpenProjectRequest />
+      <NuevoProyectoDialog />
       <ComponentesDeModulos />
       <LayoutLab />
       <InstaladorExtensiones />
@@ -453,6 +455,9 @@ export default function App() {
   const undockId = getUndockToolIdFromUrl()
   const [entrarStudio, setEntrarStudio] = useState<boolean>(() => {
     if (undockId) return true
+    if (typeof window !== 'undefined' && 'electron' in window && Boolean((window as unknown as { electron?: unknown }).electron)) {
+      return true
+    }
     try {
       const p = new URLSearchParams(window.location.search)
       if (p.has('daw') || p.get('studio') === '1') return true

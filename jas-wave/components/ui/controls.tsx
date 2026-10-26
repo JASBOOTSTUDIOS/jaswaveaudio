@@ -131,7 +131,10 @@ export function FaderControl({
         aria-valuemax={DB_SUPERIOR}
         tabIndex={0}
         onPointerDown={drag.onPointerDown}
+        onMouseDown={drag.onMouseDown}
         onDoubleClick={drag.onDoubleClick}
+        onAuxClick={drag.onAuxClick}
+        onWheel={drag.onWheel}
         onKeyDown={(e) => {
           if (e.key === 'ArrowUp') drag.onKeyStep(db + 1)
           if (e.key === 'ArrowDown') drag.onKeyStep(db - 1)
@@ -205,7 +208,10 @@ export function KnobControl({
         aria-valuemax={max}
         tabIndex={0}
         onPointerDown={drag.onPointerDown}
+        onMouseDown={drag.onMouseDown}
         onDoubleClick={drag.onDoubleClick}
+        onAuxClick={drag.onAuxClick}
+        onWheel={drag.onWheel}
         onKeyDown={(e) => {
           const step = (max - min) / 100
           if (e.key === 'ArrowUp' || e.key === 'ArrowRight') drag.onKeyStep(value + step * 2)

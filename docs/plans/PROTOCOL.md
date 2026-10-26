@@ -29,5 +29,5 @@
 
 ## Definición de hecho (por workstream)
 - Todas las casillas marcadas, criterios de aceptación cumplidos y demostrados.
-- `npm run verify` en verde; e2e en verde si el workstream toca UI/Electron; nativo compila si toca `native/`.
+- `npm run verify` y `npx tsc --noEmit` en verde; e2e en verde si el workstream toca UI/Electron; nativo compila si toca `native/`.
 - Sin `console.log` de depuración ni código muerto nuevo; docs relevantes actualizadas (README/CHANGELOG si aplica).

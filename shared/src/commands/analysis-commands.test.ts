@@ -8,6 +8,8 @@ import {
   crearComandoAnalysisReference,
   crearComandoAnalysisSection,
   crearComandoAnalysisTrack,
+  crearComandoAnalysisAudioLens,
+  crearComandoAnalysisVoiceToDrums,
   resolverRango,
 } from '../commands/analysis-commands'
 import { registrarProveedorAnalisis, type AnalisisProyecto, type RequerimientoAnalisis } from '../audio/analysis-provider'
@@ -190,3 +192,48 @@ describe('resolución de rango', () => {
     expect(resolverRango(estado, {})).toEqual({ inicioSeg: 0, finSeg: 0 })
   })
 })
+
+describe('comandos AudioLens y VoiceToDrums', () => {
+  const estado = crearEstadoInicial()
+
+  it('analysis.audioLens procesa muestras de audio y devuelve informe descriptivo', async () => {
+    const cmd = crearComandoAnalysisAudioLens()
+    // 0.5s de audio sintético
+    const sr = 44100
+    const audioData = Array.from({ length: Math.floor(0.5 * sr) }, (_, i) =>
+      Math.sin((2 * Math.PI * 440 * i) / sr)
+    )
+
+    const res = await cmd.handler(estado, { audioData, sampleRate: sr, bpm: 120 })
+    expect(res.result).toBeDefined()
+    expect(res.result.resumenParaIA).toContain('REPORTE JASWAVE AUDIOLENS')
+    expect(res.result.tonalidad).toBeDefined()
+    expect(res.result.bpmEstimado).toBe(120)
+  })
+
+  it('analysis.voiceToDrums convierte beatbox en notas MIDI y puede crear la pista', async () => {
+    const cmd = crearComandoAnalysisVoiceToDrums()
+    const sr = 44100
+    const audioData = new Array(Math.floor(1.0 * sr)).fill(0)
+    // Agregamos un golpe grave de kick al inicio
+    for (let i = 0; i < 2000; i++) {
+      audioData[i] = 0.9 * Math.sin((2 * Math.PI * 65 * i) / sr)
+    }
+
+    const res = await cmd.handler(estado, {
+      audioData,
+      sampleRate: sr,
+      bpm: 120,
+      cuantizar: '1/16',
+      crearPista: true,
+      nombrePista: 'Batería Beatbox Test',
+    })
+
+    expect(res.result.totalNotas).toBeGreaterThan(0)
+    expect(res.state.project.tracks.some((t) => t.nombre === 'Batería Beatbox Test')).toBe(true)
+    const pistaCreada = res.state.project.tracks.find((t) => t.nombre === 'Batería Beatbox Test')
+    expect(pistaCreada?.clips.length).toBe(1)
+    expect(pistaCreada?.clips[0]?.tipo).toBe('midi')
+  })
+})
+

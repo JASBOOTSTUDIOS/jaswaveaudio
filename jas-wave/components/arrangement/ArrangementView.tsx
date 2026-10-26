@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, LayoutGrid, MoreVertical, Circle, Music, FileAudio, Headphones, GripVertical } from 'lucide-react'
+import { Plus, LayoutGrid, MoreVertical, Circle, Music, FileAudio, Headphones, GripVertical, AlertTriangle } from 'lucide-react'
 import { usePlaybackActions } from '@/components/playback-provider'
 import { createProjection } from '@/lib/timeline-projection'
 import { TRACKS, type Track as UiTrack } from '@/lib/daw-data'
@@ -8,6 +8,7 @@ import type { DAWState } from '../../../shared/src'
 import { linealADb, panADisplay } from '@/lib/audio-conversions'
 import { ConfirmDialog } from '../ui/confirm-dialog'
 import { StereoWaveform } from '../stereo-waveform'
+import { audioEngine } from '@/lib/audio-engine'
 import { executeOrNotify } from '@/src/lib/execute-or-toast'
 import { registrarConfirmacionBorrarPista } from '@/src/lib/track-delete-request'
 import { requestOpenTool } from '@/src/workspace/types'
@@ -253,6 +254,19 @@ export function ArrangementView() {
   }, [])
 
   const handleAddTrack = async (tipo: 'audio' | 'midi') => {
+    const estado = tienda.obtenerEstado()
+    if (!estado.project.ruta) {
+      window.dispatchEvent(
+        new CustomEvent('jaswave-nuevo-proyecto', {
+          detail: {
+            mensaje:
+              'Para asegurar que tus pistas y audios no se pierdan al reiniciar o refrescar, primero asigna un nombre y carpeta a tu proyecto.',
+          },
+        }),
+      )
+      setShowAddTrackMenu(false)
+      return
+    }
     const count = sharedTracks.length + 1
     const nombre = tipo === 'midi' ? `MIDI ${count}` : `Audio ${count}`
     await tienda.executor.execute('track.create', { nombre, tipo })
@@ -260,8 +274,31 @@ export function ArrangementView() {
   }
 
   const handleImportToTrack = async (trackId: string, file: File) => {
+    const estado = tienda.obtenerEstado()
+    if (!estado.project.ruta) {
+      window.dispatchEvent(
+        new CustomEvent('jaswave-nuevo-proyecto', {
+          detail: {
+            mensaje:
+              'Para asegurar que el audio no se pierda al reiniciar o refrescar, primero asigna un nombre y carpeta a tu proyecto.',
+          },
+        }),
+      )
+      return
+    }
     try {
-      await addClipFromFile(trackId, file, 0)
+      let destino = trackId
+      const pista = tienda.obtenerEstado().project.tracks.find((t) => t.id === trackId)
+      if (!pista || pista.tipo !== 'audio') {
+        const created = await tienda.executor.execute('track.create', {
+          nombre: file.name.replace(/\.[^.]+$/, ''),
+          tipo: 'audio',
+        })
+        if (created.success) {
+          destino = (created.result as { trackId?: string })?.trackId ?? destino
+        }
+      }
+      await addClipFromFile(destino, file, 0)
     } catch (err) {
       // Antes el rechazo quedaba como unhandledrejection y el usuario no veía nada.
       const msg = err instanceof Error ? err.message : String(err)
@@ -1253,7 +1290,7 @@ export function ArrangementView() {
       />
       <ClipContextMenu menu={clipMenu} onClose={() => setClipMenu(null)} tienda={tienda} />
       {takeLanesTrackId ? (
-        <div className="fixed bottom-4 right-4 z-[180] w-[min(420px,92vw)]">
+        <div className="fixed bottom-4 right-4 z-180 w-[min(420px,92vw)]">
           <TakeLanesPanel pistaId={takeLanesTrackId} onClose={() => setTakeLanesTrackId(null)} />
         </div>
       ) : null}
@@ -1605,12 +1642,12 @@ export function ArrangementView() {
                 />
                 {/* Borde izquierdo del loop */}
                 <div
-                  className="absolute inset-y-0 z-5 w-[2px] bg-accent-cyan pointer-events-none"
+                  className="absolute inset-y-0 z-5 w-0.5 bg-accent-cyan pointer-events-none"
                   style={{ left: projection.beatToPixel(loopInicioBeats) }}
                 />
                 {/* Borde derecho del loop */}
                 <div
-                  className="absolute inset-y-0 z-5 w-[2px] bg-accent-cyan pointer-events-none"
+                  className="absolute inset-y-0 z-5 w-0.5 bg-accent-cyan pointer-events-none"
                   style={{ left: projection.beatToPixel(loopFinBeats) }}
                 />
                 {/* Zona después del loop (oscurecida) */}
@@ -1715,15 +1752,24 @@ export function ArrangementView() {
                     e.preventDefault()
                     const files = Array.from(e.dataTransfer.files ?? [])
                     if (files.length === 0) return
+                    const estado = tienda.obtenerEstado()
+                    if (!estado.project.ruta) {
+                      window.dispatchEvent(
+                        new CustomEvent('jaswave-nuevo-proyecto', {
+                          detail: {
+                            mensaje:
+                              'Para asegurar que el audio no se pierda al reiniciar o refrescar, primero asigna un nombre y carpeta a tu proyecto.',
+                          },
+                        }),
+                      )
+                      return
+                    }
                     const dropBeat = clientXToBeat(e.clientX)
-                    const pistaDestino = sharedTracks.find((t) => t.id === track.id)
-                    const esMidi = (pistaDestino?.tipo as string | undefined) === 'midi'
-                    // Importación múltiple → una pista por archivo; si la pista de destino
-                    // es MIDI, el audio va a una pista de audio nueva.
+                    let isFirst = true
                     for (const file of files) {
                       try {
                         let destino = track.id
-                        if (esMidi || files.length > 1) {
+                        if (!isFirst || track.tipo !== 'audio') {
                           const created = await tienda.executor.execute('track.create', {
                             nombre: file.name.replace(/\.[^.]+$/, ''),
                             tipo: 'audio',
@@ -1732,6 +1778,7 @@ export function ArrangementView() {
                           destino = (created.result as { trackId?: string })?.trackId ?? destino
                         }
                         await addClipFromFile(destino, file, dropBeat)
+                        isFirst = false
                       } catch (err) {
                         const msg = err instanceof Error ? err.message : String(err)
                         tienda.busEventos.emit('comando.fallido', {
@@ -1775,6 +1822,7 @@ export function ArrangementView() {
                       const barEnd = Math.ceil((inicio + duracion) / beatsPerBar)
                       const barCount = barEnd - barStart + 1
 
+                      const isAudioMissing = clip.kind !== 'midi' && Boolean(clip.missing)
                       return (
                         <div
                           key={clip.id}
@@ -1814,20 +1862,26 @@ export function ArrangementView() {
                               : isDupGhost
                                 ? ''
                                 : 'z-10 hover:brightness-110'
-                          }`}
+                          } ${isAudioMissing ? 'border-dashed border-amber-500/80' : ''}`}
                           style={{
                             left: `${clipLeft}px`,
                             width: `${clipWidth}px`,
-                            background: `linear-gradient(180deg, color-mix(in oklch, ${track.color} 42%, transparent) 0%, color-mix(in oklch, ${track.color} 22%, transparent) 100%)`,
+                            background: isAudioMissing
+                              ? 'linear-gradient(180deg, rgba(120, 53, 15, 0.35) 0%, rgba(69, 26, 3, 0.2) 100%)'
+                              : `linear-gradient(180deg, color-mix(in oklch, ${track.color} 42%, transparent) 0%, color-mix(in oklch, ${track.color} 22%, transparent) 100%)`,
                             borderColor: isSelected
                               ? undefined
-                              : `color-mix(in oklch, ${track.color} 80%, transparent)`,
-                            opacity: t.muted ? 0.35 : isDupGhost ? 0.85 : 1,
+                              : isAudioMissing
+                                ? 'rgba(245, 158, 11, 0.7)'
+                                : `color-mix(in oklch, ${track.color} 80%, transparent)`,
+                            opacity: t.muted ? 0.35 : isDupGhost ? 0.85 : isAudioMissing ? 0.45 : 1,
                           }}
                           title={
-                            isDupGhost
-                              ? 'Copia (Ctrl+arrastrar)'
-                              : `${clip.name} — Compás ${barStart}→${barEnd} (${clip.duracionSeconds.toFixed(2)}s)`
+                            isAudioMissing
+                              ? `⚠️ ${clip.name} — Archivo de audio no encontrado en el proyecto`
+                              : isDupGhost
+                                ? 'Copia (Ctrl+arrastrar)'
+                                : `${clip.name} — Compás ${barStart}→${barEnd} (${clip.duracionSeconds.toFixed(2)}s)`
                           }
                         >
                           <div
@@ -1842,12 +1896,25 @@ export function ArrangementView() {
                           <div className="flex items-center gap-1.5 px-2 pt-0.5">
                             <span
                               className="size-1.5 shrink-0 rounded-full opacity-90"
-                              style={{ backgroundColor: track.color }}
+                              style={{ backgroundColor: isAudioMissing ? '#f59e0b' : track.color }}
                             />
                             <span className="flex-1 truncate text-[10px] font-semibold leading-tight text-foreground">
                               {clip.name}
                               {clip.kind === 'midi' ? ' · MIDI' : ''}
                             </span>
+                            {isAudioMissing ? (
+                              <span
+                                className="shrink-0 font-mono text-[9px] text-amber-300 bg-amber-950/80 border border-amber-500/50 px-1.5 py-0.5 rounded flex items-center gap-1"
+                                title={clip.loadError || 'El archivo de audio no se encuentra en el proyecto'}
+                              >
+                                <AlertTriangle className="size-2.5 text-amber-400 shrink-0 animate-pulse" />
+                                Audio no encontrado
+                              </span>
+                            ) : clip.kind !== 'midi' && !audioEngine.getAudioBuffer(clip.sourceId) && !audioEngine.getAudioBuffer(clip.id) ? (
+                              <span className="shrink-0 font-mono text-[9px] text-amber-300 flex items-center gap-0.5" title="Audio en proceso de decodificación o carga">
+                                ⏳ Cargando...
+                              </span>
+                            ) : null}
                             {clipWidth > 80 && (
                               <span className="shrink-0 font-mono text-[9px] opacity-60">
                                 {clip.kind === 'midi' && clip.noteCount != null

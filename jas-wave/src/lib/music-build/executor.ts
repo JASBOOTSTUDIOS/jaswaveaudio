@@ -122,7 +122,15 @@ async function insertLoadInstrument(
     }
     return true
   }
-  console.warn('[music-build] host load falló', withPath.nombre, getLastVstLoadError(), forcedPath)
+  console.warn('[music-build] host load falló, retirando plugin de la pista para proteger el DAW:', withPath.nombre, getLastVstLoadError(), forcedPath)
+  try {
+    await tienda.executor.execute('plugin.remove', {
+      trackId,
+      pluginInstanceId: inserted.id,
+    })
+  } catch {
+    /* best-effort cleanup */
+  }
   return false
 }
 

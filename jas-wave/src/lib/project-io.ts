@@ -90,7 +90,7 @@ export async function detenerTransporteYFinalizarGrabacion(tienda: TiendaDAW): P
   }
 }
 
-async function persistirRutaYGuardar(tienda: TiendaDAW, ruta: string): Promise<ResultadoIO> {
+export async function persistirRutaYGuardar(tienda: TiendaDAW, ruta: string): Promise<ResultadoIO> {
   const nombre = nombreAlGuardar(tienda.obtenerEstado().project.nombre, ruta)
   const upd = await tienda.executor.execute('project.update', { datos: { ruta, nombre } })
   if (!upd.success) return { success: false, error: upd.error }

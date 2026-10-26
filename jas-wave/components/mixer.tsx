@@ -485,6 +485,33 @@ export function Mixer() {
                         max={100}
                         value={amount}
                         className="h-1 w-full accent-accent-amber"
+                        onDoubleClick={() => {
+                          void tienda.executor.execute(
+                            'send.set',
+                            { trackId: track.id, busId: bus.id, amount: 0 },
+                            'user',
+                          )
+                        }}
+                        onMouseDown={(e) => {
+                          if (e.button === 1) {
+                            e.preventDefault()
+                            void tienda.executor.execute(
+                              'send.set',
+                              { trackId: track.id, busId: bus.id, amount: 0 },
+                              'user',
+                            )
+                          }
+                        }}
+                        onAuxClick={(e) => {
+                          if (e.button === 1) {
+                            e.preventDefault()
+                            void tienda.executor.execute(
+                              'send.set',
+                              { trackId: track.id, busId: bus.id, amount: 0 },
+                              'user',
+                            )
+                          }
+                        }}
                         onChange={(e) => {
                           const v = Number(e.target.value) / 100
                           void tienda.executor.execute(

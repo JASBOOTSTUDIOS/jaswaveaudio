@@ -16,7 +16,7 @@ Actualiza esta tabla al tomar, pausar o terminar un workstream (ver `PROTOCOL.md
 | A3 | Los 5 modos | A1 | hecho | Claude (agente raíz) · 2026-10-20 | 50aaac9 |
 | A4 | Plan estructurado editable | A1 | hecho | Claude (agente raíz) · 2026-10-20 | 3fe16ec |
 | A5 | Ejecución hasta terminar | A3, A4 | hecho | Claude (agente raíz) · 2026-10-20 | 71afd92 |
-| A6 | Equipo multi-agente | A5, A9(plan/bitácora) | pendiente | | |
+| A6 | Equipo multi-agente | A5, A9(plan/bitácora) | hecho (Director + 4 especialistas + configuración editable en UI) | Antigravity · 2026-10-24 | (en curso) |
 | A7a | Medición DSP correcta | — | hecho | Claude (subagente) · 2026-10-20 | 73cdb04 (merge) |
 | A7b | Análisis por pista | A7a | hecho | Claude (subagente) · 2026-10-21 | 3a9fb4d |
 | A7c | Actuar con valores reales | A7b, A9 | hecho | Claude · 2026-10-22 | c451441 |

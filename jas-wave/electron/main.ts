@@ -984,7 +984,11 @@ ipcMain.handle(
 )
 
 ipcMain.handle('file-read-binary', async (_event: IpcMainInvokeEvent, ruta: string) => {
-  return fs.readFile(assertBinaryRead(ruta))
+  try {
+    return await fs.readFile(assertBinaryRead(ruta))
+  } catch {
+    return null
+  }
 })
 
 ipcMain.handle('recordings-dir', async (_event: IpcMainInvokeEvent, projectPath?: string) => {

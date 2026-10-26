@@ -18,3 +18,11 @@ export {
   PROMPTS,
   obtenerPrompt,
 } from './prompts'
+export {
+  type EspecialistaCustom,
+  cargarEspecialistasCustom,
+  guardarEspecialistasCustom,
+  obtenerEspecialistasPorDefecto,
+  listarAgentesEfectivos,
+  obtenerPromptFinalDeAgente,
+} from './especialistas-config'

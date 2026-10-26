@@ -55,6 +55,8 @@ export interface AudioClipPlaybackInfo {
   duracion: number // en segundos
   sourcePathOrId: string
   clipInicio?: number // offset dentro del clip de audio en segundos
+  name?: string
+  nombre?: string
 }
 
 export interface MidiNotePlaybackInfo {
@@ -460,12 +462,36 @@ export class WebAudioEngine {
   }
 
   /**
-   * Contexto solo para decode/createBuffer (Offline). No conecta a speakers.
-   * El path live es 100% Plugin Host.
+   * En navegador web (sin plugin-host nativo): AudioContext real conectado a altavoces.
+   * En Electron: contexto Offline/auxiliar para decode, el path live va por C++ Plugin Host a ASIO.
    */
   public ensureContext(): AudioContext {
     if (this.audioCtx && (this.audioCtx as AudioContext).state !== 'closed') {
+      if (!this.nativeOutput && this.audioCtx.state === 'suspended') {
+        void this.audioCtx.resume().catch(() => {})
+      }
       return this.audioCtx
+    }
+    const hasElectronHost = typeof window !== 'undefined' && Boolean(window.electron?.pluginHostSend)
+    if (!hasElectronHost) {
+      const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (AudioCtxClass) {
+        const ctx = new AudioCtxClass({ sampleRate: this.preferredSampleRate })
+        this.audioCtx = ctx
+        this.masterGain = ctx.createGain()
+        this.masterPanner = ctx.createStereoPanner()
+        this.masterAnalyser = ctx.createAnalyser()
+        this.masterAnalyser.fftSize = 256
+        this.masterAnalyser.smoothingTimeConstant = 0.8
+        this.masterMeterData = new Uint8Array(this.masterAnalyser.frequencyBinCount)
+
+        this.masterGain.connect(this.masterPanner)
+        this.masterPanner.connect(this.masterAnalyser)
+        this.masterAnalyser.connect(ctx.destination)
+
+        this.applyMasterGain()
+        return this.audioCtx
+      }
     }
     const Offline =
       typeof OfflineAudioContext !== 'undefined'
@@ -820,8 +846,8 @@ export class WebAudioEngine {
     const sampleRate = this.audioCtx?.sampleRate ?? this.preferredSampleRate
     const { left, right } = synthDemoSamples(type, sampleRate, durationSec)
     const buffer = new AudioBuffer({ numberOfChannels: 2, length: left.length, sampleRate })
-    buffer.copyToChannel(left, 0)
-    buffer.copyToChannel(right, 1)
+    buffer.getChannelData(0).set(left)
+    buffer.getChannelData(1).set(right)
     return buffer
   }
 
@@ -867,7 +893,15 @@ export class WebAudioEngine {
           } else if (cfg?.silenciada) {
             continue
           }
-          const buffer = this.audioBuffers.get(clip.sourcePathOrId) || this.audioBuffers.get(clip.id)
+          let buffer = this.audioBuffers.get(clip.sourcePathOrId) || this.audioBuffers.get(clip.id)
+          const clipNombre = clip.name || clip.nombre
+          if (!buffer && clipNombre) {
+            buffer = this.audioBuffers.get(clipNombre)
+          }
+          if (!buffer && clip.sourcePathOrId) {
+            const baseName = clip.sourcePathOrId.replace(/^.*[\\/]/, '')
+            buffer = this.audioBuffers.get(baseName)
+          }
           const clipStart = clip.inicio
           const clipDuration = clip.duracion || buffer?.duration || 0
           const clipEnd = clipStart + clipDuration
@@ -888,14 +922,30 @@ export class WebAudioEngine {
           // Con el audio ya decodificado se sube por trozos y se reutiliza entre play/seek (sin base64
           // gigante). Solo se pide al host que lea el archivo si no hay buffer y la ruta es absoluta
           // (una ruta relativa `media/x.wav` el host no la resuelve).
+          const hasHost = typeof window !== 'undefined' && Boolean(window.electron?.pluginHostSend)
           let loaded = false
-          if (buffer) {
-            loaded = await hostClipEnsureBuffer(clip.id, buffer)
-          } else if (/^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(clip.sourcePathOrId)) {
-            loaded = await hostClipLoadPath(clip.id, clip.sourcePathOrId)
+          if (hasHost) {
+            if (buffer) {
+              loaded = await hostClipEnsureBuffer(clip.id, buffer)
+            } else if (/^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(clip.sourcePathOrId)) {
+              loaded = await hostClipLoadPath(clip.id, clip.sourcePathOrId)
+            }
           }
+
           if (!loaded) {
-            console.warn('[audio-engine] el clip no se pudo cargar en el host', clip.id)
+            // Modo Web Audio nativo (navegador web o host nativo no disponible)
+            if (buffer) {
+              const ctx = this.ensureContext()
+              const trackNode = this.getTrackNode(clip.trackId)
+              const source = ctx.createBufferSource()
+              source.buffer = buffer
+              source.connect(trackNode.gain)
+              const when = Math.max(0, delay)
+              source.start(ctx.currentTime + when, offset, remainingDuration)
+              this.activeSources.set(clip.id, source)
+              continue
+            }
+            console.warn('[audio-engine] el clip no se pudo cargar en el host ni en Web Audio', clip.id)
             this.onClipLoadFailed?.(clip.id)
             continue
           }

@@ -965,6 +965,12 @@ function pumpQueue() {
       type === 'testTone' ||
       type === 'ensureAudio' ||
       type === 'asioControlPanel' ||
+      type === 'load' ||
+      type === 'unload' ||
+      type === 'prepare' ||
+      type === 'setParameter' ||
+      type === 'getPluginState' ||
+      type === 'setPluginState' ||
       // Cargar un clip largo (remuestreo) puede tardar: un timeout no debe matar el host ni cortar el audio.
       type === 'clip.load' ||
       type === 'clip.loadBegin' ||
@@ -1317,8 +1323,11 @@ async function applyAudioDeviceOrFallback(
       }
     }
     const second = await sendPluginHostCommand({ type: 'setAudioDevice', ...wasapiPrefs(prefs) }, 20_000)
-    const msg = `${applied.message || 'ASIO no se pudo abrir.'} Audio en WASAPI. Cierra REAPER/Cubase si tienen la interfaz.`
-    if (second.ok) notifyHostRestarted()
+    const msg = `${applied.message || 'ASIO no se pudo abrir.'} Audio en WASAPI.`
+    if (second.ok) {
+      writeAudioDevicePrefs(wasapiPrefs(prefs))
+      if (didRespawn) notifyHostRestarted()
+    }
     if (second.ok && opts?.sessionFallbackOk) {
       return { ...second, ok: true, message: msg }
     }
@@ -1680,6 +1689,14 @@ export function sendPluginHostCommand(
     const key = pluginKey(pluginPath)
     if (type === 'load' && pluginPath) {
       lastLoadPluginPath = pluginPath
+    }
+    if (type === 'load' && /\.dll$/i.test(pluginPath)) {
+      return Promise.resolve({
+        ok: false,
+        processId: 'jaswave-plugin-host',
+        code: 'Vst2Deprecated',
+        message: 'JasWave soporta exclusivamente plugins VST3 (.vst3). El soporte de plugins legacy VST2 (.dll) fue retirado para garantizar la estabilidad del motor.',
+      })
     }
     if (key && getQuarantine().has(key)) {
       return Promise.resolve({

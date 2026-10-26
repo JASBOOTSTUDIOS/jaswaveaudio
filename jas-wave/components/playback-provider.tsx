@@ -131,6 +131,8 @@ export interface LoadedClip {
   waveform?: number[]
   kind?: 'audio' | 'midi'
   noteCount?: number
+  missing?: boolean
+  loadError?: string
   notes?: Array<{
     pitch: number
     inicio: number
@@ -330,6 +332,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     }
   }, [transportPosSegundos, playing, satellite])
 
+  const [failedSourcesState, setFailedSourcesState] = useState<Record<string, string>>({})
   // Map clips from shared store tracks (+ backfill peaks desde buffer en memoria)
   const peaksCacheRef = useRef<Map<string, number[]>>(new Map())
   const clips: LoadedClip[] = useMemo(() => {
@@ -394,6 +397,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
               }
           }
 
+          const isMissing = failedSourcesState[sourceId] || failedSourcesState[clip.id]
           list.push({
             id: clip.id,
             trackId: trk.id,
@@ -405,12 +409,14 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
             sourceId,
             waveform,
             kind: 'audio',
+            missing: Boolean(isMissing),
+            loadError: isMissing || undefined,
           })
         }
       }
     }
     return list
-  }, [sharedTracks, BPM])
+  }, [sharedTracks, BPM, failedSourcesState])
 
   // Mute / solo / volumen / paneo / cadena FX en caliente durante play
   const trackMixSig = useMemo(
@@ -740,23 +746,24 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     if (!armed) {
       const motivo = audioEngine.getTimingDiagnostics().lastArmError
       console.warn('[playback] native mix not armed', motivo)
-      tienda.busEventos.emit('comando.fallido', {
-        type: 'audio.engine',
-        error: `El motor de audio nativo no está disponible${motivo ? ` (${String(motivo)})` : ''}. No habrá sonido hasta que arranque.`,
-      })
+      if (motivo && motivo !== 'no-plugin-host-api' && motivo !== 'undock-window') {
+        tienda.busEventos.emit('comando.fallido', {
+          type: 'audio.engine',
+          error: `El motor de audio nativo no está disponible (${String(motivo)}). No habrá sonido hasta que arranque.`,
+        })
+      }
     }
-    // Esperar load breve para tener slots antes del primer lookahead MIDI.
-    // Si ya hay slots, no re-ensure (load/getLatency en play congela stdin → silencio).
-    const alreadySlotted = trackAudioConfig().filter((t) => t.vstInstrumentSlotId).length
-    const loadP =
-      alreadySlotted > 0
-        ? Promise.resolve(new Map<string, string>())
-        : ensureProjectVstInstruments(
-            freshTracks.map((t) => ({ id: t.id, plugins: t.plugins })),
-            masterState?.plugins,
-          )
-    await Promise.race([loadP, new Promise<void>((r) => setTimeout(r, 3500))])
-    // Publicar graph con tracks frescos antes del primer noteOn (no esperar al then).
+    // Carga de VSTs asíncrona no bloqueante: dispara en segundo plano y publica el grafo
+    const loadP = ensureProjectVstInstruments(
+      freshTracks.map((t) => ({ id: t.id, plugins: t.plugins })),
+      masterState?.plugins,
+    )
+    loadP.then(() => {
+      syncNativeChannelMix(freshTracks, masterState, projectRouting)
+    }).catch((err) => {
+      console.warn('[playback] background VST ensure error:', err)
+    })
+    // Publicar graph inmediatamente con tracks frescos para arrancar el audio en 0 ms
     syncNativeChannelMix(freshTracks, masterState, projectRouting)
     let cfg0 = trackAudioConfig()
     let slotN = cfg0.filter((t) => t.vstInstrumentSlotId).length
@@ -988,13 +995,13 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       if (!Array.isArray(trk.clips)) continue
       for (const clip of trk.clips) {
         if (!esAudioClip(clip)) continue
-        const sourceId = clip.source?.ruta
+        // Preferir la ruta definitiva en disco si existe
+        const sourceId = clip.source?.ruta || ((clip as unknown as { sourceId?: string }).sourceId) || clip.id
         if (!sourceId) continue
-        // Grabaciones (.wav) y media relativa del proyecto (`media/...`).
+        if (audioEngine.getAudioBuffer(sourceId) || audioEngine.getAudioBuffer(clip.id)) continue
+        // Grabaciones (.wav) y media relativa del proyecto (`media/...`) o rutas absolutas
         const esMediaRelativa = esRutaMediaRelativa(sourceId)
-        if (!recordingBasename(sourceId) && !esMediaRelativa) continue
         needed += 1
-        if (audioEngine.getAudioBuffer(sourceId)) continue
         if (hydratedSourcesRef.current.has(sourceId)) continue
         hydratedSourcesRef.current.add(sourceId)
         pending.push(
@@ -1003,10 +1010,29 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
             : loadRecordingBytes(sourceId, projectRuta)
           ).then(async (bytes) => {
             if (!bytes) {
-              hydratedSourcesRef.current.delete(sourceId)
+              setFailedSourcesState((prev) => ({
+                ...prev,
+                [sourceId]: 'El archivo de audio no se encuentra en el proyecto',
+                [clip.id]: 'El archivo de audio no se encuentra en el proyecto',
+              }))
               return
             }
-            await audioEngine.decodeArrayBuffer(sourceId, bytes)
+            try {
+              const buf = await audioEngine.decodeArrayBuffer(sourceId, bytes)
+              if (buf) {
+                if (clip.id) audioEngine.setAudioBuffer(clip.id, buf)
+                if (clip.source?.ruta) audioEngine.setAudioBuffer(clip.source.ruta, buf)
+                const cName = clip.nombre
+                if (cName) audioEngine.setAudioBuffer(cName, buf)
+              }
+            } catch (err) {
+              console.warn('[playback-provider] Error al decodificar audio buffer para clip:', sourceId, err)
+              setFailedSourcesState((prev) => ({
+                ...prev,
+                [sourceId]: 'Archivo dañado o formato no decodificable',
+                [clip.id]: 'Archivo dañado o formato no decodificable',
+              }))
+            }
           }),
         )
       }
@@ -1447,8 +1473,21 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         }
 
         importProgress.setProgress(0.9, 'creating')
+        let targetTrackId = trackId
+        const estadoPistas = tienda.obtenerEstado().project.tracks
+        const pistaActual = estadoPistas.find((t) => t.id === targetTrackId)
+        if (!pistaActual || pistaActual.tipo !== 'audio') {
+          const resTrack = await tienda.executor.execute('track.create', {
+            nombre: file.name.replace(/\.[^.]+$/, ''),
+            tipo: 'audio',
+          })
+          if (resTrack.success && (resTrack.result as { trackId?: string })?.trackId) {
+            targetTrackId = (resTrack.result as { trackId: string }).trackId
+          }
+        }
+
         const res = await tienda.executor.execute('clip.create', {
-          pistaId: trackId,
+          pistaId: targetTrackId,
           nombre: file.name.replace(/\.[^.]+$/, ''),
           inicio: startBeats,
           duracion: durationBeats,
@@ -1457,8 +1496,11 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         })
         if (!res.success) throw new Error(res.error?.message ?? 'No se pudo crear el clip')
 
-        // El motor indexa el audio por `sourceId`: se registra con la ruta relativa.
+        const createdClipId = (res.result as { clipId?: string })?.clipId
+        audioEngine.setAudioBuffer(bufferKey, buffer)
         if (copia.rutaRelativa) audioEngine.setAudioBuffer(copia.rutaRelativa, buffer)
+        if (createdClipId) audioEngine.setAudioBuffer(createdClipId, buffer)
+        audioEngine.setAudioBuffer(file.name, buffer)
 
         importProgress.finish()
 

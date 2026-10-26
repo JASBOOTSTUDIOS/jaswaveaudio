@@ -309,12 +309,12 @@ export async function syncLoadedSlotsWithProject(
   for (const t of tracks) {
     for (const p of t.plugins ?? []) {
       if (isBuiltinInstrument(p)) continue
-      if (extractHostPluginPath(p.descripcion, p.id)) live.add(slotIdForTrackPlugin(t.id, p.id))
+      if (resolveHostPluginPath(p)) live.add(slotIdForTrackPlugin(t.id, p.id))
     }
   }
   for (const p of masterPlugins ?? []) {
     if (isBuiltinInstrument(p)) continue
-    if (extractHostPluginPath(p.descripcion, p.id)) live.add(slotIdForTrackPlugin('master', p.id))
+    if (resolveHostPluginPath(p)) live.add(slotIdForTrackPlugin('master', p.id))
   }
   for (const slotId of [...bySlot.keys()]) {
     if (!live.has(slotId)) await releaseSlot(slotId)
@@ -407,10 +407,8 @@ export async function ensureTrackVstPlugin(
     // getLatency falló: no borrar el mapa todavía — re-load abajo; si falla, conservar slot.
   }
 
-  if (instrument) {
-    const prevInst = byTrack.get(trackId)
-    if (prevInst && prevInst.slotId !== slotId) await releaseSlot(prevInst.slotId)
-  }
+  // No destruir el instrumento previo antes de cargar: la música debe seguir sonando
+  const prevInst = instrument ? byTrack.get(trackId) : null
 
   const pending = loadPromises.get(slotId)
   if (pending) return pending
@@ -463,7 +461,7 @@ export async function ensureTrackVstPlugin(
           loadFailLogged.add(failKey)
           console.error('[track-vst] load failed', path, msg)
         }
-        loadFailCache.set(failKey, { until: Date.now() + (isQuarantineLoadError(msg) ? 60_000 : 15_000), msg })
+        loadFailCache.set(failKey, { until: Date.now() + 300_000, msg })
         // Conservar slot previo si el re-load falla (evita silenciar MIDI mid-play).
         if (existing) {
           if (instrument) byTrack.set(trackId, existing)
@@ -477,6 +475,9 @@ export async function ensureTrackVstPlugin(
       if (instrument) {
         byTrack.set(trackId, loaded)
         setActiveVstVoiceTarget({ slotId, path, trackId, pluginId: plugin.id })
+        if (prevInst && prevInst.slotId !== slotId) {
+          void releaseSlot(prevInst.slotId)
+        }
       }
       await restorePluginStateAfterLoad(trackId, plugin)
       emitRuntime()
@@ -519,7 +520,7 @@ export async function ensureProjectVstInstruments(
     for (const t of tracks) {
       const needsHost = (t.plugins ?? []).some((p) => {
         if (p.bypass || isBuiltinInstrument(p)) return false
-        return Boolean(extractHostPluginPath(p.descripcion, p.id))
+        return Boolean(resolveHostPluginPath(p))
       })
       if (!needsHost) continue
       const inst = getLoadedInstrumentForTrack(t.id)
@@ -538,13 +539,13 @@ export async function ensureProjectVstInstruments(
     for (const t of tracks) {
       for (const p of t.plugins ?? []) {
         if (p.bypass || isBuiltinInstrument(p)) continue
-        if (!extractHostPluginPath(p.descripcion, p.id)) continue
+        if (!resolveHostPluginPath(p)) continue
         jobs.push({ trackId: t.id, plugin: p, name: p.nombre || p.id })
       }
     }
     for (const p of masterPlugins ?? []) {
       if (p.bypass || isBuiltinInstrument(p)) continue
-      if (!extractHostPluginPath(p.descripcion, p.id)) continue
+      if (!resolveHostPluginPath(p)) continue
       jobs.push({ trackId: 'master', plugin: p, name: p.nombre || p.id })
     }
 
@@ -666,7 +667,7 @@ export function syncReaperTrackGraph(
     const slots: Array<{ slotId: string; instrument: boolean; bypass: boolean }> = []
     for (const p of t.plugins ?? []) {
       // VST3 con ruta: nunca tratar como builtin (licencia «JasWave» ≠ in-process).
-      const path = extractHostPluginPath(p.descripcion, p.id)
+      const path = resolveHostPluginPath(p)
       if (!path) {
         if (isBuiltinInstrument(p)) continue
         continue
@@ -725,7 +726,7 @@ export function syncReaperTrackGraph(
   const master: Array<{ slotId: string; instrument: boolean; bypass: boolean }> = []
   for (const p of masterPlugins ?? []) {
     if (isBuiltinInstrument(p)) continue
-    const path = extractHostPluginPath(p.descripcion, p.id)
+    const path = resolveHostPluginPath(p)
     if (!path) continue
     const slotId = slotIdForTrackPlugin('master', p.id)
     if (!bySlot.has(slotId)) continue

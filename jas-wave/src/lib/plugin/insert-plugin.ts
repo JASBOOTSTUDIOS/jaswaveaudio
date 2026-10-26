@@ -24,9 +24,10 @@ export type InsertPluginOptions = {
 /** Mensaje de por qué un descriptor no se puede insertar, o null si sí se puede. */
 export function motivoNoInsertable(d: PluginDescriptor): string | null {
   if (catalogPluginInsertable(d)) return null
-  return d.format === 'vst2' && !d.hostReady
-    ? VST2_NOT_HOSTED_MSG
-    : `«${d.name}» aún no está listo para el audio. Escanea de nuevo con el motor en marcha.`
+  if (d.format === 'vst2' || /\.dll$/i.test(d.path ?? '')) {
+    return VST2_NOT_HOSTED_MSG
+  }
+  return `«${d.name}» aún no está listo para el audio. Escanea de nuevo con el motor en marcha.`
 }
 
 export function infoParaDescriptor(d: PluginDescriptor): PluginInfo | null {

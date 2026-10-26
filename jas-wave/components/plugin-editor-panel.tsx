@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { AppWindow, ExternalLink, PanelTop, Piano, RefreshCw, Sparkles, Waves, X } from 'lucide-react'
+import { AppWindow, ExternalLink, PanelTop, Piano, RefreshCw, RotateCcw, Sparkles, Waves, X } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import type { DAWState } from '../../shared/src/types/state'
 import type { PluginInfo } from '../../shared/src/types/entidades'
@@ -214,8 +214,39 @@ function VstNativeEditor({
     await bridge.send({ type: 'closeEditor', slotId })
     setActiveVstVoiceTarget(null)
     setStatus('idle')
-    setMessage('')
     openedOnce.current = false
+  }
+
+  async function resetToDefault() {
+    try {
+      const bridge = createElectronPluginHostBridge()
+
+      tienda.establecerEstado((s) => {
+        const tracks = (s.project?.tracks ?? []).map((t) => {
+          if (t.id !== trackId) return t
+          return {
+            ...t,
+            plugins: (t.plugins ?? []).map((p) => {
+              if (p.id !== plugin.id) return p
+              const params = (p.parametros ?? []).map((param, idx) => {
+                const defaultVal =
+                  (param as { defecto?: number }).defecto ??
+                  (param.minimo <= 0 && param.maximo >= 0 ? 0 : (param.minimo + param.maximo) / 2)
+                const range = param.maximo - param.minimo
+                const norm = range > 0 ? Math.max(0, Math.min(1, (defaultVal - param.minimo) / range)) : 0.5
+                void bridge.send({ type: 'setParameter', slotId, paramId: idx, normalizedValue: norm })
+                return { ...param, valor: defaultVal }
+              })
+              return { ...p, parametros: params }
+            }),
+          }
+        })
+        return { ...s, project: { ...s.project!, tracks } }
+      })
+      setMessage('Valores predeterminados restablecidos')
+    } catch (err) {
+      console.warn('[plugin-editor] error al restablecer:', err)
+    }
   }
 
   useEffect(() => {
@@ -287,6 +318,15 @@ function VstNativeEditor({
                     : 'VST3'}
           </div>
         </div>
+        <button
+          type="button"
+          onClick={() => void resetToDefault()}
+          title="Restablecer todos los parámetros del VST a sus valores predeterminados"
+          className="inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] text-muted-foreground ring-1 ring-border hover:text-accent-amber"
+        >
+          <RotateCcw className="size-3" />
+          Restablecer
+        </button>
         <button
           type="button"
           onClick={() => void openEditor()}

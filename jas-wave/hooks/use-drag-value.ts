@@ -37,6 +37,15 @@ export function useDragValue({
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
+      // Clic central / rueda del ratón: restablece inmediatamente a valor inicial
+      if (e.button === 1) {
+        e.preventDefault()
+        e.stopPropagation()
+        if (resetTo !== undefined) onChange(resetTo)
+        return
+      }
+      if (e.button !== 0) return
+
       e.preventDefault()
       e.stopPropagation()
       const target = e.currentTarget as HTMLElement
@@ -67,12 +76,42 @@ export function useDragValue({
       document.body.style.cursor = 'ns-resize'
       document.body.style.userSelect = 'none'
     },
-    [value, min, max, sensitivity, onChange],
+    [value, min, max, sensitivity, onChange, resetTo],
   )
 
   const onDoubleClick = useCallback(() => {
     if (resetTo !== undefined) onChange(resetTo)
   }, [resetTo, onChange])
+
+  const onAuxClick = useCallback((e: React.MouseEvent) => {
+    if (e.button === 1) {
+      e.preventDefault()
+      e.stopPropagation()
+      if (resetTo !== undefined) onChange(resetTo)
+    }
+  }, [resetTo, onChange])
+
+  const onMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button === 1) {
+        e.preventDefault()
+        e.stopPropagation()
+        if (resetTo !== undefined) onChange(resetTo)
+      }
+    },
+    [resetTo, onChange],
+  )
+
+  const onWheel = useCallback(
+    (e: React.WheelEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const step = (e.shiftKey ? 0.25 : 1) * (sensitivity * 2)
+      const delta = e.deltaY < 0 ? step : -step
+      onChange(Math.max(min, Math.min(max, value + delta)), gestoTeclado())
+    },
+    [value, min, max, sensitivity, onChange, gestoTeclado],
+  )
 
   /** Cambio por teclado: coalesce las pulsaciones seguidas. */
   const onKeyStep = useCallback(
@@ -80,5 +119,5 @@ export function useDragValue({
     [min, max, onChange, gestoTeclado],
   )
 
-  return { onPointerDown, onDoubleClick, onKeyStep }
+  return { onPointerDown, onMouseDown, onDoubleClick, onAuxClick, onWheel, onKeyStep }
 }

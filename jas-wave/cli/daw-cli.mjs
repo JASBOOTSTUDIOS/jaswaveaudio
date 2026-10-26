@@ -237,6 +237,11 @@ async function main() {
       return
     }
 
+    if (cmd === 'reload') {
+      console.log(JSON.stringify(await req('/reload', { method: 'POST' }), null, 2))
+      return
+    }
+
     if (['play', 'pause', 'stop', 'toggle'].includes(cmd)) {
       console.log(
         JSON.stringify(

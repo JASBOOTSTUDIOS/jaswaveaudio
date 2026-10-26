@@ -4,6 +4,7 @@ import {
   useSyncExternalStore,
   useEffect,
   useRef,
+  useCallback,
   useMemo,
   useState,
   type ReactNode,
@@ -49,7 +50,7 @@ export function getSharedStore() {
 
     sharedStore = crearTiendaDAW({
       estadoInicial: estado,
-      maximoListeners: 100,
+      maximoListeners: 1000,
       // Misma instancia que ajustes y ai-action-policy: el nivel elegido por el usuario aplica al agente.
       permisos: permissionManager,
     })
@@ -211,8 +212,10 @@ export function useDAWState<T>(selector: (state: DAWState) => T): T {
   selectorRef.current = selector
   const cachedRef = useRef<{ snapshot: T } | null>(null)
 
+  const subscribe = useCallback((onStoreChange: () => void) => store.suscribir(onStoreChange), [store])
+
   return useSyncExternalStore(
-    (onStoreChange) => store.suscribir(onStoreChange),
+    subscribe,
     () => {
       const next = selectorRef.current(store.obtenerEstado())
       const prev = cachedRef.current
@@ -236,11 +239,16 @@ export function useDAWStateOptional<T>(
   fallbackRef.current = fallback
   const cachedRef = useRef<{ snapshot: T } | null>(null)
 
-  return useSyncExternalStore(
-    (onStoreChange) => {
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
       if (!store) return () => {}
       return store.suscribir(onStoreChange)
     },
+    [store],
+  )
+
+  return useSyncExternalStore(
+    subscribe,
     () => {
       if (!store) return fallbackRef.current
       const next = selectorRef.current(store.obtenerEstado())

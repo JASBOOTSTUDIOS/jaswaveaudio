@@ -3330,8 +3330,10 @@ export async function executeDawActions(
         }
         case 'project.new': {
           const nombre = String(p.nombre ?? 'Proyecto nuevo').trim() || 'Proyecto nuevo'
+          const carpeta = p.carpeta ? String(p.carpeta).trim() : ''
+          const ruta = p.ruta ? String(p.ruta).trim() : ''
           // Cambios sin guardar: el usuario decide en el diálogo; la IA nunca descarta en silencio.
-          const { confirmarCambiosIO, detenerTransporteYFinalizarGrabacion } = await import('./project-io')
+          const { confirmarCambiosIO, detenerTransporteYFinalizarGrabacion, persistirRutaYGuardar } = await import('./project-io')
           const conf = await confirmarCambiosIO(tienda, 'nuevo', 'ia')
           if (!conf.continuar) {
             results.push(resultadoNecesitaUsuario(action.type, conf.error))
@@ -3340,10 +3342,21 @@ export async function executeDawActions(
           // El transporte se detiene (y la toma en curso se escribe) antes de cambiar de proyecto.
           await detenerTransporteYFinalizarGrabacion(tienda)
           const r = await tienda.executor.execute('project.new', { nombre })
+          let guardadoMsg = ''
+          if (r.success && (carpeta || ruta)) {
+            try {
+              const sep = (carpeta || ruta).includes('/') ? '/' : '\\'
+              const rutaFinal = ruta || `${carpeta.replace(/[/\\]+$/, '')}${sep}${nombre}.jaswave`
+              const guardado = await persistirRutaYGuardar(tienda, rutaFinal)
+              if (guardado.success) guardadoMsg = ` guardado en ${rutaFinal}`
+            } catch (err) {
+              console.warn('[ai-daw-agent] No se pudo guardar proyecto tras project.new:', err)
+            }
+          }
           results.push({
             type: action.type,
             success: r.success,
-            message: r.success ? `Proyecto nuevo «${nombre}»` : r.error?.message ?? 'Error project.new',
+            message: r.success ? `Proyecto nuevo «${nombre}»${guardadoMsg}` : r.error?.message ?? 'Error project.new',
             data: r.result,
           })
           break
@@ -3383,9 +3396,9 @@ export async function executeDawActions(
           break
         }
         case 'project.load': {
-          const ruta = String(p.ruta ?? p.path ?? '').trim()
+          let ruta = String(p.ruta ?? p.path ?? p.nombre ?? '').trim()
           if (!ruta) {
-            results.push({ type: action.type, success: false, message: 'Falta ruta del .jaswave' })
+            results.push({ type: action.type, success: false, message: 'Falta ruta o nombre del archivo .jaswave' })
             break
           }
           const { cargarProyectoDesdeRutaIO, confirmarCambiosIO } = await import('./project-io')
@@ -3394,7 +3407,22 @@ export async function executeDawActions(
             results.push(resultadoNecesitaUsuario(action.type, conf.error))
             break
           }
-          const r = await cargarProyectoDesdeRutaIO(tienda, ruta)
+          let r = await cargarProyectoDesdeRutaIO(tienda, ruta)
+          // Si falló por ruta relativa y tenemos Electron, intentar resolver en userData o Desktop
+          if (!r.success && !/^[A-Za-z]:[/\\]/.test(ruta) && window.electron?.userDataPath) {
+            try {
+              const userData = await window.electron.userDataPath()
+              const sep = userData.includes('/') ? '/' : '\\'
+              const cand1 = `${userData}${sep}${ruta.endsWith('.jaswave') ? ruta : ruta + '.jaswave'}`
+              const r2 = await cargarProyectoDesdeRutaIO(tienda, cand1)
+              if (r2.success) {
+                r = r2
+                ruta = cand1
+              }
+            } catch {
+              /* ignore */
+            }
+          }
           results.push({
             type: action.type,
             success: r.success,

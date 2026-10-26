@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Plus,
   Replace,
+  RotateCcw,
   Sparkles,
   Trash2,
   Waves,
@@ -37,6 +38,7 @@ import {
   pluginRuntimeCaption,
 } from '@/src/lib/plugin/plugin-info-adapter'
 import type { PluginDescriptor } from '@/src/lib/plugin/types'
+import { slotIdForTrackPlugin } from '@/src/lib/plugin/track-vst-runtime'
 import {
   getVstRuntimeGeneration,
   isPluginAudioReady,
@@ -160,6 +162,40 @@ export function FxChainPanel() {
     const info = rolesInfo ?? (d ? descriptorToPluginInfo(d) : null)
     if (!info) return
     await run('plugin.replace', { trackId, pluginInstanceId, plugin: info })
+  }
+
+  const resetPlugin = async (p: PluginInfo) => {
+    setBusy(true)
+    try {
+      const slotId = slotIdForTrackPlugin(trackId, p.id)
+      tienda.establecerEstado((s) => {
+        const tracks = (s.project?.tracks ?? []).map((t) => {
+          if (t.id !== trackId) return t
+          return {
+            ...t,
+            plugins: (t.plugins ?? []).map((plug) => {
+              if (plug.id !== p.id) return plug
+              const params = (plug.parametros ?? []).map((param, idx) => {
+                const defaultVal =
+                  (param as { defecto?: number }).defecto ??
+                  (param.minimo <= 0 && param.maximo >= 0 ? 0 : (param.minimo + param.maximo) / 2)
+                const range = param.maximo - param.minimo
+                const norm = range > 0 ? Math.max(0, Math.min(1, (defaultVal - param.minimo) / range)) : 0.5
+                void window.electron?.pluginHostSend?.({ type: 'setParameter', slotId, paramId: idx, normalizedValue: norm })
+                return { ...param, valor: defaultVal }
+              })
+              return { ...plug, parametros: params }
+            }),
+          }
+        })
+        return { ...s, project: { ...s.project!, tracks } }
+      })
+      setMsg(`«${p.nombre}» restablecido a valores predeterminados.`)
+    } catch {
+      /* ignore */
+    } finally {
+      setBusy(false)
+    }
   }
 
   const copyChain = async () => {
@@ -336,6 +372,15 @@ export function FxChainPanel() {
                   className="rounded p-0.5 text-muted-foreground hover:text-foreground"
                 >
                   <Replace className="size-3.5" />
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  title="Restablecer valores predeterminados"
+                  onClick={() => void resetPlugin(p)}
+                  className="rounded p-0.5 text-muted-foreground hover:text-accent-amber"
+                >
+                  <RotateCcw className="size-3.5" />
                 </button>
                 <button
                   type="button"

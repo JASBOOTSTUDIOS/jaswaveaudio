@@ -289,16 +289,29 @@ public:
   }
   /** rt60 en segundos; hf = factor de amortiguación de agudos (0 = brillante, 1 = oscuro). */
   void setDecay(float rt60, float hf) {
+    rt60_ = rt60;
     for (int i = 0; i < kN; ++i) {
       const float lenSec = baseLen_[i] / sr_;
-      gain_[i] = std::pow(10.f, -3.f * lenSec / std::max(0.2f, rt60));
+      gain_[i] = freeze_ ? 0.99995f : std::pow(10.f, -3.f * lenSec / std::max(0.2f, rt60));
     }
     dampCoef_ = clampf(hf, 0.f, 0.95f);
   }
   void setPreDelayMs(float ms) { preSamples_ = clampf(ms * 0.001f * sr_, 1.f, 0.19f * sr_); }
+  /** Filtros de entrada de la cola (paso alto / paso bajo) en Hz. */
+  void setInputFilters(float lowCutHz, float highCutHz) {
+    inHp_.highpass(sr_, clampf(lowCutHz, 20.f, 1000.f), 0.707f);
+    inLp_.lowpass(sr_, clampf(highCutHz, 1000.f, 20000.f), 0.707f);
+    outHpL_.highpass(sr_, clampf(lowCutHz * 0.8f, 20.f, 800.f), 0.707f);
+    outHpR_.highpass(sr_, clampf(lowCutHz * 0.8f, 20.f, 800.f), 0.707f);
+  }
+  /** Profundidad de la modulación de los retardos (muestras, 0..~6): evita el sonido metálico. */
+  void setModDepth(float samples) { modDepth_ = clampf(samples, 0.f, 8.f); }
+  /** Congela la cola: se corta la entrada y la realimentación se acerca a 1 (pad infinito). */
+  void setFreeze(bool on) { if (on != freeze_) { freeze_ = on; setDecay(rt60_, dampCoef_); } }
   inline void process(float inL, float inR, float& outL, float& outR) {
     float x = 0.5f * (inL + inR);
     x = inLp_.process(inHp_.process(x));
+    if (freeze_) x = 0.f;
     preDelay_.push(x);
     x = preDelay_.read(preSamples_);
     for (int i = 0; i < 4; ++i) x = apL_[i].process(x);
@@ -307,7 +320,7 @@ public:
     if (lfo_ > kTwoPi) lfo_ -= kTwoPi;
     float v[kN];
     for (int i = 0; i < kN; ++i) {
-      const float mod = std::sin(lfo_ * (1.f + 0.13f * static_cast<float>(i)) + static_cast<float>(i) * 1.3f) * 2.2f;
+      const float mod = std::sin(lfo_ * (1.f + 0.13f * static_cast<float>(i)) + static_cast<float>(i) * 1.3f) * modDepth_;
       float s = line_[i].read(baseLen_[i] + mod);
       // amortiguación de agudos por línea (one-pole)
       damp_[i] = flush(s * (1.f - dampCoef_) + damp_[i] * dampCoef_);
@@ -343,7 +356,8 @@ private:
   std::array<Allpass, 4> apL_{}, apR_{};
   DelayLine preDelay_;
   Biquad inHp_, inLp_, outHpL_, outHpR_;
-  float dampCoef_{0.4f}, preSamples_{960.f}, lfo_{0.f};
+  float dampCoef_{0.4f}, preSamples_{960.f}, lfo_{0.f}, rt60_{2.6f}, modDepth_{2.2f};
+  bool freeze_{false};
 };
 
 // ---------------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import { refrescarCatalogoIA } from '../ia/catalogo-ia'
 import { useCatalogoIA } from '../ia/use-catalogo-ia'
 import { Aviso, Boton, CambiarClave, FormularioProveedorIA, Seccion, apiJasWave, puenteIAEscritorio } from '@jaswave/host-sdk'
 import type { DatosProveedorIA, ProveedorIAApi } from '@jaswave/host-sdk'
+import { EspecialistasPanel } from './especialistas-panel'
 
 export function AjustesIA() {
   const { catalogo, refrescar, error, sesion } = useCatalogoIA()
@@ -109,6 +110,8 @@ export function AjustesIA() {
           </label>
         </div>
       </Seccion>
+
+      <EspecialistasPanel />
 
       {catalogo.permisos.modeloPropio ? <MisModelos /> : null}
     </div>

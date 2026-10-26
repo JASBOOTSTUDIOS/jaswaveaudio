@@ -695,6 +695,8 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'analysis.timing',
   'analysis.buffer',
   'analysis.fxBlame',
+  'analysis.audioLens',
+  'analysis.voiceToDrums',
   'automation.setCurve',
   'automation.writePoint',
   'automation.clear',

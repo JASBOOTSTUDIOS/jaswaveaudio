@@ -15,7 +15,9 @@ set(JW_PLUGIN_DIRS
   com.jaswave.plugin.utility-tool
   com.jaswave.plugin.piano-synth
   com.jaswave.plugin.roles-vst
-  com.jaswave.plugin.sampler)
+  com.jaswave.plugin.sampler
+  com.jaswave.plugin.ambience
+  com.jaswave.plugin.audio-lens)
 foreach(_d ${JW_PLUGIN_DIRS})
   add_subdirectory(${_d})
 endforeach()

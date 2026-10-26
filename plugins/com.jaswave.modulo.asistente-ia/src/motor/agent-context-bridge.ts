@@ -1,8 +1,6 @@
-/**
- * Context L4-L5 + Memory Manager + reglas de proyecto para el coproducer.
- */
-import { PLAN_SLUG, buildReadOnlyProjectContext, getAgentDoc } from '@jaswave/host-sdk'
+import { PLAN_SLUG, buildReadOnlyProjectContext, getAgentDoc, listAgentDocs, toolRegistry } from '@jaswave/host-sdk'
 import type { DAWState, TiendaDAW } from '@jaswave/host-sdk'
+import { cargarEspecialistas } from './especialistas-storage'
 
 export type SessionRules = {
   genre?: string
@@ -54,6 +52,26 @@ export function buildAssembledAgentContext(
   const plan = getAgentDoc(projectId, PLAN_SLUG)
   const rules = loadSessionRules(projectId)
 
+  // Combinar herramientas del registro de comandos con el toolRegistry completo (analysis.*, audioLens, plugin.*, etc.)
+  const commandTools = tienda.registroComandos.list().map((c) => ({
+    type: c.type,
+    category: 'system' as const,
+    description: c.description,
+    risk: c.risk,
+  }))
+  const registryTools = (toolRegistry?.list ? toolRegistry.list() : []).map((t: any) => ({
+    type: t.name || t.type,
+    category: (t.category || 'ai') as any,
+    description: t.description || '',
+    risk: 'read' as const,
+  }))
+  const allKnownTools = [...registryTools, ...commandTools]
+  const deduplicatedToolsMap = new Map<string, typeof allKnownTools[0]>()
+  for (const t of allKnownTools) {
+    if (!deduplicatedToolsMap.has(t.type)) deduplicatedToolsMap.set(t.type, t)
+  }
+  const toolsToSend = Array.from(deduplicatedToolsMap.values())
+
   const selectedId = state.selection?.idsPistas?.[0]
   const assembled = tienda.ensamblarContexto(
     {
@@ -66,12 +84,7 @@ export function buildAssembledAgentContext(
       content: m.content,
       marcaTiempo: Date.now() - (chatTurns.length - i) * 1000,
     })),
-    tienda.registroComandos.list().slice(0, 40).map((c) => ({
-      type: c.type,
-      category: 'system' as const,
-      description: c.description,
-      risk: c.risk,
-    })),
+    toolsToSend,
   )
 
   const memoryBlock =
@@ -82,10 +95,54 @@ export function buildAssembledAgentContext(
         ].join('\n')
       : ''
 
+  // Especialistas activos y músicos
+  const especialistas = cargarEspecialistas().filter((e) => e.activo)
+  const especialistasBlock = [
+    '## Equipo de Especialistas y Músicos Virtuales Disponibles',
+    'El usuario puede invocar a cada especialista mencionándolo en el chat con @nombre (ej. @pianista, @baterista, @bajista, @qa, @director, etc.):',
+    ...especialistas.map(
+      (e) =>
+        `- **@${e.nombre}** (${e.role}${e.instrumento ? ` · ${e.instrumento}` : ''}): ${e.descripcion || ''} | Skills: [${e.skills.join(', ')}]${
+          e.instruccionesPersonalizadas ? ` | Reglas personalizadas: "${e.instruccionesPersonalizadas}"` : ''
+        }`,
+    ),
+  ].join('\n')
+
+  // Base de conocimientos Markdown del proyecto
+  let allDocs: Array<{ slug: string; title?: string; content: string }> = []
+  try {
+    allDocs = listAgentDocs(projectId)
+  } catch {
+    /* ignore */
+  }
+  const knowledgeDocs = allDocs.filter((d) => d.slug !== PLAN_SLUG && d.content?.trim())
+  const knowledgeBlock =
+    knowledgeDocs.length > 0
+      ? [
+          '## Base de Conocimientos Markdown (.md) del Proyecto',
+          'El usuario ha creado o incorporado estos documentos de referencia técnica y musical. Úsalos como fuentes de verdad para tus respuestas y ejecución:',
+          ...knowledgeDocs.map((d) => `### Documento: ${d.title || d.slug} (@${d.slug})\n${d.content.slice(0, 4000)}`),
+        ].join('\n\n')
+      : ''
+
+  // Catálogo de directrices de estilo musical y análisis
+  const skillsGlobalesBlock = [
+    '## Catálogo de Skills Musicales y de Producción JasWave',
+    '- **Worship Moderno / Íntimo**: Pianos con voicings abiertos (1-5-9 o 1-5-10), arpegios sutiles, pads envolventes con modulación lenta, tempo habitualmente entre 68 y 78 BPM, baterías con bombo redondo y dinámicas en coros, reverbs estéreo largas en envíos.',
+    '- **Análisis de Audio (Lens)**: Usa analysis.timing para detectar BPM real y confidence; analysis.buffer para perfil armónico/tonalidad; analysis.mix para balance espectral y headroom. Aplica las configuraciones inmediatamente a project.setBpm y project.setKey.',
+    '- **Control de Calidad (QA)**: Comprobación estricta de clipping (True Peak < -0.5 dBTP), coherencia armónica en la escala del tema y ausencia de vacíos o solapes de notas anómalos.',
+  ].join('\n')
+
   return [
     buildReadOnlyProjectContext(state),
     '',
     formatSessionRulesBlock(rules),
+    '',
+    especialistasBlock,
+    '',
+    skillsGlobalesBlock,
+    '',
+    knowledgeBlock,
     '',
     libraryPresetsBlock
       ? `## Biblioteca de presets (global + proyecto)\nUsa presetId en Music Build; preferir sobre plugin.setParameter.\n${libraryPresetsBlock}`

@@ -7,7 +7,7 @@ import { AGENT_MODE_META, type AgentMode } from './ai-modes'
 import { listAgentDocs } from './agent-docs'
 import { pluginRegistry } from './plugin/registry'
 
-export type MentionKind = 'mode' | 'action' | 'track' | 'clip' | 'plugin' | 'vst' | 'doc' | 'message'
+export type MentionKind = 'mode' | 'action' | 'track' | 'clip' | 'plugin' | 'vst' | 'doc' | 'message' | 'agent'
 
 export type MentionableMessage = {
   id: string
@@ -40,6 +40,7 @@ export const MENTION_KIND_LABEL: Record<MentionKind, string> = {
   plugin: 'Plugins en el proyecto',
   vst: 'Catálogo VST',
   doc: 'Documentos',
+  agent: 'Agentes y Músicos Virtuales',
 }
 
 export const MAX_CITED_MESSAGES = 5
@@ -163,6 +164,42 @@ export function listMentionables(state: DAWState, messages: MentionableMessage[]
       insertText: d.slug === 'plan.md' ? 'lee y actualiza @plan.md' : `abre @${d.slug}`,
     })
   }
+
+  // Agentes y Músicos Virtuales (editables y creables por el usuario)
+  try {
+    const raw =
+      typeof window !== 'undefined' && window.localStorage
+        ? window.localStorage.getItem('jaswave-especialistas-custom-v2')
+        : null
+    const lista = raw ? JSON.parse(raw) : null
+    const agentes =
+      Array.isArray(lista) && lista.length > 0
+        ? lista
+        : [
+            { id: 'director', nombre: 'Director de Banda', role: 'director' },
+            { id: 'pianista', nombre: 'Pianista', role: 'musico', instrumento: 'Piano' },
+            { id: 'baterista', nombre: 'Baterista', role: 'musico', instrumento: 'Drums' },
+            { id: 'bajista', nombre: 'Bajista', role: 'musico', instrumento: 'Bajo' },
+            { id: 'sintetizador', nombre: 'Diseñador de Sintes', role: 'musico', instrumento: 'Synthesizer' },
+            { id: 'qa', nombre: 'Auditor QA', role: 'qa' },
+            { id: 'mezcla', nombre: 'Ingeniero de Mezcla', role: 'mezcla' },
+            { id: 'mastering', nombre: 'Ingeniero de Mastering', role: 'mastering' },
+          ]
+    for (const ag of agentes) {
+      if (ag.activo === false) continue
+      const label = ag.nombre || ag.id
+      out.push({
+        kind: 'agent',
+        id: `agent:${ag.id}`,
+        label,
+        hint: `${ag.role}${ag.instrumento ? ` · ${ag.instrumento}` : ''} · especialista`,
+        insertText: label.includes(' ') ? `@"${label}"` : `@${label}`,
+      })
+    }
+  } catch {
+    /* ignore */
+  }
+
   return out
 }
 

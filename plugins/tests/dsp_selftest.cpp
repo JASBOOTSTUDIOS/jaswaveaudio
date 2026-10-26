@@ -40,6 +40,7 @@ struct ProcessScope { ProcessScope() { g_inProcess = true; } ~ProcessScope() { g
 #include "com.jaswave.plugin.utility-tool/src/utility_dsp.h"
 #include "com.jaswave.plugin.piano-synth/source/piano_dsp.h"
 #include "com.jaswave.plugin.roles-vst/src/roles_engine.h"
+#include "jw_audio_lens.h"
 
 using namespace JasWaveDsp;
 
@@ -814,6 +815,33 @@ static void testV3Visualizacion() {
     }
 }
 
+static void testAudioLens() {
+    std::printf("-- AudioLens (Análisis Beatbox y Audio Descriptor) --\n");
+    const double sr = 44100.0;
+    const size_t nSamples = static_cast<size_t>(sr * 1.5);
+    std::vector<float> audio(nSamples, 0.0f);
+
+    // 1. Kick a 60 Hz en t = 0.1s
+    const size_t kickIdx = static_cast<size_t>(0.1 * sr);
+    for (size_t i = 0; i < 2000; ++i) {
+        float t = static_cast<float>(i) / sr;
+        audio[kickIdx + i] = 0.9f * std::exp(-t * 25.0f) * std::sin(2.0f * 3.14159f * 60.0f * t);
+    }
+
+    // 2. Hi-Hat agudo a 8000 Hz en t = 0.8s
+    const size_t hatIdx = static_cast<size_t>(0.8 * sr);
+    for (size_t i = 0; i < 800; ++i) {
+        float t = static_cast<float>(i) / sr;
+        audio[hatIdx + i] = 0.8f * std::exp(-t * 80.0f) * std::sin(2.0f * 3.14159f * 8000.0f * t);
+    }
+
+    auto res = AudioLensEngine::analyze(audio.data(), nSamples, sr, 120.0, true);
+    CHECK(res.drumHits.size() >= 2, "detecta al menos 2 golpes en la señal (detectados: %zu)", res.drumHits.size());
+    CHECK(res.kickCount >= 1, "detecta al menos 1 kick (detectados: %d)", res.kickCount);
+    CHECK(res.hihatCount >= 1, "detecta al menos 1 hi-hat (detectados: %d)", res.hihatCount);
+    CHECK(!res.aiSummary.empty(), "genera resumen para IA no vacío");
+}
+
 int main() {
     std::printf("JasWave DSP selftest\n");
     testV3Visualizacion();
@@ -825,6 +853,7 @@ int main() {
     testUtility();
     testPiano();
     testInvariance();
+    testAudioLens();
     std::printf("\n%d OK, %d FALLOS\n", g_pass, g_fail);
     std::printf(g_fail == 0 ? "DSP SELFTEST: OK\n" : "DSP SELFTEST: FALLO\n");
     return g_fail == 0 ? 0 : 1;

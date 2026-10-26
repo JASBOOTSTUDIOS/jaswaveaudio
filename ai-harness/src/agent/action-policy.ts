@@ -54,6 +54,7 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'analysis.timing': 'read',
   'analysis.buffer': 'read',
   'analysis.fxBlame': 'read',
+  'analysis.audioLens': 'read',
   'render.getStatus': 'read',
   'track.getFxChain': 'read',
   'web.search': 'read',
@@ -155,6 +156,7 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'bus.create': 'write',
   'send.set': 'write',
   'sidechain.connect': 'write',
+  'analysis.voiceToDrums': 'write',
 
   // ── A7c · Actuación con valores reales (ganancia, EQ, compresor, límite, master) ──
   'track.ganancia': 'write',

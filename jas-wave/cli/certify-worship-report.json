@@ -1,0 +1,60 @@
+{
+  "fecha": "2026-10-26T00:08:31.876Z",
+  "cancion": "Aquí te esperaré  Jesús  Al que está sentado en el trono (Live) (Toma Tu Lugar)  Íntimo.mp3",
+  "bpm": 68,
+  "tonalidad": "F# Major",
+  "benchmarkVst": [
+    {
+      "nombre": "DecentSampler",
+      "tipo": "Secuencial (Probe)",
+      "tiempoMs": 13501,
+      "ok": true,
+      "detalle": "Probe OK: C:\\Program Files\\Common Files\\VST3\\DecentSampler.vst3"
+    },
+    {
+      "nombre": "sforzando",
+      "tipo": "Secuencial (Probe)",
+      "tiempoMs": 1714,
+      "ok": true,
+      "detalle": "Probe OK: C:\\Program Files\\Common Files\\VST3\\sforzando.vst3"
+    },
+    {
+      "nombre": "Kontakt",
+      "tipo": "Secuencial (Probe)",
+      "tiempoMs": 21344,
+      "ok": true,
+      "detalle": "Probe OK: C:\\Program Files\\Common Files\\VST3\\Kontakt.vst3"
+    },
+    {
+      "nombre": "BFDPlayer",
+      "tipo": "Secuencial (Probe)",
+      "tiempoMs": 11196,
+      "ok": true,
+      "detalle": "Probe OK: C:\\Program Files\\Common Files\\VST3\\BFDPlayer.vst3"
+    },
+    {
+      "nombre": "Jasboot FX",
+      "tipo": "Secuencial (Probe)",
+      "tiempoMs": 799,
+      "ok": true,
+      "detalle": "Probe OK: C:\\Studio_Musical\\Reaper_VST\\Jasboot FX.vst3"
+    },
+    {
+      "nombre": "Jasboot Pads",
+      "tipo": "Secuencial (Probe)",
+      "tiempoMs": 14044,
+      "ok": false,
+      "detalle": "Probe falló: Module::create falló: LoadLibraryW failed for path C:\\Studio_Musical\\Reaper_VST\\jasbootPads.vst3\\Contents\\x86_64-win\\jasbootPads.vst3: No se puede encontrar el m�dulo especificado.\r\n"
+    },
+    {
+      "nombre": "DecentSampler (Insert Slot)",
+      "tipo": "Instanciación Host",
+      "tiempoMs": 481,
+      "ok": true,
+      "detalle": "Plugin «DecentSampler» insertado y cargado en host"
+    }
+  ],
+  "padArchivo": "F# Major Pad - (320 Kbps).mp3",
+  "estadoMotorAudio": "estable",
+  "certificacion": "PASSED"
+}

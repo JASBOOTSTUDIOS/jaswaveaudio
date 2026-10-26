@@ -72,7 +72,7 @@ export interface TiendaDAW {
 }
 
 export function crearTiendaDAW(opciones?: TiendaDAWOpciones): TiendaDAW {
-  const { estadoInicial, maximoListeners = 100, permisos: permisosInyectados } = opciones ?? {};
+  const { estadoInicial, maximoListeners = 1000, permisos: permisosInyectados } = opciones ?? {};
   const estadoInicialResolved = estadoInicial ?? (() => {
     throw new Error('TiendaDAW requiere estadoInicial o usar crearEstadoInicial() de shared/src/state/estado-inicial.ts');
   })();
@@ -146,9 +146,13 @@ export function crearTiendaDAW(opciones?: TiendaDAWOpciones): TiendaDAW {
     }
   }
 
+  let advertenciaEmitida = false;
   function validarMaximoListeners(): void {
-    if (listeners.size >= maximoListeners) {
+    if (listeners.size >= maximoListeners && !advertenciaEmitida) {
+      advertenciaEmitida = true;
       console.warn(`TiendaDAW alcanzó el máximo de listeners (${maximoListeners})`);
+    } else if (listeners.size < maximoListeners) {
+      advertenciaEmitida = false;
     }
   }
 

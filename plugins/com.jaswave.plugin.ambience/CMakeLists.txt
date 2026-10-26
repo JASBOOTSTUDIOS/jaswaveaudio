@@ -1,0 +1,6 @@
+# JasWave Ambience – Rack worship VST3 (reverb FDN, delay, shimmer, swell, chorus, drive, EQ)
+cmake_minimum_required(VERSION 3.25)
+project(jaswave_ambience VERSION 1.0.0 LANGUAGES C CXX)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/JasWavePlugins.cmake")
+jw_setup_shared()
+jaswave_add_vst3(TARGET JasWaveAmbience SOURCES src/ambience_plugin.cpp)

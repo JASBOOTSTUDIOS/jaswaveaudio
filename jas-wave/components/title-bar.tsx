@@ -92,7 +92,9 @@ export function TitleBar() {
       >
         <button
           type="button"
-          onClick={() => { void newProject() }}
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent('jaswave-nuevo-proyecto'))
+          }}
           title="Nuevo proyecto"
           className="flex size-8 items-center justify-center text-muted-foreground transition-colors hover:bg-panel-raised hover:text-foreground"
         >
