@@ -157,6 +157,8 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'send.set': 'write',
   'sidechain.connect': 'write',
   'analysis.voiceToDrums': 'write',
+  'analysis.voiceToMelody': 'write',
+  'analysis.extractMidi': 'write',
 
   // ── A7c · Actuación con valores reales (ganancia, EQ, compresor, límite, master) ──
   'track.ganancia': 'write',

@@ -10,6 +10,8 @@ import {
   crearComandoAnalysisTrack,
   crearComandoAnalysisAudioLens,
   crearComandoAnalysisVoiceToDrums,
+  crearComandoAnalysisVoiceToMelody,
+  crearComandoAnalysisExtractMidi,
   resolverRango,
 } from '../commands/analysis-commands'
 import { registrarProveedorAnalisis, type AnalisisProyecto, type RequerimientoAnalisis } from '../audio/analysis-provider'
@@ -234,6 +236,59 @@ describe('comandos AudioLens y VoiceToDrums', () => {
     const pistaCreada = res.state.project.tracks.find((t) => t.nombre === 'Batería Beatbox Test')
     expect(pistaCreada?.clips.length).toBe(1)
     expect(pistaCreada?.clips[0]?.tipo).toBe('midi')
+  })
+
+  it('analysis.voiceToMelody convierte tarareo senoidal en notas melódicas y crea pista de guitarra', async () => {
+    const cmd = crearComandoAnalysisVoiceToMelody()
+    const sr = 44100
+    const audioData = new Array(Math.floor(0.8 * sr)).fill(0)
+    // Tono puro de 440 Hz (A4)
+    for (let i = 0; i < audioData.length; i++) {
+      audioData[i] = 0.8 * Math.sin((2 * Math.PI * 440 * i) / sr)
+    }
+
+    const res = await cmd.handler(estado, {
+      audioData,
+      sampleRate: sr,
+      bpm: 120,
+      cuantizar: '1/16',
+      instrumento: 'guitar',
+      tonalidadRaiz: 'A',
+      tonalidadEscala: 'menor',
+      crearPista: true,
+      nombrePista: 'Guitarra Eléctrica (Melodía IA)',
+    })
+
+    expect(res.result.totalNotas).toBeGreaterThan(0)
+    expect(res.result.notas[0]?.pitch).toBe(69) // A4
+    const pistaCreada = res.state.project.tracks.find((t) => t.nombre === 'Guitarra Eléctrica (Melodía IA)')
+    expect(pistaCreada).toBeDefined()
+    expect(pistaCreada?.tipo).toBe('instrumento')
+    expect(pistaCreada?.clips[0]?.tipo).toBe('midi')
+    expect((pistaCreada?.clips[0] as any)?.notas?.length).toBe(res.result.totalNotas)
+  })
+
+  it('analysis.extractMidi realiza extracción unificada de melodía y batería', async () => {
+    const cmd = crearComandoAnalysisExtractMidi()
+    const sr = 44100
+    const audioData = new Array(Math.floor(0.6 * sr)).fill(0)
+    for (let i = 0; i < audioData.length; i++) {
+      audioData[i] = 0.7 * Math.sin((2 * Math.PI * 440 * i) / sr)
+    }
+
+    const res = await cmd.handler(estado, {
+      audioData,
+      sampleRate: sr,
+      bpm: 120,
+      tipo: 'all',
+      crearPistas: false,
+    })
+
+    expect(res.result).toBeDefined()
+    expect(res.result.melodia).toBeDefined()
+    expect(res.result.melodia.totalNotas).toBeGreaterThan(0)
+    expect(res.result.tonalidad).toBeDefined()
+    expect(res.result.resumenParaIA).toContain('REPORTE JASWAVE AUDIOLENS')
   })
 })
 

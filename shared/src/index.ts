@@ -46,5 +46,7 @@ export * from './audio/true-peak';
 export * from './audio/diagnosis';
 export * from './audio/analysis-provider';
 export * from './audio/eq-dinamico';
+export * from './audio/audio-lens';
+export * from './audio/pitch-tracking';
 export * from './sync';
 export * from './plugins';

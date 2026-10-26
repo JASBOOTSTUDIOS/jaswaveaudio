@@ -132,6 +132,24 @@ export function registrarAnalysisTools(registry: ToolRegistry): void {
       risk: 'write',
       tags: ['analysis', 'voicetodrums', 'drums', 'beatbox', 'midi'],
     },
+    {
+      type: 'analysis.voiceToMelody',
+      name: 'analysis.voiceToMelody',
+      version: '1.0.0',
+      description: 'Convierte tarareo o voz cantada en notas MIDI melódicas afinadas y cuantizadas según la escala del proyecto',
+      category: 'audio',
+      risk: 'write',
+      tags: ['analysis', 'voicetomelody', 'melody', 'pitch', 'midi', 'f0'],
+    },
+    {
+      type: 'analysis.extractMidi',
+      name: 'analysis.extractMidi',
+      version: '1.0.0',
+      description: 'Herramienta integral de análisis DSP por Audio Lens: extrae notas melódicas f0, ritmo beatbox, acordes y tonalidad',
+      category: 'audio',
+      risk: 'write',
+      tags: ['analysis', 'extractmidi', 'audiolens', 'melody', 'drums'],
+    },
   ]
 
   const viaCommand =
