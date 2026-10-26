@@ -71,6 +71,15 @@ function staticMentions(): Mentionable[] {
     }),
   )
   const actions: Mentionable[] = [
+    { kind: 'action', id: 'action:aprender', label: '/aprender', hint: 'aprende preferencias y reglas en conocimiento.md (/learn)', insertText: '/aprender ' },
+    { kind: 'action', id: 'action:learn', label: '/learn', hint: 'guarda reglas del usuario en conocimiento.md (/aprender)', insertText: '/learn ' },
+    { kind: 'action', id: 'action:meta', label: '/meta', hint: 'modo objetivo continuo exhaustivo (/goal)', insertText: '/meta ' },
+    { kind: 'action', id: 'action:goal', label: '/goal', hint: 'ejecución continua de meta hasta completar (/meta)', insertText: '/goal ' },
+    { kind: 'action', id: 'action:plan', label: '/plan', hint: 'crea, reescribe y evalúa el plan estructurado plan.md', insertText: '/plan ' },
+    { kind: 'action', id: 'action:entrevista', label: '/entrevista', hint: 'inicia entrevista interactiva de aclaración con tarjetas (/grill-me)', insertText: '/entrevista ' },
+    { kind: 'action', id: 'action:grill-me', label: '/grill-me', hint: 'alineación interactiva de decisiones mediante preguntas (/entrevista)', insertText: '/grill-me ' },
+    { kind: 'action', id: 'action:programar', label: '/programar', hint: 'programa revisiones de mezcla periódicas o recordatorios (/schedule)', insertText: '/programar ' },
+    { kind: 'action', id: 'action:schedule', label: '/schedule', hint: 'recordatorios o temporizadores periódicos (/programar)', insertText: '/schedule ' },
     { kind: 'action', id: 'action:clip', label: 'crear clip MIDI', hint: 'clip en pista seleccionada', insertText: 'crea un clip MIDI en la pista seleccionada' },
     { kind: 'action', id: 'action:project', label: 'proyecto desde cero', hint: 'Music Build: pistas + MIDI + mix', insertText: 'créame una canción completa desde cero' },
     { kind: 'action', id: 'action:bpm', label: 'cambiar BPM', hint: 'tempo', insertText: 'pon el BPM a ' },
@@ -290,15 +299,27 @@ export type MentionDraft = {
   query: string
 }
 
-/** Fragmento incompleto tras el último @ (para autocompletado). */
+/** Fragmento incompleto tras el último @ o / (para autocompletado). */
 export function mentionDraftAtCaret(text: string, caret: number): MentionDraft | null {
   const before = text.slice(0, caret)
   const at = before.lastIndexOf('@')
-  if (at < 0) return null
-  const frag = before.slice(at + 1)
+  const slash = before.lastIndexOf('/')
+  const triggerIdx = Math.max(at, slash)
+  if (triggerIdx < 0) return null
+
+  // Si el trigger es '/', solo activar si está al inicio o precedido por espacio/salto de línea
+  if (triggerIdx === slash && triggerIdx > 0 && !/[\s\n]/.test(before[triggerIdx - 1] ?? '')) {
+    if (at >= 0) {
+      const fragAt = before.slice(at + 1)
+      if (!/\n/.test(fragAt)) return { start: at, query: fragAt.replace(/^"/, '') }
+    }
+    return null
+  }
+
+  const frag = before.slice(triggerIdx + 1)
   if (/\n/.test(frag)) return null
   if (frag.startsWith('"') && frag.includes('"', 1)) return null
-  return { start: at, query: frag.replace(/^"/, '') }
+  return { start: triggerIdx, query: frag.replace(/^"/, '') }
 }
 
 export function filterMentionables(items: Mentionable[], query: string): Mentionable[] {

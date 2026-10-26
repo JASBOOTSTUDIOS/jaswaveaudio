@@ -3,6 +3,8 @@
  * Editables por el usuario y por la IA. Persistidos por projectId.
  */
 
+export type DocRbacRole = 'owner' | 'editor' | 'viewer'
+
 export type AgentDoc = {
   slug: string
   title: string
@@ -10,10 +12,33 @@ export type AgentDoc = {
   createdAt: number
   updatedAt: number
   origin: 'system' | 'ai' | 'user'
+  roleAllowed?: DocRbacRole
+}
+
+export function puedoEditarDoc(doc: AgentDoc, rolUsuario: DocRbacRole = 'owner'): boolean {
+  if (rolUsuario === 'owner') return true
+  if (rolUsuario === 'editor') return doc.roleAllowed !== 'owner'
+  return false
+}
+
+export function puedoLeerDoc(_doc: AgentDoc, _rolUsuario: DocRbacRole = 'owner'): boolean {
+  return true
 }
 
 export const PLAN_SLUG = 'plan.md'
+export const CONOCIMIENTO_SLUG = 'conocimiento.md'
 export const USER_NOTES_HEADING = 'Notas del usuario'
+
+export const DEFAULT_CONOCIMIENTO_MD = `# Base de Conocimiento y Reglas del Proyecto
+
+> Reglas, directivas de estilo y decisiones aprendidas automáticamente por los agentes (/aprender).
+
+## Reglas de Producción
+- [x] Respetar la jerarquía de mezcla y headroom (-1.0 dB True Peak en master).
+- [x] Especialistas con gobernabilidad total de FX chain.
+
+## Preferencias del Usuario
+`
 
 export const DEFAULT_PLAN_MD = `# Plan
 
@@ -464,4 +489,44 @@ export function docsPromptActions(): string {
     'Ciclo: si el objetivo cambió, actualizar plan.md → implementar → evaluar y marcar lo hecho.',
   ].join('\n')
 }
+
+/**
+ * Añade una regla o directiva de conocimiento en conocimiento.md (/aprender o /learn)
+ */
+export async function aprenderReglaOConocimiento(
+  projectId: string,
+  reglaOInstruccion: string,
+  projectRuta?: string,
+): Promise<{ doc: AgentDoc; regla: string }> {
+  const docs = listAgentDocs(projectId)
+  const existing = docs.find((d) => d.slug === CONOCIMIENTO_SLUG)
+  const item = `- [x] ${reglaOInstruccion.trim()} *(aprendido el ${new Date().toLocaleDateString()})*\n`
+
+  let doc: AgentDoc
+  if (!existing) {
+    const content = `${DEFAULT_CONOCIMIENTO_MD}\n${item}`
+    doc = writeAgentDoc(projectId, CONOCIMIENTO_SLUG, content, {
+      title: 'Base de Conocimiento y Reglas',
+      origin: 'user',
+      preserveUserNotes: false,
+    })
+  } else {
+    const updatedContent = `${existing.content.trimEnd()}\n${item}`
+    doc = writeAgentDoc(projectId, CONOCIMIENTO_SLUG, updatedContent, {
+      origin: 'user',
+    })
+  }
+
+  if (projectRuta) {
+    const fs = electronFs()
+    if (fs?.fileSave) {
+      const folder = docsFolderForProject(projectRuta)
+      const sep = folder.includes('\\') ? '\\' : '/'
+      void fs.fileSave(`${folder}${sep}${CONOCIMIENTO_SLUG}`, doc.content)
+    }
+  }
+
+  return { doc, regla: item }
+}
+
 

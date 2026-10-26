@@ -9,7 +9,7 @@ export { useDAW, useDAWState, getSharedStore } from '../context/daw-context'
 export { getSelectedTrackId } from '../lib/selection-helpers'
 
 // Documentos del proyecto (docs/*.md)
-export { getAgentDoc, subscribeAgentDocs, writeAgentDoc } from '../lib/agent-docs'
+export { getAgentDoc, subscribeAgentDocs, writeAgentDoc, aprenderReglaOConocimiento, CONOCIMIENTO_SLUG, puedoEditarDoc, puedoLeerDoc } from '../lib/agent-docs'
 
 // Clip MIDI ↔ Markdown
 export { midiClipDocSlug, parseMidiClipMd, serializeMidiClipMd } from '../lib/midi-clip-markdown'

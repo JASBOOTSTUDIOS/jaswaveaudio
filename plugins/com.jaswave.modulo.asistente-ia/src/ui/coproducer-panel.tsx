@@ -67,6 +67,7 @@ import {
   setChatProjectScope,
   patchMessage,
   getConversation,
+  appendMessage,
   type ChatConversation,
   type StoredChatMessage,
 } from '../motor/ai-chat-store'
@@ -84,7 +85,7 @@ import {
 import { DocEditCards } from './doc-edit-card'
 
 import { setAgentRuntimePhase } from '../motor/agent-runtime-phase'
-import { ASK_AI_SELECTION_EVENT, JasWaveLogo, MAX_CITED_MESSAGES, agentModeLabel, clearMusicalSelectionAnchor, collectCitedMessages, ensureTerminalAuditMirror, filterMentionables, getMusicalSelectionAnchor, groupMentionables, listMentionables, loadAgentMode, mentionDraftAtCaret, messagePreview, nextAgentMode, requestOpenTool, resolveMode, saveAgentMode, selectionChipInsertText, selectionHasContext, subscribeMusicalSelection, useDAW, useDAWState } from '@jaswave/host-sdk'
+import { ASK_AI_SELECTION_EVENT, JasWaveLogo, MAX_CITED_MESSAGES, agentModeLabel, clearMusicalSelectionAnchor, collectCitedMessages, ensureTerminalAuditMirror, filterMentionables, getMusicalSelectionAnchor, groupMentionables, listMentionables, loadAgentMode, mentionDraftAtCaret, messagePreview, nextAgentMode, requestOpenTool, resolveMode, saveAgentMode, selectionChipInsertText, selectionHasContext, subscribeMusicalSelection, useDAW, useDAWState, aprenderReglaOConocimiento } from '@jaswave/host-sdk'
 import type { AgentBudget, AgentBudgetUsage, AgentMode, AskAiSelectionDetail, EngineRun, Mentionable, TurnHandle } from '@jaswave/host-sdk'
 
 /** Texto en streaming sin bloques de protocolo (<<<ACTIONS …>>>, etc.). */
@@ -686,6 +687,40 @@ export function CoProducerPanel() {
         dawStore,
       )
       return
+    }
+
+    // Intercepción de comandos de agentes y base de conocimiento
+    if (lower.startsWith('/aprender') || lower.startsWith('/learn')) {
+      const regla = rawInput.replace(/^\/(?:aprender|learn)\s*/i, '').trim()
+      setInputMessage('')
+      if (regla) {
+        await aprenderReglaOConocimiento(projectId, regla)
+        appendMessage(conversation.id, {
+          role: 'user',
+          content: rawInput,
+        })
+        appendMessage(conversation.id, {
+          role: 'assistant',
+          content: `✅ **Preferencia / Regla aprendida y guardada** en \`docs/conocimiento.md\` bajo RBAC de propietario (Owner):\n> ${regla}\n\nLos especialistas (@guitarrista, @baterista, etc.) y el coproductor aplicarán esta directiva en todos los turnos.`,
+        })
+        const refreshed = getConversation(conversation.id)
+        if (refreshed) setConversation(refreshed)
+        return
+      }
+    }
+
+    if (lower.startsWith('/meta') || lower.startsWith('/goal')) {
+      const metaObj = rawInput.replace(/^\/(?:meta|goal)\s*/i, '').trim()
+      rawInput = `[DIRECTIVA /META: Ejecuta este objetivo continuo y exhaustivo sin detenerte hasta completarlo totalmente: "${metaObj || 'Finalizar producción completa'}"]\n${rawInput}`
+    } else if (lower.startsWith('/entrevista') || lower.startsWith('/grill-me')) {
+      const tema = rawInput.replace(/^\/(?:entrevista|grill-me)\s*/i, '').trim()
+      rawInput = `[DIRECTIVA /ENTREVISTA: Activa el modo de alineación interactiva. Hazme preguntas de opción múltiple usando <<<CLARIFY [ ... ] CLARIFY>>> para definir las decisiones del proyecto: "${tema || 'Definición de estilo, instrumentación y mezcla'}"]\n${rawInput}`
+    } else if (lower.startsWith('/plan')) {
+      const planTxt = rawInput.replace(/^\/plan\s*/i, '').trim()
+      rawInput = `[DIRECTIVA /PLAN: Crea o actualiza docs/plan.md con tareas comprobables e intención musical, y evalúa el progreso respecto al DAW: "${planTxt || 'Revisar y estructurar plan de trabajo'}"]\n${rawInput}`
+    } else if (lower.startsWith('/programar') || lower.startsWith('/schedule')) {
+      const progTxt = rawInput.replace(/^\/(?:programar|schedule)\s*/i, '').trim()
+      rawInput = `[DIRECTIVA /PROGRAMAR: Configura un recordatorio o tarea programada para: "${progTxt || 'Revisión periódica de mezcla'}"]\n${rawInput}`
     }
 
     const cited = collectCitedMessages(rawInput, citedIds, dawStore.obtenerEstado(), messages)
