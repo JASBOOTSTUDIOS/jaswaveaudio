@@ -1,0 +1,25 @@
+{
+  "productId": "com.jaswave.plugin.worship-drums",
+  "titulo": "WORSHIP DRUMS",
+  "subtitulo": "BATERÍA ACÚSTICA MODAL · SALA WORSHIP & AIRE DE PLATOS",
+  "instrumento": true,
+  "visualizador": "espectro-instrumento",
+  "acento": "#FF5722",
+  "base": {
+    "ancho": 920,
+    "alto": 520
+  },
+  "zonas": {
+    "pantalla": [20, 20, 900, 500],
+    "visualizador": [30, 80, 500, 320],
+    "controles": [520, 80, 890, 480]
+  },
+  "knobs": [
+    { "id": "kick_tune", "etiqueta": "KICK TUNE", "paramId": 0 },
+    { "id": "snare_snap", "etiqueta": "SNARE SNAP", "paramId": 1 },
+    { "id": "toms_damp", "etiqueta": "TOMS DAMP", "paramId": 2 },
+    { "id": "overhead_air", "etiqueta": "OVERHEAD AIR", "paramId": 3 },
+    { "id": "room_blend", "etiqueta": "ROOM BLEND", "paramId": 4 },
+    { "id": "volume", "etiqueta": "VOLUME", "paramId": 6 }
+  ]
+}

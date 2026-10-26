@@ -1,0 +1,127 @@
+{
+  "id": "com.jaswave.plugin.worship-drums",
+  "name": "JasWave Worship Drums",
+  "version": "1.0.0",
+  "category": "instrument",
+  "vendor": "JasWave Audio",
+  "description": "Batería acústica de estudio para worship y pop/rock moderno. Síntesis modal física de parches, cajas profundas y platillos con aire acústico y sala amplia.",
+  "targetPlatforms": [
+    "win-x64",
+    "web-wasm"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveWorshipDrums.vst3"
+  },
+  "vst3": {
+    "classId": "{B3A7C9E3-4D2F-4A8B-9E6C-1F3D5A7B8C01}",
+    "subCategories": "Instrument|Drum"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "productor"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.worship-drums",
+    "features": [
+      {
+        "key": "drums.worship-room",
+        "description": "Sala espacial worship de gran dimensión"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Batería acústica completa (bombo, caja, toms, platos) con afinación y control de sala para mezcla worship.",
+    "intents": [
+      "bateria-worship",
+      "balada-acustica",
+      "praise-rock",
+      "bateria-dinamica"
+    ],
+    "parameters": [
+      {
+        "id": "kick_tune",
+        "vstParamId": 0,
+        "name": "Afinación del Bombo",
+        "min": 35.0,
+        "max": 90.0,
+        "default": 55.0,
+        "unit": "Hz",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "snare_snap",
+        "vstParamId": 1,
+        "name": "Pegada y Bordón de Caja",
+        "min": 0,
+        "max": 100,
+        "default": 65,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "toms_damp",
+        "vstParamId": 2,
+        "name": "Amortiguación de Toms",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "overhead_air",
+        "vstParamId": 3,
+        "name": "Brillo de Platos / Overheads",
+        "min": 0,
+        "max": 100,
+        "default": 70,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "room_blend",
+        "vstParamId": 4,
+        "name": "Mezcla de Sala Worship",
+        "min": 0,
+        "max": 100,
+        "default": 35,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "drums.worship-room"
+      },
+      {
+        "id": "bypass",
+        "vstParamId": 5,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "stepped",
+        "feature": null
+      },
+      {
+        "id": "volume",
+        "vstParamId": 6,
+        "name": "Volumen Principal",
+        "min": -24,
+        "max": 6,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,127 @@
+{
+  "id": "com.jaswave.plugin.strings-section",
+  "name": "JasWave Strings Section",
+  "version": "1.0.0",
+  "category": "instrument",
+  "vendor": "JasWave Audio",
+  "description": "Ensamble orquestal sinfónico de cuerdas legato (violines, violas, cellos y contrabajos). Modelado de cuerda frotada por arco con control continuo de expresión, vibrato y sala de concierto.",
+  "targetPlatforms": [
+    "win-x64",
+    "web-wasm"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveStringsSection.vst3"
+  },
+  "vst3": {
+    "classId": "{B3A7C9E7-4D2F-4A8B-9E6C-1F3D5A7B8C01}",
+    "subCategories": "Instrument|Strings"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "productor"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.strings-section",
+    "features": [
+      {
+        "key": "strings.cinematic-hall",
+        "description": "Acústica sinfónica de sala de conciertos de 4.0 segundos"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Ensamble de cuerdas orquestal con articulación legato, expresión dinámica en tiempo real y reverberación de sala.",
+    "intents": [
+      "cuerdas-orquestales",
+      "legato-strings",
+      "arreglo-cinematico",
+      "balada-emotiva"
+    ],
+    "parameters": [
+      {
+        "id": "expression",
+        "vstParamId": 0,
+        "name": "Expresión Dinámica (CC11)",
+        "min": 0,
+        "max": 100,
+        "default": 75,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vibrato_depth",
+        "vstParamId": 1,
+        "name": "Profundidad de Vibrato",
+        "min": 0,
+        "max": 100,
+        "default": 35,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "attack_time",
+        "vstParamId": 2,
+        "name": "Tiempo de Ataque del Arco",
+        "min": 20,
+        "max": 1500,
+        "default": 180,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "release_time",
+        "vstParamId": 3,
+        "name": "Tiempo de Relajación",
+        "min": 50,
+        "max": 3000,
+        "default": 500,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "hall_size",
+        "vstParamId": 4,
+        "name": "Tamaño de Sala Sinfónica",
+        "min": 0,
+        "max": 100,
+        "default": 65,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "strings.cinematic-hall"
+      },
+      {
+        "id": "bypass",
+        "vstParamId": 5,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "stepped",
+        "feature": null
+      },
+      {
+        "id": "volume",
+        "vstParamId": 6,
+        "name": "Volumen Principal",
+        "min": -24,
+        "max": 6,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "productId": "com.jaswave.plugin.electric-bass",
+  "titulo": "ELECTRIC BASS",
+  "subtitulo": "BAJO ELÉCTRICO DE PRECISIÓN · BULBOS & COMPRESOR VCA",
+  "instrumento": true,
+  "visualizador": "espectro-instrumento",
+  "acento": "#00E5FF",
+  "base": {
+    "ancho": 920,
+    "alto": 520
+  },
+  "zonas": {
+    "pantalla": [20, 20, 900, 500],
+    "visualizador": [30, 80, 500, 320],
+    "controles": [520, 80, 890, 480]
+  },
+  "knobs": [
+    { "id": "tone", "etiqueta": "TONE", "paramId": 0 },
+    { "id": "finger_attack", "etiqueta": "ATTACK", "paramId": 1 },
+    { "id": "drive", "etiqueta": "DRIVE", "paramId": 2 },
+    { "id": "low_boost", "etiqueta": "SUB BOOST", "paramId": 3 },
+    { "id": "compressor_mix", "etiqueta": "COMP MIX", "paramId": 4 },
+    { "id": "volume", "etiqueta": "VOLUME", "paramId": 6 }
+  ]
+}

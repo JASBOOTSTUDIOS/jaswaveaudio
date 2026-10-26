@@ -1,0 +1,25 @@
+{
+  "productId": "com.jaswave.plugin.electric-guitar",
+  "titulo": "ELECTRIC GUITAR",
+  "subtitulo": "GUITARRA ELÉCTRICA · OVERDRIVE VALVULAR · CAB 4X12 · DELAY & CHORUS",
+  "instrumento": true,
+  "visualizador": "espectro-instrumento",
+  "acento": "#FF1744",
+  "base": {
+    "ancho": 920,
+    "alto": 520
+  },
+  "zonas": {
+    "pantalla": [20, 20, 900, 500],
+    "visualizador": [30, 80, 500, 320],
+    "controles": [520, 80, 890, 480]
+  },
+  "knobs": [
+    { "id": "amp_gain", "etiqueta": "AMP GAIN", "paramId": 0 },
+    { "id": "cab_sim", "etiqueta": "4X12 CAB", "paramId": 1 },
+    { "id": "tone", "etiqueta": "TONE", "paramId": 2 },
+    { "id": "delay_feedback", "etiqueta": "DELAY FB", "paramId": 3 },
+    { "id": "chorus_mix", "etiqueta": "CHORUS", "paramId": 4 },
+    { "id": "volume", "etiqueta": "VOLUME", "paramId": 6 }
+  ]
+}

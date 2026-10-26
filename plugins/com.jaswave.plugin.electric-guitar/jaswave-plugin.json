@@ -1,0 +1,127 @@
+{
+  "id": "com.jaswave.plugin.electric-guitar",
+  "name": "JasWave Electric Guitar",
+  "version": "1.0.0",
+  "category": "instrument",
+  "vendor": "JasWave Audio",
+  "description": "Guitarra eléctrica solista y rítmica. Modelado físico de cuerda con amplificador valvular de alta ganancia, emulación de pantalla (cab sim), delay y chorus estéreo.",
+  "targetPlatforms": [
+    "win-x64",
+    "web-wasm"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveElectricGuitar.vst3"
+  },
+  "vst3": {
+    "classId": "{B3A7C9E5-4D2F-4A8B-9E6C-1F3D5A7B8C01}",
+    "subCategories": "Instrument|Guitar"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "productor"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.electric-guitar",
+    "features": [
+      {
+        "key": "guitar.cab-sim-hd",
+        "description": "Emulación de pantalla 4x12 Vintage / Modern con respuesta a impulsos"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Guitarra eléctrica con control de ganancia de ampli, respuesta de pantalla acústica, tono, delay y chorus estéreo.",
+    "intents": [
+      "guitarra-electrica",
+      "solo-guitarra",
+      "riff-rock",
+      "melodia-lead"
+    ],
+    "parameters": [
+      {
+        "id": "amp_gain",
+        "vstParamId": 0,
+        "name": "Ganancia de Amplificador (Overdrive)",
+        "min": 0,
+        "max": 100,
+        "default": 45,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "cab_sim",
+        "vstParamId": 1,
+        "name": "Simulación de Pantalla 4x12",
+        "min": 0,
+        "max": 100,
+        "default": 60,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "guitar.cab-sim-hd"
+      },
+      {
+        "id": "tone",
+        "vstParamId": 2,
+        "name": "Control de Tono / Brillo",
+        "min": 0,
+        "max": 100,
+        "default": 55,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "delay_feedback",
+        "vstParamId": 3,
+        "name": "Retroalimentación de Delay",
+        "min": 0,
+        "max": 95,
+        "default": 30,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "chorus_mix",
+        "vstParamId": 4,
+        "name": "Mezcla de Chorus Espacial",
+        "min": 0,
+        "max": 100,
+        "default": 25,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "bypass",
+        "vstParamId": 5,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "stepped",
+        "feature": null
+      },
+      {
+        "id": "volume",
+        "vstParamId": 6,
+        "name": "Volumen Principal",
+        "min": -24,
+        "max": 6,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      }
+    ]
+  }
+}

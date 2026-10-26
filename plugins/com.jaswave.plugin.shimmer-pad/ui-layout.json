@@ -1,0 +1,25 @@
+{
+  "productId": "com.jaswave.plugin.shimmer-pad",
+  "titulo": "SHIMMER PAD",
+  "subtitulo": "SINTETIZADOR AMBIENTAL WORSHIP · SHIMMER OCTAVA SUPERIOR · FILTRO SVF",
+  "instrumento": true,
+  "visualizador": "espectro-instrumento",
+  "acento": "#9C27B0",
+  "base": {
+    "ancho": 920,
+    "alto": 520
+  },
+  "zonas": {
+    "pantalla": [20, 20, 900, 500],
+    "visualizador": [30, 80, 500, 320],
+    "controles": [520, 80, 890, 480]
+  },
+  "knobs": [
+    { "id": "cutoff", "etiqueta": "CUTOFF", "paramId": 0 },
+    { "id": "resonance", "etiqueta": "RESONANCE", "paramId": 1 },
+    { "id": "shimmer_octave", "etiqueta": "SHIMMER +12", "paramId": 2 },
+    { "id": "shimmer_decay", "etiqueta": "DECAY", "paramId": 3 },
+    { "id": "lfo_rate", "etiqueta": "LFO RATE", "paramId": 4 },
+    { "id": "volume", "etiqueta": "VOLUME", "paramId": 6 }
+  ]
+}

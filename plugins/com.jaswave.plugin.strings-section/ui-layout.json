@@ -1,0 +1,25 @@
+{
+  "productId": "com.jaswave.plugin.strings-section",
+  "titulo": "STRINGS SECTION",
+  "subtitulo": "ENSAMBLE SINFÓNICO DE CUERDAS LEGATO · EXPRESIÓN DINÁMICA & SALA",
+  "instrumento": true,
+  "visualizador": "espectro-instrumento",
+  "acento": "#E91E63",
+  "base": {
+    "ancho": 920,
+    "alto": 520
+  },
+  "zonas": {
+    "pantalla": [20, 20, 900, 500],
+    "visualizador": [30, 80, 500, 320],
+    "controles": [520, 80, 890, 480]
+  },
+  "knobs": [
+    { "id": "expression", "etiqueta": "EXPRESSION", "paramId": 0 },
+    { "id": "vibrato_depth", "etiqueta": "VIBRATO", "paramId": 1 },
+    { "id": "attack_time", "etiqueta": "ATTACK", "paramId": 2 },
+    { "id": "release_time", "etiqueta": "RELEASE", "paramId": 3 },
+    { "id": "hall_size", "etiqueta": "CONCERT HALL", "paramId": 4 },
+    { "id": "volume", "etiqueta": "VOLUME", "paramId": 6 }
+  ]
+}

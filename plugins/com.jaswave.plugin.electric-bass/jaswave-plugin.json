@@ -1,0 +1,127 @@
+{
+  "id": "com.jaswave.plugin.electric-bass",
+  "name": "JasWave Electric Bass",
+  "version": "1.0.0",
+  "category": "instrument",
+  "vendor": "JasWave Audio",
+  "description": "Bajo eléctrico moderno tipo Precision / Jazz con modelado físico de cuerda pulsada, saturación a bulbos, control de ataque digital y compresor VCA.",
+  "targetPlatforms": [
+    "win-x64",
+    "web-wasm"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveElectricBass.vst3"
+  },
+  "vst3": {
+    "classId": "{B3A7C9E4-4D2F-4A8B-9E6C-1F3D5A7B8C01}",
+    "subCategories": "Instrument|Bass"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "productor"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.electric-bass",
+    "features": [
+      {
+        "key": "bass.tube-drive",
+        "description": "Emulación de saturación valvular de previo vintage"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Bajo eléctrico con control de tono pasivo/activo, transitorio de ataque, pegada de compresión y subgrave.",
+    "intents": [
+      "bajo-electrico",
+      "linea-de-bajo",
+      "groove-solido",
+      "sub-bajo"
+    ],
+    "parameters": [
+      {
+        "id": "tone",
+        "vstParamId": 0,
+        "name": "Control de Tono / Filtro",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "finger_attack",
+        "vstParamId": 1,
+        "name": "Ataque del Dedo / Plectro",
+        "min": 0,
+        "max": 100,
+        "default": 60,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "drive",
+        "vstParamId": 2,
+        "name": "Saturación a Bulbos (Drive)",
+        "min": 0,
+        "max": 100,
+        "default": 20,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "bass.tube-drive"
+      },
+      {
+        "id": "low_boost",
+        "vstParamId": 3,
+        "name": "Realce Sub / Bajos",
+        "min": 0,
+        "max": 12,
+        "default": 3,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "compressor_mix",
+        "vstParamId": 4,
+        "name": "Mezcla de Compresión VCA",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "bypass",
+        "vstParamId": 5,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "stepped",
+        "feature": null
+      },
+      {
+        "id": "volume",
+        "vstParamId": 6,
+        "name": "Volumen Principal",
+        "min": -24,
+        "max": 6,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      }
+    ]
+  }
+}

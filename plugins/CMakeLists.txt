@@ -17,7 +17,13 @@ set(JW_PLUGIN_DIRS
   com.jaswave.plugin.roles-vst
   com.jaswave.plugin.sampler
   com.jaswave.plugin.ambience
-  com.jaswave.plugin.audio-lens)
+  com.jaswave.plugin.audio-lens
+  com.jaswave.plugin.grand-piano
+  com.jaswave.plugin.worship-drums
+  com.jaswave.plugin.electric-bass
+  com.jaswave.plugin.electric-guitar
+  com.jaswave.plugin.shimmer-pad
+  com.jaswave.plugin.strings-section)
 foreach(_d ${JW_PLUGIN_DIRS})
   add_subdirectory(${_d})
 endforeach()

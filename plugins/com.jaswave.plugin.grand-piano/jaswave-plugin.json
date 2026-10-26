@@ -1,0 +1,142 @@
+{
+  "id": "com.jaswave.plugin.grand-piano",
+  "name": "JasWave Grand Piano",
+  "version": "1.0.0",
+  "category": "instrument",
+  "vendor": "JasWave Audio",
+  "description": "Piano de cola acústico de concierto de alta gama. Motor híbrido de resonancia de cuerdas armónicas, tabla armónica y respuesta dinámica de martillo.",
+  "targetPlatforms": [
+    "win-x64",
+    "web-wasm"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveGrandPiano.vst3"
+  },
+  "vst3": {
+    "classId": "{B3A7C9E2-4D2F-4A8B-9E6C-1F3D5A7B8C01}",
+    "subCategories": "Instrument|Piano"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "productor"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.grand-piano",
+    "features": [
+      {
+        "key": "piano.polifonia-extendida",
+        "description": "Polifonía de 64 voces (básica: 16)"
+      },
+      {
+        "key": "piano.hall-reverb",
+        "description": "Simulación acústica de sala de concierto"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Piano de cola acústico de concierto con control dinámico de ataque, resonancia y brillo armónico.",
+    "intents": [
+      "piano-concierto",
+      "balada-acustica",
+      "solo-piano",
+      "intimo"
+    ],
+    "parameters": [
+      {
+        "id": "attack",
+        "vstParamId": 0,
+        "name": "Ataque del Martillo",
+        "min": 0.5,
+        "max": 50.0,
+        "default": 2.0,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "decay",
+        "vstParamId": 1,
+        "name": "Decaimiento Armónico",
+        "min": 0,
+        "max": 100,
+        "default": 70,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "release",
+        "vstParamId": 2,
+        "name": "Liberación / Apagadores",
+        "min": 0.05,
+        "max": 5.0,
+        "default": 0.6,
+        "unit": "s",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "velocity_curve",
+        "vstParamId": 3,
+        "name": "Curva de Velocidad Dinámica",
+        "min": 0,
+        "max": 100,
+        "default": 70,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "brightness",
+        "vstParamId": 4,
+        "name": "Brillo de Cuerdas",
+        "min": 0,
+        "max": 100,
+        "default": 60,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "reverb_send",
+        "vstParamId": 5,
+        "name": "Envío a Reverberación de Sala",
+        "min": 0,
+        "max": 100,
+        "default": 25,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "piano.hall-reverb"
+      },
+      {
+        "id": "bypass",
+        "vstParamId": 6,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "stepped",
+        "feature": null
+      },
+      {
+        "id": "volume",
+        "vstParamId": 7,
+        "name": "Volumen Principal",
+        "min": -24,
+        "max": 6,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      }
+    ]
+  }
+}

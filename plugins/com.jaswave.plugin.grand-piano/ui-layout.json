@@ -1,0 +1,26 @@
+{
+  "productId": "com.jaswave.plugin.grand-piano",
+  "titulo": "GRAND PIANO",
+  "subtitulo": "PIANO DE COLA ACÚSTICO DE CONCIERTO · MODELADO FÍSICO",
+  "instrumento": true,
+  "visualizador": "espectro-instrumento",
+  "acento": "#D4AF37",
+  "base": {
+    "ancho": 920,
+    "alto": 520
+  },
+  "zonas": {
+    "pantalla": [20, 20, 900, 500],
+    "visualizador": [30, 80, 500, 320],
+    "controles": [520, 80, 890, 480]
+  },
+  "knobs": [
+    { "id": "attack", "etiqueta": "ATTACK", "paramId": 0 },
+    { "id": "decay", "etiqueta": "DECAY", "paramId": 1 },
+    { "id": "release", "etiqueta": "RELEASE", "paramId": 2 },
+    { "id": "velocity_curve", "etiqueta": "VEL CURVE", "paramId": 3 },
+    { "id": "brightness", "etiqueta": "BRIGHTNESS", "paramId": 4 },
+    { "id": "reverb_send", "etiqueta": "HALL REVERB", "paramId": 5 },
+    { "id": "volume", "etiqueta": "VOLUME", "paramId": 7 }
+  ]
+}

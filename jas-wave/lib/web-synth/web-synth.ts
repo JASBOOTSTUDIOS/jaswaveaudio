@@ -9,13 +9,13 @@ import procesadorUrl from './web-synth-processor.js?url'
 export type PresetWebSynth = 'pad' | 'bajo' | 'lead' | 'cuerdas' | 'fm' | 'piano' | 'bateria'
 
 const REGLAS: ReadonlyArray<[RegExp, PresetWebSynth]> = [
-  [/bater|drum|perc|kit|beat|roles.*bater/i, 'bateria'],
-  [/bajo|bass|sub\b/i, 'bajo'],
-  [/piano|keys|teclad|rhodes|epiano/i, 'piano'],
-  [/cuerda|string|violin|cello|orquest/i, 'cuerdas'],
-  [/lead|melod|solo|synth lead|sierra/i, 'lead'],
+  [/bater|drum|perc|kit|beat|roles.*bater|worship.*drum/i, 'bateria'],
+  [/bajo|bass|sub\b|electric.*bass/i, 'bajo'],
+  [/piano|keys|teclad|rhodes|epiano|grand.*piano/i, 'piano'],
+  [/cuerda|string|violin|cello|orquest|strings.*section/i, 'cuerdas'],
+  [/lead|melod|solo|synth lead|sierra|guitar|guitarra|electric.*guitar/i, 'lead'],
   [/fm|bell|campana|pluck|arpa/i, 'fm'],
-  [/pad|ambient|atmos|coro|choir/i, 'pad'],
+  [/pad|ambient|atmos|coro|choir|shimmer/i, 'pad'],
 ]
 
 /** Elige el preset a partir del nombre de la pista, sus etiquetas y los nombres de sus plugins. */
