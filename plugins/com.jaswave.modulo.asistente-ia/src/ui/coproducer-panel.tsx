@@ -660,6 +660,9 @@ export function CoProducerPanel() {
 
   const handleSendMessage = async (overrideText?: string) => {
     let rawInput = (overrideText ?? inputMessage).trim()
+    if (!rawInput && attachedSample) {
+      rawInput = `He grabado esta nota de voz: "${attachedSample.name}". Por favor analiza su melodía o ritmo con las herramientas DSP y crea el clip MIDI en el DAW.`
+    }
     if (!rawInput || isGenerating) return
 
     if (attachedSample && !rawInput.includes(`"${attachedSample.name}"`)) {
@@ -1456,7 +1459,7 @@ export function CoProducerPanel() {
           ) : (
             <button
               type="submit"
-              disabled={!inputMessage.trim()}
+              disabled={!inputMessage.trim() && !attachedSample}
               aria-label="Enviar mensaje"
               className="flex size-7 items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-90 disabled:opacity-40"
             >
