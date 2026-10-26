@@ -133,12 +133,44 @@ export function buildAssembledAgentContext(
     '- **Control de Calidad (QA)**: Comprobación estricta de clipping (True Peak < -0.5 dBTP), coherencia armónica en la escala del tema y ausencia de vacíos o solapes de notas anómalos.',
   ].join('\n')
 
+  // Inspección profunda de FX y Plugins de la pista seleccionada y del proyecto
+  const fxInspectionLines: string[] = ['## Cadena de Plugins y Efectos (FX Chain) del Proyecto']
+  for (const track of state.project?.tracks ?? []) {
+    const isSelected = track.id === selectedId
+    const plugins = track.plugins ?? []
+    if (plugins.length > 0 || isSelected) {
+      const plugDesc =
+        plugins.length > 0
+          ? plugins.map((p, idx) => `${idx + 1}. ${p.nombre} (id: ${p.id}, tipo: ${p.tipo}${p.bypass ? ', BYPASS' : ''})`).join(' -> ')
+          : '(sin plugins todavía)'
+      fxInspectionLines.push(`- Pista «${track.nombre}» [${track.tipo}] id=${track.id}${isSelected ? ' ← SELECCIONADA' : ''}: ${plugDesc}`)
+    }
+  }
+  if (state.project?.master?.plugins?.length) {
+    const masterPlugs = state.project.master.plugins.map((p, idx) => `${idx + 1}. ${p.nombre} (id: ${p.id})`).join(' -> ')
+    fxInspectionLines.push(`- Master FX Chain: ${masterPlugs}`)
+  }
+  const fxInspectionBlock = fxInspectionLines.length > 1 ? fxInspectionLines.join('\n') : ''
+
+  const specialistFxDirectives = [
+    '## Directiva de Especialistas: Inspección y Gestión Quirúrgica de Plugins (FX Chain)',
+    'Como especialista musical o técnico (@guitarrista, @baterista, @bajista, @pianista, @director, @mezcla), tienes acceso y potestad para inspeccionar y gobernar la cadena de efectos de la pista:',
+    '- **Inspección activa**: Analiza los plugins presentes en la pista antes de procesar.',
+    '- **Añadir FX faltantes (`plugin.insert`)**: Si a la guitarra le falta simulador de amplificador, añade `JasWave Electric Guitar` o simulación; si a la batería le falta compresión de pegada, insértala.',
+    '- **Retirar o silenciar sobrantes (`plugin.remove` / `plugin.bypass`)**: Elimina plugins redundantes o que ensucian la mezcla (ej. reverbs largas en bombos o bajos).',
+    '- **Ajuste fino (`plugin.setParameter`)**: Modifica ganancia, tono, compresión, ataques y envíos para perfeccionar el timbre.',
+  ].join('\n')
+
   return [
     buildReadOnlyProjectContext(state),
     '',
     formatSessionRulesBlock(rules),
     '',
     especialistasBlock,
+    '',
+    specialistFxDirectives,
+    '',
+    fxInspectionBlock,
     '',
     skillsGlobalesBlock,
     '',
