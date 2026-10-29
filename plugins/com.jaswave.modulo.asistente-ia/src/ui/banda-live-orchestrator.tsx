@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import { requestOpenTool } from '@jaswave/host-sdk'
 import { abrirPanelBanda, cambiarVistaBanda, useVistaBanda } from './banda-vista-store'
+import { TarjetaReanudar } from './tarjeta-reanudar'
 
 /** Interruptor «Escuchar en vivo»: oír cada parte que se graba y la mezcla mientras se hace. */
 export function BotonEscucha({ conTexto = false }: { conTexto?: boolean }) {
@@ -75,12 +76,13 @@ const FASE_CORTA: Record<FaseBanda, string> = {
 export function BandaLineaCompacta() {
   const [s, setS] = useState<BandaLiveState>(() => orquestadorBandaSingleton.getState())
   useEffect(() => orquestadorBandaSingleton.subscribe((next) => setS({ ...next })), [])
-  if (!s.activo && s.eventos.length === 0) return null
+  if (!s.activo && s.eventos.length === 0) return <TarjetaReanudar />
   const ultimo = s.eventos.at(-1)
   const paso = ({ planificacion: 1, direccion: 2, grabacion_musicos: 3, ensayo: 3, coherencia: 3, qa_musicos: 3, mezcla: 4, qa_mezcla: 4, mastering: 5, qa_final: 5, completado: 6 } as Partial<Record<FaseBanda, number>>)[s.faseActual] ?? 0
   const porcentaje = s.faseActual === 'completado' ? 100 : Math.round((Math.max(0, paso - 1) / 5) * 100)
   return (
     <div data-testid="banda-linea" className="group relative min-w-0" tabIndex={0} aria-label="Banda virtual: pasa el ratón para ver el detalle">
+      <TarjetaReanudar />
       <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
         <Users className={`size-3.5 shrink-0 text-accent-amber ${s.activo ? 'animate-pulse' : ''}`} />
         <span className="shrink-0 font-medium text-foreground">Banda</span>
@@ -268,9 +270,10 @@ export function BandaLiveOrchestrator({ enPanel = false }: { enPanel?: boolean }
   const porcentaje = liveState.faseActual === 'completado' ? 100 : Math.round((Math.max(0, currentStep - 1) / 5) * 100)
 
   if (!liveState.activo && liveState.eventos.length === 0) {
-    if (!enPanel) return null
+    if (!enPanel) return <TarjetaReanudar />
     return (
       <div data-testid="banda-vacia" className="flex flex-col items-center gap-2 p-6 text-center text-xs text-muted-foreground">
+        <TarjetaReanudar />
         <Users className="size-5 text-accent-amber/70" />
         <span>No hay ninguna producción en curso.</span>
         <span>Pide una canción en el chat con el modo «Banda» y verás aquí a los agentes trabajando.</span>
@@ -291,6 +294,7 @@ export function BandaLiveOrchestrator({ enPanel = false }: { enPanel?: boolean }
       data-plegada={plegada ? 'si' : 'no'}
       className="@container flex min-w-0 flex-col gap-2 rounded-xl border border-accent-amber/40 bg-panel-raised/95 p-3 text-xs shadow-lg ring-1 ring-accent-amber/20"
     >
+      <TarjetaReanudar />
       {/* Encabezado con estado en vivo */}
       <div className={`flex items-center justify-between gap-2 ${plegada ? '' : 'border-b border-border/60 pb-2'}`}>
         <button

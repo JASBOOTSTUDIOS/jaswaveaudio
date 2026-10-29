@@ -278,6 +278,75 @@
       ]
     },
     {
+      "tipo": "dropdown",
+      "rect": [
+        704,
+        368,
+        880,
+        392
+      ],
+      "etiqueta": "KIT",
+      "basico": true,
+      "rectBasico": [
+        769,
+        368,
+        945,
+        392
+      ],
+      "param": 23,
+      "min": 0,
+      "max": 15,
+      "defecto": 0,
+      "pasos": 15,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Drum Kit",
+      "unidad": "",
+      "opciones": [
+        "Kit 1",
+        "Kit 2",
+        "Kit 3",
+        "Kit 4",
+        "Kit 5",
+        "Kit 6",
+        "Kit 7",
+        "Kit 8",
+        "Kit 9",
+        "Kit 10",
+        "Kit 11",
+        "Kit 12",
+        "Kit 13",
+        "Kit 14",
+        "Kit 15",
+        "Kit 16"
+      ]
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        893,
+        344,
+        935,
+        404
+      ],
+      "etiqueta": "PERC",
+      "tamano": 30,
+      "basico": false,
+      "param": 24,
+      "min": -24,
+      "max": 6,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Percusion Level",
+      "unidad": "dB"
+    },
+    {
       "tipo": "fader",
       "rect": [
         680,

@@ -215,11 +215,11 @@ describe('motor + programa coproductor (mock)', () => {
     const res = await handle.result
     const agentes = requests.filter((r) => r.meta?.purpose === 'agent').map((r) => /^Eres ([^\n]+?) en la producción/.exec(r.messages[0]!.content)?.[1])
     assert.ok(agentes.includes('Planificador') || agentes.some((a) => /plan/i.test(a ?? '')), `sin planificador: ${agentes.join(', ')}`)
-    // Sin partes grabadas, la medición no aprueba y hay rondas de corrección (con tope)...
+    // Sin partes grabadas, la medición no aprueba y hay una ronda de corrección...
     const vivo = orquestadorBandaSingleton.getState()
     assert.equal(vivo.activo, false)
     assert.ok(vivo.eventos.some((e) => e.fase === 'qa_musicos' && e.estadoQA === 'corrigiendo'))
-    assert.equal(vivo.qaReporte.rondas, 2)
+    assert.equal(vivo.qaReporte.rondas, 1) // la 2.ª ronda no se hace: la corrección no cambió la medición (bucle sin progreso)
     // ...y como nadie grabó nada, no sigue con mezcla ni máster y lo explica (sin el aviso genérico de error).
     assert.equal(res.status, 'failed')
     assert.ok(!agentes.some((a) => /mezcla|master|máster/i.test(a ?? '')), `siguió con la mezcla: ${agentes.join(', ')}`)

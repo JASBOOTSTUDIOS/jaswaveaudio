@@ -44,6 +44,8 @@ export interface BandaLiveState {
   faseActual: FaseBanda
   promptUsuario: string
   agenteActivoId: string | null
+  /** Sin internet: la producción está en pausa y continuará sola al volver la conexión. */
+  pausaRed?: boolean
   /** Quiénes forman la banda (para escribirle a uno en particular). */
   participantes: ParticipanteBanda[]
   eventos: EventoOrquestador[]
@@ -379,10 +381,24 @@ export class BandaOrchestrator {
     }
   }
 
+  /** Se perdió internet: la producción espera (no se estropea) y sigue sola al volver. */
+  public pausarPorRed(): void {
+    if (this.state.pausaRed) return
+    this.state = { ...this.state, pausaRed: true }
+    this.push(this.state.faseActual, undefined, 'Se perdió la conexión a internet. La producción está en pausa y continuará sola en cuanto vuelva; no pierdes nada de lo hecho.')
+  }
+
+  public reanudarDeRed(): void {
+    if (!this.state.pausaRed) return
+    this.state = { ...this.state, pausaRed: false }
+    this.push(this.state.faseActual, undefined, 'Volvió la conexión. La producción continúa donde se quedó.')
+  }
+
   /** Lo llama el turno al terminar (bien, con avisos, con fallo o detenido). */
   public terminar(r: ResultadoProduccionAgentes): void {
     this.abortar = null
     this.notasPendientes = []
+    this.state = { ...this.state, pausaRed: false }
     const detalles = r.etapas.filter((x) => x.etapa.startsWith('qa_')).map((x) => `${x.ok ? 'Aprobada' : 'Con avisos'}: ${limpiarTextoUsuario(x.resumen)}`)
     this.state = { ...this.state, activo: false, qaReporte: { ...this.state.qaReporte, detalles } }
     const fase: FaseBanda = r.estado === 'fallo' || r.estado === 'cancelado' ? 'error' : 'completado'

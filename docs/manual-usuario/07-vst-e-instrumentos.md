@@ -98,6 +98,21 @@ La IA puede usar `presetId` / `library.preset.apply` — **mejor que** pelear pa
   tocan ese mismo VST.
 - **Pads de Worship Drums:** cada pad del kit (KICK, SNARE, toms, HAT, RIDE, platos) suena al pulsarlo, más
   fuerte cuanto más cerca del centro del parche. Shift + clic: HAT abierto y campana del RIDE.
+- **Kits de Worship Drums:** el selector **KIT** de la sección de controles lista los kits de muestras reales
+  instalados (nombre y estilo en la cabecera del visualizador: worship moderno, jazz, rock/pop, indie con
+  escobillas, rock/metal vintage…). Se leen de `%APPDATA%\JasWave\samples\drum-kits\<kit>\` (cada kit trae su
+  `kit.json` con autor y licencia); el MuldjordKit de siempre aparece como «Muldjord». Cambiar de kit con la
+  música sonando no corta ni hace clic: lo que ya suena termina con el kit anterior y los golpes nuevos usan el
+  nuevo. Sin ningún kit instalado la batería sigue sonando con el motor modelado. El kit elegido se guarda en el
+  proyecto por nombre (no se pierde si instalas o quitas otros kits). Las filas de casillas del visualizador
+  muestran qué piezas tiene el kit (encendida = muestra real; las piezas del kit apagadas suenan con el modelo
+  físico) y qué percusión auxiliar hay instalada.
+- **Percusión y campanas:** además del kit, Worship Drums toca palmas (nota 39), pandereta (54), cencerro (56),
+  vibraslap (58), bongós (60/61), congas (62-64), timbales (65/66), agogó (67/68), cabasa (69), shaker (70/82),
+  güiro (73/74), claves (75), woodblock (76/77) y triángulo (80/81) con el banco `percusion`, con su propio
+  nivel (**PERC**, «Percusion Level»), panorámica por pieza y envío a overheads y sala. La campana del ride
+  (nota 53) y la campana del crash (78) suenan siempre: con la muestra real del kit si la trae y, si no, con el
+  modelo físico de platos en modo campana.
 - **Valor inicial:** doble clic o clic central en cualquier perilla o fader (de JasWave o de sus plugins)
   lo devuelve a su valor por defecto. «Restablecer» devuelve todo el plugin a los valores que reporta el
   propio VST, y se deshace con Ctrl+Z.

@@ -7,8 +7,10 @@
  * todo el turno); lo destructivo no se ejecuta en una producción automática. El QA combina el
  * veredicto de su agente con la medición del DAW (`analysis.mix`).
  */
-import { NOMBRE_ETAPA, agentActionClass, buildReadOnlyProjectContext, diagnosticarSonidoPistas, ejecutarProduccion, limpiarTextoUsuario, medidorMezclaApp, autonomyBlocksMutation } from '@jaswave/host-sdk'
+import { DiarioProduccion, guardarPuntoProyecto, idSeguro, leerProduccion, nuevoRunId, puertoProducciones, restaurarUltimoPunto, NOMBRE_ETAPA, agentActionClass, formatearDuracion, getStateRevision, resumenTiempos, buildReadOnlyProjectContext, diagnosticarSonidoPistas, ejecutarProduccion, limpiarTextoUsuario, medidorMezclaApp, autonomyBlocksMutation } from '@jaswave/host-sdk'
 import type {
+  ResultadoProduccionAgentes,
+  ResumenDiario,
   ArchivoAsistente,
   EtapaMedible,
   EtapaProduccion,
@@ -37,8 +39,10 @@ import { instruccionesHabilidadesEspecialista } from '../especialistas-habilidad
 import { cargarEspecialistas, type EspecialistaConfig } from '../especialistas-storage'
 import { estiloActivoDelUsuario, habilidadesDelEspecialista, type EstiloUsuario } from '../habilidades-agentes'
 import { catalogoAgente, HERRAMIENTAS_BASE, herramientasDeGrupos } from './catalogo-agente'
-import { analizarCoherencia } from './coherencia-banda'
-import { chatDelMotor, ESPERAS_REINTENTO_BANDA, type UltimoErrorIA } from './chat-agente'
+import { ARMONIA_POR_DEFECTO, guardarEscrituraArmonia, tablaArmoniaMusico, tipoDePista, type OpcionesArmonia } from './armonia-banda'
+import { analizarCoherencia, diagnosticoEscritura, seccionesFaltantes, type HojaCoherencia } from './coherencia-banda'
+import { chatDelMotor, ESPERAS_REINTENTO_BANDA, redDelNavegador, type UltimoErrorIA } from './chat-agente'
+import { masterMinimoDeterminista } from './master-minimo'
 import { mensajeErrorIA, CHAT_UPDATED } from './turno-agente'
 
 export const KIND_BANDA = 'banda'
@@ -60,9 +64,21 @@ const HERRAMIENTAS_POR_ROL: Partial<Record<RolProduccion, string[]>> = {
   director: ['project.setBpm', 'project.setTimeSignature', 'project.update', 'track.create', 'track.update', 'track.addVstLayer', 'analysis.trackSound'],
   musico: ['midi.clip.create', 'midi.createNotes', 'midi.notes.set', 'midi.notes.get', 'track.create', 'track.addVstLayer', 'plugin.bypass'],
   coherencia: ['midi.notes.get', 'midi.notes.patch', 'midi.notes.set', 'midi.clip.create'],
-  qa: ['analysis.trackSound', 'analysis.mix'],
+  qa: ['analysis.trackSound', 'analysis.mix', 'midi.notes.get'],
   mezcla: ['track.update', 'mix.eq', 'mix.compress', 'bus.create', 'send.set', 'automation.writePoint', 'plugin.insert', 'plugin.setParameter', 'analysis.mix', 'analysis.trackSound'],
   master: ['master.update', 'mix.limit', 'mix.eq', 'plugin.insert', 'plugin.setParameter', 'analysis.mix', 'analysis.loudness'],
+}
+
+/** Modo del guardia de armonía (`ajustar` | `rechazar` | `auto`) y % máximo que `auto` ajusta; configurable por almacenamiento local. */
+export function opcionesArmonia(): OpcionesArmonia {
+  try {
+    const v = JSON.parse(globalThis.localStorage?.getItem('jaswave-banda-armonia') ?? 'null') as Partial<OpcionesArmonia> | null
+    const modo = v?.modo === 'ajustar' || v?.modo === 'rechazar' || v?.modo === 'auto' ? v.modo : ARMONIA_POR_DEFECTO.modo
+    const max = Number(v?.maxAjuste)
+    return { modo, maxAjuste: Number.isFinite(max) && max >= 0 && max <= 1 ? max : ARMONIA_POR_DEFECTO.maxAjuste }
+  } catch {
+    return ARMONIA_POR_DEFECTO
+  }
 }
 
 const ETAPAS_VISIBLES: EtapaProduccion[] = ['plan', 'direccion', 'musicos', 'ensayo', 'coherencia', 'qa_musicos', 'mezcla', 'qa_mezcla', 'master', 'qa_master']
@@ -84,8 +100,78 @@ export function participantesDesdeEspecialistas(lista: EspecialistaConfig[], cat
 
 const fmt = (n: number) => n.toFixed(1).replace('.', ',')
 
-/** Medición determinista para el QA (lo que el agente no puede «opinar»). */
-export function medirBanda(tienda: TiendaDAW, medirMezcla = medidorMezclaApp(tienda)): (etapa: EtapaMedible) => Promise<MedicionQA | null> {
+/** Tiempo máximo de una medición nativa: pasado, se usa la última medición válida o se da por no medible. */
+export const MAX_MS_MEDICION = 3 * 60_000
+
+/**
+ * Huella de lo que cambia el sonido de la mezcla: la revisión del proyecto (pistas, clips, plugins, tempo) más
+ * lo que esa revisión no ve —notas (altura, inicio, duración, velocidad), volumen, paneo, mute/solo, envíos y
+ * parámetros de plugins, también en el máster—. Dos huellas iguales = el mismo audio: no hace falta renderizar otra vez.
+ */
+export function huellaMezcla(st: ReturnType<TiendaDAW['obtenerEstado']>): string {
+  const p = st.project
+  let h = 5381
+  const mezclar = (t: string) => {
+    for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) | 0
+  }
+  for (const t of p?.tracks ?? []) {
+    const { clips, ...resto } = t as unknown as { clips?: ClipResumible[] } & Record<string, unknown>
+    mezclar(JSON.stringify(resto))
+    for (const c of clips ?? []) {
+      mezclar(`|${c.inicio},${c.duracion}`)
+      for (const n of c.notas ?? []) mezclar(`${n.pitch},${n.inicio},${n.duracion},${n.velocidad ?? ''};`)
+    }
+  }
+  mezclar(JSON.stringify(p?.master ?? null))
+  mezclar(JSON.stringify((p as { routing?: unknown } | undefined)?.routing ?? null))
+  return `${getStateRevision(st)}:${(h >>> 0).toString(16)}`
+}
+
+/** Espera `p` como mucho `ms`; null si se agota (la medición sigue su curso, pero ya no se espera por ella). */
+async function conLimite<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  let t: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([p, new Promise<null>((ok) => (t = setTimeout(() => ok(null), ms)))])
+  } finally {
+    if (t) clearTimeout(t)
+  }
+}
+
+/**
+ * Medición determinista para el QA (lo que el agente no puede «opinar»). La medición nativa (render de toda la
+ * canción) es lo más lento fuera del modelo: se guarda por huella del proyecto + rango («todo»), de modo que
+ * mezcla → revisión → máster → revisión no renderizan otra vez si nada cambió, y tiene un tiempo máximo con
+ * respaldo (la última medición válida o «no medible»). Las mediciones fallidas no se guardan.
+ */
+export function medirBanda(
+  tienda: TiendaDAW,
+  medirMezclaNativa = medidorMezclaApp(tienda),
+  opts: { maxMs?: number; /** Espera antes de reintentar si el host de audio cayó a mitad de la medición (por defecto 2 s). */ reintentoHostMs?: number } = {},
+): (etapa: EtapaMedible) => Promise<MedicionQA | null> {
+  type Mezcla = Awaited<ReturnType<typeof medirMezclaNativa>>
+  let guardada: { huella: string; rango: string; m: NonNullable<Mezcla> } | null = null
+  const maxMs = opts.maxMs ?? MAX_MS_MEDICION
+  const medirMezcla = async (): Promise<Mezcla> => {
+    const huella = huellaMezcla(tienda.obtenerEstado())
+    if (guardada && guardada.huella === huella && guardada.rango === 'todo') return guardada.m
+    // Plan Q: si el host de audio cae a mitad de la medición (la app ya lo reinicia), se espera un momento y se
+    // reintenta UNA vez; si vuelve a fallar, la medición no es medible (la producción sigue).
+    const conReintento = async (): Promise<Mezcla> => {
+      try {
+        return await medirMezclaNativa()
+      } catch {
+        await new Promise((ok) => setTimeout(ok, opts.reintentoHostMs ?? 2000))
+        return medirMezclaNativa()
+      }
+    }
+    const m = await conLimite(conReintento(), maxMs).catch(() => null)
+    if (m) {
+      guardada = { huella, rango: 'todo', m }
+      return m
+    }
+    // Agotó el tiempo o falló: mejor la última medición válida (puede estar algo desfasada) que nada.
+    return guardada?.m ?? null
+  }
   return async (etapa) => {
     const st = tienda.obtenerEstado()
     const pistas = st.project?.tracks ?? []
@@ -204,7 +290,9 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
   const conversationId = ctx.run.conversationId
   const assistantMsgId = lc.assistantMsgId ?? ctx.run.messageId ?? ''
   const projectId = lc.projectId ?? (tienda.obtenerEstado().project?.id || 'default')
-  const pedido = ctx.run.userText.replace(/^\s*\/banda\s*/i, '').replace(/^banda:\s*/i, '').trim() || 'Compón y produce una canción completa.'
+  // «/banda reanudar <runId> [copia]»: continúa una producción interrumpida (plan Q) con el estado del diario.
+  const reanudacion = /^\s*\/banda\s+reanudar(?:\s+([\w-]+))?(\s+copia)?\s*$/i.exec(ctx.run.userText)
+  let pedido = ctx.run.userText.replace(/^\s*\/banda\s*/i, '').replace(/^banda:\s*/i, '').trim() || 'Compón y produce una canción completa.'
   const cfg = loadAiSettings()
   const guardar = (patch: Partial<StoredChatMessage>) => {
     patchMessage(conversationId, assistantMsgId, patch, projectId)
@@ -225,6 +313,40 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
     return terminarCon('No hay músicos activos en la banda. Activa al menos uno en Ajustes → IA → Especialistas.')
   }
 
+  // ── Resiliencia (plan Q): diario de la producción, puntos de control y reanudación ──
+  const puerto = puertoProducciones()
+  const proyectoSeguro = idSeguro(projectId)
+  let previo: ResumenDiario | null = null
+  let candado: { run: string; testigo: string } | null = null
+  if (reanudacion) {
+    if (!puerto) return terminarCon('Reanudar una producción solo está disponible en la aplicación de escritorio.')
+    let runPrevio = reanudacion[1] ?? ''
+    if (!runPrevio) {
+      const l = await puerto.listar(proyectoSeguro)
+      runPrevio = l.ok ? (l.producciones[0]?.runId ?? '') : ''
+    }
+    previo = runPrevio ? await leerProduccion(puerto, proyectoSeguro, runPrevio) : null
+    if (!previo?.guardado.hoja) return terminarCon('No encontré esa producción, o se interrumpió antes de tener el plan, así que no hay nada que reanudar. Pídeme la canción de nuevo.')
+    // Dos ventanas (o instancias) no pueden reanudar la misma producción a la vez.
+    const c = await puerto.candadoTomar(proyectoSeguro, runPrevio)
+    if (c.ok && c.testigo === null) return terminarCon('Esa producción ya se está reanudando en otra ventana.')
+    if (c.ok && c.testigo) candado = { run: runPrevio, testigo: c.testigo }
+    if (reanudacion[2]) {
+      const rr = await restaurarUltimoPunto(puerto, tienda, proyectoSeguro)
+      if (!rr.ok) return terminarCon(`No pude recuperar la copia de seguridad: ${rr.error ?? 'error desconocido'}`)
+    }
+    pedido = previo.pedido
+  }
+  const runId = nuevoRunId()
+  const diario = puerto ? new DiarioProduccion(puerto, proyectoSeguro, runId) : null
+  await diario?.iniciar({
+    pedido,
+    config: { esperasReintento: ESPERAS_REINTENTO_BANDA, reanuda: !!previo },
+    participantes: participantes.map((p) => ({ id: p.id, nombre: p.nombre, rol: p.rol })),
+    ...(previo ? { reanudaDe: previo.runId } : {}),
+  })
+  diario?.estado('en_curso', previo ? 'reanudada' : 'inicio')
+
   // Detener desde el panel de la banda o desde el chat.
   const control = new AbortController()
   const abortar = () => control.abort()
@@ -244,7 +366,21 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
 
   let undoInicio: number | null = null
   let cambios = 0
-  const ejecutar = async (l: LlamadaAgente, h: HerramientaAgente): Promise<ResultadoHerramienta> => {
+  /** Hoja de ruta vigente: el guardia de armonía comprueba cada escritura de notas contra ella. */
+  let hojaVigente: HojaCoherencia | null = null
+  const ejecutar = async (l0: LlamadaAgente, h: HerramientaAgente): Promise<ResultadoHerramienta> => {
+    let l = l0
+    let avisosArmonia: string[] = []
+    if (h.clase !== 'lectura') {
+      const g = guardarEscrituraArmonia(tienda.obtenerEstado(), hojaVigente, l, opcionesArmonia())
+      if ('error' in g) return { ok: false, error: g.error }
+      l = { ...l, argumentos: g.args }
+      avisosArmonia = g.avisos
+    }
+    const r = await ejecutarBase(l, h)
+    return r.ok && avisosArmonia.length ? { ...r, datos: { ...(r.datos && typeof r.datos === 'object' && !Array.isArray(r.datos) ? (r.datos as object) : {}), avisos: avisosArmonia } } : r
+  }
+  const ejecutarBase = async (l: LlamadaAgente, h: HerramientaAgente): Promise<ResultadoHerramienta> => {
     const etiqueta = describeActionForUser({ type: l.nombre, payload: l.argumentos ?? {} }, tienda.obtenerEstado()).label
     const claseReal = agentActionClass({ type: l.nombre, payload: l.argumentos ?? {} })
     if (claseReal === 'system' && (l.nombre === 'plugin.insert' || l.nombre === 'track.addVstLayer')) {
@@ -350,54 +486,105 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
 
   const ultimoError: UltimoErrorIA = {}
   const hojasVolcadas = new Set<string>()
-  const medir = medirBanda(tienda)
+  // La medición nativa renderiza offline (bloquea el transporte): la escucha se pausa solo cuando de verdad se
+  // renderiza; si el proyecto no cambió desde la última medición, `medirBanda` responde de su caché sin pausarla.
+  const medirNativo = medidorMezclaApp(tienda)
+  const medir = medirBanda(tienda, async () => {
+    await escuchaEnVivo.pausar()
+    try {
+      return await medirNativo()
+    } finally {
+      escuchaEnVivo.reanudar()
+    }
+  })
   escuchaEnVivo.comenzar(tienda)
-  let r
+  let r: ResultadoProduccionAgentes | undefined
   try {
     r = await ejecutarProduccion({
       pedido,
       catalogo,
       base: HERRAMIENTAS_BASE,
       participantes,
-      chat: chatDelMotor(ctx, cfg, ultimoError, { delta: 'nunca', esperas: ESPERAS_REINTENTO_BANDA }),
+      chat: chatDelMotor(ctx, cfg, ultimoError, {
+        delta: 'nunca',
+        esperas: ESPERAS_REINTENTO_BANDA,
+        // Sin internet la petición espera (no gasta reintentos) y la producción sigue sola al volver.
+        red: redDelNavegador({
+          alPausar: () => {
+            orquestadorBandaSingleton.pausarPorRed()
+            diario?.estado('pausada_red', 'sin conexión a internet')
+          },
+          alReanudar: () => {
+            orquestadorBandaSingleton.reanudarDeRed()
+            diario?.estado('en_curso', 'volvió la conexión')
+          },
+        }),
+      }),
       ejecutar,
       contexto: () => buildReadOnlyProjectContext(tienda.obtenerEstado()).slice(0, 3000),
       partes: () => resumenPartes(tienda.obtenerEstado()),
+      alDefinirHoja: (h) => {
+        hojaVigente = h
+      },
+      // Cada músico recibe las notas permitidas por acorde de SUS secciones (no solo los cifrados).
+      guiaArmonia: (encargo, hoja) => {
+        const pista = encargo.pista ? (tienda.obtenerEstado().project?.tracks ?? []).find((t) => t.id === encargo.pista || t.nombre.trim().toLowerCase() === encargo.pista!.trim().toLowerCase()) : undefined
+        return tablaArmoniaMusico(hoja, { encargo: encargo.encargo, tipo: pista ? tipoDePista(pista.nombre, pista.plugins ?? []) : { bateria: /bater|drum|percus/i.test(encargo.participante), bajo: /bajo|bass/i.test(encargo.participante) } })
+      },
+      // Diagnóstico inmediato en el resultado de cada escritura MIDI (como los errores del compilador en un IDE).
+      diagnostico: (encargo, hoja) => (encargo.pista ? diagnosticoEscritura(tienda.obtenerEstado(), hoja, { pista: encargo.pista, encargo: encargo.encargo }) : null),
       // Cada músico escribe solo en su pista: la referencia del encargo (id o nombre) se resuelve contra el proyecto.
       resolverPista: (ref) => {
         const q = ref.trim().toLowerCase()
         const t = (tienda.obtenerEstado().project?.tracks ?? []).find((x) => x.id === ref || x.nombre.trim().toLowerCase() === q)
         return t ? { id: t.id, nombre: t.nombre } : null
       },
+      // Al terminar cada músico se mide si su pista cubre las secciones que le tocan; si no, retoma lo que falta.
+      completitud: (encargo, hoja) => (encargo.pista ? seccionesFaltantes(tienda.obtenerEstado(), hoja, { pista: encargo.pista, encargo: encargo.encargo }) : null),
       coherencia: async (hoja) => {
         // La hoja de ruta (acorde por compás y secciones) se vuelca al carril de acordes del arreglo: es la
         // única salida del harness que trae la hoja completa; chords.set reemplaza, así que repetirla es inocuo.
         if (await volcarHojaAlCarril(tienda, hoja, hojasVolcadas)) cambios++
         return analizarCoherencia(tienda.obtenerEstado(), hoja)
       },
-      // La medición renderiza offline (bloquea el transporte): la escucha se pausa mientras.
-      medir: async (etapa) => {
-        await escuchaEnVivo.pausar()
-        try {
-          return await medir(etapa)
-        } finally {
-          escuchaEnVivo.reanudar()
-        }
-      },
+      medir,
       herramientasPorRol: HERRAMIENTAS_POR_ROL,
       instruccionesExtra: instruccionesConfiguradas(projectId),
       ...(estilo?.resumen ? { estiloMusical: `${estilo.nombre}: ${estilo.resumen}` } : {}),
       // Lo que el usuario escribe en el chat o en el panel de la banda mientras trabaja llega al agente en turno.
       notasUsuario: () => orquestadorBandaSingleton.tomarNotas(),
-      onEvento: alEvento,
+      onEvento: (e) => {
+        alEvento(e)
+        diario?.evento(e, e.tipo === 'medicion' ? huellaMezcla(tienda.obtenerEstado()) : undefined)
+      },
       signal: control.signal,
+      ...(previo ? { reanudar: previo.guardado } : {}),
+      // Al terminar cada etapa y cada músico se guarda una copia del proyecto (también sin ruta), con su huella en el diario.
+      alPuntoDeControl: async (que) => {
+        const g = await guardarPuntoProyecto(puerto, tienda, que)
+        if (g) await diario?.control(que, g.huella, g.archivo)
+      },
+      // Pasado el límite de tiempo: máster mínimo sin modelo (normalizar a −14 LUFS + limitador a −1 dBTP).
+      masterMinimo: () =>
+        masterMinimoDeterminista(
+          async (nombre, args) => {
+            const [x] = await ctx.executeTools([{ id: `minimo:${nombre}`, name: nombre, arguments: args }])
+            if (x?.status === 'success') cambios++
+            return { ok: x?.status === 'success', mensaje: x?.error?.message }
+          },
+          () => medir('master'),
+        ),
     })
   } finally {
+    // Una excepción deja la producción como interrumpida (se podrá reanudar); el cierre normal se escribe más abajo.
+    if (r === undefined) await diario?.cerrar('interrumpida', 'error inesperado').catch(() => undefined)
+    if (candado && puerto) void puerto.candadoSoltar(proyectoSeguro, candado.run, candado.testigo)
     ctx.signal.removeEventListener('abort', abortar)
     await escuchaEnVivo.parar()
     await colaEstilo.catch(() => undefined)
   }
   orquestadorBandaSingleton.terminar(r)
+  await diario?.cerrar(r.estado === 'cancelado' ? 'detenida' : r.estado === 'fallo' ? 'interrumpida' : 'completada', r.estado === 'fallo' ? 'la producción se detuvo por un fallo' : undefined)
   // Traza para diagnosticar producciones largas (qué llamó cada agente y qué falló); sin datos del usuario.
   console.info(
     `[banda] ${r.estado} · ${r.llamadas.length} llamadas · ${r.llamadas
@@ -405,6 +592,13 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
       .join(' | ')
       .slice(0, 16000)}`,
   )
+  // Tiempos por etapa (reloj y peticiones), mediciones y refinamientos omitidos: lo que hace falta para afinar la velocidad.
+  if (r.tiempos) {
+    const t = r.tiempos
+    console.info(
+      `[tiempos] ${resumenTiempos(t)} Mediciones: ${t.mediciones.map((m) => `${m.etapa} ${formatearDuracion(m.ms)}${m.ok === null ? ' (no medible)' : m.ok ? '' : ' (fuera de objetivo)'}`).join(', ') || 'ninguna'}. Omitido: ${t.omitidos.map((o) => `${o.que} [${o.motivo}]`).join(', ') || 'nada'}.`,
+    )
+  }
   if (fallosAgentes.length) console.info(`[banda] agentes sin terminar: ${fallosAgentes.join(' | ').slice(0, 2000)}`)
 
   const nombres = catalogo.map((h) => h.nombre)

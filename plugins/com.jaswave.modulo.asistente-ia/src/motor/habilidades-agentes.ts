@@ -107,6 +107,13 @@ const FAMILIA: Record<FamiliaInstrumento, HabilidadAgente[]> = {
       'Puente: puede empezar sin batería (o solo bombo en negras) y volver a entrar con un fill largo (un compás entero).',
       'No metas fills en mitad de la sección: rompen el groove.',
     ]),
+    h('bateria-biblioteca-de-grooves', 'Biblioteca de grooves (cuándo usarla)', 'Antes de escribir la batería a mano: decide si una base de la biblioteca de grooves MIDI te sirve.', [
+      'Herramientas: groove.listar {estilo?, tipo?, compas?, etiquetas?, texto?} para ver lo disponible (estilos como worship, pop, rock, balada, shuffle/blues, jazz, funk, soul, reggae, latin, afrobeat, hip-hop, electronica, metal, country, gospel, 12-8; tipos groove, fill, intro, outro, transicion) y groove.insertar {grooveId o estilo+tipo+compas+etiquetas, pistaId, inicioBeat, compases, variacion: "ligera", fill: true} que crea un clip MIDI con undo en TU pista (mapa GM de Worship Drums).',
+      'Úsala cuando el estilo pedido esté en la biblioteca y quieras una base sólida y humana: elige el compás del proyecto (4/4, 6/8, 12/8), la intensidad de la sección (verso suave, coro lleno, puente con crescendo) y repítela los compases que dure la sección. Pasa fill: true en el último compás de la sección para cambiarlo por un fill del mismo estilo, y variacion: "ligera" para que ningún compás repetido suene idéntico.',
+      'Después de insertar, léelo (midi.notes.get) y VARÍALO: cada 4 compases cambia algo (una ghost, el hi-hat abierto, un bombo extra), pon el crash del coro y suaviza o sube velocidades según la dinámica de la sección. No pegues el mismo clip sin tocar de principio a fin.',
+      'Escribe la parte a mano (midi.clip.create) cuando: el estilo no esté en la biblioteca, el compás sea raro, el plan pida algo muy concreto (un hit sincronizado con otro instrumento, un silencio, un fill propio) o el groove no encaje tras probarlo. Nunca inventes un grooveId: sale de groove.listar.',
+      'El tempo del proyecto manda: los grooves están en beats, no cambies el bpm para encajarlos. Si el compás del groove no coincide con el del proyecto, elige otro groove del compás correcto en vez de forzarlo.',
+    ]),
     h('bateria-dinamica-por-seccion', 'Dinámica por sección', 'Para que la batería cuente la forma de la canción.', [
       'Intro: mínima (hi-hat cerrado o aro) o silencio. Verso 1: hi-hat cerrado, bombo/caja vel 80–95, sin crash. Pre-coro: añade ghost notes y abre el hi-hat al final.',
       'Coro: ride o hi-hat abierto, caja 105–115, bombo 100–110, crash al entrar. Verso 2: un punto más que el verso 1 (p. ej. bombo en corcheas puntual, campana del ride).',

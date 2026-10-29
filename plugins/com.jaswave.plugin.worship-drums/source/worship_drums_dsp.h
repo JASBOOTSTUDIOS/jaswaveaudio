@@ -34,6 +34,7 @@
 #include "jw_params.h"
 #include "jw_sampler.h"
 #include "jw_fxrack.h"
+#include "worship_drums_kits.h"
 
 #if defined(_M_X64) || defined(__SSE2__)
 #include <emmintrin.h>
@@ -53,7 +54,9 @@ enum : uint32_t {
     // v2 (batería acústica multimicrófono): ids nuevos al final
     kCloseLevel = 15, kAmbLevel = 16,
     // v3 (cuerpo y pegada de caja y toms): ids nuevos al final
-    kShellBody = 17, kShellPunch = 18, kSnareBody = 19, kTomsBody = 20, kSnareTune = 21, kTomsTune = 22
+    kShellBody = 17, kShellPunch = 18, kSnareBody = 19, kTomsBody = 20, kSnareTune = 21, kTomsTune = 22,
+    // v4 (kits de batería y percusión auxiliar): ids nuevos al final
+    kKit = 23, kPercLevel = 24
 };
 enum Feature : int { kFeatRoom = 0 };
 
@@ -116,7 +119,10 @@ inline const std::vector<ParamDef>& paramDefs() {
         v.push_back(linearP(kTomsBody, "Toms Body", "%", 0.0, 150.0, 100.0, 0));                      // ajuste fino del cuerpo de los toms
         v.push_back(linearP(kSnareTune, "Snare Body Tuning", "Hz", 110.0, 260.0, kSnareBodyHz, 1));   // afinacion de la capa sintetizada de la caja (la muestra suena a ~215 Hz y no tiene nada bajo 160 Hz)
         v.push_back(linearP(kTomsTune, "Toms Body Tuning", "ct", -300.0, 300.0, 0.0, 0, true));       // desplaza la fundamental de los toms (EQ y capa sintetizada)
-        marcarBasicos(v, { kBypass, kVolume, kKickTune, kSnareSnap, kTomsDamp, kRoomBlend, kShellsLevel, kCymbalLevel });   // modo Básico
+        // v4: kit de batería (lista de los kits instalados; sus nombres salen de kit.json y se publican en kitLabels()) y nivel de la percusión auxiliar
+        v.push_back(stepP(kKit, "Drum Kit", kMaxKits - 1, 0, kitLabels().ptr));
+        v.push_back(linearP(kPercLevel, "Percusion Level", "dB", -24.0, 6.0, 0.0, 1, true));
+        marcarBasicos(v, { kBypass, kVolume, kKickTune, kSnareSnap, kTomsDamp, kRoomBlend, kShellsLevel, kCymbalLevel, kKit });   // modo Básico
         JW_FXRACK_REGISTRAR(v);   // FX Rack comun (ids 100..): EQ de 6 bandas, compresor, saturacion, chorus, delay, reverb, anchura (tras toda la cadena propia)
         return v;
     }();
@@ -130,6 +136,8 @@ struct DrumSettings {
     double closeDb{0.0}, ambDb{0.0};
     double shellBody{kDefShellBody / 100.0}, shellPunch{kDefShellPunch / 100.0}, snareBody{1.0}, tomsBody{1.0};
     double snareTuneHz{kSnareBodyHz}, tomsTuneCents{0.0};
+    double percDb{0.0};      // nivel de la percusión auxiliar (dB)
+    int kitIndex{0};         // kit elegido (posición en la lista de kits instalados)
     bool bypass{false};
 };
 
@@ -151,6 +159,7 @@ inline int elementForNote(int note) {
         case 42: return kElHatC; case 44: return kElHatP; case 46: return kElHatO;
         case 49: return kElCrash1; case 57: return kElCrash2; case 55: return kElSplash; case 52: return kElChina;
         case 51: return kElRide; case 59: return kElRide2; case 53: return kElBell;
+        case 78: return kElBell;   // campana de crash: muestra real si el kit o el banco de percusión la traen; si no, el modelo de campana (más grave y larga)
         default: return -1;
     }
 }
@@ -176,14 +185,14 @@ inline int elementForNote(int note) {
 //  para que sume en fase, + tic de baqueta), menos lado (overheads/sala) y compensación de nivel (kBusTrimDb / kTomTrimDb) para conservar la relación con el bombo.
 //  Con Shell Body = Shell Punch = 0 la caja y los toms suenan como el banco original (el bombo sube +2,5 dB en cualquier caso).
 // ---------------------------------------------------------------------------------
-enum Bus : int { kBusKick = 0, kBusSnare, kBusToms, kBusHats, kBusCym, kNumBus };
+enum Bus : int { kBusKick = 0, kBusSnare, kBusToms, kBusHats, kBusCym, kBusPerc, kNumBus };
 inline int busForNote(int note) {
     switch (note) {
         case 35: case 36: return kBusKick;
         case 38: case 40: return kBusSnare;
         case 41: case 43: case 45: case 47: case 48: case 50: return kBusToms;
         case 42: case 44: case 46: return kBusHats;
-        case 49: case 57: case 55: case 52: case 51: case 59: case 53: return kBusCym;
+        case 49: case 57: case 55: case 52: case 51: case 59: case 53: case 78: return kBusCym;
         default: return -1;
     }
 }
@@ -197,10 +206,11 @@ constexpr double kBusRoute[kNumBus][3] = {
     { 1.00, 0.15, 0.85 },   // toms
     { 0.85, 0.25, 0.60 },   // hi-hat
     { 0.45, 0.70, 0.60 },   // platos
+    { 0.85, 0.40, 0.60 },   // percusión auxiliar (palmas, pandereta, cencerro, congas...): igual que el resto de piezas, con envío a overheads y sala
 };
 // v3: la caja compensa el realce (EQ, transitorio, paralelo, curva de velocidad, capa de cuerpo: +5 dB de nivel propio) y el bombo sube +2,5 dB para que la
 // caja a 0,7 de velocidad siga 3-4 dB por debajo del bombo (RMS 0-300 ms) con mas cuerpo; los toms se compensan por tom (kTomTrimDb)
-constexpr double kBusTrimDb[kNumBus] = { 2.5, -5.4, 0.0, 0.0, 0.0 };
+constexpr double kBusTrimDb[kNumBus] = { 2.5, -5.4, 0.0, 0.0, 0.0, 0.0 };
 
 // Grupo de pad para la UI (14 pads)
 inline int padForElement(int el) {
@@ -221,6 +231,11 @@ struct DrumBus : MeterBusBase {
     std::atomic<int> activeVoices{0};
     std::atomic<int> maxVoices{kPolyphony};
     std::atomic<float> pad[kNumPads]{};   // velocidad del último golpe por pad (la UI lo consume con exchange)
+    // v4: kits (el motor publica aquí el catálogo y el estado para el editor; nada de esto toca el hilo de audio salvo átomos)
+    std::shared_ptr<const KitList> kits;  // acceso con std::atomic_load/store
+    std::atomic<int> kitActivo{-1};       // posición del kit cargado (-1 = ninguno: suena el motor modelado)
+    std::atomic<int> kitEstado{0};        // KitService::Estado
+    std::atomic<uint64_t> maskKit[2]{}, maskPerc[2]{};   // notas GM con muestras (kit cargado / banco de percusión)
 };
 
 // ---------------------------------------------------------------------------------
@@ -566,8 +581,16 @@ public:
         // el banco se carga una sola vez en un hilo aparte (cache compartida)
         JwSampler::Humanize hum;
         hum.gainDb = 0.8f; hum.detuneCents = 3.0f; hum.timingMs = 0.0f; hum.velCurve = 0.15f;
-        forEachSampler([&](JwSampler::Sampler& s) { s.prepare(sr_); s.setHumanize(hum); });
-        if (!samLoadStarted_) { samLoadStarted_ = true; forEachSampler([&](JwSampler::Sampler& s) { s.startLoad(kBankSlug); }); }
+        forEachAll([&](JwSampler::Sampler& s) { s.prepare(sr_); s.setHumanize(hum); });
+        // el servicio de kits (hilo de carga persistente) escanea la carpeta de samples, carga el kit elegido y el banco de percusion
+        // y los publica en los samplers con un intercambio atomico; el hilo de audio nunca hace E/S
+        if (!samLoadStarted_) {
+            samLoadStarted_ = true;
+            kit_.start([this](const std::shared_ptr<JwSampler::Bank>& b, bool perc) {
+                if (perc) auxPerc_.setBank(b);
+                else forEachSampler([&](JwSampler::Sampler& s) { s.setBank(b); });
+            });
+        }
         for (auto& b : bodySn_) b.invSr = 1.0 / sr_;
         for (auto& b : bodyTm_) b.invSr = 1.0 / sr_;
         designSamples(true);
@@ -579,11 +602,27 @@ public:
     JasWaveFx::FxRack& fx() { return fx_; }
     /// ¿Hay banco de muestras cargado? (el resto de notas sin zona siguen sonando con el motor modelado)
     bool samplerReady() const { bool ok = true; forEachSamplerC([&](const JwSampler::Sampler& s) { if (!s.ready()) ok = false; }); return ok; }
-    bool samplerLoading() const { bool ld = false; forEachSamplerC([&](const JwSampler::Sampler& s) { if (s.loading()) ld = true; }); return ld; }
+    bool samplerLoading() const { return kit_.loading(); }
+    /// El cuerpo/pegada de caja y toms (calibrados con el MuldjordKit) esta activo? Con otros kits se apaga.
+    bool shellCalibrated() const { return kitMd_; }
+    // ---- kits (v4) ----
+    KitService& kits() { return kit_; }
+    const KitService& kits() const { return kit_; }
+    /// Kit guardado en el estado del plugin (slug): tiene prioridad sobre el indice del parametro hasta que el usuario lo cambie.
+    void setKitSlug(const std::string& slug) { if (slug.empty()) return; slugPend_.store(true); kit_.selectSlug(slug); }
+    std::string kitSlug() const { return kit_.slugGuardable(); }
+    /// La nota tiene muestra real (kit cargado o banco de percusion)?
+    bool noteHasSample(int note) const {
+        if (note < 0 || note > 127) return false;
+        if (isAuxNote(note) && note != 78) return sam_[kBusPerc].hasZone(note, 0.5f) || auxPerc_.hasZone(note, 0.5f);
+        return noteIsSampled(note) || auxPerc_.hasZone(note, 0.5f);
+    }
+    /// Notas de la percusion auxiliar (palmas 39, pandereta 54, cencerro 56, vibraslap 58, 60..87; la campana de crash 78 va ademas por los platos)
+    static bool isAuxNote(int n) { return n == 39 || n == 54 || n == 56 || n == 58 || (n >= 60 && n <= 87); }
     /// ¿Esta nota suena con muestras (banco cargado y con zona)? Si no, suena el motor modelado.
     bool noteIsSampled(int note) const { const JwSampler::Sampler* s = samplerForNote(note); return s && s->hasZone(note, 0.5f); }
     void reset() {
-        forEachSampler([](JwSampler::Sampler& s) { s.panic(); });
+        forEachAll([](JwSampler::Sampler& s) { s.panic(); });
         for (auto& b : bodySn_) b.active = false;
         for (auto& b : bodyTm_) b.active = false;
         resetShells();
@@ -616,6 +655,10 @@ public:
         roomG_.setTarget(roomGain(s.roomBlend));
         shellsLin_ = dbToLinear(s.shellsDb);
         cymLin_ = dbToLinear(s.cymbalDb);
+        percLin_ = dbToLinear(s.percDb);
+        // kit: el parametro manda salvo justo despues de cargar un estado con slug (entonces manda el slug, que no depende del orden de la lista)
+        if (kitSlugJust()) lastKitIdx_ = s.kitIndex;
+        else if (s.kitIndex != lastKitIdx_) { lastKitIdx_ = s.kitIndex; kit_.selectIndex(s.kitIndex); }
         compThr_ = -30.0 - 0.18 * s.roomComp * 100.0;                // dB
         compThrLin_ = dbToLinear(compThr_);
         compRatio_ = 1.5 + 4.0 * s.roomComp;
@@ -630,21 +673,25 @@ public:
     }
     void setBend(double semitones) {
         bend_ = clampT(semitones, -12.0, 12.0); bendMul_ = std::pow(2.0, bend_ / 12.0);
-        forEachSampler([&](JwSampler::Sampler& s) { s.setBend(static_cast<float>(bend_)); });
+        forEachAll([&](JwSampler::Sampler& s) { s.setBend(static_cast<float>(bend_)); });
     }
     void setHatFoot(double f01) { s_.hatFoot = clampT(f01, 0.0, 1.0); }
     void noteOff(int) {}   // percusión: un golpe no depende del note-off
 
     void allNotesOff() {
         for (auto& v : voices_) if (v.active && !v.fading) fade(v, 0.030, 80.0);
-        forEachSampler([](JwSampler::Sampler& s) { s.allNotesOff(); });
+        forEachAll([](JwSampler::Sampler& s) { s.allNotesOff(); });
     }
 
     void noteOn(int note, float velIn) {
+        if (note < 0 || note > 127) return;
         const int el = elementForNote(note);
-        if (el < 0 || note < 0 || note > 127) return;     // fuera del mapa GM: se ignora
         if (velIn <= 0.0f) return;
         const double vel = clampT(static_cast<double>(velIn), 0.0, 1.0);
+        if (el < 0) {   // percusion auxiliar (palmas, pandereta, cencerro, congas...): solo suena con muestras; fuera del mapa se ignora
+            if (isAuxNote(note)) auxNoteOn(note, vel);
+            return;
+        }
         // banco de muestras: si hay zona para la nota, suena el kit real (el choke del hi-hat lo hacen los grupos del banco)
         if (sampleNoteOn(note, vel)) {
             if (el == kElHatC || el == kElHatP)   // por si queda algún hi-hat modelado sonando (carga tardía del banco)
@@ -653,6 +700,8 @@ public:
             hit_[pad] = std::max(hit_[pad], static_cast<float>(vel));
             return;
         }
+        // campana de crash (78) en el banco de percusion; si tampoco esta, suena el modelo de campana
+        if (note == 78 && auxNoteOn(78, vel)) { hit_[10] = std::max(hit_[10], static_cast<float>(vel)); return; }
         // grupos de choke
         if (el == kElHatC || el == kElHatP) {
             for (auto& v : voices_) if (v.active && !v.fading) {
@@ -705,15 +754,26 @@ public:
             bus->outPk[0].update(pk[0]); bus->outPk[1].update(pk[1]);
             bus->activeVoices.store(activeVoices(), std::memory_order_relaxed);
             bus->maxVoices.store(kPolyphony, std::memory_order_relaxed);
+            publishKits(bus);
             for (int p = 0; p < kNumPads; ++p) if (hit_[p] > 0.0f) { bus->pad[p].store(hit_[p], std::memory_order_relaxed); }
         }
         for (auto& h : hit_) h = 0.0f;
+    }
+
+    /// Publica en el bus (para el editor) el catalogo y el estado de kits; el catalogo solo cuando cambia.
+    void publishKits(DrumBus* bus) {
+        const uint32_t sq = kit_.listSeq();
+        if (sq != listPub_) { listPub_ = sq; std::atomic_store(&bus->kits, kit_.list()); }
+        bus->kitActivo.store(kit_.activeIndex(), std::memory_order_relaxed);
+        bus->kitEstado.store(static_cast<int>(kit_.estado()), std::memory_order_relaxed);
+        for (int w = 0; w < 2; ++w) { bus->maskKit[w].store(kit_.maskKit(w), std::memory_order_relaxed); bus->maskPerc[w].store(kit_.maskPerc(w), std::memory_order_relaxed); }
     }
 
     int activeVoices() const {
         int a = 0;
         for (const auto& v : voices_) a += v.active ? 1 : 0;
         forEachSamplerC([&](const JwSampler::Sampler& s) { a += s.activeVoices(); });
+        a += auxPerc_.activeVoices();
         return a;
     }
     double sampleRate() const { return sr_; }
@@ -722,7 +782,33 @@ public:
 
 private:
     // ---------------- muestras ----------------
-    template <class F> void forEachSampler(F&& f) { for (auto& s : sam_) f(s); for (auto& s : tomSam_) f(s); f(rimSam_); }
+    template <class F> void forEachSampler(F&& f) { for (auto& s : sam_) f(s); for (auto& s : tomSam_) f(s); f(rimSam_); }   // samplers que reciben el banco del kit
+    template <class F> void forEachAll(F&& f) { forEachSampler(f); f(auxPerc_); }                                          // + el de la percusion auxiliar
+    bool kitSlugJust() { return slugPend_.exchange(false); }
+    static float auxPan(int n) {
+        switch (n) {
+            case 39: return 0.0f;   case 54: return 0.40f;  case 56: return -0.30f; case 58: return 0.30f;
+            case 60: return -0.30f; case 61: return -0.45f; case 62: return 0.30f;  case 63: return 0.42f;  case 64: return 0.55f;
+            case 65: return -0.55f; case 66: return -0.40f; case 67: return 0.20f;  case 68: return 0.10f;
+            case 69: return -0.50f; case 70: return 0.50f;  case 73: return 0.25f;  case 74: return 0.30f;
+            case 75: return -0.20f; case 76: return -0.35f; case 77: return -0.25f; case 78: return -0.40f;
+            case 80: return 0.45f;  case 81: return 0.50f;  case 82: return 0.50f;
+            default: return 0.0f;
+        }
+    }
+    /// Golpe de percusion auxiliar: primero el banco del kit (si trae esa pieza, p. ej. el cencerro de un kit indie); si no, el banco de percusion.
+    bool auxNoteOn(int note, double vel) {
+        JwSampler::Sampler* s = nullptr;
+        const float fv = static_cast<float>(vel);
+        if (sam_[kBusPerc].hasZone(note, fv)) s = &sam_[kBusPerc];
+        else if (auxPerc_.hasZone(note, fv)) s = &auxPerc_;
+        if (!s) return false;
+        JwSampler::NoteShape sh;
+        sh.pan = auxPan(note);
+        const double v = clampT(vel * (1.0 + 0.02 * hum_.bi()), 0.01, 1.0);
+        s->noteOnShaped(note, static_cast<float>(v), sh);
+        return true;
+    }
     template <class F> void forEachSamplerC(F&& f) const { for (const auto& s : sam_) f(s); for (const auto& s : tomSam_) f(s); f(rimSam_); }
     static int tomIndex(int note) { for (int i = 0; i < kNumToms; ++i) if (kTomNote[i] == note) return i; return -1; }
     // Sampler de una nota: los toms (uno cada uno) y el rimshot tienen el suyo para poder darles EQ por pieza
@@ -842,7 +928,7 @@ private:
         }
         const double snapGain = dbToLinear((s_.snareSnap - 0.65) * 3.0);
         for (int b = 0; b < kNumBus; ++b) {
-            const double lvl = b <= kBusToms ? shellsLin_ : cymLin_;
+            const double lvl = b <= kBusToms ? shellsLin_ : (b == kBusPerc ? percLin_ : cymLin_);
             samGainTgt_[b] = lvl * dbToLinear(b == kBusSnare ? kBusTrimDb[b] * snareEngage_ : kBusTrimDb[b]) * (b == kBusSnare ? snapGain : 1.0);
             if (force) samGainCur_[b] = samGainTgt_[b];
         }
@@ -854,7 +940,9 @@ private:
         for (int i = 0; i < 10; ++i) if (key[i] != shellKey_[i]) same = false;
         if (same) return;
         for (int i = 0; i < 10; ++i) shellKey_[i] = key[i];
-        const double b = s_.shellBody, p = s_.shellPunch;
+        // El cuerpo y la pegada (EQ, capa sintetizada, curva de velocidad) estan calibrados con las medidas del MuldjordKit: con otro kit se apagan (suena el banco tal cual)
+        const double kk = kitMd_ ? 1.0 : 0.0;
+        const double b = s_.shellBody * kk, p = s_.shellPunch * kk;
         const double bs = clampT(b * s_.snareBody, 0.0, 2.25), bt = clampT(b * s_.tomsBody, 0.0, 2.25);
         bodySnare_ = bs; bodyToms_ = bt; shellPunchK_ = p;
         // la compensacion de nivel (trim) solo actua en la medida en que actua el procesado: con Shell Body = Shell Punch = 0 la muestra suena como el banco
@@ -913,7 +1001,7 @@ private:
         parA_ = std::exp(-1.0 / (0.010 * sr_)); parR_ = std::exp(-1.0 / (0.140 * sr_));
         // EQ por pieza de las muestras: paso-altos (bombo 28 Hz, caja 55, toms 30, hi-hat 160, platos 120) y recorte de agudos en hat/platos.
         // Medido: no recortan nada util (la caja del banco no tiene nada bajo 80 Hz y el tom mas grave suena a 66 Hz: -0,4 dB con el paso-alto a 30 Hz)
-        static const double hp[kNumBus] = { 28.0, 55.0, 30.0, 160.0, 120.0 };
+        static const double hp[kNumBus] = { 28.0, 55.0, 30.0, 160.0, 120.0, 70.0 };
         for (int b = 0; b < kNumBus; ++b) busHp_[b] = BiquadCoefs::design(FilterType::HighPass, sr_, hp[b], 0.0, 0.707);
         busSh_ = BiquadCoefs::design(FilterType::HighShelf, sr_, std::min(10500.0, 0.42 * sr_), -1.5, 0.7);
         hpSnQ_.set(busHp_[kBusSnare]); hpTmQ_.set(busHp_[kBusToms]);
@@ -947,6 +1035,7 @@ private:
     // Suma el audio de los samplers en sdL_/sdR_ (directo), anillo de overheads y envío a sala
     void renderSamples(int n) {
         const int mask = kRing - 1;
+        if (const bool md = kit_.activeIsMuldjord(); md != kitMd_) { kitMd_ = md; designShells(true); designSamples(false); }   // cambio de kit: se recalibra la caja/toms (solo coeficientes, sin reservas)
         for (int i = 0; i < n; ++i) { sdL_[static_cast<size_t>(i)] = 0.0; sdR_[static_cast<size_t>(i)] = 0.0; }
         // apagado de los toms: note-off interno cuando vence el tiempo de damping
         for (int t = 0; t < kNumToms; ++t) {
@@ -959,6 +1048,7 @@ private:
             int act = 0;
             if (toms) { for (const auto& s : tomSam_) act += s.activeVoices(); }
             else if (snare) act = sam_[b].activeVoices() + rimSam_.activeVoices();
+            else if (b == kBusPerc) act = sam_[b].activeVoices() + auxPerc_.activeVoices();
             else act = sam_[b].activeVoices();
             const bool bodyOn = snare ? bodyActive(bodySn_, kBodySn) : (toms ? bodyActive(bodyTm_, kBodyTm) : false);
             if (act > 0 || bodyOn) quiet_[b] = tail; else quiet_[b] -= n;
@@ -986,6 +1076,7 @@ private:
                 std::fill(tmpL_.begin(), tmpL_.begin() + n, 0.0f);
                 std::fill(tmpR_.begin(), tmpR_.begin() + n, 0.0f);
                 if (sam_[b].activeVoices() > 0) sam_[b].render(tmpL_.data(), tmpR_.data(), n);
+                if (b == kBusPerc && auxPerc_.activeVoices() > 0) auxPerc_.render(tmpL_.data(), tmpR_.data(), n);
                 for (int i = 0; i < n; ++i) {
                     double l = tmpL_[static_cast<size_t>(i)], r = tmpR_[static_cast<size_t>(i)];
                     if (snare) {
@@ -1138,7 +1229,7 @@ private:
         else if (el == kElSnare || el == kElRim) startSnare(v, r, vel, el == kElRim, maxT);
         else if (el == kElSide) startSide(v, r, vel, maxT);
         else if (el <= kElTom5) startTom(v, r, vel, el - kElTom0, maxT);
-        else startCymbal(v, r, el, vel, chokeRing, maxT);
+        else startCymbal(v, r, el, vel, chokeRing, maxT, note);
         sortModes(v);
         v.life = static_cast<int64_t>(std::min(10.0, maxT) * sr_);
     }
@@ -1243,7 +1334,7 @@ private:
         setBand(v, 1, 0, 2.2 * f, 2.0, va * 0.12, 0.02, 0.0);
     }
 
-    void startCymbal(Voice& v, Rng& r, int el, double vel, double chokeRing, double& maxT) {
+    void startCymbal(Voice& v, Rng& r, int el, double vel, double chokeRing, double& maxT, int note = 0) {
         const double va = velAmp(vel);
         int si = 0;
         double fscale = 1.0, tscale = 1.0, amp = 1.0, openness = 0.0;
@@ -1251,7 +1342,7 @@ private:
             case kElHatC: case kElHatP: case kElHatO: si = 0; break;
             case kElRide: si = 1; break;
             case kElRide2: si = 1; fscale = 0.93; tscale = 0.85; amp = 0.95; break;
-            case kElBell: si = 2; break;
+            case kElBell: si = 2; if (note == 78) { fscale = 0.84; tscale = 1.7; amp = 0.9; } break;   // campana de crash: mas grave y mas larga que la del ride
             case kElCrash1: si = 3; break;
             case kElCrash2: si = 4; break;
             case kElSplash: si = 5; break;
@@ -1470,7 +1561,7 @@ private:
     std::array<Voice, kVoiceSlots> voices_;
     CymTable tab_[7];
     Smoother vol_, wet_, air_, roomG_;
-    double shellsLin_{1.0}, cymLin_{1.0};
+    double shellsLin_{1.0}, cymLin_{1.0}, percLin_{1.0};
     double lastAir_{-99.0};
     int ohMax_{24}, ohPos_{0};
     int64_t sampleCtr_{0};
@@ -1480,6 +1571,10 @@ private:
     // muestras
     JwSampler::Sampler sam_[kNumBus];   // (el hueco kBusToms no se usa: los toms tienen un sampler cada uno)
     JwSampler::Sampler tomSam_[kNumToms], rimSam_;
+    JwSampler::Sampler auxPerc_;           // banco de percusion auxiliar (drum-kits/percusion), cargado en paralelo al kit
+    int lastKitIdx_{-1};
+    bool kitMd_{true};     // el kit activo es el MuldjordKit (calibracion de cuerpo y pegada de caja y toms)
+    std::atomic<bool> slugPend_{false};
     // v3: cuerpo y pegada de caja y toms
     BiquadCoefs snC_[kSnEq], tmC_[kNumToms][kTmEq], tmRes_[kNumToms];
     SEq snQ_[kSnEq], tmQ_[kNumToms][kTmEq], hpSnQ_, hpTmQ_;
@@ -1500,7 +1595,7 @@ private:
     bool samLoadStarted_{false};
     std::array<float, kChunk> tmpL_{}, tmpR_{};
     std::array<double, kChunk> sdL_{}, sdR_{};
-    double samGainCur_[kNumBus]{ 1, 1, 1, 1, 1 }, samGainTgt_[kNumBus]{ 1, 1, 1, 1, 1 };
+    double samGainCur_[kNumBus]{ 1, 1, 1, 1, 1, 1 }, samGainTgt_[kNumBus]{ 1, 1, 1, 1, 1, 1 };
     double tomHoldSec_{1.0}, lastSnapDb_{-99.0};
     int tomHold_[128]{};
     Rng hum_;
@@ -1527,6 +1622,8 @@ private:
     uint32_t hitCount_{0};
     int64_t orderCtr_{0};
     float hit_[kNumPads]{};
+    uint32_t listPub_{0};
+    KitService kit_;   // ULTIMO miembro: se destruye primero, su hilo deja de tocar los samplers antes de que desaparezcan
 };
 
 } // namespace JasWaveWorshipDrums

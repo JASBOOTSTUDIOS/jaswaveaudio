@@ -11,6 +11,7 @@
 #include "public.sdk/source/vst/hosting/eventlist.h"
 #include "public.sdk/source/vst/hosting/hostclasses.h"
 #include "public.sdk/source/vst/hosting/parameterchanges.h"
+#include "public.sdk/source/vst/utility/memoryibstream.h"
 #include "pluginterfaces/base/ipluginbase.h"
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
@@ -203,6 +204,42 @@ int main() {
         check(jc && jc->getMidiControllerAssignment(0, 0, 64, id) != kResultTrue, "IMidiMapping: CC64 sin asignar");
         check(hc.proc->getTailSamples() >= 48000 * 5, "cola >= 5 s", f2("%.0f muestras", double(hc.proc->getTailSamples())));
         hc.done();
+    }
+    // Estado: el kit elegido se guarda por nombre en un bloque extra tras los pares id/valor (y los estados antiguos, sin bloque, siguen cargando)
+    {
+        Host a; a.init(false);
+        auto* s0 = new ResizableMemoryIBStream();
+        a.comp->getState(s0);
+        const uint8* d0 = static_cast<const uint8*>(s0->getData());
+        const std::vector<uint8> base(d0, d0 + s0->getCursor());
+        s0->release();
+        check(!base.empty() && base.size() > 25 * 12, "estado: pares id/valor de los parametros", f2("%.0f bytes", double(base.size())));
+        auto cargar = [&](const std::vector<uint8>& bytes, std::vector<uint8>& out) {
+            Host b; b.init(false);
+            auto* in = new ResizableMemoryIBStream();
+            int32 w = 0;
+            in->write(const_cast<uint8*>(bytes.data()), static_cast<int32>(bytes.size()), &w);
+            in->rewind();
+            const bool ok = b.comp->setState(in) == kResultOk;
+            in->release();
+            auto* so = new ResizableMemoryIBStream();
+            b.comp->getState(so);
+            const uint8* d = static_cast<const uint8*>(so->getData());
+            out.assign(d, d + so->getCursor());
+            so->release();
+            b.done();
+            return ok;
+        };
+        std::vector<uint8> r0, r1;
+        check(cargar(base, r0) && r0 == base, "estado antiguo (sin kit guardado): carga y no escribe bloque extra");
+        const std::string ex = "kit=jazz-club";
+        std::vector<uint8> conKit = base;
+        const int32 magia = 0x4A575845, len = static_cast<int32>(ex.size());
+        conKit.insert(conKit.end(), reinterpret_cast<const uint8*>(&magia), reinterpret_cast<const uint8*>(&magia) + 4);
+        conKit.insert(conKit.end(), reinterpret_cast<const uint8*>(&len), reinterpret_cast<const uint8*>(&len) + 4);
+        conKit.insert(conKit.end(), ex.begin(), ex.end());
+        check(cargar(conKit, r1) && r1 == conKit, "estado con kit guardado por nombre: ida y vuelta identica", f2("%.0f bytes", double(r1.size())));
+        a.done();
     }
     // 40 voces de platos a la vez: sin NaN, pico acotado
     {

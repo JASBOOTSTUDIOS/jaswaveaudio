@@ -1,0 +1,428 @@
+{
+  "archivos": {
+    "verso-suave-cross-stick.mid": {
+      "id": "jw-worship-4-4-verso-suave-cross-stick",
+      "nombre": "Verso suave cross-stick",
+      "tempo": 74,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "verso",
+        "suave",
+        "cross-stick"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "verso-ride-y-campana.mid": {
+      "id": "jw-worship-4-4-verso-ride-y-campana",
+      "nombre": "Verso ride y campana",
+      "tempo": 72,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "verso",
+        "ride",
+        "campana-de-ride",
+        "cross-stick"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "verso-hi-hat-en-semicorcheas.mid": {
+      "id": "jw-worship-4-4-verso-hi-hat-en-semicorcheas",
+      "nombre": "Verso hi-hat en semicorcheas",
+      "tempo": 78,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "verso",
+        "hi-hat-16"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "pre-coro-en-crecimiento.mid": {
+      "id": "jw-worship-4-4-pre-coro-en-crecimiento",
+      "nombre": "Pre-coro en crecimiento",
+      "tempo": 76,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "pre-coro",
+        "crecimiento"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "coro-pleno.mid": {
+      "id": "jw-worship-4-4-coro-pleno",
+      "nombre": "Coro pleno",
+      "tempo": 76,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "coro",
+        "pleno"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "coro-abierto-en-ride.mid": {
+      "id": "jw-worship-4-4-coro-abierto-en-ride",
+      "nombre": "Coro abierto en ride",
+      "tempo": 76,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "coro",
+        "ride",
+        "abierto"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "coro-epico.mid": {
+      "id": "jw-worship-4-4-coro-epico",
+      "nombre": "Coro épico",
+      "tempo": 80,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "coro",
+        "epico",
+        "potente"
+      ],
+      "intensidad": 5,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "puente-con-crescendo.mid": {
+      "id": "jw-worship-4-4-puente-con-crescendo",
+      "nombre": "Puente con crescendo",
+      "tempo": 74,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "puente",
+        "crescendo",
+        "toms"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "puente-marcha-de-caja.mid": {
+      "id": "jw-worship-4-4-puente-marcha-de-caja",
+      "nombre": "Puente marcha de caja",
+      "tempo": 72,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "puente",
+        "crescendo",
+        "marcha"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "puente-tenso-con-campana.mid": {
+      "id": "jw-worship-4-4-puente-tenso-con-campana",
+      "nombre": "Puente tenso con campana",
+      "tempo": 70,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "puente",
+        "campana-de-ride",
+        "cross-stick"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "medio-tiempo-de-oracion.mid": {
+      "id": "jw-worship-4-4-medio-tiempo-de-oracion",
+      "nombre": "Medio tiempo de oración",
+      "tempo": 66,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "oracion",
+        "suave",
+        "medio-tiempo"
+      ],
+      "intensidad": 1,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "adoracion-con-pandereta.mid": {
+      "id": "jw-worship-4-4-adoracion-con-pandereta",
+      "nombre": "Adoración con pandereta",
+      "tempo": 68,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "adoracion",
+        "pandereta",
+        "suave"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "coro-con-palmas.mid": {
+      "id": "jw-worship-4-4-coro-con-palmas",
+      "nombre": "Coro con palmas",
+      "tempo": 78,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "coro",
+        "palmas",
+        "pop-worship"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-caja-al-cuarto.mid": {
+      "id": "jw-worship-4-4-fill-caja-al-cuarto",
+      "nombre": "Fill caja al cuarto",
+      "tempo": 74,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "caja",
+        "cuarto"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-redoble-de-caja.mid": {
+      "id": "jw-worship-4-4-fill-redoble-de-caja",
+      "nombre": "Fill redoble de caja",
+      "tempo": 74,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "redoble",
+        "caja"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-toms-bajando.mid": {
+      "id": "jw-worship-4-4-fill-toms-bajando",
+      "nombre": "Fill toms bajando",
+      "tempo": 74,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "toms",
+        "bajando"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-toms-subiendo.mid": {
+      "id": "jw-worship-4-4-fill-toms-subiendo",
+      "nombre": "Fill toms subiendo",
+      "tempo": 74,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "toms",
+        "subiendo"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "intro-con-hi-hat.mid": {
+      "id": "jw-worship-4-4-intro-con-hi-hat",
+      "nombre": "Intro con hi-hat",
+      "tempo": 74,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "intro",
+      "etiquetas": [
+        "intro"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "intro-con-toms.mid": {
+      "id": "jw-worship-4-4-intro-con-toms",
+      "nombre": "Intro con toms",
+      "tempo": 76,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "intro",
+      "etiquetas": [
+        "intro"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "intro-de-ride-y-campana.mid": {
+      "id": "jw-worship-4-4-intro-de-ride-y-campana",
+      "nombre": "Intro de ride y campana",
+      "tempo": 70,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "intro",
+      "etiquetas": [
+        "intro",
+        "ride",
+        "campana-de-ride"
+      ],
+      "intensidad": 1,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "final-con-crash.mid": {
+      "id": "jw-worship-4-4-final-con-crash",
+      "nombre": "Final con crash",
+      "tempo": 74,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "outro",
+      "etiquetas": [
+        "outro",
+        "final"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "final-suave.mid": {
+      "id": "jw-worship-4-4-final-suave",
+      "nombre": "Final suave",
+      "tempo": 68,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "outro",
+      "etiquetas": [
+        "outro",
+        "final",
+        "suave"
+      ],
+      "intensidad": 1,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "transicion-crescendo-al-coro.mid": {
+      "id": "jw-worship-4-4-transicion-crescendo-al-coro",
+      "nombre": "Transición crescendo al coro",
+      "tempo": 76,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "transicion",
+      "etiquetas": [
+        "transicion",
+        "crescendo",
+        "toms"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "transicion-al-puente.mid": {
+      "id": "jw-worship-4-4-transicion-al-puente",
+      "nombre": "Transición al puente",
+      "tempo": 72,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "transicion",
+      "etiquetas": [
+        "transicion",
+        "puente"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

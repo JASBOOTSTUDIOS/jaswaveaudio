@@ -31,7 +31,7 @@ public:
 
 protected:
     void prepare(double sr, int maxBlock) override { engine_.prepare(sr, maxBlock); }
-    void resetDsp() override { engine_.reset(); }
+    void resetDsp() override { engine_.reset(); engine_.kits().refresh(); }   // al activar: vuelve a leer la carpeta de kits (kits instalados desde la ultima vez)
     void updateParams() override {
         DrumSettings s;
         s.kickTuneHz = plainOf(kKickTune);
@@ -56,6 +56,8 @@ protected:
         s.tomsBody = plainOf(kTomsBody) / 100.0;
         s.snareTuneHz = plainOf(kSnareTune);
         s.tomsTuneCents = plainOf(kTomsTune);
+        s.percDb = plainOf(kPercLevel);
+        s.kitIndex = static_cast<int>(std::lround(plainOf(kKit)));
         s.bypass = boolOf(kBypass) || !licensed();     // sin licencia: silencio con fundido
         engine_.setSettings(s);
         fxp_.leer([this](uint32_t id) { return plainOf(id); });   // FX Rack comun
@@ -95,6 +97,9 @@ protected:
     }
     void render(const float*, const float*, float* oL, float* oR, int n, int off, ProcessData& d) override { renderT(oL, oR, n, off, d); }
     void render(const double*, const double*, double* oL, double* oR, int n, int off, ProcessData& d) override { renderT(oL, oR, n, off, d); }
+    // El kit se guarda tambien por nombre (slug): el orden de la lista de kits puede cambiar al instalar o quitar kits
+    std::string saveExtraState() override { const std::string k = engine_.kitSlug(); return k.empty() ? std::string() : "kit=" + k; }
+    void loadExtraState(const std::string& ex) override { if (ex.rfind("kit=", 0) == 0) engine_.setKitSlug(ex.substr(4)); }
     uint32 tailSamples() override { return fxp_.algunoActivo() ? kInfiniteTail : static_cast<uint32>(sr_ * 6.0); }   // el rack (reverb/delay) alarga la cola
 
 private:
@@ -119,6 +124,9 @@ public:
         P::secundaria(c, 1, kRoomBlend, L"ROOM BLEND");
         P::secundaria(c, 2, kRoomComp, L"ROOM COMP");
         P::salida(c, kBypass);
+        // v4: selector de kit (nombre del kit instalado) y nivel de la percusion auxiliar, bajo las perillas de la seccion de controles
+        c.dropdown(kKit, { 704.0f, 368.0f, 880.0f, 392.0f }, L"KIT");
+        c.knob(kPercLevel, 914.0f, 363.0f, JasWaveUI::KnobSize::Small, L"PERC");
         P::fader(c, kVolume, L"VOLUMEN");
         P::perillaSalida(c, 0, kShellsLevel, L"PARCHES");
         P::perillaSalida(c, 1, kCymbalLevel, L"PLATOS");
@@ -142,13 +150,14 @@ public:
         histPos_ = (histPos_ + 1) % kHist;
     }
     float outputLevel() const override { return meters_.level(); }
-    void drawPanels(JasWaveUI::Gfx& g, JasWaveUI::EditorContext&) override {
+    void drawPanels(JasWaveUI::Gfx& g, JasWaveUI::EditorContext& c) override {
         using namespace JasWaveUI;
         namespace P = Plantilla;
         const Rect v = P::kVisual;
         P::panelVisual(g, L"ESPECTRO OUT · KIT");
         meters_.drawLabels(g);
-        espectro_.dibujar(g, { v.l + 14.0f, v.t + 32.0f, v.r - 40.0f, v.b - 112.0f });
+        espectro_.dibujar(g, { v.l + 14.0f, v.t + 32.0f, v.r - 40.0f, v.b - 166.0f });
+        drawPiezas(g, c);
         drawKit(g, rectKit());
         // mini-panel: polifonía
         P::panelMedicion(g, L"POLIFONÍA");
@@ -163,6 +172,7 @@ public:
         swprintf_s(buf, L"%d / %d", voices_, maxVoices_);
         P::lectura(g, 0, 0, L"VOCES", buf, accent());
         P::lectura(g, 0, 1, L"MAPA", L"GM");
+        drawEstadoKit(g, c);
     }
     const wchar_t* footerId() const override { return L"com.jaswave.plugin.worship-drums"; }
 
@@ -182,6 +192,79 @@ public:
     void vizUp(const JasWaveUI::MouseEvent&, JasWaveUI::EditorContext&) override { padPulsado_ = -1; }
 
 private:
+    static std::wstring ancho(const std::string& u8) {
+        if (u8.empty()) return {};
+        const int n = MultiByteToWideChar(CP_UTF8, 0, u8.data(), static_cast<int>(u8.size()), nullptr, 0);
+        std::wstring w(static_cast<size_t>(std::max(0, n)), L'\0');
+        if (n > 0) MultiByteToWideChar(CP_UTF8, 0, u8.data(), static_cast<int>(u8.size()), &w[0], n);
+        return w;
+    }
+    // Piezas del kit (fila 1) y percusion auxiliar (fila 2): encendidas = hay muestra real (kit cargado o banco de percusion);
+    // las piezas del kit apagadas suenan con el modelo fisico; la percusion apagada no suena
+    void drawPiezas(JasWaveUI::Gfx& g, JasWaveUI::EditorContext& c) {
+        using namespace JasWaveUI;
+        if (!bus_) return;
+        struct Chip { const wchar_t* t; int notas[6]; };
+        static const Chip fila1[14] = {
+            { L"KICK", { 35, 36, -1 } }, { L"SNARE", { 38, -1 } }, { L"SIDE", { 37, -1 } }, { L"RIM", { 40, -1 } },
+            { L"TOMS", { 41, 43, 45, 47, 48, 50 } }, { L"HAT", { 42, 44, 46, -1 } }, { L"PEDAL", { 44, -1 } }, { L"OPEN", { 46, -1 } },
+            { L"RIDE", { 51, 59, -1 } }, { L"R.BELL", { 53, -1 } }, { L"CRASH", { 49, 57, -1 } }, { L"C.BELL", { 78, -1 } },
+            { L"SPLSH", { 55, -1 } }, { L"CHINA", { 52, -1 } } };
+        static const Chip fila2[14] = {
+            { L"CLAPS", { 39, -1 } }, { L"TAMB", { 54, -1 } }, { L"COWBL", { 56, -1 } }, { L"VIBSL", { 58, -1 } },
+            { L"BONGO", { 60, 61, -1 } }, { L"CONGA", { 62, 63, 64, -1 } }, { L"TIMBL", { 65, 66, -1 } }, { L"AGOGO", { 67, 68, -1 } },
+            { L"CABAS", { 69, -1 } }, { L"SHAKR", { 70, 82, -1 } }, { L"GUIRO", { 73, 74, -1 } }, { L"CLAVE", { 75, -1 } },
+            { L"WOOD", { 76, 77, -1 } }, { L"TRIAN", { 80, 81, -1 } } };
+        const auto kits = std::atomic_load(&bus_->kits);
+        const int sel = static_cast<int>(std::lround(c.params.plain(kKit)));
+        const int act = bus_->kitActivo.load(std::memory_order_relaxed);
+        const bool previa = kits && sel != act && sel >= 0 && sel < static_cast<int>(kits->kits.size());   // kit elegido que todavia carga: vista previa por kit.json
+        auto tiene = [&](int nota) {
+            const uint64_t bit = uint64_t(1) << (nota & 63);
+            const int w = nota >> 6;
+            if (bus_->maskPerc[w].load(std::memory_order_relaxed) & bit) return true;
+            if (previa) return kits->tieneNota(static_cast<size_t>(sel), nota);
+            return (bus_->maskKit[w].load(std::memory_order_relaxed) & bit) != 0;
+        };
+        const Rect v = Plantilla::kVisual;
+        const float w = (v.r - v.l - 28.0f) / 14.0f;
+        for (int fila = 0; fila < 2; ++fila) {
+            const Chip* ch = fila == 0 ? fila1 : fila2;
+            const float t = v.b - 146.0f + fila * 22.0f;
+            for (int i = 0; i < 14; ++i) {
+                bool on = false;
+                for (int k = 0; k < 6 && ch[i].notas[k] >= 0; ++k) if (tiene(ch[i].notas[k])) on = true;
+                const Rect r{ v.l + 14.0f + i * w + 1.0f, t, v.l + 14.0f + (i + 1) * w - 1.0f, t + 18.0f };
+                if (on) g.fillRect(r, accent().withAlpha(0.20f));
+                g.strokeRect(r, on ? accent().withAlpha(0.8f) : Pal::panelBorde, 1.0f);
+                g.text(ch[i].t, r, Font::Label, on ? accent() : (fila == 0 ? Pal::textoTenue : Pal::textoTenue.withAlpha(0.45f)), Align::Center);
+            }
+        }
+        // cabecera: kit activo y estilo
+        std::wstring cab = L"SIN BANCO \u00B7 MOTOR MODELADO";
+        if (kits && act >= 0 && act < static_cast<int>(kits->kits.size())) {
+            const KitInfo& k = kits->kits[static_cast<size_t>(act)];
+            cab = ancho(k.nombre) + (k.estilo.empty() ? L"" : L" \u00B7 " + ancho(k.estilo));
+        }
+        g.text(cab, { v.l + 230.0f, v.t + 10.0f, v.r - 14.0f, v.t + 28.0f }, Font::Label, Pal::textoTenue, Align::Right);
+    }
+    void drawEstadoKit(JasWaveUI::Gfx& g, JasWaveUI::EditorContext&) {
+        namespace P = JasWaveUI::Plantilla;
+        if (!bus_) return;
+        const auto kits = std::atomic_load(&bus_->kits);
+        const int act = bus_->kitActivo.load(std::memory_order_relaxed);
+        const bool hay = kits && act >= 0 && act < static_cast<int>(kits->kits.size());
+        std::wstring nombre = hay ? ancho(kits->kits[static_cast<size_t>(act)].nombre) : std::wstring(L"MODELADO");
+        if (nombre.size() > 11) nombre = nombre.substr(0, 10) + L"\u2026";
+        P::lectura(g, 1, 0, L"KIT", nombre.c_str(), accent());
+        static const wchar_t* const est[] = { L"MODELADO", L"CARGANDO", L"OK", L"NO EXISTE", L"ERROR" };
+        const int e = std::clamp(bus_->kitEstado.load(std::memory_order_relaxed), 0, 4);
+        wchar_t buf[40];
+        if (e == 2 && hay) swprintf_s(buf, L"OK %.0f MB", kits->kits[static_cast<size_t>(act)].tamanoMB);
+        else swprintf_s(buf, L"%s", est[e]);
+        P::lectura(g, 1, 1, L"BANCO", buf);
+    }
+
     static int notaDePad(int p, bool alt) {
         static const int notas[kNumPads] = { 36, 38, 41, 43, 45, 47, 48, 50, 42, 51, 49, 57, 55, 52 };
         if (p == 8 && alt) return 46;   // hi-hat abierto

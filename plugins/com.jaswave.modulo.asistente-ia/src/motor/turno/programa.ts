@@ -36,7 +36,7 @@ export function createAgenteTurnProgram(deps: { tienda: TiendaDAW }): TurnProgra
       const lc = (ctx.input.context ?? {}) as Partial<LegacyTurnContext>
       if (lc.assistantMsgId) updateMessageContent(ctx.run.conversationId, lc.assistantMsgId, '')
       // Una producción a medias no se repite sola: el usuario decide si la vuelve a lanzar.
-      if (ctx.input.kind === KIND_BANDA) return Promise.resolve({ status: 'completed', summary: 'La producción se interrumpió. Vuelve a pedirla cuando quieras.' })
+      if (ctx.input.kind === KIND_BANDA) return Promise.resolve({ status: 'completed', summary: 'La producción se interrumpió. Lo que ya estaba hecho se conserva: en el panel de la banda verás dónde se quedó y el botón Reanudar.' })
       return runTurnoAgente(ctx, deps.tienda)
     },
   }

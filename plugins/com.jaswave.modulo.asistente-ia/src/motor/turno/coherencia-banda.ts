@@ -107,6 +107,41 @@ const enRejilla = (b: number) => {
   return Math.min(r16, r3, r6) <= MARGEN_REJILLA
 }
 
+const sinAcentos = (t: string) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+
+/**
+ * Secciones de la hoja de ruta que a la pista de un músico todavía le faltan, o null si está completa.
+ * Qué se le exige: si su encargo nombra secciones («solo en el puente»), esas; si no, toda la canción salvo
+ * la intro y el outro (la base rítmica, también el outro). Una sección está cubierta si hay alguna nota en ella.
+ */
+export function seccionesFaltantes(st: ReturnType<TiendaDAW['obtenerEstado']>, hoja: HojaCoherencia, o: { pista: string; encargo: string }): string | null {
+  const q = o.pista.trim().toLowerCase()
+  const pista = ((st.project?.tracks ?? []) as unknown as Array<Pista & { id: string }>).find((t) => t.id === o.pista || t.nombre.trim().toLowerCase() === q)
+  if (!pista) return null
+  const num = Math.max(1, Math.round(hoja.numerador || Number(st.project?.timeSignature?.numerador ?? 4) || 4))
+  let compas = 0
+  const secciones = hoja.secciones.map((s) => {
+    const r = { nombre: s.nombre, desde: compas, hasta: compas + s.compases }
+    compas += s.compases
+    return r
+  })
+  if (secciones.length < 2) return null
+  const encargo = sinAcentos(o.encargo)
+  const nombradas = secciones.filter((s) => {
+    const base = sinAcentos(s.nombre).replace(/[\s\d]+$/g, '').trim()
+    return base.length >= 3 && encargo.includes(base)
+  })
+  const texto = `${pista.nombre} ${(pista.plugins ?? []).map((p) => p.nombre ?? '').join(' ')}`
+  const base = /bater|drum|percus|kit|bajo|bass/i.test(texto)
+  const exigidas = !base && nombradas.length ? nombradas : base ? secciones.slice(1) : secciones.slice(1, -1)
+  const notas: Nota[] = []
+  for (const c of pista.clips ?? []) for (const n of c.notas ?? []) notas.push({ pitch: n.pitch, inicio: c.inicio + n.inicio, duracion: n.duracion })
+  const faltan = exigidas.filter((s) => !notas.some((n) => n.inicio < s.hasta * num && n.inicio + n.duracion > s.desde * num))
+  if (!faltan.length) return null
+  const lista = faltan.map((s) => `${s.nombre} (compases ${s.desde + 1}–${s.hasta}, beat ${s.desde * num}, ${(s.hasta - s.desde) * num} beats)`).join('; ')
+  return `en «${pista.nombre}» no hay notas en: ${lista}. Cada sección es un clip que empieza en su beat con la duración indicada.`
+}
+
 export function analizarCoherencia(st: ReturnType<TiendaDAW['obtenerEstado']>, hoja: HojaCoherencia): MedicionQA {
   const num = Math.max(1, Math.round(hoja.numerador || Number(st.project?.timeSignature?.numerador ?? 4) || 4))
   // Acorde de cada compás e inicio de cada sección.
@@ -200,7 +235,10 @@ export function analizarCoherencia(st: ReturnType<TiendaDAW['obtenerEstado']>, h
       const acorde = acordes[c]
       const clase = pc(n.pitch)
       // Las extensiones (9.ª y 6.ª/13.ª) cuentan como color del acorde en los instrumentos armónicos y melódicos.
-      const delAcorde = acorde ? acorde.notas.has(clase) || (!p.bajo && (clase === pc(acorde.raiz + 2) || clase === pc(acorde.raiz + 9))) : true
+      const delAcorde = acorde
+        ? acorde.notas.has(clase) ||
+          (!p.bajo && (clase === pc(acorde.raiz + 2) || clase === pc(acorde.raiz + 9) || (acorde.notas.has(pc(acorde.raiz + 3)) && clase === pc(acorde.raiz + 5))))
+        : true
       if (escala && !escala.has(clase) && !delAcorde && n.duracion >= 0.5) fueraTono.push(c + 1)
       const tiempoFuerte = n.inicio - c * num < 0.125
       if (acorde && tiempoFuerte && n.duracion >= 1 && !delAcorde) fueraAcorde.push(c + 1)
@@ -231,3 +269,34 @@ export function analizarCoherencia(st: ReturnType<TiendaDAW['obtenerEstado']>, h
 
   return { ok: detalles.length === 0, detalles: detalles.slice(0, MAX_DETALLES) }
 }
+
+/**
+ * Diagnóstico inmediato de la pista de un músico, para el resultado de cada escritura (como los errores del
+ * compilador en un IDE): qué secciones de la hoja de ruta le faltan, cuántas duraciones y velocidades distintas
+ * tiene (aviso de parte «cuadrada») y los defectos de tiempo, armonía y rejilla de SU pista. Determinista y corto
+ * (≤ ~700 caracteres): el modelo corrige en el mismo paso y no hacen falta rondas de QA ni de arreglista por esto.
+ */
+export function diagnosticoEscritura(st: ReturnType<TiendaDAW['obtenerEstado']>, hoja: HojaCoherencia, o: { pista: string; encargo: string }): string | null {
+  const q = o.pista.trim().toLowerCase()
+  const tracks = (st.project?.tracks ?? []) as unknown as Array<Pista & { id: string }>
+  const pista = tracks.find((t) => t.id === o.pista || t.nombre.trim().toLowerCase() === q)
+  if (!pista) return null
+  const notas = (pista.clips ?? []).flatMap((c) => (c.notas ?? []) as Array<{ duracion: number; velocidad?: number }>)
+  if (!notas.length) return null
+  const falta = seccionesFaltantes(st, hoja, o)
+  const duraciones = new Set(notas.map((n) => Math.round(n.duracion * 8) / 8)).size
+  const vel = notas.map((n) => n.velocidad).filter((v): v is number => typeof v === 'number')
+  const stats = `${notas.length} notas, ${duraciones} duraciones distintas${vel.length ? `, velocidades ${Math.min(...vel)}–${Math.max(...vel)}` : ''}`
+  const solo = { ...st, project: { ...st.project, tracks: [pista] } } as unknown as typeof st
+  const defectos = analizarCoherencia(solo, hoja).detalles.slice(0, 3)
+  const cuadrada = duraciones <= 2 && notas.length >= 12
+  // Sin defectos: una línea corta (el resultado se queda en el historial del agente hasta el final de su turno).
+  if (!falta && !defectos.length && !cuadrada) return `Diagnóstico: sin defectos medidos (${stats}); todas las secciones exigidas cubiertas.`
+  const lineas = [`Diagnóstico de tu pista (${stats}):`]
+  if (falta) lineas.push(`faltan secciones: ${falta.replace(/^en «[^»]*» no hay notas en: /, '').replace(/. Cada sección es un clip.*$/, '')}.`)
+  if (cuadrada) lineas.push('parte «cuadrada»: varía duraciones y velocidades.')
+  for (const d of defectos) lineas.push(d.length > 240 ? `${d.slice(0, 239)}…` : d)
+  return lineas.join(' ').slice(0, 900)
+}
+
+export { MAYOR, MENOR }

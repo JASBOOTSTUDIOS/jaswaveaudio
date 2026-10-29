@@ -36,6 +36,7 @@ using namespace Steinberg;
 using namespace Steinberg::Vst;
 
 constexpr int32 kStateMagic = 0x4A575354; // 'JWST'
+constexpr int32 kExtraMagic = 0x4A575845; // 'JWXE': bloque de estado extra opcional tras los pares
 constexpr int32 kStateVersion = 2;        // v2: pares (id, normalizado); v1: valores en orden de tabla
 
 // ---- Descriptor de producto (manifiesto V5 ⇄ código) ----
@@ -342,6 +343,16 @@ public:
     tresult PLUGIN_API setState(IBStream* state) SMTG_OVERRIDE {
         std::vector<double> n = norm_;
         if (!readStateInto(state, table_, n, legacyState())) return kResultFalse;
+        // Estado extra opcional (cadena propia del plugin tras los pares id/valor; los plugins que no lo usan no escriben nada)
+        {
+            IBStreamer s(state, kLittleEndian);
+            int32 m = 0, len = 0;
+            if (s.readInt32(m) && m == kExtraMagic && s.readInt32(len) && len > 0 && len < 65536) {
+                std::string ex(static_cast<size_t>(len), '\0');
+                int32 got = 0;
+                if (state->read(&ex[0], len, &got) == kResultOk && got == len) loadExtraState(ex);
+            }
+        }
         // Se aplica en el siguiente process() (el host serializa setState con process)
         norm_ = n;
         paramsDirty_ = true;
@@ -350,6 +361,14 @@ public:
     tresult PLUGIN_API getState(IBStream* state) SMTG_OVERRIDE {
         if (!state) return kResultFalse;
         writeState(state, table_, norm_);
+        const std::string ex = saveExtraState();
+        if (!ex.empty() && ex.size() < 65536) {
+            IBStreamer s(state, kLittleEndian);
+            s.writeInt32(kExtraMagic);
+            s.writeInt32(static_cast<int32>(ex.size()));
+            int32 w = 0;
+            state->write(const_cast<char*>(ex.data()), static_cast<int32>(ex.size()), &w);
+        }
         return kResultOk;
     }
 
@@ -408,6 +427,9 @@ protected:
     virtual uint32 latencySamples() { return 0; }
     virtual uint32 tailSamples() { return static_cast<uint32>(sr_ * 0.25); }
     virtual LegacyStateFn legacyState() { return nullptr; }
+    // Estado extra opcional (p. ej. el kit de la bateria por nombre): se guarda tras los pares id/valor; vacio = no escribe nada
+    virtual std::string saveExtraState() { return {}; }
+    virtual void loadExtraState(const std::string&) {}
     virtual void writeOutputParams(ProcessData&) {}
     // Efectos MIDI (PluginDescriptor::midiFx): reescribir data.inputEvents / inputParameterChanges en data.outputEvents.
     // Se llama una vez por bloque, antes del audio, con los offsets de muestra del bloque completo.

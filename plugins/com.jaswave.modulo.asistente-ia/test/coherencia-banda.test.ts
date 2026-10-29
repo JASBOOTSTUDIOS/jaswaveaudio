@@ -4,7 +4,7 @@
 import '../../sdk/host-sdk/pruebas/instalar'
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { analizarCoherencia, parsearAcorde, parsearTonalidad, type HojaCoherencia } from '../src/motor/turno/coherencia-banda'
+import { analizarCoherencia, parsearAcorde, parsearTonalidad, seccionesFaltantes, type HojaCoherencia } from '../src/motor/turno/coherencia-banda'
 
 type N = { pitch: number; inicio: number; duracion: number }
 const clip = (inicio: number, duracion: number, notas: N[]) => ({ id: `c${inicio}`, nombre: `clip ${inicio}`, inicio, duracion, notas })
@@ -33,6 +33,41 @@ const bajoCoro = [
   { pitch: 49, inicio: 4, duracion: 2 },
   { pitch: 49, inicio: 6, duracion: 2 },
 ]
+
+describe('completitud de la parte de un músico', () => {
+  // Intro 2 · Verso 2 · Coro 2 · Puente 2 · Outro 2 (4/4: cada sección son 8 beats)
+  const hoja: HojaCoherencia = {
+    tonalidad: 'Re mayor',
+    numerador: 4,
+    secciones: ['Intro', 'Verso', 'Coro', 'Puente', 'Outro'].map((nombre) => ({ nombre, compases: 2, acordes: ['D', 'G'] })),
+  }
+  const nota = [{ pitch: 60, inicio: 0, duracion: 1 }]
+  const conClips = (nombre: string, inicios: number[]) => estado([{ nombre, clips: inicios.map((i) => clip(i, 8, nota)) }])
+
+  it('dice qué secciones faltan y en qué beat empiezan', () => {
+    const msg = seccionesFaltantes(conClips('Piano', [8]), hoja, { pista: 'Piano', encargo: 'acompaña el piano' })!
+    assert.match(msg, /Coro \(compases 5–6, beat 16, 8 beats\)/)
+    assert.match(msg, /Puente \(compases 7–8, beat 24/)
+    assert.doesNotMatch(msg, /Verso|Intro|Outro/)
+  })
+
+  it('una parte completa no devuelve nada; intro y outro son opcionales salvo para la base rítmica', () => {
+    assert.equal(seccionesFaltantes(conClips('Piano', [8, 16, 24]), hoja, { pista: 'Piano', encargo: 'piano' }), null)
+    const bateria = seccionesFaltantes(conClips('Batería', [8, 16, 24]), hoja, { pista: 'Batería', encargo: 'batería' })!
+    assert.match(bateria, /Outro/)
+    assert.equal(seccionesFaltantes(conClips('Batería', [8, 16, 24, 32]), hoja, { pista: 'Batería', encargo: 'batería' }), null)
+  })
+
+  it('si el encargo nombra secciones, solo se exigen esas', () => {
+    assert.equal(seccionesFaltantes(conClips('Lead', [24]), hoja, { pista: 'Lead', encargo: 'un lead de sinte solo en el puente' }), null)
+    assert.match(seccionesFaltantes(conClips('Lead', [8]), hoja, { pista: 'Lead', encargo: 'un lead de sinte solo en el puente' })!, /Puente/)
+  })
+
+  it('pista desconocida o hoja de una sola sección: no mide', () => {
+    assert.equal(seccionesFaltantes(conClips('Piano', []), hoja, { pista: 'Otra', encargo: '' }), null)
+    assert.equal(seccionesFaltantes(conClips('Piano', []), { ...hoja, secciones: [hoja.secciones[0]!] }, { pista: 'Piano', encargo: '' }), null)
+  })
+})
 
 describe('coherencia de la banda', () => {
   it('entiende tonalidades y cifrados', () => {

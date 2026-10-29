@@ -1919,4 +1919,11 @@ Detalle completo en [`plugins/samples/LICENCIAS-SAMPLES.md`](plugins/samples/LIC
 
 - «Salamander Grand Piano V3», Alexander Holm, CC BY 3.0 (modificadas).
 - «MuldjordKit», Lars Muldjord, CC BY 4.0 (modificadas).
+- «Naked Drums», Wilkinson Audio (SFZ: kinwie), CC BY 4.0 (modificadas: mezcla de micrófonos, normalización, recorte, PCM 16 bits).
+- «DRSKit», equipo DrumGizmo (Lars Muldjord, Bent Bisballe Nyeng) y Jes Eiler (DRSDrums), port SFZ de kinwie, CC BY 4.0 (modificadas).
+- «Virtuosity Drums», Versilian Studios; «Swirly Drums» y «Big Rusty Drums», Karoryfer Samples; percusión de VCSL (Versilian Community Sample Library),
+  FreePats World Percussion y body_percussion: CC0 1.0.
+- Texto de crédito para «Acerca de»: «Baterías: MuldjordKit (Lars Muldjord), Naked Drums (Wilkinson Audio) y DRSKit (DrumGizmo y Jes Eiler), CC BY 4.0,
+  modificadas; Virtuosity Drums (Versilian Studios), Swirly Drums y Big Rusty Drums (Karoryfer Samples), VCSL, FreePats World Percussion y
+  body_percussion, CC0.»
 - Bajo, guitarra y pads de FreePats, y VSCO 2 Community Edition: CC0 1.0.

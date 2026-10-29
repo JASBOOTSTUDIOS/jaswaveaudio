@@ -373,7 +373,7 @@ static void testFxRack(bool conSamples) {
         int propios = 0; bool sinColision = true;
         for (const auto& d : defs) if (d.id < kBase) { ++propios; if (d.id != static_cast<uint32_t>(propios - 1)) sinColision = false; }
         std::printf("    parametros propios de la bateria: %d (ids 0..%d contiguos, sin colision con >= %u)\n", propios, propios - 1, kBase);
-        CHECK(propios == 23 && sinColision, "los 20 parametros propios de la bateria cambiaron (%d)", propios);
+        CHECK(propios == 25 && sinColision, "los 25 parametros propios de la bateria cambiaron (%d)", propios);
     }
 
     // ---- 7.1 neutralidad bit a bit en el motor (rack apagado == salida previa del plugin) ----
@@ -1098,7 +1098,7 @@ static int sampledTest(const char* wavPath) {
         check(peakOf(o) > 0.02, "cross-stick 37 (modelado) suena", fmt("pico=%.3f", peakOf(o)));
         int leaks = 0;
         for (int n = 0; n < 128; ++n) {
-            if (elementForNote(n) >= 0) continue;
+            if (elementForNote(n) >= 0 || WorshipDrumsEngine::isAuxNote(n)) continue;   // las notas de percusion auxiliar suenan si hay banco de percusion instalado (ver suite K)
             Out q = renderEvents(SR, 4800, { { 0, n, 1.0f } }, 512);
             if (peakOf(q) != 0.0) ++leaks;
         }
@@ -1238,7 +1238,7 @@ static int sampledTest(const char* wavPath) {
               fmt("tape=%.0f comp=%.0f smooth=%.0f", def(kTape), def(kBusComp), def(kSmooth)));
         check(def(kRoomBlend) >= 40.0 && def(kTomsDamp) <= 30.0, "room generoso y toms con cola natural por defecto", fmt("room=%.0f damp=%.0f", def(kRoomBlend), def(kTomsDamp)));
         size_t nPropios = 0; for (const auto& d : defs) if (d.id < JasWaveFx::kBase) ++nPropios;   // ids >= 100: FX Rack comun
-        check(nPropios == 23 && defs[kCloseLevel].id == 15 && defs[kAmbLevel].id == 16 && defs[kSmooth].id == 14 && defs[kShellBody].id == 17 && defs[kTomsTune].id == 22, "ids nuevos (15, 16 y 17..22) al final; los anteriores no cambian");
+        check(nPropios == 25 && defs[kKit].id == 23 && defs[kPercLevel].id == 24 && defs[kCloseLevel].id == 15 && defs[kAmbLevel].id == 16 && defs[kSmooth].id == 14 && defs[kShellBody].id == 17 && defs[kTomsTune].id == 22, "ids nuevos (15, 16, 17..22, Drum Kit 23 y Percusion Level 24) al final; los anteriores no cambian");
         bool seq = true; for (size_t i = 0; i < nPropios; ++i) seq = seq && defs[i].id == i;
         check(seq, "ids de parametros contiguos 0..22");
         for (int note : { 36, 35 }) {
@@ -1548,6 +1548,367 @@ static int sampledTest(const char* wavPath) {
     return g_fail ? 1 : 0;
 }
 
+// =====================================================================================
+//  K. Kits de bateria y percusion auxiliar (v4). Bancos .jws SINTETICOS (senos con caida) creados en una carpeta temporal con el
+//  mismo formato y la misma estructura de carpetas que los bancos reales de L1 (drum-kits/<slug>/<slug>.jws + kit.json).
+// =====================================================================================
+#include <filesystem>
+
+struct SynZ { int note; double hz; double sec; int group; int offBy; };
+
+static void escribirJws(const std::filesystem::path& p, const std::vector<SynZ>& zs) {
+    const uint32_t n = static_cast<uint32_t>(zs.size());
+    std::vector<unsigned char> tabla(static_cast<size_t>(n) * 64, 0);
+    std::vector<int16_t> pcm;
+    for (uint32_t i = 0; i < n; ++i) {
+        const SynZ& z = zs[i];
+        unsigned char* r = tabla.data() + static_cast<size_t>(i) * 64;
+        const uint32_t frames = static_cast<uint32_t>(z.sec * 44100.0), sr = 44100;
+        const uint64_t off = static_cast<uint64_t>(pcm.size()) * 2;
+        r[0] = r[1] = r[2] = static_cast<unsigned char>(z.note);
+        r[3] = 1; r[4] = 127; r[5] = 0; r[6] = 1; r[7] = 1;
+        std::memcpy(r + 8, &sr, 4); std::memcpy(r + 12, &frames, 4);
+        const float zero = 0.f, rel = 0.35f;
+        std::memcpy(r + 24, &zero, 4); std::memcpy(r + 28, &zero, 4); std::memcpy(r + 32, &rel, 4); std::memcpy(r + 36, &zero, 4);
+        std::memcpy(r + 40, &off, 8);
+        r[48] = static_cast<unsigned char>(z.group); r[49] = static_cast<unsigned char>(z.offBy); r[50] = 0;
+        const double tau = z.sec / 6.9;   // -60 dB al final
+        for (uint32_t k = 0; k < frames; ++k) {
+            const double t = k / 44100.0;
+            const double a = 0.5 * std::exp(-t / tau) * std::min(1.0, k / 40.0);
+            pcm.push_back(static_cast<int16_t>(std::lround(a * std::sin(2.0 * kPi * z.hz * t) * 32767.0)));
+        }
+    }
+    FILE* f = nullptr;
+    fopen_s(&f, p.string().c_str(), "wb");
+    if (!f) return;
+    unsigned char hdr[32] = { 'J', 'W', 'S', '1' };
+    const uint32_t cab[4] = { 1u, n, 64u, 32u + n * 64u };
+    std::memcpy(hdr + 4, cab, 16);
+    std::fwrite(hdr, 1, 32, f);
+    std::fwrite(tabla.data(), 1, tabla.size(), f);
+    std::fwrite(pcm.data(), 2, pcm.size(), f);
+    std::fclose(f);
+}
+static void escribirKitJson(const std::filesystem::path& dir, const std::string& slug, const std::string& nombre, const std::string& estilo, const std::vector<SynZ>& zs) {
+    std::string notas;
+    for (size_t i = 0; i < zs.size(); ++i) notas += (i ? "," : "") + std::to_string(zs[i].note);
+    std::string js = "{\"slug\":\"" + slug + "\",\"nombre\":\"" + nombre + "\",\"estilo\":\"" + estilo + "\",\"autor\":\"Prueba\",\"licencia\":\"CC0\",\"enlaceLicencia\":\"\","
+                     "\"creditos\":\"sintetico\",\"fuente\":\"render_test\",\"notas\":[" + notas + "],\"tamanoMB\":1.0}";
+    FILE* f = nullptr;
+    fopen_s(&f, (dir / "kit.json").string().c_str(), "wb");
+    if (f) { std::fwrite(js.data(), 1, js.size(), f); std::fclose(f); }
+}
+static void crearKit(const std::filesystem::path& raiz, const std::string& slug, const std::string& nombre, const std::string& estilo, const std::vector<SynZ>& zs) {
+    const auto d = raiz / "drum-kits" / slug;
+    std::filesystem::create_directories(d);
+    escribirJws(d / (slug + ".jws"), zs);
+    escribirKitJson(d, slug, nombre, estilo, zs);
+}
+
+static std::unique_ptr<WorshipDrumsEngine> motorKit(double sr, const DrumSettings& st, bool esperar = true) {
+    std::unique_ptr<WorshipDrumsEngine> e(new WorshipDrumsEngine());
+    e->prepare(sr, 512);
+    e->setSettings(st);
+    e->prepare(sr, 512);
+    if (esperar) e->kits().waitIdle(8000);
+    return e;
+}
+static Out golpe(WorshipDrumsEngine& e, int nota, float vel, double seg, double sr = 48000.0) {
+    e.reset();   // sin colas de golpes anteriores (los bancos cargados se conservan)
+    return renderEvents(sr, int64_t(seg * sr), { { 0, nota, vel } }, 256, nullptr, nullptr, &e);
+}
+
+static void testKits() {
+    namespace fs = std::filesystem;
+    const double SR = 48000.0;
+    std::printf("== K. Kits de bateria y percusion auxiliar (bancos sinteticos en carpeta temporal) ==\n");
+    std::string envOrig; { const char* e0 = std::getenv("JASWAVE_SAMPLES_DIR"); if (e0) envOrig = e0; }
+    const fs::path raiz = fs::temp_directory_path() / ("jw_drum_kits_" + std::to_string(GetCurrentProcessId()));
+    std::error_code ec;
+    fs::remove_all(raiz, ec);
+    fs::create_directories(raiz / "vacio");
+    fs::create_directories(raiz / "con-kits");
+
+    // ---- K1. sin ningun kit: el motor modelado sigue sonando como siempre ----
+    _putenv_s("JASWAVE_SAMPLES_DIR", (raiz / "vacio").string().c_str());
+    {
+        auto e = motorKit(SR, DrumSettings{});
+        check(e->kits().list() && e->kits().list()->kits.empty(), "K1 sin kits: la lista esta vacia");
+        check(!e->samplerReady() && e->kits().activeIndex() == -1, "K1 sin kits: ningun banco cargado (suena el motor modelado)");
+        for (int n : { 36, 38, 46, 53, 78 }) {
+            Out o = golpe(*e, n, 0.9f, 1.0);
+            check(finiteAll(o) && peakOf(o) > 0.02, ("K1 nota " + std::to_string(n) + " suena con el modelo fisico sin bancos").c_str(), fmt("pico %.3f", peakOf(o)));
+        }
+        for (int n : { 39, 54, 56, 64, 70, 81 }) {
+            Out o = golpe(*e, n, 0.9f, 0.3);
+            check(peakOf(o) == 0.0, ("K1 percusion auxiliar " + std::to_string(n) + " sin banco: silencio").c_str());
+        }
+    }
+
+    // ---- bancos sinteticos ----
+    const fs::path S = raiz / "con-kits";
+    escribirJws(S / "worship-drums.jws", { { 36, 70, 1.0, 0, 0 }, { 51, 2000, 1.5, 0, 0 }, { 42, 3300, 0.3, 2, 0 }, { 46, 3400, 3.0, 0, 2 }, { 49, 5200, 3.0, 0, 0 } });
+    const std::vector<SynZ> kitA = { { 36, 60, 1.0, 0, 0 }, { 42, 3000, 0.3, 2, 0 }, { 44, 2800, 0.2, 2, 0 }, { 46, 3200, 3.0, 0, 2 }, { 49, 5000, 3.0, 0, 0 }, { 51, 3000, 1.5, 0, 0 } };
+    const std::vector<SynZ> kitB = { { 36, 90, 1.0, 0, 0 }, { 42, 3500, 0.3, 2, 0 }, { 44, 3300, 0.2, 2, 0 }, { 46, 3700, 3.0, 0, 2 }, { 49, 5500, 3.0, 0, 0 },
+                                     { 51, 4500, 1.5, 0, 0 }, { 53, 6000, 1.5, 0, 0 }, { 78, 7000, 2.0, 0, 0 }, { 56, 900, 0.8, 0, 0 } };
+    std::vector<SynZ> perc = { { 39, 1200, 0.4, 0, 0 }, { 54, 5200, 0.8, 0, 0 }, { 56, 700, 0.8, 0, 0 }, { 58, 350, 1.0, 0, 0 }, { 73, 2200, 0.4, 0, 0 },
+                               { 75, 1700, 0.3, 0, 0 }, { 76, 1000, 0.3, 0, 0 }, { 78, 2600, 2.0, 0, 0 }, { 80, 4300, 0.3, 4, 0 }, { 81, 4300, 3.0, 0, 4 }, { 82, 6500, 0.5, 0, 0 } };
+    for (int n = 60; n <= 70; ++n) perc.push_back({ n, 400.0 + 25.0 * (n - 60), 0.6, 0, 0 });
+    crearKit(S, "kita", "Kit A", "jazz", kitA);
+    crearKit(S, "kitb", "Kit B", "rock", kitB);
+    crearKit(S, "percusion", "Percusion", "auxiliar", perc);
+    _putenv_s("JASWAVE_SAMPLES_DIR", S.string().c_str());
+
+    // ---- K2. enumeracion de kits (kit.json) y etiquetas del parametro ----
+    {
+        auto e = motorKit(SR, DrumSettings{});
+        const auto L = e->kits().list();
+        check(L && L->kits.size() == 3 && L->hayPercusion, "K2 3 kits (muldjord + 2) y banco de percusion detectados", fmt("%.0f kits", L ? L->kits.size() : 0));
+        if (L && L->kits.size() == 3) {
+            check(L->kits[0].slug == "muldjord" && L->kits[1].slug == "kita" && L->kits[2].slug == "kitb", "K2 orden: muldjord primero y el resto por slug");
+            check(L->kits[1].nombre == "Kit A" && L->kits[2].estilo == "rock" && L->kits[2].licencia == "CC0", "K2 kit.json: nombre, estilo y licencia");
+            check(L->tieneNota(2, 78) && !L->tieneNota(1, 78) && L->kits[2].notas.size() == kitB.size(), "K2 kit.json: lista de notas con muestras");
+            check(std::string(kitLabels().ptr[1]) == "Kit A" && std::string(kitLabels().ptr[2]) == "Kit B" && std::string(kitLabels().ptr[5]) == "Kit 6",
+                  "K2 las etiquetas del parametro Drum Kit salen de los nombres de kit.json");
+        }
+        check(paramDefs()[kKit].steps == kMaxKits - 1 && paramDefs()[kKit].labels == kitLabels().ptr, "K2 parametro Drum Kit: 16 posiciones con etiquetas dinamicas");
+        // ---- K3. el kit por defecto (indice 0) es el MuldjordKit historico ----
+        check(e->kits().activeIndex() == 0 && e->samplerReady(), "K3 por defecto carga el banco historico (indice 0 = muldjord)");
+        Out o = golpe(*e, 51, 0.9f, 1.5);
+        const double hz = peakHz(o, 2400, 1000, 9000, SR);
+        check(std::fabs(hz - 2000.0) < 60.0, "K3 el ride suena con el banco muldjord", fmt("pico %.0f Hz", hz));
+        // el banco de percusion se cargo en paralelo
+        { Out w = golpe(*e, 36, 0.5f, 0.1); (void)w; }
+        check(e->shellCalibrated(), "K3 con el MuldjordKit queda activo el cuerpo/pegada de caja y toms (calibrado con sus medidas)");
+        check((e->kits().maskPerc(0) >> 39 & 1) && (e->kits().maskPerc(1) >> (78 - 64) & 1), "K3 el banco de percusion se carga en paralelo al kit (notas 39 y 78)");
+    }
+
+    // ---- K4. cambio de kit en caliente: sin cortes ni clics ----
+    {
+        DrumSettings s1; s1.kitIndex = 1;
+        auto x = motorKit(SR, s1), y = motorKit(SR, s1);
+        check(x->kits().activeIndex() == 1 && y->kits().activeIndex() == 1, "K4 ambos motores parten del kit A");
+        const int blk = 256, total = static_cast<int>(3.0 * SR);
+        std::vector<float> lx(static_cast<size_t>(total)), rx(lx), ly(lx), ry(lx);
+        x->noteOn(49, 0.9f); y->noteOn(49, 0.9f);   // crash largo del kit A (5000 Hz); el kit B tiene un crash distinto (5500 Hz)
+        double maxDiff = 0.0; int cambioEn = -1;
+        for (int pos = 0; pos < total; pos += blk) {
+            const int n = std::min(blk, total - pos);
+            if (pos == 20 * blk) { DrumSettings s2 = s1; s2.kitIndex = 2; y->setSettings(s2); cambioEn = pos; }
+            x->render(lx.data() + pos, rx.data() + pos, n, nullptr);
+            y->render(ly.data() + pos, ry.data() + pos, n, nullptr);
+            if (pos == 20 * blk) y->kits().waitIdle(8000);   // el banco B se publica entre bloques (en el plugin llega a mitad de un bloque: igual de seguro)
+        }
+        for (int i = 0; i < total; ++i) maxDiff = std::max({ maxDiff, double(std::fabs(lx[size_t(i)] - ly[size_t(i)])), double(std::fabs(rx[size_t(i)] - ry[size_t(i)])) });
+        check(!y->shellCalibrated() && x->shellCalibrated() == false, "K4 con otros kits el cuerpo/pegada (calibrado con el MuldjordKit) se apaga: el banco suena tal cual");
+        check(y->kits().activeIndex() == 2, "K4 el kit B queda activo", fmt("activo %.0f", y->kits().activeIndex()));
+        check(maxDiff < 1.0e-6, "K4 las voces en curso terminan con el banco anterior: salida identica (sin corte ni clic)", fmt("dif max %.3g (cambio en la muestra %.0f)", maxDiff, cambioEn));
+        // golpes nuevos: ya con el banco nuevo
+        Out ox = golpe(*x, 51, 0.9f, 1.5), oy = golpe(*y, 51, 0.9f, 1.5);
+        const double hx = peakHz(ox, 2400, 1500, 9000, SR), hy = peakHz(oy, 2400, 1500, 9000, SR);
+        check(std::fabs(hx - 3000.0) < 80.0 && std::fabs(hy - 4500.0) < 100.0, "K4 los golpes nuevos suenan con el kit elegido (A 3000 Hz, B 4500 Hz)", fmt("%.0f / %.0f Hz", hx, hy));
+        // cambios rapidos repetidos durante un redoble: sin NaN, sin desbordes, sin clics fuera de los ataques
+        {
+            auto r = motorKit(SR, s1);
+            std::vector<Ev> evs;
+            for (int i = 0; i < 60; ++i) evs.push_back({ int64_t(i * 0.05 * SR), (i % 3 == 0) ? 36 : (i % 3 == 1 ? 42 : 51), 0.7f });
+            Out o; o.l.assign(size_t(3.5 * SR), 0.0f); o.r.assign(size_t(3.5 * SR), 0.0f);
+            std::sort(evs.begin(), evs.end(), [](const Ev& a, const Ev& b) { return a.at < b.at; });
+            size_t ei = 0; int64_t pos = 0; const int64_t tot = o.l.size(); bool ok = true;
+            std::vector<char> nearHit(o.l.size(), 0);
+            while (pos < tot) {
+                const int64_t n = std::min<int64_t>(240, tot - pos);
+                const int bloque = static_cast<int>(pos / 240);
+                if (bloque % 25 == 0) { DrumSettings s3 = s1; s3.kitIndex = 1 + ((bloque / 25) & 1); r->setSettings(s3); }
+                while (ei < evs.size() && evs[ei].at < pos + n) { r->noteOn(evs[ei].note, evs[ei].vel); for (int64_t k = 0; k < 288; ++k) if (evs[ei].at + k < tot) nearHit[size_t(evs[ei].at + k)] = 1; ++ei; }
+                r->render(o.l.data() + pos, o.r.data() + pos, static_cast<int>(n), nullptr);
+                pos += n;
+            }
+            ok = finiteAll(o) && peakOf(o) < 0.9801;
+            const double cr = clickRatio(o, nearHit);
+            check(ok && cr < 12.0, "K4 cambios de kit repetidos cada 0,125 s durante un redoble: finito, sin desbordes y sin clics", fmt("pico %.3f, paso/RMS %.2f", peakOf(o), cr));
+        }
+        // ---- K5. kit inexistente: se conserva el kit cargado ----
+        DrumSettings s9 = s1; s9.kitIndex = 9;
+        y->setSettings(s9);
+        y->kits().waitIdle(8000);
+        check(y->kits().estado() == KitService::NoExiste && y->kits().activeIndex() == 2, "K5 indice de kit inexistente: estado NoExiste y se conserva el kit B", fmt("estado %.0f", int(y->kits().estado())));
+        y->setKitSlug("no-existe");
+        y->kits().waitIdle(8000);
+        Out oy2 = golpe(*y, 51, 0.9f, 1.5);
+        check(y->kits().activeIndex() == 2 && std::fabs(peakHz(oy2, 2400, 1500, 9000, SR) - 4500.0) < 100.0 && peakOf(oy2) > 0.02, "K5 slug inexistente: el motor sigue sonando con el kit cargado");
+    }
+
+    // ---- K6. persistencia por nombre (estado del plugin) ----
+    {
+        auto e = std::make_unique<WorshipDrumsEngine>();
+        e->prepare(SR, 512);
+        e->setKitSlug("kitb");           // lo hace Processor::loadExtraState al abrir el proyecto
+        DrumSettings st; st.kitIndex = 0;   // el parametro guardado apunta a otro kit (la lista cambio)
+        e->setSettings(st);
+        e->kits().waitIdle(8000);
+        check(e->kits().activeIndex() == 2 && e->kitSlug() == "kitb", "K6 el kit guardado por nombre manda sobre el indice del parametro", fmt("activo %.0f", e->kits().activeIndex()));
+        st.kitIndex = 1; e->setSettings(st); e->kits().waitIdle(8000);
+        check(e->kits().activeIndex() == 1 && e->kitSlug() == "kita", "K6 despues, el parametro vuelve a mandar");
+    }
+
+    // ---- K7. percusion auxiliar y campanas ----
+    {
+        DrumSettings sb; sb.kitIndex = 2;
+        auto e = motorKit(SR, sb);
+        struct P { int nota; double hz; const char* nombre; };
+        const P tabla[] = { { 39, 1200, "palmas" }, { 54, 5200, "pandereta" }, { 56, 900, "cencerro (el del kit B manda sobre el de percusion)" }, { 58, 350, "vibraslap" },
+                            { 60, 400, "bongo alto" }, { 61, 425, "bongo bajo" }, { 62, 450, "conga" }, { 63, 475, "conga 2" }, { 64, 500, "conga 3" }, { 65, 525, "timbal" }, { 66, 550, "timbal 2" },
+                            { 67, 575, "agogo" }, { 68, 600, "agogo 2" }, { 69, 625, "cabasa" }, { 70, 650, "maracas" }, { 73, 2200, "guiro" }, { 75, 1700, "claves" },
+                            { 76, 1000, "woodblock" }, { 80, 4300, "triangulo mudo" }, { 81, 4300, "triangulo" }, { 82, 6500, "shaker" },
+                            { 53, 6000, "campana de ride (muestra real del kit)" }, { 78, 7000, "campana de crash (muestra real del kit)" } };
+        for (const P& p : tabla) {
+            Out o = golpe(*e, p.nota, 0.9f, 0.9);
+            const double hz = peakHz(o, 2400, std::max(200.0, p.hz * 0.6), std::min(20000.0, p.hz * 1.5), SR);
+            check(finiteAll(o) && peakOf(o) > 0.01 && std::fabs(hz - p.hz) < std::max(40.0, p.hz * 0.03), (std::string("K7 ") + std::to_string(p.nota) + " " + p.nombre).c_str(), fmt("pico %.3f a %.0f Hz", peakOf(o), hz));
+        }
+        // sin las campanas en el kit A: la 78 cae al banco de percusion y la 53 al modelo fisico (nunca falta)
+        DrumSettings sa; sa.kitIndex = 1;
+        e->setSettings(sa); e->kits().waitIdle(8000);
+        Out o78 = golpe(*e, 78, 0.9f, 1.2);
+        check(std::fabs(peakHz(o78, 2400, 1500, 4000, SR) - 2600.0) < 80.0, "K7 campana de crash sin muestra en el kit: suena la del banco de percusion (2600 Hz)");
+        Out o53 = golpe(*e, 53, 0.9f, 1.5);
+        check(!e->noteIsSampled(53) && finiteAll(o53) && peakOf(o53) > 0.02, "K7 campana de ride sin muestra en el kit: suena con el modelo fisico de platos (modo campana)", fmt("pico %.3f", peakOf(o53)));
+        // nivel propio de la percusion: -12 dB
+        auto ref = motorKit(SR, sb);
+        DrumSettings sl = sb; sl.percDb = -12.0;
+        auto baj = motorKit(SR, sl);
+        Out a = golpe(*ref, 62, 0.9f, 0.6), b = golpe(*baj, 62, 0.9f, 0.6);
+        const double dd = db(rmsRange(b, 0, int64_t(0.4 * SR))) - db(rmsRange(a, 0, int64_t(0.4 * SR)));
+        check(std::fabs(dd + 12.0) < 1.0, "K7 Percusion Level -12 dB baja la percusion 12 dB", fmt("%.2f dB", dd));
+        Out k1 = golpe(*ref, 36, 0.9f, 0.6), k2 = golpe(*baj, 36, 0.9f, 0.6);
+        check(std::fabs(db(rmsRange(k2, 0, int64_t(0.4 * SR))) - db(rmsRange(k1, 0, int64_t(0.4 * SR)))) < 0.2, "K7 Percusion Level no toca el nivel del kit");
+        // panoramica por pieza (conga 64 a la derecha, bongo 61 a la izquierda)
+        Out c64 = golpe(*ref, 64, 0.9f, 0.4), b61 = golpe(*ref, 61, 0.9f, 0.4);
+        auto lr = [&](const Out& o) { double l = 0, r = 0; for (int64_t i = 0; i < int64_t(0.15 * SR); ++i) { l += double(o.l[size_t(i)]) * o.l[size_t(i)]; r += double(o.r[size_t(i)]) * o.r[size_t(i)]; } return 10.0 * std::log10((r + 1e-12) / (l + 1e-12)); };
+        check(lr(c64) > 1.5 && lr(b61) < -1.0, "K7 pan por pieza: conga 64 a la derecha y bongo 61 a la izquierda", fmt("%.1f dB / %.1f dB (D/I)", lr(c64), lr(b61)));
+        // envio a la sala: con Room Blend al maximo la cola es mayor que con la sala apagada
+        DrumSettings r0 = sb, r1 = sb; r0.roomBlend = 0.0; r1.roomBlend = 1.0;
+        auto e0 = motorKit(SR, r0), e1 = motorKit(SR, r1);
+        Out q0 = golpe(*e0, 64, 0.9f, 2.5), q1 = golpe(*e1, 64, 0.9f, 2.5);
+        const double t0 = db(rmsRange(q0, int64_t(0.9 * SR), int64_t(1.8 * SR))), t1 = db(rmsRange(q1, int64_t(0.9 * SR), int64_t(1.8 * SR)));
+        check(t1 > t0 + 6.0 && t1 > -80.0, "K7 la percusion alimenta overheads y sala (cola con Room Blend 100 % >> 0 %)", fmt("%.1f dB vs %.1f dB", t1, t0));
+    }
+
+    // ---- K8. choke: hi-hat del kit (antes y despues de cambiar de kit) y triangulo del banco de percusion ----
+    {
+        auto choke = [&](WorshipDrumsEngine& e, int abierto, int cierre, double t60, const char* quien) {
+            auto fresh = [&]() { e.reset(); };
+            fresh();
+            Out solo = renderEvents(SR, int64_t(1.6 * SR), { { 100, abierto, 0.9f } }, 256, nullptr, nullptr, &e);
+            fresh();
+            Out con = renderEvents(SR, int64_t(1.6 * SR), { { 100, abierto, 0.9f }, { 100 + int64_t(0.5 * SR), cierre, 0.8f } }, 256, nullptr, nullptr, &e);
+            fresh();
+            const double a = db(rmsRange(solo, int64_t(0.9 * SR), int64_t(1.3 * SR))), b = db(rmsRange(con, int64_t(0.9 * SR), int64_t(1.3 * SR)));
+            (void)t60;
+            check(b < a - 12.0, quien, fmt("cola con choke %.1f dB vs abierto libre %.1f dB", b, a));
+        };
+        DrumSettings sa; sa.kitIndex = 1; sa.roomBlend = 0.0;   // sin sala: se mide el directo
+        auto e = motorKit(SR, sa);
+        choke(*e, 46, 42, 0.3, "K8 kit A: el hi-hat cerrado (42) corta al abierto (46)");
+        choke(*e, 46, 44, 0.2, "K8 kit A: el pedal (44) corta al abierto (46)");
+        sa.kitIndex = 2; e->setSettings(sa); e->kits().waitIdle(8000);
+        choke(*e, 46, 42, 0.3, "K8 tras cambiar al kit B: el cerrado (42) sigue cortando al abierto (46)");
+        choke(*e, 81, 80, 0.3, "K8 triangulo del banco de percusion: el mudo (80) corta al abierto (81)");
+    }
+
+    // ---- K9. CPU y polifonia con kit + percusion ----
+    {
+        DrumSettings sb; sb.kitIndex = 2;
+        auto e = motorKit(SR, sb);
+        std::vector<Ev> evs;
+        const int notas[] = { 36, 42, 46, 49, 51, 53, 78, 56, 39, 54, 58, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 73, 75, 76, 80, 81, 82 };
+        Rng r; r.seed(77);
+        const double dur = 6.0;
+        for (int i = 0; i < int(dur * 60); ++i) evs.push_back({ int64_t(i / 60.0 * SR), notas[(i * 7 + (i >> 3)) % 28], float(0.4 + 0.5 * std::fabs(r.bi())) });   // 60 golpes/s
+        const double t0 = threadCpuSeconds();
+        DrumBus bus;
+        Out o = renderEvents(SR, int64_t(dur * SR), evs, 512, nullptr, &bus, e.get());
+        const double cpu = (threadCpuSeconds() - t0) / dur * 100.0;
+        std::printf("  K9 60 golpes/s de kit + percusion durante %.0f s: CPU = %.2f %% de un nucleo, voces activas al final %d, pico %.3f\n", dur, cpu, e->activeVoices(), peakOf(o));
+        check(finiteAll(o) && peakOf(o) < 0.9801, "K9 sin NaN y pico < 0.98 con maxima densidad de percusion");
+        check(cpu < 15.0, "K9 CPU < 15 % de un nucleo con kit + percusion a 60 golpes/s", fmt("%.2f %%", cpu));
+        check(bus.kitActivo.load() == 2 && bus.kits && bus.kits->kits.size() == 3 && ((bus.maskKit[1].load() >> (78 - 64)) & 1) && (bus.maskPerc[0].load() >> 39 & 1),
+              "K9 el motor publica en el bus el catalogo, el kit activo y las notas con muestras (para el editor)");
+    }
+
+    // ---- K10. refrescar la lista: kit nuevo instalado sin reiniciar; nombres con tildes ----
+    {
+        DrumSettings sb; sb.kitIndex = 2;
+        auto e = motorKit(SR, sb);
+        crearKit(S, "kitc", "Kit \xC3\x91" "and\xC3\xBA", "indie con escobillas", { { 36, 100, 0.5, 0, 0 } });
+        e->kits().refresh();
+        e->kits().waitIdle(8000);
+        const auto L = e->kits().list();
+        check(L && L->kits.size() == 4 && L->kits[3].slug == "kitc" && L->kits[3].nombre == "Kit \xC3\x91" "and\xC3\xBA", "K10 refrescar detecta el kit nuevo (nombre UTF-8 con tildes)");
+        check(e->kits().activeIndex() == 2 && e->kitSlug() == "kitb", "K10 el kit activo conserva su posicion tras refrescar");
+        fs::remove_all(S / "drum-kits" / "kitc", ec);
+        e->kits().refresh(); e->kits().waitIdle(8000);
+        check(e->kits().list()->kits.size() == 3 && e->kits().activeIndex() == 2, "K10 refrescar tambien detecta un kit retirado");
+    }
+
+    _putenv_s("JASWAVE_SAMPLES_DIR", envOrig.empty() ? "__sin_samples__" : envOrig.c_str());
+    fs::remove_all(raiz, ec);
+}
+
+// Kits REALES instalados (%APPDATA%\JasWave\samples\drum-kits): groove + percusion por kit, niveles, notas sin muestra y CPU. Escribe un WAV por kit.
+static int testKitsReales(const char* outDir) {
+    const double SR = 48000.0;
+    std::printf("== Kits reales instalados: groove con percusion, niveles y CPU ==\n");
+    DrumSettings s0;
+    auto e0 = motorKit(SR, s0);
+    const auto L = e0->kits().list();
+    if (!L || L->kits.empty()) { std::printf("  no hay kits instalados\n"); return 0; }
+    std::printf("  %zu kits; banco de percusion: %s\n", L->kits.size(), L->hayPercusion ? "si" : "no");
+    const double bpm = 92.0, step = 60.0 / bpm / 4.0;
+    std::vector<Ev> evs;
+    auto add = [&](double stepIdx, int note, double vel) { evs.push_back({ int64_t((stepIdx * step) * SR) + 480, note, float(vel) }); };
+    for (int bar = 0; bar < 2; ++bar) {
+        const double o = bar * 16.0;
+        if (bar == 0) add(o, 49, 0.9); else add(o, 78, 0.85);
+        add(o, 36, 0.9); add(o + 6, 36, 0.6); add(o + 8, 36, 0.85); if (bar) add(o + 10, 36, 0.7);
+        add(o + 4, 38, 0.85); add(o + 12, 38, 0.9); add(o + 7, 38, 0.2);
+        for (int s = 0; s < 16; s += 2) { if (bar == 0) add(o + s, s == 14 ? 46 : 42, s % 4 ? 0.5 : 0.72); else add(o + s, 51, s % 4 ? 0.5 : 0.7); }
+        if (bar == 1) { add(o + 8, 53, 0.7); add(o + 12, 50, 0.8); add(o + 13, 48, 0.85); add(o + 14, 45, 0.85); add(o + 15, 43, 0.9); add(o + 15, 49, 0.9); }
+        // percusion auxiliar
+        add(o + 4, 39, 0.6); add(o + 12, 39, 0.65);
+        for (int s = 2; s < 16; s += 4) add(o + s, 54, 0.45);
+        add(o, 56, 0.7); add(o + 8, 56, 0.6);
+        for (int s = 1; s < 16; s += 2) add(o + s, 70, 0.3);
+        add(o + 3, 64, 0.7); add(o + 11, 62, 0.7); add(o + 7, 75, 0.7); add(o + 15, 76, 0.7); add(o + 9, 81, 0.6); add(o + 13, 80, 0.6); add(o + 5, 60, 0.6); add(o + 14, 61, 0.6);
+    }
+    const int64_t total = int64_t((32 * step + 3.5) * SR);
+    const int chk[] = { 36, 38, 40, 37, 41, 43, 45, 47, 48, 50, 42, 44, 46, 49, 51, 52, 53, 55, 57, 78, 39, 54, 56, 58, 60, 62, 64, 65, 67, 69, 70, 73, 75, 76, 80, 81 };
+    double refRms = 0.0;
+    for (size_t i = 0; i < L->kits.size(); ++i) {
+        DrumSettings s; s.kitIndex = static_cast<int>(i);
+        auto e = motorKit(SR, s);
+        Out o;
+        const double t0 = threadCpuSeconds();
+        o = renderEvents(SR, total, evs, 512, nullptr, nullptr, e.get());
+        const double cpu = (threadCpuSeconds() - t0) / (double(total) / SR) * 100.0;
+        const double rms = db(rmsRange(o, 0, total));
+        if (i == 0) refRms = rms;
+        std::string faltan, modeladas;
+        for (int n : chk) {
+            const bool tiene = e->noteHasSample(n);
+            if (!tiene) (WorshipDrumsEngine::isAuxNote(n) && n != 78 ? faltan : modeladas) += std::to_string(n) + " ";
+        }
+        std::printf("  %-11s activo=%d pico %.3f RMS %.1f dBFS (%+.1f dB vs %s) CPU %.2f %% | sin muestra (suenan modeladas): %s| percusion sin muestra (callan): %s\n",
+                    L->kits[i].slug.c_str(), e->kits().activeIndex(), peakOf(o), rms, rms - refRms, L->kits[0].slug.c_str(), cpu, modeladas.c_str(), faltan.c_str());
+        check(e->kits().activeIndex() == int(i) && finiteAll(o) && peakOf(o) < 0.9801 && peakOf(o) > 0.2, (L->kits[i].slug + ": groove con percusion finito, pico 0.2..0.98").c_str());
+        if (outDir) writeWav24((std::string(outDir) + "/" + L->kits[i].slug + "-plugin-groove.wav").c_str(), o, 48000);
+    }
+    std::printf("\n%s (%d fallos)\n", g_fail ? "FALLO" : "TODO OK", g_fail);
+    return g_fail ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "--hash") {   // utilidad: imprime el hash de referencia (modelado, o con el banco si se pasa --samples)
         ScopedNoDenormals nd0;
@@ -1573,6 +1934,13 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--samples") {
         const char* w = (argc > 1 && std::strncmp(argv[1], "--", 2) != 0) ? argv[1] : "worship_drums_samples_groove.wav";
         return sampledTest(w);
+    }
+    if (argc > 1 && std::string(argv[1]) == "--kits-reales") { ScopedNoDenormals ndr; return testKitsReales(argc > 2 ? argv[2] : nullptr); }
+    if (argc > 1 && std::string(argv[1]) == "--kits") {   // solo la suite de kits y percusion (bancos sinteticos)
+        ScopedNoDenormals ndk;
+        testKits();
+        std::printf("\n%s (%d fallos)\n", g_fail ? "FALLO" : "TODO OK", g_fail);
+        return g_fail ? 1 : 0;
     }
     // La suite modelada comprueba el motor sin banco: se aparta la carpeta de samples (el respaldo es el comportamiento probado).
 #ifdef _WIN32
@@ -1885,9 +2253,9 @@ int main(int argc, char** argv) {
     {
         const auto& defs = paramDefs();
         size_t propios = 0; for (const auto& d : defs) if (d.id < JasWaveFx::kBase) ++propios;   // los ids >= 100 son del FX Rack comun (seccion [7])
-        bool seq = propios == 23;
+        bool seq = propios == 25;
         for (size_t i = 0; i < propios; ++i) seq = seq && defs[i].id == i;
-        check(seq && defs[kCloseLevel].id == 15 && defs[kAmbLevel].id == 16, "23 parametros, ids contiguos; Close/Ambient mic level (15, 16) y cuerpo/pegada de caja y toms (17..22) al final");
+        check(seq && defs[kCloseLevel].id == 15 && defs[kAmbLevel].id == 16, "25 parametros, ids contiguos; Close/Ambient mic level (15, 16), cuerpo/pegada de caja y toms (17..22), Drum Kit (23) y Percusion Level (24) al final");
         check(defs[kKickTune].defV == kKickRefHz, "kick_tune por defecto = fundamental natural de la muestra", fmt("%.1f Hz", defs[kKickTune].defV));
         check(defs[kTape].defV <= 8.0 && defs[kBusComp].defV <= 20.0, "saturacion de cinta <= 8 % y compresion paralela <= 20 % por defecto");
         check(defs[kSmooth].defV <= 50.0 && defs[kRoomBlend].defV >= 40.0, "suavizado de platos moderado y room generoso por defecto");
@@ -1905,6 +2273,7 @@ int main(int argc, char** argv) {
         check(ok, "sin NaN y pico < 0.98 con 44,1/96/192 kHz y bloques 1/480/4096");
     }
 
+    testKits();
     testFxRack(false);
     std::printf("\n%s (%d fallos)\n", g_fail ? "FALLO" : "TODO OK", g_fail);
     return g_fail ? 1 : 0;

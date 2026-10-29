@@ -56,6 +56,7 @@ import { AiModelPicker } from './ai-model-picker'
 import { SpeechToTextButton } from './speech-to-text-button'
 import { AudioSampleRecorder, type AttachedAudioSample } from './audio-sample-recorder'
 import { BandaLineaCompacta } from './banda-live-orchestrator'
+import { EVENTO_REANUDAR_BANDA } from './tarjeta-reanudar'
 import { abrirPanelBanda, bandaEnChat, useVistaBanda, vistaBanda } from './banda-vista-store'
 import { orquestadorBandaSingleton } from '../motor/banda-orchestrator'
 
@@ -472,7 +473,11 @@ export function CoProducerPanel() {
       if (run.messageId) {
         const msg = getConversation(run.conversationId)?.messages.find((m) => m.id === run.messageId)
         if (msg && !msg.content.trim()) {
-          patchMessage(run.conversationId, run.messageId, { content: '⏸ Turno interrumpido (se recargó la ventana).' })
+          // Plan Q: qué se alcanzó a aplicar antes del corte (las llamadas ya ejecutadas no se repiten al reanudar).
+          const n = run.executedCallKeys?.length ?? 0
+          patchMessage(run.conversationId, run.messageId, {
+            content: `⏸ El turno anterior se interrumpió${n ? ` después de aplicar ${n} ${n === 1 ? 'cambio' : 'cambios'}, que se conservan` : ' antes de aplicar ningún cambio'}. Puedes reanudarlo o reintentar tu mensaje.`,
+          })
           const after = getConversation(run.conversationId)
           if (after) setConversation(after)
         }
@@ -882,6 +887,17 @@ export function CoProducerPanel() {
   handleSendRef.current = (t?: string) => {
     void handleSendMessage(t)
   }
+  // Plan Q: «Reanudar» en el panel de la banda manda `/banda reanudar <id>` a este chat.
+  useEffect(() => {
+    const alReanudar = (e: Event) => {
+      const d = (e as CustomEvent<{ texto?: string; manejado?: boolean }>).detail
+      if (!d?.texto || d.manejado) return
+      d.manejado = true
+      handleSendRef.current(d.texto)
+    }
+    window.addEventListener(EVENTO_REANUDAR_BANDA, alReanudar)
+    return () => window.removeEventListener(EVENTO_REANUDAR_BANDA, alReanudar)
+  }, [])
 
   // /programar: las tareas vencidas de este proyecto se lanzan como un turno normal; si hay un turno en
   // curso devuelve false y el planificador las reintenta en su siguiente ciclo (no se pierden).
@@ -1084,10 +1100,23 @@ export function CoProducerPanel() {
       {interruptedRun && !isGenerating ? (
         <div className="flex items-center gap-2 border-b border-border bg-accent-amber/10 px-3 py-1.5 text-[11px] text-foreground" data-testid="engine-interrupted">
           <span className="min-w-0 flex-1 break-words">
-            {interruptedRun.status === 'paused' ? 'Turno en pausa' : 'Turno interrumpido'}: «{messagePreview(interruptedRun.userText, 40)}»
+            {interruptedRun.status === 'paused' ? 'Turno en pausa' : 'El turno anterior se interrumpió'}: «{messagePreview(interruptedRun.userText, 40)}»
+            {interruptedRun.executedCallKeys?.length ? ` · ya se aplicaron ${interruptedRun.executedCallKeys.length} ${interruptedRun.executedCallKeys.length === 1 ? 'cambio' : 'cambios'}` : ''}
           </span>
           <button type="button" className="shrink-0 text-accent-amber hover:underline" onClick={resumeInterrupted} data-testid="turn-resume">
             Reanudar
+          </button>
+          <button
+            type="button"
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              const t = interruptedRun.userText
+              setInterruptedRun(null)
+              handleSendRef.current(t)
+            }}
+            data-testid="turn-retry"
+          >
+            Reintentar mensaje
           </button>
           <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" onClick={() => setInterruptedRun(null)}>
             Descartar

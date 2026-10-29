@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "category": "instrument",
   "vendor": "JasWave Audio",
-  "description": "Batería acústica de worship moderno por síntesis física (sin muestras): bombo profundo, caja con cuerpo y bordonos, toms amplios, hi-hat con choke y apertura por pedal, platos inarmónicos, micrófonos virtuales (directo, overheads y sala FDN con compresión). Mapa GM completo, capas de velocidad y variación orgánica por golpe. Rack de mezcla comun integrado (ids FX · 100..230): paso-altos/bajos, ecualizador parametrico de 6 bandas, compresor, saturacion cinta/valvula, chorus, delay sincronizable al tempo, reverb plate/hall/room y anchura. Todo apagado por defecto (On = 0): no cambia el sonido hasta activarlo.",
+  "description": "Batería acústica con muchos kits: motor de síntesis física (siempre disponible, sin muestras) más kits de muestras reales elegibles (worship moderno, jazz, rock/pop, indie con escobillas, rock/metal vintage…) y un banco de percusión auxiliar (campana de ride y de crash, cencerro, pandereta, palmas, shaker, triángulo, woodblock, claves, bongós, congas, timbales, agogó, vibraslap…). Síntesis física: bombo profundo, caja con cuerpo y bordonos, toms amplios, hi-hat con choke y apertura por pedal, platos inarmónicos, micrófonos virtuales (directo, overheads y sala FDN con compresión). Mapa GM completo, capas de velocidad y variación orgánica por golpe. Rack de mezcla comun integrado (ids FX · 100..230): paso-altos/bajos, ecualizador parametrico de 6 bandas, compresor, saturacion cinta/valvula, chorus, delay sincronizable al tempo, reverb plate/hall/room y anchura. Todo apagado por defecto (On = 0): no cambia el sonido hasta activarlo.",
   "targetPlatforms": [
     "win-x64",
     "web"
@@ -38,14 +38,26 @@
     ]
   },
   "ai": {
-    "summary": "Batería acústica completa (bombo, caja, toms, hi-hat, ride, crashes) con afinación, amortiguación, aire de overheads, sala con compresión y pedal de hi-hat (CC4) para mezcla worship. Incluye el FX Rack comun (ids 100..230, apagado por defecto): paso-altos/bajos, EQ de 6 bandas, compresor, saturacion, chorus, delay con sync, reverb y anchura; todo configurable con plugin.setParameter.",
+    "summary": "Batería acústica completa con muestras reales: bombo, caja, toms, hi-hat, ride con campana, crashes con campana de crash y percusión auxiliar (palmas 39, pandereta 54, cencerro 56, congas, bongós, shaker, claves, triángulo, woodblock) en notas GM. Selector de kit (drum_kit, id 23): 1 muldjord worship/rock moderno (por defecto), 2 bigrusty rock y metal vintage, 3 drskit jazz-rock, 4 naked rock y pop limpio, 5 swirly indie con escobillas, 6 virtuosity jazz de club; las etiquetas del selector dicen el kit real instalado. Nivel de percusión propio (percussion_level, id 24). Las campanas 53 y 78 siempre suenan (muestra o modelo físico). Afinación, amortiguación, overheads, sala con compresión, pedal de hi-hat (CC4) y FX Rack común (ids 100..230, apagado), todo con plugin.setParameter.",
     "intents": [
       "bateria-worship",
       "balada-acustica",
       "praise-rock",
       "bateria-dinamica",
       "bateria-ghost-notes",
-      "fills-toms"
+      "fills-toms",
+      "elegir-kit-bateria",
+      "kit-jazz",
+      "kit-rock",
+      "kit-pop",
+      "kit-escobillas",
+      "kit-indie",
+      "kit-vintage-metal",
+      "bateria-con-percusion",
+      "percusion-latina",
+      "campana-ride",
+      "campana-crash",
+      "nivel-percusion"
     ],
     "parameters": [
       {
@@ -306,6 +318,47 @@
         "max": 300,
         "default": 0,
         "unit": "ct",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "drum_kit",
+        "vstParamId": 23,
+        "name": "Kit de batería (posición en la lista de kits instalados; los estilos están en las etiquetas)",
+        "min": 0,
+        "max": 15,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "basico": true,
+        "values": [
+          "Kit 1 (muldjord: worship/rock moderno, por defecto)",
+          "Kit 2 (bigrusty: rock y metal vintage)",
+          "Kit 3 (drskit: jazz-rock)",
+          "Kit 4 (naked: rock y pop limpio)",
+          "Kit 5 (swirly: indie con escobillas)",
+          "Kit 6 (virtuosity: jazz de club)",
+          "Kit 7",
+          "Kit 8",
+          "Kit 9",
+          "Kit 10",
+          "Kit 11",
+          "Kit 12",
+          "Kit 13",
+          "Kit 14",
+          "Kit 15",
+          "Kit 16"
+        ]
+      },
+      {
+        "id": "percussion_level",
+        "vstParamId": 24,
+        "name": "Nivel de la percusión auxiliar (palmas, pandereta, cencerro, congas, bongós, shaker, triángulo, woodblock, claves…)",
+        "min": -24,
+        "max": 6,
+        "default": 0,
+        "unit": "dB",
         "scale": "linear",
         "feature": null
       },

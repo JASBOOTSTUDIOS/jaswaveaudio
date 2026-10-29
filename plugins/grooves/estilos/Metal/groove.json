@@ -1,0 +1,109 @@
+{
+  "archivos": {
+    "doble-bombo.mid": {
+      "id": "jw-metal-doble-bombo",
+      "nombre": "Doble bombo",
+      "tempo": 170,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "metal",
+        "doble-bombo"
+      ],
+      "intensidad": 5,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "blast-beat.mid": {
+      "id": "jw-metal-blast-beat",
+      "nombre": "Blast beat",
+      "tempo": 190,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "metal",
+        "blast"
+      ],
+      "intensidad": 5,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "galope.mid": {
+      "id": "jw-metal-galope",
+      "nombre": "Galope",
+      "tempo": 150,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "metal",
+        "galope"
+      ],
+      "intensidad": 5,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "metal-pesado-lento.mid": {
+      "id": "jw-metal-metal-pesado-lento",
+      "nombre": "Metal pesado lento",
+      "tempo": 84,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "metal",
+        "pesado",
+        "medio-tiempo"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-redoble-largo.mid": {
+      "id": "jw-metal-fill-redoble-largo",
+      "nombre": "Fill redoble largo",
+      "tempo": 170,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "redoble",
+        "largo"
+      ],
+      "intensidad": 5,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-toms-bajando.mid": {
+      "id": "jw-metal-fill-toms-bajando",
+      "nombre": "Fill toms bajando",
+      "tempo": 170,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "toms",
+        "bajando"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}
