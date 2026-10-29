@@ -25,7 +25,8 @@
     "ia:generar-clave": "tsx scripts/generar-clave-ia.ts",
     "ia:importar-entorno": "tsx --env-file=.env scripts/importar-ia-entorno.ts",
     "admin:seed": "tsx --env-file=.env scripts/seed-admin.ts",
-    "ia:proveedor-pruebas": "tsx --env-file=.env scripts/alta-proveedor-pruebas.ts"
+    "ia:proveedor-pruebas": "tsx --env-file=.env scripts/alta-proveedor-pruebas.ts",
+    "grooves:sembrar": "tsx --env-file=.env scripts/sembrar-grooves.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.1",

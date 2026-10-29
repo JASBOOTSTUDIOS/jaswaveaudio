@@ -32,6 +32,8 @@ export type AiToolRequestPart = {
   toolChoice?: AiToolChoice
   temperature?: number
   maxTokens?: number
+  /** Marca el prefijo estable (herramientas + sistema + primer mensaje) como cacheable (`cache_control`), si el proveedor lo admite. */
+  cache?: boolean
 }
 
 export type ParsedToolResponse = { content: string; toolCalls: AiToolCall[] }
@@ -105,6 +107,18 @@ export function buildOpenAiBody(req: AiToolRequestPart, stream = false): Record<
     }
     return { role: m.role, content: m.content }
   })
+  // Anthropic vía OpenRouter: sin marca no hay caché de prompt. Se marcan el sistema y el primer mensaje del usuario
+  // (estables durante todo el turno de un agente); en Anthropic la caché cubre también las herramientas, que van antes.
+  if (req.cache) {
+    const marcar = (i: number) => {
+      const m = messages[i] as { content?: unknown } | undefined
+      if (m && typeof m.content === 'string' && m.content) m.content = [{ type: 'text', text: m.content, cache_control: { type: 'ephemeral' } }]
+    }
+    const si = messages.findIndex((m) => (m as { role?: string }).role === 'system')
+    if (si >= 0) marcar(si)
+    const ui = messages.findIndex((m) => (m as { role?: string }).role === 'user')
+    if (ui >= 0) marcar(ui)
+  }
   const body: Record<string, unknown> = {
     model: req.model,
     messages,
@@ -172,12 +186,12 @@ export function buildAnthropicBody(req: AiToolRequestPart, stream = false): Reco
     model: req.model,
     max_tokens: req.maxTokens ?? 2048,
     temperature: req.temperature ?? 0.4,
-    system: system.length ? system.join('\n\n') : undefined,
+    system: system.length ? (req.cache ? [{ type: 'text', text: system.join('\n\n'), cache_control: { type: 'ephemeral' } }] : system.join('\n\n')) : undefined,
     messages: out,
   }
   if (stream) body.stream = true
   if (req.tools?.length) {
-    body.tools = req.tools.map((t) => ({ name: encodeToolName(t.name), description: t.description, input_schema: t.parameters }))
+    body.tools = req.tools.map((t, i, todas) => ({ name: encodeToolName(t.name), description: t.description, input_schema: t.parameters, ...(req.cache && i === todas.length - 1 ? { cache_control: { type: 'ephemeral' } } : {}) }))
     const choice = req.toolChoice ?? 'auto'
     body.tool_choice = { type: choice === 'required' ? 'any' : choice }
   }

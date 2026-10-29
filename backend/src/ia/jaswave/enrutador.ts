@@ -52,6 +52,12 @@ export type OpcionesEjecucion = {
   timeoutMs?: number;
 };
 
+/** Muestras mínimas de un modelo para fiarse de su percentil de latencia, y cuántas se recuerdan. */
+const MUESTRAS_MIN_LATENCIA = 8;
+const MUESTRAS_MAX_LATENCIA = 40;
+/** La cobertura nunca salta antes de esto (un modelo muy rápido no justifica duplicar cada petición). */
+const COBERTURA_MIN_MS = 3_000;
+const PERCENTIL_COBERTURA = 0.9;
 const ENFRIAR_429_MS = 20_000;
 const ENFRIAR_AUTH_MS = 10 * 60_000;
 
@@ -65,9 +71,33 @@ export function extraRazonamiento(kind: AiProviderKind, r: Razonamiento): Record
 
 const util = (r: AiChatResult) => r.success && Boolean(r.content?.trim() || r.toolCalls?.length);
 
-export function crearEnrutador(deps: { chat: ChatDirecto; ahora?: () => number }) {
+export function crearEnrutador(deps: { chat: ChatDirecto; ahora?: () => number; coberturaMinMs?: number }) {
   const ahora = deps.ahora ?? Date.now;
   const claves = new Map<string, EstadoClave>();
+  /** Latencias de respuestas útiles por modelo (las últimas): de ahí sale cuándo cubrir con el siguiente. */
+  const latencias = new Map<string, number[]>();
+  function anotarLatencia(modelo: string, ms: number) {
+    const v = latencias.get(modelo) ?? [];
+    v.push(ms);
+    if (v.length > MUESTRAS_MAX_LATENCIA) v.shift();
+    latencias.set(modelo, v);
+  }
+  /** Percentil observado de la latencia de un modelo, o null si aún hay pocas muestras. */
+  function latenciaPercentil(modelo: string, p = PERCENTIL_COBERTURA): number | null {
+    const v = latencias.get(modelo);
+    if (!v || v.length < MUESTRAS_MIN_LATENCIA) return null;
+    const orden = [...v].sort((a, b) => a - b);
+    return orden[Math.min(orden.length - 1, Math.floor(p * orden.length))]!;
+  }
+  /**
+   * Cuándo cubrir mientras responde `modelo`: el percentil 90 observado de SU latencia (si responde más tarde que
+   * casi siempre, algo va mal y conviene lanzar ya el siguiente), acotado entre 3 s y el tope configurado.
+   */
+  function umbralCobertura(modelo: string | undefined, topeMs: number): number {
+    const p = modelo ? latenciaPercentil(modelo) : null;
+    if (p === null) return topeMs;
+    return Math.max(Math.min(deps.coberturaMinMs ?? COBERTURA_MIN_MS, topeMs), Math.min(topeMs, p));
+  }
   const estado = (id: string) => {
     let e = claves.get(id);
     if (!e) claves.set(id, (e = { enVuelo: 0, enfriadaHasta: 0, usos: 0, fallos: 0 }));
@@ -115,10 +145,12 @@ export function crearEnrutador(deps: { chat: ChatDirecto; ahora?: () => number }
 
       const programarCobertura = () => {
         if (temporizador) clearTimeout(temporizador);
+        // Se cubre según el modelo que se lanzó el último (el que ahora se espera).
+        const espera = umbralCobertura(intentos[siguiente - 1]?.modelo, cubrirTrasMs);
         temporizador = setTimeout(() => {
           if (!terminado && !dueñoStream && activos < maxParalelo && siguiente < intentos.length) lanzar();
           if (!terminado && !dueñoStream && siguiente < intentos.length) programarCobertura();
-        }, cubrirTrasMs);
+        }, espera);
       };
 
       const quizaCerrarSinExito = () => {
@@ -175,6 +207,7 @@ export function crearEnrutador(deps: { chat: ChatDirecto; ahora?: () => number }
             controladores.delete(ctl);
           }
           registro.push({ conexionId: i.conexionId, modelo: i.modelo, claveId: clave.id, ok: util(r), ...(r.errorCode ? { codigo: r.errorCode } : {}), ms: ahora() - t0 });
+          if (util(r) && !ctl.signal.aborted) anotarLatencia(i.modelo, ahora() - t0);
           if (terminado) return;
           if (util(r)) {
             cerrar(r, i);
@@ -231,7 +264,7 @@ export function crearEnrutador(deps: { chat: ChatDirecto; ahora?: () => number }
     );
   }
 
-  return { ejecutar, estadoClaves };
+  return { ejecutar, estadoClaves, latenciaPercentil };
 }
 
 export type Enrutador = ReturnType<typeof crearEnrutador>;

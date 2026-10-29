@@ -411,3 +411,79 @@ model AjusteIA {
   valor         Json
   actualizadoEn DateTime @updatedAt
 }
+
+// ---------- Catálogo de grooves MIDI (M) ----------
+
+/// Un groove MIDI del catálogo que el administrador publica y las apps de los usuarios sincronizan.
+/// `contenido` son los bytes del .mid (pocos KB). Cada cambio sube `revision`; borrar lo retira de las apps.
+model GrooveCatalogo {
+  /// Estable (slug), distinto de la ruta: sobrevive a renombrar o mover.
+  id            String   @id
+  /// `Estilo[/Subestilo]/archivo.mid` (única sin distinguir mayúsculas, lo comprueba el servicio).
+  ruta          String   @unique
+  estilo        String
+  nombre        String
+  tipo          String   @default("groove")
+  compas        String   @default("4/4")
+  tempo         Int      @default(100)
+  compases      Int      @default(1)
+  intensidad    Int      @default(3)
+  etiquetas     String[]
+  autor         String   @default("")
+  licencia      String   @default("")
+  revision      Int      @default(1)
+  sha256        String
+  tamano        Int
+  contenido     Bytes
+  activo        Boolean  @default(true)
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@index([estilo])
+}
+
+/// Una sola fila (id 1): revisión global del catálogo de grooves; sube con cada cambio.
+model GrooveCatalogoEstado {
+  id       Int @id
+  revision Int @default(0)
+}
+
+/// Un groove creado por un usuario que este propuso (con su consentimiento) para el catálogo. El admin decide.
+/// `huellaHash` es la huella exacta del contenido MIDI: dos propuestas con el mismo patrón se acumulan en una sola.
+model PropuestaGroove {
+  id                  String    @id @default(uuid())
+  /// Quien la propuso primero; `usuarios` acumula a todos los que propusieron el mismo patrón.
+  usuarioId           String
+  usuarios            String[]
+  nombre              String
+  estilo              String
+  tipo                String    @default("groove")
+  compas              String    @default("4/4")
+  tempo               Int       @default(100)
+  compases            Int       @default(1)
+  intensidad          Int       @default(3)
+  etiquetas           String[]
+  autor               String    @default("")
+  licencia            String    @default("CC0-1.0")
+  contenido           Bytes
+  sha256              String
+  huellaHash          String
+  huella              Json
+  /// "pendiente" | "aprobada" | "rechazada" | "duplicada"
+  estado              String    @default("pendiente")
+  vecesPropuesto      Int       @default(1)
+  /// [{ tipo: "groove"|"propuesta", id, nombre, puntuacion, nivel }]
+  similares           Json      @default("[]")
+  notaAdmin           String    @default("")
+  /// Groove del catálogo en que se convirtió (aprobada) o del que es copia (duplicada).
+  grooveId            String?
+  consentimientoVersion String
+  consentimientoEn    DateTime
+  creadoEn            DateTime  @default(now())
+  actualizadoEn       DateTime  @updatedAt
+  resueltaEn          DateTime?
+
+  @@index([estado])
+  @@index([huellaHash])
+  @@index([usuarioId, creadoEn])
+}

@@ -13,6 +13,9 @@ import { rutasAdminIA, rutasIA } from './ia/rutas.js';
 import type { ServicioProveedoresIA } from './ia/proveedores.js';
 import type { ServicioJasWave } from './ia/jaswave/servicio.js';
 import type { GestorModelosGratis } from './ia/jaswave/modelos-gratis.js';
+import { rutasAdminGrooves, rutasGrooves } from './grooves/rutas.js';
+import { crearServicioGrooves } from './grooves/servicio.js';
+import { crearServicioPropuestas } from './grooves/propuestas.js';
 import type { Reloj } from './license/servicio.js';
 
 export type OpcionesApp = {
@@ -48,6 +51,22 @@ export function crearApp(opciones: OpcionesApp): Express {
   // IA: contexto y herramientas pueden superar 256 KB (límite propio de 4 MB).
   app.use('/ia', rutasIA({ verificar: opciones.verificar, servicio: opciones.ia ?? null, jaswave: opciones.jaswave ?? null }));
   if (opciones.ia?.admin) app.use('/admin/ia', rutasAdminIA({ verificar: opciones.verificar, admin: opciones.ia.admin, jaswave: opciones.jaswave ?? null, gestor: opciones.gestorModelos ?? null }));
+  // Catálogo de grooves MIDI (M): los .mid son pequeños; el admin sube en lote o zip con su propio límite.
+  if (opciones.datos) {
+    const { db: dbG } = opciones.datos;
+    let recalcular = () => {};
+    const servicioGrooves = crearServicioGrooves({ db: dbG, alCambiar: () => recalcular() });
+    const propuestas = crearServicioPropuestas({ db: dbG, catalogo: servicioGrooves });
+    let pendiente: NodeJS.Timeout | null = null;
+    // Varios cambios seguidos (importación en lote) se agrupan en un solo recálculo.
+    recalcular = () => {
+      if (pendiente) clearTimeout(pendiente);
+      pendiente = setTimeout(() => void propuestas.recalcular().catch(() => undefined), 3000);
+      pendiente.unref();
+    };
+    app.use('/admin/grooves', rutasAdminGrooves({ verificar: opciones.verificar, servicio: servicioGrooves, propuestas }));
+    app.use('/grooves', rutasGrooves({ verificar: opciones.verificar, servicio: servicioGrooves, propuestas }));
+  }
   // Publicar archivos de módulos (M3, solo admin) lleva el bundle completo en base64.
   app.use('/catalogo/modulos', express.json({ limit: '40mb' }));
   app.use(express.json({ limit: '256kb' }));

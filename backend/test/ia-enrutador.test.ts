@@ -148,3 +148,47 @@ describe('créditos, mensajes públicos y periodos', () => {
     expect(periodosDe(new Date('2026-10-28T02:00:00Z')).inicioDia.toISOString()).toBe('2026-10-28T00:00:00.000Z');
   });
 });
+
+describe('cobertura adaptada a la latencia observada', () => {
+  it('cubre antes con el siguiente cuando el modelo activo suele ser rápido y esta vez se atasca', async () => {
+    let lentas = 0;
+    const f = falso({
+      a: async (_r, s) => {
+        if (lentas > 0) {
+          await espera(1500, s);
+          return ok('A lento');
+        }
+        await espera(10, s);
+        return ok('A');
+      },
+      b: async () => ok('B'),
+    });
+    const e = crearEnrutador({ chat: f.chat, coberturaMinMs: 20 });
+    // Sin historial se espera el tope configurado.
+    expect(e.latenciaPercentil('a')).toBeNull();
+    for (let i = 0; i < 10; i++) await e.ejecutar([intento('a'), intento('b')], base, { cubrirTrasMs: 1200 });
+    expect(e.latenciaPercentil('a')).not.toBeNull();
+    expect(e.latenciaPercentil('a')!).toBeLessThan(200);
+    lentas = 1;
+    const t0 = Date.now();
+    const r = await e.ejecutar([intento('a'), intento('b')], base, { cubrirTrasMs: 1200 });
+    // Gana B mucho antes del tope de 1,2 s: cubrió al pasar el percentil observado de A.
+    expect(r.resultado.content).toBe('B');
+    expect(Date.now() - t0).toBeLessThan(600);
+  });
+
+  it('sin muestras suficientes respeta el tope configurado', async () => {
+    const f = falso({
+      a: async (_r, s) => {
+        await espera(120, s);
+        return ok('A');
+      },
+      b: async () => ok('B'),
+    });
+    const e = crearEnrutador({ chat: f.chat, coberturaMinMs: 5 });
+    for (let i = 0; i < 3; i++) {
+      const r = await e.ejecutar([intento('a'), intento('b')], base, { cubrirTrasMs: 400 });
+      expect(r.resultado.content).toBe('A');
+    }
+  });
+});

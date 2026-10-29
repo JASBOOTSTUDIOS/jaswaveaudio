@@ -452,6 +452,13 @@ function toolsUnsupported(req: AiChatRequest, detail: string): AiChatResult {
 
 type HttpTarget = { url: string; headers: Record<string, string>; body: Record<string, unknown> }
 
+/** ¿Admite `cache_control` explícito? (Anthropic directo, o sus modelos vía OpenRouter). Solo con herramientas: es el caso del agente, con prefijos largos y repetidos. */
+export function admiteCachePrompt(req: AiChatRequest, style: StreamStyle | null): boolean {
+  if (!req.tools?.length) return false
+  if (style === 'anthropic') return true
+  return req.kind === 'openrouter' && /(^|\/)claude|anthropic/i.test(req.model)
+}
+
 /** Construye URL/cabeceras/cuerpo del proveedor (sin red). Exportado para snapshots. */
 export function buildProviderRequest(req: AiChatRequest, opts: { stream?: boolean } = {}): HttpTarget {
   const style = resolveApiStyle(req)
@@ -463,6 +470,7 @@ export function buildProviderRequest(req: AiChatRequest, opts: { stream?: boolea
     toolChoice: req.toolChoice,
     temperature: req.temperature,
     maxTokens: req.maxTokens,
+    ...(admiteCachePrompt(req, style) ? { cache: true } : {}),
   }
   if (style === 'anthropic') {
     const base = normalizeBase(req.baseUrl) || 'https://api.anthropic.com'
