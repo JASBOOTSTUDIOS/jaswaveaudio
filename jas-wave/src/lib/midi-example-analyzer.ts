@@ -6,26 +6,54 @@
  * no el jitter del transporte hasta la UI.
  */
 
-export type EventoEscucha = {
+type BaseEvento = {
   /** Instante del evento en ns (escala de `performance.now()` × 1e6). */
   tNs: number
-  tipo: 'on' | 'off'
-  pitch: number
-  velocity: number
   canal: number
+  /** Entrada MIDI de la que llegó (id del dispositivo). */
+  deviceId?: string
 }
+
+export type EventoNotaEscucha = BaseEvento & { tipo: 'on' | 'off'; pitch: number; velocity: number }
+/** Controlador continuo: sustain (64), sostenuto (66), suave (67), modulación (1), expresión (11)… */
+export type EventoControlEscucha = BaseEvento & { tipo: 'cc'; cc: number; valor: number }
+/** Pitch bend normalizado −1..1. */
+export type EventoBendEscucha = BaseEvento & { tipo: 'bend'; valor: number }
+export type EventoEscucha = EventoNotaEscucha | EventoControlEscucha | EventoBendEscucha
+
+/** Controladores que la escucha guarda (los demás no describen el toque). */
+export const CC_ESCUCHADOS: readonly number[] = [64, 66, 67, 1, 11]
 
 export type NotaEscuchada = { pitch: number; velocity: number; inicioMs: number; duracionMs: number }
 
-const CAPACIDAD = 4096
+/** Transporte al empezar una toma (si estaba en marcha, las notas se alinean a él). */
+export type TransporteToma = { reproduciendo: boolean; posicionBeats: number; bpm: number }
 
-/** Anillo de los últimos eventos tocados (todas las entradas). */
+export type Toma = {
+  id: string
+  inicioNs: number
+  /** Sin valor: toma en curso. */
+  finNs?: number
+  transporte?: TransporteToma
+  eventos: EventoEscucha[]
+}
+
+const CAPACIDAD = 4096
+const CAPACIDAD_TOMA = 60_000
+
+const ahoraNsPorDefecto = (): number | undefined => (typeof performance !== 'undefined' ? performance.now() * 1e6 : undefined)
+
+/** Anillo de los últimos eventos tocados (todas las entradas) y sesiones de toma. */
 export class BufferEscuchaMidi {
   private eventos: EventoEscucha[] = []
+  private toma: Toma | null = null
+  private contadorTomas = 0
 
   push(ev: EventoEscucha): void {
     this.eventos.push(ev)
     if (this.eventos.length > CAPACIDAD) this.eventos.splice(0, this.eventos.length - CAPACIDAD)
+    const t = this.toma
+    if (t && t.finNs === undefined && ev.tNs >= t.inicioNs && t.eventos.length < CAPACIDAD_TOMA) t.eventos.push(ev)
   }
 
   /** Eventos de los últimos `segundos` respecto a `ahoraNs` (o al último evento). */
@@ -36,8 +64,44 @@ export class BufferEscuchaMidi {
     return this.eventos.filter((e) => e.tNs >= desde && e.tNs <= fin)
   }
 
+  /**
+   * Empieza una toma: desde ahora todo lo que llegue se guarda aparte (sin el tope del anillo). Si ya había
+   * una en curso, se cierra. Con el transporte en marcha, guarda su posición y BPM para alinear la métrica.
+   */
+  iniciarToma(o: { transporte?: TransporteToma; ahoraNs?: number } = {}): Toma {
+    if (this.toma && this.toma.finNs === undefined) this.terminarToma(o.ahoraNs)
+    const inicioNs = o.ahoraNs ?? ahoraNsPorDefecto() ?? (this.eventos.length ? this.eventos[this.eventos.length - 1]!.tNs : 0)
+    this.contadorTomas += 1
+    this.toma = {
+      id: `toma-${this.contadorTomas}`,
+      inicioNs,
+      ...(o.transporte ? { transporte: { ...o.transporte } } : {}),
+      eventos: [],
+    }
+    return this.toma
+  }
+
+  /** Cierra la toma en curso (null si no había). */
+  terminarToma(ahoraNs?: number): Toma | null {
+    const t = this.toma
+    if (!t || t.finNs !== undefined) return null
+    const ultimo = t.eventos.length ? t.eventos[t.eventos.length - 1]!.tNs : t.inicioNs
+    t.finNs = Math.max(ahoraNs ?? ahoraNsPorDefecto() ?? ultimo, ultimo, t.inicioNs)
+    return t
+  }
+
+  /** La toma en curso o la última terminada (null si nunca se grabó). */
+  tomaActual(): Toma | null {
+    return this.toma
+  }
+
+  get tomaEnCurso(): boolean {
+    return this.toma !== null && this.toma.finNs === undefined
+  }
+
   limpiar(): void {
     this.eventos = []
+    this.toma = null
   }
 
   get tamano(): number {
@@ -47,12 +111,41 @@ export class BufferEscuchaMidi {
 
 export const bufferEscuchaMidi = new BufferEscuchaMidi()
 
+export function esEventoNota(e: EventoEscucha): e is EventoNotaEscucha {
+  return e.tipo === 'on' || e.tipo === 'off'
+}
+
+/** Curva de un controlador (p. ej. 64 = sustain) dentro de unos eventos, en orden temporal. */
+export function controlDeEventos(eventos: readonly EventoEscucha[], cc: number): Array<{ tMs: number; valor: number }> {
+  return eventos
+    .filter((e): e is EventoControlEscucha => e.tipo === 'cc' && e.cc === cc)
+    .sort((a, b) => a.tNs - b.tNs)
+    .map((e) => ({ tMs: e.tNs / 1e6, valor: e.valor }))
+}
+
+/** Resumen de una toma para la UI: duración, notas (note-on), eventos de pedal y controladores. */
+export function resumenToma(t: Toma | null, ahoraNs?: number): { enCurso: boolean; segundos: number; notas: number; pedal: number; controles: number } {
+  if (!t) return { enCurso: false, segundos: 0, notas: 0, pedal: 0, controles: 0 }
+  const fin = t.finNs ?? ahoraNs ?? ahoraNsPorDefecto() ?? t.inicioNs
+  let notas = 0
+  let pedal = 0
+  let controles = 0
+  for (const e of t.eventos) {
+    if (e.tipo === 'on' && e.velocity > 0) notas++
+    else if (e.tipo === 'cc') {
+      if (e.cc === 64) pedal++
+      else controles++
+    } else if (e.tipo === 'bend') controles++
+  }
+  return { enCurso: t.finNs === undefined, segundos: Math.max(0, (fin - t.inicioNs) / 1e9), notas, pedal, controles }
+}
+
 /** Empareja note-on/off (por pitch y canal). Las notas sin off duran hasta el último evento. */
 export function notasDeEventos(eventos: readonly EventoEscucha[]): NotaEscuchada[] {
-  const orden = [...eventos].sort((a, b) => a.tNs - b.tNs)
-  const abiertas = new Map<string, EventoEscucha>()
+  const orden = [...eventos].filter(esEventoNota).sort((a, b) => a.tNs - b.tNs)
+  const abiertas = new Map<string, EventoNotaEscucha>()
   const notas: NotaEscuchada[] = []
-  const cerrar = (on: EventoEscucha, finNs: number) =>
+  const cerrar = (on: EventoNotaEscucha, finNs: number) =>
     notas.push({ pitch: on.pitch, velocity: on.velocity, inicioMs: on.tNs / 1e6, duracionMs: Math.max(0, (finNs - on.tNs) / 1e6) })
   for (const e of orden) {
     const k = `${e.canal}:${e.pitch}`
@@ -65,7 +158,7 @@ export function notasDeEventos(eventos: readonly EventoEscucha[]): NotaEscuchada
       abiertas.delete(k)
     }
   }
-  const finNs = orden.length ? orden[orden.length - 1]!.tNs : 0
+  const finNs = eventos.reduce((m, e) => Math.max(m, e.tNs), orden.length ? orden[orden.length - 1]!.tNs : 0)
   for (const on of abiertas.values()) cerrar(on, finNs)
   return notas.sort((a, b) => a.inicioMs - b.inicioMs || a.pitch - b.pitch)
 }

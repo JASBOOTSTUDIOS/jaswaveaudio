@@ -27,8 +27,12 @@ import {
 import {
   sendVstCc,
   getLoadedInstrumentForTrack,
+  getLoadedInstrumentsForTrack,
   subscribeVstRuntime,
 } from '@/src/lib/plugin/track-vst-runtime'
+import { buildLiveMidiTargets, firmaZonas } from '@/src/lib/midi-zones'
+import { EVENTO_PANIC, enviarSeguridadMaster } from '@/src/lib/modo-directo'
+import type { ZonaMidi } from '../../shared/src/types/directo'
 import { midiMapStore } from '@/src/lib/midi-map-store'
 import { buildMidiMapCatalog } from '@/src/lib/midi-map'
 import {
@@ -37,7 +41,7 @@ import {
   installMidiMapKeyListener,
   setMidiMapTargetIndex,
 } from '@/src/lib/midi-map-runtime'
-import { routeMidiToTrack } from '@/src/lib/plugin/vst-voice-router'
+import { routeMidiToTrack, setLiveMidiZones } from '@/src/lib/plugin/vst-voice-router'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 import {
   assignedMidiDevice,
@@ -51,26 +55,33 @@ import {
   type MidiRouteTrack,
 } from '@/src/lib/midi-track-io'
 
-function sendLiveMidiTargets(tracks: MidiRouteTrack[]): void {
+/**
+ * Destinos en vivo del host: TODAS las capas (instrumentos cargados) de cada pista monitorizada, una entrada
+ * por zona MIDI activa (K3). `slotIds`/`deviceIds` se mandan además por compatibilidad con hosts anteriores
+ * (van antes de `targets`: el host lee los campos globales de la cabecera).
+ */
+function sendLiveMidiTargets(tracks: MidiRouteTrack[], zonas: readonly ZonaMidi[] | undefined): void {
   const ids = midiNativeLiveTargetIds(tracks)
-  const slots: string[] = []
-  const deviceIds: string[] = []
+  const pistas: Array<{ id: string; deviceId: string; slotIds: string[] }> = []
   for (const id of ids) {
-    const slot = getLoadedInstrumentForTrack(id)?.slotId
-    if (!slot) continue
+    const capas = getLoadedInstrumentsForTrack(id).map((p) => p.slotId)
+    const principal = getLoadedInstrumentForTrack(id)?.slotId
+    if (principal && !capas.includes(principal)) capas.unshift(principal)
+    if (capas.length === 0) continue
     const t = tracks.find((x) => x.id === id)
-    slots.push(slot)
-    deviceIds.push(assignedMidiDevice(t ?? { id }))
+    pistas.push({ id, deviceId: assignedMidiDevice(t ?? { id }), slotIds: capas })
   }
+  const { targets } = buildLiveMidiTargets(pistas, zonas)
   const ch = midiController.getChannel()
   const eat = midiMapStore.eatCsv()
   const cmd = {
     type: 'setLiveMidiTargets' as const,
-    slotIds: slots.join(','),
-    deviceIds: deviceIds.join(','),
+    slotIds: pistas.map((p) => p.slotIds[0]).join(','),
+    deviceIds: pistas.map((p) => p.deviceId).join(','),
     channel: ch === 'omni' ? -1 : ch,
     eatCcs: eat.ccs,
     eatNotes: eat.notes,
+    targets,
   }
   try {
     const api = window.electron
@@ -130,6 +141,10 @@ export function MidiControllerHost() {
   const bpm = useDAWState((s) => s.project?.bpm?.valor ?? 120)
   const midiInPref = useDAWState((s) => s.project?.configuracion?.dispositivoMidiEntrada)
   const tracks = useDAWState((s) => s.project?.tracks ?? [])
+  const zonas = useDAWState((s) => s.project?.directo?.zonas)
+  const zonasSig = firmaZonas(zonas)
+  const seguridad = useDAWState((s) => s.project?.directo?.seguridad)
+  const seguridadSig = `${seguridad?.activa ? 1 : 0}:${seguridad?.techoDb ?? -0.5}`
   const routeSig = useDAWState((s) =>
     (s.project?.tracks ?? [])
       .map(
@@ -147,6 +162,8 @@ export function MidiControllerHost() {
   const playingRef = useRef(playing)
   const bpmRef = useRef(bpm)
   const tracksRef = useRef<MidiRouteTrack[]>(tracks)
+  const zonasRef = useRef<readonly ZonaMidi[] | undefined>(zonas)
+  const seguridadRef = useRef(seguridad)
   const selectedRef = useRef<string | null>(null)
   // Pedales (CC64/66/67/69) unificados por canal: el PSR-E373 manda «pisado» por dos canales y «suelto» por un
   // tercero en el mismo instante; sin esto el último mensaje anulaba la pisada y el sustain nunca se aplicaba.
@@ -155,6 +172,8 @@ export function MidiControllerHost() {
   playingRef.current = playing
   bpmRef.current = bpm
   tracksRef.current = tracks.map(toMidiRouteTrack)
+  zonasRef.current = zonas
+  seguridadRef.current = seguridad
 
   const selectedId = useDAWState((s) => getSelectedTrackId(s))
   selectedRef.current = selectedId
@@ -180,7 +199,10 @@ export function MidiControllerHost() {
   }, [trackCount])
 
   useEffect(() => {
-    const push = () => sendLiveMidiTargets(tracksRef.current)
+    const push = () => {
+      setLiveMidiZones(zonasRef.current)
+      sendLiveMidiTargets(tracksRef.current, zonasRef.current)
+    }
     push()
     const unsubRt = subscribeVstRuntime(push)
     const unsubDev = midiController.subscribeDevices(push)
@@ -188,14 +210,24 @@ export function MidiControllerHost() {
     const offRestart = window.electron?.onPluginHostRestarted?.(() => {
       pedalesRef.current.reiniciar()
       push()
+      enviarSeguridadMaster(seguridadRef.current)
     })
+    const onPanic = () => pedalesRef.current.reiniciar()
+    window.addEventListener(EVENTO_PANIC, onPanic)
     return () => {
       unsubRt()
       unsubDev()
       unsubMap()
       offRestart?.()
+      window.removeEventListener(EVENTO_PANIC, onPanic)
     }
-  }, [routeSig])
+  }, [routeSig, zonasSig])
+
+  // Seguridad del máster (limitador true-peak) del proyecto → host.
+  useEffect(() => {
+    if (isUndockWindow()) return
+    enviarSeguridadMaster(seguridadRef.current)
+  }, [seguridadSig])
 
   useEffect(() => {
     if (isUndockWindow()) return

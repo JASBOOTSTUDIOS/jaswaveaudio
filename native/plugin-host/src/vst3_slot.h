@@ -26,6 +26,8 @@ struct Vst3MidiEvent {
   int16_t ccValue{0};
   int32_t delaySamples{0};
   int32_t lengthSamples{0};
+  /** Canal MIDI 0-15 (zonas con canal de salida; por defecto 0). */
+  int16_t channel{0};
 };
 
 struct Vst3ParamDesc {
@@ -59,11 +61,11 @@ public:
   void suspendForAudioRestart();
   void unload();
 
-  void noteOn(int pitch, float velocity, int delaySamples = 0, int32_t lengthSamples = 0);
+  void noteOn(int pitch, float velocity, int delaySamples = 0, int32_t lengthSamples = 0, int channel = 0);
   /** Con el pedal (CC64 ≥ 64) pisado, el note-off se retiene y se entrega al soltar (sustain del lado del host). */
-  void noteOff(int pitch, int delaySamples = 0);
+  void noteOff(int pitch, int delaySamples = 0, int channel = 0);
   /** CC al plugin (kLegacyMIDICCOutEvent + IMidiMapping). CC64 además gobierna el sustain del host. */
-  void midiCc(int cc, int value, int delaySamples = 0);
+  void midiCc(int cc, int value, int delaySamples = 0, int channel = 0);
   /** Sustain off + all notes/sound off + noteOff 0-127. */
   void allNotesOff();
   /**

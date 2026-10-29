@@ -88,6 +88,38 @@ la carpeta** antes del Master. Las pistas de dentro se ven con sangría y la car
 ## Marcadores
 
 Crea marcadores en el playhead para secciones (Intro, Estribillo…). Útiles para ti y para el Asistente / Music Build.
+Cuando hay marcadores aparece la fila **Secciones** bajo la regla: doble clic renombra, arrastrar mueve (con imán a la
+cuadrícula) y el clic derecho ofrece **Quitar**.
+
+## Acordes y letra en el arreglo
+
+Debajo de la regla, la cabecera del Arrange se convierte en una **pila de filas**: Secciones, **Acordes** y **Letra**.
+Las filas solo aparecen cuando tienen datos y se pliegan con la flecha de su etiqueta (a la izquierda). Todas usan la
+misma escala que las pistas: se desplazan y amplían con el scroll y el zoom, y la línea amarilla del playhead las
+atraviesa.
+
+**Acordes.** Cada acorde es una insignia que ocupa su duración (por defecto un compás). Acepta cualquier cifrado
+americano: `D`, `Bm7`, `G/B`, `F#m7b5`, `Cmaj9`, `A7sus4`, `E7alt`, `C7(b9,#11)`, también con `♯`/`♭` y en minúsculas.
+
+- **Doble clic** en una insignia: edita el nombre (Enter aplica, Esc cancela; si no es un acorde válido, el borde se
+  pone rojo y no se aplica).
+- **Doble clic en un hueco** del carril: crea un acorde en ese compás.
+- **Arrastrar** mueve el acorde con imán a la cuadrícula. **Clic derecho → Quitar** lo elimina.
+- Todo tiene deshacer (Ctrl+Z).
+
+**Letra.** Pulsa el botón de **Letra** (icono de líneas, junto a la «M» de marcador) y pega el texto: una línea por
+frase, estrofas separadas por una línea en blanco. Si el proyecto tiene marcadores, cada estrofa cae en su sección (la
+primera en la primera, etc.) y sus frases se reparten por igual; si no, cada frase ocupa dos compases seguidos. Las
+palabras se dividen en sílabas automáticamente (`pre-sen-cia`) y se reparten en el tiempo. Mientras suena la canción,
+la sílaba que toca **brilla** en ámbar siguiendo el playhead.
+
+- **Doble clic** en una sílaba la edita; **arrastrar** la mueve (con imán); **clic derecho → Quitar frase**.
+- En el mismo botón de Letra: **Quitar letra** borra todo el carril.
+
+**Con la IA.** El asistente dispone de `chords.set` / `chords.get` y `lyrics.set` / `lyrics.get`: puedes pedirle «pon
+estos acordes: | D | Bm | G A |», «escribe la letra en el arreglo» o preguntarle qué acordes hay. La **banda virtual**
+vuelca su hoja de ruta (secciones con un acorde por compás) al carril al producir una canción, y crea un marcador por
+sección si no existía.
 
 ## Grabación básica de audio
 

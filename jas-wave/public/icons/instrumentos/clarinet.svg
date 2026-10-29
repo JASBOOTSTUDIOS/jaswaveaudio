@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="clarinet">
+  <!-- Boquilla con caña y abrazadera -->
+  <polygon points="30,4 34,4 33,10 31,10" fill="currentColor" />
+  <rect x="30" y="7" width="4" height="2" fill="currentColor" />
+  <!-- Barrilete y cuerpo de madera de ébano -->
+  <rect x="29" y="10" width="6" height="36" fill="currentColor" fill-opacity="0.25" stroke-width="2" />
+  <!-- Campana inferior acampanada con anillo plateado -->
+  <path d="M29 46l-4 12h14l-4-12" fill="currentColor" fill-opacity="0.3" stroke-width="2" />
+  <ellipse cx="32" cy="58" rx="7" ry="2" fill="currentColor" />
+  <!-- Anillos metálicos de unión entre cuerpos -->
+  <line x1="28" y1="16" x2="36" y2="16" stroke-width="1.5" />
+  <line x1="28" y1="30" x2="36" y2="30" stroke-width="1.5" />
+  <!-- Llaves y anillos de digitación plateados -->
+  <circle cx="32" cy="20" r="1.5" stroke-width="1" fill="currentColor" />
+  <circle cx="32" cy="25" r="1.5" stroke-width="1" fill="currentColor" />
+  <circle cx="32" cy="35" r="1.5" stroke-width="1" fill="currentColor" />
+  <circle cx="32" cy="40" r="1.5" stroke-width="1" fill="currentColor" />
+  <line x1="27" y1="20" x2="27" y2="42" stroke-width="1.5" />
+</svg>

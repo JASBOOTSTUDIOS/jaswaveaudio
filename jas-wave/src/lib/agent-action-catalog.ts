@@ -351,6 +351,43 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     description: 'Búsqueda web general (DuckDuckGo/Wikipedia) — solo lectura',
     examplePayload: { query: 'sidechain compression technique' },
   },
+  // K6: internet para la IA (fuentes verificables y referencias musicales). Resultados = datos no confiables; cita la fuente.
+  {
+    type: 'web.buscar',
+    kind: 'agent',
+    description: 'Busca en internet (DuckDuckGo, respaldo Wikipedia) y devuelve título, enlace y resumen de cada resultado — solo lectura; cita el enlace',
+    examplePayload: { q: 'historia de la bachata tempo típico', max: 5 },
+  },
+  {
+    type: 'web.leer',
+    kind: 'agent',
+    description: 'Lee una página web http(s) y devuelve su texto legible (título, autor, fecha, párrafos; hasta 20 000 caracteres) — solo lectura; cita la URL',
+    examplePayload: { url: 'https://es.wikipedia.org/wiki/Bachata', maxChars: 8000 },
+  },
+  {
+    type: 'youtube.buscar',
+    kind: 'agent',
+    description: 'Busca vídeos en YouTube (título, canal, duración, enlace) para proponer referencias — solo lectura',
+    examplePayload: { q: 'Romeo Santos Propuesta Indecente', max: 5 },
+  },
+  {
+    type: 'youtube.ficha',
+    kind: 'agent',
+    description: 'Ficha de un vídeo de YouTube: título, canal, duración, descripción, capítulos y transcripción (si la hay) — solo lectura',
+    examplePayload: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+  },
+  {
+    type: 'referencia.analizar',
+    kind: 'agent',
+    description: 'Descarga el audio de una referencia de YouTube (yt-dlp bajo demanda, hasta 90 s del tramo más denso) y mide tempo, tonalidad, acordes, LUFS, true peak y espectro con los analizadores del DAW; informe en español con números',
+    examplePayload: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+  },
+  {
+    type: 'referencia.escuchar',
+    kind: 'agent',
+    description: 'Abre el vídeo de referencia en una ventana de JasWave (YouTube embebido, sin salir de la app) para escucharlo',
+    examplePayload: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', titulo: 'Propuesta Indecente' },
+  },
   {
     type: 'plugin.probe',
     kind: 'agent',
@@ -489,6 +526,25 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     examplePayload: { trackId: '…', clipIds: ['…'], instrumento: 'piano' },
   },
   {
+    type: 'analysis.performance',
+    kind: 'agent',
+    description:
+      'Informe completo (solo lectura) de cómo tocó el usuario: la toma grabada con «Grabar toma» (toma: true, o por defecto si existe), ' +
+      'los últimos N s (segundos) o clips (clipIds/trackId). Devuelve texto en español y datos: perfil de toque v2 (micro-tiempo por ' +
+      'posición y por voz, dinámica por mano, rubato por compás, pedal CC64), y acordes tocados como pitches agrupados con nombre cromático ' +
+      '(p. ej. Dm7/F). Úsalo para «dime cómo toco», «qué acordes toqué» o antes de style.skill.save',
+    examplePayload: { toma: true },
+  },
+  {
+    type: 'style.skill.save',
+    kind: 'agent',
+    description:
+      'Guarda la forma de tocar del usuario como SKILL DE ESTILO en la carpeta del asistente (habilidades/estilo-<nombre>.md, para todos ' +
+      'los agentes): analiza la toma / últimos segundos / clips (como analysis.performance) y escribe el perfil y su descripción. ' +
+      'La banda lo aplica a sus partes («con mi estilo»). nombre obligatorio; mismo nombre → actualiza',
+    examplePayload: { nombre: 'Mi worship', toma: true },
+  },
+  {
     type: 'style.touch.learn',
     kind: 'agent',
     description:
@@ -614,6 +670,60 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     kind: 'agent',
     description: 'Corta en dos las notas que cruzan `beat` (relativo al clip); noteIds opcional',
     examplePayload: { pistaId: '…', clipId: '…', beat: 2 },
+  },
+  {
+    type: 'midi.zones.get',
+    kind: 'agent',
+    description: 'Lee las zonas MIDI del teclado (splits, capas, transposición), la seguridad del máster y el bloqueo Directo',
+    examplePayload: {},
+  },
+  {
+    type: 'midi.zones.set',
+    kind: 'agent',
+    description:
+      'Sustituye las zonas MIDI (de una pista si das pistaId, o todas). Cada zona: pistaId, lo, hi (0-127), transposicion (semitonos), curvaVelocidad (lineal|suave|dura|fija), escalaVelocidad, canalEntrada/canalSalida (1-16, opcional). Split = rangos distintos; capa = mismo rango en dos pistas.',
+    examplePayload: {
+      zonas: [
+        { pistaId: '…bajo', lo: 21, hi: 59, transposicion: -12 },
+        { pistaId: '…piano', lo: 60, hi: 108, curvaVelocidad: 'suave' },
+      ],
+    },
+  },
+  {
+    type: 'midi.zones.add',
+    kind: 'agent',
+    description: 'Añade una zona MIDI a una pista (rango lo-hi, transposición, curva de velocidad)',
+    examplePayload: { pistaId: '…', lo: 60, hi: 108, transposicion: 0 },
+  },
+  {
+    type: 'midi.zones.update',
+    kind: 'agent',
+    description: 'Cambia campos de una zona MIDI existente (lo, hi, transposicion, curvaVelocidad, pistaId, activa…)',
+    examplePayload: { zonaId: '…', cambios: { hi: 64, transposicion: 12 } },
+  },
+  {
+    type: 'midi.zones.remove',
+    kind: 'agent',
+    description: 'Quita una zona MIDI',
+    examplePayload: { zonaId: '…' },
+  },
+  {
+    type: 'directo.panic',
+    kind: 'agent',
+    description: 'PANIC: apaga todas las notas de todos los instrumentos y descarta el MIDI pendiente (notas colgadas)',
+    examplePayload: {},
+  },
+  {
+    type: 'directo.setSafety',
+    kind: 'agent',
+    description: 'Limitador true-peak del máster solo para monitorizar en directo (no entra en el bounce). techoDb entre -24 y 0 (defecto -0.5)',
+    examplePayload: { activa: true, techoDb: -0.5 },
+  },
+  {
+    type: 'directo.setLock',
+    kind: 'agent',
+    description: 'Modo Directo: bloquea (true) o libera (false) borrar, deshacer, cortar, pegar y duplicar mientras se toca en vivo',
+    examplePayload: { bloqueo: true },
   },
   {
     type: 'export.midi',
@@ -871,6 +981,20 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'analysis.voiceToMelody',
   'analysis.extractMidi',
   'marker.create',
+  // K2 · acordes, letra y marcadores en el arreglo
+  'marker.update',
+  'marker.remove',
+  'chords.set',
+  'chords.get',
+  'lyrics.set',
+  'lyrics.get',
+  'chords.upsert',
+  'chords.remove',
+  'chords.move',
+  'lyrics.setPhrases',
+  'lyrics.alignTiming',
+  'lyrics.setChords',
+  'lyrics.clear',
   'automation.setCurve',
   'automation.writePoint',
   'automation.clear',

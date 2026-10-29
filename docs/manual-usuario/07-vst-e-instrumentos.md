@@ -187,6 +187,40 @@ canal, barra = notas), la traza de los últimos segundos, las notas que llegan a
 teclas y las estadísticas (eventos recibidos y enviados, pedales duplicados filtrados, último pedal recibido). En
 modo **Básico** quedan Fuente, Polaridad, Canal, Forzar, Unificar y Bypass.
 
+## Zonas MIDI y modo Directo
+
+Para tocar en vivo con un solo teclado (p. ej. el PSR-E373) repartiendo el teclado entre varias pistas, apilando
+capas o transponiendo sin latencia añadida. Las zonas las aplica el **host nativo en el hilo de audio**: el MIDI
+no pasa por la interfaz, así que un split suena con la misma latencia que una pista sola (0 ms añadidos).
+
+**Abrir el panel:** icono «Zonas MIDI» (teclado) en la barra lateral o la herramienta `midi-zones`. Arriba se
+dibuja un teclado de 88 teclas con una banda de color por zona; **arrastra los bordes** de la banda para mover sus
+límites, o escribe las notas (0–127, C4 = 60) en la lista.
+
+- **Split**: dos zonas con rangos distintos en pistas distintas (bajo A0–B3 a la izquierda, piano C4–C8 a la
+  derecha). «Añadir zona» en una pista que ya tiene una crea la segunda a partir de C4.
+- **Capa**: dos zonas con el mismo rango en pistas distintas (piano + cuerdas). Todas las pistas con monitor
+  encendido y la misma entrada MIDI reciben el teclado a la vez; sin zonas, cada una recibe el teclado completo.
+- **Transposición** en semitonos (±60), **curva de velocidad** (lineal, suave, dura o fija con un valor), **escala**
+  de velocidad en % y **canales**: filtrar por canal de entrada (p. ej. 1 = mano derecha de un teclado con splits
+  propios) y forzar un canal de salida hacia el instrumento.
+- **ON/OFF** desactiva una zona sin borrarla. Todo tiene **deshacer** y se guarda con el proyecto (`project.directo`).
+- Las zonas también valen para el **thru** del motor web (JasWave Roles / Piano): mismo rango, transposición y curva.
+
+**PANIC** (botón rojo del transporte): apaga todas las notas de todos los instrumentos y descarta el MIDI pendiente.
+Úsalo si una nota se queda colgada al cambiar de zona o de pista.
+
+**Directo** (candado del transporte): bloquea borrar, deshacer, rehacer, cortar, pegar y duplicar mientras tocas;
+muestra «Modo Directo: edición bloqueada» y avisa del atajo que detuvo. El transporte, la grabación y los campos de
+texto (chat, nombres) siguen funcionando. Clic de nuevo para salir; no entra en el historial de deshacer.
+
+**Seguridad del máster** (en el panel «Zonas MIDI»): limitador **true-peak** del máster para monitorizar en directo
+(techo −0,5 dBTP por defecto, 4× sobremuestreo, lookahead de ~1,4 ms). Solo actúa en lo que sale por los altavoces
+mientras tocas: **no entra en un bounce ni en la exportación**. Con la seguridad activa el candado muestra «TP».
+
+**Para la IA**: `midi.zones.get`, `midi.zones.set` («divide el teclado: bajo hasta B3 una octava abajo, piano desde
+C4»), `midi.zones.add/update/remove`, `directo.panic`, `directo.setSafety` y `directo.setLock`.
+
 ## Editores: modo Básico / Avanzado
 
 Todos los editores de los VST de JasWave tienen en la cabecera el selector **[ BÁSICO | AVANZADO ]**:

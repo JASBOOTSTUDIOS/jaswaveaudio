@@ -18,6 +18,7 @@ export type HerramientaNucleo =
   | 'automation'
   | 'plugin-editor'
   | 'midi-map'
+  | 'midi-zones'
   | 'piano-roll'
   | 'terminal'
   | 'settings'
@@ -66,6 +67,7 @@ const TAMANO_MINIMO: Record<string, { w: number; h: number }> = {
   automation: { w: 320, h: 170 },
   'plugin-editor': { w: 420, h: 300 },
   'midi-map': { w: 280, h: 200 },
+  'midi-zones': { w: 420, h: 260 },
   terminal: { w: 260, h: 140 },
   settings: { w: 300, h: 260 },
   'project-files': { w: 200, h: 160 },
@@ -161,6 +163,13 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     defaultZone: 'right',
     singleton: true,
   },
+  'midi-zones': {
+    id: 'midi-zones',
+    title: 'Zonas MIDI',
+    description: 'Splits, capas y transposición del teclado para tocar en directo',
+    defaultZone: 'bottom',
+    singleton: true,
+  },
   'piano-roll': {
     id: 'piano-roll',
     title: 'Piano roll',
@@ -248,6 +257,7 @@ export const DEFAULT_WORKSPACE: WorkspaceLayout = {
     'fx-chain',
     'automation',
     'midi-map',
+    'midi-zones',
     'meters',
     'routing',
     'terminal',

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="synth-bass">
+  <!-- Sintetizador de bajo analógico / bassline station -->
+  <rect x="8" y="16" width="48" height="36" rx="3" fill="currentColor" fill-opacity="0.14" stroke-width="2" />
+  <!-- Onda cuadrada sub-grave profunda -->
+  <path d="M12 28h8v-8h8v8h8v-8h8v8h8" stroke-width="2.5" />
+  <!-- Perillas de Cutoff, Resonancia, Env Mod y Decay -->
+  <circle cx="16" cy="38" r="3.5" fill="currentColor" fill-opacity="0.3" stroke-width="1.75" />
+  <circle cx="26" cy="38" r="3.5" fill="currentColor" fill-opacity="0.3" stroke-width="1.75" />
+  <circle cx="36" cy="38" r="3.5" fill="currentColor" fill-opacity="0.3" stroke-width="1.75" />
+  <circle cx="46" cy="38" r="3.5" fill="currentColor" fill-opacity="0.3" stroke-width="1.75" />
+  <line x1="16" y1="38" x2="18" y2="36" stroke-width="1.5" />
+  <line x1="26" y1="38" x2="28" y2="36" stroke-width="1.5" />
+  <!-- Botones de secuenciador de pasos (step sequencer) -->
+  <rect x="12" y="45" width="4" height="4" rx="0.5" fill="currentColor" />
+  <rect x="18" y="45" width="4" height="4" rx="0.5" stroke-width="1" />
+  <rect x="24" y="45" width="4" height="4" rx="0.5" fill="currentColor" />
+  <rect x="30" y="45" width="4" height="4" rx="0.5" stroke-width="1" />
+  <rect x="36" y="45" width="4" height="4" rx="0.5" fill="currentColor" />
+  <rect x="42" y="45" width="4" height="4" rx="0.5" stroke-width="1" />
+  <rect x="48" y="45" width="4" height="4" rx="0.5" fill="currentColor" />
+</svg>

@@ -195,6 +195,23 @@ contextBridge.exposeInMainWorld('electron', {
   agentBridgeSetEnabled: (enabled: boolean) => ipcRenderer.invoke('agent-bridge-set-enabled', enabled),
   pluginLookup: (pluginName: string) => ipcRenderer.invoke('plugin-lookup', pluginName),
   webSearch: (query: string) => ipcRenderer.invoke('web-search', query),
+  /** K6: internet para la IA (búsqueda, lectura legible, YouTube y referencias). Todo corre en main. */
+  webTools: {
+    buscar: (q: string, max?: number) => ipcRenderer.invoke('web-tools-buscar', q, max),
+    leer: (url: string, maxChars?: number) => ipcRenderer.invoke('web-tools-leer', url, maxChars),
+    youtubeBuscar: (q: string, max?: number) => ipcRenderer.invoke('web-tools-youtube-buscar', q, max),
+    youtubeFicha: (urlOId: string) => ipcRenderer.invoke('web-tools-youtube-ficha', urlOId),
+    youtubeMiniatura: (videoId: string) => ipcRenderer.invoke('web-tools-youtube-miniatura', videoId),
+    referenciaAnalizar: (url: string) => ipcRenderer.invoke('web-tools-referencia-analizar', url),
+    referenciaEscuchar: (url: string, titulo?: string) => ipcRenderer.invoke('web-tools-referencia-escuchar', url, titulo),
+    internetPermitido: () => ipcRenderer.invoke('web-tools-internet-permitido'),
+    fijarInternetPermitido: (activo: boolean) => ipcRenderer.invoke('web-tools-fijar-internet-permitido', activo),
+    onProgreso: (callback: (p: { fase: string; detalle?: string }) => void) => {
+      const listener = (_event: unknown, p: { fase: string; detalle?: string }) => callback(p)
+      ipcRenderer.on('web-tools-progreso', listener)
+      return () => ipcRenderer.removeListener('web-tools-progreso', listener)
+    },
+  },
   dialogMessage: (type: string, title: string, message: string) => ipcRenderer.invoke('dialog-message', type, title, message),
   shellOpenExternal: (url: string) => ipcRenderer.invoke('shell-open-external', url),
   /** Abre JasWave Admin (admin.html) en su propia ventana. */

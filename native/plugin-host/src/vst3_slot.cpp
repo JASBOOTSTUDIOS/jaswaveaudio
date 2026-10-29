@@ -380,6 +380,8 @@ struct Vst3Slot::Impl {
   bool sustainDown{false};
   uint64_t keyDown[2]{0, 0};
   uint64_t latched[2]{0, 0};
+  /** Canal del último note-on por tono: el note-off retenido por el pedal sale por el mismo canal. */
+  uint8_t noteChannel[128]{};
   static bool bit(const uint64_t* w, int p) { return (w[p >> 6] >> (p & 63)) & 1ull; }
   static void setBit(uint64_t* w, int p, bool on) {
     if (on) w[p >> 6] |= (1ull << (p & 63));
@@ -649,45 +651,52 @@ void Vst3Slot::unload() {
   path_.clear();
 }
 
-void Vst3Slot::noteOn(int pitch, float velocity, int delaySamples, int32_t lengthSamples) {
+void Vst3Slot::noteOn(int pitch, float velocity, int delaySamples, int32_t lengthSamples, int channel) {
   std::lock_guard<std::mutex> lock(impl_->midiMutex);
   if (impl_->midiQueue.size() > 8192) return;
   const int delay = std::max(0, delaySamples);
+  const int16_t ch = static_cast<int16_t>(std::clamp(channel, 0, 15));
   if (pitch >= 0 && pitch < 128) {
     // Nota retenida solo por el pedal que se vuelve a tocar: se apaga antes para que el plugin la redispare.
     if (Impl::bit(impl_->latched, pitch)) {
       Impl::setBit(impl_->latched, pitch, false);
-      impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(pitch), 0.f, 0, 0, delay});
+      impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(pitch), 0.f, 0, 0, delay, 0,
+                                  static_cast<int16_t>(impl_->noteChannel[pitch])});
     }
     Impl::setBit(impl_->keyDown, pitch, true);
+    impl_->noteChannel[pitch] = static_cast<uint8_t>(ch);
   }
   impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOn, static_cast<int16_t>(pitch),
-                              std::clamp(velocity, 0.f, 1.f), 0, 0, delay, std::max(0, lengthSamples)});
+                              std::clamp(velocity, 0.f, 1.f), 0, 0, delay, std::max(0, lengthSamples), ch});
 }
 
-void Vst3Slot::noteOff(int pitch, int delaySamples) {
+void Vst3Slot::noteOff(int pitch, int delaySamples, int channel) {
   std::lock_guard<std::mutex> lock(impl_->midiMutex);
   if (impl_->midiQueue.size() > 16384) return;
+  int16_t ch = static_cast<int16_t>(std::clamp(channel, 0, 15));
   if (pitch >= 0 && pitch < 128) {
     Impl::setBit(impl_->keyDown, pitch, false);
+    // El note-off sale por el canal del note-on que sonó (una zona puede cambiar de canal mientras suena).
+    ch = static_cast<int16_t>(impl_->noteChannel[pitch]);
     if (impl_->sustainDown) {
       Impl::setBit(impl_->latched, pitch, true);
       return;
     }
   }
   impl_->midiQueue.push_back(
-      {Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(pitch), 0.f, 0, 0, std::max(0, delaySamples)});
+      {Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(pitch), 0.f, 0, 0, std::max(0, delaySamples), 0, ch});
 }
 
-void Vst3Slot::midiCc(int cc, int value, int delaySamples) {
+void Vst3Slot::midiCc(int cc, int value, int delaySamples, int channel) {
   const int c = std::clamp(cc, 0, 127);
   const int v = std::clamp(value, 0, 127);
   const int delay = std::max(0, delaySamples);
+  const int16_t ch = static_cast<int16_t>(std::clamp(channel, 0, 15));
   {
     std::lock_guard<std::mutex> lock(impl_->midiMutex);
     if (impl_->midiQueue.size() > 16384) return;
     impl_->midiQueue.push_back({Vst3MidiEvent::Kind::ControlChange, 0, 0.f, static_cast<int16_t>(c),
-                                static_cast<int16_t>(v), delay});
+                                static_cast<int16_t>(v), delay, 0, ch});
     if (c == 64) {
       const bool down = v >= 64;
       if (down != impl_->sustainDown) {
@@ -698,7 +707,8 @@ void Vst3Slot::midiCc(int cc, int value, int delaySamples) {
             if (!Impl::bit(impl_->latched, p)) continue;
             Impl::setBit(impl_->latched, p, false);
             if (!Impl::bit(impl_->keyDown, p))
-              impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(p), 0.f, 0, 0, delay});
+              impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(p), 0.f, 0, 0, delay, 0,
+                                          static_cast<int16_t>(impl_->noteChannel[p])});
           }
         }
       }
@@ -731,7 +741,8 @@ void Vst3Slot::allNotesOff() {
   midiCc(123, 0);
   std::lock_guard<std::mutex> lock(impl_->midiMutex);
   for (int p = 0; p < 128; ++p) {
-    impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(p), 0.f});
+    impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(p), 0.f, 0, 0, 0, 0,
+                                static_cast<int16_t>(impl_->noteChannel[p])});
   }
   // No tocar kPlaying aquí: el panic se usa también en play (mute/rearm) y
   // setPlaying(false) dejaba el instrumento en silencio permanente.
@@ -926,7 +937,7 @@ void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* o
       e.sampleOffset = off - offset;
       if (ev.kind == Vst3MidiEvent::Kind::NoteOn) {
         e.type = Event::kNoteOnEvent;
-        e.noteOn.channel = 0;
+        e.noteOn.channel = static_cast<int16>(ev.channel);
         e.noteOn.pitch = ev.pitch;
         e.noteOn.velocity = ev.velocity;
         e.noteOn.length = ev.lengthSamples > 0 ? ev.lengthSamples : 0;
@@ -936,13 +947,13 @@ void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* o
         // JUCE y varios wrappers leen CC aquí (el nombre "Out" es histórico).
         // El sustain real también va por IMidiMapping → IParameterChanges en midiCc().
         e.type = Event::kLegacyMIDICCOutEvent;
-        e.midiCCOut.channel = 0;
+        e.midiCCOut.channel = static_cast<int8>(ev.channel);
         e.midiCCOut.controlNumber = static_cast<uint8>(ev.cc);
         e.midiCCOut.value = static_cast<int8>(ev.ccValue);
         e.midiCCOut.value2 = 0;
       } else {
         e.type = Event::kNoteOffEvent;
-        e.noteOff.channel = 0;
+        e.noteOff.channel = static_cast<int16>(ev.channel);
         e.noteOff.pitch = ev.pitch;
         e.noteOff.velocity = 0;
         e.noteOff.tuning = 0;

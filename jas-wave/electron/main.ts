@@ -9,6 +9,20 @@ import { createAgentRunStore } from './agent-runs'
 import { lookupPluginOnWeb } from './plugin-lookup'
 import { searchWeb } from './web-search'
 import {
+  extraerReferenciaAudio,
+  extraerVideoId,
+  GestorTemporalesReferencia,
+  instalarYtDlp,
+  LimitadorPeticiones,
+  resolverYtDlp,
+  urlEmbedYoutube,
+  webBuscar,
+  webLeer,
+  youtubeBuscar,
+  youtubeFicha,
+  youtubeMiniatura,
+} from './web-tools'
+import {
   resolveAgentBridgeReply,
   startAgentBridge,
   stopAgentBridge,
@@ -142,7 +156,13 @@ function withStoredApiKey<T extends { apiKey?: string; providerId?: string }>(re
 }
 
 // ── Ajustes del proceso main (userData/jaswave-settings.json) ───────────────
-type MainSettings = { agentBridgeEnabled?: boolean; /** X1: permite instalar extensiones .jwx sin firma (con aviso). */ modoDesarrollador?: boolean }
+type MainSettings = {
+  agentBridgeEnabled?: boolean
+  /** X1: permite instalar extensiones .jwx sin firma (con aviso). */
+  modoDesarrollador?: boolean
+  /** K6: «Permitir a la IA usar internet» (búsqueda, lectura, YouTube, referencias). Por defecto activada. */
+  permitirInternetIA?: boolean
+}
 const settingsFile = () => path.join(app.getPath('userData'), 'jaswave-settings.json')
 function readMainSettings(): MainSettings {
   try {
@@ -1458,6 +1478,143 @@ ipcMain.handle('web-search', async (_event: IpcMainInvokeEvent, query: unknown) 
   const q = String(query ?? '').trim().slice(0, 200)
   if (q.length < 2) return []
   return searchWeb(q)
+})
+
+// ── K6: internet para la IA (web-tools.ts). Red solo aquí; preferencia + límite de peticiones. ──
+const limitadorWeb = new LimitadorPeticiones(30, 60_000)
+const temporalesReferencia = new GestorTemporalesReferencia(path.join(os.tmpdir(), `jaswave-referencias-${process.pid}`))
+app.on('will-quit', () => temporalesReferencia.limpiar())
+
+const internetPermitidoIA = () => readMainSettings().permitirInternetIA !== false
+
+type RespuestaWeb<T> = ({ ok: true } & T) | { ok: false; error: string }
+
+/** Comprueba la preferencia y el límite; ejecuta la herramienta y traduce errores a texto. */
+async function herramientaWeb<T>(nombre: string, fn: () => Promise<T>): Promise<RespuestaWeb<{ datos: T }>> {
+  if (!internetPermitidoIA()) return { ok: false, error: 'El acceso a internet de la IA está desactivado en Ajustes → IA («Permitir a la IA usar internet»)' }
+  if (!limitadorWeb.permitir()) return { ok: false, error: 'Demasiadas peticiones a internet en un minuto (máximo 30); espera un momento' }
+  try {
+    return { ok: true, datos: await fn() }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err)
+    logLine('warn', 'web-tools', `${nombre} falló: ${error}`)
+    return { ok: false, error }
+  }
+}
+
+ipcMain.handle('web-tools-internet-permitido', () => internetPermitidoIA())
+ipcMain.handle('web-tools-fijar-internet-permitido', async (e: IpcMainInvokeEvent, activo: unknown) => {
+  if (!isMainWindowSender(e)) return internetPermitidoIA()
+  await writeMainSettings({ permitirInternetIA: activo !== false })
+  logLine('info', 'web-tools', `internet para la IA ${activo !== false ? 'permitido' : 'desactivado'}`)
+  return internetPermitidoIA()
+})
+ipcMain.handle('web-tools-buscar', (_e: IpcMainInvokeEvent, q: unknown, max: unknown) =>
+  herramientaWeb('web.buscar', () => webBuscar(String(q ?? ''), { max: Number(max) || undefined })),
+)
+ipcMain.handle('web-tools-leer', (_e: IpcMainInvokeEvent, url: unknown, maxChars: unknown) =>
+  herramientaWeb('web.leer', () => webLeer(String(url ?? ''), { maxChars: Number(maxChars) || undefined })),
+)
+ipcMain.handle('web-tools-youtube-buscar', (_e: IpcMainInvokeEvent, q: unknown, max: unknown) =>
+  herramientaWeb('youtube.buscar', () => youtubeBuscar(String(q ?? ''), { max: Number(max) || undefined })),
+)
+ipcMain.handle('web-tools-youtube-ficha', (_e: IpcMainInvokeEvent, urlOId: unknown) =>
+  herramientaWeb('youtube.ficha', () => youtubeFicha(String(urlOId ?? ''))),
+)
+ipcMain.handle('web-tools-youtube-miniatura', (_e: IpcMainInvokeEvent, videoId: unknown) =>
+  herramientaWeb('youtube.miniatura', () => youtubeMiniatura(String(videoId ?? ''))),
+)
+
+let extrayendoReferencia = false
+/**
+ * Audio de una referencia de YouTube: yt-dlp (descargado y verificado bajo demanda) + ffmpeg → WAV mono
+ * 22 050 Hz de hasta 90 s en la carpeta temporal (se borra al cerrar la app). El análisis musical lo hace
+ * el renderer con los analizadores del DAW sobre las muestras que se devuelven aquí.
+ */
+ipcMain.handle('web-tools-referencia-analizar', async (e: IpcMainInvokeEvent, url: unknown) => {
+  if (extrayendoReferencia) return { ok: false, error: 'Ya se está descargando otra referencia; espera a que termine' }
+  extrayendoReferencia = true
+  const progreso = (fase: string, detalle?: string) => {
+    if (!e.sender.isDestroyed()) e.sender.send('web-tools-progreso', { fase, detalle })
+  }
+  try {
+    return await herramientaWeb('referencia.analizar', async () => {
+      if (!extraerVideoId(url)) throw new Error('La referencia debe ser un enlace o id de YouTube')
+      const ffmpeg = await resolverFfmpeg({ localAppData: localAppDataDir(), env: process.env })
+      if (!ffmpeg) throw new Error('FFMPEG_MISSING: ffmpeg no está instalado; instálalo desde Exportar (formato MP3) y vuelve a intentarlo')
+      let ytDlp = await resolverYtDlp({ localAppData: localAppDataDir(), env: process.env })
+      if (!ytDlp) {
+        progreso('instalando', 'Descargando yt-dlp (verificado con SHA-256)')
+        const ruta = await instalarYtDlp({ localAppData: localAppDataDir(), alProgreso: (r) => progreso('instalando', `${Math.round(r / 1024 / 1024)} MB`) })
+        logLine('info', 'web-tools', `yt-dlp instalado en ${ruta}`)
+        ytDlp = { ruta, origen: 'jaswave' }
+      }
+      const carpeta = await temporalesReferencia.preparar()
+      pathGrants.grant(carpeta, 'read')
+      const ref = await extraerReferenciaAudio(String(url), { carpeta, ytDlp: ytDlp.ruta, ffmpeg: ffmpeg.ruta, alProgreso: progreso })
+      logLine('info', 'web-tools', `referencia ${ref.videoId}: ${Math.round(ref.duracionSeg)} s desde ${ref.desdeSeg} s (${ref.ruta})`)
+      const { pcm, ...resto } = ref
+      return { ...resto, pcm16: pcm }
+    })
+  } finally {
+    extrayendoReferencia = false
+  }
+})
+
+/** Ventana de la app para escuchar la referencia: sin node, partición propia, solo el embed de YouTube. */
+let ventanaReferencia: typeof BrowserWindow | null = null
+ipcMain.handle('web-tools-referencia-escuchar', async (_e: IpcMainInvokeEvent, url: unknown, titulo: unknown) => {
+  if (!internetPermitidoIA()) return { ok: false, error: 'El acceso a internet de la IA está desactivado en Ajustes → IA' }
+  const videoId = extraerVideoId(url)
+  if (!videoId) return { ok: false, error: 'La referencia debe ser un enlace o id de YouTube' }
+  try {
+    const nombre = `Referencia: ${String(titulo ?? '').trim().slice(0, 120) || videoId}`
+    if (ventanaReferencia && !ventanaReferencia.isDestroyed()) {
+      ventanaReferencia.setTitle(nombre)
+      await ventanaReferencia.loadURL(urlEmbedYoutube(videoId))
+      ventanaReferencia.focus()
+      return { ok: true, videoId }
+    }
+    const ses = session.fromPartition('referencia-youtube')
+    ses.setPermissionRequestHandler((_wc: unknown, _permiso: string, callback: (ok: boolean) => void) => callback(false))
+    ses.setPermissionCheckHandler(() => false)
+    const { screen } = require('electron')
+    const medidasRef = medidasQueCaben(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea, { width: 960, height: 560, minWidth: 420, minHeight: 260 })
+    const icon = resolveAppIconPath()
+    const win = new BrowserWindow({
+      width: medidasRef.width,
+      height: medidasRef.height,
+      minWidth: medidasRef.minWidth,
+      minHeight: medidasRef.minHeight,
+      minimizable: true,
+      maximizable: true,
+      closable: true,
+      title: nombre,
+      backgroundColor: '#000000',
+      autoHideMenuBar: true,
+      ...(icon ? { icon } : {}),
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true,
+        partition: 'referencia-youtube',
+      },
+    })
+    ventanaReferencia = win
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    win.on('page-title-updated', (ev: { preventDefault: () => void }) => ev.preventDefault())
+    win.on('closed', () => {
+      if (ventanaReferencia === win) ventanaReferencia = null
+    })
+    mainWindow?.once('closed', () => {
+      if (!win.isDestroyed()) win.destroy()
+    })
+    await win.loadURL(urlEmbedYoutube(videoId))
+    return { ok: true, videoId }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
 })
 
 ipcMain.handle('dialog-message', async (_event: IpcMainInvokeEvent, type: string, title: string, message: string) => {

@@ -13,6 +13,7 @@ import { FxChainPanel } from '@/components/fx-chain-panel'
 import { AutomationLanesPanel } from '@/components/automation-lanes-panel'
 import { PluginEditorPanel } from '@/components/plugin-editor-panel'
 import { MidiMapPanel } from '@/components/midi-map-panel'
+import { MidiZonesPanel } from '@/components/midi-zones-panel'
 import { SettingsPanel } from '@/components/project-settings-dialog'
 import { ProjectFileExplorer } from './project-file-explorer'
 import { PanelCuenta } from '@/components/cuenta/panel-cuenta'
@@ -89,6 +90,8 @@ function ToolContent({ toolId }: { toolId: ToolId }) {
       return <PluginEditorPanel />
     case 'midi-map':
       return <MidiMapPanel />
+    case 'midi-zones':
+      return <MidiZonesPanel />
     case 'settings':
       return <SettingsPanel />
     case 'project-files':

@@ -1,0 +1,1647 @@
+{
+  "version": "2.0.0",
+  "description": "Catálogo de instrumentos musicales de alta fidelidad y reglas de autodetección para JasWave",
+  "generatedAt": "2026-10-29T14:16:51.197Z",
+  "totalIcons": 59,
+  "canvasResolution": "64x64",
+  "style": "Realistic vector illustration with dual-tone opacity and currentColor",
+  "instruments": [
+    {
+      "id": "piano-grand",
+      "name": "Piano de Cola",
+      "nameEn": "Grand Piano",
+      "category": "keyboards",
+      "family": "Teclados y Pianos",
+      "svgFile": "piano-grand.svg",
+      "synonyms": [
+        "piano",
+        "grand piano",
+        "piano de cola",
+        "concert grand",
+        "steinway",
+        "yamaha c7",
+        "acoustic grand"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(grand\\s*piano|piano\\s*de\\s*cola|ac\\s*piano|acoustic\\s*piano|concert\\s*grand|steinway|bosendorfer)\\b",
+        "pluginNameRegex": "\\b(keyscape|pianoteq|the\\s*grandeur|alicia\\s*keys|ravenscroft|grand\\s*piano)\\b",
+        "vst3Categories": [
+          "Instrument|Piano",
+          "Instrument|Acoustic Piano"
+        ],
+        "generalMidiPatches": [
+          1,
+          2
+        ]
+      },
+      "aiGuidance": "Piano acústico de cola de concierto. Ideal para música clásica, jazz, baladas y pop.",
+      "musicalRole": "piano"
+    },
+    {
+      "id": "piano-upright",
+      "name": "Piano Vertical",
+      "nameEn": "Upright Piano",
+      "category": "keyboards",
+      "family": "Teclados y Pianos",
+      "svgFile": "piano-upright.svg",
+      "synonyms": [
+        "piano vertical",
+        "upright piano",
+        "honky tonk",
+        "studio piano",
+        "felt piano",
+        "piano de pared"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(upright|piano\\s*vertical|felt\\s*piano|honky\\s*tonk|studio\\s*piano|pared)\\b",
+        "pluginNameRegex": "\\b(upright|felt\\s*piano|gentleman|cinematic\\s*soft|ragtime)\\b",
+        "vst3Categories": [
+          "Instrument|Piano"
+        ],
+        "generalMidiPatches": [
+          3,
+          4
+        ]
+      },
+      "aiGuidance": "Piano vertical de estudio o de pared (Upright). Sonido acústico íntimo de pop indie y jazz.",
+      "musicalRole": "piano"
+    },
+    {
+      "id": "piano-electric",
+      "name": "Piano Eléctrico",
+      "nameEn": "Electric Piano",
+      "category": "keyboards",
+      "family": "Teclados y Pianos",
+      "svgFile": "piano-electric.svg",
+      "synonyms": [
+        "rhodes",
+        "wurlitzer",
+        "wurli",
+        "dx7",
+        "clavia nord",
+        "electric piano",
+        "epiano",
+        "piano electrico"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(rhodes|wurli|wurlitzer|electric\\s*piano|e-piano|ep\\b|epiano|dx7)\\b",
+        "pluginNameRegex": "\\b(rhodes|wurlitzer|keyscape|stage\\s*73|velvet|electra|lounge\\s*lizard)\\b",
+        "vst3Categories": [
+          "Instrument|Electric Piano",
+          "Instrument|Keyboards"
+        ],
+        "generalMidiPatches": [
+          5,
+          6
+        ]
+      },
+      "aiGuidance": "Piano eléctrico vintage de lengüetas (Rhodes Mark I, Wurlitzer 200A) con chasis curvo.",
+      "musicalRole": "keys"
+    },
+    {
+      "id": "organ",
+      "name": "Órgano",
+      "nameEn": "Organ",
+      "category": "keyboards",
+      "family": "Teclados y Pianos",
+      "svgFile": "organ.svg",
+      "synonyms": [
+        "organ",
+        "organo",
+        "hammond",
+        "b3",
+        "leslie",
+        "drawbar",
+        "pipe organ",
+        "organo de tubos"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(organ|organo|hammond|b3|leslie|drawbar|pipe\\s*organ)\\b",
+        "pluginNameRegex": "\\b(b-3x|vintage\\s*organs|blue3|hammond|organ|leslie)\\b",
+        "vst3Categories": [
+          "Instrument|Organ"
+        ],
+        "generalMidiPatches": [
+          17,
+          18,
+          19,
+          20,
+          21
+        ]
+      },
+      "aiGuidance": "Órgano Hammond B3 con dos teclados superpuestos (manuales) y barras drawbars.",
+      "musicalRole": "keys"
+    },
+    {
+      "id": "accordion",
+      "name": "Acordeón / Bandoneón",
+      "nameEn": "Accordion",
+      "category": "keyboards",
+      "family": "Teclados y Pianos",
+      "svgFile": "accordion.svg",
+      "synonyms": [
+        "accordion",
+        "acordeon",
+        "bandoneon",
+        "acordeona",
+        "concertina",
+        "vallenato",
+        "cumbia"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(accordion|acordeon|bandoneon|concertina|vallenato|cumbia)\\b",
+        "pluginNameRegex": "\\b(accordion|accordions|bandoneon|bayan)\\b",
+        "vst3Categories": [
+          "Instrument|Accordion",
+          "Instrument|Ethnic"
+        ],
+        "generalMidiPatches": [
+          22,
+          23,
+          24
+        ]
+      },
+      "aiGuidance": "Acordeón con fuelle central plegado, teclado piano a la derecha y botonera de bajos.",
+      "musicalRole": "keys"
+    },
+    {
+      "id": "clavinet",
+      "name": "Clavinet / Clavecín",
+      "nameEn": "Clavinet / Harpsichord",
+      "category": "keyboards",
+      "family": "Teclados y Pianos",
+      "svgFile": "clavinet.svg",
+      "synonyms": [
+        "clavinet",
+        "clavi",
+        "clavinet d6",
+        "harpsichord",
+        "clavecin",
+        "clavicordio"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(clavinet|clavi|harpsichord|clavecin|clavicordio)\\b",
+        "pluginNameRegex": "\\b(clavinet|clavi|pianet|d6)\\b",
+        "vst3Categories": [
+          "Instrument|Keyboards"
+        ],
+        "generalMidiPatches": [
+          7,
+          8
+        ]
+      },
+      "aiGuidance": "Clavinet Hohner D6 funk con cuerdas percutidas y conmutadores basculantes.",
+      "musicalRole": "keys"
+    },
+    {
+      "id": "synth-keys",
+      "name": "Sintetizador Polifónico",
+      "nameEn": "Polyphonic Synthesizer",
+      "category": "synths",
+      "family": "Sintetizadores y Electrónica",
+      "svgFile": "synth-keys.svg",
+      "synonyms": [
+        "synth",
+        "sintetizador",
+        "poly synth",
+        "polysynth",
+        "analog synth",
+        "teclado synth"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(synth|sintetizador|poly|polysynth|analog\\s*synth|teclado\\s*synth)\\b",
+        "pluginNameRegex": "\\b(serum|vital|massive|pigments|sylenth1|nexus|diva|spire|omnisphere)\\b",
+        "vst3Categories": [
+          "Instrument|Synth"
+        ],
+        "generalMidiPatches": [
+          81,
+          82,
+          83
+        ]
+      },
+      "aiGuidance": "Sintetizador analógico polifónico con pantalla de osciloscopio, perillas y teclado.",
+      "musicalRole": "synth"
+    },
+    {
+      "id": "synth-lead",
+      "name": "Lead Solista",
+      "nameEn": "Synth Lead",
+      "category": "synths",
+      "family": "Sintetizadores y Electrónica",
+      "svgFile": "synth-lead.svg",
+      "synonyms": [
+        "lead",
+        "synth lead",
+        "solo synth",
+        "saw lead",
+        "lead melodia"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(lead|synth\\s*lead|solo\\s*synth|saw\\s*lead|mono\\s*lead)\\b",
+        "pluginNameRegex": "\\b(lead|monosynth|scream|pluck)\\b",
+        "vst3Categories": [
+          "Instrument|Synth|Lead"
+        ],
+        "generalMidiPatches": [
+          81,
+          88
+        ]
+      },
+      "aiGuidance": "Línea solista cortante con oscilador diente de sierra y energía melódica.",
+      "musicalRole": "lead"
+    },
+    {
+      "id": "synth-bass",
+      "name": "Bajo Sintetizado",
+      "nameEn": "Synth Bass",
+      "category": "synths",
+      "family": "Sintetizadores y Electrónica",
+      "svgFile": "synth-bass.svg",
+      "synonyms": [
+        "synth bass",
+        "bajo sintetizado",
+        "bass synth",
+        "acid bass",
+        "tb-303",
+        "moog bass"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(synth\\s*bass|bajo\\s*synth|bass\\s*synth|acid\\s*bass|303|moog\\s*bass)\\b",
+        "pluginNameRegex": "\\b(bassline|303|subboom|monark|minitaur|sub\\s*37)\\b",
+        "vst3Categories": [
+          "Instrument|Synth|Bass"
+        ],
+        "generalMidiPatches": [
+          39,
+          40
+        ]
+      },
+      "aiGuidance": "Línea de bajo sintetizado tipo TB-303 o Moog con onda cuadrada profunda.",
+      "musicalRole": "bass"
+    },
+    {
+      "id": "synth-pad",
+      "name": "Pad Atmosférico",
+      "nameEn": "Ambient Pad",
+      "category": "synths",
+      "family": "Sintetizadores y Electrónica",
+      "svgFile": "synth-pad.svg",
+      "synonyms": [
+        "pad",
+        "ambient pad",
+        "atmosfera",
+        "texture",
+        "synth pad",
+        "superficie"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(pad|atmosfer|texture|ambient|ambient\\s*pad|soundscape|cuerdas\\s*synth)\\b",
+        "pluginNameRegex": "\\b(pad|omnisphere|atmosphere|ambient|padshop)\\b",
+        "vst3Categories": [
+          "Instrument|Synth|Pad"
+        ],
+        "generalMidiPatches": [
+          89,
+          90,
+          91,
+          92
+        ]
+      },
+      "aiGuidance": "Pad atmosférico, cálido y envolvente para colchón armónico.",
+      "musicalRole": "pad"
+    },
+    {
+      "id": "synth-modular",
+      "name": "Sintetizador Modular",
+      "nameEn": "Modular Synth",
+      "category": "synths",
+      "family": "Sintetizadores y Electrónica",
+      "svgFile": "synth-modular.svg",
+      "synonyms": [
+        "modular",
+        "eurorack",
+        "patch synth",
+        "cv/gate",
+        "modular rack"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(modular|eurorack|patch|voltage|cv|generative)\\b",
+        "pluginNameRegex": "\\b(vcv|modular|reaktor|voltage\\s*modular|cherry\\s*audio)\\b",
+        "vst3Categories": [
+          "Instrument|Synth|Modular"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Rack modular Eurorack con módulos de oscilador, jacks y cables de patch interconectados.",
+      "musicalRole": "synth"
+    },
+    {
+      "id": "vocoder",
+      "name": "Vocoder",
+      "nameEn": "Vocoder / Talkbox",
+      "category": "synths",
+      "family": "Sintetizadores y Electrónica",
+      "svgFile": "vocoder.svg",
+      "synonyms": [
+        "vocoder",
+        "talkbox",
+        "robotic voice",
+        "voz sintetica",
+        "speech synth"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(vocoder|talkbox|robot\\s*voice|voz\\s*robot)\\b",
+        "pluginNameRegex": "\\b(vocoder|talkbox|vocodex|izotope\\s*vocal|mvocoder)\\b",
+        "vst3Categories": [
+          "Instrument|Synth|Vocoder",
+          "Fx|Vocoder"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Vocoder con micrófono de cuello de cisne y analizador de bandas de formantes de voz.",
+      "musicalRole": "fx"
+    },
+    {
+      "id": "drums-acoustic",
+      "name": "Batería Acústica",
+      "nameEn": "Acoustic Drums",
+      "category": "drums",
+      "family": "Baterías y Cajas de Ritmo",
+      "svgFile": "drums-acoustic.svg",
+      "synonyms": [
+        "drums",
+        "drum kit",
+        "bateria",
+        "bateria acustica",
+        "drumset",
+        "percursion set"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(drums|bater[ií]a|drum\\s*kit|drumset|kit\\s*acustico)\\b",
+        "pluginNameRegex": "\\b(addictive\\s*drums|superior\\s*drummer|ezdrummer|bfd|slate\\s*drums|mt\\s*power)\\b",
+        "vst3Categories": [
+          "Instrument|Drum"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Kit completo de batería acústica: bombo central, toms aéreos, caja, tom de suelo, charles y crash.",
+      "musicalRole": "drums"
+    },
+    {
+      "id": "drum-machine",
+      "name": "Caja de Ritmos / Sampler",
+      "nameEn": "Drum Machine / MPC",
+      "category": "drums",
+      "family": "Baterías y Cajas de Ritmo",
+      "svgFile": "drum-machine.svg",
+      "synonyms": [
+        "drum machine",
+        "caja de ritmos",
+        "mpc",
+        "sampler",
+        "beat machine",
+        "808 kit",
+        "909 kit"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(drum\\s*machine|caja\\s*de\\s*ritmos|mpc|sampler|drum\\s*rack|maschine|beat)\\b",
+        "pluginNameRegex": "\\b(battery|maschine|spark|kong|808|909|microtonic)\\b",
+        "vst3Categories": [
+          "Instrument|Drum Machine",
+          "Instrument|Sampler"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Sampler de producción estilo Akai MPC con pantalla, dial giratorio y cuadrícula 4x4 de pads.",
+      "musicalRole": "drums"
+    },
+    {
+      "id": "kick",
+      "name": "Bombo Aislado",
+      "nameEn": "Kick Drum",
+      "category": "drums",
+      "family": "Baterías y Cajas de Ritmo",
+      "svgFile": "kick.svg",
+      "synonyms": [
+        "kick",
+        "bombo",
+        "bass drum",
+        "kick drum",
+        "bombo acustico"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(kick|bombo|bass\\s*drum|bd\\b)\\b",
+        "pluginNameRegex": "\\b(kick\\s*2|metrum|big\\s*kick|sub\\s*kick)\\b",
+        "vst3Categories": [
+          "Instrument|Drum|Kick"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Bombo acústico frontal con garras de tensión, orificio de descompresión y pedal de impacto.",
+      "musicalRole": "drums"
+    },
+    {
+      "id": "snare",
+      "name": "Caja / Redoblante",
+      "nameEn": "Snare Drum",
+      "category": "drums",
+      "family": "Baterías y Cajas de Ritmo",
+      "svgFile": "snare.svg",
+      "synonyms": [
+        "snare",
+        "caja",
+        "redoblante",
+        "tarola",
+        "snare drum"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(snare|caja|redoblante|tarola|sd\\b)\\b",
+        "pluginNameRegex": "\\b(snare|tarola)\\b",
+        "vst3Categories": [
+          "Instrument|Drum|Snare"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Caja / redoblante de batería con aro metálico, tornillos de afinación y dos baquetas cruzadas.",
+      "musicalRole": "drums"
+    },
+    {
+      "id": "hihat",
+      "name": "Hi-Hats",
+      "nameEn": "Hi-Hats",
+      "category": "drums",
+      "family": "Baterías y Cajas de Ritmo",
+      "svgFile": "hihat.svg",
+      "synonyms": [
+        "hihat",
+        "hi-hat",
+        "charles",
+        "charleston",
+        "hh\\b",
+        "closed hat",
+        "open hat"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(hihat|hi-hat|charles|charleston|hh\\b|closed\\s*hat|open\\s*hat)\\b",
+        "pluginNameRegex": "\\b(hihat|hats)\\b",
+        "vst3Categories": [
+          "Instrument|Drum|HiHat"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Platos charles o hi-hats montados en soporte con pedal de pie y varilla de tiro.",
+      "musicalRole": "drums"
+    },
+    {
+      "id": "cymbals",
+      "name": "Platos Crash / Ride",
+      "nameEn": "Cymbals",
+      "category": "drums",
+      "family": "Baterías y Cajas de Ritmo",
+      "svgFile": "cymbals.svg",
+      "synonyms": [
+        "cymbals",
+        "platos",
+        "crash",
+        "ride",
+        "china",
+        "splash",
+        "overheads",
+        "oh"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(cymbals|platos|crash|ride|splash|china|overhead|oh\\b)\\b",
+        "pluginNameRegex": "\\b(cymbal|crash|ride)\\b",
+        "vst3Categories": [
+          "Instrument|Drum|Cymbals"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Platos aéreos Crash/Ride suspendidos en soporte de jirafa con campana central.",
+      "musicalRole": "drums"
+    },
+    {
+      "id": "percussion-congas",
+      "name": "Congas / Tumbadoras",
+      "nameEn": "Congas / Bongos",
+      "category": "percussion",
+      "family": "Percusión Latina y Étnica",
+      "svgFile": "percussion-congas.svg",
+      "synonyms": [
+        "congas",
+        "tumbadoras",
+        "bongos",
+        "quinto",
+        "conga drum",
+        "latin percussion"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(conga|congas|tumbadora|tumbadoras|bongo|bongos|quinto)\\b",
+        "pluginNameRegex": "\\b(latin\\s*percussion|congas|bongos|havana)\\b",
+        "vst3Categories": [
+          "Instrument|Percussion|Latin"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Par de congas (macho y tumba) de madera curvada con aros comfort curve y herrajes laterales.",
+      "musicalRole": "percussion"
+    },
+    {
+      "id": "percussion-guira",
+      "name": "Güira Dominicana",
+      "nameEn": "Dominican Guira",
+      "category": "percussion",
+      "family": "Percusión Latina y Étnica",
+      "svgFile": "percussion-guira.svg",
+      "synonyms": [
+        "guira",
+        "güira",
+        "guiro",
+        "güiro",
+        "guira dominicana",
+        "raspador",
+        "merengue guira"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(guira|güira|guiro|güiro|raspa)\\b",
+        "pluginNameRegex": "\\b(guira|güira|merengue|bachata|dominican)\\b",
+        "vst3Categories": [
+          "Instrument|Percussion|Latin"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Güira metálica tradicional dominicana con cuerpo texturizado en puntas de diamante y gancho rascador.",
+      "musicalRole": "percussion"
+    },
+    {
+      "id": "percussion-tambora",
+      "name": "Tambora Dominicana",
+      "nameEn": "Dominican Tambora",
+      "category": "percussion",
+      "family": "Percusión Latina y Étnica",
+      "svgFile": "percussion-tambora.svg",
+      "synonyms": [
+        "tambora",
+        "tambora dominicana",
+        "tambora merenguera",
+        "tambora de merengue"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(tambora|tambora\\s*dominicana|merengue\\s*tambora)\\b",
+        "pluginNameRegex": "\\b(tambora|merengue|dominican)\\b",
+        "vst3Categories": [
+          "Instrument|Percussion|Latin"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Tambora dominicana horizontal de madera de ron con aros de cuero, sogas en zigzag y baqueta.",
+      "musicalRole": "percussion"
+    },
+    {
+      "id": "percussion-timbales",
+      "name": "Timbales Latinos / Pailas",
+      "nameEn": "Latin Timbales",
+      "category": "percussion",
+      "family": "Percusión Latina y Étnica",
+      "svgFile": "percussion-timbales.svg",
+      "synonyms": [
+        "timbales",
+        "pailas",
+        "timbaletas",
+        "tito puente timbales",
+        "latin timbales"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(timbal|timbales|pailas|timbaletas)\\b",
+        "pluginNameRegex": "\\b(timbales|pailas|salsa\\s*percussion)\\b",
+        "vst3Categories": [
+          "Instrument|Percussion|Latin"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Timbales de acero para salsa y cumbia con cencerro mambo y atril metálico.",
+      "musicalRole": "percussion"
+    },
+    {
+      "id": "percussion-shaker",
+      "name": "Shaker / Maracas",
+      "nameEn": "Shaker / Maracas",
+      "category": "percussion",
+      "family": "Percusión Latina y Étnica",
+      "svgFile": "percussion-shaker.svg",
+      "synonyms": [
+        "shaker",
+        "maracas",
+        "cabasa",
+        "ganza",
+        "chocalho",
+        "shekere"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(shaker|maraca|maracas|cabasa|ganza|chocalho)\\b",
+        "pluginNameRegex": "\\b(shaker|percussion)\\b",
+        "vst3Categories": [
+          "Instrument|Percussion"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Shaker cilíndrico de estudio y maracas para pulso constante y brillo rítmico.",
+      "musicalRole": "percussion"
+    },
+    {
+      "id": "percussion-tambourine",
+      "name": "Pandereta",
+      "nameEn": "Tambourine",
+      "category": "percussion",
+      "family": "Percusión Latina y Étnica",
+      "svgFile": "percussion-tambourine.svg",
+      "synonyms": [
+        "tambourine",
+        "pandereta",
+        "pandero",
+        "sonajas",
+        "jingles"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(tambourine|pandereta|pandero|sonajas)\\b",
+        "pluginNameRegex": "\\b(tambourine|percussion)\\b",
+        "vst3Categories": [
+          "Instrument|Percussion"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Pandereta circular de madera con pares de sonajas dobles metálicas.",
+      "musicalRole": "percussion"
+    },
+    {
+      "id": "percussion-timpani",
+      "name": "Timbales Sinfónicos",
+      "nameEn": "Timpani",
+      "category": "percussion",
+      "family": "Percusión Orquestal",
+      "svgFile": "percussion-timpani.svg",
+      "synonyms": [
+        "timpani",
+        "timbales sinfonicos",
+        "kettle drum",
+        "calderos"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(timpani|timbal\\s*sinfonico|kettle\\s*drum)\\b",
+        "pluginNameRegex": "\\b(timpani|orchestral\\s*percussion|spitfire\\s*percussion)\\b",
+        "vst3Categories": [
+          "Instrument|Percussion|Orchestral"
+        ],
+        "generalMidiPatches": [
+          48
+        ]
+      },
+      "aiGuidance": "Timbales sinfónicos de caldero de cobre afinados con pedal para orquesta.",
+      "musicalRole": "percussion"
+    },
+    {
+      "id": "percussion-mallets",
+      "name": "Marimba / Xilófono",
+      "nameEn": "Marimba / Xylophone",
+      "category": "percussion",
+      "family": "Percusión Afinada",
+      "svgFile": "percussion-mallets.svg",
+      "synonyms": [
+        "marimba",
+        "xilofono",
+        "xylophone",
+        "vibrafono",
+        "glockenspiel",
+        "celesta",
+        "mallets"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(marimba|xilofono|xylophone|vibrafono|vibes|glockenspiel|mallets)\\b",
+        "pluginNameRegex": "\\b(marimba|xylophone|mallets|vibraphone)\\b",
+        "vst3Categories": [
+          "Instrument|Percussion|Chromatic"
+        ],
+        "generalMidiPatches": [
+          12,
+          13,
+          14,
+          15
+        ]
+      },
+      "aiGuidance": "Marimba / xilófono con láminas de madera afinadas y dos mazas cruzadas.",
+      "musicalRole": "percussion"
+    },
+    {
+      "id": "percussion-steel-drum",
+      "name": "Steel Drum / Pan",
+      "nameEn": "Steel Drum / Pan",
+      "category": "percussion",
+      "family": "Percusión Caribeña",
+      "svgFile": "percussion-steel-drum.svg",
+      "synonyms": [
+        "steel drum",
+        "steel pan",
+        "caribbean drum",
+        "pan drum",
+        "trinidad pan"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(steel\\s*drum|steel\\s*pan|calypso|caribbean\\s*pan)\\b",
+        "pluginNameRegex": "\\b(steel\\s*drum|steel\\s*pan)\\b",
+        "vst3Categories": [
+          "Instrument|Percussion|Chromatic"
+        ],
+        "generalMidiPatches": [
+          115
+        ]
+      },
+      "aiGuidance": "Tambor metálico cóncavo de Trinidad y Tobago con notas martilleadas al fondo.",
+      "musicalRole": "percussion"
+    },
+    {
+      "id": "percussion-cowbell",
+      "name": "Cencerro / Claves",
+      "nameEn": "Cowbell / Claves",
+      "category": "percussion",
+      "family": "Percusión Latina y Étnica",
+      "svgFile": "percussion-cowbell.svg",
+      "synonyms": [
+        "cowbell",
+        "cencerro",
+        "campana",
+        "mambo bell",
+        "claves",
+        "cha-cha bell"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(cowbell|cencerro|campana\\s*de\\s*mano|claves)\\b",
+        "pluginNameRegex": "\\b(cowbell|latin\\s*bell)\\b",
+        "vst3Categories": [
+          "Instrument|Percussion"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Cencerro trapezoidal de metal con boca ancha y baqueta de madera.",
+      "musicalRole": "percussion"
+    },
+    {
+      "id": "bass-electric",
+      "name": "Bajo Eléctrico",
+      "nameEn": "Electric Bass",
+      "category": "bass",
+      "family": "Bajos",
+      "svgFile": "bass-electric.svg",
+      "synonyms": [
+        "bass",
+        "bajo",
+        "electric bass",
+        "bajo electrico",
+        "fender jazz",
+        "precision bass"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(bass|bajo|electric\\s*bass|bajo\\s*el[eé]ctrico|j-bass|p-bass|slap\\s*bass)\\b",
+        "pluginNameRegex": "\\b(trilian|ample\\s*bass|modobass|scarbee|helix\\s*bass)\\b",
+        "vst3Categories": [
+          "Instrument|Bass"
+        ],
+        "generalMidiPatches": [
+          33,
+          34,
+          35,
+          36,
+          37,
+          38
+        ]
+      },
+      "aiGuidance": "Bajo eléctrico de 4 cuerdas con cuerpo asimétrico contorneado y clavijero en trébol.",
+      "musicalRole": "bass"
+    },
+    {
+      "id": "bass-acoustic",
+      "name": "Contrabajo Acústico",
+      "nameEn": "Upright / Double Bass",
+      "category": "bass",
+      "family": "Bajos",
+      "svgFile": "bass-acoustic.svg",
+      "synonyms": [
+        "contrabajo",
+        "upright bass",
+        "double bass",
+        "acoustic bass",
+        "bajo acustico",
+        "standup bass"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(contrabajo|upright\\s*bass|double\\s*bass|bajo\\s*ac[uú]stico|pizzicato\\s*bass)\\b",
+        "pluginNameRegex": "\\b(upright\\s*bass|trilian\\s*acoustic|cinematic\\s*bass)\\b",
+        "vst3Categories": [
+          "Instrument|Bass|Acoustic"
+        ],
+        "generalMidiPatches": [
+          44
+        ]
+      },
+      "aiGuidance": "Contrabajo acústico vertical de jazz y música clásica con voluta, efes y pica al suelo.",
+      "musicalRole": "bass"
+    },
+    {
+      "id": "bass-synth-sub",
+      "name": "Sub 808 / Bass Slide",
+      "nameEn": "808 Sub-Bass",
+      "category": "bass",
+      "family": "Bajos",
+      "svgFile": "bass-synth-sub.svg",
+      "synonyms": [
+        "808",
+        "sub bass",
+        "808 sub",
+        "sub-bass",
+        "glide bass",
+        "808 slide"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(808|sub\\s*bass|sub|subwoofer|slide\\s*bass|trap\\s*bass)\\b",
+        "pluginNameRegex": "\\b(sublab|808\\s*studio|sub\\s*boom|crush\\s*808)\\b",
+        "vst3Categories": [
+          "Instrument|Synth|Bass"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Subgrave 808 profundo con cono de subwoofer bombeando aire y flecha de pitch slide.",
+      "musicalRole": "bass"
+    },
+    {
+      "id": "guitar-acoustic",
+      "name": "Guitarra Acústica",
+      "nameEn": "Acoustic Guitar",
+      "category": "guitars",
+      "family": "Guitarras y Cuerdas Pulsadas",
+      "svgFile": "guitar-acoustic.svg",
+      "synonyms": [
+        "guitarra acustica",
+        "acoustic guitar",
+        "guitarra espanola",
+        "guitarra clasica",
+        "nylon guitar",
+        "folk guitar"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(guitarra\\s*ac[uú]stica|acoustic\\s*guitar|guitarra\\s*espa[ñn]ola|guitarra\\s*cl[aá]sica|nylon|folk\\s*guitar)\\b",
+        "pluginNameRegex": "\\b(ample\\s*guitar|strum|picked\\s*acoustic|realguitar|sunbird)\\b",
+        "vst3Categories": [
+          "Instrument|Guitar|Acoustic"
+        ],
+        "generalMidiPatches": [
+          25,
+          26
+        ]
+      },
+      "aiGuidance": "Guitarra acústica tipo Dreadnought con roseta, boca circular, puente y clavijero 3+3.",
+      "musicalRole": "guitar"
+    },
+    {
+      "id": "guitar-electric",
+      "name": "Guitarra Eléctrica",
+      "nameEn": "Electric Guitar",
+      "category": "guitars",
+      "family": "Guitarras y Cuerdas Pulsadas",
+      "svgFile": "guitar-electric.svg",
+      "synonyms": [
+        "electric guitar",
+        "guitarra electrica",
+        "stratocaster",
+        "telecaster",
+        "clean guitar",
+        "ritmica electrica"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(guitarra\\s*el[eé]ctrica|electric\\s*guitar|clean\\s*guitar|strat|tele|les\\s*paul|egtr)\\b",
+        "pluginNameRegex": "\\b(electri6ity|ample\\s*guitar|shreddage|guitarist|electric\\s*sunburst)\\b",
+        "vst3Categories": [
+          "Instrument|Guitar|Electric"
+        ],
+        "generalMidiPatches": [
+          27,
+          28,
+          29
+        ]
+      },
+      "aiGuidance": "Guitarra eléctrica de cuerpo sólido tipo Stratocaster con cuernos asimétricos, 3 pastillas y trémolo.",
+      "musicalRole": "guitar"
+    },
+    {
+      "id": "guitar-lead",
+      "name": "Guitarra Solista / Rock",
+      "nameEn": "Lead / Rock Guitar",
+      "category": "guitars",
+      "family": "Guitarras y Cuerdas Pulsadas",
+      "svgFile": "guitar-lead.svg",
+      "synonyms": [
+        "guitar lead",
+        "guitarra solista",
+        "heavy guitar",
+        "distortion guitar",
+        "overdrive guitar",
+        "rock guitar"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(lead\\s*guitar|guitarra\\s*solista|dist\\s*guitar|overdrive\\s*guitar|heavy\\s*guitar|guitar\\s*solo)\\b",
+        "pluginNameRegex": "\\b(shreddage|guitar\\s*rig|amplitube|bias\\s*fx|archetype)\\b",
+        "vst3Categories": [
+          "Instrument|Guitar|Distorted"
+        ],
+        "generalMidiPatches": [
+          30,
+          31,
+          32
+        ]
+      },
+      "aiGuidance": "Guitarra eléctrica solista con cuerpo afilado Flying-V para rock pesado y metal.",
+      "musicalRole": "guitar"
+    },
+    {
+      "id": "ukulele",
+      "name": "Ukelele / Cuatro",
+      "nameEn": "Ukulele / Cuatro",
+      "category": "guitars",
+      "family": "Guitarras y Cuerdas Pulsadas",
+      "svgFile": "ukulele.svg",
+      "synonyms": [
+        "ukulele",
+        "ukelele",
+        "cavaquinho",
+        "cuatro",
+        "charango"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(ukulele|ukelele|cuatro|cavaquinho|charango)\\b",
+        "pluginNameRegex": "\\b(ukulele|cavaquinho|cuatro)\\b",
+        "vst3Categories": [
+          "Instrument|Plucked"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Ukelele hawaiano de cuerpo compacto con 4 cuerdas de nylon y clavijero 2+2.",
+      "musicalRole": "guitar"
+    },
+    {
+      "id": "banjo",
+      "name": "Banjo / Mandolina",
+      "nameEn": "Banjo / Mandolin",
+      "category": "guitars",
+      "family": "Guitarras y Cuerdas Pulsadas",
+      "svgFile": "banjo.svg",
+      "synonyms": [
+        "banjo",
+        "mandolina",
+        "mandolin",
+        "laud",
+        "bluegrass"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(banjo|mandolina|mandolin|la[uú]d|bluegrass)\\b",
+        "pluginNameRegex": "\\b(banjo|mandolin)\\b",
+        "vst3Categories": [
+          "Instrument|Plucked"
+        ],
+        "generalMidiPatches": [
+          106
+        ]
+      },
+      "aiGuidance": "Banjo americano de 5 cuerdas con parche circular resonador y clavija lateral de la 5ª cuerda.",
+      "musicalRole": "guitar"
+    },
+    {
+      "id": "violin",
+      "name": "Violín Solista",
+      "nameEn": "Violin",
+      "category": "strings",
+      "family": "Cuerdas Orquestales",
+      "svgFile": "violin.svg",
+      "synonyms": [
+        "violin",
+        "viola",
+        "fiddle",
+        "violin solista"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(violin|viola|fiddle|viol[ií]n)\\b",
+        "pluginNameRegex": "\\b(solo\\s*violin|joshua\\s*bell|swam\\s*violin|spitfire\\s*solo\\s*strings)\\b",
+        "vst3Categories": [
+          "Instrument|Strings|Violin"
+        ],
+        "generalMidiPatches": [
+          41,
+          42
+        ]
+      },
+      "aiGuidance": "Violín acústico con bordes en C marcados, efes talladas, mentonera y arco cruzado.",
+      "musicalRole": "strings"
+    },
+    {
+      "id": "cello",
+      "name": "Violonchelo (Cello)",
+      "nameEn": "Cello",
+      "category": "strings",
+      "family": "Cuerdas Orquestales",
+      "svgFile": "cello.svg",
+      "synonyms": [
+        "cello",
+        "violonchelo",
+        "violoncello",
+        "violoncelo",
+        "solo cello"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(cello|violonchelo|violoncello|solo\\s*cello)\\b",
+        "pluginNameRegex": "\\b(cello|swam\\s*cello|tina\\s*guo|cinematic\\s*cello)\\b",
+        "vst3Categories": [
+          "Instrument|Strings|Cello"
+        ],
+        "generalMidiPatches": [
+          43
+        ]
+      },
+      "aiGuidance": "Violonchelo orquestal solista con pica de apoyo metálica, puente elevado y curvas profundas.",
+      "musicalRole": "strings"
+    },
+    {
+      "id": "strings-ensemble",
+      "name": "Sección de Cuerdas",
+      "nameEn": "Strings Section",
+      "category": "strings",
+      "family": "Cuerdas Orquestales",
+      "svgFile": "strings-ensemble.svg",
+      "synonyms": [
+        "strings",
+        "cuerdas",
+        "string ensemble",
+        "seccion de cuerdas",
+        "orchestral strings"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(strings|cuerdas|string\\s*ensemble|orchestral\\s*strings|violines)\\b",
+        "pluginNameRegex": "\\b(cinematic\\s*studio\\s*strings|spitfire\\s*chamber|albion|hollywood\\s*strings|chamber\\s*strings)\\b",
+        "vst3Categories": [
+          "Instrument|Strings|Ensemble"
+        ],
+        "generalMidiPatches": [
+          49,
+          50,
+          51,
+          52
+        ]
+      },
+      "aiGuidance": "Ensamble orquestal completo con violines y cellos superpuestos en armonía sinfónica.",
+      "musicalRole": "strings"
+    },
+    {
+      "id": "harp",
+      "name": "Arpa de Concierto",
+      "nameEn": "Concert Harp",
+      "category": "strings",
+      "family": "Cuerdas Orquestales",
+      "svgFile": "harp.svg",
+      "synonyms": [
+        "harp",
+        "arpa",
+        "celtic harp",
+        "arpa celta",
+        "concert harp"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(harp|arpa|celtic\\s*harp)\\b",
+        "pluginNameRegex": "\\b(harp|concert\\s*harp)\\b",
+        "vst3Categories": [
+          "Instrument|Strings|Harp",
+          "Instrument|Plucked"
+        ],
+        "generalMidiPatches": [
+          47
+        ]
+      },
+      "aiGuidance": "Arpa de concierto clásica con columna estriada vertical, cuello armónico y cuerdas.",
+      "musicalRole": "strings"
+    },
+    {
+      "id": "trumpet",
+      "name": "Trompeta",
+      "nameEn": "Trumpet",
+      "category": "brass",
+      "family": "Vientos Metal",
+      "svgFile": "trumpet.svg",
+      "synonyms": [
+        "trumpet",
+        "trompeta",
+        "cornet",
+        "flugelhorn",
+        "fliscorno"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(trumpet|trompeta|cornet|flugelhorn|fliscorno)\\b",
+        "pluginNameRegex": "\\b(trumpet|swam\\s*trumpet|hollywood\\s*brass)\\b",
+        "vst3Categories": [
+          "Instrument|Brass|Trumpet"
+        ],
+        "generalMidiPatches": [
+          57,
+          58
+        ]
+      },
+      "aiGuidance": "Trompeta con boquilla, tubos cilíndricos, 3 pistones verticales y campana acampanada.",
+      "musicalRole": "brass"
+    },
+    {
+      "id": "trombone",
+      "name": "Trombón",
+      "nameEn": "Trombone",
+      "category": "brass",
+      "family": "Vientos Metal",
+      "svgFile": "trombone.svg",
+      "synonyms": [
+        "trombone",
+        "trombon",
+        "slide trombone",
+        "bass trombone",
+        "trombon de varas"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(trombone|tromb[oó]n|slide\\s*trombone)\\b",
+        "pluginNameRegex": "\\b(trombone|swam\\s*trombone)\\b",
+        "vst3Categories": [
+          "Instrument|Brass|Trombone"
+        ],
+        "generalMidiPatches": [
+          59
+        ]
+      },
+      "aiGuidance": "Trombón de varas telescópico con campana proyectada y tirantes de unión.",
+      "musicalRole": "brass"
+    },
+    {
+      "id": "french-horn",
+      "name": "Trompa Francesa",
+      "nameEn": "French Horn",
+      "category": "brass",
+      "family": "Vientos Metal",
+      "svgFile": "french-horn.svg",
+      "synonyms": [
+        "french horn",
+        "trompa",
+        "horn",
+        "corno frances",
+        "corno"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(french\\s*horn|trompa|corno\\s*franc[eé]s|horn)\\b",
+        "pluginNameRegex": "\\b(french\\s*horn|horns|hollywood\\s*brass)\\b",
+        "vst3Categories": [
+          "Instrument|Brass|French Horn"
+        ],
+        "generalMidiPatches": [
+          61
+        ]
+      },
+      "aiGuidance": "Trompa francesa orquestal de espirales circulares continuas y campana ancha.",
+      "musicalRole": "brass"
+    },
+    {
+      "id": "tuba",
+      "name": "Tuba / Sousafón",
+      "nameEn": "Tuba / Sousaphone",
+      "category": "brass",
+      "family": "Vientos Metal",
+      "svgFile": "tuba.svg",
+      "synonyms": [
+        "tuba",
+        "sousaphone",
+        "sousafon",
+        "bombardino",
+        "euphonium"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(tuba|sousaphone|sousaf[oó]n|bombardino|euphonium)\\b",
+        "pluginNameRegex": "\\b(tuba|orchestral\\s*brass)\\b",
+        "vst3Categories": [
+          "Instrument|Brass|Tuba"
+        ],
+        "generalMidiPatches": [
+          60
+        ]
+      },
+      "aiGuidance": "Tuba orquestal de tubo cónico masivo y gran pabellón vertical hacia arriba.",
+      "musicalRole": "brass"
+    },
+    {
+      "id": "brass-section",
+      "name": "Sección de Metales",
+      "nameEn": "Brass Section",
+      "category": "brass",
+      "family": "Vientos Metal",
+      "svgFile": "brass-section.svg",
+      "synonyms": [
+        "brass",
+        "metales",
+        "brass section",
+        "horns",
+        "big band brass",
+        "salsa horns"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(brass|metales|horns|brass\\s*section|secci[oó]n\\s*de\\s*metales|big\\s*band)\\b",
+        "pluginNameRegex": "\\b(session\\s*horns|mojo\\s*horn|cinebrass|hollywood\\s*brass|brass\\s*ensemble)\\b",
+        "vst3Categories": [
+          "Instrument|Brass|Ensemble"
+        ],
+        "generalMidiPatches": [
+          62,
+          63,
+          64
+        ]
+      },
+      "aiGuidance": "Sección completa de metales (trompeta, trombón y saxo) proyectando sonido en abanico.",
+      "musicalRole": "brass"
+    },
+    {
+      "id": "saxophone",
+      "name": "Saxofón",
+      "nameEn": "Saxophone",
+      "category": "woodwinds",
+      "family": "Vientos Madera",
+      "svgFile": "saxophone.svg",
+      "synonyms": [
+        "saxophone",
+        "sax",
+        "saxofon",
+        "alto sax",
+        "tenor sax",
+        "baritone sax",
+        "saxo"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(sax|saxophone|saxof[oó]n|alto\\s*sax|tenor\\s*sax|bari\\s*sax)\\b",
+        "pluginNameRegex": "\\b(sax|swam\\s*sax|sensual\\s*saxophone|mr\\s*sax)\\b",
+        "vst3Categories": [
+          "Instrument|Woodwind|Saxophone"
+        ],
+        "generalMidiPatches": [
+          65,
+          66,
+          67,
+          68
+        ]
+      },
+      "aiGuidance": "Saxofón curvado con boquilla y caña, llaves de digitación sobre el tubo y campana hacia arriba.",
+      "musicalRole": "woodwind"
+    },
+    {
+      "id": "flute",
+      "name": "Flauta Traversa",
+      "nameEn": "Flute",
+      "category": "woodwinds",
+      "family": "Vientos Madera",
+      "svgFile": "flute.svg",
+      "synonyms": [
+        "flute",
+        "flauta",
+        "flauta traversa",
+        "piccolo",
+        "flautin",
+        "pan flute"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(flute|flauta|piccolo|flaut[ií]n|pan\\s*flute)\\b",
+        "pluginNameRegex": "\\b(flute|swam\\s*flute|cinematic\\s*flutes)\\b",
+        "vst3Categories": [
+          "Instrument|Woodwind|Flute"
+        ],
+        "generalMidiPatches": [
+          73,
+          74,
+          75,
+          76
+        ]
+      },
+      "aiGuidance": "Flauta traversa de concierto sostenida horizontalmente con bisel y llaves francesas.",
+      "musicalRole": "woodwind"
+    },
+    {
+      "id": "clarinet",
+      "name": "Clarinete",
+      "nameEn": "Clarinet",
+      "category": "woodwinds",
+      "family": "Vientos Madera",
+      "svgFile": "clarinet.svg",
+      "synonyms": [
+        "clarinet",
+        "clarinete",
+        "bass clarinet",
+        "clarinete bajo"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(clarinet|clarinete|bass\\s*clarinet)\\b",
+        "pluginNameRegex": "\\b(clarinet|swam\\s*clarinet)\\b",
+        "vst3Categories": [
+          "Instrument|Woodwind|Clarinet"
+        ],
+        "generalMidiPatches": [
+          72
+        ]
+      },
+      "aiGuidance": "Clarinete recto de madera de ébano con boquilla de caña simple, anillos de plata y campana.",
+      "musicalRole": "woodwind"
+    },
+    {
+      "id": "oboe",
+      "name": "Oboe / Fagot",
+      "nameEn": "Oboe / Bassoon",
+      "category": "woodwinds",
+      "family": "Vientos Madera",
+      "svgFile": "oboe.svg",
+      "synonyms": [
+        "oboe",
+        "fagot",
+        "bassoon",
+        "corno ingles",
+        "english horn",
+        "doble lengueta"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(oboe|fagot|bassoon|corno\\s*ingl[eé]s)\\b",
+        "pluginNameRegex": "\\b(oboe|bassoon|swam\\s*double\\s*reed)\\b",
+        "vst3Categories": [
+          "Instrument|Woodwind|Oboe"
+        ],
+        "generalMidiPatches": [
+          69,
+          70,
+          71
+        ]
+      },
+      "aiGuidance": "Oboe de doble lengüeta con tubo cónico estrecho y mecanismo de llaves plateadas.",
+      "musicalRole": "woodwind"
+    },
+    {
+      "id": "harmonica",
+      "name": "Armónica",
+      "nameEn": "Harmonica",
+      "category": "woodwinds",
+      "family": "Vientos Madera",
+      "svgFile": "harmonica.svg",
+      "synonyms": [
+        "harmonica",
+        "armonica",
+        "blues harp",
+        "french harp"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(harmonica|arm[oó]nica|blues\\s*harp)\\b",
+        "pluginNameRegex": "\\b(harmonica|blues\\s*harp)\\b",
+        "vst3Categories": [
+          "Instrument|Harmonica",
+          "Instrument|Free Reed"
+        ],
+        "generalMidiPatches": [
+          23
+        ]
+      },
+      "aiGuidance": "Armónica de blues de 10 celdas con cubiertas cromadas y tornillos.",
+      "musicalRole": "woodwind"
+    },
+    {
+      "id": "vocal-lead",
+      "name": "Voz Solista",
+      "nameEn": "Lead Vocal",
+      "category": "vocals",
+      "family": "Voces y Coros",
+      "svgFile": "vocal-lead.svg",
+      "synonyms": [
+        "vocal",
+        "voz",
+        "lead vocal",
+        "voz principal",
+        "cantante",
+        "vox",
+        "mic"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(vocal|voz|lead\\s*vox|voz\\s*principal|vox|cantante|voice)\\b",
+        "pluginNameRegex": "\\b(n務tar|vocal\\s*synth|autotune|melodyne|vocalign)\\b",
+        "vst3Categories": [
+          "Fx|Vocal",
+          "Instrument|Vocal"
+        ],
+        "generalMidiPatches": [
+          55
+        ]
+      },
+      "aiGuidance": "Micrófono de condensador de estudio con filtro antipop circular sobre suspensión elástica.",
+      "musicalRole": "vocals"
+    },
+    {
+      "id": "choir",
+      "name": "Coro Polifónico",
+      "nameEn": "Choir / Ensamble",
+      "category": "vocals",
+      "family": "Voces y Coros",
+      "svgFile": "choir.svg",
+      "synonyms": [
+        "choir",
+        "coro",
+        "voces",
+        "backing vocals",
+        "coristas",
+        "vocal group"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(choir|coro|voces|backing\\s*vocals|coristas|armon[ií]as|choral)\\b",
+        "pluginNameRegex": "\\b(choir|requiem|olympus|voices\\s*of|dominus|vocal\\s*colors)\\b",
+        "vst3Categories": [
+          "Instrument|Choir"
+        ],
+        "generalMidiPatches": [
+          53,
+          54
+        ]
+      },
+      "aiGuidance": "Grupo de coristas cantando en armonía con túnicas corales y notas ascendentes.",
+      "musicalRole": "choir"
+    },
+    {
+      "id": "vocal-fx",
+      "name": "Efectos Vocales / Chops",
+      "nameEn": "Vocal Chops / FX",
+      "category": "vocals",
+      "family": "Voces y Coros",
+      "svgFile": "vocal-fx.svg",
+      "synonyms": [
+        "vocal chop",
+        "vocal fx",
+        "autotune vox",
+        "pitch voice",
+        "voice sample"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(vocal\\s*chop|vocal\\s*fx|vox\\s*fx|voice\\s*sample|adlib|chops)\\b",
+        "pluginNameRegex": "\\b(exhale|arcade|autotune|little\\s*alterboy)\\b",
+        "vst3Categories": [
+          "Instrument|Vocal|FX",
+          "Fx|Pitch Shift"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Efecto de corrección tonal digital (Auto-Tune extremo) con ondas escalonadas y destellos.",
+      "musicalRole": "fx"
+    },
+    {
+      "id": "track-audio",
+      "name": "Pista de Audio Genérica",
+      "nameEn": "Audio Track",
+      "category": "daw",
+      "family": "Pistas Técnicas / DAW",
+      "svgFile": "track-audio.svg",
+      "synonyms": [
+        "audio",
+        "audio track",
+        "pista audio",
+        "wav",
+        "grabacion"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(audio|audio\\s*track|pista\\s*audio|rec|grabaci[oó]n)\\b",
+        "pluginNameRegex": "",
+        "vst3Categories": [],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Forma de onda estéreo detallada de señal de audio grabada con picos dinámicos.",
+      "musicalRole": "unknown"
+    },
+    {
+      "id": "track-midi",
+      "name": "Pista MIDI Genérica",
+      "nameEn": "MIDI Track",
+      "category": "daw",
+      "family": "Pistas Técnicas / DAW",
+      "svgFile": "track-midi.svg",
+      "synonyms": [
+        "midi",
+        "midi track",
+        "pista midi",
+        "external midi",
+        "din midi"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(midi|midi\\s*track|pista\\s*midi|din)\\b",
+        "pluginNameRegex": "",
+        "vst3Categories": [],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Conector circular clásico DIN-5 MIDI con mueca de polaridad y pines en arco de 180°.",
+      "musicalRole": "unknown"
+    },
+    {
+      "id": "track-folder",
+      "name": "Carpeta / Bus de Grupo",
+      "nameEn": "Folder Track / Group",
+      "category": "daw",
+      "family": "Pistas Técnicas / DAW",
+      "svgFile": "track-folder.svg",
+      "synonyms": [
+        "folder",
+        "carpeta",
+        "group",
+        "grupo",
+        "bus",
+        "summing bus"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(folder|carpeta|grupo|group|bus|submix)\\b",
+        "pluginNameRegex": "",
+        "vst3Categories": [],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Carpeta organizadora de pistas con jerarquía de pistas subordinadas anidadas.",
+      "musicalRole": "unknown"
+    },
+    {
+      "id": "track-master",
+      "name": "Pista Master",
+      "nameEn": "Master Track",
+      "category": "daw",
+      "family": "Pistas Técnicas / DAW",
+      "svgFile": "track-master.svg",
+      "synonyms": [
+        "master",
+        "master bus",
+        "main out",
+        "salida principal",
+        "stereo out"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(master|main|salida\\s*principal|stereo\\s*out|mix\\s*bus)\\b",
+        "pluginNameRegex": "\\b(ozone|fabfilter\\s*l2|pro-l|maximizer|limiter)\\b",
+        "vst3Categories": [
+          "Fx|Mastering"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Canal Master estéreo con torres de medidores VU duales con leds de saturación.",
+      "musicalRole": "unknown"
+    },
+    {
+      "id": "fx-send",
+      "name": "Envío Auxiliar / Retorno",
+      "nameEn": "Aux Send / Return FX",
+      "category": "daw",
+      "family": "Pistas Técnicas / DAW",
+      "svgFile": "fx-send.svg",
+      "synonyms": [
+        "aux",
+        "send",
+        "return",
+        "reverb bus",
+        "delay bus",
+        "envio"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(aux|send|return|env[ií]o|retorno|reverb|delay)\\b",
+        "pluginNameRegex": "\\b(valhalla|pro-r|delay|space|reverb)\\b",
+        "vst3Categories": [
+          "Fx|Reverb",
+          "Fx|Delay"
+        ],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Bucle de envío y retorno de efectos auxiliares espaciales (reverbs, delays).",
+      "musicalRole": "fx"
+    },
+    {
+      "id": "fx-ambient",
+      "name": "FX / Risers / Foley",
+      "nameEn": "Ambient / Sound FX",
+      "category": "daw",
+      "family": "Pistas Técnicas / DAW",
+      "svgFile": "fx-ambient.svg",
+      "synonyms": [
+        "sfx",
+        "fx",
+        "sound fx",
+        "foley",
+        "riser",
+        "drop",
+        "impact",
+        "ambient"
+      ],
+      "detection": {
+        "trackNameRegex": "\\b(sfx|fx|foley|riser|drop|impact|ambient|efectos)\\b",
+        "pluginNameRegex": "",
+        "vst3Categories": [],
+        "generalMidiPatches": []
+      },
+      "aiGuidance": "Pista de efectos sonoros ambientales, risers cinemáticos y textura foley.",
+      "musicalRole": "fx"
+    }
+  ]
+}

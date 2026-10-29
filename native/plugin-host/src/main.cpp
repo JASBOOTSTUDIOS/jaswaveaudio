@@ -44,6 +44,7 @@
 #include "native_metronome.h"
 #include "clip_player.h"
 #include "jw_dsp.h"   // plugins/shared-dsp: LoudnessMeter BS.1770 compartido con los plugins
+#include "master_limiter.h"
 #endif
 #ifdef _WIN32
 #include "asio_output.h"
@@ -337,16 +338,102 @@ static void handleDiscover(const std::string& json) {
 static std::mutex gSlotsMutex;
 static std::unordered_map<std::string, std::unique_ptr<HostedSlot>> gSlots;
 static std::string gActiveSlot;
-static std::atomic<HostedSlot*> gLiveMidiSlots[8]{};
-static std::atomic<int> gLiveMidiPort[8]{};
+/** Destinos MIDI en vivo (K3): hasta 32 (capas × zonas de todas las pistas armadas). */
+static constexpr int kLiveMidiMax = 32;
+static std::atomic<HostedSlot*> gLiveMidiSlots[kLiveMidiMax]{};
+static std::atomic<int> gLiveMidiPort[kLiveMidiMax]{};
 static std::atomic<int> gLiveMidiCount{0};
 static std::atomic<int> gLiveMidiChannel{-1};
 
+/**
+ * Zona por destino: rango de teclas, transposición, curva de velocidad y canales. Doble buffer: el hilo de
+ * control rellena el inactivo y publica el índice; el hilo de audio solo lee. Dos publicaciones muy seguidas
+ * pueden dar un bloque con la configuración mezclada (solo enteros): inocuo.
+ */
+struct LiveZoneCfg {
+  int lo{0};
+  int hi{127};
+  int transpose{0};
+  int velCurve{0};  // 0 lineal · 1 suave · 2 dura · 3 fija
+  int velFixed{100};
+  float velScale{1.f};
+  int inChannel{-1};   // -1 = cualquier canal de entrada
+  int outChannel{-1};  // -1 = el canal con el que llegó la nota
+};
+static LiveZoneCfg gLiveZones[2][kLiveMidiMax];
+static std::atomic<int> gLiveZoneBuf{0};
+/** Cambia con cada setLiveMidiTargets/unload: el hilo de audio revisa qué notas seguían sonando. */
+static std::atomic<uint32_t> gLiveZoneGen{0};
+/** PANIC: el hilo de audio descarta lo pendiente en el anillo WinMM y olvida las notas en curso. */
+static std::atomic<bool> gLivePanic{false};
+
+/**
+ * Seguimiento de note-off por nota ORIGINAL (canal de entrada × tono): si la transposición o el rango
+ * cambian mientras una tecla está pisada, el note-off llega al tono y canal que sonaron. Solo hilo de audio.
+ */
+struct LiveNoteTrack {
+  uint8_t out[16][128]{};    // tono emitido + 1 (0 = no suena)
+  uint8_t outCh[16][128]{};  // canal con el que se emitió
+  HostedSlot* owner{nullptr};
+};
+static LiveNoteTrack gLiveNotes[kLiveMidiMax];
+static uint32_t gLiveNotesGen = 0;
+
+static int liveVelCurveFromName(const std::string& s) {
+  if (s == "suave") return 1;
+  if (s == "dura") return 2;
+  if (s == "fija") return 3;
+  return 0;
+}
+
+/** Velocidad 0..1 tras la curva de la zona (nunca 0: eso sería un note-off). */
+static float liveVelocityCurve(int vel, const LiveZoneCfg& z) {
+  float v = static_cast<float>(std::clamp(vel, 1, 127)) / 127.f;
+  switch (z.velCurve) {
+    case 1: v = std::sqrt(v); break;   // suave: responde más con poca fuerza
+    case 2: v = v * v; break;          // dura: hay que pegar más fuerte
+    case 3: return std::clamp(static_cast<float>(z.velFixed) / 127.f, 1.f / 127.f, 1.f);
+    default: break;
+  }
+  return std::clamp(v * z.velScale, 1.f / 127.f, 1.f);
+}
+
 struct LiveMidiPortInit {
   LiveMidiPortInit() {
-    for (int i = 0; i < 8; ++i) gLiveMidiPort[i].store(-1, std::memory_order_relaxed);
+    for (int i = 0; i < kLiveMidiMax; ++i) gLiveMidiPort[i].store(-1, std::memory_order_relaxed);
   }
 } gLiveMidiPortInit;
+
+/**
+ * Recorre los objetos `{…}` de un array JSON plano `"key":[{…},{…}]` (sin arrays anidados). Hilo de control.
+ */
+template <class Fn>
+static void forEachJsonObjectIn(const std::string& json, const char* key, Fn fn) {
+  const std::string needle = std::string("\"") + key + "\"";
+  size_t pos = json.find(needle);
+  if (pos == std::string::npos) return;
+  pos = json.find('[', pos);
+  if (pos == std::string::npos) return;
+  int depth = 0;
+  bool inStr = false;
+  size_t start = 0;
+  for (size_t i = pos + 1; i < json.size(); ++i) {
+    const char c = json[i];
+    if (inStr) {
+      if (c == '\\') ++i;
+      else if (c == '"') inStr = false;
+      continue;
+    }
+    if (c == '"') inStr = true;
+    else if (c == '{') {
+      if (depth++ == 0) start = i;
+    } else if (c == '}') {
+      if (--depth == 0) fn(json.substr(start, i - start + 1));
+    } else if (c == ']' && depth == 0) {
+      return;
+    }
+  }
+}
 
 static std::vector<std::string> splitCsv(const std::string& s) {
   std::vector<std::string> out;
@@ -419,19 +506,6 @@ static bool liveEatHas(const std::atomic<uint64_t>* lo, const std::atomic<uint64
 }
 // El sustain del lado del host (retener note-off con el pedal pisado) vive en cada Vst3Slot: así vale para la
 // entrada WinMM, para los comandos del renderer (Web MIDI, MIDI Learn, teclado en pantalla) y para los clips.
-static void liveSlotsNoteOn(HostedSlot** slots, int ns, int pitch, float vel, int off) {
-  if (pitch < 0 || pitch > 127) return;
-  for (int s = 0; s < ns; ++s) slots[s]->noteOn(pitch, vel, off);
-}
-
-static void liveSlotsNoteOff(HostedSlot** slots, int ns, int pitch, int off) {
-  if (pitch < 0 || pitch > 127) return;
-  for (int s = 0; s < ns; ++s) slots[s]->noteOff(pitch, off);
-}
-
-static void liveSlotsCc(HostedSlot** slots, int ns, int cc, int value, int off) {
-  for (int s = 0; s < ns; ++s) slots[s]->midiCc(cc, value, off);
-}
 
 /**
  * Pedales conmutados (CC64 sustain, CC66 sostenuto, CC67 suave, CC69 hold 2) unificados por canal.
@@ -492,18 +566,65 @@ static int liveMidiOffset(int64_t evNs, int64_t prevNs, int64_t nowNs, int frame
   return std::max(0, std::min(frames - 1, static_cast<int>(off)));
 }
 
+/**
+ * Tras cambiar los destinos (setLiveMidiTargets / unload): si un índice pasó a otro slot, las notas que seguían
+ * sonando se apagan en el slot anterior (solo si sigue siendo un destino vivo: nunca se usa un puntero descargado).
+ */
+static void liveNotesSyncGeneration() {
+  const uint32_t gen = gLiveZoneGen.load(std::memory_order_acquire);
+  if (gen == gLiveNotesGen) return;
+  gLiveNotesGen = gen;
+  for (int s = 0; s < kLiveMidiMax; ++s) {
+    LiveNoteTrack& t = gLiveNotes[s];
+    HostedSlot* now = gLiveMidiSlots[s].load(std::memory_order_acquire);
+    if (t.owner == now) continue;
+    bool vivo = false;
+    if (t.owner) {
+      for (int k = 0; k < kLiveMidiMax && !vivo; ++k) vivo = gLiveMidiSlots[k].load(std::memory_order_acquire) == t.owner;
+    }
+    for (int ch = 0; ch < 16; ++ch) {
+      for (int p = 0; p < 128; ++p) {
+        if (!t.out[ch][p]) continue;
+        if (vivo) t.owner->noteOff(t.out[ch][p] - 1, 0, t.outCh[ch][p]);
+        t.out[ch][p] = 0;
+      }
+    }
+    t.owner = now;
+  }
+}
+
+static void liveNotesForgetAll() {
+  for (int s = 0; s < kLiveMidiMax; ++s) {
+    for (int ch = 0; ch < 16; ++ch) {
+      for (int p = 0; p < 128; ++p) gLiveNotes[s].out[ch][p] = 0;
+    }
+  }
+  for (auto& p : gLivePedales) {
+    for (int c = 0; c < 16; ++c) p.porCanal[c] = 0;
+    p.emitido = -1;
+  }
+}
+
 static void applyLiveMidiFromWinmm(int frames) {
   const int64_t nowNs = jaswave_midi_now_ns();
   const int64_t prevNs = gLiveMidiBlockNs;
   gLiveMidiBlockNs = nowNs;
   JaswaveMidiEvent evs[128];
+  if (gLivePanic.exchange(false, std::memory_order_acq_rel)) {
+    // PANIC: lo que quedaba en el anillo no llega a ningún instrumento y nada queda «sonando» para el seguimiento.
+    while (jaswave_midi_drain(evs, 128) == 128) {
+    }
+    liveNotesForgetAll();
+  }
+  liveNotesSyncGeneration();
   int guard = 0;
   while (guard++ < 8) {
     const size_t n = jaswave_midi_drain(evs, 128);
     if (!n) return;
-    const int count = gLiveMidiCount.load(std::memory_order_acquire);
+    const int count = std::min(gLiveMidiCount.load(std::memory_order_acquire), kLiveMidiMax);
     if (count <= 0) continue;
     const int chFilter = gLiveMidiChannel.load(std::memory_order_relaxed);
+    const LiveZoneCfg* zones = gLiveZones[gLiveZoneBuf.load(std::memory_order_acquire) & 1];
     for (size_t i = 0; i < n; ++i) {
       const auto& e = evs[i];
       const int hi = e.status & 0xf0;
@@ -514,29 +635,52 @@ static void applyLiveMidiFromWinmm(int frames) {
         if (liveEatHas(&gLiveEatNoteLo, &gLiveEatNoteHi, pitch)) continue;
       } else if (hi == 0xb0) {
         if (liveEatHas(&gLiveEatCcLo, &gLiveEatCcHi, pitch)) continue;
+      } else {
+        continue;
       }
       int ccValor = static_cast<int>(e.data2);
       // El estado del pedal se actualiza aunque ahora mismo no haya destino: al asignar una pista ya está al día.
       if (hi == 0xb0 && !livePedalUnificar(pitch, ch, ccValor, ccValor)) continue;
-      HostedSlot* dest[8];
-      int nd = 0;
-      for (int s = 0; s < count && s < 8; ++s) {
+      const bool noteOn = hi == 0x90 && e.data2 > 0;
+      const bool noteOff = hi == 0x80 || (hi == 0x90 && e.data2 == 0);
+      const int off = liveMidiOffset(e.timestampNs, prevNs, nowNs, frames);
+      // Un CC va una sola vez a cada slot aunque tenga varias zonas.
+      HostedSlot* ccSent[kLiveMidiMax];
+      int nCcSent = 0;
+      for (int s = 0; s < count; ++s) {
         auto* slot = gLiveMidiSlots[s].load(std::memory_order_acquire);
         if (!slot) continue;
         const int port = gLiveMidiPort[s].load(std::memory_order_relaxed);
         if (port == -1) continue;  // sin entrada asignada
         if (port != kLiveMidiPortOmni && port != static_cast<int>(e.port)) continue;
-        dest[nd++] = slot;
-      }
-      if (!nd) continue;
-      const int off = liveMidiOffset(e.timestampNs, prevNs, nowNs, frames);
-      if (hi == 0x90) {
-        if (e.data2 == 0) liveSlotsNoteOff(dest, nd, pitch, off);
-        else liveSlotsNoteOn(dest, nd, pitch, static_cast<float>(e.data2) / 127.f, off);
-      } else if (hi == 0x80) {
-        liveSlotsNoteOff(dest, nd, pitch, off);
-      } else if (hi == 0xb0) {
-        liveSlotsCc(dest, nd, pitch, ccValor, off);
+        const LiveZoneCfg& z = zones[s];
+        if (z.inChannel >= 0 && ch != z.inChannel) continue;
+        const int outCh = z.outChannel >= 0 ? z.outChannel : ch;
+        LiveNoteTrack& t = gLiveNotes[s];
+        if (noteOn) {
+          if (pitch < z.lo || pitch > z.hi) continue;
+          const int op = std::clamp(pitch + z.transpose, 0, 127);
+          uint8_t& prev = t.out[ch][pitch];
+          if (prev) slot->noteOff(prev - 1, off, t.outCh[ch][pitch]);  // misma tecla repetida sin soltar
+          prev = static_cast<uint8_t>(op + 1);
+          t.outCh[ch][pitch] = static_cast<uint8_t>(outCh);
+          slot->noteOn(op, liveVelocityCurve(static_cast<int>(e.data2), z), off, 0, outCh);
+        } else if (noteOff) {
+          uint8_t& prev = t.out[ch][pitch];
+          if (prev) {
+            slot->noteOff(prev - 1, off, t.outCh[ch][pitch]);
+            prev = 0;
+          } else if (pitch >= z.lo && pitch <= z.hi) {
+            // Nota iniciada antes de asignar la zona: se apaga donde sonaría ahora.
+            slot->noteOff(std::clamp(pitch + z.transpose, 0, 127), off, outCh);
+          }
+        } else {
+          bool ya = false;
+          for (int k = 0; k < nCcSent && !ya; ++k) ya = ccSent[k] == slot;
+          if (ya) continue;
+          ccSent[nCcSent++] = slot;
+          slot->midiCc(pitch, ccValor, off, outCh);
+        }
       }
     }
     if (n < 128) return;
@@ -964,6 +1108,16 @@ static std::string encodeBase64(const uint8_t* data, size_t n) {
   }
   return out;
 }
+
+/**
+ * Seguridad del máster (modo Directo, K3): limitador true-peak conmutable que sustituye al soft-clip cuando
+ * está activo. Solo monitorización: en un bounce no entra (el render no debe depender del ajuste de directo).
+ */
+static jaswave::MasterTruePeakLimiter gMasterLimiter;
+static std::atomic<bool> gMasterSafety{false};
+static std::atomic<float> gMeterMasterLimiterGain{1.f};
+static uint32_t gMasterLimiterSr = 0;
+static bool gMasterSafetyWasOn = false;
 
 static float softLimitSample(float x) {
   /* Transparente bajo ~0.95; solo suaviza overs (antes: ×0.72+tanh dejaba el DAW muy bajo vs YouTube). */
@@ -1494,11 +1648,14 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
   const float panAng = (masterPan + 1.f) * 0.78539816339f;
   const float panL = std::cos(panAng) * 1.41421356237f;
   const float panR = std::sin(panAng) * 1.41421356237f;
+  // Seguridad del máster (limitador true-peak) en lugar del soft-clip; nunca dentro de un bounce.
+  const bool safety = !gOfflineRunning && gMasterSafety.load(std::memory_order_relaxed);
+  const bool rawMaster = transparent || safety;
   for (int i = 0; i < frames; ++i) {
     const float l = gMixL[i] * masterG * panL;
     const float r = gMixR[i] * masterG * panR;
-    interleaved[i * 2 + 0] = transparent ? l : softLimitSample(l);
-    interleaved[i * 2 + 1] = transparent ? r : softLimitSample(r);
+    interleaved[i * 2 + 0] = rawMaster ? l : softLimitSample(l);
+    interleaved[i * 2 + 1] = rawMaster ? r : softLimitSample(r);
   }
   // Legacy Chromium/Soft Pad bus: skip when Reaper graph owns all track audio.
   if (!useGraph) {
@@ -1510,10 +1667,25 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
     }
     applyPdc(gTmpL, gTmpR, frames, gPdcDawL, gPdcDawR, gPdcDawW, 0);
     for (int i = 0; i < frames; ++i) {
-      interleaved[i * 2 + 0] = softLimitSample(interleaved[i * 2 + 0] + gTmpL[i]);
-      interleaved[i * 2 + 1] = softLimitSample(interleaved[i * 2 + 1] + gTmpR[i]);
+      const float l = interleaved[i * 2 + 0] + gTmpL[i];
+      const float r = interleaved[i * 2 + 1] + gTmpR[i];
+      interleaved[i * 2 + 0] = safety ? l : softLimitSample(l);
+      interleaved[i * 2 + 1] = safety ? r : softLimitSample(r);
     }
   }
+  if (safety) {
+    const uint32_t srNow = static_cast<uint32_t>(currentSampleRate());
+    if (srNow != gMasterLimiterSr || !gMasterSafetyWasOn) {
+      gMasterLimiter.setSampleRate(static_cast<double>(srNow));
+      gMasterLimiter.reset();
+      gMasterLimiterSr = srNow;
+    }
+    gMasterLimiter.process(interleaved, frames);
+    gMeterMasterLimiterGain.store(gMasterLimiter.lastBlockMinGain(), std::memory_order_relaxed);
+  } else {
+    gMeterMasterLimiterGain.store(1.f, std::memory_order_relaxed);
+  }
+  gMasterSafetyWasOn = safety;
   // El metrónomo es solo de monitorización: nunca entra en un bounce.
   if (!gOfflineRunning) jaswave::metronome_render(interleaved, static_cast<uint32_t>(frames));
   {
@@ -2061,16 +2233,13 @@ static void executeUiJob(UiJob& job) {
       gPins.erase(slotId);  // slot descargado: el pin desaparece con él
       if (doomed) {
         clearSlotPointersInGraph(doomed.get());
-        int liveN = gLiveMidiCount.load(std::memory_order_acquire);
-        int w = 0;
-        for (int i = 0; i < liveN && i < 8; ++i) {
-          auto* s = gLiveMidiSlots[i].load(std::memory_order_acquire);
-          if (s && s != doomed.get()) {
-            gLiveMidiSlots[w++].store(s, std::memory_order_release);
+        // Sin compactar: cada índice conserva su zona; el hilo de audio salta los destinos vacíos.
+        for (int i = 0; i < kLiveMidiMax; ++i) {
+          if (gLiveMidiSlots[i].load(std::memory_order_acquire) == doomed.get()) {
+            gLiveMidiSlots[i].store(nullptr, std::memory_order_release);
           }
         }
-        for (int i = w; i < 8; ++i) gLiveMidiSlots[i].store(nullptr, std::memory_order_release);
-        gLiveMidiCount.store(w, std::memory_order_release);
+        gLiveZoneGen.fetch_add(1, std::memory_order_acq_rel);
       }
     }
     if (doomed) doomed->unload();
@@ -2333,30 +2502,90 @@ static void handleLineImpl(const std::string& line) {
   }
   if (type == "setLiveMidiTargets") {
 #if defined(JASWAVE_HAS_VST3_SDK)
-    const std::string ids = getStringField(line, "slotIds");
-    const std::vector<std::string> slotList = splitCsv(ids);
-    const std::vector<std::string> deviceList = splitCsv(getStringField(line, "deviceIds"));
-    const int ch = static_cast<int>(getNumberField(line, "channel", -1));
+    // Los campos globales se leen de la cabecera (antes de "targets"): los objetos de zona repiten nombres.
+    const size_t posTargets = line.find("\"targets\"");
+    const std::string head = posTargets == std::string::npos ? line : line.substr(0, posTargets);
+    const int ch = static_cast<int>(getNumberField(head, "channel", -1));
     gLiveMidiChannel.store(ch < 0 ? -1 : ch, std::memory_order_relaxed);
-    parseEatCsv(getStringField(line, "eatCcs"), &gLiveEatCcLo, &gLiveEatCcHi);
-    parseEatCsv(getStringField(line, "eatNotes"), &gLiveEatNoteLo, &gLiveEatNoteHi);
-    std::lock_guard<std::mutex> lock(gSlotsMutex);
-    int n = 0;
-    for (size_t i = 0; i < slotList.size() && n < 8; ++i) {
-      if (auto* s = findSlotUnlocked(slotList[i])) {
-        gLiveMidiSlots[n].store(s, std::memory_order_release);
-        const int port = i < deviceList.size() ? parseWinmmPortId(deviceList[i]) : -1;
-        gLiveMidiPort[n].store(port, std::memory_order_release);
-        ++n;
+    parseEatCsv(getStringField(head, "eatCcs"), &gLiveEatCcLo, &gLiveEatCcHi);
+    parseEatCsv(getStringField(head, "eatNotes"), &gLiveEatNoteLo, &gLiveEatNoteHi);
+
+    // Forma nueva: "targets":[{slotId, deviceId?, channel?, lo, hi, transpose, velCurve, velScale, velFixed?, outChannel?}]
+    // Forma anterior (compatible): "slotIds":"a,b" + "deviceIds":"winmm:0,all" → zona completa por slot.
+    struct Destino {
+      std::string slotId;
+      std::string deviceId;
+      LiveZoneCfg zona;
+    };
+    std::vector<Destino> destinos;
+    forEachJsonObjectIn(line, "targets", [&](const std::string& obj) {
+      Destino d;
+      d.slotId = getStringField(obj, "slotId");
+      d.deviceId = getStringField(obj, "deviceId");
+      d.zona.lo = std::clamp(static_cast<int>(getNumberField(obj, "lo", 0)), 0, 127);
+      d.zona.hi = std::clamp(static_cast<int>(getNumberField(obj, "hi", 127)), 0, 127);
+      if (d.zona.lo > d.zona.hi) std::swap(d.zona.lo, d.zona.hi);
+      d.zona.transpose = std::clamp(static_cast<int>(getNumberField(obj, "transpose", 0)), -60, 60);
+      d.zona.velCurve = liveVelCurveFromName(getStringField(obj, "velCurve"));
+      d.zona.velScale = std::clamp(static_cast<float>(getNumberField(obj, "velScale", 1.0)), 0.f, 4.f);
+      d.zona.velFixed = std::clamp(static_cast<int>(getNumberField(obj, "velFixed", 100)), 1, 127);
+      const int inCh = static_cast<int>(getNumberField(obj, "channel", -1));
+      d.zona.inChannel = inCh >= 0 && inCh < 16 ? inCh : -1;
+      const int outCh = static_cast<int>(getNumberField(obj, "outChannel", -1));
+      d.zona.outChannel = outCh >= 0 && outCh < 16 ? outCh : -1;
+      destinos.push_back(std::move(d));
+    });
+    if (destinos.empty()) {
+      const std::vector<std::string> slotList = splitCsv(getStringField(head, "slotIds"));
+      const std::vector<std::string> deviceList = splitCsv(getStringField(head, "deviceIds"));
+      for (size_t i = 0; i < slotList.size(); ++i) {
+        Destino d;
+        d.slotId = slotList[i];
+        d.deviceId = i < deviceList.size() ? deviceList[i] : "";
+        destinos.push_back(std::move(d));
       }
     }
-    for (int i = n; i < 8; ++i) {
+
+    const int nb = (gLiveZoneBuf.load(std::memory_order_acquire) + 1) & 1;
+    std::lock_guard<std::mutex> lock(gSlotsMutex);
+    int n = 0;
+    for (size_t i = 0; i < destinos.size() && n < kLiveMidiMax; ++i) {
+      auto* s = findSlotUnlocked(destinos[i].slotId);
+      if (!s) continue;
+      gLiveZones[nb][n] = destinos[i].zona;
+      gLiveMidiPort[n].store(parseWinmmPortId(destinos[i].deviceId), std::memory_order_release);
+      gLiveMidiSlots[n].store(s, std::memory_order_release);
+      ++n;
+    }
+    for (int i = n; i < kLiveMidiMax; ++i) {
+      gLiveZones[nb][i] = LiveZoneCfg{};
       gLiveMidiSlots[i].store(nullptr, std::memory_order_release);
       gLiveMidiPort[i].store(-1, std::memory_order_release);
     }
+    gLiveZoneBuf.store(nb, std::memory_order_release);
     gLiveMidiCount.store(n, std::memory_order_release);
+    gLiveZoneGen.fetch_add(1, std::memory_order_acq_rel);
 #endif
     return;
+  }
+  if (type == "setMasterSafety") {
+#if defined(JASWAVE_HAS_VST3_SDK)
+    gMasterLimiter.setCeilingDb(static_cast<float>(getNumberField(line, "ceilingDb", -0.5)));
+    gMasterSafety.store(getBoolField(line, "enabled", false), std::memory_order_relaxed);
+#endif
+    return;  // fire-and-forget, como setMonitorMix
+  }
+  if (type == "panic") {
+    // PANIC del modo Directo: descarta el MIDI pendiente del teclado, olvida las notas en curso y apaga todo.
+#if defined(JASWAVE_HAS_VST3_SDK)
+    gLivePanic.store(true, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(gSlotsMutex);
+    for (auto& [id, slot] : gSlots) {
+      (void)id;
+      if (slot) slot->allNotesOff();
+    }
+#endif
+    return;  // sin respuesta, como allNotesOff
   }
   if (type == "setHostWindow") {
 #ifdef _WIN32
@@ -3197,6 +3426,11 @@ static void handleLineImpl(const std::string& line) {
                     static_cast<double>(gMasterLoudness.momentary.load(std::memory_order_relaxed)),
                     static_cast<double>(gMasterLoudness.shortTerm.load(std::memory_order_relaxed)),
                     static_cast<double>(gMasterLoudness.integrated.load(std::memory_order_relaxed)));
+      js << nb;
+      // Seguridad del máster: ganancia mínima del último bloque (1 = sin actuar) y si está activa.
+      std::snprintf(nb, sizeof(nb), ",\"masterSafety\":%s,\"masterLimiterGain\":%.4f",
+                    gMasterSafety.load(std::memory_order_relaxed) ? "true" : "false",
+                    static_cast<double>(gMeterMasterLimiterGain.load(std::memory_order_relaxed)));
       js << nb;
     }
     js << ",\"tracks\":[";

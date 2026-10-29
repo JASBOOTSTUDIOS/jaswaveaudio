@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="drums-acoustic">
+  <!-- Bombo central con aro -->
+  <circle cx="32" cy="40" r="16" fill="currentColor" fill-opacity="0.14" stroke-width="2" />
+  <circle cx="32" cy="40" r="13" stroke-width="1.25" opacity="0.6" />
+  <circle cx="32" cy="40" r="3" fill="currentColor" fill-opacity="0.3" />
+  <!-- Patas del bombo -->
+  <path d="M19 51l-7 7M45 51l7 7" stroke-width="2.5" />
+  <!-- Toms aéreos (rack toms) montados sobre el bombo -->
+  <ellipse cx="24" cy="20" rx="7" ry="4" fill="currentColor" fill-opacity="0.25" stroke-width="1.75" />
+  <path d="M17 20v6c0 2.2 3.1 4 7 4s7-1.8 7-4v-6" stroke-width="1.75" />
+  <ellipse cx="40" cy="20" rx="7" ry="4" fill="currentColor" fill-opacity="0.25" stroke-width="1.75" />
+  <path d="M33 20v6c0 2.2 3.1 4 7 4s7-1.8 7-4v-6" stroke-width="1.75" />
+  <!-- Caja (Snare) a la izquierda -->
+  <ellipse cx="12" cy="34" rx="7.5" ry="3.5" fill="currentColor" fill-opacity="0.25" stroke-width="1.75" />
+  <path d="M4.5 34v5c0 1.9 3.4 3.5 7.5 3.5s7.5-1.6 7.5-3.5v-5" stroke-width="1.75" />
+  <!-- Tom de suelo (Floor Tom) a la derecha -->
+  <ellipse cx="52" cy="35" rx="7.5" ry="3.5" fill="currentColor" fill-opacity="0.25" stroke-width="1.75" />
+  <path d="M44.5 35v7c0 1.9 3.4 3.5 7.5 3.5s7.5-1.6 7.5-3.5v-7" stroke-width="1.75" />
+  <path d="M46 42l-2 12M58 42l2 12" stroke-width="1.5" />
+  <!-- Platos Hi-Hat a la izquierda con atril -->
+  <path d="M6 16l8-2 8 2-8 1z" fill="currentColor" fill-opacity="0.3" stroke-width="1.5" />
+  <path d="M6 18l8-1 8 1-8 2z" fill="currentColor" fill-opacity="0.3" stroke-width="1.5" />
+  <path d="M14 14v16" stroke-width="1.5" />
+  <!-- Plato Crash / Ride a la derecha -->
+  <ellipse cx="50" cy="12" rx="10" ry="2.5" fill="currentColor" fill-opacity="0.3" stroke-width="1.5" />
+  <path d="M50 12v20" stroke-width="1.5" />
+</svg>

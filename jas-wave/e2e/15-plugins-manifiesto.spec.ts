@@ -18,14 +18,17 @@ test('lista los paquetes de plugins con integridad y ruta del binario', async ()
   const ids = paquetes.map((p) => p.manifiesto?.id).sort()
   // Los plugins que el producto entrega: tienen que estar y con su binario VST3 resuelto.
   const ENTREGADOS = [
+    'com.jaswave.plugin.audio-doctor',
     'com.jaswave.plugin.bus-compressor',
     'com.jaswave.plugin.param-eq',
     'com.jaswave.plugin.pedal-fix',
     'com.jaswave.plugin.piano-synth',
     'com.jaswave.plugin.roles-vst',
     'com.jaswave.plugin.smart-deesser',
+    'com.jaswave.plugin.stomplab',
     'com.jaswave.plugin.truepeak-limiter',
     'com.jaswave.plugin.utility-tool',
+    'com.jaswave.plugin.vocal-choir',
   ]
   expect(ids).toEqual(expect.arrayContaining(ENTREGADOS))
   for (const p of paquetes) {

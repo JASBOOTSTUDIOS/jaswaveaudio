@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Piano, Crosshair, Timer, Magnet, ArrowRightToLine, Headphones, HeadphoneOff, Eye, EyeOff, Volume2, VolumeX } from 'lucide-react'
+import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Piano, Crosshair, Timer, Magnet, ArrowRightToLine, Headphones, HeadphoneOff, Eye, EyeOff, Volume2, VolumeX, Lock, LockOpen, OctagonAlert } from 'lucide-react'
 import { useStereoMeter } from '@/hooks/use-stereo-meter'
 import { fijarMonitor, useMonitorSalida } from '@/src/lib/monitor-salida'
 import { setDetenerAlFinal, usePreferenciasTransporte } from '@/src/lib/preferencias-transporte'
@@ -16,6 +16,7 @@ import { TimeSignatureField } from '@/components/ui/time-signature-field'
 import { crearVentanaGesto, opcionesGesto } from '@/src/lib/gesture-id'
 import { useRenderLock } from '@/src/lib/render-lock'
 import { fijarPreferenciaIA, usePreferenciasIA } from '@/src/lib/preferencias-ia'
+import { EVENTO_ATAJO_BLOQUEADO, instalarBloqueoDirecto, panicDirecto } from '@/src/lib/modo-directo'
 
 /** Blanco=vacío → amarillo=medio → rojo=lleno (fill / highFill). */
 function bufferFillColor(level: number): string {
@@ -660,6 +661,8 @@ export function TransportBar() {
 
         <MonitorSalida />
 
+        <ControlesDirecto />
+
         <BotonesIA />
 
         <button
@@ -764,6 +767,99 @@ function MonitorSalida() {
         className="h-1 w-16 cursor-pointer accent-accent-cyan"
         data-testid="monitor-volumen"
       />
+    </div>
+  )
+}
+
+/**
+ * Modo Directo (K3): PANIC apaga todas las notas de todos los instrumentos y descarta el MIDI pendiente; el
+ * candado bloquea los atajos destructivos (borrar, deshacer, cortar, pegar, duplicar) mientras se toca en vivo
+ * y muestra un aviso. La seguridad del máster (limitador true-peak) se activa desde «Zonas MIDI».
+ */
+function ControlesDirecto() {
+  const tienda = useDAW()
+  const bloqueo = useDAWState((s: DAWState) => s.project?.directo?.bloqueo === true)
+  const seguridad = useDAWState((s: DAWState) => s.project?.directo?.seguridad?.activa === true)
+  const [aviso, setAviso] = useState<string | null>(null)
+  const [panicActivo, setPanicActivo] = useState(false)
+
+  useEffect(() => {
+    const quitar = instalarBloqueoDirecto(() => tienda.obtenerEstado().project?.directo?.bloqueo === true)
+    const onBloqueado = (e: Event) => {
+      const key = String((e as CustomEvent<{ key?: string }>).detail?.key ?? '')
+      setAviso(key ? `Atajo «${key}» bloqueado por el modo Directo` : 'Atajo bloqueado por el modo Directo')
+    }
+    window.addEventListener(EVENTO_ATAJO_BLOQUEADO, onBloqueado)
+    return () => {
+      quitar()
+      window.removeEventListener(EVENTO_ATAJO_BLOQUEADO, onBloqueado)
+    }
+  }, [tienda])
+
+  useEffect(() => {
+    if (!aviso) return
+    const t = setTimeout(() => setAviso(null), 2500)
+    return () => clearTimeout(t)
+  }, [aviso])
+
+  const panic = () => {
+    panicDirecto()
+    setPanicActivo(true)
+    setTimeout(() => setPanicActivo(false), 400)
+  }
+
+  const alternarBloqueo = () => {
+    void tienda.executor.execute('directo.setLock', { bloqueo: !bloqueo })
+  }
+
+  return (
+    <div className="flex items-center gap-1" role="group" aria-label="Modo Directo" data-testid="controles-directo">
+      <button
+        type="button"
+        onClick={panic}
+        aria-label="PANIC: apagar todas las notas"
+        title="PANIC: apaga todas las notas de todos los instrumentos y descarta el MIDI pendiente (notas colgadas)."
+        className={`flex h-8 items-center gap-1 rounded-md px-2 text-[11px] font-bold tracking-wide transition-colors ${
+          panicActivo ? 'bg-rose-500 text-white' : 'bg-rose-500/15 text-rose-300 hover:bg-rose-500/30'
+        }`}
+        data-testid="boton-panic"
+      >
+        <OctagonAlert className="size-4" />
+        PANIC
+      </button>
+      <button
+        type="button"
+        onClick={alternarBloqueo}
+        aria-pressed={bloqueo}
+        aria-label={bloqueo ? 'Salir del modo Directo' : 'Entrar en modo Directo'}
+        title={
+          bloqueo
+            ? 'Modo Directo activo: borrar, deshacer, cortar, pegar y duplicar están bloqueados. El transporte y el teclado siguen funcionando. Clic para salir.'
+            : 'Modo Directo: bloquea los atajos destructivos para tocar en vivo sin romper el proyecto.'
+        }
+        className={`flex h-8 items-center gap-1 rounded-md px-2 text-[11px] transition-colors ${
+          bloqueo ? 'bg-accent-amber/25 text-accent-amber' : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+        }`}
+        data-testid="modo-directo"
+      >
+        {bloqueo ? <Lock className="size-4" /> : <LockOpen className="size-4" />}
+        Directo
+        {seguridad ? (
+          <span className="rounded bg-accent-cyan/20 px-1 text-[9px] font-semibold text-accent-cyan" title="Limitador true-peak del máster activo" data-testid="directo-seguridad">
+            TP
+          </span>
+        ) : null}
+      </button>
+      {bloqueo ? (
+        <div
+          role="status"
+          className="fixed left-1/2 top-16 z-50 -translate-x-1/2 rounded-md border border-accent-amber/50 bg-panel px-3 py-1.5 text-[11px] text-accent-amber shadow-lg"
+          data-testid="banner-directo"
+        >
+          <Lock className="mr-1 inline size-3" />
+          Modo Directo: edición bloqueada{aviso ? ` · ${aviso}` : ''}
+        </div>
+      ) : null}
     </div>
   )
 }

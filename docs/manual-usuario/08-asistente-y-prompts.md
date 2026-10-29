@@ -177,6 +177,29 @@ convertirla en melodía o batería, o **Insertar como clip de audio**: el audio 
 (`media/grabaciones/`) en una pista «Nota de voz», así suena, se exporta y sigue ahí al reabrir. Si el proyecto aún no
 está guardado, el audio se guarda en la carpeta de JasWave: guarda el proyecto antes si quieres que vaya dentro de él.
 
+### La IA puede consultar internet y referencias
+
+Jas puede salir a internet para apoyarse en fuentes verificables y en referencias musicales reales:
+
+- **Buscar y leer** (`web.buscar`, `web.leer`): busca en DuckDuckGo (con Wikipedia de respaldo) y lee el texto legible de
+  una página (título, autor, fecha y párrafos; hasta 20 000 caracteres). Pídelo con naturalidad: «busca a qué tempo va la
+  bachata y cítame la fuente».
+- **YouTube** (`youtube.buscar`, `youtube.ficha`): encuentra vídeos (título, canal, duración) y lee la ficha de uno
+  (descripción, capítulos y transcripción si la hay).
+- **Escuchar en JasWave** (`referencia.escuchar`): el vídeo se abre en una ventana propia de la app (sin salir al navegador).
+- **Analizar referencia** (`referencia.analizar`): descarga el audio del vídeo (hasta 90 s del tramo más denso) y lo mide con
+  los analizadores del DAW: tempo, tonalidad, acordes, LUFS, true peak y espectro, con números. Para ello JasWave descarga
+  **yt-dlp** bajo demanda desde su publicación oficial (verificado con la huella SHA-256 publicada) a
+  `%LOCALAPPDATA%\JasWave\tools\yt-dlp` y usa el ffmpeg de Exportar. El WAV temporal se borra al cerrar la app; es para uso
+  personal de referencia.
+
+Cuando la respuesta usa internet, termina con una lista **Fuentes:** y los enlaces aparecen como tarjetas en el chat: los
+de YouTube con miniatura y los botones **Escuchar en JasWave** y **Analizar referencia**. Todo lo que llega de internet se
+trata como dato (nunca como una orden para la IA), la red sale solo del proceso principal de la app con direcciones
+validadas (nada de redes locales) y con un máximo de 30 peticiones por minuto. La preferencia **Permitir a la IA usar
+internet** (activada por defecto) se guarda en `jaswave-settings.json` (`permitirInternetIA`); al desactivarla, estas
+herramientas responden que el acceso está desactivado.
+
 ## Personalizar el asistente
 
 En **Ajustes → IA → Personaliza tu asistente**:

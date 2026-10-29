@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="guitar-lead">
+  <!-- Cuerpo afilado icónico Flying V -->
+  <path d="M32 24L14 56l18-8 18 8L32 24z" fill="currentColor" fill-opacity="0.15" stroke-width="2.5" />
+  <!-- Pastillas Humbuckers dobles cromadas -->
+  <rect x="28" y="30" width="8" height="4" rx="1" fill="currentColor" stroke-width="1" />
+  <rect x="28" y="36" width="8" height="4" rx="1" fill="currentColor" stroke-width="1" />
+  <!-- Puente Tune-o-matic y cordal en V -->
+  <rect x="29" y="42" width="6" height="2" fill="currentColor" />
+  <path d="M28 46l4 3 4-3" stroke-width="2" />
+  <!-- Mástil y clavijero en punta invertida -->
+  <path d="M30 4v20h4V4z" fill="currentColor" fill-opacity="0.25" stroke-width="1.5" />
+  <polygon points="32,0 29,4 35,4" fill="currentColor" />
+</svg>

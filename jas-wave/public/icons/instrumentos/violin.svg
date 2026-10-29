@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="violin">
+  <!-- Cuerpo clásico de violín Stradivarius -->
+  <path d="M24 24c-5 3-7 7-5 12 1 2 2 4 1 6-3 4-2 11 3 14s14 3 19 0 6-10 3-14c-1-2 0-4 1-6 2-5 0-9-5-12" fill="currentColor" fill-opacity="0.14" stroke-width="2" />
+  <!-- Efes frotadas de resonancia -->
+  <path d="M27 36c-.5 2 .5 4 0 6" stroke-width="1.75" />
+  <circle cx="26" cy="36" r="0.75" fill="currentColor" />
+  <circle cx="28" cy="42" r="0.75" fill="currentColor" />
+  <path d="M37 36c.5 2-.5 4 0 6" stroke-width="1.75" />
+  <circle cx="38" cy="36" r="0.75" fill="currentColor" />
+  <circle cx="36" cy="42" r="0.75" fill="currentColor" />
+  <!-- Diapasón y mástil de ébano -->
+  <path d="M30 6v18h4V6z" fill="currentColor" fill-opacity="0.3" stroke-width="1.5" />
+  <!-- Clavijero con 4 clavijas y voluta -->
+  <path d="M30 6c0-3 2-4 2-4s2 1 2 4" stroke-width="1.75" />
+  <path d="M27 7h10M27 10h10" stroke-width="1.5" />
+  <!-- Cordal y mentonera inferior -->
+  <path d="M30 50l2 6 2-6z" fill="currentColor" stroke-width="1.5" />
+  <ellipse cx="24" cy="52" rx="3" ry="2" fill="currentColor" fill-opacity="0.3" stroke-width="1.5" />
+  <!-- Arco de crin de caballo en diagonal -->
+  <line x1="8" y1="56" x2="56" y2="8" stroke-width="1.5" />
+  <line x1="7" y1="55" x2="11" y2="59" stroke-width="2.5" />
+</svg>

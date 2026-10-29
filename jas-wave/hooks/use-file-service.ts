@@ -157,6 +157,19 @@ declare global {
       agentBridgeSetEnabled?: (enabled: boolean) => Promise<{ enabled: boolean; running: boolean }>
       pluginLookup: (pluginName: string) => Promise<Array<{ title: string; snippet: string; url: string }>>
       webSearch: (query: string) => Promise<Array<{ title: string; snippet: string; url: string }>>
+      /** K6: internet para la IA; respuestas `{ ok: true, datos } | { ok: false, error }` (ver web-tools-cliente.ts). */
+      webTools?: {
+        buscar: (q: string, max?: number) => Promise<unknown>
+        leer: (url: string, maxChars?: number) => Promise<unknown>
+        youtubeBuscar: (q: string, max?: number) => Promise<unknown>
+        youtubeFicha: (urlOId: string) => Promise<unknown>
+        youtubeMiniatura: (videoId: string) => Promise<unknown>
+        referenciaAnalizar: (url: string) => Promise<unknown>
+        referenciaEscuchar: (url: string, titulo?: string) => Promise<unknown>
+        internetPermitido: () => Promise<boolean>
+        fijarInternetPermitido: (activo: boolean) => Promise<boolean>
+        onProgreso: (callback: (p: { fase: string; detalle?: string }) => void) => () => void
+      }
       dialogMessage: (type: string, title: string, message: string) => Promise<number>
       shellOpenExternal: (url: string) => Promise<boolean>
       nativeAudioAvailable: () => Promise<boolean>

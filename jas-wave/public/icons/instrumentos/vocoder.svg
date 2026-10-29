@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="vocoder">
+  <!-- Teclado base sintetizador -->
+  <rect x="8" y="34" width="48" height="22" rx="2" fill="currentColor" fill-opacity="0.14" stroke-width="2" />
+  <rect x="12" y="42" width="40" height="12" rx="1" fill="currentColor" fill-opacity="0.25" stroke-width="1.5" />
+  <line x1="18" y1="42" x2="18" y2="54" stroke-width="1.25" />
+  <line x1="24" y1="42" x2="24" y2="54" stroke-width="1.25" />
+  <line x1="30" y1="42" x2="30" y2="54" stroke-width="1.25" />
+  <line x1="36" y1="42" x2="36" y2="54" stroke-width="1.25" />
+  <line x1="42" y1="42" x2="42" y2="54" stroke-width="1.25" />
+  <line x1="48" y1="42" x2="48" y2="54" stroke-width="1.25" />
+  <rect x="16" y="42" width="3" height="7" fill="currentColor" />
+  <rect x="22" y="42" width="3" height="7" fill="currentColor" />
+  <rect x="34" y="42" width="3" height="7" fill="currentColor" />
+  <rect x="40" y="42" width="3" height="7" fill="currentColor" />
+  <rect x="46" y="42" width="3" height="7" fill="currentColor" />
+  <!-- Micrófono de cuello de ganso flexible montado -->
+  <path d="M16 34c0-12 12-14 16-20" stroke-width="2.5" />
+  <rect x="30" y="8" width="6" height="9" rx="3" fill="currentColor" fill-opacity="0.3" stroke-width="1.75" />
+  <line x1="30" y1="12" x2="36" y2="12" stroke-width="1.5" />
+  <!-- Bandas de ecualización de formantes vocales a la derecha -->
+  <path d="M42 28v-4M46 28v-9M50 28v-14M54 28v-6" stroke-width="2" />
+</svg>

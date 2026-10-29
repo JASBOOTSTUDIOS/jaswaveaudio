@@ -6,7 +6,7 @@
 
 import { channelFilterAllows, parseMidiMessage, type MidiParsed } from './midi-bytes'
 import { RelojHostMidi } from './midi-clock-sync'
-import { bufferEscuchaMidi } from './midi-example-analyzer'
+import { bufferEscuchaMidi, CC_ESCUCHADOS } from './midi-example-analyzer'
 
 export type MidiInputInfo = {
   id: string
@@ -113,15 +113,22 @@ function dispatchParsed(
   if (!channelFilterAllows(channelFilter, parsed.msg.channel)) return
   emitActivity()
   const m = parsed.msg
+  // Búfer de escucha de la IA: instante real del evento (ns), no el de llegada a la UI. Guarda notas, los
+  // controladores que describen el toque (sustain, sostenuto, suave, modulación, expresión) y el pitch bend.
+  const tNs = Math.round(timeSec * 1e9)
   if (m.kind === 'noteOn' || m.kind === 'noteOff') {
-    // Búfer de escucha de la IA: instante real del evento (ns), no el de llegada a la UI.
     bufferEscuchaMidi.push({
-      tNs: Math.round(timeSec * 1e9),
+      tNs,
       tipo: m.kind === 'noteOn' && m.velocity > 0 ? 'on' : 'off',
       pitch: m.pitch,
       velocity: m.kind === 'noteOn' ? m.velocity : 0,
       canal: m.channel,
+      deviceId,
     })
+  } else if (m.kind === 'cc' && CC_ESCUCHADOS.includes(m.cc)) {
+    bufferEscuchaMidi.push({ tNs, tipo: 'cc', cc: m.cc, valor: m.value, canal: m.channel, deviceId })
+  } else if (m.kind === 'pitchBend') {
+    bufferEscuchaMidi.push({ tNs, tipo: 'bend', valor: m.value, canal: m.channel, deviceId })
   }
   for (const l of msgListeners) l(parsed.msg, timeSec, source, deviceId)
 }

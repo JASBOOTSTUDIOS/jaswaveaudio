@@ -16,6 +16,36 @@ Endurecimiento para producción (rama `hardening/production`).
 
 ### Añadido
 
+- **Zonas MIDI y modo Directo (K3):** splits, capas y transposición del teclado por pista aplicados en el **host
+  nativo** (`setLiveMidiTargets` con `targets`: rango, transposición, curva/escala de velocidad, canal de entrada y
+  salida, hasta 32 destinos, seguimiento de note-off por nota original, sin reservas en el hilo de audio), modelo
+  `ZonaMidi`/`DirectoState` en `project.directo` con comandos con undo (`midi.zones.set/add/update/remove`,
+  `directo.setSafety`, `directo.setLock`), panel «Zonas MIDI» (teclado de 88 teclas con arrastre de límites, lista
+  editable, pista destino), botón **PANIC** (host `panic` + motor web) y candado **Directo** (bloquea borrar, deshacer,
+  cortar, pegar y duplicar con aviso) en el transporte, limitador **true-peak** del máster (`setMasterSafety`, techo
+  −0,5 dBTP, 4×, lookahead 64 muestras, solo monitorización) con selftest determinista (`jaswave-host-selftest`), el
+  thru web respeta las zonas, y herramientas IA `midi.zones.get/set/add/update/remove`, `directo.panic`,
+  `directo.setSafety`, `directo.setLock`. Manual 07, «Zonas MIDI y modo Directo».
+- **La IA puede consultar internet y referencias (K6):** herramientas de lectura `web.buscar` (DuckDuckGo con respaldo
+  Wikipedia), `web.leer` (texto legible de una página: título, autor, fecha, párrafos), `youtube.buscar` y
+  `youtube.ficha` (descripción, capítulos, transcripción); `referencia.escuchar` abre el vídeo en una ventana de la app
+  (sin node, partición propia) y `referencia.analizar` descarga el audio con **yt-dlp bajo demanda** (release oficial
+  verificada con `SHA2-256SUMS`, `%LOCALAPPDATA%\JasWave\tools\yt-dlp`) y lo mide con los analizadores del DAW (tempo,
+  tonalidad, acordes, LUFS, true peak, espectro). La red sale solo del proceso main (`electron/web-tools.ts`): solo
+  http(s), IPs privadas/locales/metadata bloqueadas también tras DNS y en cada redirección, 15 s, 2 MB, 30 peticiones
+  por minuto, preferencia «Permitir a la IA usar internet». Los resultados llegan al modelo como datos no confiables con
+  la instrucción de citar; la respuesta termina con «Fuentes:» y el chat muestra tarjetas con enlace (YouTube con
+  miniatura, «Escuchar en JasWave» y «Analizar referencia»).
+- **Acordes y letra en el arreglo (K2):** la cabecera del Arrange es ahora una pila de filas bajo la regla con
+  carriles de **Secciones** (marcadores), **Acordes** (insignias por compás) y **Letra** (sílabas), sincronizados
+  con el scroll y el zoom; la sílaba que se canta brilla siguiendo el playhead. Doble clic edita, arrastrar mueve
+  con imán a la rejilla y el clic derecho quita; las filas se pliegan y solo aparecen si hay datos. Botón «Letra»
+  en la barra del arreglo para pegar el texto (se reparte por secciones o por compases, con silabeo automático en
+  español). Parser cromático completo de cifrados (`F#m7b5`, `Bb/D`, `C7(b9,#11)`, `G13sus4`, `E7alt`…), nombrador
+  de acordes a partir de notas tocadas (inversiones, slash, omisiones, tensiones), voicing y transposición
+  (`shared/src/music/acordes.ts`). Comandos con deshacer `lyrics.*`, `chords.*`, `marker.update/remove` y
+  herramientas de la IA `chords.set/get`, `lyrics.set/get`; la banda virtual vuelca su hoja de ruta (acorde por
+  compás y secciones) al carril.
 - **Escribirle a la banda mientras trabaja:** lo que el usuario escribe en el chat o en la caja del panel de la banda
   llega al agente en turno entre dos pasos (y al contexto de los que empiezan después); se puede dirigir a un
   participante concreto desde el selector, pulsando su nombre en la consola o con «@Nombre …» / «Nombre: …». La

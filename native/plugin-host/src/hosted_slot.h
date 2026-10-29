@@ -51,14 +51,14 @@ public:
     if (vst3_) vst3_->unload();
   }
 
-  void noteOn(int pitch, float velocity, int delaySamples = 0, int32_t lengthSamples = 0) {
-    if (vst3_) vst3_->noteOn(pitch, velocity, delaySamples, lengthSamples);
+  void noteOn(int pitch, float velocity, int delaySamples = 0, int32_t lengthSamples = 0, int channel = 0) {
+    if (vst3_) vst3_->noteOn(pitch, velocity, delaySamples, lengthSamples, channel);
   }
-  void noteOff(int pitch, int delaySamples = 0) {
-    if (vst3_) vst3_->noteOff(pitch, delaySamples);
+  void noteOff(int pitch, int delaySamples = 0, int channel = 0) {
+    if (vst3_) vst3_->noteOff(pitch, delaySamples, channel);
   }
-  void midiCc(int cc, int value, int delaySamples = 0) {
-    if (vst3_) vst3_->midiCc(cc, value, delaySamples);
+  void midiCc(int cc, int value, int delaySamples = 0, int channel = 0) {
+    if (vst3_) vst3_->midiCc(cc, value, delaySamples, channel);
   }
   void allNotesOff() {
     if (vst3_) vst3_->allNotesOff();

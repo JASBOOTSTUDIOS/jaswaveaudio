@@ -31,6 +31,8 @@ export const ALLOWED_HOST_COMMANDS = new Set([
   'midiCc',
   'setTransport',
   'setLiveMidiTargets',
+  'panic',
+  'setMasterSafety',
   'metronome.set',
   'getTransportClock',
   'clip.load',

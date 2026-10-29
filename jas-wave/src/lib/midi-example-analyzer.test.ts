@@ -3,8 +3,11 @@ import assert from 'node:assert/strict'
 import { RelojHostMidi } from './midi-clock-sync'
 import {
   BufferEscuchaMidi,
+  CC_ESCUCHADOS,
   analizarEjemploMidi,
+  controlDeEventos,
   notasDeEventos,
+  resumenToma,
   type EventoEscucha,
   type NotaEscuchada,
 } from './midi-example-analyzer'
@@ -52,6 +55,59 @@ test('búfer: guarda los últimos segundos', () => {
   const b = new BufferEscuchaMidi()
   for (let i = 0; i < 10; i++) b.push({ tNs: i * 1e9, tipo: 'on', pitch: 60, velocity: 100, canal: 0 })
   assert.equal(b.ultimos(3).length, 4) // 6, 7, 8, 9 s
+})
+
+test('notas: ignora CC y pitch bend; una nota sin off dura hasta el último evento (aunque sea un CC)', () => {
+  const ev: EventoEscucha[] = [
+    { tNs: ms(0), tipo: 'cc', cc: 64, valor: 127, canal: 0, deviceId: 'psr' },
+    { tNs: ms(5), tipo: 'on', pitch: 60, velocity: 100, canal: 0, deviceId: 'psr' },
+    { tNs: ms(300), tipo: 'bend', valor: 0.5, canal: 0 },
+    { tNs: ms(900), tipo: 'cc', cc: 64, valor: 0, canal: 0 },
+  ]
+  const n = notasDeEventos(ev)
+  assert.deepEqual(n.map((x) => [x.pitch, x.inicioMs, x.duracionMs]), [[60, 5, 895]])
+  assert.deepEqual(controlDeEventos(ev, 64), [
+    { tMs: 0, valor: 127 },
+    { tMs: 900, valor: 0 },
+  ])
+  assert.equal(CC_ESCUCHADOS.includes(64) && CC_ESCUCHADOS.includes(67) && CC_ESCUCHADOS.includes(1), true)
+})
+
+test('toma: acumula lo tocado desde iniciar hasta terminar, con el transporte, sin romper ultimos()', () => {
+  const b = new BufferEscuchaMidi()
+  b.push({ tNs: ms(0), tipo: 'on', pitch: 48, velocity: 80, canal: 0 })
+  assert.equal(b.tomaActual(), null)
+  assert.equal(b.tomaEnCurso, false)
+  const t = b.iniciarToma({ ahoraNs: ms(1000), transporte: { reproduciendo: true, posicionBeats: 8, bpm: 92 } })
+  assert.equal(b.tomaEnCurso, true)
+  assert.equal(t.transporte?.bpm, 92)
+  assert.equal(t.transporte?.posicionBeats, 8)
+  b.push({ tNs: ms(1100), tipo: 'on', pitch: 60, velocity: 100, canal: 0, deviceId: 'psr' })
+  b.push({ tNs: ms(1100), tipo: 'cc', cc: 64, valor: 127, canal: 0, deviceId: 'psr' })
+  b.push({ tNs: ms(1600), tipo: 'off', pitch: 60, velocity: 0, canal: 0, deviceId: 'psr' })
+  // Un evento con sello anterior al inicio (retraso de reloj) no entra en la toma.
+  b.push({ tNs: ms(900), tipo: 'on', pitch: 50, velocity: 90, canal: 0 })
+  const fin = b.terminarToma(ms(2000))
+  assert.ok(fin)
+  assert.equal(fin!.id, t.id)
+  assert.equal(fin!.finNs, ms(2000))
+  assert.equal(fin!.eventos.length, 3)
+  assert.equal(b.tomaEnCurso, false)
+  assert.equal(b.tomaActual()?.id, t.id, 'la última toma sigue disponible tras terminar')
+  assert.equal(b.terminarToma(ms(2500)), null, 'terminar dos veces no hace nada')
+  // Lo que llega después ya no entra en la toma pero sí en el anillo.
+  b.push({ tNs: ms(2100), tipo: 'on', pitch: 62, velocity: 100, canal: 0 })
+  assert.equal(b.tomaActual()!.eventos.length, 3)
+  assert.equal(b.ultimos(3, ms(2100)).length, 6)
+  const r = resumenToma(b.tomaActual())
+  assert.deepEqual(r, { enCurso: false, segundos: 1, notas: 1, pedal: 1, controles: 0 })
+  // Iniciar otra cierra la anterior y empieza de cero.
+  const t2 = b.iniciarToma({ ahoraNs: ms(3000) })
+  assert.notEqual(t2.id, t.id)
+  assert.equal(t2.eventos.length, 0)
+  assert.equal(t2.transporte, undefined)
+  b.limpiar()
+  assert.equal(b.tomaActual(), null)
 })
 
 test('análisis: tempo, micro-timing respecto a la rejilla, flams y acordes', () => {

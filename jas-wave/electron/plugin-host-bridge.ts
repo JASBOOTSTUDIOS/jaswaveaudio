@@ -1140,6 +1140,7 @@ export function sendPluginHostMidi(cmd: Record<string, unknown>): void {
     type !== 'noteOn' &&
     type !== 'noteOff' &&
     type !== 'allNotesOff' &&
+    type !== 'panic' &&
     type !== 'midiCc' &&
     type !== 'setTransport' &&
     type !== 'setLiveMidiTargets' &&
@@ -1943,8 +1944,8 @@ function enviarComandoHost(cmd: Record<string, unknown>, timeoutMs: number): Pro
       : timeoutMs
 
   // MIDI: host no responde — no usar la cola RPC (bloquearía load/ping).
-  if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setMixInputRate' || type === 'setSlotMix' || type === 'setMasterMix' || type === 'setMonitorMix' || type === 'setTrackGraph' || type === 'setMeterTrackOrder' || type === 'setLiveMidiTargets' || type === 'metronome.set' || type === 'clip.schedule' || type === 'clip.stopAll') {
-    if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setLiveMidiTargets' || type === 'metronome.set' || type === 'clip.schedule' || type === 'clip.stopAll') {
+  if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'panic' || type === 'midiCc' || type === 'setTransport' || type === 'setMixInputRate' || type === 'setSlotMix' || type === 'setMasterMix' || type === 'setMonitorMix' || type === 'setMasterSafety' || type === 'setTrackGraph' || type === 'setMeterTrackOrder' || type === 'setLiveMidiTargets' || type === 'metronome.set' || type === 'clip.schedule' || type === 'clip.stopAll') {
+    if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'panic' || type === 'midiCc' || type === 'setTransport' || type === 'setLiveMidiTargets' || type === 'metronome.set' || type === 'clip.schedule' || type === 'clip.stopAll') {
       sendPluginHostMidi(cmd)
       return Promise.resolve({
         ok: true,

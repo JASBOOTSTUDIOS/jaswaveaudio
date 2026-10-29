@@ -17,6 +17,7 @@ import {
   type GeneratedNote,
 } from './midi-song-generator'
 import { getSelectedTrackId } from './selection-helpers'
+import { panicDirecto } from './modo-directo'
 import { formatMentionsForPrompt, resolveAtMentions, type MentionableMessage } from './ai-mentions'
 import { pluginRegistry } from './plugin/registry'
 import { descriptorToPluginInfo } from './plugin/plugin-info-adapter'
@@ -1033,6 +1034,43 @@ export async function executeDawActions(
           })
           break
         }
+        // K3: zonas del teclado (splits/capas/transposición) y modo Directo. Todo por comandos con undo salvo el
+        // candado (sin historial) y PANIC (solo apaga notas; no toca el proyecto).
+        case 'midi.zones.get': {
+          const d = tienda.obtenerEstado().project.directo
+          const zonas = d?.zonas ?? []
+          results.push({
+            type: action.type,
+            success: true,
+            message: `${zonas.length} zonas MIDI · seguridad ${d?.seguridad?.activa ? 'ON' : 'OFF'} · Directo ${d?.bloqueo ? 'bloqueado' : 'libre'}`,
+            data: {
+              zonas: zonas.map((z) => ({ ...z })),
+              seguridad: { activa: d?.seguridad?.activa === true, techoDb: d?.seguridad?.techoDb ?? -0.5 },
+              bloqueo: d?.bloqueo === true,
+            },
+          })
+          break
+        }
+        case 'midi.zones.set':
+        case 'midi.zones.add':
+        case 'midi.zones.update':
+        case 'midi.zones.remove':
+        case 'directo.setSafety':
+        case 'directo.setLock': {
+          const r = await tienda.executor.execute(action.type, p)
+          results.push({
+            type: action.type,
+            success: r.success,
+            message: r.success ? `${action.type} OK` : r.error?.message ?? 'Error en zonas MIDI / Directo',
+            ...(r.success && r.result !== undefined ? { data: r.result as Record<string, unknown> } : {}),
+          })
+          break
+        }
+        case 'directo.panic': {
+          panicDirecto()
+          results.push({ type: action.type, success: true, message: 'PANIC: todas las notas apagadas' })
+          break
+        }
         case 'transport.seek': {
           const r = await tienda.executor.execute('transport.seek', {
             segundos: Number(p.segundos ?? 0),
@@ -1826,6 +1864,71 @@ export async function executeDawActions(
               success: false,
               message: err instanceof Error ? err.message : String(err),
             })
+          }
+          break
+        }
+        // ── K6: internet para la IA. Red solo en main; cada resultado se devuelve como dato no confiable con la
+        // instrucción de citar la fuente y se registra en fuentes-del-turno.ts (lista «Fuentes:» y tarjetas).
+        case 'web.buscar':
+        case 'web.leer':
+        case 'youtube.buscar':
+        case 'youtube.ficha': {
+          const wt = await import('./web-tools-cliente')
+          const q = String(p.q ?? p.query ?? p.consulta ?? '').trim()
+          const url = String(p.url ?? p.enlace ?? p.videoId ?? p.id ?? '').trim()
+          const max = Number(p.max ?? p.limite ?? 0) || undefined
+          try {
+            if (action.type === 'web.buscar') {
+              if (!q) throw new Error('Falta «q» (texto a buscar)')
+              const hits = await wt.webBuscar(q, max)
+              results.push({ type: action.type, success: true, message: wt.envolverResultadoWeb(action.type, wt.formatearBusquedaParaAgente(q, hits)), data: { q, resultados: hits } })
+            } else if (action.type === 'web.leer') {
+              if (!url) throw new Error('Falta «url» (página a leer)')
+              const pagina = await wt.webLeer(url, Number(p.maxChars ?? 0) || undefined)
+              results.push({ type: action.type, success: true, message: wt.envolverResultadoWeb(action.type, wt.formatearPaginaParaAgente(pagina)), data: { ...pagina, texto: undefined } })
+            } else if (action.type === 'youtube.buscar') {
+              if (!q) throw new Error('Falta «q» (texto a buscar en YouTube)')
+              const videos = await wt.youtubeBuscar(q, max)
+              results.push({ type: action.type, success: true, message: wt.envolverResultadoWeb(action.type, wt.formatearVideosParaAgente(q, videos)), data: { q, videos } })
+            } else {
+              if (!url) throw new Error('Falta «url» (enlace o id del vídeo)')
+              const ficha = await wt.youtubeFicha(url)
+              results.push({ type: action.type, success: true, message: wt.envolverResultadoWeb(action.type, wt.formatearFichaParaAgente(ficha)), data: { ...ficha, transcripcion: undefined } })
+            }
+          } catch (err) {
+            results.push({ type: action.type, success: false, message: err instanceof Error ? err.message : String(err) })
+          }
+          break
+        }
+        case 'referencia.analizar': {
+          const url = String(p.url ?? p.enlace ?? p.videoId ?? p.id ?? '').trim()
+          if (!url) {
+            results.push({ type: action.type, success: false, message: 'Falta «url» (enlace de YouTube de la referencia)' })
+            break
+          }
+          try {
+            const { analizarReferencia } = await import('./referencia-analisis')
+            const wt = await import('./web-tools-cliente')
+            const r = await analizarReferencia(tienda, url)
+            results.push({ type: action.type, success: true, message: wt.envolverResultadoWeb(action.type, r.informe), data: { kind: 'referencia', ...r.datos } })
+          } catch (err) {
+            results.push({ type: action.type, success: false, message: err instanceof Error ? err.message : String(err) })
+          }
+          break
+        }
+        case 'referencia.escuchar': {
+          const url = String(p.url ?? p.enlace ?? p.videoId ?? p.id ?? '').trim()
+          if (!url) {
+            results.push({ type: action.type, success: false, message: 'Falta «url» (enlace de YouTube de la referencia)' })
+            break
+          }
+          try {
+            const wt = await import('./web-tools-cliente')
+            const titulo = typeof p.titulo === 'string' ? p.titulo : undefined
+            const r = await wt.referenciaEscuchar(url, titulo)
+            results.push({ type: action.type, success: true, message: `Referencia abierta en una ventana de JasWave (${r.videoId}). Fuente: ${url}`, data: { videoId: r.videoId, url } })
+          } catch (err) {
+            results.push({ type: action.type, success: false, message: err instanceof Error ? err.message : String(err) })
           }
           break
         }
@@ -2780,14 +2883,24 @@ export async function executeDawActions(
         }
         // ── Toque del intérprete (micro-timing, microdinámica, acordes, articulación) ──
         case 'analysis.touch':
+        case 'analysis.performance':
         case 'style.touch.learn': {
-          const { touchAnalyze, touchLearn } = await import('./styles/touch-ops')
+          const { touchAnalyze, touchLearn, performanceAnalyze } = await import('./styles/touch-ops')
           const origen = {
             trackId: p.trackId != null || p.pistaId != null ? String(p.trackId ?? p.pistaId) : undefined,
             clipIds: Array.isArray(p.clipIds) ? (p.clipIds as unknown[]).map(String) : p.clipId ? [String(p.clipId)] : undefined,
             segundos: Number.isFinite(Number(p.segundos)) && p.segundos != null ? Number(p.segundos) : undefined,
             instrumento: typeof p.instrumento === 'string' ? p.instrumento : undefined,
             rejillaBeats: typeof p.rejillaBeats === 'number' && p.rejillaBeats > 0 ? p.rejillaBeats : undefined,
+            toma: p.toma === true || p.origen === 'toma',
+          }
+          if (action.type === 'analysis.performance') {
+            // Sin origen explícito: la toma grabada si existe; si no, los últimos segundos.
+            const { bufferEscuchaMidi } = await import('./midi-example-analyzer')
+            const sinOrigen = !origen.clipIds && origen.segundos == null && !origen.toma
+            const a = await performanceAnalyze(tienda, { ...origen, toma: origen.toma || (sinOrigen && bufferEscuchaMidi.tomaActual() !== null) })
+            results.push({ type: action.type, success: a.ok, message: a.message, data: a.datos ? { informe: a.informe, ...a.datos } : undefined })
+            break
           }
           if (action.type === 'analysis.touch') {
             const a = touchAnalyze(tienda, origen)
@@ -2803,7 +2916,7 @@ export async function executeDawActions(
               type: action.type,
               success: l.ok,
               message: l.message,
-              data: l.ok ? { perfilId: l.perfilId, nombre: l.nombre, resumen: l.resumen } : undefined,
+              data: l.ok ? { perfilId: l.perfilId, nombre: l.nombre, resumen: l.resumen, perfil: l.perfil } : undefined,
             })
           }
           break
@@ -3291,21 +3404,31 @@ export async function executeDawActions(
           const segundos = Math.max(1, Math.min(600, Number(p.segundos ?? 30)))
           const eventos = bufferEscuchaMidi.ultimos(segundos, performance.now() * 1e6)
           const bpm = safeProjectBpm(tienda.obtenerEstado())
-          const analisis = analizarEjemploMidi(notasDeEventos(eventos), {
-            bpm,
-            rejillaBeats: typeof p.rejillaBeats === 'number' && p.rejillaBeats > 0 ? p.rejillaBeats : undefined,
-          })
+          const rejillaBeats = typeof p.rejillaBeats === 'number' && p.rejillaBeats > 0 ? p.rejillaBeats : undefined
+          const analisis = analizarEjemploMidi(notasDeEventos(eventos), { bpm, rejillaBeats })
+          // El mismo informe detallado que analysis.performance (toque, voces, manos, rubato, pedal y acordes).
+          let informe: string | undefined
+          let datosPerformance: Record<string, unknown> | undefined
+          if (analisis.notas > 0) {
+            const { performanceAnalyze } = await import('./styles/touch-ops')
+            const perf = await performanceAnalyze(tienda, { segundos, rejillaBeats })
+            if (perf.ok && perf.datos) {
+              informe = perf.informe
+              datosPerformance = { perfil: perf.datos.perfil, acordes: perf.datos.acordes, pedal: perf.datos.pedal }
+            }
+          }
+          const resumen =
+            analisis.notas === 0
+              ? `No se tocó nada en el teclado MIDI en los últimos ${segundos} s`
+              : `${analisis.notas} notas en ${analisis.duracionSeg} s · vel. media ${analisis.velocidad?.media} · ` +
+                (analisis.microtiming
+                  ? `desvío medio ${analisis.microtiming.desvioMedioMs} ms (±${analisis.microtiming.desvioAbsMedioMs}) a ${bpm} BPM`
+                  : `tempo estimado ${analisis.bpmEstimado ?? '?'} BPM`)
           results.push({
             type: action.type,
             success: true,
-            message:
-              analisis.notas === 0
-                ? `No se tocó nada en el teclado MIDI en los últimos ${segundos} s`
-                : `${analisis.notas} notas en ${analisis.duracionSeg} s · vel. media ${analisis.velocidad?.media} · ` +
-                  (analisis.microtiming
-                    ? `desvío medio ${analisis.microtiming.desvioMedioMs} ms (±${analisis.microtiming.desvioAbsMedioMs}) a ${bpm} BPM`
-                    : `tempo estimado ${analisis.bpmEstimado ?? '?'} BPM`),
-            data: analisis,
+            message: informe ? `${resumen}\n\n${informe}` : resumen,
+            data: { ...analisis, ...(informe ? { informe } : {}), ...(datosPerformance ?? {}) },
           })
           break
         }

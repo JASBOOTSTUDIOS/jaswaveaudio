@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="choir">
+  <!-- Cantante central principal con boca abierta cantando -->
+  <circle cx="32" cy="18" r="6" stroke-width="2" fill="currentColor" fill-opacity="0.2" />
+  <ellipse cx="32" cy="20" rx="1.5" ry="2" fill="currentColor" />
+  <path d="M22 46c0-8 4-16 10-16s10 8 10 16" fill="currentColor" fill-opacity="0.15" stroke-width="2" />
+  <!-- Cantante izquierda -->
+  <circle cx="16" cy="22" r="5" stroke-width="1.75" fill="currentColor" fill-opacity="0.15" />
+  <ellipse cx="16" cy="24" rx="1.25" ry="1.75" fill="currentColor" />
+  <path d="M8 48c0-7 3-14 8-14s8 7 8 14" fill="currentColor" fill-opacity="0.12" stroke-width="1.75" />
+  <!-- Cantante derecha -->
+  <circle cx="48" cy="22" r="5" stroke-width="1.75" fill="currentColor" fill-opacity="0.15" />
+  <ellipse cx="48" cy="24" rx="1.25" ry="1.75" fill="currentColor" />
+  <path d="M40 48c0-7 3-14 8-14s8 7 8 14" fill="currentColor" fill-opacity="0.12" stroke-width="1.75" />
+  <!-- Nota musical armónica flotante -->
+  <path d="M38 6h5v6" stroke-width="1.5" />
+  <circle cx="38" cy="12" r="2" fill="currentColor" />
+</svg>

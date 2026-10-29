@@ -64,3 +64,11 @@ else()
 endif()
 
 install(TARGETS jaswave-plugin-host RUNTIME DESTINATION bin)
+
+# Selftest determinista del DSP propio del host (limitador true-peak del máster). No necesita el SDK:
+#   cmake --build <build> --config Release --target jaswave-host-selftest && <build>/Release/jaswave-host-selftest
+add_executable(jaswave-host-selftest EXCLUDE_FROM_ALL tests/master_limiter_test.cpp)
+target_include_directories(jaswave-host-selftest PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/src"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../plugins/shared-dsp"
+)

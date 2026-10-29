@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, LayoutGrid, MoreVertical, Circle, Music, FileAudio, Headphones, GripVertical, AlertTriangle, Folder } from 'lucide-react'
+import { Plus, LayoutGrid, MoreVertical, Circle, Music, FileAudio, Headphones, GripVertical, AlertTriangle, Folder, AlignLeft } from 'lucide-react'
 import { usePlaybackActions } from '@/components/playback-provider'
 import { createProjection } from '@/lib/timeline-projection'
 import { TRACKS, type Track as UiTrack } from '@/lib/daw-data'
@@ -20,6 +20,8 @@ import { GridLayer } from './GridLayer'
 import { PlayheadOverlay } from './PlayheadOverlay'
 import { StartMarkerOverlay } from './StartMarkerOverlay'
 import { ArrangeBoard } from './ArrangeBoard'
+import { TimelineMarkersLane, MARKERS_LANE_H } from './TimelineMarkersLane'
+import { TimelineChordLane, TimelineLyricLane, CHORD_LANE_H, LYRIC_LANE_H, type HeaderLaneRow } from './TimelineLyricChordLane'
 import { MidiClipPreview } from './MidiClipPreview'
 import { ClipEditHandles, ClipMutedOverlay, type EdicionClip } from './ClipEditHandles'
 import { TrackContextMenu, type TrackMenuState } from './TrackContextMenu'
@@ -137,6 +139,15 @@ export function ArrangementView() {
   const scrollLeft = useDAWState((state: DAWState) => state.ui?.scrollX ?? 0)
   const selectedClipIds = useDAWState((state: DAWState) => state.selection?.idsClips ?? [])
   const selectedTrackId = useDAWState((state: DAWState) => getSelectedTrackId(state))
+  // Carriles de la cabecera (marcadores, acordes, letra): solo se muestran si hay datos; se pueden plegar.
+  const hayMarcadores = useDAWState((state: DAWState) => (state.project?.marcadores?.length ?? 0) > 0)
+  const hayAcordes = useDAWState((state: DAWState) => (state.project?.letra?.acordes?.length ?? 0) > 0)
+  const hayLetra = useDAWState((state: DAWState) => (state.project?.letra?.frases?.length ?? 0) > 0)
+  const [carrilesPlegados, setCarrilesPlegados] = useState<Record<string, boolean>>({})
+  const plegarCarril = useCallback((id: string) => setCarrilesPlegados((p) => ({ ...p, [id]: !p[id] })), [])
+  const [letraAbierta, setLetraAbierta] = useState(false)
+  const [letraTexto, setLetraTexto] = useState('')
+  const letraRef = useRef<HTMLDivElement>(null)
   /** Datos de edición de cada clip (mute, ganancia, fades, slip) desde el store. */
   const edicionPorClip = useMemo(() => {
     const m = new Map<string, EdicionClip & { clipInicio?: number }>()
@@ -410,6 +421,16 @@ export function ArrangementView() {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [showAddTrackMenu])
+
+  // Cerrar el popover de letra al hacer clic fuera
+  useEffect(() => {
+    if (!letraAbierta) return
+    const handler = (e: MouseEvent) => {
+      if (letraRef.current && !letraRef.current.contains(e.target as Node)) setLetraAbierta(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [letraAbierta])
 
   // Note: keyboard shortcuts are now handled by useShortcutDispatcher (unified system)
 
@@ -1354,6 +1375,71 @@ export function ArrangementView() {
 
   const getPlayheadSeconds = useCallback(() => getPositionMs() / 1000, [getPositionMs])
 
+  const headerRows: HeaderLaneRow[] = []
+  if (hayMarcadores) {
+    headerRows.push({
+      id: 'marcadores',
+      label: 'Secciones',
+      height: MARKERS_LANE_H,
+      collapsed: Boolean(carrilesPlegados.marcadores),
+      onToggle: () => plegarCarril('marcadores'),
+      testId: 'fila-marcadores',
+      content: (
+        <TimelineMarkersLane
+          pixelsPerBeat={pixelsPerBeat}
+          getScrollX={getLanesScrollX}
+          contentWidth={contentWidth}
+          snapBeat={snapBeat}
+          onSeek={(beat) => seekToBeats(beat)}
+        />
+      ),
+    })
+  }
+  if (hayAcordes) {
+    headerRows.push({
+      id: 'acordes',
+      label: 'Acordes',
+      height: CHORD_LANE_H,
+      collapsed: Boolean(carrilesPlegados.acordes),
+      onToggle: () => plegarCarril('acordes'),
+      testId: 'fila-acordes',
+      content: (
+        <TimelineChordLane pixelsPerBeat={pixelsPerBeat} getScrollX={getLanesScrollX} contentWidth={contentWidth} snapBeat={snapBeat} beatsPerBar={beatsPerBar} />
+      ),
+    })
+  }
+  if (hayLetra) {
+    headerRows.push({
+      id: 'letra',
+      label: 'Letra',
+      height: LYRIC_LANE_H,
+      collapsed: Boolean(carrilesPlegados.letra),
+      onToggle: () => plegarCarril('letra'),
+      testId: 'fila-letra',
+      content: (
+        <TimelineLyricLane
+          pixelsPerBeat={pixelsPerBeat}
+          getScrollX={getLanesScrollX}
+          contentWidth={contentWidth}
+          snapBeat={snapBeat}
+          beatsPerBar={beatsPerBar}
+          bpm={bpm}
+          getSeconds={getPlayheadSeconds}
+        />
+      ),
+    })
+  }
+
+  const aplicarLetra = async () => {
+    const texto = letraTexto.trim()
+    if (!texto) return
+    const r = await tienda.executor.execute('lyrics.setPhrases', { texto })
+    if (r.success) {
+      setLetraAbierta(false)
+      setLetraTexto('')
+    }
+  }
+
   return (
     <div className="flex h-full w-full min-h-0 flex-col overflow-hidden">
     <div className="flex min-h-0 flex-1 w-full overflow-hidden">
@@ -1419,6 +1505,7 @@ export function ArrangementView() {
         onPointerUp={handleTimelinePointerUp}
         onPointerLeave={() => {}}
         onWheel={handleZoom}
+        headerRows={headerRows}
         headerToolbar={(
           <>
 
@@ -1476,6 +1563,68 @@ export function ArrangementView() {
           >
             M
           </button>
+          <div className="relative" ref={letraRef}>
+            <button
+              type="button"
+              aria-label="Pegar letra"
+              title="Letra: pega el texto y se reparte por secciones o compases"
+              data-testid="boton-pegar-letra"
+              onClick={() => setLetraAbierta((v) => !v)}
+              className={`rounded px-1 text-muted-foreground hover:bg-panel-raised hover:text-foreground ${letraAbierta || hayLetra ? 'text-accent-amber' : ''}`}
+            >
+              <AlignLeft className="size-3.5" />
+            </button>
+            {letraAbierta && (
+              <div
+                className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-border bg-panel p-2 shadow-xl"
+                data-testid="popover-letra"
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <p className="mb-1 text-[10px] text-muted-foreground">
+                  Una línea por frase; separa estrofas con una línea en blanco. Cada estrofa cae en su sección (marcador) o, sin marcadores, dos compases por frase.
+                </p>
+                <textarea
+                  data-testid="textarea-letra"
+                  value={letraTexto}
+                  onChange={(e) => setLetraTexto(e.target.value)}
+                  onKeyDown={(e) => {
+                    e.stopPropagation()
+                    if (e.key === 'Escape') setLetraAbierta(false)
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void aplicarLetra()
+                  }}
+                  rows={6}
+                  placeholder={'Tu presencia, Señor\nllena este lugar\n\nSanto, santo…'}
+                  className="w-full resize-y rounded border border-border bg-background px-2 py-1 text-[12px] text-foreground outline-none focus:border-accent-amber"
+                />
+                <div className="mt-1 flex items-center justify-end gap-1.5">
+                  {hayLetra ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void tienda.executor.execute('lyrics.clear', { que: 'letra' })
+                        setLetraAbierta(false)
+                      }}
+                      className="rounded px-2 py-0.5 text-[11px] text-red-400 hover:bg-panel-raised"
+                    >
+                      Quitar letra
+                    </button>
+                  ) : null}
+                  <button type="button" onClick={() => setLetraAbierta(false)} className="rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-panel-raised">
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="aplicar-letra"
+                    disabled={!letraTexto.trim()}
+                    onClick={() => void aplicarLetra()}
+                    className="rounded bg-accent-amber px-2 py-0.5 text-[11px] font-medium text-background hover:opacity-90 disabled:opacity-40"
+                  >
+                    Aplicar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
           <button
             type="button"
             aria-label="Cuadrícula"
