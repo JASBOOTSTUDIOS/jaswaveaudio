@@ -38,6 +38,7 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'style.profile.search': 'read',
   'style.touch.list': 'read',
   'analysis.touch': 'read',
+  'analysis.performance': 'read',
   'doc.evaluate': 'read',
   'doc.read': 'read',
   'doc.list': 'read',
@@ -62,7 +63,14 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'render.getStatus': 'read',
   'track.getFxChain': 'read',
   'web.search': 'read',
+  // K6: internet para la IA (lecturas; la red sale solo del proceso main con allowlist y límite).
+  'web.buscar': 'read',
+  'web.leer': 'read',
+  'youtube.buscar': 'read',
+  'youtube.ficha': 'read',
+  'referencia.analizar': 'read',
   'midi.notes.get': 'read',
+  'midi.zones.get': 'read',
   'midi.getNotes': 'read',
   'midi.getClipSummary': 'read',
   'midi.clip.md.read': 'read',
@@ -72,6 +80,8 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'track.list': 'read',
   'audio.listDevices': 'read',
   'audio.getDevice': 'read',
+  'chords.get': 'read',
+  'lyrics.get': 'read',
 
   // ── A9 · Auditoría y progreso ───────────────────────────
   // Lecturas del estado del trabajo: plan, bitácora del turno, auditorías y resumen.
@@ -127,6 +137,14 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'clip.setReverse': 'write',
   'midi.notes.mute': 'write',
   'midi.notes.split': 'write',
+  // K3: zonas del teclado y modo Directo (undo salvo el candado; panic solo apaga notas, no toca el proyecto)
+  'midi.zones.set': 'write',
+  'midi.zones.add': 'write',
+  'midi.zones.update': 'write',
+  'midi.zones.remove': 'write',
+  'directo.panic': 'write',
+  'directo.setSafety': 'write',
+  'directo.setLock': 'write',
   'clip.move': 'write',
   'midi.clip.splitIntoSections': 'write',
   'midi.notes.set': 'write',
@@ -209,11 +227,24 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   // Toque del intérprete: learn guarda en la biblioteca del usuario; apply reescribe notas (midi.notes.set, undo).
   'style.touch.learn': 'write',
   'style.touch.apply': 'write',
+  'style.skill.save': 'write',
   'audio.armNative': 'write',
   'daw.musicBuild': 'write',
   'daw.composeProject': 'write',
   'daw.composeWorship': 'write',
   'marker.create': 'write',
+  // K2 · acordes, letra y marcadores del arreglo (carriles de la cabecera)
+  'marker.update': 'write',
+  'chords.set': 'write',
+  'lyrics.set': 'write',
+  'lyrics.setPhrases': 'write',
+  'lyrics.alignTiming': 'write',
+  'lyrics.setChords': 'write',
+  'chords.upsert': 'write',
+  'chords.remove': 'write',
+  'chords.move': 'write',
+  // K6: abre una ventana de la app con el vídeo (no toca el proyecto ni el disco): write segura, sin confirmación en auto.
+  'referencia.escuchar': 'write',
   'daw.generateMidiSong': 'write',
   'daw.masterPass': 'write',
 
@@ -236,6 +267,8 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'automation.clear': 'destructive',
   'take.delete': 'destructive',
   'comp.segment.clear': 'destructive',
+  'lyrics.clear': 'destructive',
+  'marker.remove': 'destructive',
 
   // ── Sistema (fuera del proyecto / disco / dispositivo) ──
   'project.new': 'system',

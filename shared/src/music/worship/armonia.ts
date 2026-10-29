@@ -6,6 +6,7 @@
  */
 
 import type { EscalaWorship, RaizWorship, TipoSeccionWorship } from './tipos';
+import { intentarParsearAcorde } from '../acordes';
 
 export const RAIZ_PC: Record<RaizWorship, number> = {
   C: 0, 'C#': 1, Db: 1, D: 2, Eb: 3, E: 4, F: 5, 'F#': 6, G: 7, Ab: 8, A: 9, Bb: 10, B: 11,
@@ -253,6 +254,66 @@ export function parsearAcorde(token: string, tonal: Tonal): EspecAcorde {
     throw new Error(`Acorde no diatónico en ${tonal.raiz} ${tonal.escalaNombre}: «${token}» (aquí sería «${construido.simbolo}»)`);
   }
   return spec;
+}
+
+/** Grado romano cromático de un pc sobre la tonalidad («bVI», «#IV», «bII»). */
+function romanoCromatico(tonal: Tonal, pc: number, minuscula: boolean): string {
+  const semi = (pc - tonal.raizPc + 12) % 12;
+  const g = tonal.escala.indexOf(semi);
+  let txt: string;
+  if (g >= 0) txt = ROMANOS[g]!;
+  else {
+    // Bemol del grado siguiente (bII, bIII, bV, bVI, bVII).
+    const siguiente = tonal.escala.findIndex((s) => s > semi);
+    const idx = siguiente >= 0 ? siguiente : 0;
+    txt = `b${ROMANOS[idx]}`;
+  }
+  return minuscula ? txt.toLowerCase() : txt;
+}
+
+/**
+ * Acorde a partir de un token (romano o símbolo): diatónico por grados cuando se puede y, si no
+ * (préstamos, dominantes secundarias, acordes con tensiones alteradas, bajos cromáticos), lo construye
+ * el parser cromático de `music/acordes.ts`. En ese caso `spec.grado` es -1 y `romano` lleva b/#.
+ */
+export function acordeDesdeToken(token: string, tonal: Tonal): Acorde {
+  try {
+    return construirAcorde(tonal, parsearAcorde(token, tonal));
+  } catch (errorDiatonico) {
+    const crom = intentarParsearAcorde(token);
+    if (!crom) throw errorDiatonico;
+    const fnDe = (semi: number): FuncionTono => {
+      const s = semi % 12;
+      if (semi === 0) return 'r';
+      if (semi >= 12) return semi >= 20 ? '13' : semi >= 16 ? '11' : '9';
+      if (s === 2) return '2';
+      if (s === 3 || s === 4) return '3';
+      if (s === 5) return '4';
+      if (s === 6 || s === 7 || s === 8) return '5';
+      if (s === 9) return '13';
+      return '7';
+    };
+    const tonos: TonoAcorde[] = crom.intervalos.map((semi) => ({ pc: (crom.raizPc + semi) % 12, semi, fn: fnDe(semi) }));
+    const esMenor = crom.intervalos.includes(3);
+    const bajoPc = crom.bajoPc ?? crom.raizPc;
+    const gradoBajo = crom.bajoPc !== undefined ? gradoDePc(tonal, crom.bajoPc) : -1;
+    const sufijo = crom.nombre.slice(crom.raiz.length).replace(/\/[A-G](?:#|b)?$/, '');
+    // Se conserva el deletreo del usuario: en Re mayor «Bb» es un préstamo, no «A#».
+    const simbolo = `${crom.raiz}${sufijo}${bajoPc !== crom.raizPc ? `/${crom.bajo ?? nombrePc(tonal, bajoPc)}` : ''}`;
+    let romano = romanoCromatico(tonal, crom.raizPc, esMenor || crom.calidad === 'disminuido');
+    if (sufijo) romano += sufijo;
+    if (bajoPc !== crom.raizPc) romano += `/${romanoCromatico(tonal, bajoPc, false)}`;
+    return {
+      spec: { grado: -1, ext: 'tri', ...(gradoBajo >= 0 ? { bajo: gradoBajo } : {}) },
+      simbolo,
+      romano,
+      raizPc: crom.raizPc,
+      bajoPc,
+      tonos,
+      pcs: tonos.map((t) => t.pc),
+      esMenor,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------

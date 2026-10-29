@@ -78,6 +78,8 @@ import {
   crearComandoSetSnap,
   crearComandoSetZoom,
   crearComandoMarkerCreate,
+  crearComandoMarkerUpdate,
+  crearComandoMarkerRemove,
   crearComandoProjectUpdate,
 } from '../commands/auxiliary-commands';
 import {
@@ -85,6 +87,14 @@ import {
   crearComandoSelectionClear,
   crearComandoUiSetPalette,
 } from '../commands/selection-commands';
+import {
+  crearComandoMidiZonesSet,
+  crearComandoMidiZonesAdd,
+  crearComandoMidiZonesRemove,
+  crearComandoMidiZonesUpdate,
+  crearComandoDirectoSetSafety,
+  crearComandoDirectoSetLock,
+} from '../commands/directo-commands';
 import {
   crearComandoPluginInsert,
   crearComandoPluginUpdate,
@@ -165,6 +175,19 @@ import {
   crearComandoPistaLimite,
   crearComandoMasterNormalizar,
 } from '../commands/actuacion-commands';
+import {
+  crearComandoLyricsSetPhrases,
+  crearComandoLyricsAlignTiming,
+  crearComandoLyricsSetChords,
+  crearComandoChordsUpsert,
+  crearComandoChordsRemove,
+  crearComandoChordsMove,
+  crearComandoLyricsClear,
+  crearComandoChordsSet,
+  crearComandoChordsGet,
+  crearComandoLyricsSet,
+  crearComandoLyricsGet,
+} from '../commands/lyrics-commands';
 import { entorno } from './entorno-determinista';
 
 /**
@@ -273,10 +296,18 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoSetSnap(), registry);
   registrar(crearComandoSetZoom(), registry);
   registrar(crearComandoMarkerCreate(), registry);
+  registrar(crearComandoMarkerUpdate(), registry);
+  registrar(crearComandoMarkerRemove(), registry);
   registrar(crearComandoProjectUpdate(), registry);
   registrar(crearComandoSelectionSet(), registry);
   registrar(crearComandoSelectionClear(), registry);
   registrar(crearComandoUiSetPalette(), registry);
+  registrar(crearComandoMidiZonesSet(), registry);
+  registrar(crearComandoMidiZonesAdd(), registry);
+  registrar(crearComandoMidiZonesRemove(), registry);
+  registrar(crearComandoMidiZonesUpdate(), registry);
+  registrar(crearComandoDirectoSetSafety(), registry);
+  registrar(crearComandoDirectoSetLock(), registry);
   registrar(crearComandoPluginInsert(), registry);
   registrar(crearComandoPluginUpdate(), registry);
   registrar(crearComandoPluginRemove(), registry);
@@ -341,6 +372,17 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoPistaCompresorQuitar(), registry);
   registrar(crearComandoPistaLimite(), registry);
   registrar(crearComandoMasterNormalizar(), registry);
+  registrar(crearComandoLyricsSetPhrases(), registry);
+  registrar(crearComandoLyricsAlignTiming(), registry);
+  registrar(crearComandoLyricsSetChords(), registry);
+  registrar(crearComandoChordsUpsert(), registry);
+  registrar(crearComandoChordsRemove(), registry);
+  registrar(crearComandoChordsMove(), registry);
+  registrar(crearComandoLyricsClear(), registry);
+  registrar(crearComandoChordsSet(), registry);
+  registrar(crearComandoChordsGet(), registry);
+  registrar(crearComandoLyricsSet(), registry);
+  registrar(crearComandoLyricsGet(), registry);
 }
 /**
  * Alias de `registrarComandosBuiltin` para registrar comandos de proyecto.

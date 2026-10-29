@@ -136,6 +136,12 @@ export type ConfigProduccion = {
   maxPasos?: number
   instruccionesExtra?: string
   /**
+   * Estilo de interpretación del usuario (skill «estilo-<slug>» aprendida de su teclado): resumen en español con
+   * números (micro-tiempos, dinámica, legato, pedal, rubato). Solo lo ven los músicos; tras cada uno, la app
+   * aplica el perfil a su pista.
+   */
+  estiloMusical?: string
+  /**
    * Indicaciones que el usuario escribe mientras la banda trabaja (lo que él ve y oye en el DAW y los agentes
    * no). Se consulta a menudo y debe devolver solo las nuevas: cada agente activo las recibe entre dos pasos y
    * los que empiezan después las ven en su contexto. Con `para`, solo las ve ese participante.
@@ -409,6 +415,8 @@ function sistemaParticipante(o: {
   plan?: string
   encargo?: string
   habilidades?: HabilidadAgente[]
+  /** Estilo de interpretación del usuario (solo músicos). */
+  estilo?: string
   /** Indicaciones que el usuario ya dio durante esta producción. */
   notas?: string[]
 }): string {
@@ -422,6 +430,7 @@ function sistemaParticipante(o: {
   if (o.p?.instrucciones?.trim()) lineas.push('', o.p.instrucciones.trim())
   if (o.habilidades?.length) lineas.push('', listadoHabilidades(o.habilidades))
   if (o.extra?.trim()) lineas.push('', o.extra.trim())
+  if (o.rol === 'musico' && o.estilo?.trim()) lineas.push('', 'Estilo de interpretación del usuario (así toca él; hazlo tuyo, sin copiarlo literal):', o.estilo.trim().slice(0, 1800), 'La app aplicará su micro-tiempo, dinámica y pedal a tu parte al terminar: tú entrega notas musicalmente buenas y no cuantices ni aplanes.')
   if (o.plan?.trim()) lineas.push('', 'Plan de la producción:', o.plan.trim())
   if (o.notas?.length) lineas.push('', 'Indicaciones del usuario durante esta producción (él ve y oye el DAW; mandan sobre el plan):', ...o.notas.map((n) => `- ${n}`))
   if (o.contexto.trim()) lineas.push('', 'Estado actual del proyecto:', o.contexto.trim())
@@ -693,6 +702,7 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
         plan: o.rol === 'planificador' ? undefined : plan,
         encargo: o.encargo,
         habilidades,
+        estilo: cfg.estiloMusical,
         notas: paraQuien(quien.id, notasUsuario.slice(0, notasVistas)).slice(-MAX_NOTAS_EN_CONTEXTO),
       }),
       chat: cfg.chat,

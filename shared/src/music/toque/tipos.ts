@@ -37,8 +37,68 @@ export interface Estadistica {
 
 export type ConfianzaToque = 'baja' | 'media' | 'alta';
 
+/** Evento de pedal (CC64 sustain) para el aprendizaje: tiempo en beats (misma referencia que las notas). */
+export interface EventoPedalToque {
+  inicio: number;
+  /** 0..127 (≥ 64 = pisado). */
+  valor: number;
+}
+
+/** Micro-tiempo por voz del acorde: el bajo es la referencia (0 ms); + = la voz entra después del bajo. */
+export interface VocesToque {
+  medias: Estadistica;
+  superior: Estadistica;
+  /** Proporción de acordes en los que el bajo entra primero. */
+  bajoPrimero: number;
+  /** Acordes (≥ 3 notas) con los que se midió. */
+  n: number;
+}
+
+export interface ManoToque {
+  notas: number;
+  velocidad: Estadistica;
+  /** Micro-timing (ms respecto a la rejilla) de las notas de esta mano. */
+  timing: Estadistica;
+}
+
+/** Microdinámica por mano (split heurístico por tono y distribución). */
+export interface ManosToque {
+  /** Pitch MIDI del corte: por debajo, mano izquierda. null = una sola mano. */
+  split: number | null;
+  izquierda: ManoToque;
+  derecha: ManoToque;
+  /** Velocidad media de la melodía (voz superior de cada ataque), de la armonía interna y del bajo. */
+  relacion: { melodia: Estadistica; armoniaInterna: Estadistica; bajo: Estadistica };
+}
+
+/** Rubato: tempo local por compás frente al tempo de referencia. */
+export interface RubatoToque {
+  /** BPM local de cada compás medido (NaN → no medible, se omite: 0). Máximo 64 compases. */
+  curvaBpmPorCompas: number[];
+  /** Desvío del tempo local en % respecto al de referencia (+ = más rápido). */
+  desvioPorciento: Estadistica;
+  /** Caídas de tempo (cadencias): cada cuántos compases y cuánto caen (%). */
+  cadencias: { cadaCompases: number | null; caidaPorciento: number; n: number };
+}
+
+/** Uso del pedal de sustain (CC64). */
+export interface PedalToque {
+  /** Hubo eventos de pedal en la grabación. */
+  medido: boolean;
+  /** 0..1: fracción del tiempo tocado con el pedal pisado. */
+  tiempoPisado: number;
+  /** Pisadas del pedal. */
+  cambios: number;
+  /** ms entre la pisada del pedal y el ataque del acorde nuevo (− = pisa antes del acorde, + = después). */
+  cambioEnAcorde: Estadistica;
+  /** De las notas que se solapan con el ataque siguiente: proporción sostenida con los dedos y con el pedal. */
+  solapePorDedos: number;
+  solapePorPedal: number;
+}
+
 export interface PerfilToque {
-  version: 1;
+  /** 1 = sin voces/manos/rubato/pedal (perfiles antiguos); 2 = completo. */
+  version: 1 | 2;
   instrumento?: string;
   /** Instrumento de percusión: el timing y la dinámica se aplican por pitch (bombo, caja, hi-hat…). */
   percusivo: boolean;
@@ -92,6 +152,14 @@ export interface PerfilToque {
   /** Timing y velocidad por nota MIDI (sobre todo para batería). Solo pitches con ≥4 muestras. */
   porPitch: Record<string, { timing: Estadistica; velocidad: Estadistica }>;
   rango: { pitchMin: number; pitchMax: number } | null;
+  /** v2: micro-tiempo por voz del acorde. */
+  voces?: VocesToque;
+  /** v2: microdinámica por mano. */
+  manos?: ManosToque;
+  /** v2: rubato por compás. */
+  rubato?: RubatoToque;
+  /** v2: pedal de sustain. */
+  pedal?: PedalToque;
 }
 
 export interface OpcionesAprenderToque {
@@ -105,7 +173,12 @@ export interface OpcionesAprenderToque {
   beatsPorCompas?: number;
   /** Separación máxima (ms) entre notas consecutivas de un mismo acorde. 35 por defecto. */
   ventanaAcordeMs?: number;
+  /** Eventos del pedal de sustain (CC64) en beats, misma referencia que las notas. */
+  pedal?: readonly EventoPedalToque[];
 }
+
+/** Cómo aplicar el pedal aprendido: puntos CC64 (si el destino los admite), solape de notas, o nada. */
+export type ModoPedalToque = 'cc' | 'solape' | 'ninguno';
 
 export interface OpcionesAplicarToque {
   /** Tempo del destino (para convertir ms ↔ beats). Por defecto, el de referencia del perfil. */
@@ -119,4 +192,8 @@ export interface OpcionesAplicarToque {
   conservarDinamica?: number;
   /** Partir de la rejilla (quita humanización previa) antes de aplicar el toque. true por defecto. */
   partirDeRejilla?: boolean;
+  /** Rubato aprendido (ritardando suave en los compases de cadencia). true por defecto. */
+  rubato?: boolean;
+  /** Pedal aprendido: 'solape' alarga las notas que el pedal sostenía (por defecto); 'cc' las deja y el pedal sale aparte con `pedalDesdePerfil`. */
+  pedal?: ModoPedalToque;
 }

@@ -21,6 +21,7 @@ import type { DAWState } from '../types/state';
 import type { Track } from '../types/tracks';
 import { puedeTenerClips } from '../types/tracks';
 import { isValidBpm } from './bpm';
+import { intentarParsearAcorde } from '../music/acordes';
 
 export type { DomainRule };
 
@@ -377,7 +378,67 @@ export function crearReglasDominio(): ReglasDominio {
     },
   };
 
+  const letraAcordesValidos: DomainRule = {
+    name: 'LetraAcordesValidos',
+    code: 'LYRICS_INVALID',
+    description: 'Acordes con cifrado reconocible; beats ≥ 0 y duraciones > 0 en acordes, frases y sílabas.',
+    appliesTo: ['lyrics.setPhrases', 'lyrics.alignTiming', 'lyrics.setChords', 'chords.upsert', 'chords.move', 'chords.set', 'lyrics.set'],
+    validate: (_state: DAWState, payload: unknown): ValidationResult => {
+      if (!esObjeto(payload)) return ok();
+      const errores: ValidationError[] = [];
+      const tiempo = (campo: string, v: unknown, min: number, estricto: boolean) => {
+        if (v === undefined) return;
+        if (!numeroFinito(v) || (estricto ? v <= min : v < min)) {
+          errores.push(error('LYRICS_TIME_INVALID', campo, `${campo} debe ser un número ${estricto ? 'mayor que' : 'mayor o igual a'} ${min}`));
+        }
+      };
+      const acorde = (a: unknown, campo: string) => {
+        if (!esObjeto(a)) return;
+        if (a.nombre !== undefined && intentarParsearAcorde(String(a.nombre)) === null) {
+          errores.push(error('CHORD_NAME_INVALID', `${campo}.nombre`, `Acorde no reconocido: «${String(a.nombre)}»`));
+        }
+        tiempo(`${campo}.beat`, a.beat, 0, false);
+        tiempo(`${campo}.duracion`, a.duracion, 0, true);
+        if (a.compas !== undefined && (!numeroFinito(a.compas) || a.compas < 1)) {
+          errores.push(error('LYRICS_TIME_INVALID', `${campo}.compas`, 'El compás debe ser ≥ 1'));
+        }
+      };
+      if (payload.nombre !== undefined) acorde(payload, 'acorde');
+      if (Array.isArray(payload.acordes)) payload.acordes.forEach((a, i) => acorde(a, `acordes[${i}]`));
+      tiempo('beat', payload.beat, 0, false);
+      tiempo('duracion', payload.duracion, 0, true);
+      tiempo('inicioBeat', payload.inicioBeat, 0, false);
+      tiempo('compasesPorFrase', payload.compasesPorFrase, 0, true);
+      if (Array.isArray(payload.frases)) {
+        payload.frases.forEach((f, i) => {
+          if (!esObjeto(f)) return;
+          if (f.texto !== undefined && (typeof f.texto !== 'string' || f.texto.trim().length === 0)) {
+            errores.push(error('LYRICS_PHRASE_EMPTY', `frases[${i}].texto`, 'La frase no puede estar vacía'));
+          }
+          tiempo(`frases[${i}].inicioBeat`, f.inicioBeat, 0, false);
+          tiempo(`frases[${i}].duracionBeats`, f.duracionBeats, 0, true);
+          if (Array.isArray(f.silabas)) {
+            f.silabas.forEach((s, k) => {
+              if (!esObjeto(s)) return;
+              tiempo(`frases[${i}].silabas[${k}].beat`, s.beat, 0, false);
+              tiempo(`frases[${i}].silabas[${k}].duracion`, s.duracion, 0, true);
+            });
+          }
+        });
+      }
+      if (Array.isArray(payload.cambios)) {
+        payload.cambios.forEach((c, i) => {
+          if (!esObjeto(c)) return;
+          tiempo(`cambios[${i}].beat`, c.beat, 0, false);
+          tiempo(`cambios[${i}].duracion`, c.duracion, 0, true);
+        });
+      }
+      return errores.length > 0 ? fallo(errores) : ok();
+    },
+  };
+
   reglas.push(
+    letraAcordesValidos,
     trackNombreValido,
     trackCamposInmutables,
     trackVolumenPaneo,

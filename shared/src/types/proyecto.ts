@@ -72,7 +72,11 @@ export interface ProjectState {
   fechaCreacion: number;
   fechaModificacion: number;
   marcadores: import('./entidades').Marcador[];
+  /** Letra y acordes del arreglo (carriles de la cabecera); ausente = proyecto sin letra. */
+  letra?: import('./lyrics').LetraProyecto;
   escenas: import('./entidades').Escena[];
+  /** Modo Directo (K3): zonas MIDI, seguridad del máster y bloqueo. Ausente en proyectos antiguos. */
+  directo?: import('./directo').DirectoState;
   plantillaActual?: import('./entidades').Plantilla;
   historialAcciones: import('./command').Command[];
   version: number;

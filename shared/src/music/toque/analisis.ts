@@ -9,6 +9,9 @@ const EPS = 1e-6;
 
 export const VELOCIDAD_POR_DEFECTO = 100;
 
+/** Por debajo de este span (ms) un acorde se considera plaqué (simultáneo). */
+export const UMBRAL_ARPEGIADO_MS = 6;
+
 export function velocidadDe(n: NotaToque): number {
   const v = Number(n.velocidad);
   return Number.isFinite(v) ? Math.max(1, Math.min(127, v)) : VELOCIDAD_POR_DEFECTO;

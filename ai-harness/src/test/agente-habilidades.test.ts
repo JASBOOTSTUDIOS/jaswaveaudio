@@ -151,3 +151,24 @@ describe('habilidades en la producción', () => {
     expect(r.estado).toBe('completado')
   })
 })
+
+describe('estilo de interpretación del usuario en la producción', () => {
+  it('solo los músicos reciben el estilo en su sistema', async () => {
+    const sistemas: Record<string, string> = {}
+    const equipo: ParticipanteProduccion[] = [
+      { id: 'pia', nombre: 'Pianista', rol: 'musico', descripcion: 'piano', instrucciones: 'Toca el piano.', herramientas: ['midi.addNotes'] },
+      { id: 'dir', nombre: 'Director', rol: 'director', descripcion: 'dirige', instrucciones: 'Dirige la banda.' },
+    ]
+    const chat: ChatAgente = async (o) => {
+      const ultimo = o.mensajes[o.mensajes.length - 1]
+      for (const p of equipo) if (o.sistema.includes(`Eres ${p.nombre}`)) sistemas[p.id] = o.sistema
+      if (o.sistema.includes('Eres Director') && ultimo?.role !== 'tool') return { ok: true, texto: '', llamadas: [ll(H_ENCARGOS, { encargos: [{ musico: 'pia', encargo: 'piano' }] })] }
+      return hecho('ok')
+    }
+    await ejecutarProduccion({ pedido: 'tema', catalogo: CATALOGO, participantes: equipo, chat, ejecutar: async () => ({ ok: true }), estiloMusical: 'Mi estilo: llega 6 ms tarde, legato 92 %' })
+    expect(sistemas.pia).toBeDefined()
+    expect(sistemas.pia).toMatch(/Estilo de interpretación del usuario[\s\S]*llega 6 ms tarde/)
+    expect(sistemas.dir).toBeDefined()
+    expect(sistemas.dir).not.toMatch(/Estilo de interpretación del usuario/)
+  })
+})

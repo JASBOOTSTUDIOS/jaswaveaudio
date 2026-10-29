@@ -358,6 +358,94 @@ export function crearComandoMarkerCreate(): CommandDefinition<MarkerCreatePayloa
   };
 }
 
+// ── marker.update / marker.remove ──────────────────────────────
+
+export type MarkerUpdatePayload = {
+  id: string;
+  nombre?: string;
+  tiempo?: number;
+  color?: string;
+};
+
+export function crearComandoMarkerUpdate(): CommandDefinition<MarkerUpdatePayload> {
+  return {
+    type: 'marker.update',
+    historialUndo: 'instantanea',
+    description: 'Cambia el nombre, la posición (beat) o el color de un marcador',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        nombre: { type: 'string' },
+        tiempo: { type: 'number', minimum: 0 },
+        color: { type: 'string' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    handler: (estado: DAWState, payload: MarkerUpdatePayload): StateTransition<MarkerUpdatePayload> => {
+      const marcadores = estado.project.marcadores ?? [];
+      if (!marcadores.some((m) => m.id === payload.id)) throw new Error(`No existe el marcador ${payload.id}`);
+      const nombre = payload.nombre?.trim();
+      const proyecto: ProjectState = {
+        ...estado.project,
+        marcadores: marcadores
+          .map((m) =>
+            m.id === payload.id
+              ? {
+                  ...m,
+                  ...(nombre ? { nombre } : {}),
+                  ...(payload.tiempo !== undefined ? { tiempo: payload.tiempo } : {}),
+                  ...(payload.color ? { color: payload.color } : {}),
+                }
+              : m,
+          )
+          .sort((a, b) => a.tiempo - b.tiempo),
+        modificado: true,
+        fechaModificacion: entorno.ahora(),
+      };
+      return {
+        state: { ...estado, project: proyecto },
+        events: [{ nombre: 'marcador.modificado', version: 1, marcaTiempo: entorno.ahora(), fuente: 'auxiliary-commands', payload: { id: payload.id } }],
+        result: payload,
+      };
+    },
+  };
+}
+
+export type MarkerRemovePayload = { id: string };
+
+export function crearComandoMarkerRemove(): CommandDefinition<MarkerRemovePayload> {
+  return {
+    type: 'marker.remove',
+    historialUndo: 'instantanea',
+    description: 'Quita un marcador de la línea de tiempo',
+    risk: 'dangerous',
+    schema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    handler: (estado: DAWState, payload: MarkerRemovePayload): StateTransition<MarkerRemovePayload> => {
+      const marcadores = estado.project.marcadores ?? [];
+      if (!marcadores.some((m) => m.id === payload.id)) throw new Error(`No existe el marcador ${payload.id}`);
+      const proyecto: ProjectState = {
+        ...estado.project,
+        marcadores: marcadores.filter((m) => m.id !== payload.id),
+        modificado: true,
+        fechaModificacion: entorno.ahora(),
+      };
+      return {
+        state: { ...estado, project: proyecto },
+        events: [{ nombre: 'marcador.eliminado', version: 1, marcaTiempo: entorno.ahora(), fuente: 'auxiliary-commands', payload: { id: payload.id } }],
+        result: payload,
+      };
+    },
+  };
+}
+
 import { mergeProjectKeyIntoMetadata } from '../music/project-key';
 
 export type ProjectUpdatePayload = {

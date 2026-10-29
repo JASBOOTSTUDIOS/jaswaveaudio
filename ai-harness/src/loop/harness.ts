@@ -41,6 +41,7 @@ export type ActionResult = HarnessActionResult
 export type DawAction = HarnessDawAction
 
 const READ_ONLY = new Set([
+  'midi.zones.get',
   'doc.list',
   'doc.read',
   'doc.evaluate',

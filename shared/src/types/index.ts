@@ -21,3 +21,5 @@ export * from './midi';
 export * from './historial';
 export * from './duplicado';
 export * from './ia';
+export * from './directo';
+export * from './lyrics';

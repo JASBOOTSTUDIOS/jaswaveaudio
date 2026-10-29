@@ -9,7 +9,7 @@ export {
   type OpcionesComandosWorship,
 } from './comandos';
 export { crearRng, mulberry32, hashSemilla, type Rng } from './prng';
-export { crearTonal, construirAcorde, parsearAcorde, type Tonal, type Acorde, type EspecAcorde } from './armonia';
+export { crearTonal, construirAcorde, parsearAcorde, acordeDesdeToken, type Tonal, type Acorde, type EspecAcorde } from './armonia';
 export { paramsTiming } from './humanizar';
 export * from './guitarra-tecnicas';
 export { humanizarInterpretacion, type EventoCC,type NotaExpresiva, type OpcionesExpresion, type ResultadoExpresion, type SeccionExpresiva } from './expresion';

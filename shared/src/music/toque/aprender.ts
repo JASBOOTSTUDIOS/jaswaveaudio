@@ -13,6 +13,7 @@ import {
   posicionMetrica,
   r2,
   tramosDeArpegio,
+  UMBRAL_ARPEGIADO_MS,
   velocidadDe,
 } from './analisis';
 import {
@@ -24,9 +25,9 @@ import {
   type PerfilToque,
   type PosicionMetrica,
 } from './tipos';
+import { medirManos, medirPedal, medirRubato, medirVoces } from './v2';
 
-/** Por debajo de este span (ms) un acorde se considera plaqué (simultáneo). */
-export const UMBRAL_ARPEGIADO_MS = 6;
+export { UMBRAL_ARPEGIADO_MS };
 
 const RE_PERCUSIVO = /bater|drum|perc|kit|toms?\b|caj[oó]n/i;
 
@@ -163,13 +164,16 @@ export function aprenderPerfilToque(notas: readonly NotaToque[], opts: OpcionesA
   const acentos = vels.filter((v) => v >= umbralAcento);
 
   // ── por pitch (batería) ─────────────────────────────────────────────────────
+  const desvNotaMs: Array<number | null> = ordenadas.map((n) => {
+    const abs = n.inicio + offset;
+    const desvMs = (abs - ajustarARejilla(abs, rejilla)) * msPorBeat;
+    return Math.abs(desvMs) <= 0.42 * pasoMs ? desvMs : null;
+  });
   const porPitchRaw = new Map<number, { t: number[]; v: number[] }>();
   ordenadas.forEach((n, i) => {
-    const abs = n.inicio + offset;
-    const q = ajustarARejilla(abs, rejilla);
-    const desvMs = (abs - q) * msPorBeat;
     const e = porPitchRaw.get(n.pitch) ?? { t: [], v: [] };
-    if (Math.abs(desvMs) <= 0.42 * pasoMs) e.t.push(desvMs);
+    const d = desvNotaMs[i];
+    if (d != null) e.t.push(d);
     e.v.push(vels[i]!);
     porPitchRaw.set(n.pitch, e);
   });
@@ -183,7 +187,7 @@ export function aprenderPerfilToque(notas: readonly NotaToque[], opts: OpcionesA
   const pitches = ordenadas.map((n) => n.pitch);
 
   return {
-    version: 1,
+    version: 2,
     ...(opts.instrumento ? { instrumento: opts.instrumento } : {}),
     percusivo,
     bpmReferencia: bpm,
@@ -226,6 +230,32 @@ export function aprenderPerfilToque(notas: readonly NotaToque[], opts: OpcionesA
     },
     porPitch,
     rango: pitches.length ? { pitchMin: Math.min(...pitches), pitchMax: Math.max(...pitches) } : null,
+    voces: medirVoces(grupos, ordenadas, msPorBeat),
+    manos: medirManos(grupos, ordenadas, vels, desvNotaMs),
+    rubato: medirRubato(grupos, { bpm, offsetBeats: offset, beatsPorCompas: bpc, rejillaBeats: rejilla }),
+    pedal: medirPedal(grupos, ordenadas, opts.pedal, msPorBeat),
+  };
+}
+
+/**
+ * Completa un perfil guardado con una versión anterior (sin voces/manos/rubato/pedal): los campos nuevos
+ * quedan como «no medido» (n = 0) y el resto se conserva tal cual.
+ */
+export function normalizarPerfilToque(p: PerfilToque): PerfilToque {
+  if (p.version === 2 && p.voces && p.manos && p.rubato && p.pedal) return p;
+  const vacia: Estadistica = { media: 0, sd: 0, n: 0 };
+  return {
+    ...p,
+    version: 2,
+    voces: p.voces ?? { medias: vacia, superior: vacia, bajoPrimero: 0, n: 0 },
+    manos: p.manos ?? {
+      split: null,
+      izquierda: { notas: 0, velocidad: vacia, timing: vacia },
+      derecha: { notas: 0, velocidad: vacia, timing: vacia },
+      relacion: { melodia: vacia, armoniaInterna: vacia, bajo: vacia },
+    },
+    rubato: p.rubato ?? { curvaBpmPorCompas: [], desvioPorciento: vacia, cadencias: { cadaCompases: null, caidaPorciento: 0, n: 0 } },
+    pedal: p.pedal ?? { medido: false, tiempoPisado: 0, cambios: 0, cambioEnAcorde: vacia, solapePorDedos: 0, solapePorPedal: 0 },
   };
 }
 
@@ -295,6 +325,62 @@ export function describirPerfilToque(p: PerfilToque): string {
       .join('; ');
     if (piezas) l.push(`Por pieza: ${piezas}`);
   }
+  l.push(...describirV2(p));
   if (p.confianza === 'baja') l.push('Aviso: pocas muestras; graba más compases para un perfil fiable.');
   return l.join('\n');
+}
+
+const pm = (x: number) => `${x >= 0 ? '+' : ''}${x.toFixed(1)}`;
+const nombreNota = (p: number) => `${['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][((p % 12) + 12) % 12]}${Math.floor(p / 12) - 1}`;
+
+/** Líneas del informe para voces, manos, rubato y pedal: solo lo medido, con número de muestras. */
+function describirV2(p: PerfilToque): string[] {
+  const l: string[] = [];
+  const v = p.voces;
+  if (v && v.n >= 2 && !p.percusivo) {
+    const partes = [`bajo = referencia`];
+    if (v.medias.n) partes.push(`voces medias ${ms(v.medias.media)} (±${v.medias.sd.toFixed(1)})`);
+    if (v.superior.n) partes.push(`voz superior ${ms(v.superior.media)} (±${v.superior.sd.toFixed(1)})`);
+    l.push(`Voces del acorde (${v.n} acordes de 3+ notas): ${partes.join(' · ')} · el bajo entra primero el ${Math.round(v.bajoPrimero * 100)}%`);
+  }
+  const m = p.manos;
+  if (m && !p.percusivo && m.izquierda.notas + m.derecha.notas >= 8) {
+    if (m.split != null && m.izquierda.notas >= 4 && m.derecha.notas >= 4) {
+      const dt = m.izquierda.timing.n && m.derecha.timing.n ? ` · la izquierda entra ${pm(m.izquierda.timing.media - m.derecha.timing.media)} ms respecto a la derecha` : '';
+      l.push(
+        `Manos (corte en ${nombreNota(m.split)}): izquierda ${m.izquierda.notas} notas, vel ${m.izquierda.velocidad.media.toFixed(0)} ±${m.izquierda.velocidad.sd.toFixed(0)}; ` +
+          `derecha ${m.derecha.notas} notas, vel ${m.derecha.velocidad.media.toFixed(0)} ±${m.derecha.velocidad.sd.toFixed(0)}${dt}`,
+      );
+    } else l.push('Manos: el registro no se separa en dos manos (una sola región).');
+    const r = m.relacion;
+    const partes: string[] = [];
+    if (r.melodia.n) partes.push(`melodía ${r.melodia.media.toFixed(0)} (n=${r.melodia.n})`);
+    if (r.armoniaInterna.n) partes.push(`armonía interna ${r.armoniaInterna.media.toFixed(0)} (n=${r.armoniaInterna.n})`);
+    if (r.bajo.n) partes.push(`bajo ${r.bajo.media.toFixed(0)} (n=${r.bajo.n})`);
+    if (partes.length >= 2) l.push(`Relación de velocidades: ${partes.join(' · ')}`);
+  }
+  const rb = p.rubato;
+  if (rb && rb.desvioPorciento.n >= 4) {
+    const d = rb.desvioPorciento;
+    const tendencia = d.media > 1 ? 'tiendes a acelerar' : d.media < -1 ? 'tiendes a frenar' : 'tempo estable';
+    let cad = '';
+    if (rb.cadencias.n) {
+      cad = rb.cadencias.cadaCompases
+        ? ` · cadencias cada ${rb.cadencias.cadaCompases} compases con una caída media del ${rb.cadencias.caidaPorciento.toFixed(1)}% (${rb.cadencias.n})`
+        : ` · ${rb.cadencias.n} compás(es) con caída de tempo (media ${rb.cadencias.caidaPorciento.toFixed(1)}%), sin periodo claro`;
+    }
+    const medidos = rb.curvaBpmPorCompas.filter((b) => b > 0);
+    const rango = medidos.length ? ` · tempo local entre ${Math.min(...medidos).toFixed(0)} y ${Math.max(...medidos).toFixed(0)} BPM` : '';
+    l.push(`Rubato (${d.n} compases): ${tendencia} ${pm(d.media)}% ±${d.sd.toFixed(1)}${rango}${cad}`);
+  }
+  const pd = p.pedal;
+  if (pd?.medido) {
+    const cambio = pd.cambioEnAcorde.n
+      ? ` · en el cambio de acorde pisas ${pd.cambioEnAcorde.media < 0 ? `${Math.abs(pd.cambioEnAcorde.media).toFixed(0)} ms antes` : `${pd.cambioEnAcorde.media.toFixed(0)} ms después`} del ataque (±${pd.cambioEnAcorde.sd.toFixed(0)}, n=${pd.cambioEnAcorde.n})`
+      : '';
+    l.push(
+      `Pedal: pisado el ${Math.round(pd.tiempoPisado * 100)}% del tiempo, ${pd.cambios} pisadas · solape por dedos ${Math.round(pd.solapePorDedos * 100)}%, por pedal ${Math.round(pd.solapePorPedal * 100)}%${cambio}`,
+    );
+  } else if (pd && !pd.medido && !p.percusivo) l.push('Pedal: sin datos de pedal en esta grabación.');
+  return l;
 }
