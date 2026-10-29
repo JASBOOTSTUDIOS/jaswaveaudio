@@ -3,7 +3,7 @@
  */
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { crearBackendAnalisisNativo, necesitaMotorReal, ventanaRepresentativa } from './analysis-render-native'
+import { crearBackendAnalisisNativo, enCola, esperarRenderLibre, necesitaMotorReal, ventanaRepresentativa } from './analysis-render-native'
 import type { BackendAnalisis } from './analysis-render'
 import type { DAWState } from '../../../shared/src/types/state'
 
@@ -47,5 +47,33 @@ describe('analysis-render-native', () => {
     const r = await backend(req)
     assert.equal(r.backend, 'falso')
     assert.equal(vistas[0], req)
+  })
+
+  it('enCola: las mediciones van de una en una, en orden, y un fallo no bloquea la cola', async () => {
+    const orden: string[] = []
+    const tarea = (nombre: string, ms: number, falla = false) => () =>
+      new Promise<string>((res, rej) => {
+        orden.push(`${nombre}:inicio`)
+        setTimeout(() => {
+          orden.push(`${nombre}:fin`)
+          if (falla) rej(new Error(nombre))
+          else res(nombre)
+        }, ms)
+      })
+    const a = enCola(tarea('a', 30))
+    const b = enCola(tarea('b', 5, true))
+    const c = enCola(tarea('c', 5))
+    assert.equal(await a, 'a')
+    await assert.rejects(b, /b/)
+    assert.equal(await c, 'c')
+    assert.deepEqual(orden, ['a:inicio', 'a:fin', 'b:inicio', 'b:fin', 'c:inicio', 'c:fin'])
+  })
+
+  it('esperarRenderLibre: espera a que acabe el render en curso y se rinde si no acaba', async () => {
+    let activo = true
+    setTimeout(() => (activo = false), 40)
+    assert.equal(await esperarRenderLibre(2000, () => activo), true)
+    assert.equal(await esperarRenderLibre(60, () => true), false)
+    assert.equal(await esperarRenderLibre(60, () => false), true)
   })
 })

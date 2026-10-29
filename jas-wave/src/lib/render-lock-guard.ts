@@ -7,9 +7,11 @@
 
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import type { CommandResult } from '../../../shared/src/types/command'
-import { comandoBloqueadoDuranteRender, estaRenderLock } from './render-lock'
+import { comandoBloqueadoDuranteRender, esperarFinDeRender, estaRenderLock } from './render-lock'
 
 export const MENSAJE_BLOQUEO_RENDER = 'Hay un bounce en curso: no se puede editar el proyecto.'
+/** Cuánto espera una escritura de la IA a que termine un render antes de rendirse (un render colgado no la bloquea para siempre). */
+export const ESPERA_IA_MS = 150_000
 
 /** Instala la guardia en el ejecutor de la tienda (idempotente). */
 export function instalarGuardiaRenderLock(tienda: TiendaDAW): void {
@@ -24,6 +26,9 @@ export function instalarGuardiaRenderLock(tienda: TiendaDAW): void {
 
   executor.execute = async (type: string, payload: unknown, ...rest: unknown[]) => {
     if (estaRenderLock() && comandoBloqueadoDuranteRender(type)) {
+      // La IA (y los scripts) no pueden «reintentar al ver el botón habilitado» como una persona: sus escrituras esperan
+      // a que termine la medición en curso en vez de fallar y obligar al modelo a repetir la llamada.
+      if (rest[0] === 'ai' && (await esperarFinDeRender(ESPERA_IA_MS))) return original(type, payload, ...rest)
       return {
         success: false,
         state: tienda.obtenerEstado(),

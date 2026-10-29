@@ -33,6 +33,22 @@ describe('render-lock-guard (U6)', () => {
     }
   })
 
+  it('una escritura de la IA espera a que termine el bounce y se ejecuta; la de una persona sigue bloqueada', async () => {
+    _reiniciarRenderLock()
+    const tienda = crearTiendaDAW({ estadoInicial: crearEstadoInicial() })
+    instalarGuardiaRenderLock(tienda)
+    activarRenderLock()
+    const persona = await tienda.executor.execute('track.create', { nombre: 'A', tipo: 'audio' }, 'user')
+    assert.equal(persona.error?.code, 'RenderBusy')
+    const ia = tienda.executor.execute('track.create', { nombre: 'B', tipo: 'audio' }, 'ai')
+    await new Promise((r) => setTimeout(r, 30))
+    assert.equal((tienda.obtenerEstado().project?.tracks ?? []).length, 0, 'todavía esperando')
+    desactivarRenderLock()
+    const r = await ia
+    assert.equal(r.success, true, r.error?.message)
+    assert.equal((tienda.obtenerEstado().project?.tracks ?? []).length, 1)
+  })
+
   it('deja pasar render.start y render.cancel durante el bounce', async () => {
     _reiniciarRenderLock()
     const tienda = crearTiendaDAW({ estadoInicial: crearEstadoInicial() })

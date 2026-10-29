@@ -52,6 +52,8 @@ const config = {
   ],
   extraResources: [
     { from: 'resources/plugin-host', to: 'plugin-host' },
+    // Grooves MIDI de serie (CC0): se copian a %APPDATA%\JasWave\grooves la primera vez, sin pisar lo del usuario.
+    { from: '../plugins/grooves', to: 'grooves', filter: ['estilos/**/*', 'catalogo.json', 'LICENCIA.txt'] },
     // Los plugins JasWave no van en el instalador: son VST3 independientes que se descargan bajo demanda (D1).
     { from: 'public/jaswave-icono-con-frecuencia.png', to: 'jaswave-icono-con-frecuencia.png' },
     { from: '../THIRD_PARTY_NOTICES.md', to: 'THIRD_PARTY_NOTICES.md' },

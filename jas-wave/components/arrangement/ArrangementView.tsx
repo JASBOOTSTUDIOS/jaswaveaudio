@@ -2024,6 +2024,14 @@ export function ArrangementView() {
                   }}
                   onDrop={async (e) => {
                     e.preventDefault()
+                    // Groove arrastrado desde el panel «Grooves»: clip MIDI en esta pista, en el beat soltado.
+                    const grooveId = e.dataTransfer.getData('application/x-jaswave-groove')
+                    if (grooveId) {
+                      const { insertarGroove } = await import('@/src/lib/grooves/cliente')
+                      const r = await insertarGroove(tienda, { grooveId, pistaId: track.id, inicioBeat: clientXToBeat(e.clientX) })
+                      if (!r.ok) tienda.busEventos.emit('comando.fallido', { type: 'groove.insertar', error: r.mensaje })
+                      return
+                    }
                     const files = Array.from(e.dataTransfer.files ?? [])
                     if (files.length === 0) return
                     const estado = tienda.obtenerEstado()

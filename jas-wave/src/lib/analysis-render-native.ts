@@ -69,12 +69,45 @@ function estereo(bin: Uint8Array | undefined | null): SegmentoPcm | null {
   return { l, r: pcm.channels[1] ?? l }
 }
 
+/** Cuánto espera una medición a que acabe el render anterior antes de caer al respaldo. */
+export const ESPERA_RENDER_LIBRE_MS = 120_000
+
+const dormir = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+/** Espera a que no haya ningún render en curso; false si se agota el tiempo. */
+export async function esperarRenderLibre(maxMs: number, activo: () => boolean = () => Boolean(renderJobActive())): Promise<boolean> {
+  const t0 = Date.now()
+  while (activo() && Date.now() - t0 < maxMs) await dormir(200)
+  return !activo()
+}
+
+/** Cola: las mediciones nativas van de una en una. Varios agentes midiendo a la vez caían al respaldo web (sin VST: −70 LUFS). */
+let colaMediciones: Promise<unknown> = Promise.resolve()
+export function enCola<T>(tarea: () => Promise<T>): Promise<T> {
+  const r = colaMediciones.then(tarea, tarea)
+  colaMediciones = r.catch(() => undefined)
+  return r
+}
+
 export function crearBackendAnalisisNativo(o: { respaldo: BackendAnalisis }): BackendAnalisis {
   return async (req): Promise<ResultadoBackendAnalisis> => {
     const api = typeof window !== 'undefined' ? window.electron : undefined
     const estado = req.estado as DAWState
-    // Otro render en curso (export del usuario): no se le pisa.
-    if (!api?.pluginHostSend || !api.fileReadBinary || !api.analisisIaDir || !necesitaMotorReal(estado) || renderJobActive()) return o.respaldo(req)
+    if (!api?.pluginHostSend || !api.fileReadBinary || !api.analisisIaDir || !necesitaMotorReal(estado)) return o.respaldo(req)
+    const analisisIaDir = api.analisisIaDir
+    return enCola(() => medirConMotorReal(o, req, { ...api, analisisIaDir }, estado))
+  }
+}
+
+async function medirConMotorReal(
+  o: { respaldo: BackendAnalisis },
+  req: Parameters<BackendAnalisis>[0],
+  api: NonNullable<Window['electron']> & { analisisIaDir: () => Promise<string> },
+  estado: DAWState,
+): Promise<ResultadoBackendAnalisis> {
+  {
+    // Otro render en curso (export del usuario u otra medición): se espera su turno en vez de medir sin el motor real.
+    if (!(await esperarRenderLibre(ESPERA_RENDER_LIBRE_MS))) return o.respaldo(req)
     try {
       const { buildRuntimeBounceContent, runNativeBounce, planStems } = await import('./bounce-service')
       const dir = await api.analisisIaDir()

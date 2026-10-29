@@ -97,7 +97,7 @@ test('canción completa con la IA real: arreglo, mezcla, máster y exportación'
   const segundos = Math.round((Date.now() - antes) / 1000)
   const respuesta = (await chat().locator('[data-chat-selectable]').allInnerTexts()).pop() ?? ''
   console.log(`[ia] /banda tardó ${segundos} s\n[ia] ${respuesta.replace(/\s+/g, ' ').slice(0, 1500)}`)
-  for (const l of app().consoleErrors.filter((e) => e.startsWith('[banda]') || e.startsWith('[analisis]'))) console.log(`[ia] ${l.slice(0, 7000)}`)
+  for (const l of app().consoleErrors.filter((e) => e.startsWith('[banda]') || e.startsWith('[analisis]') || e.startsWith('[tiempos]'))) console.log(`[ia] ${l.slice(0, 7000)}`)
   // Todo tiene que encajar y estar medido: el arreglista aprueba y ninguna revisión se queda sin medir.
   expect(respuesta, 'la coherencia (tiempo, armonía y ritmo) debe quedar aprobada').toMatch(/Coherencia: aprobada/)
   expect(respuesta, 'cada revisión debe poder medirse con el motor real').not.toMatch(/No se pudo revisar/)

@@ -2,10 +2,61 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 contextBridge.exposeInMainWorld('electron', {
+  /** Biblioteca de grooves MIDI por estilos (M). Todas las rutas son relativas a la carpeta de grooves. */
+  grooves: {
+    carpeta: () => ipcRenderer.invoke('grooves-carpeta'),
+    listar: () => ipcRenderer.invoke('grooves-listar'),
+    leer: (ruta: string) => ipcRenderer.invoke('grooves-leer', ruta),
+    importarBytes: (nombre: string, bytes: Uint8Array, estilo: string, subestilo?: string) =>
+      ipcRenderer.invoke('grooves-importar-bytes', nombre, bytes, estilo, subestilo),
+    importarDialogo: (estilo: string, subestilo?: string) => ipcRenderer.invoke('grooves-importar-dialogo', estilo, subestilo),
+    importarArchivos: (rutas: string[], estilo: string, subestilo?: string) => ipcRenderer.invoke('grooves-importar-rutas', rutas, estilo, subestilo),
+    crearEstilo: (estilo: string, subestilo?: string) => ipcRenderer.invoke('grooves-crear-estilo', estilo, subestilo),
+    renombrarEstilo: (actual: string, nuevo: string) => ipcRenderer.invoke('grooves-renombrar-estilo', actual, nuevo),
+    borrar: (ruta: string) => ipcRenderer.invoke('grooves-borrar', ruta),
+    borrarEstilo: (ruta: string) => ipcRenderer.invoke('grooves-borrar-estilo', ruta),
+    favorito: (id: string, valor?: boolean) => ipcRenderer.invoke('grooves-favorito', id, valor),
+    abrirCarpeta: () => ipcRenderer.invoke('grooves-abrir-carpeta'),
+    /** Sincronización con el catálogo del servidor. */
+    syncAhora: (apiBase: string, token: string) => ipcRenderer.invoke('grooves-sync-ahora', apiBase, token),
+    syncEstado: () => ipcRenderer.invoke('grooves-sync-estado'),
+    syncAjustes: (ajustes: { auto?: boolean; compartir?: boolean }) => ipcRenderer.invoke('grooves-sync-ajustes', ajustes),
+    proponer: (apiBase: string, token: string, ruta: string, meta: unknown, consentimiento: { aceptado: boolean; version: string }) =>
+      ipcRenderer.invoke('grooves-proponer', apiBase, token, ruta, meta, consentimiento),
+    onSync: (callback: (evento: { tipo: 'inicio' | 'progreso' | 'fin'; [k: string]: unknown }) => void) => {
+      const handler = (_e: unknown, ev: never) => callback(ev)
+      const canales = ['grooves-sync-inicio', 'grooves-sync-progreso', 'grooves-sync-fin']
+      for (const c of canales) ipcRenderer.on(c, handler)
+      return () => canales.forEach((c) => ipcRenderer.removeListener(c, handler))
+    },
+    onCambio: (callback: () => void) => {
+      const handler = () => callback()
+      ipcRenderer.on('grooves-cambio', handler)
+      return () => ipcRenderer.removeListener('grooves-cambio', handler)
+    },
+  },
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   logError: (scope: string, message: string, stack?: string) => ipcRenderer.send('log-error', scope, message, stack),
   openLogsFolder: () => ipcRenderer.invoke('open-logs-folder'),
   /** Carpeta de configuración del asistente (reglas, habilidades, prompts y planes). */
+  /** Producciones de la banda (plan Q): diario, puntos de control y avisos del proceso principal. */
+  producciones: {
+    carpeta: () => ipcRenderer.invoke('produccion-carpeta'),
+    iniciar: (proyectoId: string, runId: string) => ipcRenderer.invoke('produccion-iniciar', proyectoId, runId),
+    anexar: (proyectoId: string, runId: string, texto: string) => ipcRenderer.invoke('produccion-anexar', proyectoId, runId, texto),
+    listar: (proyectoId: string) => ipcRenderer.invoke('produccion-listar', proyectoId),
+    leer: (proyectoId: string, runId: string) => ipcRenderer.invoke('produccion-leer', proyectoId, runId),
+    puntoGuardar: (proyectoId: string, json: string, que: string) => ipcRenderer.invoke('produccion-punto-guardar', proyectoId, json, que),
+    puntoCargar: (proyectoId: string) => ipcRenderer.invoke('produccion-punto-cargar', proyectoId),
+    puntoInfo: (proyectoId: string) => ipcRenderer.invoke('produccion-punto-info', proyectoId),
+    candadoTomar: (proyectoId: string, runId: string) => ipcRenderer.invoke('produccion-candado-tomar', proyectoId, runId),
+    candadoSoltar: (proyectoId: string, runId: string, testigo: string) => ipcRenderer.invoke('produccion-candado-soltar', proyectoId, runId, testigo),
+    onAviso: (callback: (aviso: { tipo: 'emergencia' | 'memoria'; [k: string]: unknown }) => void) => {
+      const handler = (_e: unknown, a: never) => callback(a)
+      ipcRenderer.on('produccion-aviso', handler)
+      return () => ipcRenderer.removeListener('produccion-aviso', handler)
+    },
+  },
   asistenteCarpeta: {
     listar: () => ipcRenderer.invoke('asistente-carpeta-listar'),
     escribir: (ruta: string, contenido: string) => ipcRenderer.invoke('asistente-carpeta-escribir', ruta, contenido),

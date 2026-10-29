@@ -3,9 +3,9 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { Cable, ChartColumn, Gem, LayoutDashboard, Puzzle, ScrollText, Sparkles, Users, type LucideIcon } from 'lucide-react'
+import { Cable, ChartColumn, Drum, Gem, Inbox, LayoutDashboard, Puzzle, ScrollText, Sparkles, Users, type LucideIcon } from 'lucide-react'
 
-export type IdSeccion = 'resumen' | 'usuarios' | 'ia-modelos' | 'ia-planes' | 'ia-conexiones' | 'consumo' | 'plugins' | 'auditoria'
+export type IdSeccion = 'resumen' | 'usuarios' | 'ia-modelos' | 'ia-planes' | 'ia-conexiones' | 'consumo' | 'grooves' | 'grooves-propuestas' | 'plugins' | 'auditoria'
 
 export type Seccion = { id: IdSeccion; titulo: string; icono: LucideIcon; ruta: string }
 
@@ -16,6 +16,8 @@ export const SECCIONES: Record<IdSeccion, Seccion> = {
   'ia-planes': { id: 'ia-planes', titulo: 'Planes de IA', icono: Gem, ruta: 'ia/planes' },
   'ia-conexiones': { id: 'ia-conexiones', titulo: 'Conexiones', icono: Cable, ruta: 'ia/conexiones' },
   consumo: { id: 'consumo', titulo: 'Consumo', icono: ChartColumn, ruta: 'consumo' },
+  grooves: { id: 'grooves', titulo: 'Grooves', icono: Drum, ruta: 'grooves' },
+  'grooves-propuestas': { id: 'grooves-propuestas', titulo: 'Propuestas de grooves', icono: Inbox, ruta: 'grooves/propuestas' },
   plugins: { id: 'plugins', titulo: 'Plugins y roles', icono: Puzzle, ruta: 'plugins' },
   auditoria: { id: 'auditoria', titulo: 'Auditoría', icono: ScrollText, ruta: 'auditoria' },
 }
@@ -24,6 +26,7 @@ export const SECCIONES: Record<IdSeccion, Seccion> = {
 export const GRUPOS: { titulo: string; secciones: IdSeccion[] }[] = [
   { titulo: 'General', secciones: ['resumen', 'usuarios', 'consumo'] },
   { titulo: 'Inteligencia artificial', secciones: ['ia-modelos', 'ia-planes', 'ia-conexiones'] },
+  { titulo: 'Contenido', secciones: ['grooves', 'grooves-propuestas'] },
   { titulo: 'Sistema', secciones: ['plugins', 'auditoria'] },
 ]
 

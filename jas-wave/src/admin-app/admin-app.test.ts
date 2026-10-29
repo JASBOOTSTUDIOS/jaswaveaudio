@@ -16,3 +16,8 @@ test('seccionDeHash: rutas conocidas, alias de IA y valor por defecto', () => {
   assert.equal(seccionDeHash(''), 'resumen')
   assert.equal(seccionDeHash('#/no-existe'), 'resumen')
 })
+
+test('seccionDeHash: grooves y su bandeja de propuestas', () => {
+  assert.equal(seccionDeHash('#/grooves'), 'grooves')
+  assert.equal(seccionDeHash('#/grooves/propuestas'), 'grooves-propuestas')
+})

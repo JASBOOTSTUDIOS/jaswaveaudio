@@ -2621,6 +2621,69 @@ export async function executeDawActions(
           })
           break
         }
+        case 'groove.listar': {
+          const { listarGrooves } = await import('./grooves/cliente')
+          const etiquetas = Array.isArray(p.etiquetas) ? (p.etiquetas as unknown[]).map(String) : typeof p.etiqueta === 'string' ? [p.etiqueta] : undefined
+          const lista = await listarGrooves({
+            texto: p.texto ? String(p.texto) : undefined,
+            estilo: p.estilo ? String(p.estilo) : undefined,
+            subestilo: p.subestilo ? String(p.subestilo) : undefined,
+            tipo: p.tipo ? String(p.tipo) : undefined,
+            compas: p.compas ? String(p.compas) : undefined,
+            etiquetas,
+            intensidadMin: p.intensidadMin != null ? Number(p.intensidadMin) : undefined,
+            soloFavoritos: p.soloFavoritos === true,
+          })
+          results.push({
+            type: action.type,
+            success: true,
+            message: `${lista.length} grooves`,
+            data: {
+              grooves: lista.slice(0, 60).map((g) => ({
+                id: g.id,
+                nombre: g.nombre,
+                estilo: g.estilo,
+                subestilo: g.subestilo,
+                tipo: g.tipo,
+                compas: `${g.compas.numerador}/${g.compas.denominador}`,
+                compases: g.compases,
+                tempo: g.tempo,
+                intensidad: g.intensidad,
+                etiquetas: g.etiquetas,
+              })),
+              total: lista.length,
+            },
+          })
+          break
+        }
+        case 'groove.insertar': {
+          const { insertarGroove } = await import('./grooves/cliente')
+          const estadoActual = tienda.obtenerEstado()
+          const pistaId = String(p.pistaId ?? p.trackId ?? getSelectedTrackId(estadoActual) ?? '')
+          const etiquetas = Array.isArray(p.etiquetas) ? (p.etiquetas as unknown[]).map(String) : undefined
+          const r = await insertarGroove(tienda, {
+            grooveId: p.grooveId ? String(p.grooveId) : undefined,
+            criterios: {
+              estilo: p.estilo ? String(p.estilo) : undefined,
+              subestilo: p.subestilo ? String(p.subestilo) : undefined,
+              tipo: p.tipo ? String(p.tipo) : undefined,
+              compas: p.compas ? String(p.compas) : undefined,
+              etiquetas,
+              intensidadMin: p.intensidadMin != null ? Number(p.intensidadMin) : undefined,
+              texto: p.texto ? String(p.texto) : undefined,
+            },
+            pistaId,
+            inicioBeat: p.inicioBeat != null ? Number(p.inicioBeat) : (estadoActual.transport?.posicion?.beats ?? 0),
+            compases: p.compases != null && typeof p.compases !== 'string' ? Number(p.compases) : undefined,
+            variacion: p.variacion === 'ligera' ? 'ligera' : 'ninguna',
+            fill: typeof p.fill === 'string' ? p.fill : p.fill === true ? true : undefined,
+            escalarAlTempo: p.escalarAlTempo === true,
+            adaptarCompas: p.adaptarCompas === true,
+            semilla: p.semilla != null ? Number(p.semilla) : undefined,
+          })
+          results.push({ type: action.type, success: r.ok, message: r.mensaje, data: r.ok ? { clipId: r.clipId, grooveId: r.grooveId, compases: r.compases } : undefined })
+          break
+        }
         case 'library.preset.list': {
           const { libraryList } = await import('./library/ops')
           const scope = p.scope ? String(p.scope) : 'project'

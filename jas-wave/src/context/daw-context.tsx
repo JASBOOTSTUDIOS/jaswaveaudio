@@ -36,6 +36,7 @@ import {
   type HydrateProgress,
 } from '@/src/lib/session-persist'
 import { attachDiskAutosave } from '@/src/lib/disk-autosave'
+import { instalarAvisosProduccion, puertoProducciones } from '@/src/lib/produccion-resiliente'
 import { instalarGuardiaRenderLock } from '@/src/lib/render-lock-guard'
 import { JasWaveLogo } from '@/components/brand'
 import { isUndockWindow } from '@/lib/undock-window'
@@ -178,9 +179,12 @@ export function DAWProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(failsafe)
       const detachSession = attachSessionAutosave(store)
       const detachDisk = attachDiskAutosave(store)
+      // Plan Q: ante un cierre inminente o poca memoria, copia extra del proyecto; el aviso se muestra en lenguaje llano.
+      const detachAvisos = instalarAvisosProduccion(puertoProducciones(), store, (a) => window.dispatchEvent(new CustomEvent('jaswave-produccion-aviso', { detail: a })))
       detachAutosave = () => {
         detachSession()
         detachDisk()
+        detachAvisos()
       }
       setReady(true)
     })()

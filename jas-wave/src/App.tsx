@@ -62,6 +62,7 @@ import { WorkspaceMenu } from '@/components/workspace/workspace-menu'
 import { ImportProgressProvider } from '@/src/context/import-progress-context'
 import { ProjectReadyProvider } from '@/src/context/project-ready-context'
 import { PluginHostBootstrap } from '@/components/plugin-host-bootstrap'
+import { GroovesSyncBootstrap } from '@/src/lib/grooves/sync-auto'
 import { PluginHostLifecycle } from '@/components/plugin-host-lifecycle'
 import { MidiControllerHost } from '@/components/midi-controller-host'
 import { AgentAuditHost, AGENT_BRIDGE_REV } from '@/src/lib/agent-audit-bridge'
@@ -562,6 +563,7 @@ export default function App() {
               <WorkspaceProvider>
                 <MultiWindowSync role="primary" />
                 <PluginHostBootstrap />
+                <GroovesSyncBootstrap />
                 <PluginHostLifecycle />
                 <MidiControllerHost />
                 <AgentAuditHost key={AGENT_BRIDGE_REV} />

@@ -10,6 +10,11 @@
 import { useSyncExternalStore } from 'react'
 
 let bloqueado = false
+/**
+ * Renders en curso. Es un contador, no un interruptor: con varias mediciones a la vez (la IA mide mientras otro
+ * agente exporta) el primero que termina desbloqueaba la app en pleno render del segundo.
+ */
+let rendersEnCurso = 0
 const oyentes = new Set<(b: boolean) => void>()
 
 /** ¿Hay un render en curso? */
@@ -17,18 +22,39 @@ export function estaRenderLock(): boolean {
   return bloqueado
 }
 
-/** Bloquea la app (transporte, edición y atajos). */
+/** Bloquea la app (transporte, edición y atajos). Cada llamada se empareja con un `desactivarRenderLock`. */
 export function activarRenderLock(): void {
+  rendersEnCurso++
   if (bloqueado) return
   bloqueado = true
   for (const o of oyentes) o(true)
 }
 
-/** Desbloquea la app. */
+/** Libera un render; la app se desbloquea cuando ya no queda ninguno. */
 export function desactivarRenderLock(): void {
-  if (!bloqueado) return
+  if (rendersEnCurso > 0) rendersEnCurso--
+  if (!bloqueado || rendersEnCurso > 0) return
   bloqueado = false
   for (const o of oyentes) o(false)
+}
+
+/** Resuelve cuando no hay ningún render en curso; false si se agota el tiempo (p. ej. un render colgado). */
+export function esperarFinDeRender(maxMs: number): Promise<boolean> {
+  if (!bloqueado) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    let fin = false
+    const cerrar = (ok: boolean) => {
+      if (fin) return
+      fin = true
+      clearTimeout(t)
+      off()
+      resolve(ok)
+    }
+    const off = suscribirRenderLock((b) => {
+      if (!b) cerrar(true)
+    })
+    const t = setTimeout(() => cerrar(!bloqueado), maxMs)
+  })
 }
 
 /** Suscripción al cambio del bloqueo. */
@@ -51,6 +77,7 @@ export function useRenderLock(): boolean {
 /** Solo tests: limpia el estado del módulo. */
 export function _reiniciarRenderLock(): void {
   bloqueado = false
+  rendersEnCurso = 0
   oyentes.clear()
 }
 

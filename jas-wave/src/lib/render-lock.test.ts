@@ -5,6 +5,7 @@ import {
   activarRenderLock,
   comandoBloqueadoDuranteRender,
   desactivarRenderLock,
+  esperarFinDeRender,
   estaRenderLock,
   suscribirRenderLock,
 } from './render-lock'
@@ -27,15 +28,33 @@ describe('render-lock (U6)', () => {
     assert.deepEqual(eventos, [true, false])
   })
 
-  it('activar dos veces no duplica el aviso', () => {
+  it('dos renders a la vez: no se desbloquea hasta que terminan los dos y el aviso no se duplica', () => {
     _reiniciarRenderLock()
     const eventos: boolean[] = []
     const off = suscribirRenderLock((b) => eventos.push(b))
     activarRenderLock()
     activarRenderLock()
     desactivarRenderLock()
+    assert.equal(estaRenderLock(), true, 'sigue habiendo un render en curso')
+    desactivarRenderLock()
+    assert.equal(estaRenderLock(), false)
+    desactivarRenderLock() // de más: no baja de cero ni rompe el siguiente bloqueo
+    activarRenderLock()
+    assert.equal(estaRenderLock(), true)
     off()
-    assert.deepEqual(eventos, [true, false])
+    assert.deepEqual(eventos, [true, false, true])
+  })
+
+  it('esperarFinDeRender resuelve al terminar el render, de inmediato si no hay, y false si se agota el tiempo', async () => {
+    _reiniciarRenderLock()
+    assert.equal(await esperarFinDeRender(50), true)
+    activarRenderLock()
+    const espera = esperarFinDeRender(2000)
+    setTimeout(() => desactivarRenderLock(), 20)
+    assert.equal(await espera, true)
+    activarRenderLock()
+    assert.equal(await esperarFinDeRender(30), false, 'un render colgado no bloquea para siempre')
+    _reiniciarRenderLock()
   })
 
   it('bloquea los comandos que editan la línea de tiempo, el audio y el transporte', () => {

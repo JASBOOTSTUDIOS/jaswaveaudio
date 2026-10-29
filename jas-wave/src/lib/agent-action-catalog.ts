@@ -492,6 +492,20 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     examplePayload: { trackId: '…', nombre: 'Vocal chain' },
   },
   {
+    type: 'groove.listar',
+    kind: 'agent',
+    description:
+      'Lista los grooves MIDI de batería de la biblioteca del usuario (organizados por estilos: worship, pop, rock, jazz, funk, latin, 6/8, 12/8…). Filtros opcionales: estilo, tipo (groove|fill|intro|outro|transicion), compas ("4/4", "6/8", "12/8"), etiquetas[], texto, intensidadMin (1-5). Devuelve id, nombre, estilo, tempo, compas, compases, tipo, etiquetas e intensidad. Úsalo antes de groove.insertar y para elegir fills de transición.',
+    examplePayload: { estilo: 'Worship', tipo: 'groove', compas: '4/4' },
+  },
+  {
+    type: 'groove.insertar',
+    kind: 'agent',
+    description:
+      'Inserta un groove de la biblioteca como clip MIDI en una pista de batería (con undo): {grooveId | estilo+tipo+compas+etiquetas, pistaId, inicioBeat, compases?, variacion?: "ligera", fill?: true | fillId}. Repite el patrón durante `compases` y, con fill, cambia el último compás por un fill del mismo estilo (úsalo en los cambios de sección). Las notas siguen el mapa GM de Worship Drums y se escriben en beats: manda el tempo del proyecto. Úsalo como base y varíalo; para partes muy específicas escribe la batería a mano con midi.clip.create.',
+    examplePayload: { estilo: 'Worship', tipo: 'groove', compas: '4/4', pistaId: '…', inicioBeat: 0, compases: 8, fill: true },
+  },
+  {
     type: 'style.profile.list',
     kind: 'agent',
     description: 'Lista perfiles de estilo (scope: project|global|all)',

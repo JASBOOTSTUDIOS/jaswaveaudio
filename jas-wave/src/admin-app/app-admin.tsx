@@ -20,6 +20,8 @@ import { SeccionConexiones } from './secciones/ia-conexiones'
 import { SeccionConsumo } from './secciones/consumo'
 import { SeccionPlugins } from './secciones/plugins'
 import { SeccionAuditoria } from './secciones/auditoria'
+import { SeccionGrooves } from './secciones/grooves'
+import { SeccionPropuestas } from './secciones/grooves-propuestas'
 
 function Contenido({ seccion, onIr }: { seccion: IdSeccion; onIr: (s: IdSeccion) => void }) {
   switch (seccion) {
@@ -31,6 +33,10 @@ function Contenido({ seccion, onIr }: { seccion: IdSeccion; onIr: (s: IdSeccion)
       return seccion === 'ia-modelos' ? <SeccionModelos onIr={onIr} /> : seccion === 'ia-planes' ? <SeccionPlanes onIr={onIr} /> : <SeccionConexiones onIr={onIr} />
     case 'consumo':
       return <SeccionConsumo />
+    case 'grooves':
+      return <SeccionGrooves />
+    case 'grooves-propuestas':
+      return <SeccionPropuestas />
     case 'plugins':
       return <SeccionPlugins />
     case 'auditoria':

@@ -7,6 +7,8 @@ import { aiChat, aiChatStream, aiHealth, cancelAiChat, legacyChatArgsToRequest, 
 import { mockScriptPathFromEnv } from './ai-mock'
 import { createAgentRunStore } from './agent-runs'
 import { lookupPluginOnWeb } from './plugin-lookup'
+import { ServicioGrooves, carpetaDeGrooves } from './grooves-service'
+import { enviarPropuesta, sincronizarGrooves, type EventoSync } from './grooves-sync'
 import { searchWeb } from './web-search'
 import {
   extraerReferenciaAudio,
@@ -50,6 +52,7 @@ import { crearVigilancia } from './plugins/vigilancia'
 import { desinstalarPaquete, inspeccionarArchivo, instalarArchivo, instalarPaquete, obtenerCatalogo, validarListado } from './plugins/instalador'
 import { escribirZip, type EntradaZip } from './zip-writer'
 import { AsistenteConfig } from './asistente-config'
+import { instalarProduccionMain } from './produccion-main'
 import { CLAVE_PUBLICA_JASWAVE } from './plugins/clave-catalogo'
 import {
   argsCodificacion,
@@ -405,6 +408,7 @@ function createWindow() {
 
   conectarEstadoVentana(mainWindow)
   vigilarBarraVisible(mainWindow, screen)
+  produccionMain.enlazarVentana(mainWindow)
 
   disablePageZoom(mainWindow)
   try {
@@ -621,6 +625,7 @@ app.whenReady().then(() => {
     }),
   )
   initPathGrants()
+  iniciarGrooves()
   buildAppMenu()
   createWindow()
   // Proyecto recibido en los argumentos al arrancar (asociación de archivos).
@@ -654,6 +659,8 @@ app.on('before-quit', (e: { preventDefault: () => void }) => {
     mainWindow.close()
     return
   }
+  // Cierre de verdad: lo que la banda tenía abierto queda marcado como interrumpido (síncrono) para poder reanudarlo.
+  produccionMain.cierreDeEmergencia('cierre de la aplicación')
   stopAgentBridge()
   try {
     require('./plugin-host-bridge').stopPluginHost()
@@ -675,6 +682,130 @@ ipcMain.handle('clipboard-write-text', (_e: IpcMainInvokeEvent, text: unknown) =
 })
 ipcMain.handle('env-local-appdata', () => process.env.LOCALAPPDATA || '')
 ipcMain.handle('user-data-path', () => app.getPath('userData'))
+
+// ── Biblioteca de grooves MIDI por estilos (M) ──────────────────────────────
+let serviciosGrooves: ServicioGrooves | null = null
+function servicioGrooves(): ServicioGrooves {
+  if (serviciosGrooves) return serviciosGrooves
+  const raiz = carpetaDeGrooves(process.env, app.getPath('appData'))
+  const semilla = app.isPackaged
+    ? path.join(process.resourcesPath || '', 'grooves', 'estilos')
+    : path.resolve(__dirname, '..', '..', '..', '..', 'plugins', 'grooves', 'estilos')
+  serviciosGrooves = new ServicioGrooves({
+    raiz,
+    semilla,
+    papelera: (ruta: string) => shell.trashItem(ruta),
+    alCambiar: () => {
+      const w = mainWindow as unknown as import('electron').BrowserWindow | null
+      if (w && !w.isDestroyed()) w.webContents.send('grooves-cambio')
+    },
+  })
+  pathGrants.grant(raiz, 'readwrite')
+  return serviciosGrooves
+}
+/** Siembra el contenido de serie (sin pisar nada) y vigila la carpeta. Nunca debe impedir el arranque. */
+function iniciarGrooves() {
+  try {
+    const s = servicioGrooves()
+    s.sembrar()
+    s.vigilar()
+  } catch (err) {
+    logLine('warn', 'grooves', `No se pudo preparar la biblioteca de grooves: ${(err as Error).message}`)
+  }
+}
+const envolverGrooves = <T>(f: () => T | Promise<T>) =>
+  Promise.resolve()
+    .then(f)
+    .then((r) => ({ ok: true as const, ...(r as object) }))
+    .catch((e: Error) => ({ ok: false as const, error: e.message }))
+ipcMain.handle('grooves-carpeta', () => servicioGrooves().raiz)
+ipcMain.handle('grooves-listar', () =>
+  envolverGrooves(() => {
+    const s = servicioGrooves()
+    return { raiz: s.raiz, grooves: s.indexar(), carpetas: s.carpetas(), favoritos: s.favoritosIds(), sync: s.leerSync() }
+  }),
+)
+ipcMain.handle('grooves-leer', (_e: IpcMainInvokeEvent, ruta: string) => envolverGrooves(() => ({ bytes: servicioGrooves().leerBytes(String(ruta)) })))
+ipcMain.handle('grooves-importar-bytes', (_e: IpcMainInvokeEvent, nombre: string, bytes: Uint8Array, estilo: string, subestilo?: string) =>
+  envolverGrooves(() => servicioGrooves().importarBytes(String(nombre), new Uint8Array(bytes), String(estilo), subestilo ? String(subestilo) : undefined)),
+)
+ipcMain.handle('grooves-importar-dialogo', async (_e: IpcMainInvokeEvent, estilo: string, subestilo?: string) => {
+  if (!mainWindow) return { ok: false, error: 'Sin ventana' }
+  const r = await dialog.showOpenDialog(mainWindow, {
+    title: 'Añadir grooves MIDI',
+    filters: [{ name: 'MIDI', extensions: ['mid', 'midi'] }],
+    properties: ['openFile', 'multiSelections'],
+  })
+  if (r.canceled || !r.filePaths.length) return { ok: true, importados: [], errores: [], cancelado: true }
+  return envolverGrooves(() =>
+    servicioGrooves().importarRutas(r.filePaths, String(estilo), subestilo ? String(subestilo) : undefined, (p) => pathGrants.isBinaryReadAllowed(p)),
+  )
+})
+ipcMain.handle('grooves-importar-rutas', (_e: IpcMainInvokeEvent, rutas: string[], estilo: string, subestilo?: string) =>
+  envolverGrooves(() =>
+    servicioGrooves().importarRutas(Array.isArray(rutas) ? rutas.map(String) : [], String(estilo), subestilo ? String(subestilo) : undefined, (p) =>
+      pathGrants.isBinaryReadAllowed(p),
+    ),
+  ),
+)
+ipcMain.handle('grooves-crear-estilo', (_e: IpcMainInvokeEvent, estilo: string, subestilo?: string) =>
+  envolverGrooves(() => servicioGrooves().crearEstilo(String(estilo), subestilo ? String(subestilo) : undefined)),
+)
+ipcMain.handle('grooves-renombrar-estilo', (_e: IpcMainInvokeEvent, actual: string, nuevo: string) =>
+  envolverGrooves(() => servicioGrooves().renombrarEstilo(String(actual), String(nuevo))),
+)
+ipcMain.handle('grooves-borrar', (_e: IpcMainInvokeEvent, ruta: string) => envolverGrooves(async () => (await servicioGrooves().borrar(String(ruta)), {})))
+ipcMain.handle('grooves-borrar-estilo', (_e: IpcMainInvokeEvent, ruta: string) =>
+  envolverGrooves(async () => (await servicioGrooves().borrarEstilo(String(ruta)), {})),
+)
+ipcMain.handle('grooves-favorito', (_e: IpcMainInvokeEvent, id: string, valor?: boolean) =>
+  envolverGrooves(() => ({ favoritos: servicioGrooves().alternarFavorito(String(id), typeof valor === 'boolean' ? valor : undefined) })),
+)
+// Sincronización con el catálogo (grooves-sync.ts): la sesión y la URL del servidor las pone el renderer.
+const enviarAlRenderer = (canal: string, datos?: unknown) => {
+  const w = mainWindow as unknown as import('electron').BrowserWindow | null
+  if (w && !w.isDestroyed()) w.webContents.send(canal, datos)
+}
+ipcMain.handle('grooves-sync-ahora', async (_e: IpcMainInvokeEvent, apiBase: unknown, token: unknown) => {
+  try {
+    if (typeof token !== 'string' || !token || token.length > 8192) throw new Error('Inicia sesión para actualizar los grooves')
+    const base = apiBaseValida(apiBase)
+    return await sincronizarGrooves({
+      servicio: servicioGrooves(),
+      apiBase: base,
+      token,
+      emitir: (ev: EventoSync) => enviarAlRenderer(`grooves-sync-${ev.tipo}`, ev),
+    })
+  } catch (e) {
+    return { ok: false, error: (e as Error).message, descargados: 0, actualizados: 0, retirados: 0, conservados: [], errores: [], fecha: new Date().toISOString() }
+  }
+})
+ipcMain.handle('grooves-sync-estado', () => envolverGrooves(() => ({ estado: servicioGrooves().leerEstadoSync() })))
+ipcMain.handle('grooves-sync-ajustes', (_e: IpcMainInvokeEvent, ajustes: { auto?: unknown; compartir?: unknown }) =>
+  envolverGrooves(() => ({
+    estado: servicioGrooves().guardarEstadoSync({
+      ...(typeof ajustes?.auto === 'boolean' ? { auto: ajustes.auto } : {}),
+      ...(typeof ajustes?.compartir === 'boolean' ? { compartir: ajustes.compartir } : {}),
+    }),
+  })),
+)
+ipcMain.handle('grooves-proponer', async (_e: IpcMainInvokeEvent, apiBase: unknown, token: unknown, ruta: unknown, meta: unknown, consentimiento: unknown) => {
+  try {
+    if (typeof token !== 'string' || !token) throw new Error('Inicia sesión para proponer grooves')
+    const c = consentimiento as { aceptado?: unknown; version?: unknown }
+    return await enviarPropuesta({
+      servicio: servicioGrooves(),
+      apiBase: apiBaseValida(apiBase),
+      token,
+      ruta: String(ruta),
+      meta: meta as never,
+      consentimiento: { aceptado: c?.aceptado === true, version: String(c?.version ?? '') },
+    })
+  } catch (e) {
+    return { ok: false, error: (e as Error).message }
+  }
+})
+ipcMain.handle('grooves-abrir-carpeta', () => envolverGrooves(async () => (await shell.openPath(servicioGrooves().raiz), {})))
 /** Rutas para localizar plugins propios: instalación de usuario o los incluidos en resources/. */
 ipcMain.handle('known-paths', () => {
   const resourcesPath = app.isPackaged ? process.resourcesPath || '' : ''
@@ -885,6 +1016,17 @@ ipcMain.on('log-error', (_e: IpcMainInvokeEvent, scope: unknown, message: unknow
 ipcMain.handle('open-logs-folder', async () => {
   await shell.openPath(logsDir())
   return logsDir()
+})
+
+// Producciones de la banda (plan Q): diario, puntos de control, cierre de emergencia y vigilancia de memoria.
+const produccionMain = instalarProduccionMain({
+  ipcMain,
+  app,
+  dialog,
+  powerMonitor: { on: (ev: string, fn: () => void) => void app.whenReady().then(() => require('electron').powerMonitor.on(ev, fn)) },
+  getWindow: () => mainWindow as any,
+  logLine,
+  esRemitentePrincipal: (e: unknown) => isMainWindowSender(e as IpcMainInvokeEvent),
 })
 
 // Carpeta de configuración del asistente: reglas, habilidades, prompts y planes en Markdown.

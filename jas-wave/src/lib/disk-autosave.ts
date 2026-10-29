@@ -7,6 +7,7 @@
 import { proyectoParaGuardar } from '../../../shared/src/project/ciclo-vida'
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { saveTextOrThrow } from './electron-fs'
+import { guardarPuntoProyecto, puertoProducciones } from './produccion-resiliente'
 
 const AUTOSAVE_INTERVAL_MS = 2 * 60_000
 
@@ -28,10 +29,12 @@ export function attachDiskAutosave(tienda: TiendaDAW): () => void {
   const tick = async () => {
     const st = tienda.obtenerEstado()
     // Nunca durante reproducción/grabación (evita trabajo en el hilo UI con audio en curso).
-    if (!dirty || !st.project?.ruta || st.transport?.reproduciendo) return
+    if (!dirty || !st.project || st.transport?.reproduciendo) return
     dirty = false
     try {
-      await saveTextOrThrow(autosavePathFor(st.project.ruta), JSON.stringify(proyectoParaGuardar(st.project)))
+      if (st.project.ruta) await saveTextOrThrow(autosavePathFor(st.project.ruta), JSON.stringify(proyectoParaGuardar(st.project)))
+      // Plan Q: un proyecto SIN guardar tampoco se pierde; va a la carpeta de recuperación (3 copias rotativas).
+      else if (!(await guardarPuntoProyecto(puertoProducciones(), tienda, 'autosave'))) throw new Error('sin carpeta de recuperación')
     } catch (e) {
       dirty = true
       window.electron?.logError?.('autosave', e instanceof Error ? e.message : String(e))

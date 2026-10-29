@@ -67,6 +67,7 @@ declare global {
       logError?: (scope: string, message: string, stack?: string) => void
       openLogsFolder?: () => Promise<string>
       asistenteCarpeta?: import('../src/lib/asistente-carpeta').PuenteCarpetaAsistente
+      producciones?: import('../src/lib/produccion-resiliente').PuertoProducciones
       fileSave: (ruta: string, contenido: string) => Promise<{ success: boolean; error?: string }>
       fileSaveBinary: (ruta: string, data: Uint8Array) => Promise<{ success: boolean; error?: string }>
       fileRead: (ruta: string) => Promise<string>

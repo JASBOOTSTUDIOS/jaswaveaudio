@@ -127,6 +127,61 @@ export type ConsumoIAAdmin = {
   porDia: { dia: string; creditos: number; peticiones: number }[]
 }
 
+/** Groove del catálogo tal como lo ve el administrador (sin los bytes del .mid). */
+export type GrooveCatalogoAdmin = {
+  id: string
+  ruta: string
+  estilo: string
+  nombre: string
+  tipo: string
+  compas: string
+  tempo: number
+  compases: number
+  intensidad: number
+  etiquetas: string[]
+  autor: string
+  licencia: string
+  revision: number
+  sha256: string
+  tamano: number
+  activo: boolean
+  creadoEn: string
+  actualizadoEn: string
+}
+export type DatosGrooveAdmin = Partial<Pick<GrooveCatalogoAdmin, 'nombre' | 'estilo' | 'tipo' | 'compas' | 'tempo' | 'compases' | 'intensidad' | 'etiquetas' | 'autor' | 'licencia'>>
+export type ResultadoLoteGrooves = { creados: string[]; reemplazados: string[]; sinCambios: string[]; errores: { archivo: string; error: string }[] }
+export type SimilarPropuesta = { tipo: 'groove' | 'propuesta'; id: string; nombre: string; puntuacion: number; nivel: string }
+export type PropuestaGrooveAdmin = {
+  id: string
+  usuarioId: string
+  usuarios: string[]
+  nombre: string
+  estilo: string
+  tipo: string
+  compas: string
+  tempo: number
+  compases: number
+  intensidad: number
+  etiquetas: string[]
+  autor: string
+  licencia: string
+  sha256: string
+  huella: unknown
+  estado: 'pendiente' | 'aprobada' | 'rechazada' | 'duplicada'
+  vecesPropuesto: number
+  similares: SimilarPropuesta[]
+  notaAdmin: string
+  grooveId: string | null
+  consentimientoVersion: string
+  consentimientoEn: string
+  creadoEn: string
+}
+export type ComparacionGrooves = {
+  resultado: { puntuacion: number; nivel: string; identica: boolean; desplazamiento: number }
+  a: { nombre: string; huella: unknown }
+  b: { nombre: string; huella: unknown }
+}
+
 export type OpcionesClienteApi = {
   base: string
   /** Devuelve el JWT vigente de la sesión (o null sin sesión). */
@@ -157,6 +212,20 @@ export function crearClienteApi(o: OpcionesClienteApi) {
       throw new ErrorApiCliente(r.status, datos?.error?.codigo ?? 'error', datos?.error?.mensaje ?? `error ${r.status}`)
     }
     return datos as T
+  }
+
+  /** Descarga binaria autenticada (p. ej. el .mid de un groove para escucharlo). */
+  async function pedirBytes(ruta: string): Promise<Uint8Array> {
+    const t = await o.token()
+    if (!t) throw new ErrorApiCliente(401, 'no_autenticado', 'inicia sesión para continuar')
+    let r: Response
+    try {
+      r = await f(`${o.base}${ruta}`, { headers: { Authorization: `Bearer ${t}` }, cache: 'no-store' })
+    } catch {
+      throw new ErrorApiCliente(0, 'sin_conexion', 'no se pudo contactar con el servidor de JasWave')
+    }
+    if (!r.ok) throw new ErrorApiCliente(r.status, 'error', `error ${r.status}`)
+    return new Uint8Array(await r.arrayBuffer())
   }
 
   const enc = encodeURIComponent
@@ -216,6 +285,33 @@ export function crearClienteApi(o: OpcionesClienteApi) {
         eliminarPlan: (id: string) => pedir<void>('DELETE', `/admin/ia/planes/${enc(id)}`),
         asignarPlan: (usuarioId: string, planId: string | null) => pedir<{ ok: true }>('PUT', `/admin/ia/usuarios/${enc(usuarioId)}/plan`, { planId }),
         consumo: (dias = 30) => pedir<ConsumoIAAdmin>('GET', `/admin/ia/consumo?dias=${dias}`),
+      },
+      // Catálogo de grooves MIDI que se sincroniza con las apps de los usuarios, y propuestas de los usuarios.
+      grooves: {
+        listar: () => pedir<{ revision: number; grooves: GrooveCatalogoAdmin[] }>('GET', '/admin/grooves'),
+        crear: (d: DatosGrooveAdmin & { nombre: string; estilo: string; base64: string }) =>
+          pedir<{ groove: GrooveCatalogoAdmin }>('POST', '/admin/grooves', d).then((r) => r.groove),
+        lote: (d: { archivos?: { nombre: string; carpeta?: string; base64: string }[]; zip?: string; estilo?: string; reemplazar?: boolean }) =>
+          pedir<ResultadoLoteGrooves>('POST', '/admin/grooves/lote', d),
+        editar: (id: string, d: DatosGrooveAdmin) => pedir<{ groove: GrooveCatalogoAdmin }>('PUT', `/admin/grooves/${enc(id)}`, d).then((r) => r.groove),
+        reemplazarArchivo: (id: string, base64: string) =>
+          pedir<{ groove: GrooveCatalogoAdmin }>('PUT', `/admin/grooves/${enc(id)}/archivo`, { base64 }).then((r) => r.groove),
+        activar: (id: string, activo: boolean) => pedir<{ groove: GrooveCatalogoAdmin }>('PUT', `/admin/grooves/${enc(id)}/activo`, { activo }).then((r) => r.groove),
+        borrar: (id: string) => pedir<void>('DELETE', `/admin/grooves/${enc(id)}`),
+        renombrarEstilo: (actual: string, nuevo: string) => pedir<{ cambiados: number }>('POST', '/admin/grooves/estilos/renombrar', { actual, nuevo }),
+        archivo: (id: string) => pedirBytes(`/admin/grooves/${enc(id)}/archivo`),
+        propuestas: (filtro: { estado?: string; vista?: string } = {}) => {
+          const q = new URLSearchParams(Object.entries(filtro).filter(([, v]) => v) as [string, string][]).toString()
+          return pedir<{ propuestas: PropuestaGrooveAdmin[]; grupos: string[][] }>('GET', `/admin/grooves/propuestas${q ? `?${q}` : ''}`)
+        },
+        archivoPropuesta: (id: string) => pedirBytes(`/admin/grooves/propuestas/${enc(id)}/archivo`),
+        compararPropuesta: (id: string, tipo: 'groove' | 'propuesta', con: string) =>
+          pedir<ComparacionGrooves>('GET', `/admin/grooves/propuestas/${enc(id)}/comparar?tipo=${tipo}&con=${enc(con)}`),
+        aprobarPropuesta: (id: string, d: { cambios?: DatosGrooveAdmin; varianteDe?: string; nota?: string } = {}) =>
+          pedir<{ propuesta: PropuestaGrooveAdmin; grooveId: string }>('POST', `/admin/grooves/propuestas/${enc(id)}/aprobar`, d),
+        rechazarPropuesta: (id: string, nota = '') => pedir<{ propuesta: PropuestaGrooveAdmin }>('POST', `/admin/grooves/propuestas/${enc(id)}/rechazar`, { nota }),
+        duplicadaPropuesta: (id: string, nota = '', de?: string) =>
+          pedir<{ propuesta: PropuestaGrooveAdmin }>('POST', `/admin/grooves/propuestas/${enc(id)}/marcar-duplicada`, { nota, ...(de ? { de } : {}) }),
       },
       productos: () => pedir<{ productos: ProductoAdmin[] }>('GET', '/admin/productos').then((r) => r.productos),
       crearProducto: (id: string, nombre: string) => pedir<{ producto: ProductoAdmin }>('POST', '/admin/productos', { id, nombre }),
