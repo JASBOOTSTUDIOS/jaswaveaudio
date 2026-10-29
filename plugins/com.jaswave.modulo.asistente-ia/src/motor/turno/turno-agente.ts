@@ -73,6 +73,7 @@ import {
   pideConfigurar,
   type EfectosIde,
 } from './herramientas-ide'
+import { conFuentesDelTurno, iniciarFuentesTurno } from './fuentes-turno'
 import { fijarModoSesion, modoSesion, type ModoSesion } from './sesion-agente'
 
 export const AGENTE_PROGRAM_ID = 'jaswave-agente'
@@ -228,6 +229,7 @@ export async function runTurnoAgente(ctx: TurnContext, tienda: TiendaDAW): Promi
   // El mensaje visible conserva «/meta …»; el agente recibe solo el pedido.
   const userText = comando ? ctx.run.userText.replace(/^\s*\/[\p{L}-]+\s*/u, '') : ctx.run.userText
   const cfg = loadAiSettings()
+  iniciarFuentesTurno()
 
   const tocar = () => ctx.emit({ type: 'agent.message', role: ctx.run.role, text: '', data: { kind: CHAT_UPDATED } })
   const guardar = (patch: Partial<StoredChatMessage>) => {
@@ -566,6 +568,7 @@ export async function runTurnoAgente(ctx: TurnContext, tienda: TiendaDAW): Promi
     fin: Date.now(),
   }
   extra.agente = estado.progreso
+  texto = conFuentesDelTurno(texto)
   guardar({ content: texto, ...extra })
 
   if (r.estado === 'cancelado') throw new DOMException('Aborted', 'AbortError')

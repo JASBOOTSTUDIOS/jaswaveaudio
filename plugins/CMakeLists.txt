@@ -13,8 +13,11 @@ set(JW_PLUGIN_DIRS
   com.jaswave.plugin.truepeak-limiter
   com.jaswave.plugin.smart-deesser
   com.jaswave.plugin.vocal-tune
+  com.jaswave.plugin.vocal-choir
   com.jaswave.plugin.utility-tool
   com.jaswave.plugin.pedal-fix
+  com.jaswave.plugin.audio-doctor
+  com.jaswave.plugin.stomplab
   com.jaswave.plugin.piano-synth
   com.jaswave.plugin.roles-vst
   com.jaswave.plugin.sampler

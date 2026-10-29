@@ -35,7 +35,7 @@ import { describeActionForUser } from '../describe-action'
 import { escuchaEnVivo } from '../escucha-en-vivo'
 import { instruccionesHabilidadesEspecialista } from '../especialistas-habilidades'
 import { cargarEspecialistas, type EspecialistaConfig } from '../especialistas-storage'
-import { habilidadesDelEspecialista } from '../habilidades-agentes'
+import { estiloActivoDelUsuario, habilidadesDelEspecialista, type EstiloUsuario } from '../habilidades-agentes'
 import { catalogoAgente, HERRAMIENTAS_BASE, herramientasDeGrupos } from './catalogo-agente'
 import { analizarCoherencia } from './coherencia-banda'
 import { chatDelMotor, ESPERAS_REINTENTO_BANDA, type UltimoErrorIA } from './chat-agente'
@@ -135,6 +135,70 @@ export function medirBanda(tienda: TiendaDAW, medirMezcla = medidorMezclaApp(tie
   }
 }
 
+/**
+ * Escribe la hoja de ruta de la banda (secciones con un acorde por compás) en el carril de acordes del
+ * arreglo con `chords.set` (crea además un marcador por sección). Una misma hoja solo se vuelca una vez por
+ * producción; devuelve true si escribió. Nunca interrumpe la producción si falla.
+ */
+export async function volcarHojaAlCarril(
+  tienda: TiendaDAW,
+  hoja: { secciones: Array<{ nombre: string; compases: number; acordes: string[] }> },
+  volcadas: Set<string>,
+): Promise<boolean> {
+  const secciones = (hoja.secciones ?? [])
+    .map((s) => ({ nombre: String(s.nombre ?? '').trim(), compases: Math.max(1, Math.round(Number(s.compases) || 1)), acordes: (s.acordes ?? []).map((a) => String(a).trim()).filter(Boolean) }))
+    .filter((s) => s.acordes.length > 0)
+  if (secciones.length === 0) return false
+  const firma = JSON.stringify(secciones)
+  if (volcadas.has(firma)) return false
+  volcadas.add(firma)
+  try {
+    const r = await tienda.executor.execute('chords.set', { secciones }, 'ai')
+    if (!r.success) console.info(`[banda] hoja de ruta no volcada al carril: ${r.error?.message ?? 'error'}`)
+    return Boolean(r.success)
+  } catch (e) {
+    console.info(`[banda] hoja de ruta no volcada al carril: ${e instanceof Error ? e.message : String(e)}`)
+    return false
+  }
+}
+
+const RE_PERCUSIVO = /bater|drum|percu|caja|bombo/i
+
+/**
+ * Aplica el estilo del usuario (perfil de toque) a la pista de un músico recién terminado con
+ * `style.touch.apply` (un solo lote `midi.notes.set`: un paso de undo). La batería no se humaniza con
+ * micro-tiempo, así que se salta. Devuelve true si cambió notas; nunca interrumpe la producción.
+ */
+export async function aplicarEstiloAMusico(
+  tienda: TiendaDAW,
+  ejecutarHerramienta: (nombre: string, args: Record<string, unknown>) => Promise<{ ok: boolean; mensaje?: string }>,
+  estilo: Pick<EstiloUsuario, 'nombre' | 'perfilId' | 'intensidad'>,
+  musico: { id: string; nombre: string; descripcion?: string },
+  pistaRef: string | undefined,
+  semilla: number,
+): Promise<boolean> {
+  if (RE_PERCUSIVO.test(`${musico.id} ${musico.nombre} ${musico.descripcion ?? ''}`)) return false
+  const ref = (pistaRef ?? '').trim()
+  if (!ref) return false
+  const q = ref.toLowerCase()
+  const pista = (tienda.obtenerEstado().project?.tracks ?? []).find((x) => x.id === ref || x.nombre.trim().toLowerCase() === q)
+  if (!pista) return false
+  try {
+    const r = await ejecutarHerramienta('style.touch.apply', {
+      ...(estilo.perfilId ? { perfilId: estilo.perfilId } : {}),
+      nombre: estilo.nombre,
+      trackId: pista.id,
+      intensidad: estilo.intensidad,
+      semilla,
+    })
+    if (!r.ok) console.info(`[banda] estilo no aplicado a ${pista.nombre}: ${String(r.mensaje ?? '').slice(0, 200)}`)
+    return r.ok
+  } catch (e) {
+    console.info(`[banda] estilo no aplicado a ${pista.nombre}: ${e instanceof Error ? e.message : String(e)}`)
+    return false
+  }
+}
+
 export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promise<TurnProgramOutcome> {
   const lc = (ctx.input.context ?? {}) as Partial<LegacyTurnContext>
   const conversationId = ctx.run.conversationId
@@ -217,8 +281,42 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
 
   /** Agentes que no terminaron bien (para la traza: sin esto un QA caído solo se ve como «No se pudo revisar»). */
   const fallosAgentes: string[] = []
+  // Estilo del usuario (skill «estilo-<slug>»): se aplica a la pista de cada músico al terminar su parte.
+  let estilo: EstiloUsuario | null = null
+  try {
+    estilo = estiloActivoDelUsuario()
+  } catch {
+    estilo = null
+  }
+  const pistaDeMusico = new Map<string, string>()
+  let colaEstilo: Promise<void> = Promise.resolve()
+  const aplicarEstilo = (id: string) => {
+    const quien = participantes.find((p) => p.id === id)
+    if (!estilo || !quien || quien.rol !== 'musico') return
+    const est = estilo
+    colaEstilo = colaEstilo.then(async () => {
+      const ok = await aplicarEstiloAMusico(
+        tienda,
+        async (nombre, args) => {
+          const [r] = await ctx.executeTools([{ id: `estilo:${id}`, name: nombre, arguments: args }])
+          return { ok: r?.status === 'success', mensaje: r?.error?.message }
+        },
+        est,
+        quien,
+        pistaDeMusico.get(id),
+        Math.abs([...id].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 7)),
+      )
+      if (ok) {
+        cambios++
+        progreso.actividad = [...progreso.actividad, { id: `estilo:${id}`, texto: `Estilo «${est.nombre}» aplicado a ${quien.nombre}`, estado: 'ok' as const, quien: quien.nombre }].slice(-40)
+        publicar()
+      }
+    })
+  }
   const alEvento = (e: EventoProduccion) => {
     orquestadorBandaSingleton.evento(e)
+    if (e.tipo === 'encargos') for (const x of e.encargos) if (x.pista) pistaDeMusico.set(x.participante, x.pista)
+    if (e.tipo === 'participante' && e.etapa === 'musicos' && e.estado === 'completado') aplicarEstilo(e.participante.id)
     // Mezcla y máster (incluidas sus rondas de corrección): la canción suena en bucle mientras trabajan.
     if ((e.tipo === 'etapa' && e.fase === 'inicio') || e.tipo === 'agente') {
       if (e.etapa === 'mezcla' || e.etapa === 'master') escuchaEnVivo.sonarCancion()
@@ -251,6 +349,7 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
   }
 
   const ultimoError: UltimoErrorIA = {}
+  const hojasVolcadas = new Set<string>()
   const medir = medirBanda(tienda)
   escuchaEnVivo.comenzar(tienda)
   let r
@@ -270,7 +369,12 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
         const t = (tienda.obtenerEstado().project?.tracks ?? []).find((x) => x.id === ref || x.nombre.trim().toLowerCase() === q)
         return t ? { id: t.id, nombre: t.nombre } : null
       },
-      coherencia: (hoja) => analizarCoherencia(tienda.obtenerEstado(), hoja),
+      coherencia: async (hoja) => {
+        // La hoja de ruta (acorde por compás y secciones) se vuelca al carril de acordes del arreglo: es la
+        // única salida del harness que trae la hoja completa; chords.set reemplaza, así que repetirla es inocuo.
+        if (await volcarHojaAlCarril(tienda, hoja, hojasVolcadas)) cambios++
+        return analizarCoherencia(tienda.obtenerEstado(), hoja)
+      },
       // La medición renderiza offline (bloquea el transporte): la escucha se pausa mientras.
       medir: async (etapa) => {
         await escuchaEnVivo.pausar()
@@ -282,6 +386,7 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
       },
       herramientasPorRol: HERRAMIENTAS_POR_ROL,
       instruccionesExtra: instruccionesConfiguradas(projectId),
+      ...(estilo?.resumen ? { estiloMusical: `${estilo.nombre}: ${estilo.resumen}` } : {}),
       // Lo que el usuario escribe en el chat o en el panel de la banda mientras trabaja llega al agente en turno.
       notasUsuario: () => orquestadorBandaSingleton.tomarNotas(),
       onEvento: alEvento,
@@ -290,6 +395,7 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
   } finally {
     ctx.signal.removeEventListener('abort', abortar)
     await escuchaEnVivo.parar()
+    await colaEstilo.catch(() => undefined)
   }
   orquestadorBandaSingleton.terminar(r)
   // Traza para diagnosticar producciones largas (qué llamó cada agente y qué falló); sin datos del usuario.

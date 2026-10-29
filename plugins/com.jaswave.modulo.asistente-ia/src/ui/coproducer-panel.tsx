@@ -77,6 +77,7 @@ import {
 import { AgentModePicker } from './agent-mode-picker'
 import { CHIPS_COMANDO, ChipComando, MensajeConComando, separarComando, type TipoChip } from './chip-comando'
 import { ReasoningStepsPanel } from './reasoning-steps-panel'
+import { TarjetasFuente } from './tarjeta-fuente'
 import { AgenteProgreso } from './agente-progreso'
 import { limpiarTextoUsuario } from '@jaswave/host-sdk'
 
@@ -1229,6 +1230,16 @@ export function CoProducerPanel() {
                   </span>
                 ) : null}
                 {msg.docEdits?.length ? <DocEditCards edits={msg.docEdits} /> : null}
+                {/* K6: enlaces citados por la IA como tarjetas (YouTube con miniatura, escuchar y analizar). */}
+                {msg.role === 'assistant' && msg.content && !(isGenerating && msg.id === liveAssistantMsgIdRef.current) ? (
+                  <TarjetasFuente
+                    texto={msg.content}
+                    onAnalizar={(url, titulo) => {
+                      if (isGenerating) return
+                      void runEngineTurn({ text: `Analiza esta referencia${titulo ? ` («${titulo}»)` : ''} y dame tempo, tonalidad, acordes, loudness y espectro con números: ${url}` })
+                    }}
+                  />
+                ) : null}
                 {msg.citedMessageIds?.length ? (
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     {msg.citedMessageIds.map((id) => {

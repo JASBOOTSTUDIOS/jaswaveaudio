@@ -3,7 +3,7 @@
  * asistente y, si el admin lo permite (`ia.modelo-propio`), los modelos propios del usuario.
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { loadAiSettings, saveAiSettings, type AiSettings } from '../motor/ai-settings'
 
@@ -120,6 +120,7 @@ export function AjustesIA() {
             />
             Si un modelo falla, probar otro
           </label>
+          <InterruptorInternetIA />
         </div>
       </Seccion>
 
@@ -129,6 +130,39 @@ export function AjustesIA() {
 
       {catalogo.permisos.modeloPropio ? <MisModelos /> : null}
     </div>
+  )
+}
+
+type PuenteWebTools = {
+  internetPermitido: () => Promise<boolean>
+  fijarInternetPermitido: (activo: boolean) => Promise<boolean>
+}
+
+/** «Permitir a la IA usar internet» (K6): la preferencia vive en el proceso main; solo existe en la app de escritorio. */
+function InterruptorInternetIA() {
+  const puente = (window as unknown as { electron?: { webTools?: PuenteWebTools } }).electron?.webTools
+  const [activo, setActivo] = useState(true)
+  useEffect(() => {
+    let vivo = true
+    void puente?.internetPermitido().then((v) => vivo && setActivo(Boolean(v))).catch(() => {})
+    return () => {
+      vivo = false
+    }
+  }, [puente])
+  if (!puente) return null
+  return (
+    <label className="flex items-center gap-1" title="Búsquedas web, páginas, YouTube y análisis de referencias. Desactívalo para que la IA no salga a internet.">
+      <input
+        type="checkbox"
+        checked={activo}
+        onChange={(e) => {
+          const v = e.target.checked
+          setActivo(v)
+          void puente.fijarInternetPermitido(v).then((r) => setActivo(Boolean(r))).catch(() => setActivo(!v))
+        }}
+      />
+      Permitir a la IA usar internet
+    </label>
   )
 }
 

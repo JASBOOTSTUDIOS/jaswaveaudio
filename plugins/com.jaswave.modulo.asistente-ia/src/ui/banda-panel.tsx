@@ -5,6 +5,7 @@
 import { useEffect } from 'react'
 import { BandaLiveOrchestrator } from './banda-live-orchestrator'
 import { registrarPanelBanda } from './banda-vista-store'
+import { MiEstiloPanel } from './mi-estilo-panel'
 
 export function BandaPanel() {
   // Mientras esté abierto, el chat sabe que puede ceder la tarjeta (si el usuario eligió verla aparte).
@@ -13,7 +14,8 @@ export function BandaPanel() {
     return registrarPanelBanda()
   }, [])
   return (
-    <div data-testid="banda-panel" className="h-full overflow-y-auto bg-panel-base/70 p-2">
+    <div data-testid="banda-panel" className="h-full space-y-2 overflow-y-auto bg-panel-base/70 p-2">
+      <MiEstiloPanel />
       <BandaLiveOrchestrator enPanel />
     </div>
   )

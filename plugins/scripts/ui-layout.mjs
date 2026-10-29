@@ -32,6 +32,8 @@ export const PLUGINS = [
   { dir: 'com.jaswave.plugin.smart-deesser', target: 'JasWaveSmartDeEsser', corto: 'smart-deesser' },
   { dir: 'com.jaswave.plugin.utility-tool', target: 'JasWaveUtility', corto: 'utility-tool' },
   { dir: 'com.jaswave.plugin.pedal-fix', target: 'JasWavePedalFix', corto: 'pedal-fix' },
+  { dir: 'com.jaswave.plugin.audio-doctor', target: 'JasWaveAudioDoctor', corto: 'audio-doctor' },
+  { dir: 'com.jaswave.plugin.stomplab', target: 'JasWaveStompLab', corto: 'stomplab' },
   { dir: 'com.jaswave.plugin.piano-synth', target: 'JasWavePiano', corto: 'piano-synth' },
   { dir: 'com.jaswave.plugin.roles-vst', target: 'JasWaveRoles', corto: 'roles-vst' },
   { dir: 'com.jaswave.plugin.grand-piano', target: 'JasWaveGrandPiano', corto: 'grand-piano' },
@@ -42,6 +44,7 @@ export const PLUGINS = [
   { dir: 'com.jaswave.plugin.strings-section', target: 'JasWaveStringsSection', corto: 'strings-section' },
   { dir: 'com.jaswave.plugin.ambient-atmos', target: 'JasWaveAmbientAtmos', corto: 'ambient-atmos' },
   { dir: 'com.jaswave.plugin.vocal-tune', target: 'JasWaveVocalTune', corto: 'vocal-tune' },
+  { dir: 'com.jaswave.plugin.vocal-choir', target: 'JasWaveVocalChoir', corto: 'vocal-choir' },
 ]
 const VISUALIZADORES = new Set(['espectro-dual', 'espectro-instrumento', 'vectorscopio', 'curva-tono'])
 

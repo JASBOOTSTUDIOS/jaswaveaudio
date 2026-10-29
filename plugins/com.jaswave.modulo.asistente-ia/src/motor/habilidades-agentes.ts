@@ -359,3 +359,114 @@ export function plantillaHabilidad(e: Pick<EspecialistaConfig, 'id' | 'nombre'>,
     ].join('\n'),
   }
 }
+
+// ── Skills de estilo del usuario («estilo-<slug>.md», aprendidas de su teclado MIDI) ─────────────────────────
+
+/** Lo que guarda una skill de estilo: referencia al perfil de toque de la biblioteca y copia portátil del JSON. */
+export type EstiloUsuario = {
+  /** Ruta del archivo (`habilidades/estilo-<slug>.md`). */
+  ruta: string
+  nombre: string
+  /** Id del perfil en `touch-profiles.json` (para `style.touch.apply`); puede faltar si el archivo viene de otro equipo. */
+  perfilId?: string
+  resumen: string
+  /** Copia del perfil (JSON) — se reimporta con `style.touch.learn` si falta en la biblioteca. */
+  perfil?: unknown
+  /** Intensidad 0–1 con la que la banda aplica el estilo. */
+  intensidad: number
+  activo: boolean
+}
+
+export const PREFIJO_ESTILO = 'estilo-'
+
+export function rutaHabilidadEstilo(nombre: string): string {
+  return `habilidades/${PREFIJO_ESTILO}${slugAsistente(nombre) || 'mi-estilo'}.md`
+}
+
+/** Markdown de la habilidad «estilo-<slug>»: instrucciones para el músico + el perfil como bloque JSON. */
+export function habilidadEstiloMarkdown(o: { nombre: string; resumen: string; perfilId?: string; perfil: unknown; intensidad?: number }): { ruta: string; contenido: string } {
+  const nombre = o.nombre.trim() || 'Mi estilo'
+  const intensidad = Math.max(0, Math.min(1, Number.isFinite(Number(o.intensidad)) ? Number(o.intensidad) : 1))
+  return {
+    ruta: rutaHabilidadEstilo(nombre),
+    contenido: [
+      `# Estilo: ${nombre}`,
+      `> @musicos Cómo toca el usuario (micro-tiempos, dinámica, legato, pedal, rubato): léela antes de grabar una parte armónica o melódica.`,
+      '',
+      'Así toca el usuario en su teclado MIDI, medido de sus tomas reales. Tómalo como su carácter, no como una plantilla:',
+      '',
+      o.resumen.trim(),
+      '',
+      'Cómo usarlo:',
+      '1. Escribe las notas con intención musical (duraciones y velocidades variadas, extensiones, pasos); no cuantices ni aplanes.',
+      '2. Al terminar tu parte, la app aplica automáticamente su micro-tiempo, microdinámica, legato, offset del acorde y pedal sobre tu pista (`style.touch.apply`); no lo repitas a mano.',
+      '3. La batería no se humaniza con micro-tiempo: sigue en la rejilla.',
+      '',
+      `<!-- agente: musicos -->`,
+      `<!-- estilo-intensidad: ${intensidad} -->`,
+      ...(o.perfilId ? [`<!-- estilo-perfil-id: ${o.perfilId} -->`] : []),
+      '',
+      '```json estilo-perfil',
+      JSON.stringify(o.perfil),
+      '```',
+      '',
+    ].join('\n'),
+  }
+}
+
+/** Interpreta un archivo `habilidades/estilo-*.md`; null si no es una skill de estilo. */
+export function estiloDesdeArchivo(a: Pick<ArchivoAsistente, 'ruta' | 'carpeta' | 'nombre' | 'contenido'>): EstiloUsuario | null {
+  if (a.carpeta !== 'habilidades' || !/^estilo-/i.test(a.nombre.replace(/^.*[\/]/, ''))) return null
+  const titulo = /^#\s*(?:Estilo:\s*)?(.+)$/m.exec(a.contenido)?.[1]?.trim() || a.nombre.replace(/^estilo-|\.md$/gi, '')
+  const resumen = /medido de sus tomas reales[^\n]*\n\n([\s\S]*?)\n\nCómo usarlo:/.exec(a.contenido)?.[1]?.trim() ?? ''
+  const intensidad = Number(/<!--\s*estilo-intensidad:\s*([\d.]+)\s*-->/.exec(a.contenido)?.[1])
+  const perfilId = /<!--\s*estilo-perfil-id:\s*([^\s>]+)\s*-->/.exec(a.contenido)?.[1]
+  let perfil: unknown
+  const json = /```json estilo-perfil\s*\n([\s\S]*?)\n```/.exec(a.contenido)?.[1]
+  if (json) {
+    try {
+      perfil = JSON.parse(json)
+    } catch {
+      perfil = undefined
+    }
+  }
+  return {
+    ruta: a.ruta,
+    nombre: titulo,
+    ...(perfilId ? { perfilId } : {}),
+    resumen,
+    ...(perfil !== undefined ? { perfil } : {}),
+    intensidad: Number.isFinite(intensidad) ? Math.max(0, Math.min(1, intensidad)) : 1,
+    activo: !/<!--\s*desactivad[ao]\s*-->/i.test(a.contenido),
+  }
+}
+
+/** Skills de estilo del usuario (más reciente primero según el orden del listado). */
+export function estilosDelUsuario(archivos: readonly ArchivoAsistente[] = carpetaAsistente.archivos()): EstiloUsuario[] {
+  return archivos.map(estiloDesdeArchivo).filter((e): e is EstiloUsuario => e !== null)
+}
+
+/** El estilo que usa la banda: el primero activo (si hay varios, el usuario desactiva los que no quiere). */
+export function estiloActivoDelUsuario(archivos?: readonly ArchivoAsistente[]): EstiloUsuario | null {
+  return estilosDelUsuario(archivos).find((e) => e.activo) ?? null
+}
+
+/** Guarda la skill de estilo en la carpeta del asistente (crea o actualiza). */
+export async function guardarEstiloComoHabilidad(o: { nombre: string; resumen: string; perfilId?: string; perfil: unknown; intensidad?: number }): Promise<{ ok: boolean; ruta: string; error?: string }> {
+  const { ruta, contenido } = habilidadEstiloMarkdown(o)
+  try {
+    await carpetaAsistente.escribir(ruta, contenido)
+    return { ok: true, ruta }
+  } catch (e) {
+    return { ok: false, ruta, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/** Activa o desactiva una skill de estilo (la desactivada la banda no la usa). */
+export async function activarEstilo(ruta: string, activo: boolean): Promise<boolean> {
+  const a = carpetaAsistente.archivo(ruta)
+  if (!a) return false
+  const limpio = a.contenido.replace(/<!--\s*desactivad[ao]\s*-->\s*\n?/gi, '')
+  await carpetaAsistente.escribir(ruta, activo ? limpio : `${limpio.trimEnd()}\n<!-- desactivada -->\n`)
+  return true
+}
