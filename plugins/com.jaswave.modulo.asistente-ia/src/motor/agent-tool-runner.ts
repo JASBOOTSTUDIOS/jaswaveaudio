@@ -163,7 +163,18 @@ export function instrumentoAproximado(consulta: string, instalados: readonly str
  * rechaza, con una explicación accionable, lo que dañaría el proyecto en silencio (pistas duplicadas,
  * notas MIDI en una pista de audio, notas fuera de rango que se descartarían o se desafinarían).
  */
-export function guardiaIA(tool: string, args: Record<string, unknown>, st: EstadoDaw): { args: Record<string, unknown>; porNombre?: boolean } | { error: string } {
+export type ResultadoGuardia =
+  | {
+      args: Record<string, unknown>
+      porNombre?: boolean
+      /** Herramienta que se ejecuta en lugar de la pedida (p. ej. clip repetido → parche de notas). */
+      tool?: string
+      /** Aviso que el modelo debe ver junto al resultado. */
+      aviso?: string
+    }
+  | { error: string }
+
+export function guardiaIA(tool: string, args: Record<string, unknown>, st: EstadoDaw): ResultadoGuardia {
   const pistas = st.project?.tracks ?? []
   if (tool === 'plugin.insert') {
     // El modelo inventa el objeto `plugin` ({nombre: …} sin ruta): se insertaría un plugin que nadie carga.
@@ -210,8 +221,20 @@ export function guardiaIA(tool: string, args: Record<string, unknown>, st: Estad
   }
   let out = sinComillasEnIds(args)
   args = out
-  const idPista = String(args.pistaId ?? args.trackId ?? '')
-  const pista = pistas.find((t) => t.id === idPista)
+  let idPista = String(args.pistaId ?? args.trackId ?? '')
+  let pista = pistas.find((t) => t.id === idPista)
+  // El clip existe pero en otra pista (el modelo mezcla ids al pasar de una pista a otra, o manda la
+  // pista nueva con el clip de la anterior): se corrige la pista en vez de fallar con «Clip no encontrado».
+  const clipId = typeof args.clipId === 'string' ? args.clipId : ''
+  if (clipId && !(pista?.clips ?? []).some((c) => c.id === clipId)) {
+    const duena = pistas.find((t) => (t.clips ?? []).some((c) => c.id === clipId))
+    if (duena && duena.id !== idPista) {
+      out = args.pistaId == null && args.trackId != null ? { ...out, trackId: duena.id } : { ...out, pistaId: duena.id }
+      args = out
+      idPista = duena.id
+      pista = duena
+    }
+  }
   // `notas` como texto JSON, como objeto suelto o como mapa: se convierte a lista antes de validar.
   if (NOTAS_EN(tool) && args.notas != null && !Array.isArray(args.notas)) {
     const lista = comoListaDeNotas(args.notas)
@@ -235,14 +258,22 @@ export function guardiaIA(tool: string, args: Record<string, unknown>, st: Estad
       return { error: `La pista «${pista.nombre}» es de tipo ${pista.tipo}: las notas MIDI necesitan una pista midi o de instrumento. Usa otra o créala con track.create y tipo "midi".` }
     }
   }
+  let reemplazaEn: { id: string; nombre?: string; inicio: number; duracion: number } | undefined
   if (tool === 'midi.clip.create' && pista) {
     // Dos clips en el mismo sitio suenan a la vez (partes duplicadas): se edita el que ya está.
     const ini = Number(args.inicio ?? 0)
     const fin = ini + Number(args.duracion ?? 0)
     const choca = (pista.clips ?? []).find((c) => ini < c.inicio + c.duracion - 1e-6 && c.inicio < fin - 1e-6)
     if (choca && Number.isFinite(fin) && fin > ini) {
-      return {
-        error: `Ya hay un clip en ese lugar de «${pista.nombre}»: «${choca.nombre ?? 'clip'}» = "${choca.id}" (beats ${choca.inicio}–${choca.inicio + choca.duracion}). Edita sus notas con midi.notes.patch o midi.notes.set, o crea el nuevo a partir del beat ${choca.inicio + choca.duracion}.`,
+      const cubre = choca.inicio <= ini + 1e-6 && choca.inicio + choca.duracion >= fin - 1e-6
+      if (cubre && Array.isArray(args.notas) && args.notas.length) {
+        // El músico reescribe una sección que ya grabó (en la banda se repetía 10 veces el mismo error):
+        // se sustituyen las notas de ese tramo del clip existente en vez de fallar.
+        reemplazaEn = choca
+      } else {
+        return {
+          error: `Ya hay un clip en ese lugar de «${pista.nombre}»: «${choca.nombre ?? 'clip'}» = "${choca.id}" (beats ${choca.inicio}–${choca.inicio + choca.duracion}). Edita sus notas con midi.notes.patch o midi.notes.set, o crea el nuevo a partir del beat ${choca.inicio + choca.duracion}.`,
+        }
       }
     }
   }
@@ -289,6 +320,20 @@ export function guardiaIA(tool: string, args: Record<string, unknown>, st: Estad
     const duracionClip = tool === 'midi.clip.create' ? (args.duracion != null ? Number(args.duracion) : undefined) : clipExistente?.duracion
     const relativas = notasRelativasAlClip(notas as Array<{ inicio: number }>, inicioClip, duracionClip)
     if (relativas) out = { ...out, notas: relativas }
+  }
+  if (reemplazaEn && pista && Array.isArray(out.notas)) {
+    const ini = Number(args.inicio ?? 0)
+    const fin = ini + Number(args.duracion ?? 0)
+    // Las notas ya están relativas al clip pedido: pasan a tiempo de la canción y el parche por rango las
+    // deja relativas al clip existente, quitando lo que había en ese tramo.
+    const enCancion = (out.notas as Array<{ inicio: number }>).map((n) => ({ ...n, inicio: Number(n.inicio) + ini }))
+    const parche = normalizarParche({ pistaId: pista.id, rangeStart: ini, rangeEnd: fin, notas: enCancion }, pista as Parameters<typeof normalizarParche>[1])
+    if ('error' in parche) return parche
+    return {
+      tool: 'midi.notes.patch',
+      args: parche.args,
+      aviso: `Ya había un clip en ese tramo de «${pista.nombre}» («${reemplazaEn.nombre ?? 'clip'}» = "${reemplazaEn.id}", beats ${reemplazaEn.inicio}–${reemplazaEn.inicio + reemplazaEn.duracion}): no se creó otro; se sustituyeron sus notas entre los beats ${ini} y ${fin} por las nuevas. Para seguir editándolo usa clipId "${reemplazaEn.id}".`,
+    }
   }
   if (tool === 'midi.clip.create' && pista) {
     // Un clip muy lejos de todo lo demás (p. ej. en el beat 385 de una canción de 250) alarga la canción
@@ -388,9 +433,10 @@ export function comoListaDeNotas(v: unknown): unknown[] | null {
   return null
 }
 
-/** JSON «a la JavaScript»: claves sin comillas, comillas simples, comas finales. */
+/** JSON «a la JavaScript»: claves sin comillas, comillas simples, comas finales, y el tartamudeo `{"{"id"` del modelo. */
 function jsonLaxo(t: string): string {
   return t
+    .replace(/\{\s*"\{"\s*(?=[A-Za-z_"])/g, '{"')
     .replace(/'([^'\\\n]*)'/g, '"$1"')
     .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":')
     .replace(/,\s*([}\]])/g, '$1')
@@ -492,7 +538,12 @@ export function normalizarParche(
   const existentes = ((clip?.notas ?? []) as NotaExistente[])
   const crudo = args.upsert ?? args.notas ?? args.notes ?? args.cambios ?? []
   const lista = comoListaDeNotas(crudo)
-  if (!lista) return { error: `upsert debe ser una lista de notas a crear o cambiar ([{id?, pitch, inicio, duracion, velocidad}]), no ${describirTipo(crudo)}${muestraDe(crudo)}. No se ha cambiado nada.` }
+  if (!lista) {
+    if (esResumenDeHistorial(crudo)) {
+      return { error: `upsert trae el resumen del historial («${String(crudo).trim().slice(0, 60)}»), no las notas: en el historial las listas largas se abrevian, pero a la herramienta hay que mandarle la lista completa de notas reales [{id?, pitch, inicio, duracion, velocidad}]. No se ha cambiado nada.` }
+    }
+    return { error: `upsert debe ser una lista de notas a crear o cambiar ([{id?, pitch, inicio, duracion, velocidad}]), no ${describirTipo(crudo)}${muestraDe(crudo)}. No se ha cambiado nada.` }
+  }
   const malas: string[] = []
   const upsert = lista.map((item, i) => {
     const o = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>
@@ -566,11 +617,18 @@ export async function runRegisteredTool(
   if ('error' in guardia) {
     return { callId: call.id, tool: call.tool, status: 'error', error: { code: 'AI_GUARD', message: guardia.error }, stateRevision: getStateRevision(tienda.obtenerEstado()) }
   }
-  const r = await ejecutarHerramienta(tienda, { ...call, arguments: guardia.args }, { ...opts, porNombre: guardia.porNombre })
-  if (r.status === 'success') avisarCambioIA(call.tool, guardia.args)
+  const tool = guardia.tool ?? call.tool
+  const r0 = await ejecutarHerramienta(tienda, { ...call, tool, arguments: guardia.args }, { ...opts, porNombre: guardia.porNombre })
+  // El resultado vuelve con el nombre que pidió el modelo (la sustitución es interna) y con el aviso.
+  const r: AgentLoopToolResult = { ...r0, tool: call.tool }
+  if (r.status === 'success') avisarCambioIA(tool, guardia.args)
+  if (r.status === 'success' && guardia.aviso) {
+    const data = r.data && typeof r.data === 'object' && !Array.isArray(r.data) ? { ...(r.data as object), aviso: guardia.aviso } : { resultado: r.data, aviso: guardia.aviso }
+    return { ...r, data }
+  }
   if (r.status !== 'error' || !r.error?.message) return r
-  const esquema = (tienda.registroComandos?.get?.(call.tool) as { schema?: Record<string, unknown> } | undefined)?.schema
-  return { ...r, error: { ...r.error, message: explicarErrorHerramienta(call.tool, r.error.message, call.arguments ?? {}, esquema, tienda.obtenerEstado()) } }
+  const esquema = (tienda.registroComandos?.get?.(tool) as { schema?: Record<string, unknown> } | undefined)?.schema
+  return { ...r, error: { ...r.error, message: explicarErrorHerramienta(tool, r.error.message, guardia.args, esquema, tienda.obtenerEstado()) } }
 }
 
 async function ejecutarHerramienta(

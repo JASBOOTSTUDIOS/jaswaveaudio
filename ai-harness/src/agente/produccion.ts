@@ -429,16 +429,37 @@ function sistemaParticipante(o: {
   return lineas.join('\n')
 }
 
+const sinAcentos = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
+
+/**
+ * Quién es «pianista», «Pianista», «Baterista / Percusión» o «el bajista»: por id exacto, por nombre, o por el
+ * id/nombre que contenga la palabra (sin acentos ni mayúsculas). Ambiguo → nadie.
+ */
+export function resolverMusico(ref: unknown, musicos: ParticipanteProduccion[]): ParticipanteProduccion | undefined {
+  const t = String(ref ?? '').trim()
+  if (!t) return undefined
+  const exacto = musicos.find((m) => m.id === t)
+  if (exacto) return exacto
+  const q = sinAcentos(t).replace(/^(el|la|los|las)\s+/, '')
+  const porNombre = musicos.filter((m) => sinAcentos(m.id) === q || sinAcentos(m.nombre) === q)
+  if (porNombre.length === 1) return porNombre[0]
+  const parcial = musicos.filter((m) => {
+    const id = sinAcentos(m.id)
+    const nombre = sinAcentos(m.nombre)
+    return id.includes(q) || q.includes(id) || nombre.includes(q) || q.split(/[\s/,-]+/).some((p) => p.length > 3 && (id.includes(p) || nombre.includes(p)))
+  })
+  return parcial.length === 1 ? parcial[0] : undefined
+}
+
 function normalizarEncargos(v: unknown, musicos: ParticipanteProduccion[]): Encargo[] {
-  if (!Array.isArray(v)) return []
-  const ids = new Set(musicos.map((m) => m.id))
+  const lista = Array.isArray(v) ? v : v && typeof v === 'object' ? Object.entries(v as Record<string, unknown>).map(([musico, encargo]) => (encargo && typeof encargo === 'object' ? { musico, ...(encargo as object) } : { musico, encargo })) : []
   const out: Encargo[] = []
-  for (const e of v) {
+  for (const e of lista) {
     const o = (e ?? {}) as Record<string, unknown>
-    const participante = String(o.musico ?? o.participante ?? '').trim()
-    const encargo = String(o.encargo ?? o.tarea ?? '').trim()
+    const quien = resolverMusico(o.musico ?? o.participante ?? o.id ?? o.nombre, musicos)
+    const encargo = String(o.encargo ?? o.tarea ?? o.instrucciones ?? o.descripcion ?? '').trim()
     const pista = String(o.pista ?? o.pistaId ?? o.trackId ?? '').trim().replace(/^["'«»]+|["'«»]+$/g, '')
-    if (ids.has(participante) && encargo) out.push({ participante, encargo, ...(pista ? { pista } : {}) })
+    if (quien && encargo && !out.some((x) => x.participante === quien.id)) out.push({ participante: quien.id, encargo, ...(pista ? { pista } : {}) })
   }
   return out.slice(0, MAX_ENCARGOS)
 }
@@ -625,7 +646,7 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
         capturaEncargos = normalizarEncargos(l.argumentos.encargos, musicos)
         return capturaEncargos.length
           ? { ok: true, resumen: `${capturaEncargos.length} encargos`, datos: { asignados: capturaEncargos.length } }
-          : { ok: false, error: `Ningún encargo válido. Músicos disponibles: ${musicos.map((m) => m.id).join(', ')}` }
+          : { ok: false, error: `Ningún encargo válido: cada encargo lleva "musico" (uno de: ${musicos.map((m) => `${m.id} = ${m.nombre}`).join(', ')}) y "encargo" (texto).` }
       }
       if (h.nombre === H_VEREDICTO) {
         capturaVeredicto = normalizarVeredicto(l.argumentos, ids)

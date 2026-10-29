@@ -22,7 +22,10 @@ const app = setupJasWave({ label: 'cancion-ia', bridge: true })
 const paso = crearPasos(() => app().page, '29-cancion-ia')
 
 const PEDIDO = [
-  '/banda Canción de adoración completa «Tu Gracia Me Alcanzó», Re mayor, 74 BPM, 4/4.',
+  '/banda Canción de adoración completa «Tu Gracia Me Alcanzó», Re mayor, 74 BPM, 4/4, al estilo del grupo Barak:',
+  'worship moderno dominicano, pads amplios y guitarras eléctricas con delay y ambiente, piano con voicings abiertos (novenas, sus2/sus4),',
+  'batería contundente y bajo profundo en los coros, coros grandes y coreables con un pasaje de cánticos «aaa / oh-oh» en el puente,',
+  'frases melódicas cantables, nada cuadrado ni robótico.',
   'Forma: Intro 4 compases, Verso 1 8, Pre-coro 4, Coro 8, Verso 2 8, Pre-coro 4, Coro 8, Puente 8 con crescendo, Coro final 8 y Outro 4.',
   'Banda completa, una pista por instrumento con su VST3 JasWave cargado: batería (Worship Drums) con fills al cambiar de sección,',
   'bajo eléctrico, piano de cola, guitarra eléctrica arpegiada, cuerdas (Strings Section), pad ambiental (Shimmer Pad) y un lead de sinte en el puente.',

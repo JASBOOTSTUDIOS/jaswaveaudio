@@ -14,8 +14,11 @@ import { habilidadesDelEspecialista } from '../habilidades-agentes'
 /** Consultas básicas que el agente tiene siempre a mano. */
 export const HERRAMIENTAS_BASE = ['project.getSummary', 'track.list', 'selection.get', 'midi.getClipSummary', 'analysis.trackSound']
 
-/** Calculan propuestas internas del flujo antiguo; el agente no las necesita. */
-const EXCLUIDAS = /^fallback\./
+/**
+ * Calculan propuestas internas del flujo antiguo; el agente no las necesita. `midi.notes.compare` compara
+ * con el markdown del clip, que la banda nunca escribe: el arreglista lo llamaba cinco veces por sección.
+ */
+const EXCLUIDAS = /^fallback\.|^midi\.notes\.compare$/
 
 export const PREFIJO_HABILIDAD = 'habilidad_'
 

@@ -144,7 +144,9 @@ export function createTurnContext(opts: {
               message:
                 cls === undefined
                   ? `Bloqueada: ${c.name} no tiene clase de riesgo conocida (fail closed).`
-                  : `Requiere confirmación del usuario: ${c.name}.`,
+                  : c.name === 'midi.notes.set'
+                    ? 'midi.notes.set con notas vacías borraría todas las notas del clip y eso lo tiene que confirmar el usuario: manda la lista completa de notas nuevas, o cambia solo algunas con midi.notes.patch.'
+                    : `Requiere confirmación del usuario: ${c.name}.`,
             },
           }
           out.set(c.id, r)

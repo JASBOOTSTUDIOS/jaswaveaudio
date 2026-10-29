@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compactarArgumentosHistorial, ejecutarAgente, vistaHistorial, type ChatAgente, type HerramientaAgente, type MensajeAgente } from '../agente'
+import { AVISO_HISTORIAL_ABREVIADO, compactarArgumentosHistorial, ejecutarAgente, vistaHistorial, type ChatAgente, type HerramientaAgente, type MensajeAgente } from '../agente'
 
 const CATALOGO: HerramientaAgente[] = [{ nombre: 'midi.addNotes', descripcion: 'Escribe notas', parametros: { type: 'object' }, clase: 'escritura' }]
 const notas = Array.from({ length: 40 }, (_, i) => ({ pitch: 60 + i, inicio: i, duracion: 1 }))
@@ -23,7 +23,7 @@ describe('historial compacto del agente', () => {
       { role: 'assistant', content: '', toolCalls: [{ id: 'c2', name: 'midi.addNotes', arguments: { pistaId: 'p2', notas } }] },
       { role: 'tool', content: '{"ok":true}', toolCallId: 'c2', name: 'midi.addNotes' },
     ]
-    const vista = vistaHistorial(mensajes)
+    const vista = vistaHistorial(mensajes, 1)
     const llamadas = vista.filter((m) => m.role === 'assistant') as Array<{ toolCalls?: Array<{ arguments: Record<string, unknown> }> }>
     expect(llamadas[0]!.toolCalls![0]!.arguments.notas).toBe(RESUMEN)
     expect(llamadas[1]!.toolCalls![0]!.arguments.notas).toHaveLength(40)
@@ -31,13 +31,15 @@ describe('historial compacto del agente', () => {
     expect((mensajes[1] as { toolCalls: Array<{ arguments: Record<string, unknown> }> }).toolCalls[0]!.arguments.notas).toHaveLength(40)
   })
 
-  it('la herramienta recibe las notas completas; el modelo ve completa la última llamada y abreviadas las anteriores', async () => {
+  it('la herramienta recibe las notas completas; el modelo ve completas las 3 últimas llamadas, abreviadas las anteriores y un aviso', async () => {
     const historiales: MensajeAgente[][] = []
+    const sistemas: string[] = []
     let vez = 0
     const chat: ChatAgente = async (o) => {
       historiales.push(o.mensajes)
+      sistemas.push(o.sistema)
       vez++
-      if (vez <= 2) return { ok: true, texto: '', llamadas: [{ id: `c${vez}`, nombre: 'midi.addNotes', argumentos: { pistaId: `p${vez}`, notas } }] }
+      if (vez <= 4) return { ok: true, texto: '', llamadas: [{ id: `c${vez}`, nombre: 'midi.addNotes', argumentos: { pistaId: `p${vez}`, notas } }] }
       return { ok: true, texto: 'listo', llamadas: [] }
     }
     const recibidas: number[] = []
@@ -51,13 +53,17 @@ describe('historial compacto del agente', () => {
         return { ok: true }
       },
     })
-    expect(recibidas).toEqual([40, 40])
+    expect(recibidas).toEqual([40, 40, 40, 40])
     const asistentes = (h: MensajeAgente[]) => h.filter((m) => m.role === 'assistant') as Array<{ toolCalls?: Array<{ arguments: Record<string, unknown> }> }>
-    // Segundo paso: la única llamada anterior va completa (es la última).
-    expect(asistentes(historiales[1]!)[0]!.toolCalls![0]!.arguments.notas).toHaveLength(40)
-    // Tercer paso: la primera se abrevia y la segunda (la última) va completa.
-    const [a1, a2] = asistentes(historiales[2]!)
+    // Cuarto paso: las tres llamadas anteriores van completas y el sistema no lleva aviso.
+    expect(asistentes(historiales[3]!).every((a) => Array.isArray(a.toolCalls![0]!.arguments.notas))).toBe(true)
+    expect(sistemas[3]).toBe('Eres test')
+    // Quinto paso: la primera se abrevia, las tres últimas van completas y el sistema avisa de la abreviatura.
+    const [a1, a2, a3, a4] = asistentes(historiales[4]!)
     expect(a1!.toolCalls![0]!.arguments.notas).toBe(RESUMEN)
     expect(a2!.toolCalls![0]!.arguments.notas).toHaveLength(40)
+    expect(a3!.toolCalls![0]!.arguments.notas).toHaveLength(40)
+    expect(a4!.toolCalls![0]!.arguments.notas).toHaveLength(40)
+    expect(sistemas[4]).toContain(AVISO_HISTORIAL_ABREVIADO)
   })
 })

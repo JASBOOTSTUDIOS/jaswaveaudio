@@ -100,6 +100,50 @@ describe('agent-tool-runner (ADR-0017)', () => {
     assert.equal(despues.status, 'success', despues.error?.message)
   })
 
+  it('midi.clip.create sobre un tramo ya grabado sustituye las notas del clip existente en vez de fallar en bucle', async () => {
+    const tienda = crearTiendaDAW({ estadoInicial: crearEstadoInicial() })
+    toolRegistry.setContext(tienda.executor, tienda.permisos)
+    registerAgentCatalogOnRegistry(toolRegistry, ['midi.clip.create', 'midi.notes.patch', 'midi.notes.get'], tienda.registroComandos)
+    const opts = { forceApply: true, agentMode: 'create' as const }
+    await tienda.executor.execute('track.create', { nombre: 'Pad', tipo: 'midi' }, 'user')
+    await tienda.executor.execute('track.create', { nombre: 'Cuerdas', tipo: 'midi' }, 'user')
+    const [pad, cuerdas] = tienda.obtenerEstado().project.tracks
+    const a = await runRegisteredTool(tienda, { id: 'r1', tool: 'midi.clip.create', arguments: { pistaId: pad!.id, nombre: 'Coro', inicio: 32, duracion: 16, notas: [{ pitch: 60, inicio: 0, duracion: 4 }, { pitch: 64, inicio: 4, duracion: 4 }, { pitch: 67, inicio: 12, duracion: 4 }] } }, opts)
+    assert.equal(a.status, 'success', a.error?.message)
+    const clipId = tienda.obtenerEstado().project.tracks[0]!.clips[0]!.id
+    // El mismo tramo otra vez (el músico reescribe el coro): mismo clip, notas nuevas, aviso para el modelo.
+    const b = await runRegisteredTool(tienda, { id: 'r2', tool: 'midi.clip.create', arguments: { pistaId: pad!.id, nombre: 'Coro', inicio: 32, duracion: 16, notas: [{ pitch: 62, inicio: 0, duracion: 8 }, { pitch: 65, inicio: 8, duracion: 8 }] } }, opts)
+    assert.equal(b.status, 'success', b.error?.message)
+    assert.equal(b.tool, 'midi.clip.create')
+    assert.match(String((b.data as { aviso?: string })?.aviso ?? ''), /no se creó otro; se sustituyeron sus notas entre los beats 32 y 48/)
+    const clips = tienda.obtenerEstado().project.tracks[0]!.clips as Array<{ id: string; notas: Array<{ pitch: number; inicio: number }> }>
+    assert.equal(clips.length, 1)
+    assert.equal(clips[0]!.id, clipId)
+    assert.deepEqual(clips[0]!.notas.map((n) => [n.pitch, n.inicio]).sort((x, y) => x[1]! - y[1]!), [[62, 0], [65, 8]])
+    // Solo la mitad del tramo: se conservan las notas de la otra mitad.
+    const c = await runRegisteredTool(tienda, { id: 'r3', tool: 'midi.clip.create', arguments: { pistaId: pad!.id, nombre: 'Coro b', inicio: 40, duracion: 8, notas: [{ pitch: 69, inicio: 0, duracion: 8 }] } }, opts)
+    assert.equal(c.status, 'success', c.error?.message)
+    const notas = (tienda.obtenerEstado().project.tracks[0]!.clips[0] as { notas: Array<{ pitch: number; inicio: number }> }).notas
+    assert.deepEqual(notas.map((n) => [n.pitch, n.inicio]).sort((x, y) => x[1]! - y[1]!), [[62, 0], [69, 8]])
+    // Un tramo que desborda el clip sigue siendo un error (sería otro clip).
+    const d = await runRegisteredTool(tienda, { id: 'r4', tool: 'midi.clip.create', arguments: { pistaId: pad!.id, nombre: 'Puente', inicio: 44, duracion: 16, notas: [{ pitch: 60, inicio: 0, duracion: 1 }] } }, opts)
+    assert.match(d.error?.message ?? '', /Ya hay un clip en ese lugar/)
+    // El clip existe pero el modelo manda otra pista: se corrige la pista en vez de «Clip no encontrado».
+    const e = await runRegisteredTool(tienda, { id: 'r5', tool: 'midi.notes.patch', arguments: { pistaId: cuerdas!.id, clipId, upsert: [{ pitch: 72, inicio: 2, duracion: 1 }] } }, opts)
+    assert.equal(e.status, 'success', e.error?.message)
+    assert.equal((tienda.obtenerEstado().project.tracks[0]!.clips[0] as { notas: unknown[] }).notas.length, 3)
+    assert.equal(tienda.obtenerEstado().project.tracks[1]!.clips.length, 0)
+  })
+
+  it('normalizarParche: el tartamudeo `{"{"id"` del modelo y el resumen del historial', () => {
+    const pista = { nombre: 'Pad', clips: [{ id: 'c1', inicio: 0, duracion: 8, notas: [] }] }
+    const roto = normalizarParche({ clipId: 'c1', upsert: '[{"id": "a", "pitch": 67, "inicio": 0, "duracion": 4, "velocidad": 88}, {"{"id": "b", "pitch": 71, "inicio": 2, "duracion": 2}]' }, pista)
+    assert.ok('args' in roto, 'error' in roto ? roto.error : '')
+    if ('args' in roto) assert.deepEqual((roto.args.upsert as Array<{ nota: { pitch: number } }>).map((u) => u.nota.pitch), [67, 71])
+    const resumen = normalizarParche({ clipId: 'c1', upsert: '[lista de 14 elementos, abreviada en el historial]' }, pista)
+    assert.match('error' in resumen ? resumen.error : '', /resumen del historial/)
+  })
+
   it('instrumentoAproximado: «piano de cola» es el Grand Piano, no el Piano Synth', () => {
     const l = ['JasWave Grand Piano', 'JasWave Piano Synth', 'JasWave Shimmer Pad']
     assert.equal(instrumentoAproximado('piano de cola', l), 'JasWave Grand Piano')

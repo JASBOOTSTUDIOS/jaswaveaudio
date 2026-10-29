@@ -185,7 +185,11 @@ const MAX_LISTA_HISTORIAL = 8
  * que ve es el resumen, manda el resumen («[80 elementos]») como si fueran notas (60+ rechazos en una
  * producción). Con la última completa, imita datos reales; las anteriores sí se abrevian.
  */
-const LLAMADAS_COMPLETAS_EN_HISTORIAL = 1
+const LLAMADAS_COMPLETAS_EN_HISTORIAL = 3
+
+/** Se añade al sistema cuando el historial que ve el modelo lleva alguna lista abreviada. */
+export const AVISO_HISTORIAL_ABREVIADO =
+  'Nota sobre tu historial: en llamadas antiguas las listas largas aparecen abreviadas como «[lista de N elementos, abreviada en el historial]». Es solo un resumen de lo que ya enviaste; nunca copies ese texto en una llamada nueva: escribe siempre los datos reales y completos.'
 
 /** Argumentos de una llamada tal y como quedan en el historial: las listas largas, resumidas. */
 export function compactarArgumentosHistorial(v: unknown, nivel = 0): unknown {
@@ -347,10 +351,12 @@ export async function ejecutarAgente(cfg: ConfigAgente): Promise<ResultadoAgente
       ...[...visibles].map((n) => porNombre.get(n)!).map((h) => ({ name: h.nombre, description: h.descripcion, parameters: h.parametros })),
     ]
     let r
+    const vista = vistaHistorial(mensajes)
+    const abreviado = vista.some((m, i) => m !== mensajes[i])
     try {
       r = await cfg.chat({
-        sistema: cfg.sistema,
-        mensajes: vistaHistorial(mensajes),
+        sistema: abreviado ? `${cfg.sistema}\n\n${AVISO_HISTORIAL_ABREVIADO}` : cfg.sistema,
+        mensajes: vista,
         herramientas,
         profundidad,
         onDelta: (d) => emitir({ tipo: 'texto', delta: d, agente }),

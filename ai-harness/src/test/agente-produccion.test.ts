@@ -9,6 +9,7 @@ import {
   H_VEREDICTO,
   hojaComoTexto,
   normalizarHoja,
+  resolverMusico,
   type ChatAgente,
   type EventoProduccion,
   type HerramientaAgente,
@@ -33,6 +34,27 @@ const EQUIPO: ParticipanteProduccion[] = [
   { id: 'mix', nombre: 'Mezcla', descripcion: 'mezcla', instrucciones: '', rol: 'mezcla' },
   { id: 'mas', nombre: 'Máster', descripcion: 'máster', instrucciones: '', rol: 'master' },
 ]
+
+describe('a quién va cada encargo', () => {
+  const musicos: ParticipanteProduccion[] = [
+    { id: 'pianista', nombre: 'Pianista', descripcion: '', instrucciones: '', rol: 'musico' },
+    { id: 'baterista', nombre: 'Baterista / Percusión', descripcion: '', instrucciones: '', rol: 'musico' },
+    { id: 'sintetizador', nombre: 'Diseñador de Sintes / Leads', descripcion: '', instrucciones: '', rol: 'musico' },
+    { id: 'bajista', nombre: 'Bajista', descripcion: '', instrucciones: '', rol: 'musico' },
+  ]
+  it('acepta el id, el nombre, mayúsculas, acentos y partes del nombre (el modelo no copia los ids tal cual)', () => {
+    expect(resolverMusico('pianista', musicos)?.id).toBe('pianista')
+    expect(resolverMusico('Pianista', musicos)?.id).toBe('pianista')
+    expect(resolverMusico('Baterista / Percusión', musicos)?.id).toBe('baterista')
+    expect(resolverMusico('el baterista', musicos)?.id).toBe('baterista')
+    expect(resolverMusico('percusion', musicos)?.id).toBe('baterista')
+    expect(resolverMusico('Diseñador de Sintes', musicos)?.id).toBe('sintetizador')
+    expect(resolverMusico('sintes', musicos)?.id).toBe('sintetizador')
+    expect(resolverMusico('Bajista (bajo eléctrico)', musicos)?.id).toBe('bajista')
+    expect(resolverMusico('cuerdas', musicos)).toBeUndefined()
+    expect(resolverMusico('', musicos)).toBeUndefined()
+  })
+})
 
 let n = 0
 const ll = (nombre: string, argumentos: Record<string, unknown> = {}) => ({ id: `${nombre}-${++n}`, nombre, argumentos })
