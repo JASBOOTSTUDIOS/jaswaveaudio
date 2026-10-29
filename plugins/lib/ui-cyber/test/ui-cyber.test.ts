@@ -6,7 +6,13 @@ import de from '../../../com.jaswave.plugin.smart-deesser/ui-layout.json'
 import util from '../../../com.jaswave.plugin.utility-tool/ui-layout.json'
 import piano from '../../../com.jaswave.plugin.piano-synth/ui-layout.json'
 import roles from '../../../com.jaswave.plugin.roles-vst/ui-layout.json'
+import vocalTune from '../../../com.jaswave.plugin.vocal-tune/ui-layout.json'
+import bajo from '../../../com.jaswave.plugin.electric-bass/ui-layout.json'
 import {
+  layoutParaVista,
+  modoEnSelector,
+  modoInicial,
+  visibleEnPagina,
   Balistica,
   aNormalizado,
   aPlano,
@@ -160,5 +166,91 @@ describe('disposición responsiva y controles', () => {
       dibujarEditor(ctx, { layout: L, valor: () => 0.5, espectro: { in: cols, out: cols }, mostrarValores: true, avisoMedicion: 'La medición en vivo la calcula el VST en escritorio.' })
     }
     expect(llamadas.filter((c) => c === 'fillText').length).toBeGreaterThan(200)
+  })
+})
+
+describe('botón RESET', () => {
+  const layoutConReset: UiLayout = {
+    ...(piano as unknown as UiLayout),
+    widgets: [
+      ...(piano as unknown as UiLayout).widgets,
+      { tipo: 'reset', rect: [624, 48, 684, 68], etiqueta: 'RESET' },
+    ],
+  }
+
+  it('es un widget sensible aunque no tenga parámetro asociado', () => {
+    const w = widgetEn(layoutConReset, 650, 58)
+    expect(w?.tipo).toBe('reset')
+    expect(w?.param).toBeUndefined()
+  })
+
+  it('no captura clics fuera de su rectángulo', () => {
+    expect(widgetEn(layoutConReset, 600, 58)?.tipo).not.toBe('reset')
+    expect(widgetEn(layoutConReset, 650, 80)?.tipo).not.toBe('reset')
+  })
+})
+
+describe('modo Básico / Avanzado', () => {
+  const VT = vocalTune as unknown as UiLayout
+  const TODOS = [...LAYOUTS, VT, bajo as unknown as UiLayout]
+
+  it('cada editor tiene un selector BÁSICO | AVANZADO y abre en Avanzado', () => {
+    for (const L of TODOS) {
+      expect(L.widgets.filter((w) => w.tipo === 'modo'), L.productId).toHaveLength(1)
+      expect(modoInicial(L)).toBe('avanzado')
+    }
+  })
+
+  it('Avanzado muestra todo; Básico solo los esenciales, recolocados y sin páginas extra', () => {
+    for (const L of TODOS) {
+      expect(layoutParaVista(L, 'avanzado').widgets).toEqual(L.widgets)
+      const b = layoutParaVista(L, 'basico')
+      expect(b.widgets.length, L.productId).toBeLessThan(L.widgets.length)
+      expect(b.widgets.some((w) => w.basico === false || (w.pagina ?? 0) > 0 || w.tipo === 'pagina')).toBe(false)
+      for (const w of b.widgets) if (w.rectBasico) expect(w.rect).toEqual(w.rectBasico)
+      // el resultado se cachea: mismos objetos en cada fotograma (el widget activo se compara por identidad)
+      expect(layoutParaVista(L, 'basico')).toBe(b)
+    }
+    const nombres = layoutParaVista(VT, 'basico').widgets.filter((w) => w.param !== undefined).map((w) => w.nombre)
+    expect(nombres).toEqual(expect.arrayContaining(['Retune Speed', 'Humanize', 'Scale', 'Root', 'Mix', 'Bypass']))
+    expect(nombres).not.toContain('Formant Shift')
+  })
+
+  it('el selector cambia de modo según la mitad pulsada', () => {
+    const sel = VT.widgets.find((w) => w.tipo === 'modo')!
+    expect(widgetEn(VT, (sel.rect[0] + sel.rect[2]) / 2, (sel.rect[1] + sel.rect[3]) / 2)).toBe(sel)
+    expect(modoEnSelector(sel, sel.rect[0] + 4)).toBe('basico')
+    expect(modoEnSelector(sel, sel.rect[2] - 4)).toBe('avanzado')
+  })
+
+  it('página PARÁMETROS: su botón se ve en el editor y en su página (en la cabecera), no en MIX / FX', () => {
+    const L = bajo as unknown as UiLayout
+    const boton = L.widgets.find((w) => w.tipo === 'pagina' && w.paginaDestino === 2)!
+    expect(visibleEnPagina(boton, 0)).toBe(true)
+    expect(visibleEnPagina(boton, 1)).toBe(false)
+    const abierta = layoutParaVista(L, 'avanzado', 2)
+    const movido = abierta.widgets.find((w) => w.tipo === 'pagina' && w.paginaDestino === 2)!
+    expect(movido.rect[0]).toBe(484)
+    expect(movido.rect[1]).toBe(51)
+    const rejilla = L.widgets.filter((w) => w.pagina === 2 && w.param !== undefined)
+    expect(rejilla.length).toBeGreaterThan(0)
+    for (const w of rejilla) expect(widgetEn(abierta, (w.rect[0] + w.rect[2]) / 2, (w.rect[1] + w.rect[3]) / 2, 0, 2)).toBe(w)
+  })
+
+  it('dibuja ambos modos y la página PARÁMETROS sin errores', () => {
+    const ctx = new Proxy(
+      {},
+      {
+        get: (_t, k) => {
+          if (k === 'measureText') return (s: string) => ({ width: s.length * 6 })
+          if (k === 'createLinearGradient' || k === 'createRadialGradient') return () => ({ addColorStop: () => undefined })
+          return () => undefined
+        },
+        set: () => true,
+      },
+    ) as unknown as CanvasRenderingContext2D
+    for (const L of TODOS)
+      for (const modo of ['basico', 'avanzado'] as const)
+        for (const pagina of [0, 2]) dibujarEditor(ctx, { layout: L, valor: () => 0.5, modo, pagina })
   })
 })

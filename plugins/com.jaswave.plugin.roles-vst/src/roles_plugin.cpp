@@ -42,6 +42,7 @@ inline const std::vector<ParamDef>& paramDefs() {
         v.push_back(withFeature(linearP(kParamReverbId, "Reverb", "%", 0.0, 100.0, 25.0, 0), kFeatFx));
         v.push_back(linearP(kParamEqLowId, "EQ Low", "%", 0.0, 100.0, 50.0, 0));
         v.push_back(linearP(kParamEqHighId, "EQ High", "%", 0.0, 100.0, 50.0, 0));
+        marcarBasicos(v, { kParamRoleId, kParamAttackId, kParamReleaseId, kParamCutoffId, kParamGainId, kParamReverbId });   // modo Básico
         return v;
     }();
     return defs;
@@ -236,8 +237,10 @@ public:
             c.params.setNorm(kParamRoleId, static_cast<double>(i) / (kNumRoles - 1));
             return false;
         }
-        return false;
+        return teclado_.pulsar(e, c.params.bus());   // teclado en pantalla tocable con el ratón
     }
+    void vizDrag(const JasWaveUI::MouseEvent& e, JasWaveUI::EditorContext&) override { teclado_.arrastrar(e); }
+    void vizUp(const JasWaveUI::MouseEvent&, JasWaveUI::EditorContext&) override { teclado_.soltar(); }
     const wchar_t* footerId() const override { return L"com.jaswave.plugin.roles-vst"; }
 
 private:

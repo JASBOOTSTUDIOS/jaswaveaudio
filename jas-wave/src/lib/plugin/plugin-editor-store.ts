@@ -118,21 +118,45 @@ export function openPluginEditor(args: {
 async function abrirEnVentana(args: { trackId: string; pluginId: string; pluginName: string; pluginSnapshot?: PluginInfo }): Promise<void> {
   const { openPluginWindow } = await import('./plugin-windows')
   const snap = args.pluginSnapshot ?? (await buscarPlugin(args.trackId, args.pluginId))
-  if (!snap) return
+  if (!snap) {
+    // Antes salía en silencio y la ventana «no abría» sin explicación.
+    avisar(`No se encontró «${args.pluginName}» en ${args.trackId === 'master' ? 'el master' : 'la pista'}: ya no está en el proyecto.`)
+    return
+  }
   const r = await openPluginWindow({ trackId: args.trackId, plugin: snap, trackName: await nombrePista(args.trackId) })
-  if (!r.ok) console.warn('[plugin-editor] no se pudo abrir la ventana:', r.message)
+  if (!r.ok) {
+    console.warn('[plugin-editor] no se pudo abrir la ventana:', r.message)
+    avisar(`No se pudo abrir «${args.pluginName}»: ${r.message ?? 'error desconocido'}`)
+  }
 }
 
-type EstadoMin = { project?: { tracks?: Array<{ id: string; nombre?: string; plugins?: PluginInfo[] }> } }
+let notificador: ((mensaje: string) => void) | null = null
+/** La app registra cómo mostrar un aviso al usuario (toast); sin él, solo consola. */
+export function registrarNotificadorEditor(fn: ((mensaje: string) => void) | null): void {
+  notificador = fn
+}
+function avisar(mensaje: string): void {
+  try {
+    if (notificador) notificador(mensaje)
+    else console.warn('[plugin-editor]', mensaje)
+  } catch {
+    /* un aviso nunca debe romper la apertura */
+  }
+}
+
+type EstadoMin = { project?: { tracks?: Array<{ id: string; nombre?: string; plugins?: PluginInfo[] }>; master?: { plugins?: PluginInfo[] } } }
 let obtenerEstado: (() => EstadoMin) | null = null
 /** El árbol de React registra cómo leer el proyecto (para resolver el plugin y la pista al abrir su ventana). */
 export function registrarLectorProyecto(fn: (() => EstadoMin) | null): void {
   obtenerEstado = fn
 }
 async function buscarPlugin(trackId: string, pluginId: string): Promise<PluginInfo | null> {
+  // La cadena del master no es una pista: antes su plugin nunca se encontraba y el editor no abría.
+  if (trackId === 'master') return obtenerEstado?.().project?.master?.plugins?.find((p) => p.id === pluginId) ?? null
   const t = obtenerEstado?.().project?.tracks?.find((x) => x.id === trackId)
   return t?.plugins?.find((p) => p.id === pluginId) ?? null
 }
 async function nombrePista(trackId: string): Promise<string> {
+  if (trackId === 'master') return 'Master'
   return obtenerEstado?.().project?.tracks?.find((x) => x.id === trackId)?.nombre ?? ''
 }

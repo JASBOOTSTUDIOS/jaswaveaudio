@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { memo, useEffect, useRef } from 'react'
 
 export type MidiClipPreviewNote = {
   pitch: number
@@ -9,7 +9,7 @@ export type MidiClipPreviewNote = {
 }
 
 /** Mini piano-roll: figura real de las notas del clip (no un placeholder). */
-export function MidiClipPreview({
+function MidiClipPreviewImpl({
   notes,
   durationBeats,
   color,
@@ -31,8 +31,11 @@ export function MidiClipPreview({
       const h = wrap.clientHeight
       if (w < 2 || h < 2) return
       const dpr = Math.min(2, window.devicePixelRatio || 1)
-      canvas.width = Math.floor(w * dpr)
-      canvas.height = Math.floor(h * dpr)
+      // Asignar width/height realoca el bitmap aunque no cambie: sólo si cambió el tamaño.
+      const cw = Math.floor(w * dpr)
+      const ch = Math.floor(h * dpr)
+      if (canvas.width !== cw) canvas.width = cw
+      if (canvas.height !== ch) canvas.height = ch
       canvas.style.width = `${w}px`
       canvas.style.height = `${h}px`
       const ctx = canvas.getContext('2d')
@@ -84,3 +87,6 @@ export function MidiClipPreview({
     </div>
   )
 }
+
+/** memo: con 90 clips, un re-render del arrange no debe repintar las 90 miniaturas. */
+export const MidiClipPreview = memo(MidiClipPreviewImpl)

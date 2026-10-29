@@ -1,8 +1,9 @@
 /**
  * Escenario 7: turno completo del agente por la UI con el proveedor mock (A1 + A2).
  * JASWAVE_AI_MOCK=<guion> → el gateway responde de forma determinista (tool call nativa).
- * Pedido en el chat → tarjeta Aplicar (run en espera persistido en userData/agent-runs) →
- * «Todas» → el motor aplica, reanuda el loop y completa → BPM cambiado en el proyecto.
+ * Pedido en el chat → el agente ejecuta la herramienta → el chat muestra el progreso y una respuesta
+ * legible (sin nombres internos) → BPM cambiado y run completado en userData/agent-runs.
+ * También: el menú «/» con explicaciones para usuarios y los comandos locales (/programar).
  */
 import { expect, test } from '@playwright/test'
 import * as fs from 'node:fs'
@@ -32,7 +33,7 @@ test('el proveedor mock está online en el panel', async () => {
   await expect(chat.getByText('Online', { exact: true })).toBeVisible({ timeout: 30_000 })
 })
 
-test('turno completo: pedido → tarjeta Aplicar → aplicar → completado y run persistido', async () => {
+test('turno completo: pedido → el agente ejecuta → respuesta legible y run persistido', async () => {
   const { page, bridge, userData } = app()
   const chat = page.locator('aside[data-coproducer-chat]')
   const input = chat.locator('textarea')
@@ -40,28 +41,36 @@ test('turno completo: pedido → tarjeta Aplicar → aplicar → completado y ru
   await input.fill('pon el tempo a 97 bpm')
   await input.press('Enter')
 
-  // La tool call nativa del mock queda como propuesta (create/auto piden Aplicar antes de mutar).
-  const applyAll = chat.locator('[data-apply-remaining]').first()
-  await expect(applyAll).toBeVisible({ timeout: 90_000 })
-  expect((await bridge!.state()).bpm).toBe(120)
-
-  const waiting = await waitFor(
-    'run en espera persistido',
-    async () => runFiles(userData).find((r) => r.status === 'waiting-user' && r.pending?.kind === 'apply'),
-    30_000,
-  )
-  expect(waiting.programId).toBe('coproductor-legacy')
-  expect(waiting.log.some((l: any) => l.kind === 'chat')).toBe(true)
-
-  await applyAll.click()
-  await expect.poll(async () => (await bridge!.state()).bpm, { timeout: 60_000 }).toBe(97)
+  await expect.poll(async () => (await bridge!.state()).bpm, { timeout: 90_000 }).toBe(97)
+  await expect(chat.locator('[data-agente-progreso="listo"]').first()).toBeVisible({ timeout: 30_000 })
+  await expect(chat.getByText(/quedó en 97 BPM/)).toBeVisible()
+  const texto = await chat.innerText()
+  expect(texto).not.toMatch(/project\.setBpm|<<<|>>>/)
 
   const done = await waitFor(
     'run completado',
-    async () => runFiles(userData).find((r) => r.id === waiting.id && r.status === 'completed'),
+    async () => runFiles(userData).find((r) => r.programId === 'jaswave-agente' && r.status === 'completed'),
     60_000,
   )
   expect(done.budget.modelCalls).toBeGreaterThanOrEqual(2)
-  // Nada de chats sin system prompt ni errores de consola por el turno.
   expect(app().consoleErrors.filter((e) => /agent|engine|ai-chat/i.test(e))).toEqual([])
+})
+
+test('menú «/»: comandos con explicación sencilla y /programar responde sin tecnicismos', async () => {
+  const { page } = app()
+  const chat = page.locator('aside[data-coproducer-chat]')
+  const input = chat.locator('textarea')
+  await input.click()
+  await input.fill('/')
+  const menu = chat.locator('#jw-mention-list')
+  await expect(menu).toBeVisible()
+  await expect(menu.getByText('¿Qué quieres hacer?')).toBeVisible()
+  await expect(menu.getByText('preparo un plan paso a paso sin tocar tu proyecto')).toBeVisible()
+  expect(await menu.innerText()).not.toMatch(/\.md|Music Build|mapa MIDI/)
+  await input.press('Escape')
+
+  await input.fill('/programar lista')
+  await input.press('Enter')
+  await expect(chat.getByText('No hay tareas programadas.', { exact: false })).toBeVisible({ timeout: 15_000 })
+  expect(await chat.innerText()).not.toMatch(/<id>|`/)
 })

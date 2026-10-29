@@ -9,6 +9,8 @@ import { requestOpenTool } from '@/src/workspace/types'
 import { dawClipboard, type ClipboardClip } from '@/src/lib/daw-clipboard'
 import { loteBorrarClips, lotePegarClips } from '@/src/lib/clip-edit-commands'
 import { batchOrNotify } from '@/src/lib/execute-or-toast'
+import { loteAutoFade, loteConsolidar, loteInvertir, loteNormalizar, loteToggleMute } from '@/src/lib/clip-acciones'
+import { audioEngine } from '@/lib/audio-engine'
 import { styleSaveFromClip } from '@/src/lib/styles/ops'
 import { accionesDeClip, ejecutarAccionDeClip } from '@/src/modulos/contribuciones'
 
@@ -354,6 +356,57 @@ export function ClipContextMenu({ menu, onClose, tienda }: Props) {
         }
       />
       ) : null}
+      <Sep />
+      {(() => {
+        const proyecto = tienda.obtenerEstado().project as never
+        const ids = menuClips.map((c) => c.id)
+        const todosSilenciados = menuClips.every((c) => (c as { silenciado?: boolean }).silenciado === true)
+        const hayAudio = menuClips.some((c) => !clipIsMidi(c))
+        return (
+          <>
+            <MenuItem
+              label={todosSilenciados ? 'Activar clip' : 'Silenciar clip'}
+              shortcut="0"
+              onClick={() => run(() => batchOrNotify(tienda, loteToggleMute(proyecto, ids), 'clip.toggleMute'))}
+            />
+            {hayAudio ? (
+              <>
+                <MenuItem
+                  label="Fundido anti-clics (10 ms)"
+                  shortcut="F"
+                  onClick={() => run(() => batchOrNotify(tienda, loteAutoFade(proyecto, ids), 'clip.autoFade'))}
+                />
+                <MenuItem
+                  label="Invertir audio"
+                  shortcut="Alt+R"
+                  onClick={() => run(() => batchOrNotify(tienda, loteInvertir(proyecto, ids), 'clip.reverseAudio'))}
+                />
+                <MenuItem
+                  label="Normalizar (pico −1 dB)"
+                  shortcut="Alt+N"
+                  onClick={() =>
+                    run(() =>
+                      batchOrNotify(
+                        tienda,
+                        loteNormalizar(proyecto, ids, (k, d, dur) => audioEngine.getClipPeak(k, d, dur)).comandos,
+                        'clip.normalizeAudio',
+                      ),
+                    )
+                  }
+                />
+              </>
+            ) : null}
+            {multi ? (
+              <MenuItem
+                label="Consolidar"
+                shortcut="Ctrl+J"
+                disabled={loteConsolidar(proyecto, ids).length === 0}
+                onClick={() => run(() => batchOrNotify(tienda, loteConsolidar(proyecto, ids), 'clip.consolidate'))}
+              />
+            ) : null}
+          </>
+        )
+      })()}
       {!multi && midi ? (
         <>
           <Sep />

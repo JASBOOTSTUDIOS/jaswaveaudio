@@ -49,6 +49,8 @@ export interface ToolContext {
   query: DAWQuery;
   userPermissionLevel: PermissionLevel;
   projectId: string;
+  /** Quién pidió la herramienta: los comandos que lance deben auditarse con el mismo origen. */
+  source?: 'user' | 'ai' | 'script';
 }
 
 export interface ToolError {
@@ -316,6 +318,7 @@ export function crearToolRegistry(): ToolRegistry {
           query: { type: 'tool_execute', toolName: name, params } as any,
           userPermissionLevel: NIVEL_POR_ORIGEN[source] ?? 'guest',
           projectId: executorRef.obtenerEstado()?.project?.id ?? '',
+          source,
         };
 
         try {

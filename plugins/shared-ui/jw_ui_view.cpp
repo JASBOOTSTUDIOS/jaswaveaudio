@@ -92,6 +92,127 @@ private:
 };
 
 // ---------------------------------------------------------------------------------
+//  Botón RESET de la cabecera: todos los parámetros editables vuelven a su valor por defecto
+// ---------------------------------------------------------------------------------
+class ResetButton : public Button {
+public:
+    using Button::Button;
+    void draw(Gfx& g, ParamAccess&, bool hover) override {
+        const float rad = rect.h() * 0.5f;
+        g.fillRound(rect, rad, Pal::cian.withAlpha(hover ? 0.26f : 0.10f));
+        g.strokeRound(rect, rad, Pal::cian.withAlpha(hover ? 0.95f : 0.55f), 1.0f);
+        g.text(caption, rect, Font::Label, hover ? Pal::textoTitulo : Pal::cian, Align::Center, true);
+    }
+    const char* kind() const override { return "reset"; }
+};
+
+// ---------------------------------------------------------------------------------
+//  Selector de modo de la cabecera: [ BÁSICO | AVANZADO ]
+// ---------------------------------------------------------------------------------
+constexpr Rect kRectModo{ 358.0f, 48.0f, 476.0f, 68.0f };
+constexpr float kCorteModo = 410.0f;   // frontera entre las dos mitades
+
+class SelectorModo : public Widget {
+public:
+    SelectorModo(Rect r, std::function<bool()> esBasico, std::function<void(bool)> cambiar)
+        : Widget(r), esBasico_(std::move(esBasico)), cambiar_(std::move(cambiar)) { basico = 1; }
+    void draw(Gfx& g, ParamAccess&, bool hover) override {
+        const bool b = esBasico_();
+        const float rad = rect.h() * 0.5f;
+        const Rect izq{ rect.l, rect.t, kCorteModo, rect.b }, der{ kCorteModo, rect.t, rect.r, rect.b };
+        g.fillRound(rect, rad, Pal::cian.withAlpha(hover ? 0.10f : 0.05f));
+        g.fillRound(b ? izq : der, rad, Pal::cian.withAlpha(0.30f));
+        g.strokeRound(rect, rad, Pal::cian.withAlpha(hover ? 0.95f : 0.55f), 1.0f);
+        g.line(kCorteModo, rect.t + 4.0f, kCorteModo, rect.b - 4.0f, Pal::cian.withAlpha(0.35f), 1.0f);
+        g.text(L"BÁSICO", izq, Font::Label, b ? Pal::textoTitulo : Pal::cian.withAlpha(0.75f), Align::Center, true);
+        g.text(L"AVANZADO", der, Font::Label, b ? Pal::cian.withAlpha(0.75f) : Pal::textoTitulo, Align::Center, true);
+    }
+    bool onDown(const MouseEvent& e, ParamAccess&) override {
+        const bool quiere = e.x < kCorteModo;
+        if (quiere != esBasico_()) cambiar_(quiere);
+        return false;
+    }
+    const char* kind() const override { return "modo"; }
+    const wchar_t* text() const override { return L"BÁSICO|AVANZADO"; }
+    std::string layoutExtra() const override {
+        char b[64];
+        std::snprintf(b, sizeof b, ", \"corte\": %.1f", kCorteModo);
+        return b;
+    }
+private:
+    std::function<bool()> esBasico_;
+    std::function<void(bool)> cambiar_;
+};
+
+// ---------------------------------------------------------------------------------
+//  Página automática «PARÁMETROS» (pagina = 2): todos los parámetros editables que el editor del plugin no expone
+//  con un widget propio, en una rejilla. Garantiza que el modo Avanzado muestre el 100 % de la tabla.
+// ---------------------------------------------------------------------------------
+constexpr uint8_t kPaginaParametros = 2;
+
+class BotonParametros : public Button {
+public:
+    BotonParametros(Rect r, int n, std::function<void()> a, std::function<bool()> abierta)
+        : Button(r, L"", std::move(a)), abierta_(std::move(abierta)) {
+        wchar_t b[32];
+        swprintf_s(b, L"+%d PARÁM.", n);
+        cerrado_ = b;
+        caption = cerrado_;
+        basico = 0;
+    }
+    void draw(Gfx& g, ParamAccess&, bool hover) override {
+        const bool on = abierta_();
+        caption = on ? L"◀ EDITOR" : cerrado_;
+        const float rad = rect.h() * 0.5f;
+        g.fillRound(rect, rad, Pal::cian.withAlpha(on ? 0.34f : (hover ? 0.26f : 0.10f)));
+        g.strokeRound(rect, rad, Pal::cian.withAlpha(on || hover ? 0.95f : 0.55f), 1.0f);
+        g.text(caption, rect, Font::Label, hover || on ? Pal::textoTitulo : Pal::cian, Align::Center, true);
+    }
+    const char* kind() const override { return "pagina"; }
+    int paginaDestino() const override { return kPaginaParametros; }
+    bool paginaAbierta() const override { return abierta_(); }
+    std::string layoutExtra() const override { return ", \"paginaDestino\": 2, \"textoAbierta\": \"◀ EDITOR\""; }
+private:
+    std::wstring cerrado_;
+    std::function<bool()> abierta_;
+};
+
+// Desplegable de la página de parámetros: nombre encima y caja debajo
+class DropdownApilado : public Dropdown {
+public:
+    DropdownApilado(uint32_t id, Rect r, const wchar_t* label) : Dropdown(id, r, L""), nombre_(label ? label : L"") {}
+    void draw(Gfx& g, ParamAccess& p, bool hover) override {
+        const bool locked = p.locked(static_cast<uint32_t>(paramId()));
+        g.text(nombre_, { rect.l - 8.0f, rect.t - 18.0f, rect.r + 8.0f, rect.t - 2.0f }, Font::Label, locked ? Pal::bloqueado : Pal::textoEtiqueta, Align::Center, true);
+        Dropdown::draw(g, p, hover);
+    }
+    const wchar_t* text() const override { return nombre_.c_str(); }
+    std::string layoutExtra() const override { return ", \"etiquetaArriba\": true"; }
+private:
+    std::wstring nombre_;
+};
+
+// Nombre legible de un parámetro para la rejilla (mayúsculas, UTF-8 -> UTF-16)
+// Si no cabe bajo la perilla (~18 caracteres) se abrevian las palabras más largas ("REALIMENTACIÓN" -> "REAL.").
+static std::wstring nombreParametro(const JasWaveVst::ParamDef& d) {
+    constexpr size_t kMax = 18;
+    std::wstring w = widen(d.name ? d.name : "");
+    if (!w.empty()) CharUpperBuffW(&w[0], static_cast<DWORD>(w.size()));
+    for (int guarda = 0; w.size() > kMax && guarda < 8; ++guarda) {
+        size_t mejor = std::wstring::npos, largo = 0, i = 0;
+        while (i < w.size()) {
+            const size_t f = std::min(w.find(L' ', i), w.size());
+            if (f - i > largo && w[f - 1] != L'.') { largo = f - i; mejor = i; }
+            i = f + 1;
+        }
+        if (mejor == std::wstring::npos || largo <= 5) break;
+        w = w.substr(0, mejor + 4) + L"." + w.substr(mejor + largo);
+    }
+    if (w.size() > kMax) w = w.substr(0, kMax - 1) + L"…";
+    return w;
+}
+
+// ---------------------------------------------------------------------------------
 //  Núcleo del editor: estado + pintado (ventana o bitmap)
 // ---------------------------------------------------------------------------------
 class EditorCore {
@@ -102,6 +223,22 @@ public:
             editor_->build(ctx_);
             if (editor_->modeParam() >= 0) mode_ = ctx_.dropdown(static_cast<uint32_t>(editor_->modeParam()), { 690.0f, 48.0f, 846.0f, 68.0f }, L"MODO");
         }
+        construirPaginaParametros();
+        ctx_.widgets.push_back(std::make_unique<SelectorModo>(kRectModo, [this] { return modoBasico(); }, [this](bool b) { cambiarModo(b); }));
+        {
+            // el botón se registra el último: queda por encima de los demás widgets en pintado y en hit-test
+            JasWaveVst::JwController* ctl = c;
+            ctx_.widgets.push_back(std::make_unique<ResetButton>(Rect{ 624.0f, 48.0f, 684.0f, 68.0f }, L"RESET", [this, ctl] {
+                for (const auto& d : ctl->table().defs()) {
+                    if (d.readOnly) continue;
+                    access_.setNorm(d.id, JasWaveVst::defaultNorm(d));
+                }
+            }));
+        }
+        offsets_.assign(ctx_.widgets.size(), Pt{ 0.0f, 0.0f });
+        if (gPaginaInicial == kPaginaParametros) activarParametros(true);   // solo capturas
+        if (gPaginaInicial == 1 && botonParams_) botonParams_->visible = false;   // capturas de MIX / FX abierta
+        aplicarModo();
         footer_ = widen(c->descriptor().productId);
         login_ = std::make_unique<Button>(Rect{ 460.0f, 352.0f, 640.0f, 384.0f }, L"INICIAR SESIÓN",
                                           [] { JasWaveLicense::Manager::instance().startActivation(); });
@@ -135,8 +272,9 @@ public:
         const bool expiring = (lic_.state & JasWaveLicense::StateBits::kExpiringSoon) != 0;
         Chrome::drawHeader(g, editor_ ? editor_->title() : L"JASWAVE", editor_ ? editor_->subtitle() : L"", expiring, licensed,
                            editor_ ? editor_->accent() : Pal::acentoCian);
-        if (editor_) editor_->drawPanels(g, ctx_);
-        for (auto& w : ctx_.widgets) if (w->visible) w->draw(g, access_, w.get() == hover_ && !overlayActive());
+        aplicarModo();
+        if (editor_ && !ctx_.suppressPanels) editor_->drawPanels(g, ctx_);
+        for (auto& w : ctx_.widgets) if (w->mostrado()) w->draw(g, access_, w.get() == hover_ && !overlayActive());
         Chrome::drawFrameLeds(g, editor_ ? editor_->outputLevel() : 0.0f);
         Chrome::drawFooter(g, footer_.c_str());
         if (overlayActive()) drawOverlay(g);
@@ -156,12 +294,12 @@ public:
         }
         for (auto it = ctx_.widgets.rbegin(); it != ctx_.widgets.rend(); ++it) {
             Widget* w = it->get();
-            if (!w->visible || !w->hit(e.x, e.y)) continue;
+            if (!w->mostrado() ||!w->hit(e.x, e.y)) continue;
             if (dynamic_cast<Dropdown*>(w)) return w->isLocked(access_) ? -1 : w->paramId();
             if (w->onDown(e, access_)) captured_ = w;
             return -1;
         }
-        if (editor_ && editor_->vizDown(e, ctx_)) vizCaptured_ = true;
+        if (editor_ && !ctx_.suppressPanels && editor_->vizDown(e, ctx_)) vizCaptured_ = true;
         return -1;
     }
     void mouseMove(const MouseEvent& e) {
@@ -171,7 +309,7 @@ public:
         hover_ = nullptr;
         if (overlayActive()) return;
         for (auto it = ctx_.widgets.rbegin(); it != ctx_.widgets.rend(); ++it)
-            if ((*it)->visible && (*it)->hit(e.x, e.y)) { hover_ = it->get(); break; }
+            if ((*it)->mostrado() &&(*it)->hit(e.x, e.y)) { hover_ = it->get(); break; }
     }
     void mouseUp(const MouseEvent& e) {
         if (captured_) { captured_->onUp(e, access_); captured_ = nullptr; }
@@ -180,19 +318,24 @@ public:
     void mouseDouble(const MouseEvent& e) {
         if (overlayActive()) return;
         for (auto it = ctx_.widgets.rbegin(); it != ctx_.widgets.rend(); ++it)
-            if ((*it)->visible && (*it)->hit(e.x, e.y)) { (*it)->onDouble(e, access_); return; }
-        if (editor_) editor_->vizDouble(e, ctx_);
+            if ((*it)->mostrado() &&(*it)->hit(e.x, e.y)) { (*it)->onDouble(e, access_); return; }
+        if (editor_ && !ctx_.suppressPanels) editor_->vizDouble(e, ctx_);
+    }
+    // Clic central = valor por defecto del control bajo el cursor (como el doble clic); no toca el visualizador
+    void mouseMiddle(const MouseEvent& e) {
+        if (overlayActive()) return;
+        if (Widget* w = widgetAt(e.x, e.y)) w->onDouble(e, access_);
     }
     void mouseWheel(const MouseEvent& e) {
         if (overlayActive()) return;
         for (auto it = ctx_.widgets.rbegin(); it != ctx_.widgets.rend(); ++it)
-            if ((*it)->visible && (*it)->hit(e.x, e.y)) { (*it)->onWheel(e, access_); return; }
-        if (editor_) editor_->vizWheel(e, ctx_);
+            if ((*it)->mostrado() &&(*it)->hit(e.x, e.y)) { (*it)->onWheel(e, access_); return; }
+        if (editor_ && !ctx_.suppressPanels) editor_->vizWheel(e, ctx_);
     }
     void mouseLeave() { if (!captured_) hover_ = nullptr; }
     Widget* widgetAt(float x, float y) {
         for (auto it = ctx_.widgets.rbegin(); it != ctx_.widgets.rend(); ++it)
-            if ((*it)->visible && (*it)->hit(x, y)) return it->get();
+            if ((*it)->mostrado() &&(*it)->hit(x, y)) return it->get();
         return nullptr;
     }
     // Táctil: área mínima de 44 px de diseño alrededor de cada control (V3 §4.5)
@@ -201,7 +344,7 @@ public:
         Widget* best = nullptr;
         float bestD = 1.0e9f;
         for (auto& w : ctx_.widgets) {
-            if (!w->visible || dynamic_cast<Section*>(w.get())) continue;
+            if (!w->mostrado() ||dynamic_cast<Section*>(w.get())) continue;
             const Rect& r = w->rect;
             const float padX = std::max(0.0f, (44.0f - r.w()) * 0.5f), padY = std::max(0.0f, (44.0f - r.h()) * 0.5f);
             if (!Rect{ r.l - padX, r.t - padY, r.r + padX, r.b + padY }.contains(x, y)) continue;
@@ -216,7 +359,303 @@ public:
     PluginEditor* editor() { return editor_.get(); }
     EditorContext& context() { return ctx_; }
 
+    // ---- modo Básico / Avanzado ----
+    bool modoBasico() const { return forzado_ >= 0 ? forzado_ == 0 : ctl_->modoEditor() == 0; }
+    void cambiarModo(bool basico) {
+        if (basico) cerrarPaginas();   // las páginas extra (MIX / FX, PARÁMETROS) son del modo Avanzado
+        ctl_->setModoEditor(basico ? 0 : 1);
+        aplicarModo();
+    }
+    // Solo volcado de layout: fija el modo sin tocar el controlador (-1 = el del controlador)
+    void forzarModo(int modo) { forzado_ = modo; aplicarModo(); }
+    // ¿El widget se muestra en modo Básico?
+    bool esBasico(const Widget& w) const {
+        if (w.basico >= 0) return w.basico != 0;
+        if (w.paginaDestino() >= 0) return false;   // botones de páginas extra: solo Avanzado
+        if (dynamic_cast<const Section*>(&w) || dynamic_cast<const Meter*>(&w)) return true;
+        const int id = w.paramId();
+        if (id < 0) return true;
+        const JasWaveVst::ParamDef* d = ctl_->table().find(static_cast<uint32_t>(id));
+        return !d || d->basico || d->bypass;
+    }
+    // Oculta lo que no es esencial en Básico y recoloca lo que queda (solo cuando cambia lo visible)
+    void aplicarModo() {
+        const bool basico = modoBasico();
+        ctx_.modoBasico = basico;
+        auto& ws = ctx_.widgets;
+        uint64_t firma = basico ? 0x9E3779B97F4A7C15ull : 0x1234567ull;
+        for (size_t i = 0; i < ws.size(); ++i) {
+            Widget* w = ws[i].get();
+            w->ocultoModo = basico && !esBasico(*w);
+            const uint64_t v = (w->visible ? 1ull : 0ull) | (w->ocultoModo ? 2ull : 0ull) | (static_cast<uint64_t>(static_cast<uint32_t>(w->paramId())) << 2);
+            firma = (firma ^ (v + 0x9E3779B97F4A7C15ull + (firma << 6) + (firma >> 2))) * 0x100000001B3ull;
+        }
+        if (firma == firma_) return;
+        firma_ = firma;
+        reflujo(basico);
+    }
+    // Rectángulo de un widget en el layout base (sin el reflujo del modo Básico)
+    Rect rectBase(size_t i) const {
+        const Rect& r = ctx_.widgets[i]->rect;
+        const Pt o = i < offsets_.size() ? offsets_[i] : Pt{ 0.0f, 0.0f };
+        return { r.l - o.x, r.t - o.y, r.r - o.x, r.b - o.y };
+    }
+    bool desplazado(size_t i) const { return i < offsets_.size() && (offsets_[i].x != 0.0f || offsets_[i].y != 0.0f); }
+    // Parámetros expuestos sin widget propio (perillas reasignables, páginas dibujadas a mano)
+    const std::vector<uint32_t>& cubiertosExtra() const { return cubiertosExtra_; }
+
 private:
+    void cerrarPaginas() {
+        if (paramsAbierta_) activarParametros(false);
+        for (auto& w : ctx_.widgets)
+            if (w->paginaDestino() > 0 && w->paginaAbierta()) { const MouseEvent e{ w->rect.cx(), w->rect.cy(), false, false, 0 }; w->onDown(e, access_); }
+    }
+
+    // ---- página PARÁMETROS ----
+    void construirPaginaParametros() {
+        std::vector<uint32_t> cubiertos;
+        for (auto& w : ctx_.widgets) w->parametrosCubiertos(cubiertosExtra_);
+        if (editor_) editor_->parametrosCubiertos(cubiertosExtra_);
+        std::sort(cubiertosExtra_.begin(), cubiertosExtra_.end());
+        cubiertosExtra_.erase(std::unique(cubiertosExtra_.begin(), cubiertosExtra_.end()), cubiertosExtra_.end());
+        cubiertos = cubiertosExtra_;
+        for (auto& w : ctx_.widgets) if (w->paramId() >= 0) cubiertos.push_back(static_cast<uint32_t>(w->paramId()));
+        if (editor_ && editor_->modeParam() >= 0) cubiertos.push_back(static_cast<uint32_t>(editor_->modeParam()));
+        std::vector<const JasWaveVst::ParamDef*> resto;
+        for (const auto& d : ctl_->table().defs()) {
+            if (d.readOnly) continue;
+            if (std::find(cubiertos.begin(), cubiertos.end(), d.id) != cubiertos.end()) continue;
+            resto.push_back(&d);
+        }
+        if (resto.empty()) return;
+        const int n = static_cast<int>(resto.size());
+        // botón en la barra de título de la sección de controles (a la izquierda de su píldora / candado si los tiene)
+        const Rect z = Plantilla::kControles;
+        float derecha = z.r - 14.0f;
+        for (auto& w : ctx_.widgets)
+            if (auto* s = dynamic_cast<Section*>(w.get()))
+                if (s->rect.l == z.l && s->rect.t == z.t) {
+                    if (s->paramId() >= 0) derecha = z.r - 46.0f;
+                    if (s->feature() >= 0) derecha = std::min(derecha, z.r - 62.0f);
+                }
+        const size_t i0 = ctx_.widgets.size();
+        // sección a pantalla completa con la rejilla
+        wchar_t titulo[64];
+        swprintf_s(titulo, L"PARÁMETROS AVANZADOS · %d", n);
+        const Rect area{ Layout::kVisualizer.l, Layout::kVisualizer.t, Layout::kRightBottom.r, Layout::kRightBottom.b };
+        ctx_.section(area, titulo);
+        int cols = std::min(n, 6);
+        while (cols < 12 && (n + cols - 1) / cols * 84 > static_cast<int>(area.h() - 44.0f)) ++cols;
+        const int rows = (n + cols - 1) / cols;
+        const float x0 = area.l + 14.0f, x1 = area.r - 14.0f, y0 = area.t + 34.0f, y1 = area.b - 8.0f;
+        const float cw = (x1 - x0) / cols, ch = std::min(96.0f, (y1 - y0) / rows);
+        const float yOff = y0 + ((y1 - y0) - ch * rows) * 0.5f;
+        const KnobSize ks = cw >= 96.0f && ch >= 84.0f ? KnobSize::Normal : KnobSize::Small;
+        for (int k = 0; k < n; ++k) {
+            const JasWaveVst::ParamDef& d = *resto[static_cast<size_t>(k)];
+            const float cx = x0 + cw * (k % cols + 0.5f), cy = yOff + ch * (k / cols + 0.5f);
+            const std::wstring nombre = nombreParametro(d);
+            if (d.map == JasWaveVst::Map::Stepped && d.steps == 1 && !d.bypass) {
+                const float hw = std::min(cw * 0.5f - 6.0f, 64.0f);
+                ctx_.toggle(d.id, { cx - hw, cy - 12.0f, cx + hw, cy + 12.0f }, nombre.c_str());
+            } else if (d.map == JasWaveVst::Map::Stepped) {
+                const float hw = std::min(cw * 0.5f - 6.0f, 70.0f);
+                auto dd = std::make_unique<DropdownApilado>(d.id, Rect{ cx - hw, cy - 2.0f, cx + hw, cy + 18.0f }, nombre.c_str());
+                ctx_.widgets.push_back(std::move(dd));
+            } else {
+                const float s = static_cast<float>(ks);
+                ctx_.knob(d.id, cx, cy - (s * 0.5f + 26.0f - (s + 30.0f) * 0.5f), ks, nombre.c_str());
+            }
+        }
+        for (size_t i = i0; i < ctx_.widgets.size(); ++i) { ctx_.widgets[i]->pagina = kPaginaParametros; ctx_.widgets[i]->visible = false; }
+        ctx_.widgets.push_back(std::make_unique<BotonParametros>(Rect{ derecha - 86.0f, z.t + 6.0f, derecha, z.t + 21.0f }, n,
+                                                                 [this] { activarParametros(!paramsAbierta_); }, [this] { return paramsAbierta_; }));
+        botonParams_ = ctx_.widgets.back().get();
+    }
+    void activarParametros(bool on) {
+        if (on == paramsAbierta_ || !botonParams_) return;
+        auto& ws = ctx_.widgets;
+        auto fija = [&](Widget* w) { return w == botonParams_ || std::strcmp(w->kind(), "reset") == 0 || std::strcmp(w->kind(), "modo") == 0; };
+        if (on) {
+            visPrevParams_.assign(ws.size(), 1);
+            for (size_t i = 0; i < ws.size(); ++i) {
+                Widget* w = ws[i].get();
+                visPrevParams_[i] = w->visible ? 1 : 0;
+                if (w->pagina == kPaginaParametros || fija(w)) continue;
+                w->visible = false;
+            }
+        } else {
+            for (size_t i = 0; i < ws.size() && i < visPrevParams_.size(); ++i) {
+                Widget* w = ws[i].get();
+                if (w->pagina == kPaginaParametros || fija(w)) continue;
+                w->visible = visPrevParams_[i] != 0;
+            }
+        }
+        for (auto& w : ws) if (w->pagina == kPaginaParametros) w->visible = on;
+        ctx_.suppressPanels = on;
+        paramsAbierta_ = on;
+        // el botón se coloca en la cabecera mientras la página está abierta (la sección de controles queda tapada)
+        // (en el sitio del botón MIX / FX, que queda oculto)
+        if (on) {
+            offsetBoton_ = { 484.0f - botonParams_->rect.l, 51.0f - botonParams_->rect.t };
+            botonParams_->mover(offsetBoton_.x, offsetBoton_.y);
+        } else {
+            botonParams_->mover(-offsetBoton_.x, -offsetBoton_.y);
+            offsetBoton_ = { 0.0f, 0.0f };
+        }
+        firma_ = 0;
+    }
+
+    // ---- reflujo del modo Básico ----
+    struct Item { size_t i; Rect r; bool oculto; };
+    void moverA(size_t i, float dx, float dy) {
+        if (dx == 0.0f && dy == 0.0f) return;
+        ctx_.widgets[i]->mover(dx, dy);
+        offsets_[i].x += dx;
+        offsets_[i].y += dy;
+    }
+    void reflujo(bool basico) {
+        auto& ws = ctx_.widgets;
+        if (offsets_.size() < ws.size()) offsets_.resize(ws.size(), Pt{ 0.0f, 0.0f });
+        // vuelta al layout base
+        for (size_t i = 0; i < ws.size(); ++i) moverA(i, -offsets_[i].x, -offsets_[i].y);
+        if (!basico) return;
+        reflujoControles();
+        reflujoSalida();
+    }
+    std::vector<Item> itemsEn(const Rect& z, bool celdas) {
+        std::vector<Item> v;
+        auto& ws = ctx_.widgets;
+        for (size_t i = 0; i < ws.size(); ++i) {
+            Widget* w = ws[i].get();
+            if (w->pagina != 0 || !w->visible || w == botonParams_) continue;
+            if (dynamic_cast<Section*>(w) || dynamic_cast<Fader*>(w)) continue;
+            if (!celdas && dynamic_cast<Meter*>(w)) continue;
+            const Rect r = rectBase(i);
+            if (!z.contains(r.cx(), r.cy())) continue;
+            v.push_back({ i, r, w->ocultoModo });
+        }
+        return v;
+    }
+    // Controles: filas (por altura); en cada fila con huecos se reparten los visibles a lo ancho y, si una fila
+    // queda vacía, las restantes se reparten a lo alto.
+    void reflujoControles() {
+        const Rect z = Plantilla::kControles;
+        std::vector<Item> items = itemsEn({ z.l, z.t + 26.0f, z.r, z.b }, false);
+        if (items.empty()) return;
+        std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.r.cy() < b.r.cy(); });
+        std::vector<std::vector<Item>> filas;
+        for (const Item& it : items) {
+            if (filas.empty() || std::fabs(it.r.cy() - filas.back().front().r.cy()) > 22.0f) filas.emplace_back();
+            filas.back().push_back(it);
+        }
+        struct Fila { std::vector<Item> vis; float t, b; bool cambia; float paso; };
+        std::vector<Fila> quedan;
+        bool filaVacia = false;
+        for (auto& f : filas) {
+            Fila q{ {}, 1e9f, -1e9f, false, 12.0f };
+            for (const Item& it : f) if (!it.oculto) { q.vis.push_back(it); q.t = std::min(q.t, it.r.t); q.b = std::max(q.b, it.r.b); }
+            if (q.vis.empty()) { filaVacia = true; continue; }
+            q.cambia = q.vis.size() < f.size();
+            // separación original entre vecinos de la fila (se conserva al recentrar el grupo)
+            std::sort(f.begin(), f.end(), [](const Item& a, const Item& b) { return a.r.cx() < b.r.cx(); });
+            float suma = 0.0f;
+            int n = 0;
+            for (size_t j = 1; j < f.size(); ++j) { suma += std::max(0.0f, f[j].r.l - f[j - 1].r.r); ++n; }
+            if (n > 0) q.paso = std::max(4.0f, suma / n);
+            quedan.push_back(std::move(q));
+        }
+        if (quedan.empty()) return;
+        // reparto vertical (solo si desapareció alguna fila)
+        std::vector<float> dyFila(quedan.size(), 0.0f);
+        if (filaVacia) {
+            const float top = z.t + 34.0f, bot = z.b - 10.0f;
+            float suma = 0.0f;
+            for (auto& q : quedan) suma += q.b - q.t;
+            const float gap = std::max(6.0f, ((bot - top) - suma) / (quedan.size() + 1));
+            float y = top + gap;
+            for (size_t k = 0; k < quedan.size(); ++k) {
+                dyFila[k] = y - quedan[k].t;
+                y += (quedan[k].b - quedan[k].t) + gap;
+            }
+        }
+        // filas con huecos: el grupo visible se recentra con la separación original entre vecinos
+        const float l = z.l + 14.0f, r = z.r - 14.0f;
+        for (size_t k = 0; k < quedan.size(); ++k) {
+            auto& vis = quedan[k].vis;
+            std::sort(vis.begin(), vis.end(), [](const Item& a, const Item& b) { return a.r.cx() < b.r.cx(); });
+            float ancho = 0.0f;
+            for (const Item& it : vis) ancho += it.r.w();
+            const float paso = std::min(quedan[k].paso, std::max(0.0f, ((r - l) - ancho) / std::max<size_t>(1, vis.size() - 1)));
+            ancho += paso * (vis.size() - 1);
+            float x = 0.5f * (l + r) - 0.5f * ancho;
+            for (const Item& it : vis) {
+                const float dx = quedan[k].cambia ? x - it.r.l : 0.0f;
+                moverA(it.i, dx, dyFila[k]);
+                x += it.r.w() + paso;
+            }
+        }
+    }
+    // SALIDA: las celdas (3 columnas × 2 filas entre el fader y los medidores) se reempaquetan en orden de lectura
+    // y el bloque resultante se centra; el fader y los medidores IN/OUT no se mueven.
+    void reflujoSalida() {
+        namespace P = Plantilla;
+        const Rect celdas{ P::kCeldaX[0] - 37.0f, P::kSalida.t + 22.0f, P::kCeldaX[2] + 37.0f, P::kSalida.b };
+        std::vector<Item> items = itemsEn(celdas, true);
+        bool hay = false;
+        for (const Item& it : items) if (it.oculto) hay = true;
+        if (!hay) return;
+        constexpr float kPasoX = 74.0f, kPasoY = 56.0f;
+        bool ocupado[2][3] = {};
+        struct Pieza { Item it; int span, alto, c0, f0; float ax, ay; };
+        std::vector<Pieza> piezas;
+        for (const Item& it : items) {
+            Widget* w = ctx_.widgets[it.i].get();
+            const int span = std::clamp(static_cast<int>(std::lround(it.r.w() / kPasoX)), 1, 3);
+            const auto* k = dynamic_cast<Knob*>(w);
+            const bool medidor = dynamic_cast<Meter*>(w) != nullptr;
+            const int alto = medidor || (k && k->size() != KnobSize::Small) ? 2 : 1;
+            const int c0 = std::clamp(static_cast<int>(std::lround((it.r.cx() - P::kCeldaX[0]) / kPasoX - (span - 1) * 0.5f)), 0, 3 - span);
+            const int f0 = alto == 2 ? 0 : (std::fabs(it.r.cy() - P::kCeldaY[0]) <= std::fabs(it.r.cy() - P::kCeldaY[1]) ? 0 : 1);
+            const float ax = P::kCeldaX[0] + kPasoX * (c0 + (span - 1) * 0.5f);
+            const float ay = alto == 2 ? 0.5f * (P::kCeldaY[0] + P::kCeldaY[1]) : P::kCeldaY[f0];
+            if (medidor) { for (int f = 0; f < 2; ++f) ocupado[f][c0] = true; continue; }   // los medidores de celda no se mueven
+            if (it.oculto) continue;
+            piezas.push_back({ it, span, alto, c0, f0, ax, ay });
+        }
+        if (piezas.empty()) return;
+        std::stable_sort(piezas.begin(), piezas.end(), [](const Pieza& a, const Pieza& b) { return a.f0 != b.f0 ? a.f0 < b.f0 : a.c0 < b.c0; });
+        int cMin = 3, cMax = -1, fMin = 2, fMax = -1;
+        std::vector<std::pair<int, int>> pos(piezas.size(), { -1, -1 });
+        for (size_t k = 0; k < piezas.size(); ++k) {
+            const Pieza& p = piezas[k];
+            for (int f = 0; f + p.alto <= 2 && pos[k].first < 0; ++f)
+                for (int c = 0; c + p.span <= 3; ++c) {
+                    bool libre = true;
+                    for (int ff = f; ff < f + p.alto; ++ff) for (int cc = c; cc < c + p.span; ++cc) if (ocupado[ff][cc]) libre = false;
+                    if (!libre) continue;
+                    for (int ff = f; ff < f + p.alto; ++ff) for (int cc = c; cc < c + p.span; ++cc) ocupado[ff][cc] = true;
+                    pos[k] = { f, c };
+                    cMin = std::min(cMin, c); cMax = std::max(cMax, c + p.span - 1);
+                    fMin = std::min(fMin, f); fMax = std::max(fMax, f + p.alto - 1);
+                    break;
+                }
+        }
+        if (cMax < 0) return;
+        // con medidores de celda fijos no se centra en horizontal (se respetan sus columnas)
+        bool hayMedidor = false;
+        for (const Item& it : items) if (dynamic_cast<Meter*>(ctx_.widgets[it.i].get())) hayMedidor = true;
+        const float offX = hayMedidor ? 0.0f : ((3 - (cMax - cMin + 1)) * kPasoX) * 0.5f - cMin * kPasoX;
+        const float offY = ((2 - (fMax - fMin + 1)) * kPasoY) * 0.5f - fMin * kPasoY;
+        for (size_t k = 0; k < piezas.size(); ++k) {
+            if (pos[k].first < 0) continue;
+            const Pieza& p = piezas[k];
+            const float tx = P::kCeldaX[0] + kPasoX * (pos[k].second + (p.span - 1) * 0.5f) + offX;
+            const float ty = (p.alto == 2 ? 0.5f * (P::kCeldaY[0] + P::kCeldaY[1]) : P::kCeldaY[0] + kPasoY * pos[k].first) + offY;
+            moverA(p.it.i, tx - p.ax, ty - p.ay);
+        }
+    }
+
     Button* activeOverlayButton() {
         if (lic_.phase == JasWaveLicense::Phase::WaitingApproval || lic_.phase == JasWaveLicense::Phase::Starting) return cancel_.get();
         return login_.get();
@@ -277,6 +716,15 @@ private:
     Widget* captured_{nullptr};
     bool vizCaptured_{false};
     Pt mouse_{ -100.0f, -100.0f };
+    // modo Básico / Avanzado y página PARÁMETROS
+    int forzado_{-1};
+    uint64_t firma_{0};
+    std::vector<Pt> offsets_;
+    Widget* botonParams_{nullptr};
+    bool paramsAbierta_{false};
+    std::vector<char> visPrevParams_;
+    Pt offsetBoton_{ 0.0f, 0.0f };
+    std::vector<uint32_t> cubiertosExtra_;
 };
 
 // ---------------------------------------------------------------------------------
@@ -556,6 +1004,7 @@ private:
                 return 0;
             }
             case WM_LBUTTONDBLCLK: self->core_->mouseDouble(self->toDesign(lp, wp)); return 0;
+            case WM_MBUTTONDOWN: self->core_->mouseMiddle(self->toDesign(lp, wp)); return 0;
             case WM_MOUSEMOVE: {
                 if (!self->tracking_) {
                     TRACKMOUSEEVENT t{ sizeof t, TME_LEAVE, hwnd, 0 };
@@ -685,13 +1134,28 @@ bool dumpEditorLayout(JasWaveVst::JwController* controller, const wchar_t* path)
     o += std::string("    \"medidores\": ") + med + "\n  },\n";
     o += "  \"escalas\": { \"frecuencia\": [20, 20000], \"dbfs\": [-120, 0], \"caidaDbS\": 14 },\n";
     o += "  \"modoParam\": " + (ed->modeParam() >= 0 ? std::to_string(ed->modeParam()) : std::string("null")) + ",\n";
+    // Modo Básico: qué widgets quedan y dónde (reflujo); después se vuelve al layout base (Avanzado)
+    auto& ws = core.context().widgets;
+    core.forzarModo(0);
+    std::vector<std::pair<bool, Rect>> enBasico(ws.size(), { false, Rect{ 0, 0, 0, 0 } });
+    for (size_t i = 0; i < ws.size(); ++i) enBasico[i] = { core.desplazado(i), ws[i]->rect };
+    core.forzarModo(1);
+    o += "  \"modos\": { \"selector\": " + jsonRect(kRectModo) + ", \"corte\": " + std::to_string(static_cast<int>(kCorteModo)) + ", \"defecto\": \"avanzado\" },\n";
+    o += "  \"parametrosCubiertos\": [";
+    for (size_t i = 0; i < core.cubiertosExtra().size(); ++i) o += (i ? "," : "") + std::to_string(core.cubiertosExtra()[i]);
+    o += "],\n";
     o += "  \"widgets\": [\n";
     bool first = true;
-    for (auto& w : core.context().widgets) {
+    for (size_t i = 0; i < ws.size(); ++i) {
+        auto& w = ws[i];
         o += first ? "    {" : ",\n    {";
         first = false;
         o += " \"tipo\": " + jsonStr(w->kind()) + ", \"rect\": " + jsonRect(w->rect) + ", \"etiqueta\": " + jsonStr(utf8(w->text()));
         if (auto* k = dynamic_cast<Knob*>(w.get())) o += ", \"tamano\": " + std::to_string(static_cast<int>(k->size()));
+        if (w->pagina) o += ", \"pagina\": " + std::to_string(static_cast<int>(w->pagina));
+        o += std::string(", \"basico\": ") + (core.esBasico(*w) ? "true" : "false");
+        if (enBasico[i].first) o += ", \"rectBasico\": " + jsonRect(enBasico[i].second);
+        o += w->layoutExtra();
         const int id = w->paramId();
         if (id >= 0) {
             o += ", \"param\": " + std::to_string(id);

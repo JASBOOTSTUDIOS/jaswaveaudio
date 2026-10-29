@@ -7,6 +7,8 @@ import { crearDb } from './db.js';
 import { createPrivateKey } from 'node:crypto';
 import { adjuntarSync } from './sync/servidor.js';
 import { crearServicioIA, sembrarProductoIA } from './ia/proveedores.js';
+import { crearServicioJasWave, sembrarJasWaveIA } from './ia/jaswave/servicio.js';
+import { aiChatDirecto } from './ia/gateway/ai-gateway.js';
 import { claveMaestraDesdeBase64, type ClaveMaestra } from './seguridad/cifrado.js';
 
 const config = cargarConfiguracion();
@@ -48,15 +50,22 @@ const verificar = crearVerificadorJwt({
 });
 
 const db = crearDb(config.urlBaseDatos);
+// JasWave IA usa los permisos del servicio de proveedores y se entera de los cambios en las conexiones.
+let alCambiarConexiones = () => {};
+const ia = crearServicioIA({ db, claveMaestra: claveMaestraIA, alCambiarConexiones: () => alCambiarConexiones() });
+const jaswave = crearServicioJasWave({ db, claveMaestra: claveMaestraIA, permisos: (id) => ia.permisos(id), chat: aiChatDirecto, zonaHoraria: config.zonaHorariaIA });
+alCambiarConexiones = () => jaswave.admin.invalidar();
 const app = crearApp({
   verificar,
   origenesCors: config.origenesCors,
   log,
-  ia: crearServicioIA({ db, claveMaestra: claveMaestraIA }),
+  ia,
+  jaswave,
   datos: { db, clavePrivadaPem: config.clavePrivadaLicencia, reloj: () => new Date() },
 });
 // Producto del asistente y acciones base para que el admin pueda asignarlas desde el primer arranque.
 await sembrarProductoIA(db).catch((err: unknown) => log.error({ err }, 'no se pudo sembrar el producto de IA'));
+await sembrarJasWaveIA(db).catch((err: unknown) => log.error({ err }, 'no se pudieron sembrar los modelos y planes de JasWave IA'));
 const servidor = http.createServer(app);
 adjuntarSync(servidor, { db, verificar });
 servidor.listen(config.puerto, () => log.info({ puerto: config.puerto }, 'backend escuchando'));

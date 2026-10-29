@@ -13,6 +13,12 @@ import { EventosPlugin, EventosTrack } from '../constants/nombres-eventos'
 /** Id canónico para FX Chain del master (mismo API que trackId). */
 export const MASTER_FX_TRACK_ID = 'master'
 
+/**
+ * Máximo de plugins por cadena: el host nativo procesa como mucho 24 slots por pista
+ * (`kMaxChainSlots` en native/plugin-host/src/main.cpp); los que pasaran de ahí no sonarían.
+ */
+export const MAX_PLUGINS_POR_CADENA = 24
+
 function generarId(): string {
   return `plugin-${entorno.ahora().toString(36)}-${entorno.aleatorio().toString(36).slice(2, 7)}`
 }
@@ -146,11 +152,18 @@ export function crearComandoPluginInsert(): CommandDefinition<PluginInsertPayloa
       if (chain.some((p) => p.id === plugin.id)) {
         throw new Error(`Ya existe plugin instanceId: ${plugin.id}`)
       }
+      if (chain.length >= MAX_PLUGINS_POR_CADENA) {
+        throw new Error(
+          `La cadena de «${pista.nombre}» ya tiene ${MAX_PLUGINS_POR_CADENA} plugins, el máximo que procesa el motor. ` +
+            'Quita alguno o usa una pista o bus adicional.',
+        )
+      }
       const rawPos = payload.position ?? payload.index
+      const posNumerica = Number(rawPos)
       const pos =
-        rawPos === undefined
+        rawPos === undefined || !Number.isFinite(posNumerica)
           ? chain.length
-          : Math.max(0, Math.min(Number(rawPos), chain.length))
+          : Math.max(0, Math.min(Math.trunc(posNumerica), chain.length))
       chain.splice(pos, 0, plugin)
 
       return {
@@ -446,6 +459,11 @@ export function crearComandoPluginDuplicate(): CommandDefinition<PluginDuplicate
       if (chain.some((p) => p.id === copy.id)) {
         throw new Error(`Ya existe plugin instanceId: ${copy.id}`)
       }
+      if (chain.length >= MAX_PLUGINS_POR_CADENA) {
+        throw new Error(
+          `La cadena de «${pista.nombre}» ya tiene ${MAX_PLUGINS_POR_CADENA} plugins, el máximo que procesa el motor.`,
+        )
+      }
       chain.splice(idx + 1, 0, copy)
 
       return {
@@ -549,16 +567,19 @@ export type PluginSetParameterPayload = {
   trackId: string
   pluginInstanceId: string
   parameterId: string
+  /** 0..1. Se acota al rango; un valor no finito es un error. */
   normalizedValue: number
   plainValue?: number
   name?: string
+  /** Quita la entrada del parámetro (es el inverso exacto de crear una entrada nueva). */
+  quitar?: boolean
 }
 
 export function crearComandoPluginSetParameter(): CommandDefinition<PluginSetParameterPayload> {
   return {
     type: 'plugin.setParameter',
     inverseType: 'plugin.setParameter',
-    description: 'Actualiza un parámetro lógico del plugin (dominio; host sync aparte)',
+    description: 'Actualiza un parámetro lógico del plugin (dominio; host sync aparte). normalizedValue 0..1',
     risk: 'write',
     schema: {
       type: 'object',
@@ -569,37 +590,49 @@ export function crearComandoPluginSetParameter(): CommandDefinition<PluginSetPar
         normalizedValue: { type: 'number' },
         plainValue: { type: 'number' },
         name: { type: 'string' },
+        quitar: { type: 'boolean' },
       },
       required: ['trackId', 'pluginInstanceId', 'parameterId', 'normalizedValue'],
       additionalProperties: false,
     },
     handler: (estado, payload): StateTransition<PluginSetParameterPayload> => {
+      const parameterId = String(payload.parameterId ?? '').trim()
+      if (!parameterId) throw new Error('parameterId vacío')
+      const crudo = Number(payload.normalizedValue)
+      if (!Number.isFinite(crudo)) throw new Error('normalizedValue debe ser un número finito entre 0 y 1')
+      const valor = Math.min(1, Math.max(0, crudo))
+
       const host = resolveChainHost(estado, payload.trackId)
+      const prev = host.plugins.find((p) => p.id === payload.pluginInstanceId)
+      if (!prev) throw new Error(`Plugin no encontrado: ${payload.pluginInstanceId}`)
+      const coincide = (x: ParametroPluginOpciones) => x.id === parameterId || x.nombre === parameterId
+      const prevParam = (prev.parametros ?? []).find(coincide)
+
       const chain = host.plugins.map((p) => {
         if (p.id !== payload.pluginInstanceId) return p
         const params = [...(p.parametros ?? [])]
-        const i = params.findIndex((x) => x.id === payload.parameterId || x.nombre === payload.parameterId)
-        const entry: ParametroPluginOpciones = {
-          id: payload.parameterId,
-          nombre: payload.name ?? (i >= 0 ? params[i]!.nombre : payload.parameterId),
-          valor: payload.normalizedValue,
-          minimo: i >= 0 ? params[i]!.minimo : 0,
-          maximo: i >= 0 ? params[i]!.maximo : 1,
-          paso: i >= 0 ? params[i]!.paso : 0.01,
-          unidad: i >= 0 ? params[i]!.unidad : '',
-          etiqueta: payload.name ?? (i >= 0 ? params[i]!.etiqueta : payload.parameterId),
+        const i = params.findIndex(coincide)
+        if (payload.quitar) {
+          if (i >= 0) params.splice(i, 1)
+          return { ...p, parametros: params }
         }
-        if (i >= 0) params[i] = { ...params[i]!, ...entry }
+        const existente = i >= 0 ? params[i]! : undefined
+        const entry: ParametroPluginOpciones = {
+          // al encontrarlo por nombre se conserva su id real (no se sobrescribe con el nombre)
+          id: existente?.id ?? parameterId,
+          nombre: payload.name ?? existente?.nombre ?? parameterId,
+          valor,
+          minimo: existente?.minimo ?? 0,
+          maximo: existente?.maximo ?? 1,
+          paso: existente?.paso ?? 0.01,
+          unidad: existente?.unidad ?? '',
+          etiqueta: payload.name ?? existente?.etiqueta ?? parameterId,
+          ...(existente?.opciones ? { opciones: existente.opciones } : {}),
+        }
+        if (i >= 0) params[i] = entry
         else params.push(entry)
         return { ...p, parametros: params }
       })
-      if (!host.plugins.some((p) => p.id === payload.pluginInstanceId)) {
-        throw new Error(`Plugin no encontrado: ${payload.pluginInstanceId}`)
-      }
-      const prev = host.plugins.find((p) => p.id === payload.pluginInstanceId)!
-      const prevParam = (prev.parametros ?? []).find(
-        (x) => x.id === payload.parameterId || x.nombre === payload.parameterId,
-      )
 
       return {
         state: { ...estado, project: applyChain(estado, payload.trackId, chain) },
@@ -612,19 +645,28 @@ export function crearComandoPluginSetParameter(): CommandDefinition<PluginSetPar
             payload: {
               trackId: payload.trackId,
               pluginInstanceId: payload.pluginInstanceId,
-              parameterId: payload.parameterId,
-              normalizedValue: payload.normalizedValue,
+              parameterId: prevParam?.id ?? parameterId,
+              normalizedValue: valor,
             },
           },
         ],
-        result: payload,
-        inversePayload: {
-          trackId: payload.trackId,
-          pluginInstanceId: payload.pluginInstanceId,
-          parameterId: payload.parameterId,
-          normalizedValue: prevParam?.valor ?? 0,
-          name: prevParam?.nombre,
-        },
+        result: { ...payload, parameterId, normalizedValue: valor },
+        // Inverso exacto: restaura la entrada previa (con su id y nombre) o, si no existía, la quita
+        inversePayload: prevParam
+          ? {
+              trackId: payload.trackId,
+              pluginInstanceId: payload.pluginInstanceId,
+              parameterId: prevParam.id,
+              normalizedValue: prevParam.valor,
+              name: prevParam.nombre,
+            }
+          : {
+              trackId: payload.trackId,
+              pluginInstanceId: payload.pluginInstanceId,
+              parameterId,
+              normalizedValue: 0,
+              quitar: true,
+            },
       }
     },
   }

@@ -347,6 +347,14 @@ export function TrackContextMenu({
           run(() => tienda.executor.execute('track.move', { trackId: track.id, toIndex: trackIndex + 1 }))
         }
       />
+      {track.padreId ? (
+        <MenuItem
+          label="Sacar de la carpeta"
+          onClick={() =>
+            run(() => tienda.executor.execute('track.update', { trackId: track.id, datos: { padreId: null } }))
+          }
+        />
+      ) : null}
       <Sep />
       <MenuItem
         label="Eliminar pista…"

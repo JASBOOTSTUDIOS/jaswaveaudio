@@ -12,6 +12,9 @@ import * as path from 'path'
 import { app, BrowserWindow } from 'electron'
 import { parseAudioDeviceNotice, type AudioDeviceNotice } from './audio-device-notice'
 import { hayCrashLoop, limpiarSalidas, registrarSalidaInesperada } from './crash-loop'
+import { matarHostsHuerfanos } from './host-huerfanos'
+import { claveSerieRpc, esBarreraRpc, siguienteRpcEnviable } from './plugin-host-rpc-scheduler'
+import { ColaPipeMezcla } from './mix-pipe-queue'
 import {
   evaluarCuarentena,
   mensajeMotivoCuarentena,
@@ -19,13 +22,9 @@ import {
   type CargaEnCurso,
 } from './quarantine'
 
-export type AudioDevicePrefs = {
-  backend: string
-  deviceId: string
-  sampleRate: number
-  bufferSize: number
-  exclusive?: boolean
-}
+import { pickPreferredWasapi, wantsSharedWasapi, type AudioDevicePrefs } from './salida-wasapi'
+
+export type { AudioDevicePrefs }
 
 export type PluginHostRpcResult =
   | {
@@ -101,6 +100,10 @@ export type PluginHostRpcResult =
 type Pending = {
   resolve: (v: PluginHostRpcResult) => void
   timer: ReturnType<typeof setTimeout>
+  type: string
+  /** Comandos del mismo slot no se solapan (load → setPluginState → listParameters…). */
+  slotKey: string
+  barrier: boolean
 }
 
 type QueuedCmd = {
@@ -111,7 +114,16 @@ type QueuedCmd = {
 
 let child: ChildProcessWithoutNullStreams | null = null
 let buffer = ''
-let pending: Pending | null = null
+/**
+ * Peticiones en vuelo por `rid`. Con un host que devuelve el `rid` (ping → `ridEcho`), varias
+ * peticiones conviven: una carga lenta de VST ya no frena subidas de clip, reloj ni medidores, y
+ * una respuesta tardía tras un timeout se descarta en vez de resolver la petición siguiente.
+ * Sin `ridEcho` (host antiguo / node-host) se trabaja en serie como antes.
+ */
+const inFlight = new Map<number, Pending>()
+let nextRid = 1
+let hostEchoesRid = false
+const MAX_IN_FLIGHT = 8
 const queue: QueuedCmd[] = []
 const sondeosEnCurso = new Map<string, Promise<PluginHostRpcResult>>()
 let started = false
@@ -134,7 +146,7 @@ let autoRespawnTimer: ReturnType<typeof setTimeout> | null = null
 let mixSock: fs.WriteStream | null = null
 let mixBackpressure = false
 let mixPipePath = ''
-let mixQueue: Buffer[] = []
+const mixQueue = new ColaPipeMezcla(2048 * 2)
 let mixReconnectTimer: ReturnType<typeof setTimeout> | null = null
 let mixReconnectAttempts = 0
 let mixSuppressReconnect = false
@@ -155,6 +167,8 @@ export function configureMixPcmPace(sampleRate?: number, bufferSize?: number): v
     // ~1.5 bloques ASIO de holgura (antes 2× → saturaba tras Soft Pad multi-pista).
     mixPaceMaxAhead = Math.max(Math.round(bufferSize * 1.5), 768)
   }
+  // La cola de contrapresión aguanta ~2 ventanas de holgura antes de descartar lo más antiguo.
+  mixQueue.fijarTope(mixPaceMaxAhead * 2)
 }
 
 export function resetMixPcmPace(): void {
@@ -183,7 +197,7 @@ function cancelMixReconnect() {
 
 function closeMixPipe() {
   mixBackpressure = false
-  mixQueue = []
+  mixQueue.vaciar()
   if (!mixSock) return
   const s = mixSock
   mixSock = null
@@ -220,7 +234,7 @@ function writeMixPipe(buf: Buffer): boolean {
       if (mixSock === s) {
         mixSock = null
         mixBackpressure = false
-        mixQueue = []
+        mixQueue.vaciar()
       }
       if (!mixSuppressReconnect) scheduleMixReconnect()
     })
@@ -228,7 +242,7 @@ function writeMixPipe(buf: Buffer): boolean {
     if (mixSock === s) {
       mixSock = null
       mixBackpressure = false
-      mixQueue = []
+      mixQueue.vaciar()
     }
     if (!mixSuppressReconnect) scheduleMixReconnect()
     return false
@@ -237,13 +251,13 @@ function writeMixPipe(buf: Buffer): boolean {
 
 function flushMixPending() {
   if (!mixSock || mixSock.destroyed || !mixSock.writable) {
-    mixQueue = []
+    mixQueue.vaciar()
     return
   }
   while (mixQueue.length) {
-    const p = mixQueue[0]!
+    const p = mixQueue.primero()!
     const ok = writeMixPipe(p)
-    mixQueue.shift()
+    mixQueue.quitarPrimero()
     if (!ok) {
       mixBackpressure = true
       return
@@ -306,7 +320,7 @@ function connectMixPipeOnce(name: string): Promise<boolean> {
     stream.on('open', () => {
       mixSock = stream
       mixBackpressure = false
-      mixQueue = []
+      mixQueue.vaciar()
       resetMixPcmPace()
       done(true)
     })
@@ -458,8 +472,8 @@ export function pushPluginHostPcm(data: Buffer | ArrayBuffer | Float32Array | Ar
   }
 
   if (mixBackpressure || mixQueue.length > 0) {
-    // No crecer la cola: un solo pendiente como máximo.
-    if (mixQueue.length === 0) mixQueue.push(buf)
+    // Cola elástica acotada por duración: un atasco breve no corta el audio.
+    mixQueue.encolar(buf, Math.max(1, frames))
     return
   }
   const ok = writeMixPipe(buf)
@@ -557,11 +571,33 @@ function pluginKey(p: string): string {
   return p.trim().replace(/\//g, '\\').toLowerCase()
 }
 
+/** Huella del binario de un plugin (fecha + tamaño del .vst3 o de su DLL interna): cambia al recompilar o actualizar. */
+function huellaPlugin(ruta: string): string {
+  try {
+    let objetivo = ruta
+    const st = fs.statSync(ruta)
+    if (st.isDirectory()) {
+      const dir = path.join(ruta, 'Contents', 'x86_64-win')
+      const interno = fs.existsSync(dir) ? fs.readdirSync(dir).find((f) => /\.vst3$/i.test(f)) : undefined
+      if (interno) objetivo = path.join(dir, interno)
+    }
+    const f = fs.statSync(objetivo)
+    return `${Math.round(f.mtimeMs)}:${f.size}`
+  } catch {
+    return ''
+  }
+}
+
+/** Huellas guardadas al apartar cada plugin (clave normalizada → huella). */
+let huellasCuarentena: Record<string, string> = {}
+
 function loadQuarantine(): Set<string> {
   try {
-    const raw = JSON.parse(fs.readFileSync(pluginQuarantinePath(), 'utf8')) as { paths?: string[] }
+    const raw = JSON.parse(fs.readFileSync(pluginQuarantinePath(), 'utf8')) as { paths?: string[]; huellas?: Record<string, string> }
+    huellasCuarentena = { ...(raw.huellas || {}) }
     return new Set((raw.paths || []).map(pluginKey).filter(Boolean))
   } catch {
+    huellasCuarentena = {}
     return new Set()
   }
 }
@@ -569,7 +605,9 @@ function loadQuarantine(): Set<string> {
 function saveQuarantine(set: Set<string>) {
   try {
     fs.mkdirSync(path.dirname(pluginQuarantinePath()), { recursive: true })
-    fs.writeFileSync(pluginQuarantinePath(), JSON.stringify({ paths: [...set] }, null, 2), 'utf8')
+    const huellas: Record<string, string> = {}
+    for (const k of set) if (huellasCuarentena[k]) huellas[k] = huellasCuarentena[k]!
+    fs.writeFileSync(pluginQuarantinePath(), JSON.stringify({ paths: [...set], huellas }, null, 2), 'utf8')
     quarantineFileMtime = quarantineFileStamp()
   } catch (e) {
     console.error('[plugin-host] no se pudo guardar cuarentena de plugins', e)
@@ -597,13 +635,41 @@ function getQuarantine(): Set<string> {
   return quarantinedPlugins
 }
 
-/** Aparta un plugin vivo que el watchdog detectó inestable (próximas cargas se rechazan). */
-export function ponerPluginEnCuarentena(ruta: string): void {
+/** Aparta un plugin recordando la huella de su binario, para poder rehabilitarlo si cambia. */
+function apartarPlugin(ruta: string): void {
   const clave = pluginKey(ruta)
   if (!clave) return
   const q = getQuarantine()
   q.add(clave)
+  const h = huellaPlugin(ruta)
+  if (h) huellasCuarentena[clave] = h
   saveQuarantine(q)
+}
+
+/**
+ * ¿Sigue vetado? Un plugin recompilado o actualizado (huella distinta a la de cuando se apartó) vuelve a tener
+ * una oportunidad: la cuarentena es por versión del binario, no para siempre.
+ */
+function estaEnCuarentena(ruta: string): boolean {
+  const clave = pluginKey(ruta)
+  if (!clave) return false
+  const q = getQuarantine()
+  if (!q.has(clave)) return false
+  const guardada = huellasCuarentena[clave]
+  const actual = huellaPlugin(ruta)
+  if (guardada && actual && guardada !== actual) {
+    q.delete(clave)
+    delete huellasCuarentena[clave]
+    saveQuarantine(q)
+    logLine('info', 'plugin-host', `cuarentena levantada: el binario cambió (${ruta})`)
+    return false
+  }
+  return true
+}
+
+/** Aparta un plugin vivo que el watchdog detectó inestable (próximas cargas se rechazan). */
+export function ponerPluginEnCuarentena(ruta: string): void {
+  apartarPlugin(ruta)
 }
 
 const alLimpiarCuarentena = new Set<() => void>()
@@ -618,6 +684,7 @@ export function clearPluginQuarantine(): { cleared: number } {
   for (const cb of alLimpiarCuarentena) cb()
   const n = getQuarantine().size
   quarantinedPlugins = new Set()
+  huellasCuarentena = {}
   quarantineFileMtime = 0
   try {
     if (fs.existsSync(pluginQuarantinePath())) fs.unlinkSync(pluginQuarantinePath())
@@ -678,13 +745,34 @@ export function isEditorHostCommand(type: string): boolean {
   )
 }
 
-function settlePending(result: PluginHostRpcResult) {
-  if (!pending) return
-  clearTimeout(pending.timer)
-  const p = pending
-  pending = null
+/** Resuelve una petición en vuelo (la indicada por `rid`, o la más antigua si la respuesta no trae id). */
+function settlePending(result: PluginHostRpcResult, rid?: number) {
+  let key = rid
+  if (key === undefined) {
+    const oldest = inFlight.keys().next()
+    if (oldest.done) return
+    key = oldest.value
+  }
+  const p = inFlight.get(key)
+  if (!p) {
+    // Respuesta de una petición ya resuelta por timeout: se descarta (antes resolvía la siguiente).
+    logLine('info', 'plugin-host', `respuesta tardía descartada (rid=${key})`)
+    return
+  }
+  inFlight.delete(key)
+  clearTimeout(p.timer)
   p.resolve(result)
   pumpQueue()
+}
+
+/** Resuelve todas las peticiones en vuelo con el mismo resultado (host caído, stdin cerrado). */
+function settleAllInFlight(result: PluginHostRpcResult) {
+  const all = [...inFlight.values()]
+  inFlight.clear()
+  for (const p of all) {
+    clearTimeout(p.timer)
+    p.resolve(result)
+  }
 }
 
 function onChunk(chunk: Buffer) {
@@ -696,9 +784,17 @@ function onChunk(chunk: Buffer) {
     if (!line) continue
     if (line[0] !== '{') continue
     try {
-      const parsed = JSON.parse(line) as PluginHostRpcResult & { type?: string }
+      const parsed = JSON.parse(line) as PluginHostRpcResult & { type?: string; rid?: unknown; ridEcho?: unknown }
       if (parsed && parsed.type === 'midiIn') continue
-      settlePending(parsed)
+      const rid = typeof parsed.rid === 'number' ? parsed.rid : undefined
+      if (rid !== undefined || parsed.ridEcho === true) hostEchoesRid = true
+      // Con un host que devuelve `rid`, una respuesta sin él es de un comando sin espera (setTrackGraph,
+      // setSlotMix… rechazados durante un bounce): no pertenece a ninguna petición en vuelo.
+      if (rid === undefined && hostEchoesRid && parsed.ridEcho !== true) {
+        if (parsed.ok === false) logLine('info', 'plugin-host', `aviso sin petición: ${String(parsed.message ?? parsed.code ?? '')}`)
+        continue
+      }
+      settlePending(parsed, rid)
     } catch {
       settlePending({
         ok: false,
@@ -709,7 +805,8 @@ function onChunk(chunk: Buffer) {
   }
 }
 
-type NativeMidiListener = (msg: { id: string; data: number[] }) => void
+/** `tNs`: instante QPC (ns) en que el host recibió el evento (mismo reloj para todos los eventos). */
+type NativeMidiListener = (msg: { id: string; data: number[]; tNs?: number }) => void
 const nativeMidiListeners = new Set<NativeMidiListener>()
 
 export type { AudioDeviceNotice } from './audio-device-notice'
@@ -745,10 +842,10 @@ export function subscribeNativeMidi(cb: NativeMidiListener): () => void {
   return () => nativeMidiListeners.delete(cb)
 }
 
-function emitNativeMidi(id: string, data: number[]) {
+function emitNativeMidi(id: string, data: number[], tNs?: number) {
   for (const l of nativeMidiListeners) {
     try {
-      l({ id, data })
+      l(tNs != null ? { id, data, tNs } : { id, data })
     } catch {
       /* ignore */
     }
@@ -760,10 +857,20 @@ function parseHostLogLine(raw: string) {
   const parts = text.split('\n')
   for (const line of parts) {
     const t = line.trim()
+    if (t === 'JW_ENGINE_RELEASE_REQUEST') {
+      solicitudCederMotor()
+      continue
+    }
+    if (t === 'JW_TRANSPORT_TOGGLE') {
+      // Barra espaciadora en la ventana nativa de un plugin: Play/Stop en la ventana principal.
+      enviarATodas('host-transport-toggle', {})
+      continue
+    }
     if (t.startsWith('JW_MIDI ')) {
       try {
-        const payload = JSON.parse(t.slice(8)) as { id?: string; data?: number[] }
-        if (payload?.id && Array.isArray(payload.data)) emitNativeMidi(payload.id, payload.data)
+        const payload = JSON.parse(t.slice(8)) as { id?: string; data?: number[]; tNs?: number }
+        const tNs = typeof payload?.tNs === 'number' && payload.tNs > 0 ? payload.tNs : undefined
+        if (payload?.id && Array.isArray(payload.data)) emitNativeMidi(payload.id, payload.data, tNs)
       } catch {
         /* ignore */
       }
@@ -784,6 +891,8 @@ function parseHostLogLine(raw: string) {
 
 function wireChild(proc: ChildProcessWithoutNullStreams) {
   buffer = ''
+  // Cada proceso nuevo empieza en serie hasta que confirme que devuelve el rid.
+  hostEchoesRid = false
   proc.stdout.on('data', onChunk)
   proc.stderr.on('data', (d: Buffer) => {
     parseHostLogLine(d.toString('utf8'))
@@ -818,12 +927,12 @@ function wireChild(proc: ChildProcessWithoutNullStreams) {
       pluginCargado: pluginCargadoEnProceso,
       cargadoEn: pluginCargadoEn,
       bloqueAbierto: bloquePluginAbierto,
+      codigoSalida: signal ? null : code,
     })
     if (decision) {
       const key = pluginKey(decision.plugin)
-      if (key && !getQuarantine().has(key)) {
-        getQuarantine().add(key)
-        saveQuarantine(getQuarantine())
+      if (key && !estaEnCuarentena(decision.plugin)) {
+        apartarPlugin(decision.plugin)
         const motivo = mensajeMotivoCuarentena(decision.motivo)
         console.error('[plugin-host] quarantine after host exit:', decision.plugin, motivo)
         logLine('warn', 'plugin-host', `plugin en cuarentena: ${decision.plugin} (${motivo})`)
@@ -837,7 +946,7 @@ function wireChild(proc: ChildProcessWithoutNullStreams) {
     pluginCargadoEn = 0
     bloquePluginAbierto = false
     lastLoadPluginPath = ''
-    settlePending({
+    settleAllInFlight({
       ok: false,
       code: 'HostNotReady',
       message: lastError,
@@ -939,7 +1048,18 @@ function spawnNodeHost(script: string): ChildProcessWithoutNullStreams {
 }
 
 function pumpQueue() {
-  if (pending || !queue.length) return
+  while (queue.length) {
+    const idx = siguienteRpcEnviable(queue, [...inFlight.values()], {
+      paralelo: hostEchoesRid,
+      maxEnVuelo: MAX_IN_FLIGHT,
+    })
+    if (idx < 0) return
+    if (!dispatchQueued(idx)) return
+  }
+}
+
+/** Envía el comando `queue[idx]`. Devuelve false si el host no está disponible (cola vaciada). */
+function dispatchQueued(idx: number): boolean {
   if (!child || child.killed || !child.stdin.writable) {
     while (queue.length) {
       const job = queue.shift()!
@@ -949,13 +1069,14 @@ function pumpQueue() {
         message: lastError || 'Plugin Host Process no está en ejecución.',
       })
     }
-    return
+    return false
   }
 
-  const job = queue.shift()!
+  const job = queue.splice(idx, 1)[0]!
   const type = typeof job.cmd.type === 'string' ? job.cmd.type : ''
+  const rid = nextRid++
   const timer = setTimeout(() => {
-    if (pending?.resolve !== job.resolve) return
+    if (inFlight.get(rid)?.resolve !== job.resolve) return
     const soft =
       type === 'openEditor' ||
       type === 'openEditorFloating' ||
@@ -976,29 +1097,39 @@ function pumpQueue() {
       type === 'clip.loadBegin' ||
       type === 'clip.loadChunk' ||
       type === 'clip.loadEnd' ||
-      type === 'clip.has'
+      type === 'clip.has' ||
+      // Pin de editores: un timeout (UI del host ocupada con un editor lento) no debe matar el host.
+      type === 'pinEditor' ||
+      type === 'setPinsVisible'
     lastError = soft
       ? `Timeout Plugin Host (${type}). El host sigue vivo.`
       : 'Timeout Plugin Host (posible freeze). Proceso de audio detenido; el siguiente ping puede reiniciar.'
     if (soft) {
-      settlePending({ ok: false, code: 'HostNotReady', message: lastError })
+      // La respuesta tardía de este rid se descartará al llegar (no resuelve otra petición).
+      settlePending({ ok: false, code: 'HostNotReady', message: lastError }, rid)
       return
     }
     failAllRpc(lastError)
     killAudioChild()
   }, job.timeoutMs)
 
-  pending = { resolve: job.resolve, timer }
-  if (!writeHostStdin(JSON.stringify(job.cmd) + '\n')) {
+  inFlight.set(rid, {
+    resolve: job.resolve,
+    timer,
+    type,
+    slotKey: claveSerieRpc(job.cmd),
+    barrier: esBarreraRpc(type),
+  })
+  if (!writeHostStdin(JSON.stringify({ ...job.cmd, rid }) + '\n')) {
     clearTimeout(timer)
-    pending = null
+    inFlight.delete(rid)
     job.resolve({
       ok: false,
       code: 'HostNotReady',
       message: lastError || 'No se pudo escribir al plugin-host (stdin cerrado)',
     })
-    pumpQueue()
   }
+  return true
 }
 
 /** MIDI sin esperar reply (el host no responde noteOn/noteOff/allNotesOff). */
@@ -1025,18 +1156,16 @@ export function sendPluginHostMidi(cmd: Record<string, unknown>): void {
   }
 }
 
-/** Mata huérfanos de arranques previos (dos hosts = silencio ASIO). */
-function killOrphanPluginHosts() {
-  if (process.platform !== 'win32') return
+/**
+ * Mata hosts huérfanos de arranques previos (su app ya no existe). Nunca el motor de otra instancia
+ * viva: matarlo por nombre provocaba el crash-loop cruzado entre instancias (ver host-huerfanos.ts).
+ */
+async function killOrphanPluginHosts() {
   try {
-    const { execFileSync } = require('child_process') as typeof import('child_process')
-    execFileSync(
-      'taskkill',
-      ['/F', '/IM', 'jaswave-plugin-host.exe', '/T'],
-      { stdio: 'ignore', windowsHide: true },
-    )
+    const muertos = await matarHostsHuerfanos(child?.pid ? [child.pid] : [])
+    if (muertos.length) logLine('info', 'plugin-host', `hosts huérfanos terminados: ${muertos.join(', ')}`)
   } catch {
-    /* no había proceso, o acceso denegado */
+    /* sin permisos o sin PowerShell: la reserva del motor evita igualmente el doble audio */
   }
 }
 
@@ -1053,30 +1182,6 @@ function wasapiPrefs(from?: AudioDevicePrefs): AudioDevicePrefs {
     deviceId: '',
     sampleRate: from?.sampleRate || 48000,
     bufferSize: from?.bufferSize || 512,
-    exclusive: false,
-  }
-}
-
-function isUmcName(value: string | undefined): boolean {
-  return /umc|behringer/i.test(value || '')
-}
-
-function wantsSharedWasapi(prefs: AudioDevicePrefs): boolean {
-  if (prefs.exclusive || prefs.backend === 'wasapi_exclusive' || prefs.backend === 'asio') return false
-  return !prefs.backend || prefs.backend === 'wasapi' || prefs.backend === 'auto'
-}
-
-function pickPreferredWasapi(
-  devices?: Array<{ id: string; backend: string; name: string }>,
-): AudioDevicePrefs {
-  const umc = (devices ?? []).find(
-    (d) => d.backend === 'wasapi' && (isUmcName(d.name) || isUmcName(d.id)),
-  )
-  return {
-    backend: 'wasapi',
-    deviceId: umc?.id || '',
-    sampleRate: 48000,
-    bufferSize: 512,
     exclusive: false,
   }
 }
@@ -1120,22 +1225,40 @@ async function respawnNativeHost(): Promise<boolean> {
   logLine('info', 'plugin-host', 'respawn', new Error('origen').stack?.split('\n').slice(2, 5).join(' <- ') ?? '')
   const bin = resolveNativeBinary()
   if (!bin) return false
-  failAllRpc('Plugin Host Process reiniciado.')
-  killAudioChild()
-  await sleepMs(80)
-  child = spawnNative(bin)
-  backend = 'native'
-  wireChild(child)
-  started = true
-  lastError = undefined
-  const ping = await sendPluginHostCommand({ type: 'ping' }, 4000)
-  if (!ping.ok) {
-    lastError = ping.message
-    stopPluginHost()
-    return false
+  // Mientras child es null (kill → spawn) un ensurePluginHostStarted() de la UI lanzaría un segundo host y
+  // dejaría dos procesos vivos (el que tiene ASIO se pierde). Se reserva startPromise durante el relevo,
+  // salvo que ya lo tenga el arranque en curso (respawn llamado desde doStart).
+  let liberar: ((ok: boolean) => void) | null = null
+  if (!startPromise) {
+    startPromise = new Promise<boolean>((resolve) => {
+      liberar = resolve
+    })
   }
-  await connectMixPipe(String(ping.mixPipe || ''), child?.pid)
-  return true
+  let ok = false
+  try {
+    failAllRpc('Plugin Host Process reiniciado.')
+    killAudioChild()
+    await sleepMs(80)
+    child = spawnNative(bin)
+    backend = 'native'
+    wireChild(child)
+    started = true
+    lastError = undefined
+    const ping = await sendPluginHostCommand({ type: 'ping' }, 4000)
+    if (!ping.ok) {
+      lastError = ping.message
+      stopPluginHost()
+      return false
+    }
+    await connectMixPipe(String(ping.mixPipe || ''), child?.pid)
+    ok = true
+    return true
+  } finally {
+    if (liberar) {
+      startPromise = null
+      ;(liberar as (ok: boolean) => void)(ok)
+    }
+  }
 }
 
 function notifyHostRestarted() {
@@ -1228,7 +1351,173 @@ function isAsioDeviceAbsent(message: string): boolean {
   return /no device is connected|device not (present|connected)|no se encuentra|desconectad/i.test(message)
 }
 
+// ── Motor de audio ocupado por otra instancia ────────────────────────────────
+// El host reserva el motor de la sesión (objeto con nombre en Windows): si otra JasWave (otro perfil,
+// la versión instalada junto a la de desarrollo…) ya lo tiene, esta no abre el driver — antes ambas
+// peleaban por el ASIO, el driver tumbaba un host, venía el bucle de reinicios y la cuarentena de
+// plugins inocentes. Esta instancia queda sin sonido, lo avisa y reintenta hasta que el motor se libere.
+// «Usar audio aquí» (tomarMotorAudio) pide a la dueña que lo ceda sin cerrarse (cederMotorAudio).
+const REINTENTO_MOTOR_OCUPADO_MS = 4000
+/** Cada cuánto, como mucho, se buscan hosts huérfanos que retengan la reserva (lanza PowerShell). */
+const HUERFANOS_CADA_MS = 60_000
+/** La ventana que cede tiene este margen para parar el transporte y cerrar una grabación. */
+const CEDER_MARGEN_MS = 4000
+/** Cuánto espera «Usar audio aquí» a que la otra instancia suelte el motor. */
+const TOMAR_ESPERA_MS = 8000
+export const MENSAJE_MOTOR_OCUPADO =
+  'Otra ventana de JasWave está usando el motor de audio. Esta queda sin sonido: pulsa «Usar audio aquí» para traerlo o cierra la otra y volverá solo.'
+export const MENSAJE_MOTOR_CEDIDO =
+  'Cediste el motor de audio a otra ventana de JasWave. Pulsa «Usar audio aquí» para recuperarlo.'
+let motorOcupado: { prefs: AudioDevicePrefs; cedido: boolean } | null = null
+let reintentoMotorTimer: ReturnType<typeof setTimeout> | null = null
+let ultimaBusquedaHuerfanos = 0
+let cesionEnCurso: Promise<{ ok: boolean; message?: string }> | null = null
+let cesionTimer: ReturnType<typeof setTimeout> | null = null
+
+export function audioEngineBusy(): boolean {
+  return motorOcupado != null
+}
+
+function mensajeMotorOcupado(): string {
+  return motorOcupado?.cedido ? MENSAJE_MOTOR_CEDIDO : MENSAJE_MOTOR_OCUPADO
+}
+
+function enviarATodas(canal: string, datos: unknown) {
+  try {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send(canal, datos)
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function notifyAudioEngineBusy(activo: boolean) {
+  enviarATodas('audio-engine-busy', { activo, mensaje: activo ? mensajeMotorOcupado() : undefined })
+}
+
+function marcarMotorOcupado(prefs: AudioDevicePrefs, cedido = false): PluginHostRpcResult {
+  const nuevo = !motorOcupado || motorOcupado.cedido !== cedido
+  if (!motorOcupado) {
+    logLine('warn', 'plugin-host', cedido
+      ? 'motor de audio cedido a otra instancia: esta queda sin sonido'
+      : 'motor de audio ocupado por otra instancia: esta queda sin sonido y reintenta')
+  }
+  motorOcupado = { prefs, cedido: cedido || (motorOcupado?.cedido ?? false) }
+  if (nuevo) notifyAudioEngineBusy(true)
+  programarReintentoMotor()
+  return { ok: false, code: 'AudioEngineBusy', message: mensajeMotorOcupado() }
+}
+
+function liberarMarcaMotorOcupado() {
+  if (!motorOcupado) return
+  motorOcupado = null
+  if (reintentoMotorTimer) clearTimeout(reintentoMotorTimer)
+  reintentoMotorTimer = null
+  logLine('info', 'plugin-host', 'motor de audio recuperado')
+  notifyAudioEngineBusy(false)
+}
+
+function programarReintentoMotor() {
+  if (reintentoMotorTimer) return
+  reintentoMotorTimer = setTimeout(() => {
+    reintentoMotorTimer = null
+    const pendiente = motorOcupado
+    if (!pendiente) return
+    void withApplyLock(async () => {
+      // Host caído: el auto-respawn vuelve a aplicar el dispositivo (y pasa otra vez por aquí).
+      if (!child || !started) {
+        programarReintentoMotor()
+        return
+      }
+      // Si la reserva la tiene un host colgado cuya app ya cerró, se libera aquí (sin lanzar PowerShell a cada vuelta).
+      if (Date.now() - ultimaBusquedaHuerfanos > HUERFANOS_CADA_MS) {
+        ultimaBusquedaHuerfanos = Date.now()
+        await killOrphanPluginHosts()
+      }
+      await applyAudioDeviceOrFallback(pendiente.prefs, { persist: false, sessionFallbackOk: true })
+    })
+  }, REINTENTO_MOTOR_OCUPADO_MS)
+}
+
+/**
+ * Otra instancia pidió el motor (el host lo avisa por stderr). La UI para el transporte y cierra una toma en
+ * curso y después llama a `cederMotorAudio`; si no contesta a tiempo, se cede igualmente.
+ */
+function solicitudCederMotor() {
+  if (motorOcupado || cesionEnCurso) return
+  logLine('info', 'plugin-host', 'otra instancia pidió el motor de audio')
+  enviarATodas('audio-engine-release-requested', {})
+  if (cesionTimer) clearTimeout(cesionTimer)
+  cesionTimer = setTimeout(() => {
+    cesionTimer = null
+    void cederMotorAudio()
+  }, CEDER_MARGEN_MS)
+}
+
+/** Suelta dispositivo y reserva sin cerrar el host: los plugins siguen cargados para cuando vuelva. */
+export function cederMotorAudio(): Promise<{ ok: boolean; message?: string }> {
+  if (cesionTimer) {
+    clearTimeout(cesionTimer)
+    cesionTimer = null
+  }
+  if (motorOcupado) return Promise.resolve({ ok: true })
+  cesionEnCurso ??= withApplyLock(async () => {
+    const prefs = readAudioDevicePrefs() ?? wasapiPrefs()
+    const r = await sendPluginHostCommand({ type: 'releaseAudioEngine' }, 8000)
+    if (!r.ok) {
+      logLine('warn', 'plugin-host', `no se pudo ceder el motor: ${r.message}`)
+      return { ok: false, message: r.message }
+    }
+    marcarMotorOcupado(prefs, true)
+    return { ok: true }
+  }).finally(() => {
+    cesionEnCurso = null
+  })
+  return cesionEnCurso
+}
+
+/** «Usar audio aquí»: pide el motor a la instancia que suena, espera a que lo suelte y abre el dispositivo. */
+export async function tomarMotorAudio(): Promise<{ ok: boolean; message?: string }> {
+  const pendiente = motorOcupado
+  if (!pendiente) return { ok: true }
+  const pedido = await sendPluginHostCommand({ type: 'requestAudioEngine' }, 4000)
+  if (!pedido.ok) return { ok: false, message: pedido.message }
+  const limite = Date.now() + TOMAR_ESPERA_MS
+  for (;;) {
+    await sleepMs(200)
+    const reserva = await sendPluginHostCommand({ type: 'acquireAudioEngine' }, 4000)
+    if (reserva.ok) break
+    if (Date.now() > limite) {
+      return {
+        ok: false,
+        message:
+          'La otra ventana de JasWave no soltó el motor (puede ser una versión anterior sin traspaso). Ciérrala para usar el audio aquí.',
+      }
+    }
+  }
+  const r = await withApplyLock(() =>
+    applyAudioDeviceOrFallback(pendiente.prefs, { persist: false, sessionFallbackOk: true }),
+  )
+  if (!r.ok) return { ok: false, message: r.message }
+  logLine('info', 'plugin-host', 'motor de audio traído a esta instancia')
+  return { ok: true }
+}
+
 async function applyAudioDeviceOrFallback(
+  prefs: AudioDevicePrefs,
+  opts?: { sessionFallbackOk?: boolean; persist?: boolean },
+): Promise<PluginHostRpcResult> {
+  // Reserva antes de tocar el driver. Un host sin el comando (binario viejo) responde otro código y se sigue.
+  const reserva = await sendPluginHostCommand({ type: 'acquireAudioEngine' }, 6000)
+  if (!reserva.ok && reserva.code === 'AudioEngineBusy') return marcarMotorOcupado(prefs)
+  const r = await aplicarDispositivoAudio(prefs, opts)
+  if (!r.ok && r.code === 'AudioEngineBusy') return marcarMotorOcupado(prefs)
+  if (r.ok || r.audio?.running) liberarMarcaMotorOcupado()
+  return r
+}
+
+async function aplicarDispositivoAudio(
   prefs: AudioDevicePrefs,
   opts?: { sessionFallbackOk?: boolean; persist?: boolean },
 ): Promise<PluginHostRpcResult> {
@@ -1289,6 +1578,8 @@ async function applyAudioDeviceOrFallback(
       if (didRespawn) notifyHostRestarted()
       return applied
     }
+    // Otra instancia tiene el motor: ni reintento, ni respawn, ni WASAPI (fallarían igual y tocarían las prefs).
+    if (applied.code === 'AudioEngineBusy') return applied
     console.error('[plugin-host] setAudioDevice ASIO falló:', applied.message)
     if (isAsioDeviceAbsent(String(applied.message || ''))) {
       asioAbsent = { deviceId: String(prefs.deviceId || ''), at: Date.now(), message: String(applied.message) }
@@ -1345,7 +1636,10 @@ async function applyAudioDeviceOrFallback(
     current.audio?.running &&
     current.audio.backend === 'wasapi' &&
     !current.audio.exclusive
-  if (alreadySharedWasapi && wantsSharedWasapi(prefs)) {
+  // Solo se reutiliza si es la misma salida: elegir otra WASAPI la abre (antes se ignoraba y se guardaba la vieja).
+  const mismaSalida =
+    !prefs.deviceId || prefs.deviceId === 'default' || prefs.deviceId === String(current.audio?.deviceId || '')
+  if (alreadySharedWasapi && wantsSharedWasapi(prefs) && mismaSalida) {
     if (persist) {
       writeAudioDevicePrefs({
         backend: 'wasapi',
@@ -1377,6 +1671,7 @@ async function applyAudioDeviceOrFallback(
     if (persist) writeAudioDevicePrefs(prefs)
     return applied
   }
+  if (applied.code === 'AudioEngineBusy') return applied
   console.error('[plugin-host] setAudioDevice falló:', applied.message)
 
   const crashed = /salió \(code=/.test(String(applied.message || ''))
@@ -1423,7 +1718,7 @@ async function applyAudioDeviceOrFallback(
 async function tryStart(kind: 'native' | 'node'): Promise<boolean> {
   logLine('info', 'plugin-host', `start ${kind}`, new Error('origen').stack?.split('\n').slice(2, 5).join(' <- ') ?? '')
   stopPluginHost()
-  if (kind === 'native') killOrphanPluginHosts()
+  if (kind === 'native') await killOrphanPluginHosts()
 
   if (kind === 'native') {
     const bin = resolveNativeBinary()
@@ -1461,7 +1756,7 @@ async function tryStart(kind: 'native' | 'node'): Promise<boolean> {
       applied = await applyAudioDeviceOrFallback(saved, { sessionFallbackOk: true, persist: true })
     } else {
       const listed = await sendPluginHostCommand({ type: 'listAudioDevices' }, 12_000)
-      const preferredWasapi = pickPreferredWasapi(listed.ok ? listed.devices : undefined)
+      const preferredWasapi = pickPreferredWasapi(listed.ok ? listed.devices : undefined, saved)
       applied = await applyAudioDeviceOrFallback(preferredWasapi, {
         sessionFallbackOk: true,
         persist: !saved,
@@ -1529,6 +1824,7 @@ export function getPluginHostStatus() {
     vst3AudioAvailable: backend === 'native',
     mixPipeConnected: isMixPipeConnected(),
     mixQueueDepth: mixQueue.length,
+    mixQueueDropped: mixQueue.descartados,
     mixBackpressure,
     mixPipePath: mixPipePath || '',
     nativePid: child?.pid ?? 0,
@@ -1582,15 +1878,7 @@ function killAudioChild() {
 }
 
 function failAllRpc(reason: string) {
-  if (pending) {
-    clearTimeout(pending.timer)
-    pending.resolve({
-      ok: false,
-      code: 'HostNotReady',
-      message: reason,
-    })
-    pending = null
-  }
+  settleAllInFlight({ ok: false, code: 'HostNotReady', message: reason })
   while (queue.length) {
     const job = queue.shift()!
     job.resolve({ ok: false, code: 'HostNotReady', message: reason })
@@ -1611,6 +1899,19 @@ export function sendPluginHostCommand(
   cmd: Record<string, unknown>,
   timeoutMs = 30_000,
 ): Promise<PluginHostRpcResult> {
+  const type = cmd.type
+  if (type !== 'ensureAudio' && type !== 'testTone') return enviarComandoHost(cmd, timeoutMs)
+  // Motor en manos de otra instancia: no se encola un arranque de dispositivo que fallará igual.
+  if (motorOcupado) {
+    return Promise.resolve({ ok: false, code: 'AudioEngineBusy', message: MENSAJE_MOTOR_OCUPADO })
+  }
+  return enviarComandoHost(cmd, timeoutMs).then((r) => {
+    if (!r.ok && r.code === 'AudioEngineBusy') return marcarMotorOcupado(readAudioDevicePrefs() ?? wasapiPrefs())
+    return r
+  })
+}
+
+function enviarComandoHost(cmd: Record<string, unknown>, timeoutMs: number): Promise<PluginHostRpcResult> {
   const type = typeof cmd.type === 'string' ? cmd.type : ''
   if (type === 'clearPluginQuarantine') {
     const r = clearPluginQuarantine()
@@ -1642,7 +1943,7 @@ export function sendPluginHostCommand(
       : timeoutMs
 
   // MIDI: host no responde — no usar la cola RPC (bloquearía load/ping).
-  if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setMixInputRate' || type === 'setSlotMix' || type === 'setMasterMix' || type === 'setTrackGraph' || type === 'setMeterTrackOrder' || type === 'setLiveMidiTargets' || type === 'metronome.set' || type === 'clip.schedule' || type === 'clip.stopAll') {
+  if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setMixInputRate' || type === 'setSlotMix' || type === 'setMasterMix' || type === 'setMonitorMix' || type === 'setTrackGraph' || type === 'setMeterTrackOrder' || type === 'setLiveMidiTargets' || type === 'metronome.set' || type === 'clip.schedule' || type === 'clip.stopAll') {
     if (type === 'noteOn' || type === 'noteOff' || type === 'allNotesOff' || type === 'midiCc' || type === 'setTransport' || type === 'setLiveMidiTargets' || type === 'metronome.set' || type === 'clip.schedule' || type === 'clip.stopAll') {
       sendPluginHostMidi(cmd)
       return Promise.resolve({
@@ -1698,7 +1999,7 @@ export function sendPluginHostCommand(
         message: 'JasWave soporta exclusivamente plugins VST3 (.vst3). El soporte de plugins legacy VST2 (.dll) fue retirado para garantizar la estabilidad del motor.',
       })
     }
-    if (key && getQuarantine().has(key)) {
+    if (key && estaEnCuarentena(pluginPath)) {
       return Promise.resolve({
         ok: false,
         code: 'PluginCrashedHost',
@@ -1721,10 +2022,7 @@ export function sendPluginHostCommand(
         /tumbó el Plugin Host/i.test(msg) ||
         result.code === 'PluginCrashedHost'
       if (!crashed) return result
-      if (key) {
-        getQuarantine().add(key)
-        saveQuarantine(getQuarantine())
-      }
+      if (key) apartarPlugin(pluginPath)
       console.error('[plugin-host] plugin firewall (Ableton-style):', pluginPath, result.message)
       // El exit handler ya programa auto-respawn; solo forzar si aún no hay host.
       if (!child || child.killed || !started) {

@@ -18,13 +18,23 @@ import {
   Keyboard,
   Layers2,
   Sparkles,
+  Scissors,
+  VolumeX,
+  SplitSquareHorizontal,
 } from 'lucide-react'
+import {
+  NOMBRES_RAIZ,
+  TIPOS_ESCALA,
+  TRANSFORMACIONES_PR,
+  type EscalaPR,
+  type TransformacionPR,
+} from '@/src/lib/piano-roll-ops'
 import type { ComponentType } from 'react'
 import type { ContextoClip } from '@jaswave/host-sdk/contrato'
 import { TIMELINE_SNAP_OPTIONS, snapSelectValue } from '@/src/lib/timeline-snap'
 import { ejecutarAccionDeClip, useAccionesDeClip } from '@/src/modulos/contribuciones'
 
-export type PianoRollTool = 'seleccionar' | 'dibujar' | 'borrar'
+export type PianoRollTool = 'seleccionar' | 'dibujar' | 'borrar' | 'cortar'
 
 export type SnapDivision = number
 
@@ -36,6 +46,16 @@ export const PIANO_ROLL_ATAJOS: { teclas: string; accion: string }[] = [
   { teclas: 'V', accion: 'Herramienta seleccionar' },
   { teclas: 'D / B', accion: 'Herramienta dibujar' },
   { teclas: 'E / X', accion: 'Herramienta borrar' },
+  { teclas: 'C', accion: 'Tijera: clic corta la nota; arrastre vertical corta el acorde' },
+  { teclas: 'M', accion: 'Silenciar / activar notas seleccionadas' },
+  { teclas: 'Shift+S', accion: 'Dividir notas en el playhead' },
+  { teclas: 'Alt+L / Alt+S', accion: 'Legato / Staccato' },
+  { teclas: 'Alt+H', accion: 'Humanizar (tiempo y velocidad)' },
+  { teclas: 'Alt+R / Alt+I', accion: 'Invertir en el tiempo / invertir tonos' },
+  { teclas: 'Alt+2 / Alt+1', accion: 'Duración ×2 / ÷2' },
+  { teclas: 'Alt+K', accion: 'Ajustar a la escala al dibujar y transponer' },
+  { teclas: 'Alt+clic en tecla', accion: 'Seleccionar todas las notas de ese tono (Shift+Alt: añadir)' },
+  { teclas: 'Ctrl+Shift+D', accion: 'Quitar notas duplicadas' },
   { teclas: 'S', accion: 'Activar / desactivar imán (snap de notas)' },
   { teclas: '1–8 / 0', accion: 'Profundidad de encaje (compás … 1/128 / Off)' },
   { teclas: 'Magnet', accion: 'Imán del seek/playhead (transporte)' },
@@ -51,7 +71,6 @@ export const PIANO_ROLL_ATAJOS: { teclas: string; accion: string }[] = [
   { teclas: 'Alt+← / →', accion: 'Pan ~1 compás (sin selección)' },
   { teclas: 'Shift+← / →', accion: 'Con selección: ±1 negra · sin selección: pan 1 negra' },
   { teclas: 'Q', accion: 'Cuantizar selección (o todo)' },
-  { teclas: '—', accion: 'Quitar notas duplicadas (mismo pitch+inicio)' },
   { teclas: 'G', accion: 'Mostrar / ocultar velocidad' },
   { teclas: 'F', accion: 'Mostrar / ocultar expresión (CC)' },
   { teclas: '+ / −', accion: 'Zoom horizontal (anclado al playhead)' },
@@ -142,6 +161,13 @@ export function PianoRollToolbar({
   nombreClip,
   onSaveStyle,
   contextoClip,
+  onMute,
+  onSplitAtPlayhead,
+  onTransform,
+  escala,
+  onEscala,
+  snapEscala,
+  onSnapEscala,
 }: {
   herramienta: PianoRollTool
   onHerramienta: (t: PianoRollTool) => void
@@ -183,6 +209,13 @@ export function PianoRollToolbar({
   onSaveStyle?: () => void
   /** Clip del piano roll: los módulos activos añaden sus acciones con icono (p. ej. MIDI · MD). */
   contextoClip?: ContextoClip
+  onMute?: () => void
+  onSplitAtPlayhead?: () => void
+  onTransform?: (op: TransformacionPR) => void
+  escala?: EscalaPR | null
+  onEscala?: (e: EscalaPR | null) => void
+  snapEscala?: boolean
+  onSnapEscala?: () => void
 }) {
   const accionesModulos = useAccionesDeClip(contextoClip ?? null).filter((a) => a.icono)
   return (
@@ -190,9 +223,9 @@ export function PianoRollToolbar({
       <div className="flex h-8 items-center gap-2 border-b border-border/60 px-2">
         <span className="truncate text-[12px] font-semibold text-foreground">{nombreClip}</span>
         <span className="text-[10px] text-muted-foreground">
-          {notasCount} notas
-          {seleccionCount > 0 ? ` · ${seleccionCount} seleccionadas` : ''}
-          {duplicadosCount && duplicadosCount > 0 ? ` · ${duplicadosCount} duplicadas` : ''}
+          {notasCount} {notasCount === 1 ? 'nota' : 'notas'}
+          {seleccionCount > 0 ? ` · ${seleccionCount} ${seleccionCount === 1 ? 'seleccionada' : 'seleccionadas'}` : ''}
+          {duplicadosCount && duplicadosCount > 0 ? ` · ${duplicadosCount} ${duplicadosCount === 1 ? 'duplicada' : 'duplicadas'}` : ''}
           {dirty ? ' · guardando…' : ''}
         </span>
       </div>
@@ -220,7 +253,78 @@ export function PianoRollToolbar({
             icon={Eraser}
             onClick={() => onHerramienta('borrar')}
           />
+          <ToolBtn
+            activo={herramienta === 'cortar'}
+            titulo="Tijera"
+            atajo="C"
+            icon={Scissors}
+            onClick={() => onHerramienta('cortar')}
+          />
         </div>
+
+        {onMute && <ToolBtn titulo="Silenciar" atajo="M" icon={VolumeX} onClick={onMute} />}
+        {onSplitAtPlayhead && (
+          <ToolBtn titulo="Dividir en playhead" atajo="Shift+S" icon={SplitSquareHorizontal} onClick={onSplitAtPlayhead} />
+        )}
+        {onTransform && (
+          <select
+            className="h-6 max-w-[150px] rounded border border-border bg-background px-1 text-[10px]"
+            defaultValue=""
+            title="Transformar la selección (o todo el clip si no hay selección)"
+            aria-label="Transformar notas"
+            onChange={(e) => {
+              const op = e.target.value as TransformacionPR | ''
+              if (op) onTransform(op)
+              e.target.value = ''
+            }}
+          >
+            <option value="">Transformar…</option>
+            {TRANSFORMACIONES_PR.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.nombre} ({t.atajo})
+              </option>
+            ))}
+          </select>
+        )}
+        {onEscala && (
+          <>
+            <select
+              className="h-6 rounded border border-border bg-background px-1 text-[10px]"
+              value={escala ? String(escala.raiz) : ''}
+              title="Tónica de la guía de escala"
+              aria-label="Tónica"
+              onChange={(e) => {
+                const v = e.target.value
+                onEscala(v === '' ? null : { raiz: Number(v), tipo: escala?.tipo ?? 'major' })
+              }}
+            >
+              <option value="">Sin escala</option>
+              {NOMBRES_RAIZ.map((nombre, i) => (
+                <option key={nombre} value={i}>
+                  {nombre}
+                </option>
+              ))}
+            </select>
+            {escala && (
+              <select
+                className="h-6 rounded border border-border bg-background px-1 text-[10px]"
+                value={escala.tipo}
+                title="Tipo de escala"
+                aria-label="Tipo de escala"
+                onChange={(e) => onEscala({ raiz: escala.raiz, tipo: e.target.value as EscalaPR['tipo'] })}
+              >
+                {TIPOS_ESCALA.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.nombre}
+                  </option>
+                ))}
+              </select>
+            )}
+            {escala && onSnapEscala && (
+              <ToolBtn activo={snapEscala} titulo="Ajustar a escala" atajo="Alt+K" icon={Magnet} onClick={onSnapEscala} />
+            )}
+          </>
+        )}
 
         <div className="mx-0.5 h-5 w-px bg-border" />
 

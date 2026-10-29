@@ -512,6 +512,8 @@ export type TransportTogglePayload = {};
 export type TransportStopPayload = {};
 export type TransportSeekPayload = {
   segundos: number;
+  /** Gesto del usuario (clic en la regla, W/Inicio): también fija el punto de inicio al que vuelve Stop. */
+  marcarInicio?: boolean;
 };
 export type TransportToggleLoopPayload = {};
 export type TransportToggleMetronomePayload = {};
@@ -520,7 +522,7 @@ export type ProjectSetBpmPayload = {
   bpm: number;
 };
 
-function crearPista(nombre: string, tipo: Track['tipo'] = 'audio', color?: string, id?: string): Track {
+export function crearPista(nombre: string, tipo: Track['tipo'] = 'audio', color?: string, id?: string): Track {
   const base = {
     id: id && id.length > 0 ? id : generarId(),
     nombre,
@@ -713,7 +715,7 @@ export function crearComandoTrackCreate(): CommandDefinition<TrackCreatePayload>
         state: { ...estado, project: proyecto },
         events,
         // Compat: result conserva los campos del payload y añade trackId.
-        result: { ...payload, trackId: pista.id },
+        result: { ...payload, nombre, tipo, trackId: pista.id },
         inversePayload: { trackId: pista.id },
         // Redo fija nombre e id: recrea exactamente la misma pista.
         redoPayload: { ...payload, nombre, id: pista.id },
@@ -1331,7 +1333,8 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
   return {
     type: 'midi.clip.create',
     inverseType: 'clip.delete',
-    description: 'Crea un clip MIDI con notas en una pista MIDI',
+    description:
+      'Crea un clip MIDI con notas en una pista MIDI. `notas` es un array JSON de objetos {pitch, inicio, duracion, velocidad} (pitch 0–127, inicio y duracion en beats contados desde el principio del clip, velocidad 1–127), nunca un texto ni una descripción.',
     risk: 'write',
     schema: {
       type: 'object',
@@ -2886,12 +2889,18 @@ export function crearComandoTransportToggle(): CommandDefinition<TransportToggle
   };
 }
 
+/** Punto de inicio del transporte en segundos (0 si no se ha fijado o no es válido). */
+export function puntoInicioDe(transport: Pick<TransportState, 'puntoInicio'> | undefined): number {
+  const p = transport?.puntoInicio
+  return typeof p === 'number' && Number.isFinite(p) && p > 0 ? p : 0
+}
+
 export function crearComandoTransportStop(): CommandDefinition<TransportStopPayload> {
   return {
     type: 'transport.stop',
     replicacion: 'local',
     historialUndo: 'ninguno',
-    description: 'Detiene la reproducción y vuelve al inicio',
+    description: 'Detiene la reproducción y vuelve al punto de inicio',
     risk: 'write',
     schema: { type: 'object', additionalProperties: false },
     handler: (estado: DAWState): StateTransition<TransportStopPayload> => {
@@ -2900,7 +2909,7 @@ export function crearComandoTransportStop(): CommandDefinition<TransportStopPayl
         ...estado.transport,
         reproduciendo: false,
         grabacion: 'inactiva',
-        posicion: posicionDesdeSegundos(0, bpm),
+        posicion: posicionDesdeSegundos(puntoInicioDe(estado.transport), bpm),
       };
 
       return {
@@ -2931,6 +2940,7 @@ export function crearComandoTransportSeek(): CommandDefinition<TransportSeekPayl
       type: 'object',
       properties: {
         segundos: { type: 'number', minimum: 0 },
+        marcarInicio: { type: 'boolean' },
       },
       required: ['segundos'],
       additionalProperties: false,
@@ -2940,6 +2950,7 @@ export function crearComandoTransportSeek(): CommandDefinition<TransportSeekPayl
       const transport: TransportState = {
         ...estado.transport,
         posicion: posicionDesdeSegundos(payload.segundos, bpm),
+        ...(payload.marcarInicio ? { puntoInicio: Math.max(0, payload.segundos) } : {}),
       };
 
       return {
@@ -3343,6 +3354,324 @@ export function crearComandoClipRestoreMany(): CommandDefinition<ClipRestoreMany
           clips: quitados.map((x) => x.clip),
           indices: quitados.map((x) => x.index),
         } satisfies ClipRestoreManyPayload,
+      };
+    },
+  };
+}
+
+
+// ── G3: mute de clip, fades, ganancia de clip, mute y corte de notas ─────────
+
+export type ClipSetMutePayload = { cambios: { pistaId: string; clipId: string; silenciado: boolean }[] };
+
+/** Clips silenciados (atenuados, sin sonar). Varios clips de varias pistas en un solo paso de undo. */
+export function crearComandoClipSetMute(): CommandDefinition<ClipSetMutePayload> {
+  return {
+    type: 'clip.setMute',
+    inverseType: 'clip.setMute',
+    description: 'Silencia o activa clips (no suenan en la reproducción ni en el export)',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        cambios: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            properties: { pistaId: { type: 'string' }, clipId: { type: 'string' }, silenciado: { type: 'boolean' } },
+            required: ['pistaId', 'clipId', 'silenciado'],
+          },
+        },
+      },
+      required: ['cambios'],
+      additionalProperties: false,
+    },
+    handler: (estado, payload) => {
+      const previos: ClipSetMutePayload['cambios'] = [];
+      let tracks = estado.project.tracks;
+      for (const c of payload.cambios) {
+        const pista = tracks.find((t) => t.id === c.pistaId);
+        if (!pista) throw new Error(`Pista no encontrada: ${c.pistaId}`);
+        const clip = (pista.clips as { id: string; silenciado?: boolean }[]).find((x) => x.id === c.clipId);
+        if (!clip) throw new Error(`Clip no encontrado: ${c.clipId}`);
+        previos.push({ pistaId: c.pistaId, clipId: c.clipId, silenciado: clip.silenciado === true });
+        tracks = tracks.map((t) =>
+          t.id === c.pistaId
+            ? ({
+                ...t,
+                clips: (t.clips as { id: string }[]).map((x) => (x.id === c.clipId ? { ...x, silenciado: c.silenciado } : x)),
+                fechaModificacion: entorno.ahora(),
+              } as Track)
+            : t,
+        );
+      }
+      return {
+        state: { ...estado, project: { ...estado.project, tracks, modificado: true, fechaModificacion: entorno.ahora() } },
+        events: [],
+        result: payload,
+        inversePayload: { cambios: previos.reverse() },
+      };
+    },
+  };
+}
+
+export type CurvaFade = 'lineal' | 'exponencial' | 'logaritmica';
+export type ClipSetFadePayload = {
+  pistaId: string;
+  clipId: string;
+  tipo: 'in' | 'out';
+  /** Segundos (independiente del tempo). 0 quita el fade. */
+  duracion: number;
+  curva?: CurvaFade;
+};
+
+export function crearComandoClipSetFade(): CommandDefinition<ClipSetFadePayload> {
+  return {
+    type: 'clip.setFade',
+    inverseType: 'clip.setFade',
+    description: 'Fundido de entrada o salida de un clip de audio (duración en segundos y curva)',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        pistaId: { type: 'string' },
+        clipId: { type: 'string' },
+        tipo: { type: 'string', enum: ['in', 'out'] },
+        duracion: { type: 'number' },
+        curva: { type: 'string', enum: ['lineal', 'exponencial', 'logaritmica'] },
+      },
+      required: ['pistaId', 'clipId', 'tipo', 'duracion'],
+      additionalProperties: false,
+    },
+    handler: (estado, payload) => {
+      const pista = estado.project.tracks.find((t) => t.id === payload.pistaId);
+      if (!pista) throw new Error(`Pista no encontrada: ${payload.pistaId}`);
+      const clip = (pista.clips as AudioClip[]).find((c) => c.id === payload.clipId);
+      if (!clip) throw new Error(`Clip no encontrado: ${payload.clipId}`);
+      if (clip.tipo !== 'audio') throw new Error('Los fundidos solo se aplican a clips de audio');
+      if (!Number.isFinite(payload.duracion) || payload.duracion < 0) throw new Error('La duración del fundido debe ser ≥ 0 s');
+      const bpm = estado.project.bpm?.valor > 0 ? estado.project.bpm.valor : 120;
+      const largoSeg = (clip.duracion * 60) / bpm;
+      const otro = payload.tipo === 'in' ? clip.fadeOut?.duracion ?? 0 : clip.fadeIn?.duracion ?? 0;
+      // Los dos fundidos juntos nunca superan el largo del clip.
+      const duracion = Math.min(payload.duracion, Math.max(0, largoSeg - otro));
+      const clave = payload.tipo === 'in' ? 'fadeIn' : 'fadeOut';
+      const previo = clip[clave];
+      const curvaPrevia = (previo?.curva === 'exponencial' || previo?.curva === 'logaritmica' ? previo.curva : 'lineal') as CurvaFade;
+      const fade = {
+        id: previo?.id ?? `${clip.id}-${clave}`,
+        clipId: clip.id,
+        tipo: payload.tipo,
+        duracion,
+        curva: payload.curva ?? curvaPrevia,
+      };
+      const pistaNueva = {
+        ...pista,
+        clips: (pista.clips as AudioClip[]).map((c) => (c.id === clip.id ? { ...c, [clave]: fade } : c)),
+        fechaModificacion: entorno.ahora(),
+      } as Track;
+      return {
+        state: {
+          ...estado,
+          project: {
+            ...estado.project,
+            tracks: estado.project.tracks.map((t) => (t.id === pista.id ? pistaNueva : t)),
+            modificado: true,
+            fechaModificacion: entorno.ahora(),
+          },
+        },
+        events: [],
+        result: { ...payload, duracion },
+        inversePayload: { pistaId: pista.id, clipId: clip.id, tipo: payload.tipo, duracion: previo?.duracion ?? 0, curva: curvaPrevia },
+      };
+    },
+  };
+}
+
+export type ClipSetGainPayload = { pistaId: string; clipId: string; gananciaDb: number };
+
+export function crearComandoClipSetGain(): CommandDefinition<ClipSetGainPayload> {
+  return {
+    type: 'clip.setGain',
+    inverseType: 'clip.setGain',
+    description: 'Ganancia de un clip de audio en dB (−48 a +24), antes del fader de la pista',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: { pistaId: { type: 'string' }, clipId: { type: 'string' }, gananciaDb: { type: 'number' } },
+      required: ['pistaId', 'clipId', 'gananciaDb'],
+      additionalProperties: false,
+    },
+    handler: (estado, payload) => {
+      const pista = estado.project.tracks.find((t) => t.id === payload.pistaId);
+      if (!pista) throw new Error(`Pista no encontrada: ${payload.pistaId}`);
+      const clip = (pista.clips as AudioClip[]).find((c) => c.id === payload.clipId);
+      if (!clip) throw new Error(`Clip no encontrado: ${payload.clipId}`);
+      if (clip.tipo !== 'audio') throw new Error('La ganancia de clip solo se aplica a clips de audio');
+      if (!Number.isFinite(payload.gananciaDb)) throw new Error('Ganancia inválida');
+      const gananciaDb = Math.max(-48, Math.min(24, payload.gananciaDb));
+      const pistaNueva = {
+        ...pista,
+        clips: (pista.clips as AudioClip[]).map((c) => (c.id === clip.id ? { ...c, ganancia: gananciaDb } : c)),
+        fechaModificacion: entorno.ahora(),
+      } as Track;
+      return {
+        state: {
+          ...estado,
+          project: {
+            ...estado.project,
+            tracks: estado.project.tracks.map((t) => (t.id === pista.id ? pistaNueva : t)),
+            modificado: true,
+            fechaModificacion: entorno.ahora(),
+          },
+        },
+        events: [],
+        result: { ...payload, gananciaDb },
+        inversePayload: { pistaId: pista.id, clipId: clip.id, gananciaDb: clip.ganancia ?? 0 },
+      };
+    },
+  };
+}
+
+export type MidiNotesMutePayload = { pistaId: string; clipId: string; noteIds: string[]; mute?: boolean };
+
+/** Silencia notas concretas. Sin `mute`: alterna (si todas estaban silenciadas, las activa). */
+export function crearComandoMidiNotesMute(): CommandDefinition<MidiNotesMutePayload> {
+  return {
+    type: 'midi.notes.mute',
+    inverseType: 'midi.notes.patch',
+    description: 'Silencia o activa notas MIDI (se ven atenuadas y no suenan)',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        pistaId: { type: 'string' },
+        clipId: { type: 'string' },
+        noteIds: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        mute: { type: 'boolean' },
+      },
+      required: ['pistaId', 'clipId', 'noteIds'],
+      additionalProperties: false,
+    },
+    handler: (estado, payload) =>
+      applyMidiNotesToClip(estado, payload.pistaId, payload.clipId, (notas) => {
+        const ids = new Set(payload.noteIds);
+        const objetivo = notas.filter((n) => ids.has(n.id));
+        if (!objetivo.length) throw new Error('Ninguna de esas notas está en el clip');
+        const mute = payload.mute ?? !objetivo.every((n) => n.mute === true);
+        return notas.map((n) => (ids.has(n.id) ? { ...n, mute } : n));
+      }) as StateTransition<MidiNotesMutePayload>,
+  };
+}
+
+export type MidiNotesSplitPayload = {
+  pistaId: string;
+  clipId: string;
+  /** Beat (relativo al clip) donde se cortan las notas que lo cruzan. */
+  beat: number;
+  /** Solo estas notas (por defecto, todas las que cruzan el punto). */
+  noteIds?: string[];
+  idsGenerados?: string[];
+};
+
+export function crearComandoMidiNotesSplit(): CommandDefinition<MidiNotesSplitPayload> {
+  return {
+    type: 'midi.notes.split',
+    inverseType: 'midi.notes.patch',
+    description: 'Corta en dos las notas que cruzan un beat (tijera del piano roll)',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        pistaId: { type: 'string' },
+        clipId: { type: 'string' },
+        beat: { type: 'number' },
+        noteIds: { type: 'array', items: { type: 'string' } },
+        idsGenerados: SCHEMA_IDS_GENERADOS,
+      },
+      required: ['pistaId', 'clipId', 'beat'],
+      additionalProperties: false,
+    },
+    handler: (estado, payload) => {
+      const ids = crearGeneradorIds(payload.idsGenerados);
+      const limitar = payload.noteIds?.length ? new Set(payload.noteIds) : null;
+      const MIN = 1 / 64;
+      let cortadas = 0;
+      const t = applyMidiNotesToClip(estado, payload.pistaId, payload.clipId, (notas) => {
+        const out: MidiNote[] = [];
+        for (const n of notas) {
+          const fin = n.inicio + n.duracion;
+          const cruza = payload.beat > n.inicio + MIN && payload.beat < fin - MIN;
+          if (!cruza || (limitar && !limitar.has(n.id))) {
+            out.push(n);
+            continue;
+          }
+          cortadas++;
+          out.push({ ...n, duracion: payload.beat - n.inicio });
+          out.push({ ...n, id: ids.siguiente(), inicio: payload.beat, duracion: fin - payload.beat, seleccionada: false });
+        }
+        return out;
+      });
+      if (cortadas === 0) throw new Error('Ninguna nota cruza ese punto: no hay nada que cortar');
+      return {
+        ...t,
+        result: { ...payload, cortadas } as never,
+      } as StateTransition<MidiNotesSplitPayload>;
+    },
+  };
+}
+
+export type ClipSetReversePayload = { cambios: { pistaId: string; clipId: string; inverso: boolean }[] };
+
+/** Audio al revés (sin tocar el archivo: el motor lee la región del clip de atrás hacia delante). */
+export function crearComandoClipSetReverse(): CommandDefinition<ClipSetReversePayload> {
+  return {
+    type: 'clip.setReverse',
+    inverseType: 'clip.setReverse',
+    description: 'Reproduce al revés clips de audio (no modifica el archivo)',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        cambios: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            properties: { pistaId: { type: 'string' }, clipId: { type: 'string' }, inverso: { type: 'boolean' } },
+            required: ['pistaId', 'clipId', 'inverso'],
+          },
+        },
+      },
+      required: ['cambios'],
+      additionalProperties: false,
+    },
+    handler: (estado, payload) => {
+      const previos: ClipSetReversePayload['cambios'] = [];
+      let tracks = estado.project.tracks;
+      for (const c of payload.cambios) {
+        const pista = tracks.find((t) => t.id === c.pistaId);
+        if (!pista) throw new Error(`Pista no encontrada: ${c.pistaId}`);
+        const clip = (pista.clips as AudioClip[]).find((x) => x.id === c.clipId);
+        if (!clip) throw new Error(`Clip no encontrado: ${c.clipId}`);
+        if (clip.tipo !== 'audio') throw new Error('Solo los clips de audio se pueden invertir');
+        previos.push({ pistaId: c.pistaId, clipId: c.clipId, inverso: clip.inverso === true });
+        tracks = tracks.map((t) =>
+          t.id === c.pistaId
+            ? ({
+                ...t,
+                clips: (t.clips as AudioClip[]).map((x) => (x.id === c.clipId ? { ...x, inverso: c.inverso } : x)),
+                fechaModificacion: entorno.ahora(),
+              } as Track)
+            : t,
+        );
+      }
+      return {
+        state: { ...estado, project: { ...estado.project, tracks, modificado: true, fechaModificacion: entorno.ahora() } },
+        events: [],
+        result: payload,
+        inversePayload: { cambios: previos.reverse() },
       };
     },
   };

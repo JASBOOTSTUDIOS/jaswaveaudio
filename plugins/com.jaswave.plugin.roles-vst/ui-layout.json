@@ -70,6 +70,17 @@
     "caidaDbS": 14
   },
   "modoParam": 0,
+  "modos": {
+    "selector": [
+      358,
+      48,
+      476,
+      68
+    ],
+    "corte": 410,
+    "defecto": "avanzado"
+  },
+  "parametrosCubiertos": [],
   "widgets": [
     {
       "tipo": "section",
@@ -79,7 +90,8 @@
         1048,
         404
       ],
-      "etiqueta": "ENVOLVENTE · FILTRO"
+      "etiqueta": "ENVOLVENTE · FILTRO",
+      "basico": true
     },
     {
       "tipo": "knob",
@@ -91,6 +103,13 @@
       ],
       "etiqueta": "ATAQUE",
       "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        704,
+        213,
+        780,
+        307
+      ],
       "param": 1,
       "min": 0,
       "max": 100,
@@ -113,6 +132,13 @@
       ],
       "etiqueta": "RELEASE",
       "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        819,
+        213,
+        895,
+        307
+      ],
       "param": 2,
       "min": 0,
       "max": 100,
@@ -135,6 +161,13 @@
       ],
       "etiqueta": "CORTE",
       "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        934,
+        213,
+        1010,
+        307
+      ],
       "param": 3,
       "min": 0,
       "max": 100,
@@ -157,6 +190,7 @@
       ],
       "etiqueta": "RESONANCIA",
       "tamano": 44,
+      "basico": false,
       "param": 4,
       "min": 0,
       "max": 100,
@@ -179,6 +213,7 @@
       ],
       "etiqueta": "DRIVE",
       "tamano": 44,
+      "basico": false,
       "param": 7,
       "min": 0,
       "max": 100,
@@ -201,6 +236,7 @@
       ],
       "etiqueta": "VOCES",
       "tamano": 44,
+      "basico": false,
       "param": 6,
       "min": 0,
       "max": 100,
@@ -221,7 +257,8 @@
         1048,
         556
       ],
-      "etiqueta": "SALIDA · EFECTOS"
+      "etiqueta": "SALIDA · EFECTOS",
+      "basico": true
     },
     {
       "tipo": "fader",
@@ -232,6 +269,7 @@
         552
       ],
       "etiqueta": "NIVEL",
+      "basico": true,
       "param": 5,
       "min": 0,
       "max": 100,
@@ -254,6 +292,7 @@
       ],
       "etiqueta": "CHORUS",
       "tamano": 30,
+      "basico": false,
       "param": 9,
       "min": 0,
       "max": 100,
@@ -277,6 +316,7 @@
       ],
       "etiqueta": "DELAY",
       "tamano": 30,
+      "basico": false,
       "param": 10,
       "min": 0,
       "max": 100,
@@ -300,6 +340,13 @@
       ],
       "etiqueta": "REVERB",
       "tamano": 30,
+      "basico": true,
+      "rectBasico": [
+        830,
+        467,
+        872,
+        527
+      ],
       "param": 11,
       "min": 0,
       "max": 100,
@@ -323,6 +370,7 @@
       ],
       "etiqueta": "GRAVES",
       "tamano": 30,
+      "basico": false,
       "param": 12,
       "min": 0,
       "max": 100,
@@ -345,6 +393,7 @@
       ],
       "etiqueta": "AGUDOS",
       "tamano": 30,
+      "basico": false,
       "param": 13,
       "min": 0,
       "max": 100,
@@ -367,6 +416,7 @@
       ],
       "etiqueta": "GATE",
       "tamano": 30,
+      "basico": false,
       "param": 8,
       "min": 0,
       "max": 100,
@@ -387,7 +437,8 @@
         985,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -397,7 +448,8 @@
         999,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -407,7 +459,8 @@
         1029,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -417,7 +470,8 @@
         1043,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "dropdown",
@@ -428,6 +482,7 @@
         68
       ],
       "etiqueta": "MODO",
+      "basico": true,
       "param": 0,
       "min": 0,
       "max": 12,
@@ -454,6 +509,29 @@
         "Percusion",
         "Default"
       ]
+    },
+    {
+      "tipo": "modo",
+      "rect": [
+        358,
+        48,
+        476,
+        68
+      ],
+      "etiqueta": "BÁSICO|AVANZADO",
+      "basico": true,
+      "corte": 410
+    },
+    {
+      "tipo": "reset",
+      "rect": [
+        624,
+        48,
+        684,
+        68
+      ],
+      "etiqueta": "RESET",
+      "basico": true
     }
   ]
 }

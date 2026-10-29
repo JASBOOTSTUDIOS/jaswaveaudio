@@ -178,9 +178,25 @@ export function captureActiveDocTextSelection(): boolean {
   return true
 }
 
-/** Bloque para system/user context del agente. */
-export function formatMusicalSelectionForPrompt(a: MusicalSelectionAnchor | null): string {
+const RE_REFERENCIA_SELECCION = /\[selecci[oó]n:|\b(estas?|esos?|esas?|estos?) (notas?|acordes?|compases?|secuencias?|frases?|fragmentos?)\b|\b(la|mi) selecci[oó]n\b|\b(lo )?seleccionad[oa]s?\b|\beste (clip|fragmento|pasaje|trozo)\b|\besto\b/i
+const RE_PEDIDO_GLOBAL = /\b(canci[oó]n|tema|arreglo|proyecto|banda|mezcla|master)\b/i
+const MAX_EDAD_ANCLA_MS = 3 * 60_000
+
+/**
+ * ¿La selección anclada sirve para este pedido? Una selección vieja del piano roll no debe sesgar un pedido
+ * que no la menciona (p. ej. «completa la canción» con 5 notas de la intro seleccionadas hace rato).
+ */
+export function selectionRelevantForText(a: MusicalSelectionAnchor | null, userText: string, ahora = Date.now()): boolean {
+  if (!a || !selectionHasContext(a)) return false
+  if (RE_REFERENCIA_SELECCION.test(userText)) return true
+  if (RE_PEDIDO_GLOBAL.test(userText)) return false
+  return ahora - a.createdAt <= MAX_EDAD_ANCLA_MS
+}
+
+/** Bloque para system/user context del agente. Con `userText`, sólo si la selección es relevante para el pedido. */
+export function formatMusicalSelectionForPrompt(a: MusicalSelectionAnchor | null, userText?: string): string {
   if (!a || !selectionHasContext(a)) return ''
+  if (userText !== undefined && !selectionRelevantForText(a, userText)) return ''
   if (a.kind === 'doc-text') {
     return [
       '## Fragmento de documento anclado (usuario · Ctrl+L / Hacer)',

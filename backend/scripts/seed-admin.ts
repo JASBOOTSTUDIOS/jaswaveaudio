@@ -29,7 +29,7 @@ async function main() {
 
   console.log(`✓ Usuario admin registrado en BD: ID ${usuario.id} (esAdmin: ${usuario.esAdmin})`);
 
-  // 2. Sembrar los 7 plugins oficiales si no existen
+  // 2. Sembrar los plugins oficiales (FX, piano, roles e instrumentos independientes) si no existen
   const productos = [
     { id: 'com.jaswave.plugin.param-eq', nombre: 'JasWave Parametric EQ' },
     { id: 'com.jaswave.plugin.bus-compressor', nombre: 'JasWave Bus Compressor' },
@@ -38,6 +38,17 @@ async function main() {
     { id: 'com.jaswave.plugin.utility-tool', nombre: 'JasWave Utility Tool' },
     { id: 'com.jaswave.plugin.piano-synth', nombre: 'JasWave Piano Synth' },
     { id: 'com.jaswave.plugin.roles-vst', nombre: 'JasWave Roles Synthesizer' },
+    { id: 'com.jaswave.plugin.grand-piano', nombre: 'JasWave Grand Piano' },
+    { id: 'com.jaswave.plugin.worship-drums', nombre: 'JasWave Worship Drums' },
+    { id: 'com.jaswave.plugin.electric-bass', nombre: 'JasWave Electric Bass' },
+    { id: 'com.jaswave.plugin.electric-guitar', nombre: 'JasWave Electric Guitar' },
+    { id: 'com.jaswave.plugin.shimmer-pad', nombre: 'JasWave Shimmer Pad' },
+    { id: 'com.jaswave.plugin.strings-section', nombre: 'JasWave Strings Section' },
+    { id: 'com.jaswave.plugin.ambient-atmos', nombre: 'JasWave Ambient Atmos' },
+    { id: 'com.jaswave.plugin.sampler', nombre: 'JasWave Sampler' },
+    { id: 'com.jaswave.plugin.ambience', nombre: 'JasWave Ambience' },
+    { id: 'com.jaswave.plugin.vocal-tune', nombre: 'JasWave Vocal Tune' },
+    { id: 'com.jaswave.plugin.audio-lens', nombre: 'JasWave AudioLens' },
   ];
 
   for (const p of productos) {
@@ -59,7 +70,7 @@ async function main() {
     });
   }
 
-  console.log(`✓ Los 7 plugins oficiales sembrados y licenciados para ${ADMIN_EMAIL}`);
+  console.log(`✓ Los ${productos.length} plugins oficiales sembrados y licenciados para ${ADMIN_EMAIL}`);
   await prisma.$disconnect();
   await pool.end();
 }

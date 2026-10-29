@@ -1,7 +1,15 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Folder, FolderPlus, Sparkles, AlertCircle, X } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { persistirRutaYGuardar } from '@/src/lib/project-io'
+
+/**
+ * Detalle del evento `jaswave-nuevo-proyecto`.
+ * - `conservar`: el usuario ya está trabajando (quiso añadir una pista o soltar audio en un proyecto sin guardar):
+ *   se guarda el proyecto ACTUAL con ese nombre y carpeta en vez de vaciarlo con project.new.
+ * - `alCrear`: la acción que el usuario pidió y quedó pendiente; se completa al guardar.
+ */
+export type NuevoProyectoDetalle = { mensaje?: string; conservar?: boolean; alCrear?: () => void }
 
 export function NuevoProyectoDialog() {
   const tienda = useDAW()
@@ -12,12 +20,16 @@ export function NuevoProyectoDialog() {
   const [error, setError] = useState<string | null>(null)
   const [mensajeContextual, setMensajeContextual] = useState<string | null>(null)
   const [creando, setCreando] = useState(false)
+  const [conservar, setConservar] = useState(false)
+  const alCrearRef = useRef<(() => void) | null>(null)
 
   // Escuchar evento para abrir el diálogo
   useEffect(() => {
     const handleOpen = (e: Event) => {
-      const custom = e as CustomEvent<{ mensaje?: string }>
+      const custom = e as CustomEvent<NuevoProyectoDetalle | undefined>
       setMensajeContextual(custom.detail?.mensaje || null)
+      setConservar(custom.detail?.conservar === true)
+      alCrearRef.current = custom.detail?.alCrear ?? null
       setNombre(project.nombre && project.nombre !== 'Sin título' && project.nombre !== 'Proyecto sin nombre' ? project.nombre : 'Mi Proyecto')
       setError(null)
       setOpen(true)
@@ -27,16 +39,14 @@ export function NuevoProyectoDialog() {
     return () => window.removeEventListener('jaswave-nuevo-proyecto', handleOpen)
   }, [project.nombre])
 
-  // Obtener carpeta predeterminada al abrir
+  // Carpeta predeterminada al abrir: Documentos\JasWave (la de datos de la app queda como último recurso).
   useEffect(() => {
     if (!open) return
     void (async () => {
       try {
-        const docs = await window.electron?.userDataPath?.()
-        if (docs && !carpetaPadre) {
-          // Usar carpeta por defecto de proyectos
-          setCarpetaPadre(docs.replace(/[/\\]+$/, ''))
-        }
+        const rutas = await window.electron?.knownPaths?.()
+        const dir = rutas?.proyectosDir || (await window.electron?.userDataPath?.())
+        if (dir && !carpetaPadre) setCarpetaPadre(dir.replace(/[/\\]+$/, ''))
       } catch {
         /* best-effort */
       }
@@ -87,8 +97,11 @@ export function NuevoProyectoDialog() {
     setError(null)
 
     try {
-      // 1. Ejecutar project.new para reiniciar estado con el nombre elegido
-      const resultNew = await tienda.executor.execute('project.new', { nombre: nombreLimpio })
+      // 1. Proyecto nuevo y vacío con el nombre elegido; o, si el usuario ya estaba trabajando, el actual renombrado
+      //    (project.new aquí borraba sin aviso las pistas creadas antes de guardar).
+      const resultNew = conservar
+        ? await tienda.executor.execute('project.update', { datos: { nombre: nombreLimpio } })
+        : await tienda.executor.execute('project.new', { nombre: nombreLimpio })
       if (!resultNew.success) {
         throw new Error(resultNew.error?.message || 'Error al inicializar el proyecto')
       }
@@ -101,6 +114,9 @@ export function NuevoProyectoDialog() {
       }
 
       setOpen(false)
+      const pendiente = alCrearRef.current
+      alCrearRef.current = null
+      pendiente?.()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -120,8 +136,10 @@ export function NuevoProyectoDialog() {
               <FolderPlus className="size-5" />
             </div>
             <div>
-              <h2 className="text-[15px] font-semibold text-foreground">Crear Nuevo Proyecto</h2>
-              <p className="text-[11px] text-muted-foreground">Configura el destino permanente para tus pistas y audios</p>
+              <h2 className="text-[15px] font-semibold text-foreground">{conservar ? 'Guardar el proyecto' : 'Crear Nuevo Proyecto'}</h2>
+              <p className="text-[11px] text-muted-foreground">
+                {conservar ? 'Tu trabajo actual se conserva: solo elige nombre y carpeta' : 'Configura el destino permanente para tus pistas y audios'}
+              </p>
             </div>
           </div>
           <button
@@ -218,7 +236,7 @@ export function NuevoProyectoDialog() {
               ) : (
                 <>
                   <Sparkles className="size-3.5" />
-                  <span>Crear y Abrir Proyecto</span>
+                  <span>{conservar ? 'Guardar y continuar' : 'Crear y Abrir Proyecto'}</span>
                 </>
               )}
             </button>

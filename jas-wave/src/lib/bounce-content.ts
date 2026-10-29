@@ -34,6 +34,12 @@ export interface BounceAudioClip {
   inicioSec: number
   duracionSec: number
   clipInicioSec: number
+  gananciaDb?: number
+  fadeInSec?: number
+  fadeOutSec?: number
+  fadeInCurva?: string
+  fadeOutCurva?: string
+  inverso?: boolean
 }
 
 export interface BounceTrack {
@@ -69,6 +75,11 @@ type ClipLike = {
   }
   clipInicio?: number
   source?: { ruta?: string }
+  silenciado?: boolean
+  ganancia?: number
+  fadeIn?: { duracion?: number; curva?: string } | null
+  fadeOut?: { duracion?: number; curva?: string } | null
+  inverso?: boolean
 }
 
 type TrackLike = {
@@ -88,6 +99,8 @@ export type BounceSourceState = {
 
 export interface BounceSlotResolution {
   slotId?: string
+  /** Instrumentos en capa de la pista (además de `slotId`): reciben las mismas notas y CCs. */
+  capas?: string[]
 }
 
 /** Resuelve instrumento activo de una pista (slot VST). */
@@ -130,6 +143,7 @@ export function buildBounceContent(
     if (i >= MAX_STEMS) return
     const resolved = resolve(trk.id, trk.plugins)
     const slotId = resolved.slotId
+    const slots: Array<string | undefined> = [slotId, ...(resolved.capas ?? []).filter((s) => s && s !== slotId)]
 
     const track: BounceTrack = {
       trackId: trk.id,
@@ -140,6 +154,8 @@ export function buildBounceContent(
     }
 
     for (const clip of trk.clips ?? []) {
+      // Clip silenciado: no suena ni alarga el bounce.
+      if (clip.silenciado) continue
       const clipStart = beatsASegundos(clip.inicio ?? 0, bpm)
       const clipDur = beatsASegundos(clip.duracion ?? 16, bpm)
       const clipEnd = clipStart + clipDur
@@ -154,7 +170,14 @@ export function buildBounceContent(
           sourceKey: sourceKeyForClip(clip, trk.id),
           inicioSec: clipStart,
           duracionSec: clipDur,
-          clipInicioSec: clip.clipInicio ?? 0,
+          // `clipInicio` se guarda en beats, como `inicio` (ver clip.resize).
+          clipInicioSec: beatsASegundos(clip.clipInicio ?? 0, bpm),
+          gananciaDb: clip.ganancia,
+          fadeInSec: clip.fadeIn?.duracion,
+          fadeOutSec: clip.fadeOut?.duracion,
+          fadeInCurva: clip.fadeIn?.curva,
+          fadeOutCurva: clip.fadeOut?.curva,
+          inverso: clip.inverso === true,
         })
         continue
       }
@@ -167,13 +190,15 @@ export function buildBounceContent(
         if (noteEnd <= startSec) continue
         if (opts?.endSec != null && noteStart >= opts.endSec) continue
         contentEnd = Math.max(contentEnd, noteEnd)
-        track.notes.push({
-          slotId,
-          pitch: n.pitch,
-          velocity: typeof n.velocidad === 'number' ? n.velocidad : 100,
-          startSec: noteStart,
-          durSec: noteDur,
-        })
+        for (const s of slots) {
+          track.notes.push({
+            slotId: s,
+            pitch: n.pitch,
+            velocity: typeof n.velocidad === 'number' ? n.velocidad : 100,
+            startSec: noteStart,
+            durSec: noteDur,
+          })
+        }
       }
 
       for (const lane of clip.expression?.cc ?? []) {
@@ -183,12 +208,14 @@ export function buildBounceContent(
           if (opts?.endSec != null && timeSec > opts.endSec) continue
           const nrm = pt.valor <= 1 ? pt.valor : pt.valor / 127
           contentEnd = Math.max(contentEnd, timeSec)
-          track.ccs.push({
-            slotId,
-            cc: lane.cc,
-            value: Math.max(0, Math.min(127, Math.round(nrm * 127))),
-            timeSec,
-          })
+          for (const s of slots) {
+            track.ccs.push({
+              slotId: s,
+              cc: lane.cc,
+              value: Math.max(0, Math.min(127, Math.round(nrm * 127))),
+              timeSec,
+            })
+          }
         }
       }
     }

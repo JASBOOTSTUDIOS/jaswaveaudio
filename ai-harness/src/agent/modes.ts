@@ -10,22 +10,22 @@ export const AGENT_MODE_META: Record<
 > = {
   ask: {
     label: 'Consulta',
-    hint: 'Responde sobre el proyecto sin mutar el DAW',
+    hint: 'responde preguntas sin cambiar nada',
     insert: 'explícame cómo está el proyecto',
   },
   plan: {
     label: 'Plan',
-    hint: 'Propone estructura y VSTs sin mutar el DAW',
+    hint: 'propone cómo hacerlo, sin cambiar nada',
     insert: 'haz un plan del proyecto',
   },
   create: {
     label: 'Crear',
-    hint: 'Ejecuta y repara hasta completar el plan',
+    hint: 'hace los cambios en tu proyecto',
     insert: 'crea esto en el DAW',
   },
   think: {
     label: 'Pensar',
-    hint: 'Razona el arreglo; no muta hasta Construir',
+    hint: 'piensa el arreglo antes de hacer cambios',
     insert: 'piensa el arreglo completo y muéstrame una vista previa',
   },
 }

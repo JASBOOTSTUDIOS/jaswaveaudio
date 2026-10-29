@@ -37,7 +37,9 @@ struct ProcessScope { ProcessScope() { g_inProcess = true; } ~ProcessScope() { g
 #include "com.jaswave.plugin.bus-compressor/src/bus_compressor_dsp.h"
 #include "com.jaswave.plugin.truepeak-limiter/src/truepeak_limiter_dsp.h"
 #include "com.jaswave.plugin.smart-deesser/src/deesser_dsp.h"
+#include "com.jaswave.plugin.vocal-tune/src/vocal_tune_dsp.h"
 #include "com.jaswave.plugin.utility-tool/src/utility_dsp.h"
+#include "com.jaswave.plugin.pedal-fix/src/pedal_dsp.h"
 #include "com.jaswave.plugin.piano-synth/source/piano_dsp.h"
 #include "com.jaswave.plugin.roles-vst/src/roles_engine.h"
 #include "jw_audio_lens.h"
@@ -543,6 +545,138 @@ static double measurePitch(const Buf& x, int from, int to, double guess, double 
     return 0.5 * (lo + hi);
 }
 
+// Pedal Fix: la secuencia real del Yamaha PSR-E373 (pedal por tres canales a la vez), sustain forzado,
+// polaridad, canal fijo, transposición coherente en note-off y cero asignaciones.
+static void testPedalFix() {
+    std::printf("\n[PEDAL FIX] PSR-E373 multicanal, sustain forzado, polaridad, canal, transposición\n");
+    using namespace JasWavePedal;
+    std::vector<PedalOut> out;
+    out.reserve(256);
+    auto emit = [&](const PedalOut& o) { out.push_back(o); };
+    auto cuenta = [&](PedalOut::Tipo t) { int n = 0; for (const auto& o : out) if (o.tipo == t) ++n; return n; };
+    auto pisada = [&](PedalEngine& e, int off) {   // B0 40 7F · B1 40 7F · B2 40 00 (captura WinMM 2026-10-28)
+        e.cc(0, 64, 127, off, emit); e.cc(1, 64, 127, off, emit); e.cc(2, 64, 0, off, emit);
+    };
+    auto suelta = [&](PedalEngine& e, int off) { e.cc(0, 64, 0, off, emit); e.cc(1, 64, 0, off, emit); e.cc(2, 64, 0, off, emit); };
+
+    {
+        PedalEngine e;
+        PedalSettings s;
+        e.setSettings(s);
+        {
+            ProcessScope ps;
+            pisada(e, 10);
+        }
+        CHECK(out.size() == 1 && out[0].tipo == PedalOut::Cc && out[0].cc == 64 && out[0].valor == 127,
+              "pisada por 3 canales → un único CC64=127 (salieron %zu eventos)", out.size());
+        CHECK(e.pedalAbajo(0) && e.pedalAbajo(2), "el pedal queda pisado para todos los canales (unificado)");
+        out.clear();
+        e.noteOn(0, 60, 0.8f, -1, 20, emit);
+        e.noteOff(0, 60, 0.0f, -1, 30, emit);
+        CHECK(cuenta(PedalOut::NoteOn) == 1 && cuenta(PedalOut::NoteOff) == 0 && e.notasRetenidas() == 1,
+              "con el pedal pisado el note-off se retiene (retenidas=%d)", e.notasRetenidas());
+        out.clear();
+        suelta(e, 40);
+        CHECK(cuenta(PedalOut::Cc) == 1 && out[0].valor == 0 && cuenta(PedalOut::NoteOff) == 1 && out[1].nota == 60 && out[1].offset == 40,
+              "soltar → un único CC64=0 y el note-off retenido en el mismo instante (%zu eventos)", out.size());
+        CHECK(e.notasRetenidas() == 0 && e.duplicadosFiltrados() == 4, "sin retenidas; duplicados filtrados = %llu (4)",
+              static_cast<unsigned long long>(e.duplicadosFiltrados()));
+        out.clear();
+        pisada(e, 50); suelta(e, 60); pisada(e, 70);
+        CHECK(cuenta(PedalOut::Cc) == 3, "pisar/soltar/pisar → exactamente 3 CC (%d)", cuenta(PedalOut::Cc));
+        // redisparo: la nota retenida vuelve a tocarse → note-off previo + note-on
+        out.clear();
+        e.noteOn(0, 64, 0.7f, -1, 80, emit); e.noteOff(0, 64, 0.0f, -1, 81, emit);
+        e.noteOn(0, 64, 0.7f, -1, 90, emit);
+        CHECK(out.size() == 3 && out[1].tipo == PedalOut::NoteOff && out[2].tipo == PedalOut::NoteOn, "redisparo de nota retenida: off + on (%zu)", out.size());
+    }
+    {
+        // polaridad invertida: 127 en reposo; pisar manda 0
+        PedalEngine e;
+        PedalSettings s;
+        s.invertir = true;
+        e.setSettings(s);
+        out.clear();
+        e.cc(0, 64, 127, 0, emit);   // reposo
+        CHECK(out.size() == 1 && out[0].valor == 0 && !e.pedalAbajo(0), "polaridad invertida: 127 en reposo → pedal suelto (CC64=0)");
+        out.clear();
+        e.cc(0, 64, 0, 5, emit);
+        CHECK(out.size() == 1 && out[0].valor == 127 && e.pedalAbajo(0), "polaridad invertida: 0 → pedal pisado (CC64=127)");
+    }
+    {
+        // canal fijo + transposición: el note-off sale en el tono y canal con los que salió el note-on
+        PedalEngine e;
+        PedalSettings s;
+        s.canalSalida = 4;
+        s.transponer = 12;
+        s.forzar = false;
+        e.setSettings(s);
+        out.clear();
+        e.noteOn(3, 60, 0.5f, -1, 0, emit);
+        PedalSettings s2 = s;
+        s2.transponer = -5;
+        e.setSettings(s2);
+        e.noteOff(3, 60, 0.0f, -1, 10, emit);
+        CHECK(out.size() == 2 && out[0].canal == 4 && out[0].nota == 72 && out[1].canal == 4 && out[1].nota == 72,
+              "canal 5 fijo; note-on en 72 y note-off también en 72 aunque la transposición cambie (%d/%d)", out[0].nota, out[1].nota);
+        out.clear();
+        e.cc(7, 1, 90, 0, emit);
+        CHECK(out.size() == 1 && out[0].tipo == PedalOut::Cc && out[0].cc == 1 && out[0].valor == 90 && out[0].canal == 4, "otros CC pasan intactos al canal fijo");
+    }
+    {
+        // sin unificar: cada canal conserva su pedal (y se deduplica por canal)
+        PedalEngine e;
+        PedalSettings s;
+        s.unificar = false;
+        e.setSettings(s);
+        out.clear();
+        pisada(e, 0);
+        CHECK(cuenta(PedalOut::Cc) == 3 && e.pedalAbajo(0) && e.pedalAbajo(1) && !e.pedalAbajo(2), "sin unificar: 3 CC y el canal 3 queda suelto");
+        out.clear();
+        e.cc(0, 64, 127, 1, emit);
+        CHECK(out.empty(), "sin unificar: repetir el mismo valor en el canal no genera CC");
+        e.noteOn(2, 50, 0.5f, -1, 2, emit); out.clear();
+        e.noteOff(2, 50, 0.0f, -1, 3, emit);
+        CHECK(out.size() == 1 && out[0].tipo == PedalOut::NoteOff, "sin unificar: en el canal 3 (pedal suelto) el note-off sale");
+    }
+    {
+        // desactivar «forzar» con notas retenidas las libera en el siguiente bloque
+        PedalEngine e;
+        PedalSettings s;
+        e.setSettings(s);
+        pisada(e, 0);
+        e.noteOn(0, 61, 0.5f, -1, 1, emit); e.noteOff(0, 61, 0.0f, -1, 2, emit);
+        out.clear();
+        s.forzar = false;
+        e.setSettings(s);
+        CHECK(e.liberarPendiente(), "al quitar «forzar» queda pendiente liberar");
+        e.soltarTodo(0, emit);
+        CHECK(out.size() == 1 && out[0].tipo == PedalOut::NoteOff && out[0].nota == 61 && e.notasRetenidas() == 0, "soltarTodo entrega el note-off retenido");
+    }
+    {
+        // sin asignaciones en el camino caliente (1000 pisadas con acordes)
+        PedalEngine e;
+        PedalSettings s;
+        e.setSettings(s);
+        std::array<PedalOut, 64> buf{};
+        int n = 0;
+        auto emitFijo = [&](const PedalOut& o) { if (n < 64) buf[static_cast<size_t>(n++)] = o; };
+        g_allocs.store(0);
+        {
+            ProcessScope ps;
+            for (int i = 0; i < 1000; ++i) {
+                n = 0;
+                e.cc(0, 64, 127, 0, emitFijo); e.cc(1, 64, 127, 0, emitFijo); e.cc(2, 64, 0, 0, emitFijo);
+                for (int k = 0; k < 8; ++k) e.noteOn(k % 3, 40 + k, 0.6f, -1, 1, emitFijo);
+                for (int k = 0; k < 8; ++k) e.noteOff(k % 3, 40 + k, 0.0f, -1, 2, emitFijo);
+                e.cc(0, 64, 0, 3, emitFijo); e.cc(1, 64, 0, 3, emitFijo); e.cc(2, 64, 0, 3, emitFijo);
+            }
+        }
+        CHECK(g_allocs.load() == 0, "cero asignaciones en process (%lld)", g_allocs.load());
+        CHECK(n == 1 + 8 + 1 + 8, "último ciclo: 1 CC + 8 on + 1 CC + 8 off = %d", n);
+    }
+}
+
 static void testPiano() {
     std::printf("\n[PIANO] afinación, polifonía, denormales\n");
     using namespace JasWavePiano;
@@ -842,15 +976,168 @@ static void testAudioLens() {
     CHECK(!res.aiSummary.empty(), "genera resumen para IA no vacío");
 }
 
+// Teclado del editor tocable: cola UI → audio sin bloqueo (orden, note-off con velocidad 0, desbordamiento)
+static void testColaNotasUi() {
+    std::printf("\n[Cola de notas del teclado del editor]\n");
+    JasWaveDsp::ColaNotasUi q;
+    q.push(60, 0.8f);
+    q.push(60, 0.0f);
+    q.push(200, 1.0f);   // fuera de rango: se ignora
+    int notas[4]{}, n = 0;
+    float vels[4]{};
+    q.drenar([&](int nota, float v) { if (n < 4) { notas[n] = nota; vels[n] = v; } ++n; }, 32);
+    CHECK(n == 2 && notas[0] == 60 && std::fabs(vels[0] - 0.8f) < 0.01f && notas[1] == 60 && vels[1] == 0.0f,
+          "note-on 60 (vel %.2f) y note-off 60 en orden; nota fuera de rango descartada (%d entregadas)", vels[0], n);
+    for (int i = 0; i < 100; ++i) q.push(40 + (i % 40), 0.5f);
+    int m = 0, ultima = -1;
+    q.drenar([&](int nota, float) { ++m; ultima = nota; }, 1000);
+    CHECK(m == static_cast<int>(JasWaveDsp::ColaNotasUi::N) && ultima == 40 + (99 % 40),
+          "sin drenar a tiempo conserva las %d más recientes (entregadas %d, última %d)", static_cast<int>(JasWaveDsp::ColaNotasUi::N), m, ultima);
+    m = 0;
+    q.drenar([&](int, float) { ++m; }, 32);
+    CHECK(m == 0, "drenada la cola queda vacía (%d)", m);
+}
+
+// Vocal Tune: afinación (cromática y por escala), voz sorda intacta, latencia exacta, formantes, sin asignaciones
+static void testVocalTune() {
+    std::printf("\n[VOCAL TUNE] corrección de tono, sordas sin tocar, latencia\n");
+    using namespace JasWaveVocalTune;
+    auto ajustes = [](int escala, int tonica, bool lowLat) {
+        VocalTuneSettings s;
+        s.retuneMs = 0.0; s.humanize = 0.0; s.vibrato = 0.7; s.mix = 1.0; s.scale = escala; s.root = tonica; s.lowLatency = lowLat;
+        return s;
+    };
+    for (double sr : { 44100.0, 48000.0, 96000.0 }) {
+        const int n = static_cast<int>(sr * 2.0);
+        // 1) seno a A4 + 30 cents, cromática, retune instantáneo -> 440 Hz ± 5 cents tras asentarse
+        {
+            VocalTuneEngine e;
+            e.setSettings(ajustes(0, 0, true));
+            e.prepare(sr, 512);
+            const double fIn = 440.0 * std::pow(2.0, 30.0 / 1200.0);
+            const Buf x = sine(fIn, 0.5, sr, n);
+            Buf yl, yr;
+            const long long a0 = g_allocs.load();
+            runFx(e, static_cast<VocalTuneBus*>(nullptr), x, x, yl, yr, 256);
+            const long long a1 = g_allocs.load();
+            const double f = measurePitch(yl, n / 2, n, 440.0, sr);
+            const double cents = 1200.0 * std::log2(f / 440.0);
+            CHECK(std::fabs(cents) < 5.0, "sr=%.0f: A4+30c corregido a %.2f Hz (%+.2f cents de 440)", sr, f, cents);
+            CHECK(e.voiced() && std::fabs(e.correctionCents() + 30.0) < 3.0, "sr=%.0f: voz detectada a %.2f Hz, corrección %+.1f cents", sr, e.detectedHz(), e.correctionCents());
+            const double pureza = toneAmp(yl, n / 2, n, f, sr) / (std::sqrt(2.0) * rms(yl, n / 2, n));
+            CHECK(pureza > 0.98 && allFinite(yl) && allFinite(yr), "sr=%.0f: salida limpia (energía en la fundamental %.4f)", sr, pureza);
+            CHECK(a1 == a0, "sr=%.0f: sin asignaciones en process (%lld)", sr, a1 - a0);
+        }
+        // 1b) señal armónica (diente de sierra de 12 parciales) en A3 + 40 cents con vibrato 5.5 Hz ±20 cents,
+        //     retune 20 ms y Vibrato Preserve 100 %: el centro baja a 220 Hz y el vibrato se conserva
+        {
+            VocalTuneEngine e;
+            VocalTuneSettings s = ajustes(0, 0, true);
+            s.retuneMs = 20.0; s.vibrato = 1.0;
+            e.setSettings(s);
+            e.prepare(sr, 512);
+            Buf x(static_cast<size_t>(n));
+            double fase = 0.0;
+            for (int i = 0; i < n; ++i) {
+                const double f0 = 220.0 * std::pow(2.0, (40.0 + 20.0 * std::sin(2.0 * kPi * 5.5 * i / sr)) / 1200.0);
+                fase += 2.0 * kPi * f0 / sr;
+                double v = 0.0;
+                for (int k = 1; k <= 12; ++k) v += std::sin(k * fase) / k;
+                x[static_cast<size_t>(i)] = 0.25 * v;
+            }
+            Buf yl, yr;
+            runFx(e, static_cast<VocalTuneBus*>(nullptr), x, x, yl, yr, 512);
+            // centro: tono medio sobre un número entero de ciclos de vibrato (8 ciclos ≈ 1.45 s)
+            const double fOut = measurePitch(yl, n / 4, n / 4 + static_cast<int>(sr * 8.0 / 5.5), 220.0, sr);
+            const double cents = 1200.0 * std::log2(fOut / 220.0);
+            CHECK(std::fabs(cents) < 5.0 && allFinite(yl), "sr=%.0f: sierra A3+40c con vibrato -> centro %.2f Hz (%+.2f cents de 220)", sr, fOut, cents);
+        }
+        // 2) escala: C mayor, C#5 + 10 cents (fuera de escala) -> D5 (la más cercana de la escala)
+        {
+            VocalTuneEngine e;
+            e.setSettings(ajustes(1, 0, true));
+            e.prepare(sr, 512);
+            const double fIn = 440.0 * std::pow(2.0, (73.0 + 0.10 - 69.0) / 12.0);
+            const Buf x = sine(fIn, 0.4, sr, n);
+            Buf yl, yr;
+            runFx(e, static_cast<VocalTuneBus*>(nullptr), x, x, yl, yr, 512);
+            const double fD5 = 440.0 * std::pow(2.0, 5.0 / 12.0);
+            const double f = measurePitch(yl, n / 2, n, fD5, sr);
+            const double cents = 1200.0 * std::log2(f / fD5);
+            CHECK(std::fabs(cents) < 5.0, "sr=%.0f: C mayor, C#5+10c -> %.2f Hz (%+.2f cents de D5)", sr, f, cents);
+        }
+        // 3) ruido (sordo/sibilante) y silencio: pasan sin corregir, exactamente retrasados D muestras
+        for (bool lowLat : { true, false }) {
+            VocalTuneEngine e;
+            e.setSettings(ajustes(0, 0, lowLat));
+            e.prepare(sr, 512);
+            const int D = e.latency();
+            std::mt19937 rng(1234);
+            std::uniform_real_distribution<double> u(-0.3, 0.3);
+            Buf x(static_cast<size_t>(n), 0.0);
+            for (int i = n / 4; i < n; ++i) x[static_cast<size_t>(i)] = u(rng);   // 0.5 s de silencio y luego ruido
+            Buf yl, yr;
+            runFx(e, static_cast<VocalTuneBus*>(nullptr), x, x, yl, yr, 300);
+            double err = 0.0, ref = 0.0, sil = 0.0;
+            for (int i = D; i < n; ++i) {
+                const double d = yl[static_cast<size_t>(i)] - x[static_cast<size_t>(i - D)];
+                err += d * d; ref += x[static_cast<size_t>(i - D)] * x[static_cast<size_t>(i - D)];
+            }
+            for (int i = 0; i < n / 4; ++i) sil = std::max(sil, std::fabs(yl[static_cast<size_t>(i)]));
+            // pico de la correlación cruzada = retardo medido
+            int mejor = 0; double cmax = -1e30;
+            for (int lag = 0; lag < static_cast<int>(sr * 0.02); ++lag) {
+                double c = 0.0;
+                for (int i = n / 2; i < n / 2 + 8192; ++i) c += yl[static_cast<size_t>(i + lag)] * x[static_cast<size_t>(i)];
+                if (c > cmax) { cmax = c; mejor = lag; }
+            }
+            const int esperado = latencyFor(sr, lowLat);
+            CHECK(D == esperado && (!lowLat || D * 1000.0 / sr < 3.0), "sr=%.0f %s: latencia informada %d muestras (%.2f ms)", sr, lowLat ? "low" : "normal", D, D * 1000.0 / sr);
+            CHECK(mejor == D, "sr=%.0f %s: latencia medida (correlación) %d = informada %d", sr, lowLat ? "low" : "normal", mejor, D);
+            CHECK(db(std::sqrt(err / std::max(ref, 1e-30))) < -80.0, "sr=%.0f %s: ruido sin corregir (error %.1f dB)", sr, lowLat ? "low" : "normal", db(std::sqrt(err / std::max(ref, 1e-30))));
+            CHECK(sil == 0.0 && !e.voiced(), "sr=%.0f %s: silencio sin artefactos (pico %.2e)", sr, lowLat ? "low" : "normal", sil);
+        }
+        // 4) nota afinada: salida = entrada retrasada D (sin desfase de grano)
+        {
+            VocalTuneEngine e;
+            e.setSettings(ajustes(0, 0, true));
+            e.prepare(sr, 512);
+            const int D = e.latency();
+            const Buf x = sine(440.0, 0.5, sr, n);
+            Buf yl, yr;
+            runFx(e, static_cast<VocalTuneBus*>(nullptr), x, x, yl, yr, 128);
+            double err = 0.0, ref = 0.0;
+            for (int i = n / 2; i < n; ++i) { const double d = yl[static_cast<size_t>(i)] - x[static_cast<size_t>(i - D)]; err += d * d; ref += x[static_cast<size_t>(i - D)] * x[static_cast<size_t>(i - D)]; }
+            CHECK(db(std::sqrt(err / ref)) < -40.0, "sr=%.0f: A4 afinado sale alineado con la latencia informada (error %.1f dB)", sr, db(std::sqrt(err / ref)));
+        }
+        // 5) Formant Shift +4 st: cambia el timbre pero no la nota corregida
+        {
+            VocalTuneEngine e;
+            VocalTuneSettings s = ajustes(0, 0, true);
+            s.formantSt = 4.0;
+            e.setSettings(s);
+            e.prepare(sr, 512);
+            const Buf x = sine(440.0 * std::pow(2.0, 30.0 / 1200.0), 0.5, sr, n);
+            Buf yl, yr;
+            runFx(e, static_cast<VocalTuneBus*>(nullptr), x, x, yl, yr, 512);
+            const double f = measurePitch(yl, n / 2, n, 440.0, sr);
+            CHECK(std::fabs(1200.0 * std::log2(f / 440.0)) < 5.0 && allFinite(yl), "sr=%.0f: con formantes +4 st la nota sigue en %.2f Hz", sr, f);
+        }
+    }
+}
+
 int main() {
     std::printf("JasWave DSP selftest\n");
+    testVocalTune();
     testV3Visualizacion();
+    testColaNotasUi();
     testEq();
     testEqDinamico();
     testComp();
     testLimiter();
     testDeEsser();
     testUtility();
+    testPedalFix();
     testPiano();
     testInvariance();
     testAudioLens();

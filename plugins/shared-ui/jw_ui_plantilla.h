@@ -190,9 +190,44 @@ inline void dibujarUmbral(Gfx& g, const Rect& a, float umbralDb, const NivelVivo
     g.text(buf, { a.l + 6, yL, a.l + 220, yL + 16 }, Font::ValueSmall, sobre > 0.0f ? Pal::alerta : Pal::textoTenue, Align::Left);
 }
 
-// Teclado de 88 teclas (A0..C8) iluminado por las notas que suenan
+// Teclado de 88 teclas (A0..C8) iluminado por las notas que suenan. Tocable: clic = nota (más fuerte
+// hacia el borde inferior de la tecla), arrastrar = glissando, soltar = note-off.
 class Teclado88 {
 public:
+    Teclado88() = default;
+    Teclado88(const Teclado88&) = delete;
+    Teclado88& operator=(const Teclado88&) = delete;
+    ~Teclado88() { soltar(); }
+
+    // true si el clic cae en una tecla (el editor captura el ratón)
+    bool pulsar(const MouseEvent& e, const std::shared_ptr<JasWaveDsp::MeterBusBase>& bus) {
+        const int n = notaEn(e.x, e.y);
+        if (n < 0 || !bus) return false;
+        bus_ = bus;
+        tocar(n, velocidadEn(n, e.y));
+        return true;
+    }
+    void arrastrar(const MouseEvent& e) {
+        if (nota_ < 0) return;
+        const int n = notaEn(e.x, e.y);
+        if (n >= 0 && n != nota_) tocar(n, velocidadEn(n, e.y));
+    }
+    void soltar() {
+        if (nota_ < 0) return;
+        if (auto b = bus_.lock()) b->notasUi.push(nota_, 0.0f);
+        nota_ = -1;
+    }
+    bool tocando() const { return nota_ >= 0; }
+    // Nota bajo el punto (las negras van encima de las blancas) o -1
+    int notaEn(float x, float y) const {
+        if (kb_.w() <= 0.0f || !kb_.contains(x, y)) return -1;
+        for (int n = 21; n <= 108; ++n)
+            if (negra(n) && teclas_[static_cast<size_t>(n)].contains(x, y)) return n;
+        for (int n = 21; n <= 108; ++n)
+            if (!negra(n) && teclas_[static_cast<size_t>(n)].contains(x, y)) return n;
+        return -1;
+    }
+
     void actualizar(uint64_t k0, uint64_t k1, float dt) {
         const float caida = std::exp(-dt * 9.0f);
         for (int n = 0; n < 128; ++n) {
@@ -236,9 +271,24 @@ private:
             }
         }
     }
+    void tocar(int n, float vel) {
+        auto b = bus_.lock();
+        if (!b) return;
+        if (nota_ >= 0) b->notasUi.push(nota_, 0.0f);
+        b->notasUi.push(n, vel);
+        nota_ = n;
+        brillo_[static_cast<size_t>(n)] = 1.0f;
+    }
+    float velocidadEn(int n, float y) const {
+        const Rect& r = teclas_[static_cast<size_t>(n)];
+        const float t = r.h() > 0.0f ? std::clamp((y - r.t) / r.h(), 0.0f, 1.0f) : 0.7f;
+        return 0.35f + 0.6f * t;
+    }
     std::array<float, 128> brillo_{};
     std::array<Rect, 128> teclas_{};
     Rect kb_{ 0, 0, 0, 0 };
+    std::weak_ptr<JasWaveDsp::MeterBusBase> bus_;
+    int nota_{-1};
 };
 
 // ---------------------------------------------------------------------------------

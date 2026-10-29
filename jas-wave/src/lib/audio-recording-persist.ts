@@ -47,10 +47,15 @@ export async function saveRecordingWav(
   return { absPath, sourceId }
 }
 
-/** ¿La carpeta de grabaciones está dentro de la carpeta del proyecto? */
+/**
+ * ¿La carpeta de grabaciones está dentro de la carpeta del proyecto?
+ * `projectRuta` es el archivo `.jaswave` (como `project.ruta`) o su carpeta.
+ */
 export function esMediaDelProyecto(dir: string, projectRuta?: string | null): boolean {
   if (!projectRuta) return false
-  const proyecto = projectRuta.replace(/[\\/]+$/, '')
+  let proyecto = projectRuta.replace(/[\\/]+$/, '')
+  // Archivo de proyecto → su carpeta (main guarda en `dirname(ruta)/media/grabaciones`).
+  if (/\.jaswave$/i.test(proyecto)) proyecto = proyecto.replace(/[\\/][^\\/]*$/, '')
   const base = proyecto.replace(/\\/g, '/')
   const objetivo = dir.replace(/\\/g, '/').replace(/\/+$/, '')
   return objetivo.startsWith(`${base}/`)

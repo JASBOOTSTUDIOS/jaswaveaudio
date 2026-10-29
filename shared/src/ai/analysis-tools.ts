@@ -156,7 +156,7 @@ export function registrarAnalysisTools(registry: ToolRegistry): void {
     (type: string): ToolHandler =>
     async (params, ctx) => {
       try {
-        const r = await ctx.commandExecutor.execute(type, params as Record<string, unknown>)
+        const r = await ctx.commandExecutor.execute(type, params as Record<string, unknown>, ctx.source)
         return {
           success: r.success,
           data: r.result,

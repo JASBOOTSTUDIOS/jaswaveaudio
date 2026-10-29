@@ -16,6 +16,11 @@ import type { AudioClip } from '../../shared/src/types/clips'
 import { beatsASegundos, segundosABeats } from '@/lib/audio-conversions'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { safeProjectBpm } from '../../shared/src'
+import { EventosTransporte } from '../../shared/src/constants/nombres-eventos'
+import { detectarFinProyecto } from '../../shared/src/render/fin-proyecto'
+import { puntoInicioDe } from '../../shared/src/commands/domain-commands'
+import { decidirFinReproduccion, umbralSilencioLineal } from '@/src/lib/fin-reproduccion'
+import { getPreferenciasTransporte } from '@/src/lib/preferencias-transporte'
 import { useImportProgress } from '@/src/context/import-progress-context'
 import { extractStereoPeaks, packStereoPeaks } from '@/lib/stereo-peaks'
 import { nativeAudioBridge } from '@/src/lib/native-audio-bridge'
@@ -32,7 +37,6 @@ import { encodeWavFromAudioBuffer } from '@/src/lib/encode-wav'
 import {
   loadRecordingBytes,
   makeRecordingFileName,
-  recordingBasename,
   saveRecordingWav,
   saveRecordingWavFallback,
 } from '@/src/lib/audio-recording-persist'
@@ -45,6 +49,7 @@ import { scheduleCompPlayback } from '@/src/lib/comp-playback'
 import {
   ensureProjectVstInstruments,
   getLoadedInstrumentForTrack,
+  getLoadedInstrumentsForTrack,
   getVstRuntimeGeneration,
   registerProjectGraphResync,
   startVstRuntimeWindowSync,
@@ -52,6 +57,7 @@ import {
 } from '@/src/lib/plugin/track-vst-runtime'
 import { setPreferredVstPreviewTrack } from '@/src/lib/plugin/vst-voice-router'
 import { syncNativeChannelMix } from '@/src/lib/plugin/track-channel-mix'
+import { pistasAudibles } from '@/src/lib/plugin/track-hierarchy'
 import { applyAutomationAtTime, applyParamAutomationAtTime } from '@/src/lib/automation-runtime'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 import { isUndockWindow } from '@/lib/undock-window'
@@ -83,22 +89,36 @@ function trackAudioConfigFromShared(
     plugins?: { id?: string; bypass?: boolean; licencia?: string; nombre?: string; descripcion?: string }[]
   },
   stemIndex = 0,
+  audibles?: ReadonlySet<string>,
 ): TrackAudioConfig {
   // Solo slot host-confirmado: si inventamos el id esperado, el host loguea «slot no cargado» y hay silencio.
   const loaded = getLoadedInstrumentForTrack(t.id)
   const vstSlot = loaded?.slotId
+  const capas = getLoadedInstrumentsForTrack(t.id)
+    .map((p) => p.slotId)
+    .filter((s) => s !== vstSlot)
 
   return {
     id: t.id,
     volumen: typeof t.volumen === 'number' ? t.volumen : 0.8,
     paneo: typeof t.paneo === 'number' ? t.paneo : 0,
-    silenciada: Boolean(t.silenciada),
-    soloActiva: Boolean(t.soloActiva),
+    // Con jerarquía resuelta, mute/solo heredados de carpetas ya vienen aplanados en `silenciada`.
+    silenciada: audibles ? !audibles.has(t.id) : Boolean(t.silenciada),
+    soloActiva: audibles ? false : Boolean(t.soloActiva),
     stemIndex,
     vstInstrumentSlotId: vstSlot,
+    vstLayerSlotIds: capas.length > 0 ? capas : undefined,
     // W2: preset del WebSynth para escuchar la pista en la web.
     instrumentoWeb: presetParaPista([t.nombre, ...(t.tags ?? []), ...(t.plugins ?? []).map((p) => p.nombre)]),
   }
+}
+
+/** Config de audio de todas las pistas con mute/solo heredados de las carpetas-bus. */
+function tracksAudioConfigFromShared(
+  tracks: Array<Parameters<typeof trackAudioConfigFromShared>[0] & { tipo?: string; padreId?: string }>,
+): TrackAudioConfig[] {
+  const audibles = pistasAudibles(tracks)
+  return tracks.map((t, i) => trackAudioConfigFromShared(t, i, audibles))
 }
 
 function esAudioClip(clip: unknown): clip is AudioClip {
@@ -163,6 +183,29 @@ type PlaybackState = {
 }
 
 /** Acciones + clips (cambia poco). */
+/**
+ * Proyección de notas para la miniatura del clip, cacheada por la identidad del array
+ * `clip.notas` del store (inmutable: sólo cambia si ese clip cambia). Antes se recreaban
+ * ~90 clips x ~1000 notas en cada mutación de cualquier pista, y cada MidiClipPreview
+ * redibujaba su canvas entero.
+ */
+const previewNotasCache = new WeakMap<object, Array<{ pitch: number; inicio: number; duracion: number; velocidad?: number; mute?: boolean }>>()
+function previewNotasCacheadas(
+  notas: ReadonlyArray<{ pitch: number; inicio: number; duracion: number; velocidad?: number; mute?: boolean }>,
+) {
+  const hit = previewNotasCache.get(notas)
+  if (hit) return hit
+  const out = notas.map((n) => ({
+    pitch: n.pitch,
+    inicio: n.inicio,
+    duracion: n.duracion,
+    velocidad: n.velocidad,
+    mute: n.mute,
+  }))
+  previewNotasCache.set(notas, out)
+  return out
+}
+
 const PlaybackActionsContext = createContext<Omit<PlaybackState, 'positionMs' | 'progress'> | null>(null)
 /** Reloj UI (~20fps). */
 const PlaybackClockContext = createContext<{ positionMs: number; progress: number } | null>(null)
@@ -204,6 +247,17 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     return startVstRuntimeWindowSync(satellite ? 'satellite' : 'primary')
   }, [satellite])
 
+  // Stop (botón, atajo, IA o CLI: todos pasan por transport.stop) corta en seco todo el sonido de los plugins,
+  // reverbs y delays incluidos. La pausa no: ahí las colas de FX caen solas.
+  useEffect(() => {
+    if (satellite) return
+    const alDetener = () => {
+      void audioEngine.hardStop()
+    }
+    tienda.busEventos.on(EventosTransporte.detenido, alDetener)
+    return () => tienda.busEventos.off(EventosTransporte.detenido, alDetener as (p: unknown) => void)
+  }, [tienda, satellite])
+
   // Si un clip no llega al motor nativo, se avisa (una vez por clip) en lugar de dejarlo mudo sin explicación.
   useEffect(() => {
     const avisados = new Set<string>()
@@ -241,7 +295,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     return subscribeVstRuntime(() => {
       for (const t of sharedTracks) {
         const cfg = trackAudioConfigFromShared(t, sharedTracks.indexOf(t))
-        audioEngine.patchTrackVstInstrument(t.id, cfg.vstInstrumentSlotId)
+        audioEngine.patchTrackVstInstrument(t.id, cfg.vstInstrumentSlotId, cfg.vstLayerSlotIds ?? [])
       }
     })
   }, [sharedTracks])
@@ -284,6 +338,8 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   const [positionMs, setPositionMs] = useState(0)
   const positionMsRef = useRef(0)
+  /** `stop` del provider (lo usa el vigilante de fin de canción, definido más abajo). */
+  const stopRef = useRef<() => void>(() => undefined)
   /** Ancla para extrapolación en ventanas undock (Date.now comparable). */
   const satelliteAnchorRef = useRef<PlayheadAnchor | null>(null)
 
@@ -335,6 +391,8 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   const [failedSourcesState, setFailedSourcesState] = useState<Record<string, string>>({})
   // Map clips from shared store tracks (+ backfill peaks desde buffer en memoria)
   const peaksCacheRef = useRef<Map<string, number[]>>(new Map())
+  // Sube al llegar un .peak del disco para que las formas de onda se repinten sin esperar a otro cambio de estado
+  const [peaksVersion, setPeaksVersion] = useState(0)
   const clips: LoadedClip[] = useMemo(() => {
     const list: LoadedClip[] = []
     for (const trk of sharedTracks) {
@@ -354,15 +412,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
               sourceId: '',
               kind: 'midi',
               noteCount: Array.isArray(clip.notas) ? clip.notas.length : 0,
-              notes: Array.isArray(clip.notas)
-                ? clip.notas.map((n) => ({
-                    pitch: n.pitch,
-                    inicio: n.inicio,
-                    duracion: n.duracion,
-                    velocidad: n.velocidad,
-                    mute: n.mute,
-                  }))
-                : [],
+              notes: Array.isArray(clip.notas) ? previewNotasCacheadas(clip.notas) : [],
             })
             continue
           }
@@ -388,9 +438,11 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
               if (cached) {
                 waveform = cached
               } else {
-                void cargarWaveformPeak(sourceId).then((peakData) => {
-                  if (peakData && peakData.length >= 4) {
+                void cargarWaveformPeak(sourceId, projectRuta).then((peakData) => {
+                  // No pisa una forma de onda recién calculada desde el buffer (carrera con el disco)
+                  if (peakData && peakData.length >= 4 && !peaksCacheRef.current.has(cacheKey)) {
                     peaksCacheRef.current.set(cacheKey, peakData)
+                    setPeaksVersion((v) => v + 1)
                   }
                 })
                 const buf = audioEngine.getAudioBuffer(sourceId)
@@ -398,7 +450,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
                   const buckets = Math.min(4096, Math.max(512, Math.floor(buf.duration * 80)))
                   waveform = packStereoPeaks(extractStereoPeaks(buf, buckets))
                   peaksCacheRef.current.set(cacheKey, waveform)
-                  void guardarWaveformPeak(sourceId, waveform)
+                  void guardarWaveformPeak(sourceId, waveform, projectRuta)
                 }
               }
           }
@@ -422,7 +474,9 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       }
     }
     return list
-  }, [sharedTracks, BPM, failedSourcesState])
+    // peaksVersion no se lee dentro: solo fuerza el recálculo cuando llega un .peak del disco
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sharedTracks, BPM, failedSourcesState, projectRuta, peaksVersion])
 
   // Mute / solo / volumen / paneo / cadena FX en caliente durante play
   const trackMixSig = useMemo(
@@ -435,7 +489,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           const autos = (t.automatizaciones ?? [])
             .map((a) => `${a.parametro}:${a.puntos?.length ?? 0}`)
             .join(',')
-          return `${t.id}:${Boolean(t.silenciada)}:${Boolean(t.soloActiva)}:${typeof t.volumen === 'number' ? t.volumen : 0.8}:${typeof t.paneo === 'number' ? t.paneo : 0}:${plugs}:${autos}`
+          return `${t.id}:${t.padreId ?? ''}:${Boolean(t.silenciada)}:${Boolean(t.soloActiva)}:${typeof t.volumen === 'number' ? t.volumen : 0.8}:${typeof t.paneo === 'number' ? t.paneo : 0}:${plugs}:${autos}`
         })
         .join('|'),
     [sharedTracks],
@@ -473,7 +527,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (satellite) return
-    const tracksConfig: TrackAudioConfig[] = sharedTracks.map((t, i) => trackAudioConfigFromShared(t, i))
+    const tracksConfig: TrackAudioConfig[] = tracksAudioConfigFromShared(sharedTracks)
     audioEngine.applyTracksConfig(tracksConfig)
     syncNativeChannelMix(sharedTracks, masterState, projectRouting)
   }, [satellite, trackMixSig, masterMixSig, sharedTracks, vstRuntimeGen, masterState, projectRouting])
@@ -660,15 +714,40 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     // Estado fresco (CLI/musicBuild puede ir por delante del cierre React).
     const freshTracks = tienda.obtenerEstado().project?.tracks ?? sharedTracks
 
+    // Datos de edición del clip (mute, ganancia, fades, slip) desde el store: los clips cargados solo
+    // conocen posición y audio.
+    type ClipEdicion = {
+      id: string
+      silenciado?: boolean
+      ganancia?: number
+      clipInicio?: number
+      fadeIn?: { duracion?: number; curva?: string } | null
+      fadeOut?: { duracion?: number; curva?: string } | null
+      inverso?: boolean
+    }
+    const edicionPorId = new Map<string, ClipEdicion>()
+    for (const trk of freshTracks) for (const c of (trk.clips ?? []) as ClipEdicion[]) edicionPorId.set(c.id, c)
     const playbackClips: AudioClipPlaybackInfo[] = currentClips
       .filter((c) => (c.kind ?? 'audio') !== 'midi')
-      .map((c) => ({
-        id: c.id,
-        trackId: c.trackId,
-        inicio: c.inicioSeconds,
-        duracion: c.duracionSeconds,
-        sourcePathOrId: c.sourceId,
-      }))
+      .map((c) => {
+        const e = edicionPorId.get(c.id)
+        return {
+          id: c.id,
+          trackId: c.trackId,
+          inicio: c.inicioSeconds,
+          duracion: c.duracionSeconds,
+          sourcePathOrId: c.sourceId,
+          // clipInicio se guarda en beats.
+          clipInicio: e?.clipInicio ? beatsASegundos(e.clipInicio, BPM) : 0,
+          silenciado: e?.silenciado === true,
+          gananciaDb: e?.ganancia,
+          fadeInSec: e?.fadeIn?.duracion,
+          fadeOutSec: e?.fadeOut?.duracion,
+          fadeInCurva: e?.fadeIn?.curva,
+          fadeOutCurva: e?.fadeOut?.curva,
+          inverso: e?.inverso === true,
+        }
+      })
 
     // MIDI siempre desde el store: tras daw.musicBuild el play del bridge
     // suele llegar antes de que React regenere `clips` → schedule vacío + silencio
@@ -678,6 +757,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       if (!Array.isArray(trk.clips)) continue
       for (const rawClip of trk.clips) {
         if (!esMidiClip(rawClip)) continue
+        if ((rawClip as { silenciado?: boolean }).silenciado) continue
         const inicioBeats = rawClip.inicio ?? 0
         const inicioSeconds = beatsASegundos(inicioBeats, BPM)
         const raw = rawClip as {
@@ -725,8 +805,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    const trackAudioConfig = (): TrackAudioConfig[] =>
-      freshTracks.map((t, i) => trackAudioConfigFromShared(t, i))
+    const trackAudioConfig = (): TrackAudioConfig[] => tracksAudioConfigFromShared(freshTracks)
 
     if (midiClips.length === 0) {
       const storeMidi = freshTracks.reduce((n, t) => {
@@ -791,7 +870,9 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     if (noteN > 0 && slotN === 0) {
       console.warn('[playback] MIDI con notas pero sin slots VST', { noteN, tracks: freshTracks.length })
     }
-    audioEngine.playClips(startMs / 1000, playbackClips, cfg0, midiClips, BPM)
+    // Espera a que estén en el host los clips de los primeros segundos (máx. 4 s): el reloj de la UI
+    // arranca después (clock.play tras triggerAudioPlayback), así el playhead no corre con el audio mudo.
+    await audioEngine.playClips(startMs / 1000, playbackClips, cfg0, midiClips, BPM)
     const stComp = tienda.obtenerEstado()
     if ((stComp.project.takeFolders ?? []).some((f) => f.segments.length > 0 || f.takeActivoId)) {
       const stemByTrackId = new Map(freshTracks.map((t, i) => [t.id, i]))
@@ -948,10 +1029,31 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   }, [tienda])
 
   const stop = useCallback(() => {
-    // Primero congelar reloj en 0 para que el effect de pause no reintroduzca posición
+    // Primero congelar el reloj en el punto de inicio (donde el usuario dejó el cursor; 0 por defecto) para que el
+    // effect de pausa no reintroduzca la posición. transport.stop deja el estado en ese mismo punto.
     clock.stop()
-    positionMsRef.current = 0
-    setPositionMs(0)
+    const inicioMs = puntoInicioDe(tienda.obtenerEstado().transport) * 1000
+    positionMsRef.current = inicioMs
+    setPositionMs(inicioMs)
+    if (inicioMs > 0) {
+      const seg = inicioMs / 1000
+      const beats = seg * (BPM / 60)
+      try {
+        clock.seek({
+          beats,
+          segundos: seg,
+          samples: Math.round(seg * audioEngine.getSampleRate()),
+          ticks: beats * PPQ,
+          compases: beats / BEATS_PER_BAR,
+          frames: Math.round(seg * 30),
+          tiempoMusical: '',
+          porcentaje: 0,
+        })
+        audioEngine.seekTimeline(seg)
+      } catch {
+        /* ignore */
+      }
+    }
     audioEngine.stopAllSources()
     audioEngine.stopMetronome()
     void nativeAudioBridge.pause()
@@ -960,7 +1062,9 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         tienda.busEventos.emit('comando.fallido', { type: 'transport.stop', error: r.error?.message })
       }
     })
-  }, [tienda, clock])
+  }, [tienda, clock, BPM, BEATS_PER_BAR])
+
+  stopRef.current = stop
 
   const toggleRecording = useCallback(() => {
     void tienda.executor.execute('transport.toggleRecord', {})
@@ -1371,7 +1475,8 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         /* ignore */
       }
       if (!satellite) publishPlayheadTick(targetMs, playingRef.current)
-      void tienda.executor.execute('transport.seek', { segundos: targetSeconds })
+      // Arrastre en la barra de progreso = gesto del usuario: también fija el punto de inicio de Stop.
+      void tienda.executor.execute('transport.seek', { segundos: targetSeconds, marcarInicio: true })
 
       if (playing) {
         void triggerAudioPlayback(targetMs, clips).then(() => {
@@ -1384,16 +1489,13 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     [clock, playing, clips, triggerAudioPlayback, tienda, TOTAL_BEATS, BEATS_PER_BAR, metronomeOn, BPM, satellite],
   )
 
-  const seekToBeats = useCallback(
-    (beats: number) => {
+  /**
+   * Salto a un beat exacto (sin ajustar a la rejilla): lo usa el loop y seekToBeats tras el snap.
+   * `marcarInicio`: el salto es un gesto del usuario y fija el punto al que vuelve Stop (el loop no lo marca).
+   */
+  const seekToBeatsExact = useCallback(
+    (targetBeats: number, marcarInicio = false) => {
       const msPerBeat = msPerBeatRef.current
-      const st = tienda.obtenerEstado()
-      const targetBeats = snapSeekBeat(Math.max(0, beats), {
-        playheadSnap: st.ui?.playheadSnap !== false,
-        snapEnabled: st.project?.timeline?.snap ?? true,
-        snapValor: st.project?.timeline?.snapValor ?? 1,
-        beatsPerBar: st.project?.timeSignature?.numerador ?? BEATS_PER_BAR,
-      })
       const targetMs = targetBeats * msPerBeat
       const targetTicks = targetBeats * PPQ
       const targetSeconds = targetMs / 1000
@@ -1416,7 +1518,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         /* ignore */
       }
       if (!satellite) publishPlayheadTick(targetMs, playingRef.current)
-      void tienda.executor.execute('transport.seek', { segundos: targetSeconds })
+      void tienda.executor.execute('transport.seek', { segundos: targetSeconds, ...(marcarInicio ? { marcarInicio: true } : {}) })
 
       if (playing) {
         void triggerAudioPlayback(targetMs, clips).then(() => {
@@ -1428,6 +1530,68 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     },
     [clock, playing, clips, triggerAudioPlayback, tienda, TOTAL_BEATS, BEATS_PER_BAR, metronomeOn, BPM, satellite],
   )
+
+  /** Clic del usuario en la regla (Arrange / Piano Roll): mueve el playhead y fija el punto de inicio. */
+  const seekToBeats = useCallback(
+    (beats: number) => {
+      const st = tienda.obtenerEstado()
+      seekToBeatsExact(
+        snapSeekBeat(Math.max(0, beats), {
+          playheadSnap: st.ui?.playheadSnap !== false,
+          snapEnabled: st.project?.timeline?.snap ?? true,
+          snapValor: st.project?.timeline?.snapValor ?? 1,
+          beatsPerBar: st.project?.timeSignature?.numerador ?? BEATS_PER_BAR,
+        }),
+        true,
+      )
+    },
+    [tienda, seekToBeatsExact, BEATS_PER_BAR],
+  )
+
+  // Fin de la canción: con loop, vuelve al inicio de la región (o de la canción); sin loop y con
+  // «detener al final» (por defecto), se detiene y vuelve al inicio cuando se apaga la cola de reverb.
+  const seekExactRef = useRef(seekToBeatsExact)
+  seekExactRef.current = seekToBeatsExact
+  useEffect(() => {
+    if (satellite || !playing) return
+    let silencioSec = 0
+    let ultimo = performance.now()
+    let ocupado = false
+    const id = window.setInterval(() => {
+      const ahora = performance.now()
+      const dt = (ahora - ultimo) / 1000
+      ultimo = ahora
+      if (ocupado) return
+      const st = tienda.obtenerEstado()
+      if (st.transport?.grabacion === 'grabando') return // grabando: la canción crece, no se corta
+      const nivel = audioEngine.getMasterMeterLevel()
+      const pico = nivel > 0 ? Math.pow(nivel, 1 / 0.6) : 0
+      silencioSec = pico < umbralSilencioLineal() ? silencioSec + dt : 0
+      const fin = detectarFinProyecto(st.project)
+      const loop = st.transport?.loop
+      const d = decidirFinReproduccion({
+        ahoraSec: audioEngine.getMonotonicTimelineSeconds(),
+        finContenidoSec: fin.vacio ? null : fin.finSegundos,
+        loop: { activo: Boolean(loop?.activo), inicioSec: loop?.inicio?.segundos, finSec: loop?.fin?.segundos },
+        detenerAlFinal: getPreferenciasTransporte().detenerAlFinal,
+        picoMaster: pico,
+        silencioSec,
+      })
+      if (d.tipo === 'saltar') {
+        ocupado = true
+        silencioSec = 0
+        const bpm = safeProjectBpm(st)
+        seekExactRef.current((d.segundos * bpm) / 60)
+        window.setTimeout(() => {
+          ocupado = false
+        }, 300)
+      } else if (d.tipo === 'detener') {
+        ocupado = true
+        stopRef.current()
+      }
+    }, 50)
+    return () => window.clearInterval(id)
+  }, [playing, satellite, tienda])
 
   const addClipFromFile = useCallback(
     async (trackId: string, file: File, startBeats = 0) => {
@@ -1515,7 +1679,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
         if (playing) {
           // Re-schedule clips on the native host from current playhead.
-          void triggerAudioPlayback(positionMs, clips)
+          void triggerAudioPlayback(positionMsRef.current, clips)
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -1523,7 +1687,9 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         throw err
       }
     },
-    [tienda, playing, positionMs, BPM, importProgress, triggerAudioPlayback, clips, projectRuta],
+    // positionMs NO va en deps: cambiaba 4x/s, recreaba actionsValue y re-renderizaba
+    // ArrangementView + PianoRoll completos durante el play. Se lee de positionMsRef.
+    [tienda, playing, BPM, importProgress, triggerAudioPlayback, clips, projectRuta],
   )
 
   const getPositionMs = useCallback(() => {

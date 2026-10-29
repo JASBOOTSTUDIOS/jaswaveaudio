@@ -188,7 +188,8 @@ export interface Command {
   fechaCreacion: number;
 }
 
-export interface CommandDefinition<T = unknown> {
+/** `T` = payload; `R` = resultado del handler (por defecto, el mismo tipo que el payload). */
+export interface CommandDefinition<T = unknown, R = T> {
   type: string;
   description: string;
   risk: RiskLevel;
@@ -215,7 +216,7 @@ export interface CommandDefinition<T = unknown> {
    *   - `'local'`: no se replica (selección, vista, estado efímero de cada usuario).
    */
   replicacion?: 'operacion' | 'resultado' | 'local';
-  handler: (state: import('../types/state').DAWState, payload: T) => StateTransition<T> | Promise<StateTransition<T>>;
+  handler: (state: import('../types/state').DAWState, payload: T) => StateTransition<R> | Promise<StateTransition<R>>;
   validate?: (state: import('../types/state').DAWState, payload: T) => ValidationResult;
 }
 

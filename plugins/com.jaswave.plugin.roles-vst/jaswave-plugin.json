@@ -74,7 +74,8 @@
           "Synth",
           "Percusion",
           "Default"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "roles.ataque",
@@ -85,7 +86,8 @@
         "default": 35,
         "unit": "%",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "roles.release",
@@ -96,7 +98,8 @@
         "default": 40,
         "unit": "%",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "roles.corte",
@@ -107,7 +110,8 @@
         "default": 55,
         "unit": "%",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "roles.resonancia",
@@ -129,7 +133,8 @@
         "default": 70,
         "unit": "%",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "roles.voces",
@@ -195,7 +200,8 @@
         "default": 25,
         "unit": "%",
         "scale": "linear",
-        "feature": "roles.efectos"
+        "feature": "roles.efectos",
+        "basico": true
       },
       {
         "id": "roles.eq-graves",

@@ -16,22 +16,28 @@ test('lista los paquetes de plugins con integridad y ruta del binario', async ()
   const paquetes = (await page.evaluate(() => (window as any).electron.pluginsListar?.())) as Paquete[]
   test.skip(target !== 'dev' && paquetes.length === 0, 'app empaquetada sin plugins instalados')
   const ids = paquetes.map((p) => p.manifiesto?.id).sort()
-  expect(ids).toEqual(
-    expect.arrayContaining([
-      'com.jaswave.plugin.bus-compressor',
-      'com.jaswave.plugin.param-eq',
-      'com.jaswave.plugin.piano-synth',
-      'com.jaswave.plugin.roles-vst',
-      'com.jaswave.plugin.smart-deesser',
-      'com.jaswave.plugin.truepeak-limiter',
-      'com.jaswave.plugin.utility-tool',
-    ]),
-  )
+  // Los plugins que el producto entrega: tienen que estar y con su binario VST3 resuelto.
+  const ENTREGADOS = [
+    'com.jaswave.plugin.bus-compressor',
+    'com.jaswave.plugin.param-eq',
+    'com.jaswave.plugin.pedal-fix',
+    'com.jaswave.plugin.piano-synth',
+    'com.jaswave.plugin.roles-vst',
+    'com.jaswave.plugin.smart-deesser',
+    'com.jaswave.plugin.truepeak-limiter',
+    'com.jaswave.plugin.utility-tool',
+  ]
+  expect(ids).toEqual(expect.arrayContaining(ENTREGADOS))
   for (const p of paquetes) {
     expect(p.errores, p.dir).toEqual([])
     expect(p.integridad, p.dir).not.toBe('alterada')
     // Los módulos del DAW (asistente IA, MIDI·MD…) no tienen binario VST3.
-    if (p.manifiesto?.entrypoints?.dspDesktop) expect(p.rutaDsp, `${p.dir}: binario VST3 resuelto`).toMatch(/\.vst3$/i)
+    if (!p.manifiesto?.entrypoints?.dspDesktop) continue
+    if (p.rutaDsp) expect(p.rutaDsp, `${p.dir}: binario VST3 resuelto`).toMatch(/\.vst3$/i)
+    // Un plugin en desarrollo (p. ej. Audio Lens, fuera del build conjunto) puede estar sin compilar en el
+    // repositorio; los entregados, nunca.
+    else if (ENTREGADOS.includes(p.manifiesto?.id ?? '')) expect(p.rutaDsp, `${p.dir}: binario VST3 resuelto`).toMatch(/\.vst3$/i)
+    else console.log(`[e2e] paquete sin binario compilado (en desarrollo): ${p.manifiesto?.id}`)
   }
 })
 

@@ -5,8 +5,9 @@
  */
 
 import { DB_MAX, DB_MIN, xDeFrecuencia, yDeDbfs } from './espectro'
-import { pildora } from './disposicion'
-import type { Rect4, UiLayout, WidgetLayout } from './tipos'
+import { layoutParaVista, pildora, visibleEnPagina } from './disposicion'
+import { BANDAS, OFF, leerParamsEq, resolverWidget, respuestaDb, widgetEq } from './fxrack'
+import type { ModoEditor, Rect4, UiLayout, WidgetLayout } from './tipos'
 import { aPlano, defDe, formatear } from './valores'
 
 /** Tokens de V3 §3.1 (idénticos a Pal en jw_ui.h). */
@@ -80,7 +81,22 @@ export type EstadoDibujo = {
   logo?: CanvasImageSource | null
   /** Texto del mini-panel donde el VST pinta medición en vivo que la réplica no calcula. */
   avisoMedicion?: string
+  /** Página visible: 0 = editor del plugin, 1 = MIX / FX, 2 = PARÁMETROS. */
+  pagina?: number
+  /** Modo del editor (Avanzado si se omite): en Básico solo se dibujan los controles esenciales. */
+  modo?: ModoEditor
+  /** Banda del ecualizador seleccionada en la página MIX / FX (0..5). */
+  bandaSel?: number
+  /** Reducción de ganancia del compresor integrado (dB); la web no procesa audio, así que normalmente no hay. */
+  grDb?: number | null
+  /** Tecla del teclado en pantalla pulsada con el ratón (se ilumina). */
+  notaPulsada?: number | null
+  /** Frecuencia de muestreo con la que se dibuja la curva del ecualizador. */
+  sampleRate?: number
 }
+
+/** Banda del ecualizador seleccionada por defecto (la tercera: campana de 800 Hz), como en el editor nativo. */
+export const BANDA_INICIAL = 2
 
 type Ctx = CanvasRenderingContext2D
 
@@ -402,10 +418,54 @@ function interruptor(ctx: Ctx, w: WidgetLayout, e: EstadoDibujo) {
   texto(ctx, w.etiqueta, (r[0] + r[2]) / 2, (r[1] + r[3]) / 2, FUENTE.etiqueta, on ? PAL.cianNucleo : PAL.textoEtiqueta, 'center', true)
 }
 
+/** Botón RESET de la cabecera: devuelve todos los parámetros a su valor por defecto. */
+function botonReset(ctx: Ctx, w: WidgetLayout, e: EstadoDibujo) {
+  const r = w.rect
+  const radio = (r[3] - r[1]) / 2
+  const sobre = e.activo === w
+  ctx.beginPath()
+  ctx.roundRect(r[0], r[1], r[2] - r[0], r[3] - r[1], radio)
+  ctx.fillStyle = sobre ? 'rgba(25,217,255,0.26)' : 'rgba(25,217,255,0.10)'
+  ctx.fill()
+  ctx.strokeStyle = sobre ? 'rgba(25,217,255,0.95)' : 'rgba(25,217,255,0.55)'
+  ctx.lineWidth = 1
+  ctx.stroke()
+  texto(ctx, w.etiqueta || 'RESET', (r[0] + r[2]) / 2, (r[1] + r[3]) / 2, FUENTE.etiqueta, sobre ? PAL.cianNucleo : PAL.cian, 'center', true)
+}
+
+/** Selector [ BÁSICO | AVANZADO ] de la cabecera (como SelectorModo en jw_ui_view.cpp). */
+function selectorModo(ctx: Ctx, w: WidgetLayout, e: EstadoDibujo) {
+  const r = w.rect
+  const corte = w.corte ?? (r[0] + r[2]) / 2
+  const basico = e.modo === 'basico'
+  const sobre = e.activo === w
+  const radio = (r[3] - r[1]) / 2
+  ctx.beginPath()
+  ctx.roundRect(r[0], r[1], r[2] - r[0], r[3] - r[1], radio)
+  ctx.fillStyle = sobre ? 'rgba(25,217,255,0.10)' : 'rgba(25,217,255,0.05)'
+  ctx.fill()
+  ctx.beginPath()
+  ctx.roundRect(basico ? r[0] : corte, r[1], basico ? corte - r[0] : r[2] - corte, r[3] - r[1], radio)
+  ctx.fillStyle = 'rgba(25,217,255,0.30)'
+  ctx.fill()
+  ctx.beginPath()
+  ctx.roundRect(r[0], r[1], r[2] - r[0], r[3] - r[1], radio)
+  ctx.strokeStyle = sobre ? 'rgba(25,217,255,0.95)' : 'rgba(25,217,255,0.55)'
+  ctx.lineWidth = 1
+  ctx.stroke()
+  linea(ctx, corte, r[1] + 4, corte, r[3] - 4, 'rgba(25,217,255,0.35)')
+  const cy = (r[1] + r[3]) / 2
+  texto(ctx, 'BÁSICO', (r[0] + corte) / 2, cy, FUENTE.etiqueta, basico ? PAL.textoTitulo : 'rgba(25,217,255,0.75)', 'center', true)
+  texto(ctx, 'AVANZADO', (corte + r[2]) / 2, cy, FUENTE.etiqueta, basico ? 'rgba(25,217,255,0.75)' : PAL.textoTitulo, 'center', true)
+}
+
 function desplegable(ctx: Ctx, w: WidgetLayout, e: EstadoDibujo) {
   const r = w.rect
   let bx = r[0]
-  if (w.etiqueta) {
+  if (w.etiquetaArriba) {
+    // página PARÁMETROS: el nombre encima y la caja a todo el ancho
+    texto(ctx, w.etiqueta, (r[0] + r[2]) / 2, r[1] - 10, FUENTE.etiqueta, PAL.textoEtiqueta, 'center', true)
+  } else if (w.etiqueta) {
     ctx.font = FUENTE.etiqueta
     conEspaciado(ctx, true, 11)
     const lw = ctx.measureText(w.etiqueta).width + 8
@@ -518,24 +578,58 @@ function espectro(ctx: Ctx, a: Rect4, e: EstadoDibujo) {
   }
 }
 
-function teclado(ctx: Ctx, kb: Rect4) {
-  const negra = (n: number) => [1, 3, 6, 8, 10].includes(n % 12)
+const esNegra = (n: number) => [1, 3, 6, 8, 10].includes(n % 12)
+
+/** Teclado de 88 teclas del visualizador de instrumentos (mismas coordenadas que el VST nativo). */
+export function rectTeclado(layout: UiLayout): Rect4 | null {
+  if (layout.visualizador !== 'espectro-instrumento') return null
+  const v = layout.zonas.visualizador
+  return [v[0] + 14, v[3] - 84, v[2] - 14, v[3] - 14]
+}
+
+/** Nota MIDI (21..108) bajo un punto del teclado, o null. Las negras van encima de las blancas. */
+export function notaEnTeclado(kb: Rect4, x: number, y: number): number | null {
+  if (x < kb[0] || x > kb[2] || y < kb[1] || y > kb[3]) return null
+  const ww = (kb[2] - kb[0]) / 52
+  const blanca = Math.min(51, Math.floor((x - kb[0]) / ww))
+  if (y <= kb[1] + (kb[3] - kb[1]) * 0.6) {
+    // negra: centrada en el borde izquierdo de la blanca siguiente
+    let wi = 0
+    for (let n = 21; n <= 108; n++) {
+      if (esNegra(n)) {
+        const cx = kb[0] + wi * ww
+        if (Math.abs(x - cx) <= ww * 0.32) return n
+        continue
+      }
+      wi++
+    }
+  }
+  let wi = 0
+  for (let n = 21; n <= 108; n++) {
+    if (esNegra(n)) continue
+    if (wi === blanca) return n
+    wi++
+  }
+  return null
+}
+
+function teclado(ctx: Ctx, kb: Rect4, pulsada: number | null) {
   const ww = (kb[2] - kb[0]) / 52
   let wi = 0
-  const negras: number[] = []
+  const negras: Array<[number, number]> = []
   for (let n = 21; n <= 108; n++) {
-    if (negra(n)) {
-      negras.push(kb[0] + wi * ww)
+    if (esNegra(n)) {
+      negras.push([n, kb[0] + wi * ww])
       continue
     }
-    ctx.fillStyle = '#12143A'
+    ctx.fillStyle = n === pulsada ? PAL.cian : '#12143A'
     ctx.fillRect(kb[0] + wi * ww + 0.6, kb[1], ww - 1.2, kb[3] - kb[1])
     ctx.strokeStyle = PAL.panelBorde
     ctx.strokeRect(kb[0] + wi * ww + 0.6, kb[1], ww - 1.2, kb[3] - kb[1])
     wi++
   }
-  for (const x of negras) {
-    ctx.fillStyle = '#03030F'
+  for (const [n, x] of negras) {
+    ctx.fillStyle = n === pulsada ? PAL.cian : '#03030F'
     ctx.fillRect(x - ww * 0.32, kb[1], ww * 0.64, (kb[3] - kb[1]) * 0.6)
     ctx.strokeStyle = PAL.panelBorde
     ctx.strokeRect(x - ww * 0.32, kb[1], ww * 0.64, (kb[3] - kb[1]) * 0.6)
@@ -566,6 +660,21 @@ const TITULO_VISUAL: Record<UiLayout['visualizador'], string> = {
   'espectro-dual': 'ESPECTRO IN / OUT',
   'espectro-instrumento': 'ESPECTRO OUT · TECLADO',
   vectorscopio: 'VECTORSCOPIO · ESPECTRO IN / OUT',
+  'curva-tono': 'CURVA DE TONO · DETECTADO / CORREGIDO',
+}
+
+const NOTAS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+/** Rejilla de semitonos del afinador (Vocal Tune); la réplica web no procesa audio, así que no hay curva. */
+function curvaTono(ctx: Ctx, a: Rect4) {
+  const centro = 62, rango = 12
+  for (let s = -rango; s <= rango; s++) {
+    const y = a[3] - ((s + rango) / (2 * rango)) * (a[3] - a[1])
+    const n = (((centro + s) % 12) + 12) % 12
+    const natural = !NOTAS[n]!.includes('#')
+    linea(ctx, a[0], y, a[2], y, natural ? 'rgba(25,217,255,0.10)' : 'rgba(25,217,255,0.04)')
+    if (natural) texto(ctx, `${NOTAS[n]}${Math.floor((centro + s) / 12) - 1}`, a[0] - 4, y, FUENTE.valorPeq, PAL.textoTenue, 'right')
+  }
 }
 
 function visualizador(ctx: Ctx, e: EstadoDibujo) {
@@ -577,7 +686,9 @@ function visualizador(ctx: Ctx, e: EstadoDibujo) {
     espectro(ctx, [v[0] + 310, v[1] + 32, v[2] - 40, v[3] - 22], e)
   } else if (L.visualizador === 'espectro-instrumento') {
     espectro(ctx, [v[0] + 14, v[1] + 32, v[2] - 40, v[3] - 112], e)
-    teclado(ctx, [v[0] + 14, v[3] - 84, v[2] - 14, v[3] - 14])
+    teclado(ctx, [v[0] + 14, v[3] - 84, v[2] - 14, v[3] - 14], e.notaPulsada ?? null)
+  } else if (L.visualizador === 'curva-tono') {
+    curvaTono(ctx, [v[0] + 44, v[1] + 32, v[2] - 14, v[3] - 14])
   } else {
     espectro(ctx, L.zonas.espectro, e)
   }
@@ -605,15 +716,205 @@ function visualizador(ctx: Ctx, e: EstadoDibujo) {
   }
 }
 
+// ---------------------------------------------------------------------------------
+//  Página MIX / FX (FX Rack)
+// ---------------------------------------------------------------------------------
+const COLOR_BANDA = (b: number) => gradienteMarca(b / (BANDAS - 1))
+const NOMBRE_BANDA = (b: number) => (b === 0 ? 'LOW SHELF' : b === BANDAS - 1 ? 'HIGH SHELF' : 'PEAK')
+
+function botonPagina(ctx: Ctx, w: WidgetLayout, e: EstadoDibujo) {
+  const r = w.rect
+  const activa = (e.pagina ?? 0) === (w.paginaDestino ?? 1)
+  const sobre = e.activo === w
+  ctx.beginPath()
+  ctx.roundRect(r[0], r[1], r[2] - r[0], r[3] - r[1], (r[3] - r[1]) / 2)
+  ctx.fillStyle = activa ? 'rgba(25,217,255,0.34)' : sobre ? 'rgba(25,217,255,0.26)' : 'rgba(25,217,255,0.10)'
+  ctx.fill()
+  ctx.strokeStyle = activa || sobre ? 'rgba(25,217,255,0.95)' : 'rgba(25,217,255,0.55)'
+  ctx.lineWidth = 1
+  ctx.stroke()
+  const fx = (w.paginaDestino ?? 1) === 1
+  const rotulo = activa ? w.textoAbierta ?? 'EDITOR' : w.etiqueta || 'MIX / FX'
+  texto(ctx, rotulo, fx ? (r[0] + r[2] - 6) / 2 : (r[0] + r[2]) / 2, (r[1] + r[3]) / 2, FUENTE.etiqueta, activa || sobre ? PAL.textoTitulo : PAL.cian, 'center', true)
+  // LED «rack encendido»: solo en el botón MIX / FX
+  const base = fx ? widgetEq(e.layout.widgets)?.base : undefined
+  if (base !== undefined) {
+    const ons = [OFF.HpfOn, OFF.LpfOn, OFF.EqOn, OFF.CompOn, OFF.SatOn, OFF.ChOn, OFF.DlOn, OFF.RvOn, OFF.OutOn]
+    if (ons.some((o) => e.valor(base + o) >= 0.5)) brillo(ctx, PAL.cianNucleo, 6, () => {
+      ctx.fillStyle = PAL.cianNucleo
+      ctx.beginPath()
+      ctx.arc(r[2] - 9, (r[1] + r[3]) / 2, 2.6, 0, Math.PI * 2)
+      ctx.fill()
+    })
+  }
+}
+
+/** Valor plano de un parámetro descrito por una banda del layout. */
+function planoDe(e: EstadoDibujo, d?: { param: number; min: number; max: number; defecto: number; escala: 'linear' | 'log' | 'stepped' }): number {
+  if (!d) return 0
+  return aPlano({ min: d.min, max: d.max, defecto: d.defecto, escala: d.escala }, e.valor(d.param))
+}
+
+function botonBanda(ctx: Ctx, w: WidgetLayout, e: EstadoDibujo) {
+  const b = w.selBanda ?? 0
+  const sel = (e.bandaSel ?? BANDA_INICIAL) === b
+  const c = COLOR_BANDA(b)
+  const r = w.rect
+  const tocada = Math.abs(planoDe(e, widgetEq(e.layout.widgets)?.bandas?.[b]?.gain)) > 0.05
+  chaflan(ctx, r, 4)
+  ctx.fillStyle = sel ? c.replace('rgb', 'rgba').replace(')', ',0.30)') : '#0A0C26'
+  ctx.fill()
+  ctx.strokeStyle = sel || e.activo === w ? c : PAL.panelBorde
+  ctx.lineWidth = 1
+  ctx.stroke()
+  texto(ctx, w.etiqueta, (r[0] + r[2]) / 2, (r[1] + r[3]) / 2, FUENTE.etiqueta, sel ? PAL.textoTitulo : PAL.textoEtiqueta, 'center', true)
+  if (tocada) {
+    ctx.fillStyle = c
+    ctx.beginPath()
+    ctx.arc(r[2] - 6, r[1] + 6, 1.8, 0, Math.PI * 2)
+    ctx.fill()
+  }
+}
+
+function botonResetFx(ctx: Ctx, w: WidgetLayout, e: EstadoDibujo) {
+  const r = w.rect
+  const sobre = e.activo === w
+  ctx.beginPath()
+  ctx.roundRect(r[0], r[1], r[2] - r[0], r[3] - r[1], (r[3] - r[1]) / 2)
+  ctx.fillStyle = sobre ? 'rgba(255,79,195,0.24)' : 'rgba(255,79,195,0.08)'
+  ctx.fill()
+  ctx.strokeStyle = sobre ? 'rgba(255,79,195,0.95)' : 'rgba(255,79,195,0.5)'
+  ctx.lineWidth = 1
+  ctx.stroke()
+  texto(ctx, w.etiqueta || 'RESET FX', (r[0] + r[2]) / 2, (r[1] + r[3]) / 2, FUENTE.etiqueta, sobre ? PAL.textoTitulo : PAL.alerta, 'center', true)
+}
+
+/** Gráfica del ecualizador: espectro de salida + curva de respuesta (EQ + filtros) + 6 nodos (misma geometría que GraficaEq). */
+function graficaEq(ctx: Ctx, w: WidgetLayout, e: EstadoDibujo) {
+  const [l, t, rr, b] = w.rect
+  const ancho = rr - l, alto = b - t
+  const dbMin = w.dbMin ?? -18, dbMax = w.dbMax ?? 18
+  const yDb = (db: number) => b - ((Math.min(Math.max(db, dbMin), dbMax) - dbMin) / (dbMax - dbMin)) * alto
+  const xF = (f: number) => l + (Math.log(f / 20) / Math.log(1000)) * ancho
+  ctx.fillStyle = 'rgba(5,6,26,0.55)'
+  ctx.fillRect(l, t, ancho, alto)
+  ctx.strokeStyle = PAL.panelBorde
+  ctx.lineWidth = 1
+  ctx.strokeRect(l, t, ancho, alto)
+  // espectro de salida de la pista (tenue, escala dBFS) bajo la curva
+  const out = e.espectro?.out
+  if (out && out.length > 1) {
+    const n = out.length
+    ctx.beginPath()
+    for (let i = 0; i < n; i++) {
+      const x = l + (ancho * (i + 0.5)) / n
+      const y = yDeDbfs(t, alto, out[i]!)
+      if (i === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
+    ctx.strokeStyle = 'rgba(25,217,255,0.45)'
+    ctx.lineWidth = 1.2
+    ctx.stroke()
+    ctx.lineTo(l + ancho * (1 - 0.5 / n), b)
+    ctx.lineTo(l + (ancho * 0.5) / n, b)
+    ctx.closePath()
+    ctx.fillStyle = 'rgba(25,217,255,0.07)'
+    ctx.fill()
+  }
+  for (const [f, et] of FRECUENCIAS) {
+    const x = xF(f)
+    linea(ctx, x, t, x, b, 'rgba(25,217,255,0.07)')
+    texto(ctx, et, x, b + 9, FUENTE.valorPeq, PAL.textoTenue, 'center')
+  }
+  for (let d = Math.ceil(dbMin / 6) * 6; d <= dbMax + 1e-9; d += 6) {
+    const y = yDb(d)
+    linea(ctx, l, y, rr, y, Math.abs(d) < 1e-9 ? 'rgba(25,217,255,0.4)' : 'rgba(25,217,255,0.07)')
+    texto(ctx, `${d > 0 ? '+' : ''}${d}`, rr + 2, y, FUENTE.valorPeq, PAL.textoTenue)
+  }
+  const p = leerParamsEq(e.layout.widgets, e.valor)
+  if (!p) return
+  const sr = e.sampleRate ?? 48000
+  if (p.hpfOn) linea(ctx, xF(p.hpfHz), t, xF(p.hpfHz), b, 'rgba(255,79,195,0.35)')
+  if (p.lpfOn) linea(ctx, xF(p.lpfHz), t, xF(p.lpfHz), b, 'rgba(255,79,195,0.35)')
+  const viva = p.eqOn || p.hpfOn || p.lpfOn
+  const N = 180
+  ctx.beginPath()
+  for (let i = 0; i < N; i++) {
+    const f = 20 * Math.pow(1000, i / (N - 1))
+    const x = l + (ancho * i) / (N - 1), y = yDb(respuestaDb(p, sr, f, p.eqOn))
+    if (i === 0) ctx.moveTo(x, y)
+    else ctx.lineTo(x, y)
+  }
+  ctx.strokeStyle = viva ? PAL.cian : 'rgba(25,217,255,0.35)'
+  ctx.lineWidth = viva ? 1.8 : 1.2
+  if (viva) brillo(ctx, PAL.cianGlow, 8, () => ctx.stroke())
+  else ctx.stroke()
+  ctx.lineTo(rr, yDb(0))
+  ctx.lineTo(l, yDb(0))
+  ctx.closePath()
+  ctx.fillStyle = viva ? 'rgba(25,217,255,0.13)' : 'rgba(25,217,255,0.05)'
+  ctx.fill()
+  const sel = e.bandaSel ?? BANDA_INICIAL
+  for (let k = 0; k < BANDAS; k++) {
+    const nx = xF(p.bandas[k]!.hz), ny = yDb(p.bandas[k]!.gainDb)
+    const c = COLOR_BANDA(k)
+    const r = k === sel ? 9 : 7
+    if (k === sel) brillo(ctx, c, 10, () => {
+      ctx.fillStyle = c
+      ctx.beginPath()
+      ctx.arc(nx, ny, r + 1, 0, Math.PI * 2)
+      ctx.fill()
+    })
+    ctx.fillStyle = p.eqOn ? '#0B0D27' : 'rgba(11,13,39,0.6)'
+    ctx.beginPath()
+    ctx.arc(nx, ny, r, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = p.eqOn ? c : 'rgba(255,255,255,0.25)'
+    ctx.lineWidth = k === sel ? 2 : 1.4
+    ctx.stroke()
+    texto(ctx, String(k + 1), nx, ny, FUENTE.valorPeq, p.eqOn ? PAL.textoTitulo : PAL.textoTenue, 'center')
+  }
+  const bd = p.bandas[sel]!
+  const fb = bd.hz >= 1000 ? `${(bd.hz / 1000).toFixed(2)} kHz` : `${bd.hz.toFixed(0)} Hz`
+  texto(ctx, `BANDA ${sel + 1} · ${NOMBRE_BANDA(sel)} · ${fb} · ${bd.gainDb >= 0 ? '+' : ''}${bd.gainDb.toFixed(1)} dB · Q ${bd.q.toFixed(2)}`, 196, 107, FUENTE.valorPeq, PAL.textoValor)
+  texto(ctx, 'ARRASTRA: FREQ / GAIN', 646, 341, FUENTE.valorPeq, PAL.textoTenue, 'right')
+  texto(ctx, 'RUEDA: Q', 646, 355, FUENTE.valorPeq, PAL.textoTenue, 'right')
+  texto(ctx, 'DOBLE CLIC: RESET BANDA', 646, 369, FUENTE.valorPeq, PAL.textoTenue, 'right')
+}
+
+function medidorGr(ctx: Ctx, w: WidgetLayout, e: EstadoDibujo) {
+  const [l, t, r, b] = w.rect
+  const barra: Rect4 = [l, t, r - 58, b]
+  const base = w.base ?? widgetEq(e.layout.widgets)?.base
+  const on = base !== undefined && e.valor(base + OFF.CompOn) >= 0.5
+  const gr = on && e.grDb != null ? e.grDb : 0
+  const SEGS = 48
+  const sw = (barra[2] - barra[0]) / SEGS
+  const maxDb = w.maxDb ?? 24
+  for (let i = 0; i < SEGS; i++) {
+    const x0 = barra[2] - (i + 1) * sw
+    const nivel = ((i + 0.5) * maxDb) / SEGS
+    ctx.fillStyle = gr >= nivel ? (on ? PAL.cian : 'rgba(25,217,255,0.4)') : on ? 'rgba(25,217,255,0.08)' : 'rgba(25,217,255,0.04)'
+    ctx.fillRect(x0 + 1, barra[1], sw - 2, barra[3] - barra[1])
+  }
+  texto(ctx, e.grDb == null ? 'GR  —' : `GR ${gr.toFixed(1).padStart(4)} dB`, r + 4, (t + b) / 2, FUENTE.valorPeq, on ? PAL.textoValor : PAL.textoTenue, 'right')
+}
+
 /** Dibuja el editor completo. `ctx` ya debe estar escalado a unidades de diseño. */
 export function dibujarEditor(ctx: Ctx, e: EstadoDibujo): void {
-  const L = e.layout
+  const pagina = e.modo === 'basico' ? 0 : e.pagina ?? 0
+  const L = layoutParaVista(e.layout, e.modo ?? 'avanzado', pagina)
+  e = { ...e, layout: L }
   fondo(ctx, L)
   cabecera(ctx, e)
-  visualizador(ctx, e)
+  if (pagina === 0) visualizador(ctx, e)
   const z = L.zonas.medidores
   let indiceMedidor = 0
-  for (const w of L.widgets) {
+  for (const w0 of L.widgets) {
+    if (!visibleEnPagina(w0, pagina)) continue
+    // las perillas FREQ / GAIN / Q siguen a la banda seleccionada del ecualizador
+    const w = resolverWidget(L.widgets, w0, e.bandaSel ?? BANDA_INICIAL)
+    if (w !== w0 && e.activo === w0) e = { ...e, activo: w }
     switch (w.tipo) {
       case 'section':
         seccion(ctx, w, e)
@@ -630,6 +931,27 @@ export function dibujarEditor(ctx: Ctx, e: EstadoDibujo): void {
       case 'dropdown':
         desplegable(ctx, w, e)
         break
+      case 'reset':
+        botonReset(ctx, w, e)
+        break
+      case 'pagina':
+        botonPagina(ctx, w, e)
+        break
+      case 'modo':
+        selectorModo(ctx, w, e)
+        break
+      case 'button':
+        if (w.selBanda !== undefined) botonBanda(ctx, w, e)
+        break
+      case 'reset-fx':
+        botonResetFx(ctx, w, e)
+        break
+      case 'mixfx-eq':
+        graficaEq(ctx, w, e)
+        break
+      case 'mixfx-gr':
+        medidorGr(ctx, w, e)
+        break
       case 'meter': {
         const estandar = w.rect[1] === z.arriba && w.rect[3] === z.abajo && w.rect[0] >= z.x - 0.5
         let m: Medidor | null = null
@@ -645,6 +967,7 @@ export function dibujarEditor(ctx: Ctx, e: EstadoDibujo): void {
     }
   }
   // etiquetas IN / OUT bajo los medidores estándar (como StereoMeters::drawLabels)
+  if (pagina !== 0) return
   texto(ctx, L.instrumento ? 'MIDI' : 'IN', z.x + 12, z.abajo + 9, FUENTE.etiqueta, PAL.textoEtiqueta, 'center', true)
   texto(ctx, 'OUT', z.x + 57, z.abajo + 9, FUENTE.etiqueta, PAL.textoEtiqueta, 'center', true)
 }

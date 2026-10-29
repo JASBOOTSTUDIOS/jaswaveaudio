@@ -78,6 +78,7 @@ inline const std::vector<ParamDef>& paramDefs() {
         v.push_back(linearP(kRevDamp, "Reverb Tone", "%", 0.0, 95.0, 45.0, 0));
         v.push_back(linearP(kRevPre, "Reverb Pre-delay", "ms", 0.0, 120.0, 18.0, 0));
         v.push_back(asReadOnly(linearP(kLoad, "Load", "%", 0.0, 100.0, 0.0, 0)));
+        marcarBasicos(v, { kInstrument, kVolume, kAttack, kRelease, kSustain, kReverb });   // modo Básico del editor
         return v;
     }();
     return defs;
@@ -220,6 +221,10 @@ public:
     const wchar_t* title() const override { return L"SAMPLER"; }
     const wchar_t* subtitle() const override { return L"MUESTRAS REALES · HUMANIZACIÓN · ROUND-ROBIN · PRESETS"; }
     const char* visualizer() const override { return "espectro-instrumento"; }
+    // Teclado en pantalla tocable con el ratón
+    bool vizDown(const JasWaveUI::MouseEvent& e, JasWaveUI::EditorContext& c) override { return teclado_.pulsar(e, c.params.bus()); }
+    void vizDrag(const JasWaveUI::MouseEvent& e, JasWaveUI::EditorContext&) override { teclado_.arrastrar(e); }
+    void vizUp(const JasWaveUI::MouseEvent&, JasWaveUI::EditorContext&) override { teclado_.soltar(); }
     JasWaveUI::Color accent() const override { return JasWaveUI::Pal::acentoLila; }
     void build(JasWaveUI::EditorContext& c) override {
         namespace P = JasWaveUI::Plantilla;

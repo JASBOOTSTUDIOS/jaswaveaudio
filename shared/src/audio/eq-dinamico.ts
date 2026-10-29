@@ -35,10 +35,18 @@ const ALIAS_TIPO: Record<string, TipoBandaEq> = {
   lowcut: 'lowCut', hpf: 'lowCut', highpass: 'lowCut', lowshelf: 'lowShelf', ls: 'lowShelf',
   bell: 'bell', peak: 'bell', peaking: 'bell', highshelf: 'highShelf', hs: 'highShelf',
   highcut: 'highCut', lpf: 'highCut', lowpass: 'highCut', notch: 'notch', bandpass: 'bandPass', bp: 'bandPass',
+  // Sinónimos en español y de otros DAW (el modelo los usa a menudo).
+  campana: 'bell', pico: 'bell', band: 'bell', parametric: 'bell', parametrico: 'bell', peq: 'bell',
+  pasaaltos: 'lowCut', pasoalto: 'lowCut', pasaalto: 'lowCut', cortegraves: 'lowCut', cortebajos: 'lowCut', hp: 'lowCut', lowcutfilter: 'lowCut',
+  pasabajos: 'highCut', pasobajo: 'highCut', pasabajo: 'highCut', corteagudos: 'highCut', cortealtos: 'highCut', lp: 'highCut',
+  estantebajo: 'lowShelf', shelfbajo: 'lowShelf', lowshelving: 'lowShelf', bassshelf: 'lowShelf',
+  estantealto: 'highShelf', shelfalto: 'highShelf', highshelving: 'highShelf', trebleshelf: 'highShelf',
+  muesca: 'notch', rechazabanda: 'notch', pasabanda: 'bandPass', bandpassfilter: 'bandPass',
 };
 export function normalizarTipoEq(valor: unknown): TipoBandaEq | undefined {
   if (typeof valor !== 'string') return undefined;
-  return ALIAS_TIPO[valor.replace(/[\s_-]/g, '').toLowerCase()];
+  const clave = valor.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[\s_-]/g, '').toLowerCase();
+  return ALIAS_TIPO[clave];
 }
 export function tipoEqACodigo(tipo: TipoBandaEq): number {
   return TIPOS_BANDA_EQ.indexOf(tipo);

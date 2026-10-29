@@ -1,0 +1,473 @@
+{
+  "productId": "com.jaswave.plugin.pedal-fix",
+  "titulo": "PEDAL FIX",
+  "subtitulo": "SUSTAIN REAL · UNIFICA CANALES · POLARIDAD · TRANSPOSICIÓN",
+  "instrumento": false,
+  "visualizador": "espectro-dual",
+  "acento": "#B59BFF",
+  "base": {
+    "ancho": 1100,
+    "alto": 620
+  },
+  "zonas": {
+    "pantalla": [
+      34,
+      34,
+      1066,
+      586
+    ],
+    "visualizador": [
+      52,
+      92,
+      652,
+      404
+    ],
+    "espectro": [
+      66,
+      124,
+      612,
+      382
+    ],
+    "miniPanel": [
+      52,
+      418,
+      652,
+      556
+    ],
+    "controles": [
+      666,
+      92,
+      1048,
+      404
+    ],
+    "salida": [
+      666,
+      418,
+      1048,
+      556
+    ],
+    "fader": [
+      680,
+      440,
+      724,
+      552
+    ],
+    "medidores": {
+      "x": 976,
+      "arriba": 446,
+      "abajo": 528
+    }
+  },
+  "escalas": {
+    "frecuencia": [
+      20,
+      20000
+    ],
+    "dbfs": [
+      -120,
+      0
+    ],
+    "caidaDbS": 14
+  },
+  "modoParam": null,
+  "modos": {
+    "selector": [
+      358,
+      48,
+      476,
+      68
+    ],
+    "corte": 410,
+    "defecto": "avanzado"
+  },
+  "parametrosCubiertos": [],
+  "widgets": [
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        92,
+        1048,
+        404
+      ],
+      "etiqueta": "PEDAL",
+      "basico": true
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        704,
+        140,
+        780,
+        234
+      ],
+      "etiqueta": "UMBRAL",
+      "tamano": 64,
+      "basico": false,
+      "param": 1,
+      "min": 1,
+      "max": 127,
+      "defecto": 64,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Pedal Threshold",
+      "unidad": ""
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        819,
+        140,
+        895,
+        234
+      ],
+      "etiqueta": "TRANSPONER",
+      "tamano": 64,
+      "basico": false,
+      "param": 2,
+      "min": -24,
+      "max": 24,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Transpose",
+      "unidad": "st"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        934,
+        140,
+        1010,
+        234
+      ],
+      "etiqueta": "VELOCIDAD",
+      "tamano": 64,
+      "basico": false,
+      "param": 3,
+      "min": 0,
+      "max": 200,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Velocity Scale",
+      "unidad": "%"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        690,
+        294,
+        794,
+        314
+      ],
+      "etiqueta": "FUENTE",
+      "basico": true,
+      "rectBasico": [
+        690,
+        250,
+        794,
+        270
+      ],
+      "param": 4,
+      "min": 0,
+      "max": 3,
+      "defecto": 0,
+      "pasos": 3,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Pedal Source",
+      "unidad": "",
+      "opciones": [
+        "CC64 Sustain",
+        "CC66 Sostenuto",
+        "CC67 Soft",
+        "CC69 Hold 2"
+      ]
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        805,
+        294,
+        909,
+        314
+      ],
+      "etiqueta": "CANAL",
+      "basico": true,
+      "rectBasico": [
+        805,
+        250,
+        909,
+        270
+      ],
+      "param": 5,
+      "min": 0,
+      "max": 16,
+      "defecto": 0,
+      "pasos": 16,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Output Channel",
+      "unidad": "",
+      "opciones": [
+        "Original",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16"
+      ]
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        920,
+        294,
+        1024,
+        314
+      ],
+      "etiqueta": "POLARIDAD",
+      "basico": true,
+      "rectBasico": [
+        920,
+        250,
+        1024,
+        270
+      ],
+      "param": 6,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Pedal Polarity",
+      "unidad": "",
+      "opciones": [
+        "Normal",
+        "Inverted"
+      ]
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        418,
+        1048,
+        556
+      ],
+      "etiqueta": "SALIDA MIDI",
+      "basico": true,
+      "param": 0,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": true,
+      "nombre": "Bypass",
+      "unidad": "",
+      "opciones": [
+        "Active",
+        "Bypass"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        743,
+        454,
+        811,
+        478
+      ],
+      "etiqueta": "FORZAR",
+      "basico": true,
+      "rectBasico": [
+        780,
+        482,
+        848,
+        506
+      ],
+      "param": 7,
+      "min": 0,
+      "max": 1,
+      "defecto": 1,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Force Sustain",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        743,
+        510,
+        811,
+        534
+      ],
+      "etiqueta": "UNIFICAR",
+      "basico": true,
+      "rectBasico": [
+        854,
+        482,
+        922,
+        506
+      ],
+      "param": 8,
+      "min": 0,
+      "max": 1,
+      "defecto": 1,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Merge Channels",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        817,
+        454,
+        885,
+        478
+      ],
+      "etiqueta": "REDISPARO",
+      "basico": false,
+      "param": 9,
+      "min": 0,
+      "max": 1,
+      "defecto": 1,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Retrigger Held Notes",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        696,
+        446,
+        708,
+        544
+      ],
+      "etiqueta": "PEDAL",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        976,
+        446,
+        985,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        990,
+        446,
+        999,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1020,
+        446,
+        1029,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1034,
+        446,
+        1043,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "modo",
+      "rect": [
+        358,
+        48,
+        476,
+        68
+      ],
+      "etiqueta": "BÁSICO|AVANZADO",
+      "basico": true,
+      "corte": 410
+    },
+    {
+      "tipo": "reset",
+      "rect": [
+        624,
+        48,
+        684,
+        68
+      ],
+      "etiqueta": "RESET",
+      "basico": true
+    }
+  ]
+}

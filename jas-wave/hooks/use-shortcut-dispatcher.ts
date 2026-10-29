@@ -15,8 +15,11 @@ import {
   nuevoProyectoIO,
 } from '../src/lib/project-io'
 import { batchOrNotify, executeOrNotify, redoOrNotify, undoOrNotify } from '../src/lib/execute-or-toast'
+import { selectTrackPayload } from '../src/lib/selection-helpers'
 import { dawClipboard, type ClipboardClip } from '../src/lib/daw-clipboard'
 import { loteBorrarClips, loteDuplicarClips, lotePegarClips } from '../src/lib/clip-edit-commands'
+import { loteAutoFade, loteConsolidar, loteInvertir, loteNormalizar, loteToggleMute } from '../src/lib/clip-acciones'
+import { audioEngine } from '@/lib/audio-engine'
 import { solicitarBorrarPista } from '../src/lib/track-delete-request'
 
 import { requestOpenTool } from '../src/workspace/types'
@@ -25,6 +28,8 @@ import { zoomDeModulo } from '../src/modulos/contribuciones'
 import { captureActiveDocTextSelection } from '../src/lib/ai-selection-context'
 import { resolveSnapDivision } from '../src/lib/timeline-snap'
 import { estaRenderLock } from '../src/lib/render-lock'
+import { isUndockWindow } from '@/lib/undock-window'
+import { alternarDictadoEnfocado } from '../src/lib/voice-dictation-core'
 
 /**
  * Sistema unificado: ActionSystem → Command System.
@@ -49,6 +54,15 @@ export function useShortcutDispatcher(): DespachadorTeclado {
 
   useEffect(() => {
     const st = () => tienda.obtenerEstado()
+
+    /** Crea la pista y la deja seleccionada, para que el catálogo y el inspector apunten a ella. */
+    const crearPistaSeleccionada = (prefijo: string, tipo: 'audio' | 'midi' | 'carpeta') => {
+      const nombre = `${prefijo} ${st().project.tracks.length + 1}`
+      void executeOrNotify(tienda, 'track.create', { nombre, tipo }).then((r) => {
+        const trackId = r.success ? (r.result as { trackId?: string })?.trackId : undefined
+        if (trackId) void tienda.executor.execute('selection.set', selectTrackPayload(trackId))
+      })
+    }
 
     const collectSelectedClips = (): ClipboardClip[] => {
       const { selection, project } = st()
@@ -155,7 +169,8 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       'transport.stop': () => { void executeOrNotify(tienda, 'transport.stop', {}) },
       'transport.record': () => { void executeOrNotify(tienda, 'transport.toggleRecord', {}) },
       'transport.toggleLoop': () => { void executeOrNotify(tienda, 'transport.toggleLoop', {}) },
-      'transport.goToStart': () => { void executeOrNotify(tienda, 'transport.seek', { segundos: 0 }) },
+      // W / Inicio: playhead y punto de inicio (al que vuelve Stop) a cero.
+      'transport.goToStart': () => { void executeOrNotify(tienda, 'transport.seek', { segundos: 0, marcarInicio: true }) },
       'transport.goToEnd': () => {
         const { timeline } = st().project
         void executeOrNotify(tienda, 'transport.seek', { segundos: timeline.duracion.segundos })
@@ -203,6 +218,46 @@ export function useShortcutDispatcher(): DespachadorTeclado {
             tienda.busEventos.emit('comando.fallido', { type: 'project.save', error: String(r.error ?? 'Error') })
           }
         })
+      },
+      'clip.toggleMute': () => {
+        const { selection, project } = st()
+        void batchOrNotify(tienda, loteToggleMute(project as never, selection.idsClips), 'clip.toggleMute')
+      },
+      'clip.autoFade': () => {
+        const { selection, project } = st()
+        void batchOrNotify(tienda, loteAutoFade(project as never, selection.idsClips), 'clip.autoFade')
+      },
+      'clip.consolidate': () => {
+        const { selection, project } = st()
+        const lote = loteConsolidar(project as never, selection.idsClips)
+        if (!lote.length) {
+          tienda.busEventos.emit('comando.fallido', {
+            type: 'clip.consolidate',
+            error: 'Selecciona al menos dos clips del mismo tipo en una pista para consolidarlos.',
+          })
+          return
+        }
+        void batchOrNotify(tienda, lote, 'clip.consolidate')
+      },
+      'clip.reverseAudio': () => {
+        const { selection, project } = st()
+        void batchOrNotify(tienda, loteInvertir(project as never, selection.idsClips), 'clip.reverseAudio')
+      },
+      'clip.normalizeAudio': () => {
+        const { selection, project } = st()
+        const { comandos, sinAudio } = loteNormalizar(project as never, selection.idsClips, (k, d, dur) =>
+          audioEngine.getClipPeak(k, d, dur),
+        )
+        if (sinAudio > 0) {
+          tienda.busEventos.emit('comando.fallido', {
+            type: 'clip.normalizeAudio',
+            error: `${sinAudio} clip(s) sin audio cargado o en silencio: reprodúcelos una vez y vuelve a normalizar.`,
+          })
+        }
+        void batchOrNotify(tienda, comandos, 'clip.normalizeAudio')
+      },
+      'project.export': () => {
+        window.dispatchEvent(new CustomEvent('jaswave-menu-action', { detail: { id: 'archivo.exportarBounce' } }))
       },
       'project.saveAs': () => {
         void guardarProyectoComoIO(tienda).then((r) => {
@@ -288,14 +343,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         }
       },
 
-      'track.create': () => {
-        const count = st().project.tracks.length + 1
-        void executeOrNotify(tienda, 'track.create', { nombre: `Pista ${count}`, tipo: 'audio' })
-      },
-      'track.createMidi': () => {
-        const count = st().project.tracks.length + 1
-        void executeOrNotify(tienda, 'track.create', { nombre: `MIDI ${count}`, tipo: 'midi' })
-      },
+      'track.create': () => crearPistaSeleccionada('Pista', 'audio'),
+      'track.createMidi': () => crearPistaSeleccionada('MIDI', 'midi'),
+      'track.createFolder': () => crearPistaSeleccionada('Carpeta', 'carpeta'),
       'track.delete': () => {
         const { selection, project } = st()
         const trackId = selection.idPrincipal
@@ -458,6 +508,14 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         captureActiveDocTextSelection()
         window.dispatchEvent(new CustomEvent('jaswave-ask-ai-selection'))
       },
+      // G7: dictado del campo enfocado; si el foco no está en ninguno, el del asistente.
+      'ai.toggleVoiceDictation': () => {
+        if (alternarDictadoEnfocado(document.activeElement)) return
+        tienda.busEventos.emit('comando.fallido', {
+          type: 'ai.toggleVoiceDictation',
+          error: 'No hay ningún campo con dictado por voz a la vista: abre el Asistente Jas o enfoca un campo con micrófono.',
+        })
+      },
     }
 
     system.bindHandlers(handlers)
@@ -475,6 +533,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       if (!id) return
       // U6: con un render en curso la app está bloqueada (solo cancelar).
       if (estaRenderLock()) return
+      // El diálogo de exportar lo abre App con este evento; `project.export` lo emite, así que reejecutar
+      // la acción por su alias aquí formaba un bucle infinito.
+      if (id === 'archivo.exportarBounce') return
       const resolved = system.actions.resolveId(id) ?? id
       // Copiar/pegar clips: no bloquear por selección de texto residual
       const isClipEdit =
@@ -522,9 +583,19 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       system.actions.execute(resolved)
     })
 
+    // Barra espaciadora con el foco en la ventana nativa de un plugin (la intercepta el host). Solo la
+    // ventana principal maneja el transporte; el foco del DOM aquí no cuenta (el usuario está en el plugin).
+    const unsubHostSpace = isUndockWindow()
+      ? undefined
+      : window.electron?.onHostTransportToggle?.(() => {
+          if (estaRenderLock()) return
+          system.actions.execute('transport.togglePlay')
+        })
+
     return () => {
       window.removeEventListener('jaswave-menu-action', onMenu)
       unsubNative?.()
+      unsubHostSpace?.()
     }
   }, [system, tienda])
 
@@ -544,13 +615,34 @@ export function useShortcutDispatcher(): DespachadorTeclado {
   }, [tienda])
 
   useEffect(() => {
+    // Si el play ya se ejecutó con el keydown, el keyup no debe además «pulsar» el control que tiene el foco.
+    let espacioManejada = false
     const handler = (e: KeyboardEvent) => {
       // Un componente con foco (piano roll, editor de partitura, diálogo) ya
       // manejó la tecla: no ejecutar además un atajo global (nunca dos acciones).
       if (e.defaultPrevented) return
       // U6: con un render en curso la app está bloqueada (solo cancelar).
       if (estaRenderLock()) return
+      // G7: el dictado (Alt+V) funciona justo donde se escribe: campos de texto, chat y la paleta abierta.
+      if (system.resolver.resolveFromEvent(e)?.actionId === 'ai.toggleVoiceDictation') {
+        e.preventDefault()
+        if (!e.repeat) system.actions.execute('ai.toggleVoiceDictation')
+        return
+      }
       if (paletaAbiertaRef.current && e.key !== 'Escape') return
+      // Barra espaciadora = reproducir/pausar en TODO el DAW, también con el foco en un desplegable (que se queda
+      // enfocado tras elegir). Solo se respetan el panel del agente de IA/terminal y los campos donde se escribe.
+      if (
+        e.code === 'Space' &&
+        !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey &&
+        e.target instanceof HTMLSelectElement &&
+        !e.target.closest('[data-shortcut-scope="ignore"]')
+      ) {
+        e.preventDefault()
+        espacioManejada = true
+        system.actions.execute('transport.togglePlay')
+        return
+      }
       if (shouldIgnoreGlobalShortcuts(e.target)) {
         const terminalChord =
           (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key === '`'
@@ -569,10 +661,29 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         }
         return
       }
-      system.handleKeyboardEvent(e)
+      const manejado = system.handleKeyboardEvent(e)
+      // Barra espaciadora con el foco en un botón/casilla: el navegador activaría ese control al soltar la tecla.
+      if (manejado && e.code === 'Space') espacioManejada = true
+    }
+    const alSoltar = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || !espacioManejada) return
+      espacioManejada = false
+      e.preventDefault()
+    }
+    // Tras elegir una opción de un desplegable el foco se queda en el <select> y la barra espaciadora volvería a
+    // abrirlo en vez de reproducir: se suelta el foco al cambiar.
+    const alCambiar = (e: Event) => {
+      const t = e.target
+      if (t instanceof HTMLSelectElement) window.setTimeout(() => t.blur(), 0)
     }
     window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
+    window.addEventListener('keyup', alSoltar, true)
+    document.addEventListener('change', alCambiar, true)
+    return () => {
+      window.removeEventListener('keydown', handler)
+      window.removeEventListener('keyup', alSoltar, true)
+      document.removeEventListener('change', alCambiar, true)
+    }
   }, [system])
 
   return dispatcher

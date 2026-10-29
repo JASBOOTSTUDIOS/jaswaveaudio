@@ -17,6 +17,8 @@ const esquema = z.object({
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
   /** Clave maestra (32 bytes en base64) para cifrar las claves de los proveedores de IA en la BD. */
   IA_CLAVE_MAESTRA: z.string().optional(),
+  /** Zona horaria IANA en la que se renuevan los créditos diarios y mensuales de IA. */
+  IA_ZONA_HORARIA: z.string().default('UTC'),
 });
 
 export type Configuracion = {
@@ -30,6 +32,7 @@ export type Configuracion = {
   clavePrivadaLicencia?: string;
   origenesCors: string[];
   claveMaestraIA?: string;
+  zonaHorariaIA: string;
 };
 
 export function cargarConfiguracion(entorno: NodeJS.ProcessEnv = process.env): Configuracion {
@@ -46,5 +49,6 @@ export function cargarConfiguracion(entorno: NodeJS.ProcessEnv = process.env): C
     ...(v.LICENSE_SIGNING_KEY_PEM ? { clavePrivadaLicencia: v.LICENSE_SIGNING_KEY_PEM.replace(/\\n/g, '\n') } : {}),
     origenesCors: v.CORS_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean),
     ...(v.IA_CLAVE_MAESTRA ? { claveMaestraIA: v.IA_CLAVE_MAESTRA } : {}),
+    zonaHorariaIA: v.IA_ZONA_HORARIA,
   };
 }

@@ -52,16 +52,22 @@ let startedAt = Date.now()
 let settledAt: number | undefined
 let failsafeTimer: ReturnType<typeof setTimeout> | null = null
 let forcedDegraded = false
+/** Motivo por el que la salida de audio no se arma y no tiene sentido esperarla (null = esperar). */
+let deviceNoDisponible: string | null = null
 
 const listeners = new Set<Listener>()
 
 function phaseOf(): ProjectReadyPhase {
-  if (forcedDegraded) return 'degraded'
+  // Con todo realmente listo no hay degradación que valga: si el temporizador de seguridad saltó antes de
+  // tiempo y los recursos llegaron tarde, el aviso desaparece solo.
   if (hostOk && deviceArmed && pluginsSettled && buffersSettled) return 'ready'
+  if (forcedDegraded) return 'degraded'
   if (!hostOk) return 'host'
-  if (!deviceArmed) return 'device'
+  if (!deviceArmed && !deviceNoDisponible) return 'device'
   if (!pluginsSettled) return 'plugins'
   if (!buffersSettled) return 'buffers'
+  // Sin salida por una causa conocida (otra instancia tiene el motor): se trabaja sin esperar al failsafe.
+  if (!deviceArmed) return 'degraded'
   return 'booting'
 }
 
@@ -80,7 +86,7 @@ function labelOf(phase: ProjectReadyPhase): string {
     case 'ready':
       return 'Proyecto listo'
     case 'degraded':
-      return 'Listo con advertencias'
+      return !deviceArmed && deviceNoDisponible ? 'Listo sin audio (motor en uso)' : 'Listo con advertencias'
     default:
       return 'Preparando proyecto…'
   }
@@ -146,15 +152,20 @@ function armFailsafe() {
   clearFailsafe()
   failsafeTimer = setTimeout(() => {
     if (snapshot().blocking) {
+      // Se permite usar el DAW, pero SIN dar por cargado lo que no lo está: así, si el recurso llega tarde, el
+      // estado vuelve solo a «listo». Se dice qué faltó en vez de un aviso genérico.
       forcedDegraded = true
-      if (!pluginsSettled) pluginsSettled = true
-      if (!buffersSettled) buffersSettled = true
-      pluginDone = Math.max(pluginDone, pluginTotal)
+      const pendientes = [
+        !hostOk ? 'Plugin Host' : '',
+        !deviceArmed ? 'salida de audio' : '',
+        !pluginsSettled ? 'plugins' : '',
+        !buffersSettled ? 'buffers de audio' : '',
+      ].filter(Boolean)
       if (!errors.includes('timeout')) {
-        errors.push('Timeout cargando recursos — se permite uso en modo degradado')
+        errors.push(`Sin confirmar a tiempo: ${pendientes.join(', ')}. Se puede trabajar; se completará en cuanto responda.`)
       }
       label = 'Listo con advertencias'
-      detail = 'Algunos recursos no terminaron a tiempo'
+      detail = `Pendiente: ${pendientes.join(', ')}`
       settledAt = Date.now()
       emit()
     }
@@ -163,6 +174,11 @@ function armFailsafe() {
 
 function recompute() {
   const phase = phaseOf()
+  if (phase === 'ready' && forcedDegraded) {
+    forcedDegraded = false
+    errors = []
+    detail = 'Proyecto listo'
+  }
   label = labelOf(phase)
   if (phase === 'ready' || phase === 'degraded') {
     if (!settledAt) settledAt = Date.now()
@@ -176,6 +192,16 @@ function recompute() {
  * Si host+device ya están OK (cambio de proyecto), no los reinicia —
  * bootstrap solo reporta una vez al montar.
  */
+/**
+ * Comprobación del host/salida de audio que registra la app (el bootstrap). Se invoca en cada ciclo de carga
+ * en que no se sabe con certeza que el host y la salida siguen listos: antes ese estado se daba por perdido y
+ * solo un informe único, emitido al montar la app, podía restaurarlo (si no llegaba, 22 s de espera y aviso).
+ */
+let sondaHost: ((gen: number) => Promise<void>) | null = null
+export function registrarSondaHost(fn: ((gen: number) => Promise<void>) | null): void {
+  sondaHost = fn
+}
+
 export function beginProjectResourceLoad(reason = 'project'): number {
   generation += 1
   const keepHost = hostOk && deviceArmed
@@ -195,6 +221,10 @@ export function beginProjectResourceLoad(reason = 'project'): number {
   detail = reason
   armFailsafe()
   emit()
+  if (!keepHost && sondaHost) {
+    const g = generation
+    void sondaHost(g).catch(() => undefined)
+  }
   return generation
 }
 
@@ -216,6 +246,16 @@ export function reportProjectDevice(armed: boolean, message?: string, gen?: numb
   deviceArmed = armed
   if (!armed && message) errors.push(message)
   if (armed) detail = message || 'Audio armado'
+  recompute()
+}
+
+/**
+ * La salida de audio no se puede armar por una causa conocida que no se resolverá esperando (otra instancia
+ * de JasWave tiene el motor). Las acciones y Play no se bloquean 18 s por ella; `null` vuelve a esperarla.
+ */
+export function reportProjectDeviceUnavailable(motivo: string | null) {
+  deviceNoDisponible = motivo
+  if (motivo) detail = motivo
   recompute()
 }
 

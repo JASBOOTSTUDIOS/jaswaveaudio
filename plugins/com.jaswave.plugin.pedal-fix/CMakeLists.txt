@@ -1,0 +1,6 @@
+# JasWave Pedal Fix – efecto MIDI VST3 independiente (compila solo o desde plugins/CMakeLists.txt)
+cmake_minimum_required(VERSION 3.25)
+project(jaswave_pedal_fix VERSION 1.0.0 LANGUAGES C CXX)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/JasWavePlugins.cmake")
+jw_setup_shared()
+jaswave_add_vst3(TARGET JasWavePedalFix SOURCES src/pedal_plugin.cpp)

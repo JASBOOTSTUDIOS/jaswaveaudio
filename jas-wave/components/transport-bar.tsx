@@ -1,5 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Piano, Crosshair, Timer, Magnet } from 'lucide-react'
+import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Piano, Crosshair, Timer, Magnet, ArrowRightToLine, Headphones, HeadphoneOff, Eye, EyeOff, Volume2, VolumeX } from 'lucide-react'
+import { useStereoMeter } from '@/hooks/use-stereo-meter'
+import { fijarMonitor, useMonitorSalida } from '@/src/lib/monitor-salida'
+import { setDetenerAlFinal, usePreferenciasTransporte } from '@/src/lib/preferencias-transporte'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { DAWState } from '../../shared/src'
 import { safeProjectBpm } from '../../shared/src'
@@ -12,6 +15,7 @@ import { NumericField } from '@/components/ui/numeric-field'
 import { TimeSignatureField } from '@/components/ui/time-signature-field'
 import { crearVentanaGesto, opcionesGesto } from '@/src/lib/gesture-id'
 import { useRenderLock } from '@/src/lib/render-lock'
+import { fijarPreferenciaIA, usePreferenciasIA } from '@/src/lib/preferencias-ia'
 
 /** Blanco=vacío → amarillo=medio → rojo=lleno (fill / highFill). */
 function bufferFillColor(level: number): string {
@@ -385,6 +389,7 @@ export function TransportBar() {
   const isMetronome = Boolean(transport.metronomo?.activo)
   const isPunch = Boolean(transport.punch?.activo)
   const isCountIn = Boolean(transport.countIn?.activo)
+  const { detenerAlFinal } = usePreferenciasTransporte()
   const isComping = transport.modoGrabacion === 'comping'
   const playheadSnap = useDAWState((s: DAWState) => s.ui?.playheadSnap !== false)
   // Solo bloquear Play si falta host/audio. La carga de VSTs muestra progreso pero no congela la UI.
@@ -554,6 +559,22 @@ export function TransportBar() {
         </button>
         <button
           type="button"
+          onClick={() => setDetenerAlFinal(!detenerAlFinal)}
+          aria-label="Detener al final de la canción"
+          aria-pressed={detenerAlFinal}
+          title={
+            detenerAlFinal
+              ? 'Al terminar la canción se detiene y vuelve al inicio (clic para reproducir sin fin)'
+              : 'Reproducción sin fin: no se detiene al terminar la canción (clic para detener al final)'
+          }
+          className={`flex size-9 items-center justify-center rounded-md transition-colors ${
+            detenerAlFinal ? 'bg-accent-amber/20 text-accent-amber' : 'text-foreground hover:bg-panel-raised'
+          }`}
+        >
+          <ArrowRightToLine className="size-4" />
+        </button>
+        <button
+          type="button"
           onClick={togglePunch}
           disabled={renderLock}
           aria-label="Punch in/out"
@@ -637,6 +658,10 @@ export function TransportBar() {
           )
         }} />
 
+        <MonitorSalida />
+
+        <BotonesIA />
+
         <button
           type="button"
           onClick={toggleMetronome}
@@ -657,5 +682,124 @@ export function TransportBar() {
         </button>
       </div>
     </header>
+  )
+}
+
+/**
+ * Señal estéreo del master y volumen hacia los altavoces. El volumen NO cambia el master ni lo que se
+ * exporta: con él a cero (o con la IA trabajando en silencio) el medidor sigue mostrando la señal.
+ */
+function MonitorSalida() {
+  const m = useMonitorSalida()
+  const picos = useStereoMeter('master')
+  // Retención de pico: la marca cae despacio (≈0,6/s) para que un golpe breve se vea aunque dure 20 ms.
+  // La caída va con su propio reloj: si dependiera solo de que cambie la lectura, con señal constante o en
+  // silencio la marca se quedaba congelada a media barra.
+  const [pico, setPico] = useState({ l: 0, r: 0 })
+  const ultimo = useRef(picos)
+  ultimo.current = picos
+  useEffect(() => {
+    const paso = () =>
+      setPico((prev) => {
+        const p = ultimo.current
+        const l = p.l >= prev.l ? p.l : Math.max(p.l, prev.l - 0.03)
+        const r = p.r >= prev.r ? p.r : Math.max(p.r, prev.r - 0.03)
+        return l === prev.l && r === prev.r ? prev : { l, r }
+      })
+    const t = setInterval(paso, 50)
+    return () => clearInterval(t)
+  }, [])
+  const silencio = m.silenciado || m.silencioIA
+  // Por debajo de −70 dB (ruido del analizador en reposo) la barra marca 0: con el transporte parado se ve silencio.
+  const escala = (p: number) => (p < 3e-4 ? 0 : Math.round(Math.min(1, Math.sqrt(Math.max(0, p))) * 100))
+  const ancho = (p: number) => `${escala(p)}%`
+  const color = (p: number) => (p > 0.98 ? 'bg-rose-500' : silencio ? 'bg-muted-foreground/70' : p > 0.7 ? 'bg-accent-amber' : 'bg-accent-cyan')
+  const titulo = m.silencioIA
+    ? 'La IA está trabajando sin sacar audio: hay señal en el master pero no sale por los altavoces. Enciende «Escuchar a la IA» para oírla.'
+    : m.silenciado
+      ? 'Salida silenciada: el master sigue sonando por dentro (y se exporta igual), pero nada sale por los altavoces.'
+      : 'Señal del master y volumen hacia los altavoces. No cambia el master ni lo que se exporta.'
+  return (
+    <div className="flex items-center gap-1.5" role="group" aria-label="Monitorización" data-testid="monitor-salida" title={titulo}>
+      <div className="flex w-20 flex-col gap-0.5" aria-label="Señal estéreo del master" data-testid="monitor-medidor">
+        {([
+          ['L', picos.l, pico.l],
+          ['R', picos.r, pico.r],
+        ] as const).map(([canal, p, retenido]) => (
+          <div key={canal} className="relative h-2 overflow-hidden rounded-sm bg-panel-base/80" aria-label={`Canal ${canal}`}>
+            <div className={`h-full transition-[width] duration-75 ${color(p)}`} style={{ width: ancho(p) }} data-nivel={escala(p)} />
+            {retenido > 0.01 ? (
+              <div
+                className={`absolute inset-y-0 w-px ${retenido > 0.98 ? 'bg-rose-300' : 'bg-foreground/80'}`}
+                style={{ left: `calc(${ancho(retenido)} - 1px)` }}
+                aria-hidden
+              />
+            ) : null}
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        aria-pressed={m.silenciado}
+        aria-label={m.silenciado ? 'Activar la salida a los altavoces' : 'Silenciar la salida a los altavoces'}
+        onClick={() => fijarMonitor({ silenciado: !m.silenciado })}
+        className={`relative flex size-8 items-center justify-center rounded-md transition-colors ${
+          silencio ? 'bg-rose-500/20 text-rose-300' : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+        }`}
+      >
+        {silencio ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
+        {m.silencioIA ? (
+          <span className="absolute -right-0.5 -top-0.5 rounded bg-accent-amber px-0.5 text-[8px] font-bold leading-3 text-black" data-testid="monitor-silencio-ia">
+            IA
+          </span>
+        ) : null}
+      </button>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        value={Math.round(m.volumen * 100)}
+        aria-label="Volumen de los altavoces"
+        onChange={(e) => fijarMonitor({ volumen: Number(e.target.value) / 100 })}
+        className="h-1 w-16 cursor-pointer accent-accent-cyan"
+        data-testid="monitor-volumen"
+      />
+    </div>
+  )
+}
+
+/**
+ * Qué percibe el usuario del trabajo de la IA: escucharlo (suena cada parte que graba y la mezcla mientras
+ * se hace) y verlo (se ilumina lo que toca). Independientes: se puede ver sin escuchar.
+ */
+function BotonesIA() {
+  const { escuchar, ver } = usePreferenciasIA()
+  const base = 'flex h-8 items-center gap-1 rounded-md px-1.5 text-[11px] transition-colors'
+  const on = 'bg-accent-amber/20 text-accent-amber'
+  const off = 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+  return (
+    <div className="flex items-center gap-0.5" role="group" aria-label="Seguir el trabajo de la IA" data-testid="transporte-ia">
+      <span className="mr-0.5 text-[10px] font-semibold text-muted-foreground">IA</span>
+      <button
+        type="button"
+        aria-pressed={escuchar}
+        aria-label="Escuchar lo que hace la IA"
+        title={escuchar ? 'Escuchando a la IA: suena cada parte que graba y la mezcla mientras la hace. Clic para no escuchar.' : 'Sin escuchar a la IA (trabaja en silencio). Clic para oír lo que va haciendo.'}
+        onClick={() => fijarPreferenciaIA({ escuchar: !escuchar })}
+        className={`${base} ${escuchar ? on : off}`}
+      >
+        {escuchar ? <Headphones className="size-4" /> : <HeadphoneOff className="size-4" />}
+      </button>
+      <button
+        type="button"
+        aria-pressed={ver}
+        aria-label="Ver lo que toca la IA"
+        title={ver ? 'Viendo a la IA: se ilumina cada fader, perilla o FX que toca. Clic para no resaltarlo.' : 'Sin resaltar lo que toca la IA. Clic para verlo iluminado.'}
+        onClick={() => fijarPreferenciaIA({ ver: !ver })}
+        className={`${base} ${ver ? on : off}`}
+      >
+        {ver ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
+      </button>
+    </div>
   )
 }

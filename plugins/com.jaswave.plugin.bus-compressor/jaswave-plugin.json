@@ -60,7 +60,8 @@
         "unit": "",
         "scale": "toggle",
         "feature": null,
-        "bypass": true
+        "bypass": true,
+        "basico": true
       },
       {
         "id": "comp.umbral",
@@ -71,7 +72,8 @@
         "default": -20,
         "unit": "dB",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "comp.ratio",
@@ -82,7 +84,8 @@
         "default": 4,
         "unit": ":1",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "comp.ataque",
@@ -93,7 +96,8 @@
         "default": 10,
         "unit": "ms",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "comp.release",
@@ -104,7 +108,8 @@
         "default": 100,
         "unit": "ms",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "comp.rodilla",
@@ -126,7 +131,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "comp.mezcla",
@@ -137,7 +143,8 @@
         "default": 100,
         "unit": "%",
         "scale": "linear",
-        "feature": "comp.mezcla-paralela"
+        "feature": "comp.mezcla-paralela",
+        "basico": true
       },
       {
         "id": "comp.sc-hpf",

@@ -1,5 +1,19 @@
-import { useState, useEffect } from 'react'
-import { DAWProvider } from './context/daw-context'
+import { useState, useEffect, useRef, type RefObject } from 'react'
+import type { ImperativePanelHandle } from 'react-resizable-panels'
+import { useElementSize } from '@/hooks/use-element-size'
+import { minimoPorcentaje, minimoZonaPx } from '@/src/workspace/zone-min'
+
+/** Si el mínimo sube (otra herramienta, ventana más baja) y el panel quedó por debajo, se agranda hasta él. */
+function useAsegurarMinimo(ref: RefObject<ImperativePanelHandle | null>, minPct: number, visible: boolean) {
+  useEffect(() => {
+    if (!visible) return
+    const p = ref.current
+    if (!p || p.isCollapsed()) return
+    if (p.getSize() < minPct - 0.05) p.resize(minPct)
+  }, [ref, minPct, visible])
+}
+import { DAWProvider, getSharedStore } from './context/daw-context'
+import { abrirProyectoIO, mensajeError } from './lib/project-io'
 import { PlaybackProvider } from '@/components/playback-provider'
 import { CommandPalette } from '@/components/command-palette'
 import { useShortcutDispatcher } from '@/hooks/use-shortcut-dispatcher'
@@ -22,6 +36,7 @@ import { ProyectosWebDialog } from '@/components/web/proyectos-web-dialog'
 import { ReceptorHandover } from '@/components/handover/receptor-handover'
 import { AudioDeviceBanner } from '@/components/audio-device-banner'
 import { PluginHostCrashLoopBanner } from '@/components/plugin-host-crash-loop-banner'
+import { AudioEngineBusyBanner } from '@/components/audio-engine-busy-banner'
 import { ProjectCloseDialog } from '@/components/project-close-dialog'
 import { NuevoProyectoDialog } from '@/components/nuevo-proyecto-dialog'
 import { SaveConflictDialog } from '@/components/save-conflict-dialog'
@@ -32,6 +47,7 @@ import { DockZonePanel } from '@/components/workspace/ide-shell'
 import { ToolHost } from '@/components/workspace/tool-host'
 import { LayoutLab } from '@/components/workspace/layout-lab'
 import { PluginWindowsBar } from '@/components/plugin-windows-bar'
+import { PinPanelButton } from '@/components/pin-button'
 import {
   WorkspaceProvider,
   useWorkspace,
@@ -146,6 +162,7 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
       <div className="flex h-10 items-center gap-2 border-b border-border bg-panel px-2 text-[12px] font-semibold">
         <JasWaveAppIcon className="size-7 shrink-0" />
         <span className="text-[10px] font-normal text-muted-foreground">flotante</span>
+        <PinPanelButton toolId={initialToolId} titulo={TOOL_CATALOG[initialToolId]?.title ?? initialToolId} />
         <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
           {tabs.map((id) => (
             <button
@@ -207,11 +224,26 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         <div className="h-full min-h-0">
-          <ToolHost toolId={visible} />
+          <ToolHost toolId={visible} avisoEspacio={false} />
         </div>
       </div>
     </main>
   )
+}
+
+/** Archivo → Abrir proyecto empaquetado: el main extrae el zip junto a él y se abre el .jaswave que contiene. */
+async function abrirPaqueteProyecto(): Promise<void> {
+  const tienda = getSharedStore()
+  const r = await window.electron?.projectImportBundle?.()
+  if (!r || r.canceled) return
+  if (!r.ok || !r.ruta) {
+    tienda.busEventos.emit('comando.fallido', { type: 'project.load', error: r.error ?? 'No se pudo abrir el paquete' })
+    return
+  }
+  const abierto = await abrirProyectoIO(tienda, { ruta: r.ruta })
+  if (!abierto.success && !abierto.canceled) {
+    tienda.busEventos.emit('comando.fallido', { type: 'project.load', error: mensajeError(abierto.error) ?? 'No se pudo abrir el proyecto' })
+  }
 }
 
 function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) {
@@ -221,6 +253,13 @@ function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) 
   const [railActive, setRailActive] = useState<ToolId | null>(null)
   const { layout, setActiveTab, toggleZone, toolsInZone, dockTool, closeTool, openTool, toggleTool, isToolOpen } =
     useWorkspace()
+  const hGroupRef = useRef<HTMLDivElement>(null)
+  const vGroupRef = useRef<HTMLDivElement>(null)
+  const { width: hGroupW } = useElementSize(hGroupRef)
+  const { height: vGroupH } = useElementSize(vGroupRef)
+  const bottomPanelRef = useRef<ImperativePanelHandle>(null)
+  const leftPanelRef = useRef<ImperativePanelHandle>(null)
+  const rightPanelRef = useRef<ImperativePanelHandle>(null)
 
   useEffect(() => {
     const handler = () => setShortcutsOpen(true)
@@ -232,6 +271,7 @@ function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) 
     const handler = (e: Event) => {
       const id = (e as CustomEvent<{ id?: string }>).detail?.id
       if (id === 'archivo.exportarBounce') setExportOpen(true)
+      if (id === 'archivo.abrirPaquete') void abrirPaqueteProyecto()
       if (id?.startsWith('ventana.tool.')) {
         const toolId = id.slice('ventana.tool.'.length) as ToolId
         if (toolId in TOOL_CATALOG) {
@@ -321,6 +361,17 @@ function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) 
   const rightVisible = layout.zoneVisible.right
   const bottomVisible = layout.zoneVisible.bottom
 
+  // El divisor no deja una zona más pequeña que su herramienta activa (el mixer no baja de sus faders):
+  // nada de scroll interno. Los mínimos en px pasan a % del grupo medido.
+  const activaEn = (zone: 'left' | 'right' | 'bottom' | 'center') => layout.activeTab[zone] ?? toolsInZone(zone)[0]
+  const minBottomPct = minimoPorcentaje(minimoZonaPx(activaEn('bottom'), 'h'), vGroupH, 12, 70)
+  const minArrangePct = minimoPorcentaje(minimoZonaPx(activaEn('center'), 'h'), vGroupH, 20, bottomVisible ? 100 - minBottomPct : 100)
+  const minLeftPct = minimoPorcentaje(minimoZonaPx(activaEn('left'), 'w'), hGroupW, 12, 40)
+  const minRightPct = minimoPorcentaje(minimoZonaPx(activaEn('right'), 'w'), hGroupW, 12, 40)
+  useAsegurarMinimo(bottomPanelRef, minBottomPct, bottomVisible)
+  useAsegurarMinimo(leftPanelRef, minLeftPct, leftVisible)
+  useAsegurarMinimo(rightPanelRef, minRightPct, rightVisible)
+
   return (
     <>
       <CommandPalette />
@@ -331,6 +382,7 @@ function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) 
       <UpdateBanner />
       <AudioDeviceBanner />
       <PluginHostCrashLoopBanner />
+      <AudioEngineBusyBanner />
       <ProjectCloseDialog />
       <SaveConflictDialog />
       <MediaFaltanteDialog />
@@ -366,10 +418,11 @@ function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) 
             <TransportBar />
             <EditToolbar />
 
+            <div ref={hGroupRef} className="flex min-h-0 flex-1">
             <ResizablePanelGroup direction="horizontal" autoSaveId="jaswave-ide-h" className="min-h-0 flex-1 bg-panel">
               {leftVisible && (
                 <>
-                  <ResizablePanel id="jas-left" order={1} defaultSize={22} minSize={12} maxSize={40} className="min-h-0 min-w-0 border-r border-border bg-panel">
+                  <ResizablePanel ref={leftPanelRef} id="jas-left" order={1} defaultSize={Math.max(22, minLeftPct)} minSize={minLeftPct} maxSize={40} className="min-h-0 min-w-0 border-r border-border bg-panel">
                     <div className="h-full min-h-0">
                       <DockZonePanel zone="left" />
                     </div>
@@ -379,8 +432,9 @@ function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) 
               )}
 
               <ResizablePanel id="jas-center" order={2} defaultSize={leftVisible && rightVisible ? 56 : 78} minSize={30} className="min-h-0 min-w-0 bg-panel">
+                <div ref={vGroupRef} className="h-full min-h-0">
                 <ResizablePanelGroup direction="vertical" autoSaveId="jaswave-ide-v" className="h-full min-h-0 bg-panel">
-                  <ResizablePanel id="jas-arrange" order={1} defaultSize={bottomVisible ? 62 : 100} minSize={20} className="min-h-0 bg-panel">
+                  <ResizablePanel id="jas-arrange" order={1} defaultSize={bottomVisible ? 62 : 100} minSize={minArrangePct} className="min-h-0 bg-panel">
                     <div className="h-full min-h-0">
                       <DockZonePanel zone="center" />
                     </div>
@@ -388,7 +442,7 @@ function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) 
                   {bottomVisible && (
                     <>
                       <ResizableHandle withHandle />
-                      <ResizablePanel id="jas-bottom" order={2} defaultSize={38} minSize={12} maxSize={70} className="min-h-0 border-t border-border bg-panel">
+                      <ResizablePanel ref={bottomPanelRef} id="jas-bottom" order={2} defaultSize={Math.max(38, minBottomPct)} minSize={minBottomPct} maxSize={70} className="min-h-0 border-t border-border bg-panel">
                         <div className="h-full min-h-0">
                           <DockZonePanel zone="bottom" />
                         </div>
@@ -396,12 +450,13 @@ function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) 
                     </>
                   )}
                 </ResizablePanelGroup>
+                </div>
               </ResizablePanel>
 
               {rightVisible && (
                 <>
                   <ResizableHandle withHandle />
-                  <ResizablePanel id="jas-right" order={3} defaultSize={22} minSize={12} maxSize={40} className="min-h-0 min-w-0 border-l border-border bg-panel">
+                  <ResizablePanel ref={rightPanelRef} id="jas-right" order={3} defaultSize={Math.max(22, minRightPct)} minSize={minRightPct} maxSize={40} className="min-h-0 min-w-0 border-l border-border bg-panel">
                     <div className="h-full min-h-0">
                       <DockZonePanel zone="right" />
                     </div>
@@ -409,6 +464,7 @@ function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) 
                 </>
               )}
             </ResizablePanelGroup>
+            </div>
           </div>
         </div>
 

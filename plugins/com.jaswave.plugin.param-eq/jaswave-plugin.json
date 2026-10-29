@@ -65,7 +65,8 @@
         "unit": "",
         "scale": "toggle",
         "feature": null,
-        "bypass": true
+        "bypass": true,
+        "basico": true
       },
       {
         "id": "b1.tipo",
@@ -85,7 +86,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b1.freq",
@@ -96,7 +98,8 @@
         "default": 30,
         "unit": "Hz",
         "scale": "log",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b1.ganancia",
@@ -107,7 +110,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b1.q",
@@ -118,7 +122,8 @@
         "default": 0.71,
         "unit": "",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b1.activa",
@@ -129,7 +134,8 @@
         "default": 0,
         "unit": "",
         "scale": "toggle",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b2.tipo",
@@ -149,7 +155,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b2.freq",
@@ -160,7 +167,8 @@
         "default": 100,
         "unit": "Hz",
         "scale": "log",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b2.ganancia",
@@ -171,7 +179,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b2.q",
@@ -182,7 +191,8 @@
         "default": 0.71,
         "unit": "",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b2.activa",
@@ -193,7 +203,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b3.tipo",
@@ -213,7 +224,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b3.freq",
@@ -224,7 +236,8 @@
         "default": 250,
         "unit": "Hz",
         "scale": "log",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b3.ganancia",
@@ -235,7 +248,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b3.q",
@@ -246,7 +260,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b3.activa",
@@ -257,7 +272,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b4.tipo",
@@ -277,7 +293,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b4.freq",
@@ -288,7 +305,8 @@
         "default": 1000,
         "unit": "Hz",
         "scale": "log",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b4.ganancia",
@@ -299,7 +317,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b4.q",
@@ -310,7 +329,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b4.activa",
@@ -321,7 +341,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "b5.tipo",
@@ -341,7 +362,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b5.freq",
@@ -352,7 +374,8 @@
         "default": 3000,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b5.ganancia",
@@ -363,7 +386,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b5.q",
@@ -374,7 +398,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b5.activa",
@@ -385,7 +410,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b6.tipo",
@@ -405,7 +431,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b6.freq",
@@ -416,7 +443,8 @@
         "default": 6000,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b6.ganancia",
@@ -427,7 +455,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b6.q",
@@ -438,7 +467,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b6.activa",
@@ -449,7 +479,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b7.tipo",
@@ -469,7 +500,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b7.freq",
@@ -480,7 +512,8 @@
         "default": 10000,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b7.ganancia",
@@ -491,7 +524,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b7.q",
@@ -502,7 +536,8 @@
         "default": 0.71,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b7.activa",
@@ -513,7 +548,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b8.tipo",
@@ -533,7 +569,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b8.freq",
@@ -544,7 +581,8 @@
         "default": 18000,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b8.ganancia",
@@ -555,7 +593,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b8.q",
@@ -566,7 +605,8 @@
         "default": 0.71,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b8.activa",
@@ -577,7 +617,8 @@
         "default": 0,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "salida",
@@ -588,7 +629,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "pendiente",
@@ -2033,7 +2075,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b9.freq",
@@ -2044,7 +2087,8 @@
         "default": 120,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b9.ganancia",
@@ -2055,7 +2099,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b9.q",
@@ -2066,7 +2111,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b9.activa",
@@ -2077,7 +2123,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b10.tipo",
@@ -2097,7 +2144,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b10.freq",
@@ -2108,7 +2156,8 @@
         "default": 160.0240768,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b10.ganancia",
@@ -2119,7 +2168,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b10.q",
@@ -2130,7 +2180,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b10.activa",
@@ -2141,7 +2192,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b11.tipo",
@@ -2161,7 +2213,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b11.freq",
@@ -2172,7 +2225,8 @@
         "default": 213.3975429,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b11.ganancia",
@@ -2183,7 +2237,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b11.q",
@@ -2194,7 +2249,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b11.activa",
@@ -2205,7 +2261,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b12.tipo",
@@ -2225,7 +2282,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b12.freq",
@@ -2236,7 +2294,8 @@
         "default": 284.5728732,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b12.ganancia",
@@ -2247,7 +2306,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b12.q",
@@ -2258,7 +2318,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b12.activa",
@@ -2269,7 +2330,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b13.tipo",
@@ -2289,7 +2351,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b13.freq",
@@ -2300,7 +2363,8 @@
         "default": 379.4875942,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b13.ganancia",
@@ -2311,7 +2375,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b13.q",
@@ -2322,7 +2387,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b13.activa",
@@ -2333,7 +2399,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b14.tipo",
@@ -2353,7 +2420,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b14.freq",
@@ -2364,7 +2432,8 @@
         "default": 506.0595992,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b14.ganancia",
@@ -2375,7 +2444,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b14.q",
@@ -2386,7 +2456,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b14.activa",
@@ -2397,7 +2468,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b15.tipo",
@@ -2417,7 +2489,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b15.freq",
@@ -2428,7 +2501,8 @@
         "default": 674.8476679,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b15.ganancia",
@@ -2439,7 +2513,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b15.q",
@@ -2450,7 +2525,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b15.activa",
@@ -2461,7 +2537,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b16.tipo",
@@ -2481,7 +2558,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b16.freq",
@@ -2492,7 +2570,8 @@
         "default": 899.9322917,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b16.ganancia",
@@ -2503,7 +2582,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b16.q",
@@ -2514,7 +2594,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b16.activa",
@@ -2525,7 +2606,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b17.tipo",
@@ -2545,7 +2627,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b17.freq",
@@ -2556,7 +2639,8 @@
         "default": 1200.090284,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b17.ganancia",
@@ -2567,7 +2651,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b17.q",
@@ -2578,7 +2663,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b17.activa",
@@ -2589,7 +2675,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b18.tipo",
@@ -2609,7 +2696,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b18.freq",
@@ -2620,7 +2708,8 @@
         "default": 1600.361165,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b18.ganancia",
@@ -2631,7 +2720,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b18.q",
@@ -2642,7 +2732,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b18.activa",
@@ -2653,7 +2744,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b19.tipo",
@@ -2673,7 +2765,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b19.freq",
@@ -2684,7 +2777,8 @@
         "default": 2134.135983,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b19.ganancia",
@@ -2695,7 +2789,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b19.q",
@@ -2706,7 +2801,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b19.activa",
@@ -2717,7 +2813,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b20.tipo",
@@ -2737,7 +2834,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b20.freq",
@@ -2748,7 +2846,8 @@
         "default": 2845.942836,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b20.ganancia",
@@ -2759,7 +2858,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b20.q",
@@ -2770,7 +2870,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b20.activa",
@@ -2781,7 +2882,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b21.tipo",
@@ -2801,7 +2903,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b21.freq",
@@ -2812,7 +2915,8 @@
         "default": 3795.161457,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b21.ganancia",
@@ -2823,7 +2927,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b21.q",
@@ -2834,7 +2939,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b21.activa",
@@ -2845,7 +2951,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b22.tipo",
@@ -2865,7 +2972,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b22.freq",
@@ -2876,7 +2984,8 @@
         "default": 5060.976736,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b22.ganancia",
@@ -2887,7 +2996,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b22.q",
@@ -2898,7 +3008,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b22.activa",
@@ -2909,7 +3020,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b23.tipo",
@@ -2929,7 +3041,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b23.freq",
@@ -2940,7 +3053,8 @@
         "default": 6748.984414,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b23.ganancia",
@@ -2951,7 +3065,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b23.q",
@@ -2962,7 +3077,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b23.activa",
@@ -2973,7 +3089,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b24.tipo",
@@ -2993,7 +3110,8 @@
           "LPF",
           "Notch",
           "Band Pass"
-        ]
+        ],
+        "basico": true
       },
       {
         "id": "b24.freq",
@@ -3004,7 +3122,8 @@
         "default": 9000,
         "unit": "Hz",
         "scale": "log",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b24.ganancia",
@@ -3015,7 +3134,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b24.q",
@@ -3026,7 +3146,8 @@
         "default": 1,
         "unit": "",
         "scale": "linear",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       },
       {
         "id": "b24.activa",
@@ -3037,7 +3158,8 @@
         "default": 1,
         "unit": "",
         "scale": "toggle",
-        "feature": "eq.bandas-avanzadas"
+        "feature": "eq.bandas-avanzadas",
+        "basico": true
       }
     ]
   },

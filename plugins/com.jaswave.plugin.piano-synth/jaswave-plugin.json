@@ -68,7 +68,8 @@
         "default": 50,
         "unit": "%",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "piano.decay",
@@ -79,7 +80,8 @@
         "default": 45,
         "unit": "%",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "piano.release",
@@ -113,7 +115,8 @@
         "unit": "",
         "scale": "toggle",
         "feature": null,
-        "bypass": true
+        "bypass": true,
+        "basico": true
       },
       {
         "id": "piano.volumen",
@@ -124,7 +127,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "piano.afinacion",
@@ -146,7 +150,8 @@
         "default": 50,
         "unit": "%",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "piano.sustain",
@@ -157,7 +162,8 @@
         "default": 0,
         "unit": "",
         "scale": "toggle",
-        "feature": null
+        "feature": null,
+        "basico": true
       }
     ]
   },

@@ -27,6 +27,7 @@ import {
   eqResumenCambios,
   eqValorANormalizado,
   normalizarTipoEq,
+  EQ_RANGOS,
   type BandaEq,
   type CambioEq,
 } from '../../../../shared/src/audio/eq-dinamico'
@@ -176,6 +177,9 @@ export function eqBandParamIds(band1: number): {
   }
 }
 
+/** Tope de espera a que el host cargue el FX antes de ajustarlo. */
+const ESPERA_CARGA_FX_MS = 15_000
+
 /**
  * Inserta (o reutiliza) el FX JasWave en la pista y devuelve el slotId del host.
  * No establece parámetros; para eso usar applyMixParams / setMixParam.
@@ -187,23 +191,32 @@ export async function ensureJasWaveFxOnTrack(
 ): Promise<{ slotId: string; descriptor: PluginDescriptor } | null> {
   const descriptor = findJasWaveFxDescriptor(kind)
   if (!descriptor) return null
-  const r = await tienda.executor.execute('plugin.insert', {
-    trackId,
-    plugin: descriptorToPluginInfo(descriptor),
-  })
-  if (!r.success) return null
-  const st = tienda.obtenerEstado() as DAWState
   const isMaster = trackId === 'master' || trackId === '__master__'
-  const plugins = isMaster
-    ? (st.project.master.plugins ?? [])
-    : (st.project.tracks.find((t) => t.id === trackId)?.plugins ?? [])
+  const cadena = () => {
+    const st = tienda.obtenerEstado() as DAWState
+    return isMaster ? (st.project.master.plugins ?? []) : (st.project.tracks.find((t) => t.id === trackId)?.plugins ?? [])
+  }
+  // «Asegurar» = reutilizar el que ya está: antes cada llamada (leer estado, ajustar una banda…)
+  // insertaba otro EQ/compresor y se apilaban en la pista.
+  const existente = cadena().find((p) => p.nombre === descriptor.name && !p.bypass)
+  if (!existente) {
+    const r = await tienda.executor.execute('plugin.insert', {
+      trackId,
+      plugin: descriptorToPluginInfo(descriptor),
+    })
+    if (!r.success) return null
+  }
+  const plugins = cadena()
   const inserted =
-    plugins.find((p) => p.nombre === descriptor.name) ?? plugins[plugins.length - 1]
+    existente ?? plugins.filter((p) => p.nombre === descriptor.name).pop() ?? plugins[plugins.length - 1]
   if (!inserted) return null
-  void ensureTrackVstPlugin(isMaster ? 'master' : trackId, {
+  // Se espera a que el host cargue el slot: sin esto los setParameter de justo después llegaban a un
+  // slot inexistente y la IA veía «El host rechazó algún parámetro» (y leía el EQ vacío).
+  const carga = ensureTrackVstPlugin(isMaster ? 'master' : trackId, {
     ...inserted,
     descripcion: inserted.descripcion ?? '',
-  })
+  }).catch(() => false)
+  await Promise.race([carga, new Promise((ok) => setTimeout(ok, ESPERA_CARGA_FX_MS))])
   return {
     slotId: slotIdForTrackPlugin(isMaster ? 'master' : trackId, inserted.id),
     descriptor,
@@ -302,6 +315,25 @@ export type ResultadoBandaEq = {
 /** Ajustes reales (Hz/dB/Q…) que la IA puede pedir para una banda; todos opcionales salvo al agregar. */
 export type CambiosBandaEq = Partial<Pick<BandaEq, 'freq' | 'gain' | 'q' | 'enabled' | 'slope' | 'mode' | 'solo'>> & { type?: string }
 
+/**
+ * Valores de la IA a números dentro del rango del VST («200 Hz», "-3"); si algo queda fuera, un mensaje que
+ * dice qué corregir (antes el host lo rechazaba y la IA solo veía «rechazó algún parámetro»).
+ */
+export function validarCambiosEq(cambios: CambiosBandaEq): { cambios: CambiosBandaEq } | { error: string } {
+  const out: CambiosBandaEq = { ...cambios }
+  const errores: string[] = []
+  for (const campo of ['freq', 'gain', 'q'] as const) {
+    const v = cambios[campo] as unknown
+    if (v === undefined) continue
+    const n = typeof v === 'number' ? v : typeof v === 'string' ? Number.parseFloat(v.replace(',', '.')) : NaN
+    const r = EQ_RANGOS[campo]
+    if (!Number.isFinite(n)) errores.push(`${campo} debe ser un número (${r.min} a ${r.max})`)
+    else if (n < r.min || n > r.max) errores.push(`${campo} ${n} fuera de rango (${r.min} a ${r.max})`)
+    else out[campo] = n
+  }
+  return errores.length ? { error: `Valores no válidos: ${errores.join('; ')}.` } : { cambios: out }
+}
+
 async function aplicarAjustes(slotId: string, ajustes: ReturnType<typeof eqBandasAAjustes>): Promise<boolean> {
   let todos = true
   for (const a of ajustes) todos = (await setSlotParameter(slotId, a.paramId, a.normalizado)) && todos
@@ -315,6 +347,9 @@ export async function agregarBandaEq(
   cambios: CambiosBandaEq,
   opts: { slot?: number; origen?: 'ia' | 'usuario'; bandasAvanzadas?: boolean } = {},
 ): Promise<ResultadoBandaEq> {
+  const val = validarCambiosEq(cambios)
+  if ('error' in val) return { ok: false, mensaje: val.error, cambios: [], bandas: [] }
+  cambios = val.cambios
   const ensured = await ensureJasWaveFxOnTrack(tienda, trackId, 'eq')
   if (!ensured) return { ok: false, mensaje: 'No se pudo insertar/cargar JasWave EQ', cambios: [], bandas: [] }
   const antes = await leerBandasEq(ensured.slotId)
@@ -390,6 +425,9 @@ export async function editarBandaEq(
   cambios: CambiosBandaEq,
   opts: { origen?: 'ia' | 'usuario' } = {},
 ): Promise<ResultadoBandaEq> {
+  const val = validarCambiosEq(cambios)
+  if ('error' in val) return { ok: false, mensaje: val.error, cambios: [], bandas: [] }
+  cambios = val.cambios
   const ensured = await ensureJasWaveFxOnTrack(tienda, trackId, 'eq')
   if (!ensured) return { ok: false, mensaje: 'No se pudo insertar/cargar JasWave EQ', cambios: [], bandas: [] }
   const slot = Math.round(banda1) - 1

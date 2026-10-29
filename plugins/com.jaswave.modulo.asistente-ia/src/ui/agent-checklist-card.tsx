@@ -10,6 +10,7 @@ import {
 } from '../motor/ai-agent-checklist'
 import { dryRunDawActions, ensureToolRegistryContext } from '../motor/agent-tool-bridge'
 import { appendAiDawAudit, cn, useDAW } from '@jaswave/host-sdk'
+import { textoLegible } from './detalles-tecnicos'
 
 type Props = {
   conversationId: string
@@ -97,7 +98,7 @@ export function AgentChecklistCard({
             ? {
                 ...it,
                 status: 'ready',
-                detail: 'Propuesta lista — revisa la tarjeta y pulsa Aplicar',
+                detail: 'Propuesta lista: revísala y pulsa Aplicar',
               }
             : it,
         ),
@@ -121,7 +122,7 @@ export function AgentChecklistCard({
       setHint('Revisa la propuesta abajo: puedes aplicar cada cambio por separado o todas juntas.')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      setHint(msg)
+      setHint(textoLegible(msg) || 'No se pudo preparar este paso. Pulsa Continuar para intentarlo de nuevo.')
       persist({
         ...list,
         items: list.items.map((it, i) =>
@@ -164,8 +165,8 @@ export function AgentChecklistCard({
           className={cn('size-3.5 shrink-0 transition-transform duration-150', open && 'rotate-90')}
         />
         <span className="min-w-0 truncate">
-          Plan · {doneCount}/{list.items.length}
-          {list.status === 'done' ? ' · listo' : list.status === 'stopped' ? ' · detenido' : ''}
+          Plan: {doneCount} de {list.items.length} pasos
+          {list.status === 'done' ? ' · terminado' : list.status === 'stopped' ? ' · detenido' : ''}
         </span>
       </button>
       {open ? (
@@ -188,17 +189,17 @@ export function AgentChecklistCard({
                     {active && it.actions.length ? (
                       <ul className="mt-0.5 space-y-0.5 text-[0.95em] text-muted-foreground/70">
                         {it.actions.map((a, ai) => (
-                          <li key={`${a.type}-${ai}`} className="truncate">
-                            {describeActionForUser(a).label}
+                          <li key={`${a.type}-${ai}`} className="break-words">
+                            {describeActionForUser(a, tienda.obtenerEstado()).label}
                           </li>
                         ))}
                       </ul>
                     ) : null}
                     {it.error ? (
-                      <div className="mt-0.5 text-destructive/80">
-                        {/ReferenceError|TypeError|is not defined/i.test(it.error)
-                          ? 'Fallo interno. Reintenta Continuar.'
-                          : it.error}
+                      <div className="mt-0.5 break-words text-destructive/80">
+                        {textoLegible(it.error) && !/ReferenceError|TypeError|is not defined/i.test(it.error)
+                          ? textoLegible(it.error)
+                          : 'No se pudo completar este paso. Pulsa Continuar para intentarlo de nuevo.'}
                       </div>
                     ) : null}
                   </span>

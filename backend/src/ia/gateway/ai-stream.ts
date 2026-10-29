@@ -15,7 +15,7 @@ export type StreamAccumulator = {
   /** Procesa un trozo crudo; devuelve el texto nuevo (delta) que trajo. */
   push(chunk: string): string
   /** Cierra (procesa el resto del buffer) y devuelve lo acumulado. */
-  finish(): { content: string; toolCalls: AiToolCall[]; error?: string }
+  finish(): { content: string; toolCalls: AiToolCall[]; error?: string; usage?: { entrada: number; salida: number } }
 }
 
 function safeJson(s: string): unknown {
@@ -35,6 +35,7 @@ export function createStreamAccumulator(style: StreamStyle): StreamAccumulator {
   let buf = ''
   let content = ''
   let error: string | undefined
+  let usage: { entrada: number; salida: number } | undefined
   // openai: por índice; anthropic: por índice de bloque
   const partial = new Map<number, { id: string; name: string; args: string }>()
   const direct: AiToolCall[] = []
@@ -47,6 +48,12 @@ export function createStreamAccumulator(style: StreamStyle): StreamAccumulator {
       return ''
     }
     let delta = ''
+    const u = d.usage ?? d.usageMetadata
+    if (u && typeof u === 'object') {
+      const entrada = Number(u.prompt_tokens ?? u.input_tokens ?? u.promptTokenCount ?? 0) || 0
+      const salida = Number(u.completion_tokens ?? u.output_tokens ?? u.candidatesTokenCount ?? 0) || 0
+      if (entrada || salida) usage = { entrada: entrada || usage?.entrada || 0, salida: salida || usage?.salida || 0 }
+    }
     if (style === 'openai') {
       const ch = d.choices?.[0]?.delta
       if (typeof ch?.content === 'string') delta = ch.content
@@ -122,7 +129,7 @@ export function createStreamAccumulator(style: StreamStyle): StreamAccumulator {
         .sort((a, b) => a[0] - b[0])
         .filter(([, c]) => c.name)
         .map(([i, c]) => ({ id: c.id || `call_${i}`, name: decodeToolName(c.name), arguments: parseArgsText(c.args) }))
-      return { content, toolCalls: [...fromPartial, ...direct], error }
+      return { content, toolCalls: [...fromPartial, ...direct], error, ...(usage ? { usage } : {}) }
     },
   }
 }

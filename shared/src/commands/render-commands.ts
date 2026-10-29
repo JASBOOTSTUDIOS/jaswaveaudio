@@ -5,6 +5,8 @@
 import type { CommandDefinition, StateTransition } from '../types/command'
 import type { DAWState } from '../types/state'
 import type { RenderJob, RenderStartPayload } from '../types/render'
+import { RENDER_BIT_DEPTHS, RENDER_FORMATS, RENDER_SAMPLE_RATES } from '../types/render'
+import { detectarFinProyecto } from '../render/fin-proyecto'
 import type { TimePosition } from '../types/tiempo'
 import {
   renderJobActive,
@@ -47,12 +49,13 @@ export function crearComandoRenderStart(): CommandDefinition<any> {
   return {
     type: 'render.start',
     replicacion: 'resultado',
-    description: 'Inicia bounce/export WAV/FLAC/MP3 del proyecto',
+    description:
+      'Exporta el proyecto (WAV/AIFF/FLAC/MP3/OGG/AAC/Opus). Sin endSec detecta solo dónde termina la canción.',
     risk: 'write',
     schema: {
       type: 'object',
       properties: {
-        format: { type: 'string', enum: ['wav', 'flac', 'mp3'] },
+        format: { type: 'string', enum: [...RENDER_FORMATS] },
         sampleRate: { type: 'number' },
         bitDepth: { type: 'number' },
         bitrate: { type: 'number' },
@@ -60,21 +63,46 @@ export function crearComandoRenderStart(): CommandDefinition<any> {
         endSec: { type: 'number' },
         outputPath: { type: 'string' },
         stems: { type: 'boolean' },
+        stemTrackIds: { type: 'array', items: { type: 'string' } },
+        stemsTap: { type: 'string', enum: ['post', 'pre'] },
         normalize: { type: ['string', 'boolean'] },
         normalizeTargetDb: { type: 'number' },
         listenTarget: { type: 'string', enum: ['streaming', 'club', 'cd'] },
+        dither: { type: 'boolean' },
+        transparentMaster: { type: 'boolean' },
       },
       additionalProperties: false,
     },
     handler: (estado: DAWState, payload: RenderStartPayload): StateTransition<RenderJob> => {
       const format = payload.format ?? 'wav'
-      if (format !== 'wav' && format !== 'flac' && format !== 'mp3') {
-        throw new Error(`Formato no soportado: ${format}`)
+      if (!RENDER_FORMATS.includes(format)) {
+        throw new Error(`Formato no soportado: ${format}. Usa uno de: ${RENDER_FORMATS.join(', ')}.`)
       }
-      const startSec = payload.startSec ?? 0
-      const endSec = payload.endSec
-      if (endSec != null && endSec <= startSec) {
-        throw new Error('endSec debe ser > startSec')
+      const sampleRate = payload.sampleRate ?? 48000
+      if (!(RENDER_SAMPLE_RATES as readonly number[]).includes(sampleRate)) {
+        throw new Error(`Frecuencia de muestreo no soportada: ${sampleRate}. Usa ${RENDER_SAMPLE_RATES.join(', ')} Hz.`)
+      }
+      const bitDepth = payload.bitDepth ?? 24
+      if (!(RENDER_BIT_DEPTHS as readonly number[]).includes(bitDepth)) {
+        throw new Error(`Profundidad no soportada: ${bitDepth} bits. Usa 16, 24 o 32 (float).`)
+      }
+      if (payload.bitrate != null && (payload.bitrate < 64 || payload.bitrate > 320)) {
+        throw new Error('bitrate debe estar entre 64 y 320 kbps.')
+      }
+      const startSec = Math.max(0, payload.startSec ?? 0)
+      // Sin endSec: el final lo marca el contenido (último clip audible); el bounce añade la cola.
+      const fin = detectarFinProyecto(estado.project)
+      const autoEnd = payload.endSec == null
+      if (autoEnd && fin.vacio) {
+        throw new Error('No hay contenido en la línea de tiempo: añade clips (o quita el mute/solo) antes de exportar.')
+      }
+      const endSec = autoEnd ? fin.finSegundos : payload.endSec!
+      if (endSec <= startSec) {
+        throw new Error(
+          autoEnd
+            ? `El contenido termina en ${endSec.toFixed(1)} s, antes del inicio pedido (${startSec.toFixed(1)} s).`
+            : 'endSec debe ser > startSec',
+        )
       }
       if (renderJobActive()) {
         throw new Error('Ya hay un render en curso')
@@ -89,18 +117,24 @@ export function crearComandoRenderStart(): CommandDefinition<any> {
         id: newId(),
         projectId: estado.project.id,
         format,
-        sampleRate: payload.sampleRate ?? 48000,
-        bitDepth: payload.bitDepth ?? 16,
+        sampleRate,
+        bitDepth,
         bitrate: payload.bitrate,
         start: secToPos(startSec),
-        end: secToPos(endSec ?? Math.max(startSec + 1, 30)),
+        end: secToPos(endSec),
         progress: 0,
         status: 'pending',
         outputPath: payload.outputPath,
         normalize,
         normalizeTargetDb: payload.normalizeTargetDb,
-        exportStems: payload.stems === true,
+        exportStems: payload.stems === true || (payload.stemTrackIds?.length ?? 0) > 0,
+        stemTrackIds: payload.stemTrackIds?.length ? [...payload.stemTrackIds] : undefined,
+        stemsTap: payload.stemsTap,
         listenTarget: payload.listenTarget,
+        autoEnd,
+        contentEndSec: autoEnd ? endSec : undefined,
+        dither: payload.dither,
+        transparentMaster: payload.transparentMaster,
       }
       renderJobPut(job)
       return {

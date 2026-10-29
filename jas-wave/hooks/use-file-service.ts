@@ -15,7 +15,7 @@ declare global {
       windowMinimize: () => Promise<void>
       localAppData?: () => Promise<string>
       userDataPath?: () => Promise<string>
-      knownPaths?: () => Promise<{ resourcesPath: string; localAppData: string; bundledVst3Dir: string }>
+      knownPaths?: () => Promise<{ resourcesPath: string; localAppData: string; bundledVst3Dir: string; proyectosDir?: string }>
       pluginsListar?: () => Promise<import('../src/lib/plugins/registro-plugins').PaqueteRecibido[]>
       onHandover?: (callback: (token: string) => void) => () => void
       handoverTakePending?: () => Promise<string | null>
@@ -52,6 +52,8 @@ declare global {
       windowMaximize: () => Promise<void>
       windowClose: () => Promise<void>
       windowIsMaximized: () => Promise<boolean>
+      /** Colores de los botones nativos de ventana (window controls overlay). */
+      windowSetTitleBarOverlay?: (opciones: { color?: string; symbolColor?: string; height?: number }) => Promise<boolean>
       /** Cierre de la ventana principal pendiente de confirmar (cambios sin guardar). */
       onAppCloseRequested?: (callback: () => void) => () => void
       confirmAppClose?: () => Promise<boolean>
@@ -64,6 +66,7 @@ declare global {
       getAppVersion: () => Promise<string>
       logError?: (scope: string, message: string, stack?: string) => void
       openLogsFolder?: () => Promise<string>
+      asistenteCarpeta?: import('../src/lib/asistente-carpeta').PuenteCarpetaAsistente
       fileSave: (ruta: string, contenido: string) => Promise<{ success: boolean; error?: string }>
       fileSaveBinary: (ruta: string, data: Uint8Array) => Promise<{ success: boolean; error?: string }>
       fileRead: (ruta: string) => Promise<string>
@@ -78,6 +81,29 @@ declare global {
         entries: Array<{ name: string; isDirectory: boolean; isFile: boolean }>
       }>
       recordingsDir: (projectPath?: string) => Promise<string>
+      /** Carpeta temporal (vaciada) para los renders de medición de la IA; `analisisIaLimpiar` la borra. */
+      analisisIaDir?: () => Promise<string>
+      analisisIaLimpiar?: () => Promise<boolean>
+      /** Exportación (G2): codificador ffmpeg bajo demanda y conversión WAV → formato final. */
+      /** G7: dictado por voz con el reconocedor local de Windows (electron/dictado-windows.ts). */
+      dictado?: import('../src/lib/voice-dictation-core').PuenteDictadoEscritorio
+      ffmpegAvailable?: () => Promise<{ ok: boolean; origen?: 'jaswave' | 'path' | 'entorno'; error?: string }>
+      ffmpegInstall?: (apiBase: string) => Promise<{ ok: boolean; version?: string; error?: string }>
+      onFfmpegProgreso?: (callback: (p: { recibidos: number; total: number }) => void) => () => void
+      audioEncode?: (
+        input: string,
+        output: string,
+        formato: string,
+        opciones?: { bitrate?: number; bitDepth?: number; sampleRate?: number; borrarEntrada?: boolean },
+      ) => Promise<{ ok: boolean; output?: string; error?: string }>
+      exportEnsureDir?: (dir: string) => Promise<{ ok: boolean; error?: string }>
+      projectExportBundle?: (
+        salida: string,
+        json: string,
+        nombreProyecto: string,
+        archivos: Array<{ origen: string; destino: string }>,
+      ) => Promise<{ ok: boolean; bytes?: number; error?: string }>
+      projectImportBundle?: () => Promise<{ ok: boolean; ruta?: string; canceled?: boolean; error?: string }>
       /** Ruta real de un archivo arrastrado desde el explorador (Electron). */
       pathForFile?: (file: File) => string
       /** Copia un archivo de audio al media del proyecto (o a media/pending/). */
@@ -169,6 +195,13 @@ declare global {
     pluginHostReset?: () => Promise<{ ok: boolean; message?: string }>
     /** U7: el motor entró en bucle de fallos. */
     onPluginHostCrashLoop?: (callback: (info?: { activo?: boolean; mensaje?: string }) => void) => () => void
+    /** Otra instancia de JasWave tiene el motor de audio. */
+    onAudioEngineBusy?: (callback: (info?: { activo?: boolean; mensaje?: string }) => void) => () => void
+    /** «Usar audio aquí»: trae el motor de audio de la otra instancia. */
+    audioEngineTake?: () => Promise<{ ok: boolean; message?: string }>
+    /** Cede el motor de audio a la instancia que lo pidió. */
+    audioEngineRelease?: () => Promise<{ ok: boolean; message?: string }>
+    onAudioEngineReleaseRequested?: (callback: () => void) => () => void
       onPluginHostExited?: (
         callback: (info?: { code?: number | null; signal?: string | null }) => void,
       ) => () => void
@@ -180,7 +213,8 @@ declare global {
         callback: (msg: { id: string; channel: string; payload: Record<string, unknown> }) => void,
       ) => () => void
       agentBridgeReply?: (id: string, result: unknown, error?: string) => void
-      onNativeMidi?: (callback: (msg: { id: string; data: number[] }) => void) => () => void
+      onHostTransportToggle?: (callback: () => void) => () => void
+      onNativeMidi?: (callback: (msg: { id: string; data: number[]; tNs?: number }) => void) => () => void
     }
   }
 }

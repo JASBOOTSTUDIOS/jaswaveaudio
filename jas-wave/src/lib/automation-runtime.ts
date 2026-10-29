@@ -120,7 +120,9 @@ export function hayAutomatizacion(tracks: Array<Pick<Track, 'automatizaciones'>>
 export function grafoConAutomatizacionBounce(
   ctx: ContextoAutomatizacionBounce,
   timeSec: number,
-): Array<Pick<Track, 'id' | 'plugins' | 'volumen' | 'paneo' | 'silenciada' | 'soloActiva' | 'automatizaciones'>> {
+): Array<
+  Pick<Track, 'id' | 'plugins' | 'volumen' | 'paneo' | 'silenciada' | 'soloActiva' | 'automatizaciones' | 'tipo' | 'padreId'>
+> {
   const snapshots = new Map(
     applyAutomationAtTime(ctx.tracks, timeSec).map((s) => [s.id, s]),
   )

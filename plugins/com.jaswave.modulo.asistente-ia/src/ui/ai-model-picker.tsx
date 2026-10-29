@@ -8,6 +8,7 @@ import {
   type AiSettings,
 } from '../motor/ai-settings'
 import { requestOpenTool } from '@jaswave/host-sdk'
+import { Settings } from 'lucide-react'
 
 /**
  * Selector del catálogo unificado (proveedor · modelo).
@@ -41,50 +42,52 @@ export function AiModelPicker({ compact = false }: { compact?: boolean }) {
 
   return (
     <div
-      className={`flex min-w-0 flex-wrap items-center gap-1 ${compact ? '' : 'rounded-md border border-border/60 bg-panel-raised/30 px-1.5 py-1'}`}
-      title="Elige cualquier modelo del catálogo. Si falla, se reintenta con otros (mismo contexto)."
+      className={`@container flex min-w-0 flex-wrap items-center gap-1 ${compact ? '' : 'rounded-md border border-border/60 bg-panel-raised/30 px-1.5 py-1'}`}
+      title="Elige el modelo de IA. Si no responde, se puede probar otro automáticamente."
     >
       <select
-        aria-label="Modelo del catálogo"
+        aria-label="Modelo de IA"
         value={catalog.some((c) => c.key === activeKey) ? activeKey : catalog[0]?.key ?? ''}
         onChange={(e) => {
           const hit = catalog.find((c) => c.key === e.target.value)
           if (!hit) return
           persist(selectCatalogModel(settings, hit.providerId, hit.model))
         }}
-        className={`${selectClass} min-w-0 flex-1`}
+        className={`${selectClass} min-w-[8rem] flex-1`}
       >
         {catalog.length === 0 ? (
-          <option value="">Sin modelos — abre Configuración</option>
+          <option value="">No hay modelos: abre los ajustes</option>
         ) : (
           catalog.map((c) => (
             <option key={c.key} value={c.key} disabled={!c.ready}>
-              {c.healthy ? '● ' : c.ready ? '○ ' : '✕ '}
               {c.label}
-              {!c.ready ? ' (falta key/URL)' : ''}
+              {!c.ready ? ' (sin configurar)' : ''}
             </option>
           ))
         )}
       </select>
       <label
         className="flex shrink-0 cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
-        title="Si el modelo elegido no responde, probar el siguiente del catálogo con el mismo contexto"
+        title="Si el modelo elegido no responde, probar otro automáticamente"
       >
         <input
           type="checkbox"
           className="size-3 accent-accent-amber"
           checked={settings.fallbackEnabled !== false}
           onChange={(e) => persist({ ...settings, fallbackEnabled: e.target.checked })}
+          aria-label="Probar otro modelo si falla"
         />
-        Auto
+        {/* En paneles estrechos solo la casilla (el texto queda en el título): el selector no se corta. */}
+        <span className="hidden @[320px]:inline">Probar otro si falla</span>
       </label>
       <button
         type="button"
-        title="Abrir configuración de IA / catálogo"
+        title="Ajustes del asistente"
+        aria-label="Ajustes del asistente"
         onClick={() => requestOpenTool('settings', { zone: 'right' })}
         className="shrink-0 rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-background hover:text-foreground"
       >
-        ···
+        <Settings className="size-3.5" />
       </button>
     </div>
   )

@@ -1,3 +1,5 @@
+import type { ProcedimientoHabilidad } from '@jaswave/host-sdk'
+
 export type RolAgente = 'planificador' | 'director' | 'musico' | 'mezcla' | 'mastering' | 'qa' | string
 
 export type EspecialistaConfig = {
@@ -5,9 +7,17 @@ export type EspecialistaConfig = {
   nombre: string
   role: RolAgente
   instrumento?: string
+  /** Etiquetas de especialidad (descriptivas, no ejecutables). */
   skills: string[]
+  /**
+   * Habilidades ejecutables compiladas desde lenguaje natural (ver «Compilar habilidad»).
+   * Opcional: los datos guardados antes de existir siguen siendo válidos.
+   */
+  procedimientos?: ProcedimientoHabilidad[]
   descripcion?: string
   instruccionesPersonalizadas?: string
+  /** Grupos de herramientas que puede usar como subagente (`GRUPOS_HERRAMIENTAS`); vacío = todas. */
+  herramientasPermitidas?: string[]
   temperatura?: number
   maxIterPorPaso?: number
   activo: boolean
@@ -61,12 +71,25 @@ export const ESPECIALISTAS_POR_DEFECTO: EspecialistaConfig[] = [
     role: 'musico',
     instrumento: 'Drums',
     skills: ['groove', 'ritmo', 'kick-snare-hihat', 'fills', 'vst-drums', 'voice-to-drums'],
-    descripcion: 'Crea el ritmo principal, grooves, cajas, bombos, hi-hats y redobles de batería alineados a la rejilla.',
-    instruccionesPersonalizadas: 'Genera patrones de batería sólidos con acentos en 2 y 4, variaciones en los cortes y sincronización perfecta con el tempo.',
+    descripcion: 'Crea el ritmo principal, grooves, cajas, bombos, hi-hats y redobles de batería con groove humano.',
+    instruccionesPersonalizadas: 'Genera patrones de batería sólidos con acentos en 2 y 4, ghost notes, variaciones en los cortes y un groove vivo (velocidades humanas y ghost notes, nunca dos compases idénticos), sin perder el tempo.',
     temperatura: 0.3,
     maxIterPorPaso: 25,
     activo: true,
     color: '#ef4444',
+  },
+  {
+    id: 'guitarrista',
+    nombre: 'Guitarrista',
+    role: 'musico',
+    instrumento: 'Guitarra eléctrica',
+    skills: ['riffs', 'acordes-ritmicos', 'leads', 'solos', 'vst-guitar', 'fx-chain-guitarra'],
+    descripcion: 'Escribe riffs, rítmicas y solos de guitarra y revisa que la cadena tenga ganancia, tono, delay y chorus bien calibrados.',
+    instruccionesPersonalizadas: 'Antes de escribir, inspecciona la FX chain de la pista de guitarra: ajusta ganancia, cab, delay y chorus del propio instrumento con plugin.setParameter y solo añade o retira efectos externos si hace falta.',
+    temperatura: 0.35,
+    maxIterPorPaso: 25,
+    activo: true,
+    color: '#f97316',
   },
   {
     id: 'bajista',
@@ -157,10 +180,27 @@ export function cargarEspecialistas(): EspecialistaConfig[] {
       return ESPECIALISTAS_POR_DEFECTO
     }
     const p = JSON.parse(raw)
-    return Array.isArray(p) && p.length > 0 ? p : ESPECIALISTAS_POR_DEFECTO
+    return Array.isArray(p) && p.length > 0 ? p.map(normalizarEspecialista).filter((e): e is EspecialistaConfig => !!e) : ESPECIALISTAS_POR_DEFECTO
   } catch {
     return ESPECIALISTAS_POR_DEFECTO
   }
+}
+
+function esProcedimientoGuardado(v: unknown): v is ProcedimientoHabilidad {
+  if (!v || typeof v !== 'object') return false
+  const o = v as Record<string, unknown>
+  return typeof o.id === 'string' && typeof o.nombre === 'string' && Array.isArray(o.pasos) && Array.isArray(o.disparadores)
+}
+
+/** Tolera datos viejos o editados a mano: skills siempre array y procedimientos sólo si son válidos. */
+export function normalizarEspecialista(raw: unknown): EspecialistaConfig | null {
+  if (!raw || typeof raw !== 'object') return null
+  const e = raw as EspecialistaConfig
+  if (typeof e.id !== 'string' || typeof e.nombre !== 'string') return null
+  const out: EspecialistaConfig = { ...e, skills: Array.isArray(e.skills) ? e.skills.filter((s) => typeof s === 'string') : [], activo: e.activo !== false }
+  if (Array.isArray(e.procedimientos)) out.procedimientos = e.procedimientos.filter(esProcedimientoGuardado)
+  else delete out.procedimientos
+  return out
 }
 
 export function guardarEspecialistas(lista: EspecialistaConfig[]): void {

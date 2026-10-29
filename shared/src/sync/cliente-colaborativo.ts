@@ -30,13 +30,20 @@ export type OpcionesClienteColaborativo = {
   /** Se llama cuando llega un cambio remoto concurrente con lo que el cliente había visto. */
   alConflicto?: (cambio: CambioConfirmado) => void;
   alError?: (error: unknown) => void;
+  /**
+   * Rol confirmado por el servidor al unirse (y `null` al detener). La app lo usa para los permisos
+   * de documentos del asistente (`fijarRolDocumentos`): un `viewer` no puede hacer que la IA escriba.
+   */
+  alCambiarRol?: (rol: RolSala | null) => void;
 };
+
+export type RolSala = 'owner' | 'editor' | 'viewer';
 
 export class ClienteColaborativo {
   private readonly replica: ReplicaSync;
   private reloj: RelojVectorial = {};
   private cancelaciones: (() => void)[] = [];
-  private rol: 'owner' | 'editor' | 'viewer' | null = null;
+  private rol: RolSala | null = null;
 
   constructor(private readonly o: OpcionesClienteColaborativo) {
     this.replica = new ReplicaSync(o.aplicar, o.ejecutor.obtenerEstado(), o.ultimoSeq ?? 0);
@@ -78,6 +85,10 @@ export class ClienteColaborativo {
 
   detener(): void {
     for (const c of this.cancelaciones.splice(0)) c();
+    if (this.rol !== null) {
+      this.rol = null;
+      this.o.alCambiarRol?.(null);
+    }
   }
 
   private unirse(): void {
@@ -86,7 +97,10 @@ export class ClienteColaborativo {
 
   private manejar(m: MensajeServidorSync): void {
     if (m.tipo === 'sala.unido' && m.salaId === this.o.salaId) {
-      this.rol = m.rol;
+      if (this.rol !== m.rol) {
+        this.rol = m.rol;
+        this.o.alCambiarRol?.(m.rol);
+      }
       return;
     }
     if (m.tipo !== 'comando.aplicado' || m.salaId !== this.o.salaId || m.comando !== COMANDO_CAMBIO) return;

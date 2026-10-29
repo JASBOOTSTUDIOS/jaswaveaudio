@@ -547,9 +547,10 @@ export function composeMidiFromBrief(
       const ohh = 46
       const crash = 49
       const ride = 51
-      const tomLo = 45
+      // toms comunes al mapa GM y a los kits de 3 toms (BFD Player): 47 alto, 45 medio, 43 de suelo
+      const tomLo = 43
       const tomHi = 47
-      const tomMid = 48
+      const tomMid = 45
       const tomHeavy = brief.mood === 'epic' || dens > 0.55
       if (bar === 0 || (sec === 'chorus' && bar % 8 === 0)) push(crash, start, 1.2, base + 14)
       // Kick patterns by section

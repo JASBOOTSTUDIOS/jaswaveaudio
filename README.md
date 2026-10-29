@@ -1,7 +1,7 @@
 # JasWave
 
 DAW (Digital Audio Workstation) **AI-first** para Windows — Electron + React + Vite, con dominio
-compartido en TypeScript y un host nativo de plugins VST3/VST2 en C++.
+compartido en TypeScript y un host nativo de plugins VST3 en C++.
 
 Repositorio: [JASBOOTSTUDIOS/jaswaveaudio](https://github.com/JASBOOTSTUDIOS/jaswaveaudio)
 
@@ -10,7 +10,7 @@ Repositorio: [JASBOOTSTUDIOS/jaswaveaudio](https://github.com/JASBOOTSTUDIOS/jas
 - Timeline / arrange, mixer, transporte, metrónomo
 - Piano roll MIDI (edición, snap, velocity, expression lanes) y partitura
 - Reproducción de clips de audio + notas MIDI (synth interno)
-- Host de plugins VST3 / VST2 x64 fuera de proceso
+- Host de plugins VST3 (x64) fuera de proceso
 - Co-producer / agente IA conectado al estado del DAW (proveedores en la nube u Ollama local)
 - Workspace con paneles dockables y ventanas flotantes
 - Persistencia de sesión (proyecto + buffers en IndexedDB)
@@ -23,7 +23,7 @@ jaswaveaudio/
 ├── ai-harness/    # @jaswave/ai-harness — bucle IA, plan.md, modos y política del agente
 ├── jas-wave/      # App Electron + React + Tailwind (UI, main, CLI, empaquetado)
 ├── native/
-│   ├── plugin-host/       # Host VST3/VST2 en C++ (proceso separado)
+│   ├── plugin-host/       # Host VST3 en C++ (proceso separado)
 │   ├── jaswave-roles-vst/ # Instrumento VST3 propio "JasWave Roles"
 │   ├── piano-synth/       # Instrumento VST3 de piano (JasWavePiano)
 │   └── audio-engine/      # Addon N-API de audio (ADR-0009)

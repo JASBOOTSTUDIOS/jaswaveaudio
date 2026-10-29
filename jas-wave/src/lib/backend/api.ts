@@ -74,6 +74,59 @@ export type DatosProveedorIA = {
   peticionesPorMinuto?: number
 }
 
+// ---------- Admin · JasWave IA (modelos de marca, planes, consumo y grupo de claves) ----------
+export type RazonamientoIA = 'off' | 'bajo' | 'normal'
+export type EslabonModeloJasWave = { proveedorId: string; modelo: string; razonamiento: RazonamientoIA }
+export type ModeloJasWaveAdmin = {
+  id: string
+  nombre: string
+  descripcion: string
+  orden: number
+  activo: boolean
+  cadena: EslabonModeloJasWave[]
+  creditosPorMil: number
+  maxTokens: number
+}
+export type DatosModeloJasWave = {
+  nombre: string
+  descripcion: string
+  orden?: number
+  activo?: boolean
+  cadena: EslabonModeloJasWave[]
+  creditosPorMil?: number
+  maxTokens?: number
+}
+export type PruebaEslabonIA = { conexionId: string; modelo: string; razonamiento: RazonamientoIA; ok: boolean; ms: number; error?: string }
+export type PlanIAAdmin = {
+  id: string
+  nombre: string
+  descripcion: string
+  creditosDia: number | null
+  creditosMes: number | null
+  peticionesMinuto: number
+  /** Ids de modelos JasWave permitidos (vacío = todos). */
+  modelos: string[]
+  porDefecto: boolean
+  usuarios?: number
+}
+export type DatosPlanIA = Omit<PlanIAAdmin, 'id' | 'usuarios'>
+export type EstadoClaveIA = { enVuelo: number; enPausaHasta: number | null; usos: number; fallos: number; ultimoError?: string }
+/** Clave del grupo de una conexión: nunca incluye el secreto. La principal tiene id `<conexión>:principal`. */
+export type ClaveConexionIA = { id: string; etiqueta: string; activa: boolean; principal: boolean; estado: EstadoClaveIA | null }
+export type ConsumoIAAdmin = {
+  porModelo: { modelo: string; peticiones: number; fallos: number; creditos: number; tokens: number; msMedio: number }[]
+  porUsuario: {
+    usuarioId: string
+    email: string
+    esAdmin: boolean
+    licencia: string | null
+    plan: { id: string; nombre: string; asignado: boolean } | null
+    dia: { usados: number; limite: number | null }
+    mes: { usados: number; limite: number | null; peticiones: number }
+  }[]
+  porDia: { dia: string; creditos: number; peticiones: number }[]
+}
+
 export type OpcionesClienteApi = {
   base: string
   /** Devuelve el JWT vigente de la sesión (o null sin sesión). */
@@ -142,6 +195,27 @@ export function crearClienteApi(o: OpcionesClienteApi) {
         eliminar: (id: string) => pedir<void>('DELETE', `/admin/ia/proveedores/${enc(id)}`),
         probar: (id: string) =>
           pedir<{ estado: string; modelos: string[]; error?: string; pista?: string }>('POST', `/admin/ia/proveedores/${enc(id)}/probar`),
+        // Grupo de claves de una conexión (solo escritura: nunca vuelven al cliente).
+        claves: (id: string) => pedir<{ claves: ClaveConexionIA[] }>('GET', `/admin/ia/proveedores/${enc(id)}/claves`).then((r) => r.claves),
+        agregarClave: (id: string, apiKey: string, etiqueta = '') =>
+          pedir<{ ok: true }>('POST', `/admin/ia/proveedores/${enc(id)}/claves`, { apiKey, etiqueta }),
+        cambiarClave: (id: string, claveId: string, cambios: { activa?: boolean; etiqueta?: string }) =>
+          pedir<{ ok: true }>('PUT', `/admin/ia/proveedores/${enc(id)}/claves/${enc(claveId)}`, cambios),
+        quitarClave: (id: string, claveId: string) => pedir<void>('DELETE', `/admin/ia/proveedores/${enc(id)}/claves/${enc(claveId)}`),
+        // Modelos JasWave (los que ven los usuarios; «auto» es virtual y lo gestiona el servidor).
+        modelos: () => pedir<{ modelos: ModeloJasWaveAdmin[] }>('GET', '/admin/ia/modelos').then((r) => r.modelos),
+        guardarModelo: (id: string, d: DatosModeloJasWave) =>
+          pedir<{ modelo: ModeloJasWaveAdmin }>('PUT', `/admin/ia/modelos/${enc(id)}`, d).then((r) => r.modelo),
+        probarModelo: (id: string) =>
+          pedir<{ eslabones: PruebaEslabonIA[] }>('POST', `/admin/ia/modelos/${enc(id)}/probar`).then((r) => r.eslabones),
+        eliminarModelo: (id: string) => pedir<void>('DELETE', `/admin/ia/modelos/${enc(id)}`),
+        // Planes de IA y su asignación a usuarios.
+        planes: () => pedir<{ planes: PlanIAAdmin[] }>('GET', '/admin/ia/planes').then((r) => r.planes),
+        crearPlan: (d: DatosPlanIA) => pedir<{ plan: PlanIAAdmin }>('POST', '/admin/ia/planes', d).then((r) => r.plan),
+        actualizarPlan: (id: string, d: DatosPlanIA) => pedir<{ plan: PlanIAAdmin }>('PUT', `/admin/ia/planes/${enc(id)}`, d).then((r) => r.plan),
+        eliminarPlan: (id: string) => pedir<void>('DELETE', `/admin/ia/planes/${enc(id)}`),
+        asignarPlan: (usuarioId: string, planId: string | null) => pedir<{ ok: true }>('PUT', `/admin/ia/usuarios/${enc(usuarioId)}/plan`, { planId }),
+        consumo: (dias = 30) => pedir<ConsumoIAAdmin>('GET', `/admin/ia/consumo?dias=${dias}`),
       },
       productos: () => pedir<{ productos: ProductoAdmin[] }>('GET', '/admin/productos').then((r) => r.productos),
       crearProducto: (id: string, nombre: string) => pedir<{ producto: ProductoAdmin }>('POST', '/admin/productos', { id, nombre }),

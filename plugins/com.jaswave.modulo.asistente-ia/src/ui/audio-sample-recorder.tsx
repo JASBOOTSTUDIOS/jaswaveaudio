@@ -17,12 +17,27 @@ import {
   Check,
   ChevronDown,
 } from 'lucide-react'
-import { useDAW } from '@jaswave/host-sdk'
+import { importAudioBytesToTrack, quitarAudioAdjunto, registrarAudioAdjunto, useDAW } from '@jaswave/host-sdk'
+
+/** Frecuencia a la que se remuestrea el audio para el análisis DSP (YIN, transitorios, AudioLens). */
+const SR_ANALISIS = 22050
+/** Tope de duración analizada: el PCM viaja en el payload del comando (se replica en colaboración). */
+const MAX_ANALISIS_SEG = 30
+const MAX_BYTES_ARCHIVO = 50 * 1024 * 1024
+const EXT_AUDIO = /\.(wav|mp3|ogg|oga|m4a|aac|flac|webm|opus)$/i
+
+/** Windows suele dejar `type` vacío en .flac/.m4a: se acepta también por extensión. */
+function esArchivoAudio(file: File): boolean {
+  return file.type.startsWith('audio/') || EXT_AUDIO.test(file.name)
+}
+
+type ContextoWeb = { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }
 
 export interface AttachedAudioSample {
   id: string
   name: string
   durationSec: number
+  /** Frecuencia REAL de `pcmSamples` (ya remuestreado a SR_ANALISIS), no la del archivo original. */
   sampleRate: number
   pcmSamples: number[]
   waveform: number[]
@@ -57,10 +72,15 @@ export function AudioSampleRecorder({
   const [melodyQuantize, setMelodyQuantize] = useState<'1/16' | '1/8' | '1/4' | 'off'>('1/16')
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const cancelledRef = useRef(false)
+  const startingRef = useRef(false)
   const audioChunksRef = useRef<Blob[]>([])
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const audioPlaybackRef = useRef<HTMLAudioElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const dropRef = useRef<(e: React.DragEvent | DragEvent) => void>(() => undefined)
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const showNotice = (msg: string) => {
@@ -77,6 +97,19 @@ export function AudioSampleRecorder({
     return () => {
       if (recordTimerRef.current) clearInterval(recordTimerRef.current)
       if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current)
+      // Si se cierra el panel grabando: descartar la toma y liberar el micrófono
+      cancelledRef.current = true
+      const rec = mediaRecorderRef.current
+      if (rec && rec.state !== 'inactive') {
+        try {
+          rec.stop()
+        } catch {
+          /* ya detenido */
+        }
+      }
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+      streamRef.current = null
+      mediaRecorderRef.current = null
       if (audioPlaybackRef.current) {
         audioPlaybackRef.current.pause()
         audioPlaybackRef.current = null
@@ -84,90 +117,130 @@ export function AudioSampleRecorder({
     }
   }, [])
 
-  // Decodificar un Blob de audio a AttachedAudioSample
+  // Quita la muestra actual liberando su URL de objeto
+  const quitarMuestra = () => {
+    if (audioPlaybackRef.current) {
+      audioPlaybackRef.current.pause()
+      audioPlaybackRef.current = null
+    }
+    if (attachedSample) {
+      URL.revokeObjectURL(attachedSample.blobUrl)
+      quitarAudioAdjunto(attachedSample.id)
+    }
+    setIsPlaying(false)
+    onSampleAttached(null)
+  }
+
+  // Decodificar un Blob de audio a AttachedAudioSample (mono, remuestreado, con su sampleRate real)
   const processAudioBlob = async (blob: Blob, name: string) => {
+    if (blob.size > MAX_BYTES_ARCHIVO) {
+      showNotice(`Archivo demasiado grande (máx. ${MAX_BYTES_ARCHIVO / 1024 / 1024} MB)`)
+      return
+    }
     setIsProcessing(true)
+    let audioCtx: AudioContext | null = null
     try {
       const arrayBuffer = await blob.arrayBuffer()
-      const audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
+      const w = window as unknown as ContextoWeb
+      const Ctor = w.AudioContext ?? w.webkitAudioContext
+      if (!Ctor) throw new Error('Este entorno no tiene Web Audio')
+      audioCtx = new Ctor()
       const decoded = await audioCtx.decodeAudioData(arrayBuffer)
-      
-      const channelData = decoded.getChannelData(0)
       const durationSec = decoded.duration
-      const sampleRate = decoded.sampleRate
 
-      // Extraer waveform para dibujar (64 barras)
+      // Mezcla a mono: un archivo estéreo con la voz solo a la derecha no debe perder el audio
+      const frames = decoded.length
+      const mono = new Float32Array(frames)
+      for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+        const data = decoded.getChannelData(ch)
+        for (let i = 0; i < frames; i++) mono[i] = (mono[i] ?? 0) + (data[i] ?? 0) / decoded.numberOfChannels
+      }
+
+      // Forma de onda para dibujar (64 barras)
       const waveformBins = 64
-      const blockSize = Math.max(1, Math.floor(channelData.length / waveformBins))
+      const blockSize = Math.max(1, Math.floor(frames / waveformBins))
       const waveform: number[] = []
       for (let i = 0; i < waveformBins; i++) {
         let max = 0
-        const start = i * blockSize
-        const end = Math.min(start + blockSize, channelData.length)
-        for (let j = start; j < end; j++) {
-          const abs = Math.abs(channelData[j] ?? 0)
+        const ini = i * blockSize
+        const fin = Math.min(ini + blockSize, frames)
+        for (let j = ini; j < fin; j++) {
+          const abs = Math.abs(mono[j] ?? 0)
           if (abs > max) max = abs
         }
         waveform.push(Math.min(1, Math.max(0.05, max)))
       }
 
-      // Representación downsampleada para análisis rápido
-      const maxSamples = 88200
-      let pcmSamples: number[] = []
-      if (channelData.length <= maxSamples) {
-        pcmSamples = Array.from(channelData)
-      } else {
-        const step = channelData.length / maxSamples
-        pcmSamples = new Array(maxSamples)
-        for (let i = 0; i < maxSamples; i++) {
-          pcmSamples[i] = channelData[Math.floor(i * step)] ?? 0
-        }
-      }
+      // Remuestreo con filtro (OfflineAudioContext) para el análisis. Decimar sin filtrar y seguir enviando la
+      // frecuencia original desafinaba toda la melodía (+29 semitonos con 10 s a 48 kHz).
+      const analizadoSeg = Math.min(durationSec, MAX_ANALISIS_SEG)
+      const outLen = Math.max(1, Math.ceil(analizadoSeg * SR_ANALISIS))
+      const offline = new OfflineAudioContext(1, outLen, SR_ANALISIS)
+      const origen = offline.createBuffer(1, frames, decoded.sampleRate)
+      origen.copyToChannel(mono, 0)
+      const fuente = offline.createBufferSource()
+      fuente.buffer = origen
+      fuente.connect(offline.destination)
+      fuente.start()
+      const renderizado = await offline.startRendering()
+      const pcmSamples = Array.from(renderizado.getChannelData(0))
 
-      const blobUrl = URL.createObjectURL(blob)
+      // Si ya había una muestra, se libera su URL antes de sustituirla
+      if (attachedSample) {
+        URL.revokeObjectURL(attachedSample.blobUrl)
+        quitarAudioAdjunto(attachedSample.id)
+      }
       const sample: AttachedAudioSample = {
         id: `sample-${Date.now()}`,
         name,
         durationSec,
-        sampleRate,
+        sampleRate: SR_ANALISIS,
         pcmSamples,
         waveform,
-        blobUrl,
+        blobUrl: URL.createObjectURL(blob),
       }
 
+      // El agente lo referencia como audioRef: el estado del proyecto no guarda PCM
+      registrarAudioAdjunto(sample.id, { audioData: pcmSamples, sampleRate: SR_ANALISIS, duracionSeg: durationSec })
       onSampleAttached(sample)
       setIsMenuOpen(false)
-      showNotice(`Nota de voz lista: ${name} (${durationSec.toFixed(1)}s)`)
-      await audioCtx.close()
+      const recorte = durationSec > MAX_ANALISIS_SEG ? ` · se analizan los primeros ${MAX_ANALISIS_SEG}s` : ''
+      showNotice(`Nota de voz lista: ${name} (${durationSec.toFixed(1)}s)${recorte}`)
     } catch (err) {
       console.error('[audio-sample-recorder] error decodificando audio:', err)
       showNotice('Error al procesar el archivo de audio')
     } finally {
+      if (audioCtx) void audioCtx.close().catch(() => undefined)
       setIsProcessing(false)
     }
   }
 
   // Grabar desde micrófono estilo WhatsApp
   const startRecording = async () => {
+    // getUserMedia puede tardar (permiso): un segundo clic no debe abrir un segundo stream
+    if (startingRef.current || mediaRecorderRef.current) return
+    startingRef.current = true
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      cancelledRef.current = false
       audioChunksRef.current = []
       const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg'
       const mediaRecorder = new MediaRecorder(stream, { mimeType })
 
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data)
-        }
+        if (event.data.size > 0 && !cancelledRef.current) audioChunksRef.current.push(event.data)
       }
 
       mediaRecorder.onstop = async () => {
-        const tracks = stream.getTracks()
-        tracks.forEach((t) => t.stop())
-        if (audioChunksRef.current.length > 0) {
-          const audioBlob = new Blob(audioChunksRef.current, { type: mimeType })
-          await processAudioBlob(audioBlob, `Nota_Voz_${new Date().toLocaleTimeString().replace(/:/g, '-')}`)
-        }
+        stream.getTracks().forEach((t) => t.stop())
+        if (streamRef.current === stream) streamRef.current = null
+        mediaRecorderRef.current = null
+        // Cancelada (o panel cerrado): MediaRecorder emite un último dataavailable antes de onstop
+        const chunks = audioChunksRef.current
+        audioChunksRef.current = []
+        if (cancelledRef.current || chunks.length === 0) return
+        await processAudioBlob(new Blob(chunks, { type: mimeType }), `Nota_Voz_${new Date().toLocaleTimeString().replace(/:/g, '-')}`)
       }
 
       mediaRecorderRef.current = mediaRecorder
@@ -181,29 +254,34 @@ export function AudioSampleRecorder({
     } catch (err) {
       console.error('[audio-sample-recorder] no se pudo acceder al micrófono:', err)
       showNotice('No se pudo acceder al micrófono. Revisa los permisos.')
+    } finally {
+      startingRef.current = false
+    }
+  }
+
+  const pararTemporizador = () => {
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current)
+      recordTimerRef.current = null
     }
   }
 
   const stopAndSaveRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
+      cancelledRef.current = false
       mediaRecorderRef.current.stop()
       setIsRecording(false)
-      if (recordTimerRef.current) {
-        clearInterval(recordTimerRef.current)
-        recordTimerRef.current = null
-      }
+      pararTemporizador()
     }
   }
 
   const cancelRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
+      cancelledRef.current = true
       audioChunksRef.current = []
       mediaRecorderRef.current.stop()
       setIsRecording(false)
-      if (recordTimerRef.current) {
-        clearInterval(recordTimerRef.current)
-        recordTimerRef.current = null
-      }
+      pararTemporizador()
       showNotice('Grabación cancelada')
     }
   }
@@ -225,17 +303,54 @@ export function AudioSampleRecorder({
     e.preventDefault()
     e.stopPropagation()
     setIsDragOver(false)
-    const file = e.dataTransfer.files?.[0]
-    if (file && file.type.startsWith('audio/')) {
-      await processAudioBlob(file, file.name)
+    const file = e.dataTransfer?.files?.[0]
+    if (!file) return
+    if (!esArchivoAudio(file)) {
+      showNotice(`«${file.name}» no es un archivo de audio compatible`)
+      return
     }
+    await processAudioBlob(file, file.name)
   }
+
+  dropRef.current = (e) => void handleDrop(e as React.DragEvent)
+
+  // Toda el área del chat acepta audio arrastrado, no solo la barra de entrada.
+  useEffect(() => {
+    const zona = rootRef.current?.closest('[data-coproducer-chat]') as HTMLElement | null
+    if (!zona) return
+    const tieneArchivos = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files')
+    const over = (e: DragEvent) => {
+      if (!tieneArchivos(e)) return
+      e.preventDefault()
+      setIsDragOver(true)
+    }
+    const leave = (e: DragEvent) => {
+      if (e.relatedTarget && zona.contains(e.relatedTarget as Node)) return
+      setIsDragOver(false)
+    }
+    const drop = (e: DragEvent) => {
+      if (!tieneArchivos(e)) return
+      // Si cae sobre la barra del grabador ya lo gestiona su propio onDrop.
+      if (rootRef.current?.contains(e.target as Node)) return
+      e.preventDefault()
+      dropRef.current(e)
+    }
+    zona.addEventListener('dragover', over)
+    zona.addEventListener('dragleave', leave)
+    zona.addEventListener('drop', drop)
+    return () => {
+      zona.removeEventListener('dragover', over)
+      zona.removeEventListener('dragleave', leave)
+      zona.removeEventListener('drop', drop)
+    }
+  }, [])
 
   // Carga de archivo manual
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    await processAudioBlob(file, file.name)
+    if (!esArchivoAudio(file)) showNotice(`«${file.name}» no es un archivo de audio compatible`)
+    else await processAudioBlob(file, file.name)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -268,7 +383,7 @@ export function AudioSampleRecorder({
       const estado = dawStore.obtenerEstado()
       const bpm = estado.project.bpm?.valor || 120
       const selectedTrackId = estado.selection?.idsPistas?.[0]
-      const selectedTrack = (estado.project.tracks ?? []).find((t: any) => t.id === selectedTrackId)
+      const selectedTrack = (estado.project.tracks ?? []).find((t: { id: string }) => t.id === selectedTrackId)
       const canUseSelected = selectedTrack && (selectedTrack.tipo === 'instrumento' || selectedTrack.tipo === 'midi')
 
       const nombresInst: Record<string, string> = {
@@ -294,12 +409,10 @@ export function AudioSampleRecorder({
         'user'
       )
 
-      if (res && res.result) {
-        const { totalNotas, metricas } = res.result as {
-          totalNotas: number
-          metricas: { rangoPitches: { min: number; max: number }; afinacionPromedioCents: number }
-        }
-        showNotice(`🎸 Melodía creada: ${totalNotas} notas (pitch ${metricas.rangoPitches.min}..${metricas.rangoPitches.max}) en el DAW`)
+      if (!res?.success) throw new Error(res?.error?.message ?? 'El comando no se pudo ejecutar')
+      if (res.result) {
+        const { totalNotas } = res.result as { totalNotas: number }
+        showNotice(`Melodía creada con ${totalNotas} notas en la pista de ${nombresInst[melodyInstrument]}`)
         if (onInsertPromptText) {
           onInsertPromptText(
             `He convertido la melodía de "${attachedSample.name}" a ${nombresInst[melodyInstrument]} con ${totalNotas} notas afinadas y cuantizadas a ${melodyQuantize}.`
@@ -337,9 +450,10 @@ export function AudioSampleRecorder({
         'user'
       )
 
-      if (res && res.result) {
+      if (!res?.success) throw new Error(res?.error?.message ?? 'El comando no se pudo ejecutar')
+      if (res.result) {
         const { conteo } = res.result as { conteo: { kicks: number; snares: number; hihats: number } }
-        showNotice(`🥁 Batería creada en el DAW: ${conteo.kicks} kicks, ${conteo.snares} snares, ${conteo.hihats} hihats`)
+        showNotice(`Batería creada: ${conteo.kicks} bombos, ${conteo.snares} cajas y ${conteo.hihats} charles`)
         if (onInsertPromptText) {
           onInsertPromptText(`He convertido el beatbox "${attachedSample.name}" a batería MIDI con ${conteo.kicks} kicks, ${conteo.snares} snares y ${conteo.hihats} charles adaptados a ${bpm} BPM.`)
         }
@@ -372,17 +486,20 @@ export function AudioSampleRecorder({
         'user'
       )
 
-      if (res && res.result) {
+      if (!res?.success) throw new Error(res?.error?.message ?? 'El comando no se pudo ejecutar')
+      if (res.result) {
         const r = res.result as {
-          tonalidad: { estimacion: string; confianza: number }
-          tempoDetectado: { bpmEstimado: number; regularidad: number }
-          descripcionMusical: string
-          acordesSugeridos: string[]
+          tonalidad: { raiz: string; escala: string; confianza: number }
+          bpmEstimado: number
+          progresionAcordes: { acorde: string }[]
+          resumenParaIA: string
         }
-        showNotice(`🔍 AudioLens: Tono ${r.tonalidad.estimacion} | BPM ${r.tempoDetectado.bpmEstimado} | ${r.acordesSugeridos.join(' - ')}`)
+        const tono = `${r.tonalidad.raiz} ${r.tonalidad.escala}`
+        const acordes = [...new Set(r.progresionAcordes.map((a) => a.acorde))].slice(0, 8)
+        showNotice(`Tonalidad ${tono} · ${r.bpmEstimado} BPM${acordes.length ? ` · ${acordes.join(' - ')}` : ''}`)
         if (onInsertPromptText) {
           onInsertPromptText(
-            `[AudioLens de "${attachedSample.name}"]: Tonalidad ${r.tonalidad.estimacion} (confianza ${(r.tonalidad.confianza * 100).toFixed(0)}%), Tempo estimado ${r.tempoDetectado.bpmEstimado} BPM. Acordes: ${r.acordesSugeridos.join(', ')}. ${r.descripcionMusical}`
+            `[AudioLens de "${attachedSample.name}"]: Tonalidad ${tono} (confianza ${(r.tonalidad.confianza * 100).toFixed(0)}%), tempo ${r.bpmEstimado} BPM. Acordes: ${acordes.join(', ') || 'no detectados'}.`
           )
         }
       }
@@ -399,39 +516,22 @@ export function AudioSampleRecorder({
     if (!attachedSample || !dawStore) return
     setIsProcessing(true)
     try {
-      const estado = dawStore.obtenerEstado()
-      const bpm = estado.project.bpm?.valor || 120
-      const duracionBeats = Math.max(1, Math.round((attachedSample.durationSec / (60 / bpm)) * 4) / 4)
-
-      let pistaAudio = (estado.project.tracks ?? []).find((t: any) => t.tipo === 'audio')
-      let pistaId = pistaAudio?.id
-
-      if (!pistaId) {
-        const nuevaPista: any = await dawStore.executor.execute(
-          'track.create',
-          { nombre: 'Audio Grabado', tipo: 'audio' },
-          'user'
-        )
-        pistaId = nuevaPista?.result?.id ?? nuevaPista?.state?.project?.tracks?.slice(-1)[0]?.id
-      }
-
-      if (pistaId) {
-        await dawStore.executor.execute(
-          'clip.create',
-          {
-            pistaId,
-            nombre: attachedSample.name,
-            inicio: 0,
-            duracion: duracionBeats,
-            waveform: attachedSample.waveform,
-          },
-          'user'
-        )
-        showNotice(`🎵 Clip insertado en el DAW (${duracionBeats} beats)`)
-      }
+      // El audio original a calidad completa (no el PCM reducido del análisis)
+      const bytes = await (await fetch(attachedSample.blobUrl)).arrayBuffer()
+      const r = await importAudioBytesToTrack(dawStore, {
+        bytes,
+        nombre: attachedSample.name,
+        trackName: 'Nota de voz',
+        inicio: 0,
+      })
+      showNotice(
+        r.dentroDelProyecto
+          ? `Audio añadido al proyecto en la pista «Nota de voz» (${r.durationSec.toFixed(1)} s)`
+          : `Audio añadido (${r.durationSec.toFixed(1)} s) y guardado en la carpeta de JasWave, porque el proyecto aún no está guardado`,
+      )
     } catch (err) {
       console.error('[audio-sample-recorder] error insertando clip:', err)
-      showNotice('No se pudo insertar el clip: ' + (err instanceof Error ? err.message : String(err)))
+      showNotice('No se pudo añadir el audio al proyecto: ' + (err instanceof Error ? err.message : String(err)))
     } finally {
       setIsProcessing(false)
     }
@@ -445,6 +545,7 @@ export function AudioSampleRecorder({
 
   return (
     <div
+      ref={rootRef}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -498,11 +599,7 @@ export function AudioSampleRecorder({
 
             <button
               type="button"
-              onClick={() => {
-                if (audioPlaybackRef.current) audioPlaybackRef.current.pause()
-                setIsPlaying(false)
-                onSampleAttached(null)
-              }}
+              onClick={quitarMuestra}
               className="shrink-0 text-muted-foreground hover:text-foreground p-1"
               title="Quitar muestra"
             >

@@ -74,10 +74,40 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     examplePayload: { aplicar: true, nombre: 'Demo', bpm: 100 },
   },
   {
+    type: 'daw.composeWorship',
+    kind: 'agent',
+    description:
+      'Produce un tema de worship moderno completo: compone (determinista, orgánico, con variaciones por sección), crea una pista por instrumento (Grand Piano, Shimmer Pad, Strings Section, Electric Bass, Worship Drums, Electric Guitar), carga un VST3 independiente en cada una y mezcla midiendo (balance por rol, paneo, master −14 LUFS con techo −1 dBTP). prompt libre o campos explícitos; la misma semilla da la misma canción. ' +
+      'Tú decides la forma: secciones [{tipo,compases,progresion (grados romanos diatónicos con sus2/sus4/add9/7 e inversiones),intensidad 0..1}]. ' +
+      'Para continuar lo que ya hay: inicioBeat = fin del contenido y ajustarProyecto:false (respeta tempo, tonalidad y compás). ' +
+      'Con el toque del usuario: perfilToque {rol: perfilId|nombre} (de style.touch.list) se aplica a los clips de ese rol al crearlos (intensidadToque 0..1)',
+    examplePayload: {
+      semilla: 7,
+      estilo: 'anthem',
+      tonalidad: 'D',
+      humanizacion: 0.7,
+      roles: ['piano', 'pad', 'bajo', 'bateria', 'guitarra'],
+      secciones: [
+        { tipo: 'verso', compases: 8, progresion: ['Isus2', 'V/3', 'vi7', 'IVadd9'], intensidad: 0.4 },
+        { tipo: 'coro', compases: 8, progresion: ['IV', 'I/3', 'V', 'vi7'], intensidad: 0.8 },
+      ],
+      inicioBeat: 16,
+      ajustarProyecto: false,
+    },
+  },
+  {
     type: 'daw.generateMidiSong',
     kind: 'agent',
     description: 'Genera canción MIDI en pista(s)',
     examplePayload: { aplicar: true, prompt: 'funk bass', minutos: 1 },
+  },
+  {
+    type: 'analysis.midiPlayed',
+    kind: 'agent',
+    description:
+      'Analiza lo que el usuario acaba de tocar en su teclado MIDI (últimos N s): notas, rango, velocidad, tempo estimado, ' +
+      'micro-timing respecto a la rejilla (ms, + = tarde), flams, acordes arpegiados y legato. Úsalo para «tócalo como yo».',
+    examplePayload: { segundos: 30, rejillaBeats: 0.25 },
   },
   {
     type: 'analysis.timing',
@@ -98,6 +128,34 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     description:
       'Aísla qué FX/VST degrada el audio: bypass A/B + buffer/peaks; restaura la cadena al terminar',
     examplePayload: { sampleMs: 350, settleMs: 120, includeInstruments: false },
+  },
+  {
+    type: 'analysis.audioLens',
+    kind: 'agent',
+    description:
+      'Analiza un audio (nota de voz adjunta o clip de audio): tonalidad, acordes, tempo y descripción. Indica audioRef (adjunto del chat) o clipId',
+    examplePayload: { audioRef: 'sample-…' },
+  },
+  {
+    type: 'analysis.voiceToMelody',
+    kind: 'agent',
+    description:
+      'Convierte tarareo/voz en notas MIDI afinadas a la escala (YIN f0) y crea la pista/clip. Indica la fuente con audioRef (adjunto del chat) o clipId; instrumento: guitar|piano|bass|lead|strings; trackId opcional para insertar en una pista existente',
+    examplePayload: { audioRef: 'sample-…', instrumento: 'piano', tonalidadRaiz: 'D', tonalidadEscala: 'mayor', cuantizar: '1/16', crearPista: true, inicioCompas: 0 },
+  },
+  {
+    type: 'analysis.voiceToDrums',
+    kind: 'agent',
+    description:
+      'Convierte beatbox/percusión vocal en notas MIDI de batería alineadas al tempo. Indica audioRef o clipId; crearPista o trackId para insertarlas',
+    examplePayload: { audioRef: 'sample-…', cuantizar: '1/16', crearPista: true },
+  },
+  {
+    type: 'analysis.extractMidi',
+    kind: 'agent',
+    description:
+      'Extracción unificada de un audio: melodía f0, patrón de batería, acordes y tonalidad. tipo: melody|drums|both|all; crearPistas para insertarlas. Indica audioRef o clipId',
+    examplePayload: { audioRef: 'sample-…', tipo: 'both', crearPistas: true },
   },
   {
     type: 'daw.masterPass',
@@ -324,6 +382,13 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     examplePayload: { trackId: '…', pluginInstanceId: '…', parameterId: '0' },
   },
   {
+    type: 'plugin.resetDefaults',
+    kind: 'agent',
+    description:
+      'Devuelve un plugin (o solo los parameterIds indicados) a los valores por defecto que reporta el propio VST, en un solo paso de deshacer',
+    examplePayload: { trackId: '…', pluginInstanceId: '…' },
+  },
+  {
     type: 'track.getFxChain',
     kind: 'agent',
     description: 'Devuelve cadena FX de una pista',
@@ -414,6 +479,38 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     examplePayload: { profileId: '…', pistaId: '…', clipId: '…', replace: true },
   },
   {
+    type: 'analysis.touch',
+    kind: 'agent',
+    description:
+      'Analiza el TOQUE del usuario (solo lectura) en sus clips MIDI (clipIds / todos los de trackId) o en lo que acaba de tocar ' +
+      '(segundos, como analysis.midiPlayed): micro-timing en ms por posición métrica (fuerte/débil/contratiempo/subdivisión), ' +
+      'acordes arpegiados (orden grave→agudo, ms entre notas), microdinámica (por posición, voz superior/bajo, curva de arpegios), ' +
+      'articulación legato/staccato y ataque de frase. Devuelve informe + perfil con confianza',
+    examplePayload: { trackId: '…', clipIds: ['…'], instrumento: 'piano' },
+  },
+  {
+    type: 'style.touch.learn',
+    kind: 'agent',
+    description:
+      'Aprende y GUARDA el toque del usuario como perfil reutilizable (biblioteca global del usuario). Mismos orígenes que analysis.touch + nombre. ' +
+      'Mismo nombre → actualiza. Devuelve {perfilId, nombre, resumen}. Un perfil por instrumento (piano, bajo, batería…)',
+    examplePayload: { trackId: '…', nombre: 'Mi toque piano', instrumento: 'piano' },
+  },
+  {
+    type: 'style.touch.apply',
+    kind: 'agent',
+    description:
+      'Aplica un perfil de toque (perfilId o nombre) a un clip MIDI (clipId) o a todos los de la pista: reescribe timing, velocidad, ' +
+      'duración y arpegiado de acordes para que suene como el usuario (un solo undo). intensidad 0..1 (1 = toque completo)',
+    examplePayload: { nombre: 'Mi toque piano', trackId: '…', clipId: '…', intensidad: 0.9 },
+  },
+  {
+    type: 'style.touch.list',
+    kind: 'agent',
+    description: 'Lista los perfiles de toque guardados (perfilId, nombre, instrumento, confianza, resumen)',
+    examplePayload: {},
+  },
+  {
     type: 'score.exportClip',
     kind: 'agent',
     description: 'Exporta partitura PDF del clip MIDI (diálogo o ruta)',
@@ -462,10 +559,74 @@ export const AGENT_ONLY_ACTIONS: CatalogEntry[] = [
     examplePayload: {},
   },
   {
+    type: 'track.setParent',
+    kind: 'agent',
+    description:
+      'Mete una pista en una carpeta-bus (padreId = id de una pista tipo carpeta; null la saca). La carpeta suma sus pistas, ' +
+      'aplica sus FX y su fader; su mute/solo se hereda.',
+    examplePayload: { trackId: '…', padreId: '…' },
+  },
+  {
+    type: 'track.addVstLayer',
+    kind: 'agent',
+    description:
+      'Añade otro instrumento VST3 a la pista (capa: p. ej. piano + pad). Todas las capas reciben el mismo MIDI y se suman antes de los FX.',
+    examplePayload: { trackId: '…', nombre: 'JasWave Shimmer Pad' },
+  },
+  {
     type: 'track.freeze',
     kind: 'agent',
     description: 'Congela pista (bounce→clip + bypass)',
     examplePayload: { trackId: '…' },
+  },
+  {
+    type: 'clip.setMute',
+    kind: 'agent',
+    description: 'Silencia o activa clips (no suenan ni se exportan). Un paso de undo para todos.',
+    examplePayload: { cambios: [{ pistaId: '…', clipId: '…', silenciado: true }] },
+  },
+  {
+    type: 'clip.setFade',
+    kind: 'agent',
+    description: 'Fundido de entrada/salida de un clip de audio en SEGUNDOS, curva lineal|exponencial|logaritmica',
+    examplePayload: { pistaId: '…', clipId: '…', tipo: 'in', duracion: 0.5, curva: 'exponencial' },
+  },
+  {
+    type: 'clip.setGain',
+    kind: 'agent',
+    description: 'Ganancia de un clip de audio en dB (−48 a +24), antes del fader',
+    examplePayload: { pistaId: '…', clipId: '…', gananciaDb: -3 },
+  },
+  {
+    type: 'clip.setReverse',
+    kind: 'agent',
+    description: 'Reproduce al revés clips de audio (sin tocar el archivo)',
+    examplePayload: { cambios: [{ pistaId: '…', clipId: '…', inverso: true }] },
+  },
+  {
+    type: 'midi.notes.mute',
+    kind: 'agent',
+    description: 'Silencia (mute:true) o activa notas concretas de un clip MIDI; sin mute alterna',
+    examplePayload: { pistaId: '…', clipId: '…', noteIds: ['…'], mute: true },
+  },
+  {
+    type: 'midi.notes.split',
+    kind: 'agent',
+    description: 'Corta en dos las notas que cruzan `beat` (relativo al clip); noteIds opcional',
+    examplePayload: { pistaId: '…', clipId: '…', beat: 2 },
+  },
+  {
+    type: 'export.midi',
+    kind: 'agent',
+    description:
+      'Exporta notas MIDI a un .mid estándar (tipo 1, una pista por pista, batería en canal 10). Sin trackIds/clipId: todo el proyecto.',
+    examplePayload: { ruta: 'D:/Exports/cancion.mid', trackIds: ['…'] },
+  },
+  {
+    type: 'export.projectBundle',
+    kind: 'agent',
+    description: 'Empaqueta el proyecto y todo su audio en un .zip que se abre en cualquier equipo',
+    examplePayload: { ruta: 'D:/Exports/cancion.jaswave.zip' },
   },
   {
     type: 'track.unfreeze',
@@ -626,6 +787,8 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'daw.wipeProject',
   'track.move',
   'track.update',
+  'track.setParent',
+  'track.addVstLayer',
   'track.toggleMute',
   'track.toggleSolo',
   'track.toggleArm',
@@ -645,6 +808,12 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'clip.resize',
   'clip.delete',
   'clip.move',
+  'clip.setMute',
+  'clip.setFade',
+  'clip.setGain',
+  'clip.setReverse',
+  'midi.notes.mute',
+  'midi.notes.split',
   'midi.notes.set',
   'midi.clip.create',
   'midi.transpose',
@@ -692,11 +861,16 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'analysis.section',
   'analysis.reference',
   'analysis.diagnose',
+  'analysis.trackSound',
   'analysis.timing',
+  'analysis.midiPlayed',
   'analysis.buffer',
   'analysis.fxBlame',
   'analysis.audioLens',
   'analysis.voiceToDrums',
+  'analysis.voiceToMelody',
+  'analysis.extractMidi',
+  'marker.create',
   'automation.setCurve',
   'automation.writePoint',
   'automation.clear',
@@ -821,7 +995,10 @@ const viaCommand =
   (type: string): ToolHandler =>
   async (params, ctx) => {
     try {
-      const r = await ctx.commandExecutor.execute(type, (params ?? {}) as Record<string, unknown>)
+      const r = await ctx.commandExecutor.execute(type, (params ?? {}) as Record<string, unknown>, ctx.source)
+      // Sin comando en esta tienda (acción solo del agente, p. ej. track.addVstLayer): la resuelve executeDawActions.
+      const codigo = (r as { error?: { code?: string } }).error?.code
+      if (!r.success && codigo === 'COMMAND_NOT_FOUND') return deferredHandler(params, ctx)
       return {
         success: r.success,
         data: r.result,

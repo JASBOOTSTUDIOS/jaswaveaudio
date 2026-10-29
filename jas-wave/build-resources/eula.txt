@@ -51,7 +51,7 @@ otorgan sobre dichos componentes.
 4. PLUGINS DE TERCEROS
 ----------------------
 
-JasWave permite cargar plugins de audio de terceros (VST3 y VST2) instalados por usted.
+JasWave permite cargar plugins de audio de terceros (VST3) instalados por usted.
 
   * Esos plugins no forman parte del Software ni los proporciona el Licenciante.
   * Usted es el único responsable de obtenerlos legalmente, de cumplir sus licencias y de su

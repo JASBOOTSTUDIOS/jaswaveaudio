@@ -5,6 +5,8 @@
  */
 
 import { channelFilterAllows, parseMidiMessage, type MidiParsed } from './midi-bytes'
+import { RelojHostMidi } from './midi-clock-sync'
+import { bufferEscuchaMidi } from './midi-example-analyzer'
 
 export type MidiInputInfo = {
   id: string
@@ -110,12 +112,28 @@ function dispatchParsed(
   if (!parsed.msg) return
   if (!channelFilterAllows(channelFilter, parsed.msg.channel)) return
   emitActivity()
+  const m = parsed.msg
+  if (m.kind === 'noteOn' || m.kind === 'noteOff') {
+    // Búfer de escucha de la IA: instante real del evento (ns), no el de llegada a la UI.
+    bufferEscuchaMidi.push({
+      tNs: Math.round(timeSec * 1e9),
+      tipo: m.kind === 'noteOn' && m.velocity > 0 ? 'on' : 'off',
+      pitch: m.pitch,
+      velocity: m.kind === 'noteOn' ? m.velocity : 0,
+      canal: m.channel,
+    })
+  }
   for (const l of msgListeners) l(parsed.msg, timeSec, source, deviceId)
 }
 
-function onNativeMidi(msg: { id: string; data: number[] }): void {
+const relojHost = new RelojHostMidi()
+
+function onNativeMidi(msg: { id: string; data: number[]; tNs?: number }): void {
   if (!msg.data?.length) return
-  dispatchParsed(msg.data, performance.now() / 1000, 'native', msg.id)
+  const ahora = performance.now()
+  // Con el sello QPC del host, el instante es el de la pulsación (sin el retraso variable del IPC).
+  const t = typeof msg.tNs === 'number' ? relojHost.mapear(msg.tNs, ahora) : ahora
+  dispatchParsed(msg.data, t / 1000, 'native', msg.id)
 }
 
 function unbindAll(): void {
@@ -168,6 +186,7 @@ function attachNativeOnce(): void {
   nativeAttached = true
   api.onNativeMidi(onNativeMidi)
   api.onPluginHostRestarted?.(() => {
+    relojHost.reiniciar()
     void refreshNative().then(() => {
       bindSelected()
       emitDevices()

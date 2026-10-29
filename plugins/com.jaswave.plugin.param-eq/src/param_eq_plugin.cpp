@@ -243,6 +243,13 @@ public:
         addBand(JasWaveUI::Kit::freqForX(pr, e.x), clampT(kDbRange - (e.y - pr.t) / pr.h() * 2.0 * kDbRange, -24.0, 24.0));
     }
     const wchar_t* footerId() const override { return L"com.jaswave.plugin.param-eq"; }
+    // Los controles de la sección se reasignan a la banda seleccionada: todas las bandas quedan expuestas
+    void parametrosCubiertos(std::vector<uint32_t>& ids) const override {
+        for (int b = 0; b < kBands; ++b) {
+            for (BandField f : { fType, fFreq, fGain, fQ, fOn }) ids.push_back(bandParam(b, f));
+            for (ExtField f : { eUsed, eSlope, eMode, eSolo }) ids.push_back(extParam(b, f));
+        }
+    }
 
 private:
     static constexpr int kCurve = 300;

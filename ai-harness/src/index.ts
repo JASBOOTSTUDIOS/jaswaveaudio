@@ -230,7 +230,10 @@ export {
 export {
   estimateReasoningDepth,
   parseModelIntentBrief,
+  planFastReasoning,
   planReasoningPhases,
+  DEFAULT_REASONING_PROFILE,
+  type ReasoningProfile,
   phasesForDepth,
   remainingPhasesAfterNormalize,
   stripIntentBlock,
@@ -388,3 +391,5 @@ export * from './engine'
 export * from './audit'
 export * from './plan/criteria'
 export * from './agents'
+export * from './skills'
+export * from './agente'

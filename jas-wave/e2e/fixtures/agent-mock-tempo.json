@@ -1,5 +1,5 @@
 {
-  "name": "e2e: turno completo del coproductor con proveedor mock (tool call nativa → Aplicar → completar)",
+  "name": "e2e: turno completo del agente con proveedor mock (tool call nativa → ejecuta → responde)",
   "responses": [
     {
       "when": { "purpose": "agent", "hasTools": true, "afterToolResult": false, "anyIncludes": "97" },
@@ -8,9 +8,9 @@
     },
     {
       "when": { "purpose": "agent" },
-      "content": "<<<DECISION {\"type\":\"complete\",\"summary\":\"Tempo del proyecto en 97 BPM (mock).\"} DECISION>>>",
+      "content": "Listo: el tempo del proyecto quedó en 97 BPM.",
       "repeat": true
     }
   ],
-  "fallback": { "content": "Entendido: el usuario quiere el tempo a 97 BPM. Lo ajusto con project.setBpm." }
+  "fallback": { "content": "Entendido: el usuario quiere el tempo a 97 BPM." }
 }

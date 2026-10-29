@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,7 @@ struct ParamDef {
     const char* const* labels;   // etiquetas para Stepped (opcional)
     int feature = -1;            // índice de feature de licencia que lo habilita (-1 = básica)
     bool readOnly = false;       // parámetro de salida (medidor), no automatizable
+    bool basico = false;         // visible en el modo "Básico" del editor (el resto, solo en "Avanzado")
 };
 
 inline const char* const* labelsOnOff() { static const char* const l[] = { "Off", "On" }; return l; }
@@ -51,6 +53,13 @@ inline ParamDef toggleP(uint32_t id, const char* name, int df, bool isBypass = f
 // Marca un parámetro como dependiente de una feature de licencia (DESIGN.md §5)
 inline ParamDef withFeature(ParamDef d, int featureIndex) { d.feature = featureIndex; return d; }
 inline ParamDef asReadOnly(ParamDef d) { d.readOnly = true; return d; }
+// Parámetro esencial: se muestra también en el modo "Básico" del editor
+inline ParamDef asBasico(ParamDef d) { d.basico = true; return d; }
+
+// Marca como básicos los ids indicados de una tabla ya construida (para tablas largas)
+inline void marcarBasicos(std::vector<ParamDef>& v, std::initializer_list<uint32_t> ids) {
+    for (auto& d : v) for (uint32_t id : ids) if (d.id == id) d.basico = true;
+}
 
 inline double clamp01(double v) { return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v); }
 

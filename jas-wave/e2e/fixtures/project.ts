@@ -1,6 +1,7 @@
 /**
  * Utilidades de proyecto sobre el agent bridge: crear pista MIDI con clip y leer el estado.
  */
+import type { Page } from '@playwright/test'
 import type { BridgeClient } from './app'
 import { waitFor } from './app'
 
@@ -27,19 +28,38 @@ export async function findTrack(bridge: BridgeClient, nombre: string): Promise<T
   return (await tracks(bridge)).find((t) => t.nombre === nombre)
 }
 
-/** project.new limpio (con reintento: tras el arranque el proyecto puede estar aún inicializándose). */
-export async function newProject(bridge: BridgeClient, nombre: string): Promise<void> {
-  await waitFor(
-    'project.new',
-    async () => {
-      const res = await bridge.actions([{ type: 'project.new', payload: { nombre } }])
-      if (!res.results?.[0]?.success) return false
-      const st = await bridge.state()
-      return st.nombre === nombre
-    },
-    60_000,
-    1000,
-  )
+/**
+ * project.new limpio (con reintento: tras el arranque el proyecto puede estar aún inicializándose).
+ * Si el proyecto anterior quedó con cambios (otro test del mismo archivo), la app pregunta en
+ * «Cambios sin guardar» y la IA nunca descarta sola: con `page` se responde «No guardar».
+ */
+export async function newProject(bridge: BridgeClient, nombre: string, page?: Page): Promise<void> {
+  let activo = true
+  const descartar = page
+    ? (async () => {
+        const boton = page.getByRole('button', { name: 'No guardar', exact: true })
+        while (activo) {
+          if (await boton.isVisible().catch(() => false)) await boton.click().catch(() => {})
+          await new Promise((r) => setTimeout(r, 250))
+        }
+      })()
+    : Promise.resolve()
+  try {
+    await waitFor(
+      'project.new',
+      async () => {
+        const res = await bridge.actions([{ type: 'project.new', payload: { nombre } }])
+        if (!res.results?.[0]?.success) return false
+        const st = await bridge.state()
+        return st.nombre === nombre
+      },
+      60_000,
+      1000,
+    )
+  } finally {
+    activo = false
+    await descartar
+  }
 }
 
 /** Crea una pista MIDI con un clip de 4 notas. Devuelve ids. */

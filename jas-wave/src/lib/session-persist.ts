@@ -198,6 +198,15 @@ export function marcarCierreApp(): void {
 
 /** Flush final antes de cerrar: espera al guardado en curso y vuelca uno nuevo (sin RPC VST). */
 export async function flushSessionForClose(tienda: TiendaDAW): Promise<void> {
+  // ANTES de marcar el cierre: el host sigue vivo y aún se puede leer el estado de cada VST. Antes se
+  // saltaba este paso y todo lo que el usuario hubiera cambiado en BFD/Kontakt desde el último snapshot
+  // (que solo se tomaba al editar el proyecto) se perdía al cerrar.
+  try {
+    const { capturarEstadoVstAlCerrar } = await import('./plugin/track-vst-runtime')
+    await capturarEstadoVstAlCerrar(tienda)
+  } catch (err) {
+    console.warn('[session-persist] captura VST al cerrar omitida', err)
+  }
   marcarCierreApp()
   if (saveTimer) {
     clearTimeout(saveTimer)
@@ -475,7 +484,19 @@ export function attachSessionAutosave(tienda: TiendaDAW): () => void {
   }
   document.addEventListener('visibilitychange', onVis)
 
+  // Autoguardado periódico del estado interno de los VST (no mueve la tienda: nadie más lo dispararía).
+  let detenerVst: (() => void) | null = null
+  let cancelado = false
+  void import('./plugin/track-vst-runtime')
+    .then((m) => {
+      if (cancelado) return
+      detenerVst = m.iniciarAutoguardadoEstadoVst(tienda).detener
+    })
+    .catch((err) => console.warn('[session-persist] autoguardado VST no iniciado', err))
+
   return () => {
+    cancelado = true
+    detenerVst?.()
     unsub()
     window.removeEventListener('beforeunload', flush)
     window.removeEventListener('pagehide', flush)

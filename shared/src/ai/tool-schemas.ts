@@ -92,7 +92,7 @@ export function buildToolSchemas(sources: ToolSchemaSource[]): ToolJsonSchema[] 
 export const ROLE_WRITE_PREFIXES: Readonly<Record<ToolAgentRole, readonly string[] | '*'>> = Object.freeze({
   coproductor: '*',
   director: ['plan.', 'doc.'],
-  productor: ['track.', 'clip.', 'midi.', 'plugin.insert', 'plugin.replace', 'style.', 'daw.musicBuild', 'daw.composeProject', 'daw.generateMidiSong', 'project.setBpm', 'project.setTimeSignature', 'analysis.voiceToDrums', 'analysis.voiceToMelody', 'analysis.extractMidi', 'doc.'],
+  productor: ['track.', 'clip.', 'midi.', 'plugin.insert', 'plugin.replace', 'plugin.setParameter', 'plugin.bypass', 'plugin.remove', 'style.', 'daw.musicBuild', 'daw.composeProject', 'daw.composeWorship', 'daw.generateMidiSong', 'project.setBpm', 'project.setTimeSignature', 'analysis.voiceToDrums', 'analysis.voiceToMelody', 'analysis.extractMidi', 'doc.'],
   mezcla: ['plugin.', 'fxChain.', 'send.', 'bus.', 'sidechain.', 'automation.', 'track.update', 'track.ganancia', 'pista.pan', 'clip.gain', 'master.update', 'doc.'],
   mastering: ['master.', 'plugin.', 'fxChain.', 'daw.masterPass', 'reference.', 'doc.'],
   qa: [],
@@ -127,9 +127,9 @@ export function toolsForRole(
 
 /** Prioridad de familias cuando hay que recortar (OpenAI admite ≤128 tools por petición). */
 export const TOOL_FAMILY_PRIORITY: readonly string[] = [
-  'track.', 'clip.', 'midi.', 'project.', 'daw.', 'plugin.', 'master.', 'analysis.', 'audit.', 'plan.',
+  'track.', 'clip.', 'midi.', 'project.', 'daw.', 'fallback.', 'plugin.', 'master.', 'analysis.', 'audit.', 'plan.',
   'session.', 'run.',
-  'send.', 'bus.', 'sidechain.', 'automation.', 'fxChain.', 'fallback.', 'style.', 'reference.',
+  'send.', 'bus.', 'sidechain.', 'automation.', 'fxChain.', 'style.', 'reference.',
   'library.', 'doc.', 'render.', 'selection.', 'audio.', 'take.', 'comp.', 'transport.', 'ui.',
 ]
 

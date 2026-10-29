@@ -11,21 +11,27 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   EditorCyber,
   PESTANAS,
+  PESTANAS_FX,
+  RANGO,
   aNormalizado,
   aPlano,
   columnasDesdeBins,
   defDe,
   interpretar,
+  modoInicial,
   modoPorAncho,
   normalizadoPorDefecto,
   vistaDe,
+  widgetEq,
+  type DefParametro,
   type FaseCambio,
   type Modo,
+  type ModoEditor,
   type Pestana,
   type RectCss,
   type WidgetLayout,
 } from '@jaswave/ui-cyber'
-import { espectroDePista, useDAW, useDAWState, type DAWState } from '@jaswave/host-sdk'
+import { espectroDePista, routeMidiToTrack, useDAW, useDAWState, type DAWState } from '@jaswave/host-sdk'
 import { ISOTIPO } from './generado/isotipo'
 import { layoutPorNombre } from './layouts'
 
@@ -33,6 +39,24 @@ import { layoutPorNombre } from './layouts'
 const esMaster = (trackId: string) => trackId === 'master' || trackId === '__master__'
 
 type Props = { trackId: string; pluginInstanceId: string }
+
+// Modo BÁSICO | AVANZADO de cada instancia: preferencia de vista de este navegador (no es estado del proyecto).
+const claveModo = (pluginInstanceId: string) => `jaswave.editor-vst.modo.${pluginInstanceId}`
+function leerModo(pluginInstanceId: string): ModoEditor | null {
+  try {
+    const v = localStorage.getItem(claveModo(pluginInstanceId))
+    return v === 'basico' || v === 'avanzado' ? v : null
+  } catch {
+    return null
+  }
+}
+function guardarModo(pluginInstanceId: string, modo: ModoEditor): void {
+  try {
+    localStorage.setItem(claveModo(pluginInstanceId), modo)
+  } catch {
+    /* sin almacenamiento: el modo dura lo que el editor abierto */
+  }
+}
 type PluginEnProyecto = { id: string; nombre: string; parametros?: Array<{ id: string; valor: number }> }
 
 function pluginDe(s: DAWState, trackId: string, pluginInstanceId: string): PluginEnProyecto | null {
@@ -71,6 +95,8 @@ export function EditorVstWeb({ trackId, pluginInstanceId }: Props) {
   const editor = useRef<EditorCyber | null>(null)
   const [ancho, setAncho] = useState(0)
   const [pestana, setPestana] = useState<Pestana>('controles')
+  const [pagina, setPagina] = useState(0)
+  const [modoEditor, setModoEditor] = useState<ModoEditor>(() => leerModo(pluginInstanceId) ?? 'avanzado')
   const [menu, setMenu] = useState<{ w: WidgetLayout; rect: RectCss } | null>(null)
   const [entrada, setEntrada] = useState<{ w: WidgetLayout; rect: RectCss; texto: string } | null>(null)
   const fps = useFpsObjetivo()
@@ -82,20 +108,25 @@ export function EditorVstWeb({ trackId, pluginInstanceId }: Props) {
   useEffect(() => {
     valores.current = new Map((plugin?.parametros ?? []).map((p) => [Number(p.id), p.valor]))
   }, [plugin])
-  const defectos = useMemo(() => {
-    const m = new Map<number, number>()
+  // Definición de cada parámetro: los de los widgets y los de las 6 bandas del ecualizador de la página MIX / FX
+  // (las perillas FREQ / GAIN / Q solo listan la banda seleccionada al volcar el layout)
+  const defs = useMemo(() => {
+    const m = new Map<number, { d: DefParametro; nombre?: string }>()
     for (const w of layout?.widgets ?? []) {
       const d = defDe(w)
-      if (d && w.param !== undefined) m.set(w.param, normalizadoPorDefecto(d))
+      if (d && w.param !== undefined && !m.has(w.param)) m.set(w.param, { d, nombre: w.nombre })
+    }
+    for (const b of (layout ? widgetEq(layout.widgets)?.bandas : undefined) ?? []) {
+      for (const x of [b.freq, b.gain, b.q]) m.set(x.param, { d: { min: x.min, max: x.max, defecto: x.defecto, escala: x.escala, decimales: x.decimales, bipolar: x.bipolar, unidad: x.unidad, nombre: x.nombre }, nombre: x.nombre })
     }
     return m
   }, [layout])
+  const defectos = useMemo(() => new Map([...defs].map(([param, x]) => [param, normalizadoPorDefecto(x.d)])), [defs])
   const valor = (param: number) => gesto.current.get(param) ?? valores.current.get(param) ?? defectos.get(param) ?? 0
-  const nombreDe = (param: number) => layout?.widgets.find((w) => w.param === param && w.tipo !== 'section')?.nombre
+  const nombreDe = (param: number) => defs.get(param)?.nombre
 
   const confirmar = (param: number, n: number) => {
-    const w = layout?.widgets.find((x) => x.param === param && x.nombre)
-    const d = w ? defDe(w) : null
+    const d = defs.get(param)?.d
     void tienda.executor.execute('plugin.setParameter', {
       trackId,
       pluginInstanceId,
@@ -122,6 +153,31 @@ export function EditorVstWeb({ trackId, pluginInstanceId }: Props) {
   }
   const cambiarRef = useRef(cambiar)
   cambiarRef.current = cambiar
+
+  /** RESET: todos los parámetros al valor por defecto del layout, en un solo paso de deshacer. `desde`/`hasta`: solo ese rango de ids (RESET FX). */
+  const reiniciar = (desde = -Infinity, hasta = Infinity) => {
+    const comandos = [...defectos.entries()]
+      .filter(([param]) => param >= desde && param < hasta)
+      .map(([param, n]) => {
+        const x = defs.get(param)
+        gesto.current.delete(param)
+        valores.current.set(param, n)
+        return {
+          type: 'plugin.setParameter',
+          payload: {
+            trackId,
+            pluginInstanceId,
+            parameterId: String(param),
+            normalizedValue: n,
+            ...(x ? { plainValue: aPlano(x.d, n) } : {}),
+            ...(x?.nombre ? { name: x.nombre } : {}),
+          },
+        }
+      })
+    if (comandos.length > 0) void tienda.executor.batch(comandos, 'user')
+  }
+  const reiniciarRef = useRef(reiniciar)
+  reiniciarRef.current = reiniciar
   const valorRef = useRef(valor)
   valorRef.current = valor
 
@@ -157,6 +213,18 @@ export function EditorVstWeb({ trackId, pluginInstanceId }: Props) {
         // Solo la salida de la pista: sin el DSP del VST, entrada y salida serían la misma señal
         return { out: cols }
       },
+      reiniciar: () => reiniciarRef.current(),
+      // Teclado en pantalla: la nota va al instrumento de la pista (en escritorio suena el VST; aunque la pista esté en mute)
+      tocarNota: (nota, velocidad) => {
+        routeMidiToTrack(trackId, velocidad > 0, nota, Math.max(1, Math.round(velocidad * 127)), { ignoreMute: true })
+      },
+      cambiarPagina: (p) => setPagina(p),
+      modo: leerModo(pluginInstanceId) ?? modoInicial(layout),
+      cambiarModo: (m) => {
+        guardarModo(pluginInstanceId, m)
+        setModoEditor(m)
+      },
+      reiniciarFx: (base) => reiniciarRef.current(base, base + RANGO),
       menu: (w, rect) => setMenu({ w, rect }),
       entradaNumerica: (w, rect) => {
         const d = defDe(w)
@@ -183,15 +251,27 @@ export function EditorVstWeb({ trackId, pluginInstanceId }: Props) {
       espectro?.liberar()
       editor.current = null
     }
-  }, [layout, trackId, fps])
+  }, [layout, trackId, fps, pluginInstanceId])
 
-  // Vista según el ancho (16:9 entero, compacto o una pestaña)
+  // Vista según el ancho (16:9 entero, compacto o una pestaña), el modo y la página (editor del plugin / MIX / FX / PARÁMETROS)
   useEffect(() => {
     const ed = editor.current
     if (!ed || !layout || ancho <= 0) return
-    ed.fijarVista(vistaDe(layout, modo, pestana))
+    ed.fijarModo(modoEditor)
+    const p = modoEditor === 'basico' ? 0 : pagina
+    ed.fijarPagina(p)
+    ed.fijarVista(vistaDe(layout, modo, pestana, p))
     ed.redimensionar(ancho)
-  }, [layout, ancho, modo, pestana])
+  }, [layout, ancho, modo, pestana, pagina, modoEditor])
+  useEffect(() => setPagina(0), [layout])
+  const avanzado = modoEditor === 'avanzado'
+  const tienePagina = Boolean(avanzado && layout && widgetEq(layout.widgets))
+  const tieneParametros = Boolean(avanzado && layout?.widgets.some((w) => w.pagina === 2))
+  const cambiarModoEditor = (m: ModoEditor) => {
+    guardarModo(pluginInstanceId, m)
+    setModoEditor(m)
+    if (m === 'basico') setPagina(0)
+  }
 
   if (!plugin) return <p className="p-3 text-[11px] text-muted-foreground">El plugin ya no está en la pista.</p>
   if (!layout) return <p className="p-3 text-[11px] text-muted-foreground">«{plugin.nombre}» no es un VST de JasWave.</p>
@@ -214,7 +294,35 @@ export function EditorVstWeb({ trackId, pluginInstanceId }: Props) {
     <div ref={contenedor} className="relative flex h-full min-h-0 flex-col overflow-auto bg-[#06080A]" data-testid="editor-vst-web" data-modo={modo}>
       {modo === 'pestanas' ? (
         <div className="flex shrink-0 border-b border-border" role="tablist" aria-label="Secciones del editor">
-          {PESTANAS.map((p) => (
+          <button
+            type="button"
+            aria-pressed={!avanzado}
+            onClick={() => cambiarModoEditor(avanzado ? 'basico' : 'avanzado')}
+            className={`min-h-11 px-3 text-[11px] font-semibold tracking-wider ${avanzado ? 'text-muted-foreground' : 'text-accent-cyan'}`}
+          >
+            {avanzado ? 'AVANZADO' : 'BÁSICO'}
+          </button>
+          {tieneParametros ? (
+            <button
+              type="button"
+              aria-pressed={pagina === 2}
+              onClick={() => setPagina(pagina === 2 ? 0 : 2)}
+              className={`min-h-11 px-3 text-[11px] font-semibold tracking-wider ${pagina === 2 ? 'text-accent-cyan' : 'text-muted-foreground'}`}
+            >
+              PARÁM.
+            </button>
+          ) : null}
+          {tienePagina ? (
+            <button
+              type="button"
+              aria-pressed={pagina === 1}
+              onClick={() => setPagina(pagina === 1 ? 0 : 1)}
+              className={`min-h-11 px-3 text-[11px] font-semibold tracking-wider ${pagina === 1 ? 'text-accent-cyan' : 'text-muted-foreground'}`}
+            >
+              MIX / FX
+            </button>
+          ) : null}
+          {(pagina === 1 ? PESTANAS_FX : PESTANAS).map((p) => (
             <button
               key={p.id}
               type="button"

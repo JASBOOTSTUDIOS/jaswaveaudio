@@ -100,10 +100,8 @@ export function defaultVstRoots(env: Record<string, string | undefined>): string
   add(env.ProgramFiles, 'VST3')
   add(env.ProgramFiles, 'VSTPlugins')
   add(env.ProgramFiles, 'Steinberg', 'VSTPlugins')
-  add(env.ProgramFiles, 'Common Files', 'VST2')
   add(env['ProgramFiles(x86)'], 'VSTPlugins')
   add(env['ProgramFiles(x86)'], 'Steinberg', 'VSTPlugins')
   add(env.LOCALAPPDATA, 'Programs', 'Common', 'VST3')
-  add(env.LOCALAPPDATA, 'Programs', 'Common', 'VST2')
   return out
 }

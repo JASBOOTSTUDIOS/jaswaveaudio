@@ -70,6 +70,17 @@
     "caidaDbS": 14
   },
   "modoParam": null,
+  "modos": {
+    "selector": [
+      358,
+      48,
+      476,
+      68
+    ],
+    "corte": 410,
+    "defecto": "avanzado"
+  },
+  "parametrosCubiertos": [],
   "widgets": [
     {
       "tipo": "section",
@@ -79,7 +90,8 @@
         1048,
         404
       ],
-      "etiqueta": "MARTILLO · CUERDA"
+      "etiqueta": "MARTILLO · CUERDA",
+      "basico": true
     },
     {
       "tipo": "knob",
@@ -91,6 +103,13 @@
       ],
       "etiqueta": "BRILLO",
       "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        704,
+        213,
+        780,
+        307
+      ],
       "param": 1,
       "min": 0,
       "max": 100,
@@ -113,6 +132,13 @@
       ],
       "etiqueta": "DUREZA",
       "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        819,
+        213,
+        895,
+        307
+      ],
       "param": 8,
       "min": 0,
       "max": 100,
@@ -135,6 +161,13 @@
       ],
       "etiqueta": "DECAY",
       "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        934,
+        213,
+        1010,
+        307
+      ],
       "param": 2,
       "min": 0,
       "max": 100,
@@ -157,6 +190,7 @@
       ],
       "etiqueta": "VELOCIDAD",
       "tamano": 44,
+      "basico": false,
       "param": 0,
       "min": 0,
       "max": 100,
@@ -179,6 +213,7 @@
       ],
       "etiqueta": "RELEASE",
       "tamano": 44,
+      "basico": false,
       "param": 3,
       "min": 0.05,
       "max": 3,
@@ -201,6 +236,7 @@
       ],
       "etiqueta": "LA4",
       "tamano": 44,
+      "basico": false,
       "param": 7,
       "min": 430,
       "max": 450,
@@ -222,6 +258,7 @@
         556
       ],
       "etiqueta": "SALIDA",
+      "basico": true,
       "param": 5,
       "min": 0,
       "max": 1,
@@ -247,6 +284,7 @@
         552
       ],
       "etiqueta": "VOLUMEN",
+      "basico": true,
       "param": 6,
       "min": -24,
       "max": 6,
@@ -269,6 +307,7 @@
       ],
       "etiqueta": "ESTÉREO",
       "tamano": 44,
+      "basico": false,
       "param": 4,
       "min": 0,
       "max": 100,
@@ -291,6 +330,13 @@
         478
       ],
       "etiqueta": "SUSTAIN",
+      "basico": true,
+      "rectBasico": [
+        780,
+        482,
+        922,
+        506
+      ],
       "param": 9,
       "min": 0,
       "max": 1,
@@ -315,7 +361,8 @@
         985,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -325,7 +372,8 @@
         999,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -335,7 +383,8 @@
         1029,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -345,7 +394,31 @@
         1043,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "modo",
+      "rect": [
+        358,
+        48,
+        476,
+        68
+      ],
+      "etiqueta": "BÁSICO|AVANZADO",
+      "basico": true,
+      "corte": 410
+    },
+    {
+      "tipo": "reset",
+      "rect": [
+        624,
+        48,
+        684,
+        68
+      ],
+      "etiqueta": "RESET",
+      "basico": true
     }
   ]
 }

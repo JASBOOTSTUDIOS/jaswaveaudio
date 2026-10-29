@@ -10,14 +10,21 @@ import { createMidiTrackWithClip, newProject } from './fixtures/project'
 const app = setupJasWave({ label: 'close-guard', bridge: true })
 
 const dialog = () => app().page.getByTestId('unsaved-changes-dialog')
-const closeButton = () => app().page.locator('div.h-11 button[aria-label="Cerrar"]').first()
+/**
+ * El botón Cerrar de la ventana lo dibuja Windows (overlay de la barra de título, fuera del DOM): se pide
+ * por el mismo IPC que usan los botones propios; ambos acaban en BrowserWindow.close() y su guarda.
+ */
+const pedirCierre = () =>
+  app().page.evaluate(() => {
+    void (window as unknown as { electron: { windowClose: () => Promise<void> } }).electron.windowClose()
+  })
 
 test('cerrar con cambios abre el diálogo y Cancelar mantiene la app abierta', async () => {
   const { bridge, page } = app()
   await newProject(bridge!, 'E2E Cierre')
   await createMidiTrackWithClip(bridge!, 'E2E Pista Cierre')
 
-  await closeButton().click()
+  await pedirCierre()
   await expect(dialog()).toBeVisible({ timeout: 20_000 })
   await page.getByTestId('unsaved-cancel').click()
   await expect(dialog()).toBeHidden({ timeout: 10_000 })
@@ -44,7 +51,7 @@ test('crear un proyecto nuevo desde la IA con cambios pide confirmación', async
 
 test('No guardar cierra la aplicación', async () => {
   const { page } = app()
-  await closeButton().click()
+  await pedirCierre()
   await expect(dialog()).toBeVisible({ timeout: 20_000 })
   await page.getByTestId('unsaved-discard').click()
   await waitFor('la app termina', async () => app().proc.exitCode !== null, 40_000, 250)

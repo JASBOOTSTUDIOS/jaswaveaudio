@@ -53,6 +53,12 @@ import {
   crearComandoClipSetSource,
   crearComandoClipResize,
   crearComandoClipSplit,
+  crearComandoClipSetMute,
+  crearComandoClipSetFade,
+  crearComandoClipSetGain,
+  crearComandoClipSetReverse,
+  crearComandoMidiNotesMute,
+  crearComandoMidiNotesSplit,
   crearComandoMidiClipSplitIntoSections,
   crearComandoTransportToggle,
   crearComandoTransportStop,
@@ -114,6 +120,7 @@ import {
   crearComandoAnalysisSection,
   crearComandoAnalysisReference,
   crearComandoAnalysisDiagnose,
+  crearComandoAnalysisTrackSound,
   crearComandoAnalysisAudioLens,
   crearComandoAnalysisVoiceToDrums,
   crearComandoAnalysisVoiceToMelody,
@@ -239,6 +246,12 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoClipSetSource(), registry);
   registrar(crearComandoClipResize(), registry);
   registrar(crearComandoClipSplit(), registry);
+  registrar(crearComandoClipSetMute(), registry);
+  registrar(crearComandoClipSetFade(), registry);
+  registrar(crearComandoClipSetGain(), registry);
+  registrar(crearComandoClipSetReverse(), registry);
+  registrar(crearComandoMidiNotesMute(), registry);
+  registrar(crearComandoMidiNotesSplit(), registry);
   registrar(crearComandoMidiClipSplitIntoSections(), registry);
   registrar(crearComandoTransportToggle(), registry);
   registrar(crearComandoTransportStop(), registry);
@@ -294,6 +307,7 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoAnalysisSection(), registry);
   registrar(crearComandoAnalysisReference(), registry);
   registrar(crearComandoAnalysisDiagnose(), registry);
+  registrar(crearComandoAnalysisTrackSound(), registry);
   registrar(crearComandoAnalysisAudioLens(), registry);
   registrar(crearComandoAnalysisVoiceToDrums(), registry);
   registrar(crearComandoAnalysisVoiceToMelody(), registry);

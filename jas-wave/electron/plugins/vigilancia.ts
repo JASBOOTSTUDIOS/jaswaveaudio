@@ -74,10 +74,13 @@ export function crearVigilancia(d: DependenciasVigilancia) {
       })
       const decisiones = watchdog.evaluar(muestras, ahora())
       for (const decision of decisiones) {
-        for (const s of slots.filter((x) => x.path === decision.plugin)) {
-          await d.enviar({ type: 'setBypass', slotId: s.slot, bypass: true }).catch(() => undefined)
+        // El exceso de CPU solo se avisa; únicamente los fallos reales apartan y puentean el plugin.
+        if (decision.accion === 'apartar') {
+          for (const s of slots.filter((x) => x.path === decision.plugin)) {
+            await d.enviar({ type: 'setBypass', slotId: s.slot, bypass: true }).catch(() => undefined)
+          }
+          d.apartar(decision.plugin)
         }
-        d.apartar(decision.plugin)
         d.notificar(decision, mensajeWatchdog(decision))
       }
       return decisiones

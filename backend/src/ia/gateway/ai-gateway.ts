@@ -94,6 +94,8 @@ export type AiChatRequest = {
   toolChoice?: AiToolChoice
   /** Metadatos del motor (propósito/rol): los usa el mock; los proveedores reales los ignoran. */
   meta?: { purpose?: string; role?: string; runId?: string }
+  /** Campos extra del cuerpo OpenAI-compatible (p. ej. `reasoning`); los pone el servidor, nunca el cliente. */
+  extra?: Record<string, unknown>
 }
 
 export type AiHealthRequest = {
@@ -118,6 +120,26 @@ export type AiChatResult = {
   toolsUnsupported?: boolean
   /** Intentos HTTP realizados (incluye reintentos) — para el presupuesto del turno. */
   httpAttempts?: number
+  /** Tokens que informó el proveedor (si los informó). */
+  usage?: AiUsage
+}
+
+export type AiUsage = { entrada: number; salida: number }
+
+/** Lee el consumo de tokens del cuerpo de respuesta de cualquier estilo de API. */
+export function usageFrom(data: Record<string, any> | undefined | null): AiUsage | undefined {
+  if (!data || typeof data !== 'object') return undefined
+  const u = data.usage ?? data.usageMetadata
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  if (u && typeof u === 'object') {
+    const entrada = n(u.prompt_tokens) || n(u.input_tokens) || n(u.promptTokenCount)
+    const salida = n(u.completion_tokens) || n(u.output_tokens) || n(u.candidatesTokenCount)
+    if (entrada || salida) return { entrada, salida }
+  }
+  if (typeof data.prompt_eval_count === 'number' || typeof data.eval_count === 'number') {
+    return { entrada: n(data.prompt_eval_count), salida: n(data.eval_count) }
+  }
+  return undefined
 }
 
 export type AiHealthResult = {
@@ -328,10 +350,11 @@ async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  outerSignal: AbortSignal | null = activeChatSignal,
 ): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
-  const outer = activeChatSignal
+  const outer = outerSignal
   const onOuterAbort = () => controller.abort()
   outer?.addEventListener('abort', onOuterAbort)
   if (outer?.aborted) controller.abort()
@@ -474,7 +497,10 @@ export function buildProviderRequest(req: AiChatRequest, opts: { stream?: boolea
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   applyAuthHeaders(headers, req.apiKey, req.kind, req.custom)
   const chatPath = req.custom?.chatPath?.trim() || '/chat/completions'
-  return { url: joinUrl(base, chatPath), headers, body: buildOpenAiBody(part, stream) }
+  const body: Record<string, unknown> = { ...buildOpenAiBody(part, stream), ...(req.extra ?? {}) }
+  // Con streaming, el consumo solo llega si se pide (último trozo con `usage`).
+  if (stream && req.extra) body.stream_options = { include_usage: true }
+  return { url: joinUrl(base, chatPath), headers, body }
 }
 
 function emptyMessage(style: StreamStyle): string {
@@ -513,17 +539,23 @@ export function parseProviderResponse(style: StreamStyle, kind: AiProviderKind, 
         : style === 'ollama'
           ? parseOllamaMessage(data.message ?? { content: data.response })
           : parseOpenAiMessage(data.choices?.[0]?.message)
-  if (!parsed.content.trim() && !parsed.toolCalls.length) return fail(emptyMessage(style), 'empty_response', kind)
+  const usage = usageFrom(data)
+  if (!parsed.content.trim() && !parsed.toolCalls.length) return fail(emptyMessage(style), 'empty_response', kind, usage ? { usage } : {})
   return {
     success: true,
     content: parsed.content,
     ...(parsed.toolCalls.length ? { toolCalls: parsed.toolCalls } : {}),
     model,
     provider: kind,
+    ...(usage ? { usage } : {}),
   }
 }
 
-async function chatHttp(req: AiChatRequest, onDelta?: (text: string) => void): Promise<AiChatResult> {
+async function chatHttp(
+  req: AiChatRequest,
+  onDelta?: (text: string) => void,
+  opts: { signal?: AbortSignal | null; timeoutMs?: number } = {},
+): Promise<AiChatResult> {
   const style = resolveApiStyle(req)
   if (!style) return fail(`Proveedor no soportado: ${req.kind}`, 'bad_request', req.kind)
   if (style === 'anthropic' && !String(req.apiKey ?? '').trim()) {
@@ -539,7 +571,12 @@ async function chatHttp(req: AiChatRequest, onDelta?: (text: string) => void): P
   const target = buildProviderRequest(req, { stream: Boolean(onDelta) })
   let res: Response
   try {
-    res = await fetchWithTimeout(target.url, { method: 'POST', headers: target.headers, body: JSON.stringify(target.body) })
+    res = await fetchWithTimeout(
+      target.url,
+      { method: 'POST', headers: target.headers, body: JSON.stringify(target.body) },
+      opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      opts.signal === undefined ? activeChatSignal : opts.signal,
+    )
   } catch (err) {
     return classifyFetchError(err, req.kind)
   }
@@ -565,14 +602,16 @@ async function chatHttp(req: AiChatRequest, onDelta?: (text: string) => void): P
     return classifyFetchError(err, req.kind)
   }
   const out = acc.finish()
+  const usage = out.usage
   if (out.error) return fail(out.error, 'provider_error', req.kind)
-  if (!out.content.trim() && !out.toolCalls.length) return fail(emptyMessage(style), 'empty_response', req.kind)
+  if (!out.content.trim() && !out.toolCalls.length) return fail(emptyMessage(style), 'empty_response', req.kind, usage ? { usage } : {})
   return {
     success: true,
     content: out.content,
     ...(out.toolCalls.length ? { toolCalls: out.toolCalls } : {}),
     model: req.model,
     provider: req.kind,
+    ...(usage ? { usage } : {}),
   }
 }
 
@@ -681,6 +720,27 @@ async function aiChatWithRetry(
     await sleep(delay)
   }
   return { ...last, httpAttempts: attempts }
+}
+
+/**
+ * Una petición directa, sin la cola global ni reintentos: la usa el enrutador de JasWave IA, que
+ * reparte la carga entre claves y modelos y decide él mismo cuándo reintentar o cubrir.
+ */
+export async function aiChatDirecto(
+  req: AiChatRequest,
+  opts: { signal?: AbortSignal; onDelta?: (text: string) => void; timeoutMs?: number } = {},
+): Promise<AiChatResult> {
+  const invalid = validateRequest(req)
+  if (invalid) return invalid
+  if (opts.signal?.aborted) return fail('Solicitud cancelada.', 'cancelled', req.kind)
+  try {
+    if (isMockRequest(req)) return chatMock(req, opts.onDelta)
+    if (req.tools?.length && !shouldSendTools(req)) return toolsUnsupported(req, `${req.kind} · ${req.model}`)
+    const r = await chatHttp(req, opts.onDelta, { signal: opts.signal ?? null, timeoutMs: opts.timeoutMs })
+    return opts.signal?.aborted ? fail('Solicitud cancelada.', 'cancelled', req.kind) : r
+  } catch (err) {
+    return classifyFetchError(err, req.kind)
+  }
 }
 
 async function aiChatOnce(req: AiChatRequest, onDelta?: (text: string) => void): Promise<AiChatResult> {

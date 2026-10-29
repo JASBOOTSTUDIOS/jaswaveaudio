@@ -7,11 +7,10 @@
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { AppWindow, ExternalLink, PanelTop, Piano, RefreshCw, RotateCcw, Sparkles, Waves, X } from 'lucide-react'
+import { AppWindow, ExternalLink, PanelTop, Piano, RefreshCw, RotateCcw, SlidersHorizontal, Sparkles, Waves, X } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import type { DAWState } from '../../shared/src/types/state'
 import type { PluginInfo } from '../../shared/src/types/entidades'
-import { audioEngine } from '@/lib/audio-engine'
 import {
   getPluginEditorFocus,
   subscribePluginEditorFocus,
@@ -22,6 +21,7 @@ import {
   setForceBuiltinPreview,
 } from '@/src/lib/plugin/vst-voice-router'
 import {
+  ensureHostMidiAudible,
   ensureTrackVstInstrument,
   getLastVstLoadError,
   isVstQuarantineError,
@@ -33,6 +33,8 @@ import { JASWAVE_ROLES_NAME } from '@/src/lib/plugin/jaswave-roles'
 import { isJasWaveFxPlugin } from '@/src/lib/plugin/bundled-plugins'
 import type { EditorEmbedRect } from '@/src/lib/plugin/types'
 import { servicioDeModulo } from '@/src/modulos/contribuciones'
+import { PluginControlPanel } from '@/components/plugin-control-panel'
+import { accionPluginUsuario } from '@/src/lib/plugin/plugin-ui-acciones'
 import { useVersionModulos } from '@/src/modulos/use-modulos'
 
 function useEditorFocus() {
@@ -86,6 +88,7 @@ function VstNativeEditor({
   const [mode, setMode] = useState<EditorMode>('embebido')
   const modeRef = useRef<EditorMode>('embebido')
   const [clearingQuarantine, setClearingQuarantine] = useState(false)
+  const [controles, setControles] = useState(false)
   const quarantineBlocked = status === 'error' && isVstQuarantineError(message)
 
   async function clearQuarantineAndRetry() {
@@ -155,6 +158,8 @@ function VstNativeEditor({
       reply = await bridge.send({ type: 'openEditor', path, slotId, pluginId: plugin.id })
     }
     if (reply.ok) {
+      // el teclado del propio editor toca el VST: la salida de audio nativa tiene que estar en marcha
+      void ensureHostMidiAudible()
       setStatus('open')
       setMessage(
         'UI y audio son la misma instancia. El teclado del plugin debe sonar por el driver de Configuración → Audio.',
@@ -217,36 +222,19 @@ function VstNativeEditor({
     openedOnce.current = false
   }
 
+  /** Valores por defecto que reporta el VST, con deshacer (la misma acción que puede usar la IA). */
   async function resetToDefault() {
-    try {
-      const bridge = createElectronPluginHostBridge()
+    const r = await accionPluginUsuario(tienda, 'plugin.resetDefaults', { trackId, pluginInstanceId: plugin.id })
+    setMessage(r.message)
+  }
 
-      tienda.establecerEstado((s) => {
-        const tracks = (s.project?.tracks ?? []).map((t) => {
-          if (t.id !== trackId) return t
-          return {
-            ...t,
-            plugins: (t.plugins ?? []).map((p) => {
-              if (p.id !== plugin.id) return p
-              const params = (p.parametros ?? []).map((param, idx) => {
-                const defaultVal =
-                  (param as { defecto?: number }).defecto ??
-                  (param.minimo <= 0 && param.maximo >= 0 ? 0 : (param.minimo + param.maximo) / 2)
-                const range = param.maximo - param.minimo
-                const norm = range > 0 ? Math.max(0, Math.min(1, (defaultVal - param.minimo) / range)) : 0.5
-                void bridge.send({ type: 'setParameter', slotId, paramId: idx, normalizedValue: norm })
-                return { ...param, valor: defaultVal }
-              })
-              return { ...p, parametros: params }
-            }),
-          }
-        })
-        return { ...s, project: { ...s.project!, tracks } }
-      })
-      setMessage('Valores predeterminados restablecidos')
-    } catch (err) {
-      console.warn('[plugin-editor] error al restablecer:', err)
-    }
+  /** Teclas de prueba: MIDI directo a ESTE VST (no al sintetizador interno ni a otra pista). */
+  function probarNota(pitch: number, on: boolean) {
+    const api = window.electron
+    const cmd = on ? { type: 'noteOn' as const, slotId, pitch, velocity: 100 } : { type: 'noteOff' as const, slotId, pitch }
+    if (typeof api?.pluginHostMidi === 'function') void api.pluginHostMidi(cmd)
+    else void api?.pluginHostSend?.(cmd)
+    if (on) void ensureHostMidiAudible()
   }
 
   useEffect(() => {
@@ -320,8 +308,18 @@ function VstNativeEditor({
         </div>
         <button
           type="button"
+          aria-pressed={controles}
+          onClick={() => setControles((v) => !v)}
+          title="Parámetros, presets y herramientas del plugin (lo mismo que puede hacer la IA)"
+          className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] ring-1 ring-border hover:text-foreground ${controles ? 'text-accent-amber' : 'text-muted-foreground'}`}
+        >
+          <SlidersHorizontal className="size-3" />
+          Controles
+        </button>
+        <button
+          type="button"
           onClick={() => void resetToDefault()}
-          title="Restablecer todos los parámetros del VST a sus valores predeterminados"
+          title="Restablecer todos los parámetros del VST a sus valores por defecto (con deshacer)"
           className="inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] text-muted-foreground ring-1 ring-border hover:text-accent-amber"
         >
           <RotateCcw className="size-3" />
@@ -359,22 +357,24 @@ function VstNativeEditor({
           <button
             key={pitch}
             type="button"
-            onPointerDown={() => {
-              void audioEngine.ensureContext().resume()
-              audioEngine.noteOn(pitch, 100)
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId)
+              probarNota(pitch, true)
             }}
-            onPointerUp={() => {
-              audioEngine.noteOff(pitch)
-            }}
-            onPointerLeave={() => {
-              audioEngine.noteOff(pitch)
-            }}
+            onPointerUp={() => probarNota(pitch, false)}
+            onPointerCancel={() => probarNota(pitch, false)}
             className="rounded bg-background px-2 py-1 font-mono text-[10px] text-foreground ring-1 ring-border hover:ring-accent-amber"
           >
             {pitch}
           </button>
         ))}
       </div>
+
+      {controles ? (
+        <div className="max-h-[45%] shrink-0 overflow-y-auto border-b border-border px-3 py-1.5">
+          <PluginControlPanel trackId={trackId} plugin={plugin} />
+        </div>
+      ) : null}
 
       <div
         ref={hostRef}

@@ -5,7 +5,10 @@
  */
 
 import { definirModulo, fijarConversacionActiva, JasWaveLogo, VERSION_SDK } from '@jaswave/host-sdk'
+import { Users } from 'lucide-react'
 import { AjustesIA } from './ui/ajustes-ia'
+import { BandaPanel } from './ui/banda-panel'
+import { HERRAMIENTA_BANDA } from './ui/banda-vista-store'
 import { CoProducerPanel } from './ui/coproducer-panel'
 import { ProgressPanel } from './ui/progress-panel'
 import { bumpChatTextZoom, isChatZoomTarget, setChatTextZoom } from './motor/chat-ui-store'
@@ -22,13 +25,14 @@ export default definirModulo({
   herramientas: [
     { id: 'coproducer', titulo: 'Asistente Jas', descripcion: 'Asistente JasWave', zona: 'left', icono: Logo, destacada: true },
     { id: 'progress', titulo: 'Progreso', descripcion: 'Plan, bitácora, diffs y métricas (A9)', zona: 'right', bajoDemanda: true },
+    { id: HERRAMIENTA_BANDA, titulo: 'Banda virtual', descripcion: 'Los agentes de la banda trabajando en vivo', zona: 'right', icono: Users, bajoDemanda: true },
   ],
   activar: () => {
     // El panel Admin → IA avisa cuando cambian proveedores o permisos.
     const recargar = () => void refrescarCatalogoIA().catch(() => {})
     window.addEventListener('jaswave-ia-catalogo-invalidado', recargar)
     return {
-      paneles: { coproducer: CoProducerPanel, progress: ProgressPanel },
+      paneles: { coproducer: CoProducerPanel, progress: ProgressPanel, [HERRAMIENTA_BANDA]: BandaPanel },
       ajustes: [{ id: 'ia', titulo: 'IA', componente: AjustesIA }],
       zoom: { esObjetivo: () => isChatZoomTarget(), cambiar: (d) => bumpChatTextZoom(d), restablecer: () => setChatTextZoom(1) },
       desactivar: () => {

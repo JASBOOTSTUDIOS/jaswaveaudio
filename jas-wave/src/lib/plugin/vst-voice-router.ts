@@ -6,6 +6,7 @@ import {
   ensureHostMidiAudible,
   findTrackPlaybackInstrument,
   getLoadedInstrumentForTrack,
+  getLoadedInstrumentsForTrack,
   rememberLoadedInstrument,
   slotIdForTrackPlugin,
 } from './track-vst-runtime'
@@ -119,6 +120,17 @@ function resolveTrackSlotId(trackId: string, plugins?: PluginInfo[]): string | n
   return slotId
 }
 
+/** Slot principal y capas (otros instrumentos cargados) de la pista, sin repetir. */
+export function resolveAllTrackSlotIds(trackId: string, plugins?: PluginInfo[]): string[] {
+  const principal = resolveTrackSlotId(trackId, plugins)
+  if (!principal) return []
+  const out = [principal]
+  for (const p of getLoadedInstrumentsForTrack(trackId)) {
+    if (!out.includes(p.slotId)) out.push(p.slotId)
+  }
+  return out
+}
+
 export function routeMidiToActiveVst(
   on: boolean,
   pitch: number,
@@ -134,6 +146,12 @@ export function routeMidiToActiveVst(
   const trackId = active?.trackId ?? preferredTrackId
   if (on && trackId && !opts?.ignoreMute && !trackChannelIsAudible(trackId)) return false
   sendMidi(slotId, on, pitch, velocity)
+  // Capas: el resto de instrumentos de la misma pista tocan la misma nota.
+  if (trackId) {
+    for (const p of getLoadedInstrumentsForTrack(trackId)) {
+      if (p.slotId !== slotId) sendMidi(p.slotId, on, pitch, velocity)
+    }
+  }
   return true
 }
 
@@ -146,9 +164,9 @@ export function routeMidiToTrack(
   opts?: { ignoreMute?: boolean; plugins?: PluginInfo[] },
 ): boolean {
   if (forceBuiltin) return false
-  const slotId = resolveTrackSlotId(trackId, opts?.plugins)
-  if (!slotId) return false
+  const slots = resolveAllTrackSlotIds(trackId, opts?.plugins)
+  if (slots.length === 0) return false
   if (on && !opts?.ignoreMute && !trackChannelIsAudible(trackId)) return false
-  sendMidi(slotId, on, pitch, velocity)
+  for (const slotId of slots) sendMidi(slotId, on, pitch, velocity)
   return true
 }

@@ -20,6 +20,20 @@ import {
 
 const banda = (extra: Partial<BandaEq> = {}): BandaEq => ({ freq: 1000, gain: 0, q: 1, type: 'bell', enabled: true, ...extra });
 
+describe('eq-dinamico: tipos que escribe la IA', () => {
+  it('acepta sinónimos en español y de otros DAW, con o sin acentos', () => {
+    expect(normalizarTipoEq('campana')).toBe('bell');
+    expect(normalizarTipoEq('band')).toBe('bell');
+    expect(normalizarTipoEq('Paramétrico')).toBe('bell');
+    expect(normalizarTipoEq('pasa altos')).toBe('lowCut');
+    expect(normalizarTipoEq('pasa-bajos')).toBe('highCut');
+    expect(normalizarTipoEq('estante bajo')).toBe('lowShelf');
+    expect(normalizarTipoEq('muesca')).toBe('notch');
+    expect(normalizarTipoEq('pasabanda')).toBe('bandPass');
+    expect(normalizarTipoEq('inventado')).toBeUndefined();
+  });
+});
+
 describe('eq-dinamico: contrato con el VST', () => {
   it('los IDs de las 8 bandas heredadas no cambian (compatibilidad con JasWave EQ / JasWaveFx)', () => {
     expect(eqParamId(0, 'type')).toBe(1);

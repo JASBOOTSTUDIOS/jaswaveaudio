@@ -18,7 +18,6 @@ La sección npm se regenera con `npm run notices` en `jas-wave/`; el resto se ma
 | Chromium y dependencias de Electron | Incluido en Electron | BSD-3-Clause y otras (ver `LICENSES.chromium.html`) |
 | Steinberg VST3 SDK v3.8.1_build_84 | `native/plugin-host`, `native/jaswave-roles-vst`, `native/jaswave-fx`, `native/piano-synth` | MIT |
 | miniaudio 0.11.22 | E/S de audio del plugin host (`native/plugin-host/vendor/miniaudio.h`) | Dominio público (Unlicense) o MIT-0 |
-| Cabecera VST 2.4 mínima | `native/plugin-host/vendor/vst2/aeffect.h` | Código propio de JASBOOTSTUDIOS (ver nota) |
 | Bravura (vía vexflow) | Fuente de notación musical de la partitura | SIL OFL 1.1 |
 | Academico (vía vexflow) | Fuente de texto de la partitura | SIL OFL 1.1 |
 | Inter, JetBrains Mono (vía @fontsource-variable) | Tipografías de la interfaz | SIL OFL 1.1 |
@@ -120,12 +119,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~~
 
-## Cabecera VST 2.4 (nota)
+## VST2 (nota)
 
-`native/plugin-host/vendor/vst2/aeffect.h` es una cabecera mínima escrita por JASBOOTSTUDIOS
-que declara la interfaz binaria histórica VST 2.4 necesaria para cargar plugins VST2 que el
-usuario ya tiene instalados. **No contiene archivos del VST2 SDK de Steinberg**, que ya no se
-licencia. Ver [ADR-0018](docs/decisiones/ADR-0018-soporte-vst2-se-mantiene.md).
+JasWave ya no incluye ni carga plugins VST2: la cabecera mínima `aeffect.h` se eliminó del repositorio.
+Ver [ADR-0019](docs/decisiones/ADR-0019-retiro-de-vst2.md).
 
 ## Fuentes tipográficas (SIL Open Font License 1.1)
 
@@ -1915,3 +1912,11 @@ SOFTWARE.
 </details>
 
 <!-- END GENERATED: npm -->
+
+## Muestras de instrumentos (bancos opcionales)
+
+Detalle completo en [`plugins/samples/LICENCIAS-SAMPLES.md`](plugins/samples/LICENCIAS-SAMPLES.md).
+
+- «Salamander Grand Piano V3», Alexander Holm, CC BY 3.0 (modificadas).
+- «MuldjordKit», Lars Muldjord, CC BY 4.0 (modificadas).
+- Bajo, guitarra y pads de FreePats, y VSCO 2 Community Edition: CC0 1.0.

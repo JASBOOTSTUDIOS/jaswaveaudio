@@ -9,7 +9,7 @@
 
 import type { PluginInfo } from '../../../../shared/src/types/entidades'
 import type { TiendaDAW } from '../../../../shared/src/state/tienda'
-import { ensureTrackVstInstrument, resolveHostPluginPath, slotIdForTrackPlugin, snapshotTrackPluginIntoProject } from './track-vst-runtime'
+import { ensureTrackVstInstrument, getLastVstLoadError, olvidarFalloVst, resolveHostPluginPath, slotIdForTrackPlugin, snapshotTrackPluginIntoProject } from './track-vst-runtime'
 
 export type PluginWindow = {
   slotId: string
@@ -58,9 +58,20 @@ async function syncWithHost() {
   const now = Date.now()
   const keep = windows.filter((w) => open.has(w.slotId) || now - w.openedAt < 4000)
   if (keep.length !== windows.length) {
+    // El usuario cerró la ventana con la X del propio editor (no con la barra del DAW): el slot sigue
+    // cargado en el host con el estado vivo; se captura ahora para no depender del siguiente autoguardado.
+    const cerradas = windows.filter((w) => !keep.includes(w))
     windows = keep
     emit()
+    for (const w of cerradas) void alCerrarEditor?.(w)
   }
+}
+
+let alCerrarEditor: ((w: PluginWindow) => Promise<unknown> | void) | null = null
+
+/** Registra la captura de estado al cerrarse un editor (la tienda la aporta el autoguardado de VST). */
+export function registrarCapturaAlCerrarEditor(fn: ((w: PluginWindow) => Promise<unknown> | void) | null): void {
+  alCerrarEditor = fn
 }
 
 function startSync() {
@@ -84,8 +95,10 @@ export async function openPluginWindow(args: {
   const path = resolveHostPluginPath(plugin)
   if (!path) return { ok: false, message: 'Este plugin no tiene ruta .vst3/.dll. Vuelve a insertarlo desde el catálogo.' }
   const slotId = slotIdForTrackPlugin(trackId, plugin.id)
+  // Abrirlo es una orden explícita del usuario: un fallo reciente (o una cuarentena ya levantada) no la bloquea.
+  olvidarFalloVst(path)
   const loaded = await ensureTrackVstInstrument(trackId, { ...plugin, descripcion: path })
-  if (!loaded) return { ok: false, message: 'No se pudo cargar el plugin en el host.' }
+  if (!loaded) return { ok: false, message: getLastVstLoadError() || 'No se pudo cargar el plugin en el host.' }
   const trackName = args.trackName ?? ''
   const title = trackName ? `${plugin.nombre} · ${trackName}` : plugin.nombre
   const reply = (await send({ type: 'openEditor', path, slotId, pluginId: plugin.id, title })) as { ok?: boolean; message?: string } | null

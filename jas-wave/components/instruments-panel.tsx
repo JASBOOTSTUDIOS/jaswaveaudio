@@ -93,6 +93,9 @@ function useAiPrefs() {
 /**
  * Panel de instrumentos: búsqueda, defaults por rol y activación para IA.
  */
+/** Nivel inicial de la vista previa MIDI (doble clic / clic central vuelve aquí). */
+const GANANCIA_PREVIA_INICIAL = 0.35
+
 export function InstrumentsPanel() {
   const tienda = useDAW()
   const prefs = useAiPrefs()
@@ -102,7 +105,7 @@ export function InstrumentsPanel() {
     return s.project?.tracks?.find((t) => t.id === id)?.nombre ?? null
   })
   const [held, setHeld] = useState<number | null>(null)
-  const [gain, setGain] = useState(0.35)
+  const [gain, setGain] = useState(GANANCIA_PREVIA_INICIAL)
   const [scanning, setScanning] = useState(false)
   const [vstList, setVstList] = useState<PluginDescriptor[]>([])
   const [scanMsg, setScanMsg] = useState('')
@@ -117,7 +120,7 @@ export function InstrumentsPanel() {
   const refreshCatalogUi = useCallback(() => {
     hydratePluginCatalog()
     pluginManager.ensureBuiltins()
-    setVstList(pluginManager.listAvailable().filter((p) => p.format === 'vst3' || p.format === 'vst2'))
+    setVstList(pluginManager.listAvailable().filter((p) => p.format === 'vst3'))
   }, [])
 
   const syncCapabilities = useCallback(() => {
@@ -141,8 +144,8 @@ export function InstrumentsPanel() {
       syncCapabilities()
       setScanMsg(
         result.registered
-          ? `${result.registered} plugins en catálogo (.vst3 y .dll VST2 x64 hosteables).`
-          : result.error || 'No se encontraron .vst3 ni .dll en las carpetas habilitadas',
+          ? `${result.registered} plugins VST3 en catálogo.`
+          : result.error || 'No se encontraron plugins .vst3 en las carpetas habilitadas',
       )
     } catch (e) {
       setScanMsg(e instanceof Error ? e.message : 'Error de escaneo')
@@ -210,12 +213,23 @@ export function InstrumentsPanel() {
       setScanMsg('No se pudo crear la pista para el plugin.')
       return
     }
+    // Instrumentos que ya tenía la pista: el nuevo no los sustituye, suena encima como capa.
+    const previos = plugin.isInstrument
+      ? (tienda.obtenerEstado().project?.tracks?.find((t) => t.id === trackId)?.plugins ?? [])
+          .filter((x) => !x.bypass && (x.tipo === 'instrumento' || x.categoria === 'instrumento' || x.categoria === 'synth'))
+          .map((x) => x.nombre)
+      : []
     const r = await insertPluginOnTrack(tienda, trackId, plugin)
     if (!r.ok) {
       setScanMsg(r.message)
       return
     }
     const track = tienda.obtenerEstado().project?.tracks?.find((t) => t.id === trackId)
+    if (previos.length > 0) {
+      setScanMsg(`«${r.info.nombre}» añadido como capa sobre «${previos.join('», «')}» en «${track?.nombre ?? 'la pista'}»: suenan juntos.`)
+      refreshCatalogUi()
+      return
+    }
     if (isJasWaveRolesDescriptor(plugin) && track) {
       try {
         await applyJasWaveRolesParameter(trackId, r.info, inferRoleFromTrack(track))
@@ -423,7 +437,7 @@ export function InstrumentsPanel() {
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="truncate text-[12px] font-medium text-foreground">{p.name}</span>
                   <span className="rounded bg-panel-raised px-1 py-px text-[9px] text-muted-foreground">
-                    {p.format === 'vst2' ? 'VST2' : 'VST3'}
+                    VST3
                   </span>
                   <span className="rounded bg-panel-raised px-1 py-px text-[9px] text-muted-foreground">
                     {INSTRUMENT_ROLE_LABELS[role]}
@@ -439,11 +453,7 @@ export function InstrumentsPanel() {
                   ))}
                 </div>
                 <div className="truncate text-[9px] text-muted-foreground" title={p.path}>
-                  {!catalogPluginInsertable(p)
-                    ? p.format === 'vst2'
-                      ? 'Requiere host VST2 · '
-                      : 'Host pendiente · '
-                    : ''}
+                  {!catalogPluginInsertable(p) ? 'Host pendiente · ' : ''}
                   {p.vendor ? `${p.vendor} · ` : ''}
                   {p.path}
                 </div>
@@ -605,6 +615,17 @@ export function InstrumentsPanel() {
                   const v = Number(e.target.value)
                   setGain(v)
                   audioEngine.setSynthGain(v)
+                }}
+                title="Doble clic o clic central: nivel inicial"
+                onDoubleClick={() => {
+                  setGain(GANANCIA_PREVIA_INICIAL)
+                  audioEngine.setSynthGain(GANANCIA_PREVIA_INICIAL)
+                }}
+                onMouseDown={(e) => {
+                  if (e.button !== 1) return
+                  e.preventDefault()
+                  setGain(GANANCIA_PREVIA_INICIAL)
+                  audioEngine.setSynthGain(GANANCIA_PREVIA_INICIAL)
                 }}
                 className="flex-1"
               />

@@ -2,6 +2,7 @@ import { spawn } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import fs from 'fs'
+import { matarHostsHuerfanos } from '../electron/host-huerfanos'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -10,19 +11,14 @@ delete process.env.ELECTRON_RUN_AS_NODE
 const projectRoot = path.join(__dirname, '..')
 const electronPath = path.join(projectRoot, 'node_modules', 'electron', 'dist', 'electron.exe')
 
-/** Evita dos jaswave-plugin-host (ASIO doble = eco / silencio / host «no disponible»). */
+/**
+ * Solo hosts huérfanos (su app ya cerró). Matar por nombre tumbaba también el motor de la JasWave
+ * instalada u otra instancia abierta; el doble audio ya lo impide la reserva del motor en el host.
+ */
 function killOrphanHosts() {
-  if (process.platform !== 'win32') return
-  try {
-    const { execFileSync } = require('child_process') as typeof import('child_process')
-    execFileSync(
-      'taskkill',
-      ['/F', '/IM', 'jaswave-plugin-host.exe', '/T'],
-      { stdio: 'ignore', windowsHide: true },
-    )
-  } catch {
-    /* ninguno */
-  }
+  void matarHostsHuerfanos().catch(() => {
+    /* sin PowerShell o sin permisos */
+  })
 }
 
 killOrphanHosts()
@@ -46,6 +42,8 @@ child.on('error', (err) => {
 })
 
 child.on('exit', (code) => {
-  killOrphanHosts()
-  process.exit(code ?? 0)
+  // El host de esta instancia queda huérfano si Electron murió sin cerrarlo.
+  void matarHostsHuerfanos()
+    .catch(() => [])
+    .finally(() => process.exit(code ?? 0))
 })

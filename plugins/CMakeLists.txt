@@ -12,18 +12,34 @@ set(JW_PLUGIN_DIRS
   com.jaswave.plugin.bus-compressor
   com.jaswave.plugin.truepeak-limiter
   com.jaswave.plugin.smart-deesser
+  com.jaswave.plugin.vocal-tune
   com.jaswave.plugin.utility-tool
+  com.jaswave.plugin.pedal-fix
   com.jaswave.plugin.piano-synth
   com.jaswave.plugin.roles-vst
   com.jaswave.plugin.sampler
-  com.jaswave.plugin.ambience
-  com.jaswave.plugin.audio-lens
-  com.jaswave.plugin.grand-piano
-  com.jaswave.plugin.worship-drums
-  com.jaswave.plugin.electric-bass
-  com.jaswave.plugin.electric-guitar
-  com.jaswave.plugin.shimmer-pad
-  com.jaswave.plugin.strings-section)
+  com.jaswave.plugin.ambience)
+
+# Audio Lens: plugin sin terminar desde a81763b (Controller sin createEditor() y bus de tipo incorrecto): no compila.
+# Fuera del build conjunto hasta que se complete; activar con -DJW_BUILD_AUDIO_LENS=ON para trabajar en él.
+option(JW_BUILD_AUDIO_LENS "Compilar Audio Lens (en desarrollo, no compila)" OFF)
+if(JW_BUILD_AUDIO_LENS)
+  list(APPEND JW_PLUGIN_DIRS com.jaswave.plugin.audio-lens)
+endif()
+
+# Suite de 7 instrumentos independientes (6 + Ambient Atmos; un VST3 por instrumento). Cada uno compila solo y pasa el validator
+# del SDK; OFF permite excluirlos si falta tiempo de CI.
+option(JW_BUILD_INSTRUMENTS "Compilar la suite de 7 instrumentos" ON)
+if(JW_BUILD_INSTRUMENTS)
+  list(APPEND JW_PLUGIN_DIRS
+    com.jaswave.plugin.grand-piano
+    com.jaswave.plugin.worship-drums
+    com.jaswave.plugin.electric-bass
+    com.jaswave.plugin.electric-guitar
+    com.jaswave.plugin.shimmer-pad
+    com.jaswave.plugin.strings-section
+    com.jaswave.plugin.ambient-atmos)
+endif()
 foreach(_d ${JW_PLUGIN_DIRS})
   add_subdirectory(${_d})
 endforeach()

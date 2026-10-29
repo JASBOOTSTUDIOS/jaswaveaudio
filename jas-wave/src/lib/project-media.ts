@@ -10,6 +10,7 @@
  *    proyecto funciona en otra carpeta, otro disco u otro equipo.
  */
 
+import { PEAK_MIN_VALORES, leerPeak, serializarPeak, type FirmaOrigen } from './peak-formato'
 import {
   MEDIA_PENDING_REL_DIR,
   MEDIA_REL_DIR,
@@ -360,91 +361,115 @@ export async function cargarBytesMedia(
   }
 }
 
-/** Cache en memoria de waveforms para renderizado inmediato (0 ms) */
+/** Cache en memoria de waveforms para renderizado inmediato (0 ms), acotada (LRU por orden de inserción). */
+const MAX_PEAKS_EN_MEMORIA = 256
 const memoriaPeakCache = new Map<string, number[]>()
+
+function recordarPeak(clave: string, waveform: number[]): void {
+  memoriaPeakCache.delete(clave)
+  memoriaPeakCache.set(clave, waveform)
+  while (memoriaPeakCache.size > MAX_PEAKS_EN_MEMORIA) {
+    const masAntigua = memoriaPeakCache.keys().next().value
+    if (masAntigua === undefined) break
+    memoriaPeakCache.delete(masAntigua)
+  }
+}
+
+function consultarPeak(clave: string): number[] | null {
+  const hit = memoriaPeakCache.get(clave)
+  if (!hit || hit.length < PEAK_MIN_VALORES) return null
+  memoriaPeakCache.delete(clave) // renueva su posición
+  memoriaPeakCache.set(clave, hit)
+  return hit
+}
+
+/** Olvida la forma de onda en memoria de un audio (llamar cuando el archivo se reemplaza o se vuelve a grabar). */
+export function invalidarWaveformPeak(rutaAudio: string, rutaProyecto?: string | null): void {
+  memoriaPeakCache.delete(rutaAudio)
+  const abs = rutaAbsolutaDeAudio(rutaAudio, rutaProyecto)
+  if (abs) memoriaPeakCache.delete(abs)
+}
 
 /** Genera la ruta del archivo .peak adyacente a un archivo de audio */
 export function rutaArchivoPeak(rutaAudio: string): string {
   return `${rutaAudio.replace(/[/\\]+$/, '')}.peak`
 }
 
+function rutaAbsolutaDeAudio(rutaAudio: string, rutaProyecto?: string | null): string | null {
+  const norm = normalizarRutaRelativa(rutaAudio)
+  const esAbsoluta = /^[a-zA-Z]:\//.test(norm) || norm.startsWith('/')
+  return esAbsoluta ? rutaAudio : resolverRutaMedia(rutaAudio, rutaProyecto)
+}
+
+/** Firma (tamaño + mtime) del audio en disco; null si no se puede consultar. */
+async function firmaDeAudio(absoluta: string): Promise<FirmaOrigen | null> {
+  const api = window.electron
+  if (!api?.fileStat) return null
+  try {
+    const st = (await api.fileStat(absoluta)) as { size?: number; mtimeMs?: number } | null
+    return st && typeof st.size === 'number' && typeof st.mtimeMs === 'number' ? { size: st.size, mtimeMs: st.mtimeMs } : null
+  } catch {
+    return null
+  }
+}
+
 /**
- * Guarda los picos precalculados (waveform) en un archivo binario/texto .peak en disco
- * y en la cache de memoria del renderer para 0 ms de latencia en posteriores accesos.
+ * Guarda los picos precalculados en `<audio>.peak` (formato versionado con la firma del audio) y en la
+ * caché de memoria. Devuelve true solo si el archivo se escribió de verdad.
  */
 export async function guardarWaveformPeak(
   rutaAudio: string,
   waveform: number[],
   rutaProyecto?: string | null,
 ): Promise<boolean> {
-  if (!rutaAudio || !waveform || waveform.length === 0) return false
+  if (!rutaAudio || !waveform || waveform.length < PEAK_MIN_VALORES) return false
 
-  memoriaPeakCache.set(rutaAudio, waveform)
+  recordarPeak(rutaAudio, waveform)
+  const absoluta = rutaAbsolutaDeAudio(rutaAudio, rutaProyecto)
+  if (!absoluta) return false
+  recordarPeak(absoluta, waveform)
 
   const api = window.electron
-  const norm = normalizarRutaRelativa(rutaAudio)
-  const esAbsoluta = /^[a-zA-Z]:\//.test(norm) || norm.startsWith('/')
-  const absoluta = esAbsoluta ? rutaAudio : resolverRutaMedia(rutaAudio, rutaProyecto)
-
-  if (absoluta) {
-    memoriaPeakCache.set(absoluta, waveform)
-    if (api?.fileSave) {
-      try {
-        const payload = JSON.stringify(waveform)
-        await api.fileSave(rutaArchivoPeak(absoluta), payload)
-        return true
-      } catch {
-        // Fallback silencioso: se mantiene en memoria
-      }
-    }
+  if (!api?.fileSave) return false
+  try {
+    const origen = await firmaDeAudio(absoluta)
+    const r = (await api.fileSave(rutaArchivoPeak(absoluta), serializarPeak(waveform, origen))) as { success?: boolean } | undefined
+    return r?.success === true
+  } catch {
+    return false // se mantiene en memoria; el próximo arranque lo recalcula
   }
-  return false
 }
 
 /**
- * Carga instantáneamente los picos de forma de onda (waveform) desde la memoria
- * o desde el archivo `.peak` en disco, evitando decodificar el audio (0 ms).
+ * Carga la forma de onda desde memoria o desde `<audio>.peak` sin decodificar el audio. Solo acepta un
+ * `.peak` válido, de esta versión y cuyo audio de origen no haya cambiado.
  */
 export async function cargarWaveformPeak(
   rutaAudio: string,
   rutaProyecto?: string | null,
 ): Promise<number[] | null> {
   if (!rutaAudio) return null
+  const enMemoria = consultarPeak(rutaAudio)
+  if (enMemoria) return enMemoria
 
-  // 1. Consulta en memoria de acceso 0 ms
-  const cached = memoriaPeakCache.get(rutaAudio)
-  if (cached && cached.length >= 4) return cached
+  const absoluta = rutaAbsolutaDeAudio(rutaAudio, rutaProyecto)
+  if (!absoluta) return null
+  const enMemoriaAbs = consultarPeak(absoluta)
+  if (enMemoriaAbs) return enMemoriaAbs
 
   const api = window.electron
-  const norm = normalizarRutaRelativa(rutaAudio)
-  const esAbsoluta = /^[a-zA-Z]:\//.test(norm) || norm.startsWith('/')
-  const absoluta = esAbsoluta ? rutaAudio : resolverRutaMedia(rutaAudio, rutaProyecto)
-
-  if (absoluta) {
-    const cachedAbs = memoriaPeakCache.get(absoluta)
-    if (cachedAbs && cachedAbs.length >= 4) return cachedAbs
-
-    // 2. Consulta en archivo .peak en disco
-    if (api?.fileRead && api?.fileExists) {
-      try {
-        const rutaPeak = rutaArchivoPeak(absoluta)
-        const existe = await api.fileExists(rutaPeak)
-        if (existe) {
-          const contenido = await api.fileRead(rutaPeak)
-          if (contenido) {
-            const parsed = JSON.parse(contenido)
-            if (Array.isArray(parsed) && parsed.length >= 4) {
-              memoriaPeakCache.set(rutaAudio, parsed)
-              memoriaPeakCache.set(absoluta, parsed)
-              return parsed
-            }
-          }
-        }
-      } catch {
-        // Fallback si el archivo está corrupto o inaccesible
-      }
-    }
+  if (!api?.fileRead || !api?.fileExists) return null
+  try {
+    const rutaPeak = rutaArchivoPeak(absoluta)
+    if (!(await api.fileExists(rutaPeak))) return null
+    const contenido = await api.fileRead(rutaPeak)
+    if (!contenido) return null
+    const peaks = leerPeak(String(contenido), await firmaDeAudio(absoluta))
+    if (!peaks) return null // antiguo, corrupto o el audio cambió: se regenera
+    recordarPeak(rutaAudio, peaks)
+    recordarPeak(absoluta, peaks)
+    return peaks
+  } catch {
+    return null
   }
-
-  return null
 }

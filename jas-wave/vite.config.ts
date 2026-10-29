@@ -75,6 +75,13 @@ export default defineConfig(({ mode }) => ({
   build: {
     outDir: resolve(__dirname, 'dist'),
     emptyOutDir: true,
+    rollupOptions: {
+      // Dos páginas: el DAW (index.html) y JasWave Admin (admin.html), app aparte con su propio bundle.
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        admin: resolve(__dirname, 'admin.html'),
+      },
+    },
   },
   server: {
     port: 5173,
@@ -88,7 +95,7 @@ export default defineConfig(({ mode }) => ({
       '@': resolve(__dirname, ''),
       '@jaswave/ai-harness': resolve(__dirname, '../ai-harness/src/index.ts'),
       '@jaswave/shared': resolve(__dirname, '../shared/src/index.ts'),
-      '@jaswave/host-sdk': resolve(__dirname, '../plugins/sdk/host-sdk/src'),
+      '@jaswave/host-sdk': resolve(__dirname, '../plugins/sdk/host-sdk/src'),
       react: resolve(__dirname, 'node_modules/react'),
       'react-dom': resolve(__dirname, 'node_modules/react-dom'),
     },

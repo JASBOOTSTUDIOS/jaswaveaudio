@@ -511,6 +511,16 @@ describe('comandos de actuación con valores reales (A7c)', () => {
       expect(exec.obtenerEstado().project.master.volumen).toBeCloseTo(Math.pow(10, 6 / 20), 4)
     })
 
+    it('rechaza una medición en silencio en vez de subir el master +56 dB (el análisis web no renderiza VST)', async () => {
+      registrarProveedorAnalisis(async () => analisisFake({ master: medidaPista('master', { integrated: -70 }) }))
+      const exec = crearExecutor(estado)
+      const antes = exec.obtenerEstado().project.master.volumen
+      const r = await exec.execute('master.normalizar', { objetivoLufs: -14 }, 'ai')
+      expect(r.success).toBe(false)
+      expect(r.error?.message).toContain('vacía')
+      expect(exec.obtenerEstado().project.master.volumen).toBe(antes)
+    })
+
     it('falla sin medición del master disponible', async () => {
       registrarProveedorAnalisis(null)
       const exec = crearExecutor(estado)

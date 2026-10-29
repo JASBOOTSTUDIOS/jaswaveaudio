@@ -34,6 +34,11 @@ export type LoopMode = 'loop' | 'punch' | 'repeat' | 'custom' | 'none';
 export interface TransportState {
   reproduciendo: boolean;
   posicion: TimePosition;
+  /**
+   * Punto de inicio (segundos): lo fija el usuario al hacer clic en la línea de tiempo o con W/Inicio (→ 0).
+   * Stop devuelve el playhead aquí; la pausa no. Sin valor = 0.
+   */
+  puntoInicio?: number;
   bpm: number;
   modo: TransportMode;
   loop: {

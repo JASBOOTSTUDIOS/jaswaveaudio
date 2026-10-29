@@ -15,18 +15,53 @@ export type AgentDoc = {
   roleAllowed?: DocRbacRole
 }
 
-export function puedoEditarDoc(doc: AgentDoc, rolUsuario: DocRbacRole = 'owner'): boolean {
+/**
+ * `roleAllowed` = rol mínimo para EDITAR el documento: 'owner' → solo el propietario; ausente o 'editor' →
+ * propietario y editores. El `viewer` nunca edita. Leer: todos los miembros de la sala.
+ */
+export function puedoEditarDoc(doc: Pick<AgentDoc, 'roleAllowed'>, rolUsuario: DocRbacRole = 'owner'): boolean {
   if (rolUsuario === 'owner') return true
   if (rolUsuario === 'editor') return doc.roleAllowed !== 'owner'
   return false
 }
 
-export function puedoLeerDoc(_doc: AgentDoc, _rolUsuario: DocRbacRole = 'owner'): boolean {
-  return true
+export function puedoLeerDoc(_doc: Pick<AgentDoc, 'roleAllowed'>, rolUsuario: DocRbacRole = 'owner'): boolean {
+  return rolUsuario === 'owner' || rolUsuario === 'editor' || rolUsuario === 'viewer'
+}
+
+/**
+ * Rol del usuario actual sobre los documentos. En local es 'owner'; en una sala colaborativa es el rol que
+ * confirma el servidor: pasa `alCambiarRol: rolDocumentosDesdeSala` al crear el `ClienteColaborativo`.
+ * La IA actúa con los permisos del usuario que la invoca: un `viewer` no puede hacer que la IA escriba documentos.
+ */
+let rolActual: DocRbacRole = 'owner'
+export function fijarRolDocumentos(rol: DocRbacRole): void {
+  rolActual = rol
+}
+/** Rol de la sala (o `null` al salir de ella, que vuelve al proyecto local como propietario). */
+export function rolDocumentosDesdeSala(rol: DocRbacRole | null): void {
+  rolActual = rol ?? 'owner'
+}
+export function rolDocumentos(): DocRbacRole {
+  return rolActual
+}
+
+function exigirEdicion(doc: Pick<AgentDoc, 'roleAllowed' | 'slug'>): void {
+  if (!puedoEditarDoc(doc, rolActual)) {
+    throw new Error(`Sin permiso: con el rol «${rolActual}» no puedes modificar ${doc.slug}`)
+  }
 }
 
 export const PLAN_SLUG = 'plan.md'
 export const CONOCIMIENTO_SLUG = 'conocimiento.md'
+
+/**
+ * conocimiento.md se inyecta en cada turno como fuente de verdad: solo lo escribe el usuario (/aprender o
+ * edición manual). Una escritura con origen IA persistiría texto no confiable (web, nombres de pistas…).
+ */
+export function esDocProtegidoParaIA(slug: string): boolean {
+  return sanitizeDocSlug(slug) === CONOCIMIENTO_SLUG
+}
 export const USER_NOTES_HEADING = 'Notas del usuario'
 
 export const DEFAULT_CONOCIMIENTO_MD = `# Base de Conocimiento y Reglas del Proyecto
@@ -34,8 +69,8 @@ export const DEFAULT_CONOCIMIENTO_MD = `# Base de Conocimiento y Reglas del Proy
 > Reglas, directivas de estilo y decisiones aprendidas automáticamente por los agentes (/aprender).
 
 ## Reglas de Producción
-- [x] Respetar la jerarquía de mezcla y headroom (-1.0 dB True Peak en master).
-- [x] Especialistas con gobernabilidad total de FX chain.
+- [x] Respetar la jerarquía de mezcla y headroom (-1.0 dBTP de techo en el master).
+- [x] Los especialistas proponen cambios de FX chain; se ejecutan con comandos (con undo) según la autonomía del usuario.
 
 ## Preferencias del Usuario
 `
@@ -169,6 +204,7 @@ export async function hydrateAgentDocsFromDisk(projectId: string, projectRuta?: 
         createdAt: prev?.createdAt ?? now,
         updatedAt: now,
         origin: 'user',
+        ...(prev?.roleAllowed ? { roleAllowed: prev.roleAllowed } : {}),
       }
       const idx = next.findIndex((d) => d.slug === slug)
       if (idx >= 0) next[idx] = doc
@@ -253,10 +289,10 @@ function persist(projectId: string, docs: AgentDoc[]) {
     if (b.slug === PLAN_SLUG) return 1
     return b.updatedAt - a.updatedAt
   })
-  cache.set(id, next)
   const bag = loadBag()
   bag[id] = next
-  saveBag(bag)
+  saveBag(bag) // si falla (cuota llena) lanza antes de tocar la caché: memoria y almacenamiento no divergen
+  cache.set(id, next)
   const disk = diskRutaByProject.get(id)
   if (disk) writeDocsToDisk(disk, next)
   emit()
@@ -271,11 +307,15 @@ export function writeAgentDoc(
   projectId: string,
   slug: string,
   content: string,
-  opts?: { origin?: AgentDoc['origin']; title?: string; preserveUserNotes?: boolean },
+  opts?: { origin?: AgentDoc['origin']; title?: string; preserveUserNotes?: boolean; roleAllowed?: DocRbacRole },
 ): AgentDoc {
   const s = sanitizeDocSlug(slug)
+  if (esDocProtegidoParaIA(s) && (opts?.origin ?? 'ai') !== 'user') {
+    throw new Error(`${CONOCIMIENTO_SLUG} solo puede modificarlo el usuario (/aprender o edición manual)`)
+  }
   const docs = listAgentDocs(projectId)
   const prev = docs.find((d) => d.slug === s)
+  exigirEdicion({ slug: s, roleAllowed: prev?.roleAllowed ?? opts?.roleAllowed })
   let body = content.replace(/\r\n/g, '\n')
   if ((opts?.preserveUserNotes ?? true) && prev) {
     body = mergePreservingUserNotes(prev.content, body)
@@ -289,6 +329,7 @@ export function writeAgentDoc(
     createdAt: prev?.createdAt ?? now,
     updatedAt: now,
     origin: opts?.origin ?? 'ai',
+    ...((opts?.roleAllowed ?? prev?.roleAllowed) ? { roleAllowed: (opts?.roleAllowed ?? prev?.roleAllowed) as DocRbacRole } : {}),
   }
   persist(projectId, [...docs.filter((d) => d.slug !== s), doc])
   return doc
@@ -310,7 +351,9 @@ export function deleteAgentDoc(projectId: string, slug: string): boolean {
     return true
   }
   const docs = listAgentDocs(projectId)
-  if (!docs.some((d) => d.slug === s)) return false
+  const objetivo = docs.find((d) => d.slug === s)
+  if (!objetivo) return false
+  exigirEdicion(objetivo)
   persist(projectId, docs.filter((d) => d.slug !== s))
   return true
 }
@@ -439,6 +482,7 @@ export function applyMarkdownDocsFromModel(
   const slugs: string[] = []
   const edits: ChatDocEdit[] = []
   for (const b of parseDocBlocksFromText(text)) {
+    if (esDocProtegidoParaIA(b.slug)) continue
     const prev = getAgentDoc(projectId, b.slug)
     const previousContent = prev?.content ?? ''
     const doc = writeAgentDoc(projectId, b.slug, b.content, { origin: 'ai' })
@@ -490,43 +534,70 @@ export function docsPromptActions(): string {
   ].join('\n')
 }
 
+export const MAX_LARGO_REGLA = 400
+export const SECCION_REGLAS_APRENDIDAS = 'Reglas aprendidas'
+
 /**
- * Añade una regla o directiva de conocimiento en conocimiento.md (/aprender o /learn)
+ * Normaliza el texto de /aprender: una sola línea, sin encabezados ni marcadores del protocolo de documentos
+ * (`<<<DOC`, `DOC>>>`, `<<<ACTIONS`…), acotado en longitud. Lanza si queda vacío.
+ */
+export function sanitizarRegla(texto: string): string {
+  const limpio = texto
+    .replace(/[\r\n\p{Zl}\p{Zp}]+/gu, ' ')
+    .replace(/<<<[^>]*>>>|<<<\w*|\w*>>>/g, ' ')
+    .replace(/^(?:[#>*\-\s]+|\[[ xX]\]\s*)+/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, MAX_LARGO_REGLA)
+    .trim()
+  if (!limpio) throw new Error('La regla está vacía: escribe qué debo aprender (p. ej. /aprender usa siempre Re mayor en los temas de adoración)')
+  return limpio
+}
+
+/** Pila de contenidos anteriores de conocimiento.md para `deshacerUltimaReglaAprendida` (en memoria). */
+const historialReglas: Array<{ projectId: string; previo: string | null }> = []
+
+/**
+ * Añade una regla o directiva en conocimiento.md (/aprender o /learn), dentro de «Reglas aprendidas».
+ * Requiere permiso de edición (rol), evita duplicados y se puede revertir con `deshacerUltimaReglaAprendida`.
  */
 export async function aprenderReglaOConocimiento(
   projectId: string,
   reglaOInstruccion: string,
-  projectRuta?: string,
-): Promise<{ doc: AgentDoc; regla: string }> {
-  const docs = listAgentDocs(projectId)
-  const existing = docs.find((d) => d.slug === CONOCIMIENTO_SLUG)
-  const item = `- [x] ${reglaOInstruccion.trim()} *(aprendido el ${new Date().toLocaleDateString()})*\n`
-
-  let doc: AgentDoc
-  if (!existing) {
-    const content = `${DEFAULT_CONOCIMIENTO_MD}\n${item}`
-    doc = writeAgentDoc(projectId, CONOCIMIENTO_SLUG, content, {
-      title: 'Base de Conocimiento y Reglas',
-      origin: 'user',
-      preserveUserNotes: false,
-    })
-  } else {
-    const updatedContent = `${existing.content.trimEnd()}\n${item}`
-    doc = writeAgentDoc(projectId, CONOCIMIENTO_SLUG, updatedContent, {
-      origin: 'user',
-    })
+): Promise<{ doc: AgentDoc; regla: string; duplicada: boolean }> {
+  const regla = sanitizarRegla(reglaOInstruccion)
+  const existing = listAgentDocs(projectId).find((d) => d.slug === CONOCIMIENTO_SLUG)
+  const base = existing?.content ?? DEFAULT_CONOCIMIENTO_MD
+  const actual = getMarkdownSection(base, SECCION_REGLAS_APRENDIDAS)
+  const normalizada = regla.toLowerCase()
+  if (actual.split('\n').some((l) => l.toLowerCase().includes(normalizada))) {
+    return { doc: existing as AgentDoc, regla, duplicada: true }
   }
+  const fecha = new Date().toISOString().slice(0, 10)
+  const item = `- [x] ${regla} *(aprendido el ${fecha})*`
+  const contenido = setMarkdownSection(base, SECCION_REGLAS_APRENDIDAS, [actual.trim(), item].filter(Boolean).join('\n'))
+  const doc = writeAgentDoc(projectId, CONOCIMIENTO_SLUG, contenido, {
+    title: existing?.title ?? 'Base de Conocimiento y Reglas',
+    origin: 'user',
+    preserveUserNotes: false,
+    roleAllowed: existing?.roleAllowed ?? 'editor',
+  })
+  historialReglas.push({ projectId, previo: existing?.content ?? null })
+  if (historialReglas.length > 20) historialReglas.shift()
+  return { doc, regla, duplicada: false }
+}
 
-  if (projectRuta) {
-    const fs = electronFs()
-    if (fs?.fileSave) {
-      const folder = docsFolderForProject(projectRuta)
-      const sep = folder.includes('\\') ? '\\' : '/'
-      void fs.fileSave(`${folder}${sep}${CONOCIMIENTO_SLUG}`, doc.content)
-    }
+/** Revierte la última regla aprendida del proyecto. Devuelve false si no hay nada que deshacer. */
+export function deshacerUltimaReglaAprendida(projectId: string): boolean {
+  for (let i = historialReglas.length - 1; i >= 0; i--) {
+    const h = historialReglas[i]!
+    if (h.projectId !== projectId) continue
+    historialReglas.splice(i, 1)
+    if (h.previo === null) deleteAgentDoc(projectId, CONOCIMIENTO_SLUG)
+    else writeAgentDoc(projectId, CONOCIMIENTO_SLUG, h.previo, { origin: 'user', preserveUserNotes: false })
+    return true
   }
-
-  return { doc, regla: item }
+  return false
 }
 
 

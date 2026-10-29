@@ -11,7 +11,7 @@ import { expect, test } from '@playwright/test'
 import { setupJasWave } from './fixtures/harness'
 import { waitFor } from './fixtures/app'
 import { findTrack, newProject } from './fixtures/project'
-import { capturarVentana, mostrarVentana, ventanasNativas, type VentanaNativa } from './fixtures/ventanas-win'
+import { capturarVentana, capturarVentanaEntera, estilosVentana, mostrarVentana, ventanasNativas, type VentanaNativa } from './fixtures/ventanas-win'
 
 const app = setupJasWave({ label: 'editor-nativo', bridge: true })
 const CLASE_EMBED = 'JasWaveVstEmbedHost'
@@ -119,6 +119,26 @@ test('el EQ JasWave se muestra con su editor nativo alineado al panel', async ({
   // Modo ventana (flotante, con marco) y vuelta al panel
   await page.getByRole('button', { name: 'En ventana' }).click()
   await expect(page.getByText('UI nativa en ventana · misma instancia que el audio')).toBeVisible({ timeout: 60_000 })
+  // La ventana flotante es una ventana normal de Windows: título, minimizar, maximizar/restaurar y cerrar
+  const flotante = await waitFor('editor flotante', async () => editores().find((v) => v.visible) ?? null, 15_000, 500)
+  const { estilo, estiloEx } = estilosVentana(flotante.hwnd)
+  const WS_CAPTION = 0xc00000, WS_SYSMENU = 0x80000, WS_MINIMIZEBOX = 0x20000, WS_MAXIMIZEBOX = 0x10000, WS_EX_TOOLWINDOW = 0x80
+  expect((estilo & WS_CAPTION) === WS_CAPTION, 'barra de título').toBe(true)
+  for (const [bit, nombre] of [[WS_SYSMENU, 'cerrar'], [WS_MINIMIZEBOX, 'minimizar'], [WS_MAXIMIZEBOX, 'maximizar']] as const) {
+    expect(estilo & bit, nombre).toBeTruthy()
+  }
+  expect(estiloEx & WS_EX_TOOLWINDOW, 'sin WS_EX_TOOLWINDOW').toBe(0)
+  expect(flotante.rect.y, 'barra de título dentro de la pantalla').toBeGreaterThanOrEqual(0)
+  const capturaFlotante = path.join(testInfo.outputDir, 'editor-nativo-flotante.png')
+  capturarVentanaEntera(flotante.hwnd, capturaFlotante)
+  await testInfo.attach('editor-nativo-flotante', { path: capturaFlotante, contentType: 'image/png' })
+  // Maximizar y restaurar (el editor no se deforma: queda centrado si no es redimensionable)
+  mostrarVentana(flotante.hwnd, 3)
+  await waitFor('flotante maximizado', async () => (editores().find((v) => v.hwnd === flotante.hwnd)?.rect.w ?? 0) > flotante.rect.w, 10_000, 300)
+  const capturaMax = path.join(testInfo.outputDir, 'editor-nativo-flotante-maximizado.png')
+  capturarVentanaEntera(flotante.hwnd, capturaMax)
+  await testInfo.attach('editor-nativo-flotante-maximizado', { path: capturaMax, contentType: 'image/png' })
+  mostrarVentana(flotante.hwnd, 9)
   await page.getByRole('button', { name: 'En el panel' }).click()
   await expect(page.getByText('UI nativa embebida · misma instancia que el audio')).toBeVisible({ timeout: 60_000 })
   await comprobarAlineado()

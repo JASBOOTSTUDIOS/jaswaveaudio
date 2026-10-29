@@ -206,6 +206,7 @@ export type PluginHostProcessCommand =
   | { type: 'setMixInputRate'; sampleRate: number }
   | { type: 'setSlotMix'; slotId: string; gain: number; pan: number; muted: boolean }
   | { type: 'setMasterMix'; gain: number; muted: boolean }
+  | { type: 'setMonitorMix'; gain: number; muted: boolean }
   | { type: 'asioControlPanel'; deviceId?: string }
 
 export type PluginHostDiscoveredPlugin = {

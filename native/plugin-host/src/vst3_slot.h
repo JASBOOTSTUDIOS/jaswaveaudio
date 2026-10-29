@@ -60,10 +60,17 @@ public:
   void unload();
 
   void noteOn(int pitch, float velocity, int delaySamples = 0, int32_t lengthSamples = 0);
+  /** Con el pedal (CC64 ≥ 64) pisado, el note-off se retiene y se entrega al soltar (sustain del lado del host). */
   void noteOff(int pitch, int delaySamples = 0);
+  /** CC al plugin (kLegacyMIDICCOutEvent + IMidiMapping). CC64 además gobierna el sustain del host. */
   void midiCc(int cc, int value, int delaySamples = 0);
   /** Sustain off + all notes/sound off + noteOff 0-127. */
   void allNotesOff();
+  /**
+   * Stop duro: setProcessing(false) → setActive(false/true) → setProcessing(true). El ciclo de activación es
+   * la forma estándar de VST3 de vaciar el DSP (voces, reverb, delay); los parámetros y el estado se conservan.
+   */
+  void flushDsp();
   void setParameterNormalized(uint32_t paramId, double normalized);
   std::vector<Vst3ParamDesc> listParameters(int maxCount = 400);
   void setPlaying(bool playing);
@@ -92,6 +99,19 @@ public:
   bool editorEmbedded() const;
   void closeEditor();
   bool hasEditor() const;
+  /**
+   * Pin: la ventana flotante del editor queda siempre visible (HWND_TOPMOST, sin activar ni robar el foco).
+   * La marca sobrevive a cerrar/reabrir el editor; el orden entre anclados lo decide main.cpp (por índice).
+   */
+  void setEditorPinned(bool pinned);
+  bool editorPinned() const;
+  /** Sube la ventana anclada a la cima de la banda TOPMOST sin activarla. */
+  void raiseEditorPinned();
+  /** Oculta/muestra la ventana anclada (la app minimizada no deja editores colgados). */
+  void setEditorPinVisible(bool visible);
+  /** Consulta real WS_EX_TOPMOST del HWND (0/false si no hay ventana). */
+  bool editorTopmost() const;
+  std::uintptr_t editorHwnd() const;
   /** Título de la ventana flotante del editor (UTF-8), p. ej. «Piano · Sampler». */
   void setEditorTitle(const std::string& utf8) { editorTitle_ = utf8; }
 
@@ -125,4 +145,9 @@ private:
   std::atomic<bool> bypass_{false};
   std::atomic<uint32_t> exceptions_{0};   // excepciones SEH/C++ capturadas en process()
   int latencySamples_{0};
+  /** Estado capturado en suspendForAudioRestart/reprepare para reaplicarlo tras re-activar el plugin. */
+  std::vector<uint8_t> estadoTrasSuspender_;
 };
+
+/** Aviso (hilo UI) cuando una ventana de editor anclada se activa: main.cpp reaplica el orden por índice. */
+void vst3SetPinActivatedHook(void (*hook)());

@@ -26,7 +26,7 @@ import {
 import { transporteIA } from '../ia/transporte-ia'
 import { useCatalogoIA } from '../ia/use-catalogo-ia'
 
-import { formatClarificationAnswersForPrompt, type ClarificationQuestion } from '../motor/ai-clarify'
+import { formatClarificationAnswersForPrompt, ID_PREGUNTA_AGENTE, RESPUESTA_DECIDE_AGENTE, type ClarificationQuestion } from '../motor/ai-clarify'
 
 import { endCoproducerSession, startCoproducerSession } from '../motor/agent-context-bridge'
 import { ensureToolRegistryContext } from '../motor/agent-tool-bridge'
@@ -38,6 +38,8 @@ import {
   startCoproducerTurn,
   type EngineEvent,
 } from '../motor/agent-engine-host'
+import type { ComandoTurno } from '../motor/turno/turno-agente'
+import { KIND_BANDA } from '../motor/turno/turno-banda'
 
 import { PendingActionsCard } from './pending-actions-card'
 import { AgentChecklistCard } from './agent-checklist-card'
@@ -53,7 +55,8 @@ import { MusicBuildPreview } from './music-build-preview'
 import { AiModelPicker } from './ai-model-picker'
 import { SpeechToTextButton } from './speech-to-text-button'
 import { AudioSampleRecorder, type AttachedAudioSample } from './audio-sample-recorder'
-import { BandaLiveOrchestrator } from './banda-live-orchestrator'
+import { BandaLineaCompacta } from './banda-live-orchestrator'
+import { abrirPanelBanda, bandaEnChat, useVistaBanda, vistaBanda } from './banda-vista-store'
 import { orquestadorBandaSingleton } from '../motor/banda-orchestrator'
 
 import { copyTextToClipboard } from '../motor/copy-text'
@@ -72,7 +75,10 @@ import {
   type StoredChatMessage,
 } from '../motor/ai-chat-store'
 import { AgentModePicker } from './agent-mode-picker'
+import { CHIPS_COMANDO, ChipComando, MensajeConComando, separarComando, type TipoChip } from './chip-comando'
 import { ReasoningStepsPanel } from './reasoning-steps-panel'
+import { AgenteProgreso } from './agente-progreso'
+import { limpiarTextoUsuario } from '@jaswave/host-sdk'
 
 import { ChatMarkdown, sanitizeAssistantMarkdown } from '@jaswave/ui-markdown'
 import {
@@ -85,12 +91,12 @@ import {
 import { DocEditCards } from './doc-edit-card'
 
 import { setAgentRuntimePhase } from '../motor/agent-runtime-phase'
-import { ASK_AI_SELECTION_EVENT, JasWaveLogo, MAX_CITED_MESSAGES, agentModeLabel, clearMusicalSelectionAnchor, collectCitedMessages, ensureTerminalAuditMirror, filterMentionables, getMusicalSelectionAnchor, groupMentionables, listMentionables, loadAgentMode, mentionDraftAtCaret, messagePreview, nextAgentMode, requestOpenTool, resolveMode, saveAgentMode, selectionChipInsertText, selectionHasContext, subscribeMusicalSelection, useDAW, useDAWState, aprenderReglaOConocimiento } from '@jaswave/host-sdk'
+import { ASK_AI_SELECTION_EVENT, JasWaveLogo, MAX_CITED_MESSAGES, agentModeLabel, clearMusicalSelectionAnchor, collectCitedMessages, ensureTerminalAuditMirror, filterMentionables, getMusicalSelectionAnchor, groupMentionables, listMentionables, loadAgentMode, mentionDraftAtCaret, messagePreview, orderedMentionables, type MentionTrigger, nextAgentMode, requestOpenTool, resolveMode, saveAgentMode, selectionChipInsertText, selectionHasContext, subscribeMusicalSelection, useDAW, useDAWState, aprenderReglaOConocimiento, ayudaComando, describirCuando, deshacerUltimaReglaAprendida, parsearComandoChat, planificadorTareas } from '@jaswave/host-sdk'
 import type { AgentBudget, AgentBudgetUsage, AgentMode, AskAiSelectionDetail, EngineRun, Mentionable, TurnHandle } from '@jaswave/host-sdk'
 
 /** Texto en streaming sin bloques de protocolo (<<<ACTIONS …>>>, etc.). */
 function stripProtocolForStream(text: string): string {
-  return text.replace(/<<<[A-Z]+[\s\S]*?(?:[A-Z]+>>>|$)/g, '').trim()
+  return limpiarTextoUsuario(text.replace(/<<<[A-Z]+[\s\S]*?(?:[A-Z]+>>>|$)/g, ''))
 }
 
 function chatTitle(c: ChatConversation): string {
@@ -135,6 +141,8 @@ function formatMessageForCopy(msg: StoredChatMessage): string {
 
 export function CoProducerPanel() {
   const [inputMessage, setInputMessage] = useState('')
+  /** Modo elegido («/configurar», «/plan»…): se ve como etiqueta y se antepone al enviar. */
+  const [comandoChip, setComandoChip] = useState<{ tipo: TipoChip; token: string } | null>(null)
   const [conversation, setConversation] = useState<ChatConversation>(() =>
     ensureActiveConversation('default'),
   )
@@ -149,7 +157,9 @@ export function CoProducerPanel() {
   const [turnBudget, setTurnBudget] = useState<{ usage: AgentBudgetUsage; budget: AgentBudget } | null>(null)
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const [mentionStart, setMentionStart] = useState(0)
+  const [mentionTrigger, setMentionTrigger] = useState<MentionTrigger>('@')
   const [mentionIndex, setMentionIndex] = useState(0)
+  const mentionOptionRefs = useRef(new Map<string, HTMLButtonElement>())
   const [agentMode, setAgentMode] = useState<AgentMode>(() => loadAgentMode())
   /** Modo con el que corre (o corrió) el turno activo: indicador en el timeline. */
   const [activeTurnMode, setActiveTurnMode] = useState<AgentMode | null>(null)
@@ -160,12 +170,20 @@ export function CoProducerPanel() {
   const [selectionLabel, setSelectionLabel] = useState(() => getMusicalSelectionAnchor()?.label ?? '')
   const [attachedSample, setAttachedSample] = useState<AttachedAudioSample | null>(null)
   const [mostrarBandaLive, setMostrarBandaLive] = useState(false)
+  /** Con la banda trabajando, el chat sigue abierto: lo que se escribe va al agente en turno. */
+  const [bandaActiva, setBandaActiva] = useState(() => orquestadorBandaSingleton.getState().activo)
+  const vistaBandaActual = useVistaBanda()
 
   useEffect(() => {
+    let estabaActiva = orquestadorBandaSingleton.getState().activo
     return orquestadorBandaSingleton.subscribe((state) => {
-      if (state.activo) {
-        setMostrarBandaLive(true)
+      setBandaActiva(state.activo)
+      if (state.activo && !estabaActiva) {
+        // Al arrancar una producción: en el chat o en su panel, según lo que eligió el usuario.
+        if (vistaBanda().ubicacion === 'panel') abrirPanelBanda('empieza una producción', (id) => requestOpenTool(id as never, { zone: 'right' }))
+        else setMostrarBandaLive(true)
       }
+      estabaActiva = state.activo
     })
   }, [])
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -255,13 +273,6 @@ export function CoProducerPanel() {
     }
   }
 
-  useEffect(() => {
-    const el = inputRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
-  }, [inputMessage])
-
   useEffect(() => subscribeMusicalSelection(() => {
     setSelectionLabel(getMusicalSelectionAnchor()?.label ?? '')
   }), [])
@@ -332,11 +343,19 @@ export function CoProducerPanel() {
   const citedMessages = citedIds
     .map((id) => messages.find((m) => m.id === id))
     .filter((m): m is StoredChatMessage => Boolean(m))
-  const mentionHits =
+  const mentionFiltered =
     mentionQuery != null
-      ? filterMentionables(listMentionables(dawStore.obtenerEstado(), messages), mentionQuery)
+      ? filterMentionables(listMentionables(dawStore.obtenerEstado(), messages), mentionQuery, mentionTrigger)
       : []
-  const mentionGroups = groupMentionables(mentionHits)
+  const mentionGroups = groupMentionables(mentionFiltered)
+  // Lista plana en el orden en que se pintan los grupos: es la que recorren las flechas.
+  const mentionHits = orderedMentionables(mentionFiltered)
+  const mentionActive = mentionHits[Math.min(mentionIndex, Math.max(0, mentionHits.length - 1))]
+
+  useEffect(() => {
+    if (mentionQuery == null || !mentionActive) return
+    mentionOptionRefs.current.get(mentionActive.id)?.scrollIntoView({ block: 'nearest' })
+  }, [mentionActive?.id, mentionQuery])
 
   const citeMessage = (msg: StoredChatMessage) => {
     if (!msg.content?.trim() && !msg.actionsSummary?.trim()) return
@@ -376,8 +395,17 @@ export function CoProducerPanel() {
       item.insertText ??
       (item.label.includes(' ') ? `@"${item.label}"` : `@${item.label}`)
     const next = `${before}${token} ${after}`
-    setInputMessage(next)
     setMentionQuery(null)
+    if (!comandoChip && !before.trim()) {
+      const chip = separarComando(next.replace(/^\s+/, ''), true)
+      if (chip) {
+        setComandoChip({ tipo: chip.tipo, token: chip.token })
+        setInputMessage(chip.resto)
+        requestAnimationFrame(() => el?.focus())
+        return
+      }
+    }
+    setInputMessage(next)
     requestAnimationFrame(() => {
       const pos = (before + token + ' ').length
       el?.focus()
@@ -386,12 +414,27 @@ export function CoProducerPanel() {
   }
 
   const onInputChange = (value: string, caret: number) => {
+    // «/configurar » escrito a mano (o pegado) se convierte en la etiqueta del modo.
+    const chip = comandoChip ? null : separarComando(value, true)
+    if (chip) {
+      setComandoChip({ tipo: chip.tipo, token: chip.token })
+      setMentionQuery(null)
+      setInputMessage(chip.resto)
+      const pos = Math.max(0, caret - (value.length - chip.resto.length))
+      requestAnimationFrame(() => inputRef.current?.setSelectionRange(pos, pos))
+      return
+    }
     setInputMessage(value)
     const draft = mentionDraftAtCaret(value, caret)
     if (draft) {
+      // onKeyUp también llama aquí: solo se vuelve a la primera opción si cambió la búsqueda,
+      // si no, soltar la flecha devolvería la selección arriba.
+      if (draft.query !== mentionQuery || draft.trigger !== mentionTrigger || draft.start !== mentionStart) {
+        setMentionIndex(0)
+      }
       setMentionQuery(draft.query)
       setMentionStart(draft.start)
-      setMentionIndex(0)
+      setMentionTrigger(draft.trigger)
     } else {
       setMentionQuery(null)
     }
@@ -538,7 +581,7 @@ export function CoProducerPanel() {
           ? { ...msg.agentChecklist, status: 'stopped' as const }
           : msg?.agentChecklist
       patchMessage(convId, msgId, {
-        content: '⏹ Ejecución detenida.',
+        content: 'Detenido.',
         ...(checklist ? { agentChecklist: checklist } : {}),
       })
       const refreshed = getConversation(convId)
@@ -600,6 +643,13 @@ export function CoProducerPanel() {
       case 'agent.delta':
         setStreamText((prev) => (prev + e.text).slice(-12_000))
         return
+      case 'agent.message':
+        // El agente empieza un paso nuevo: el texto en vivo del paso anterior ya no aplica.
+        if ((e.data as { kind?: string } | undefined)?.kind === 'stream-reset') {
+          setStreamText('')
+          return
+        }
+        break
       case 'budget':
         setTurnBudget({ usage: e.usage, budget: e.budget })
         return
@@ -640,7 +690,7 @@ export function CoProducerPanel() {
     }
   }
 
-  const runEngineTurn = async (opts: { text: string; citedIds?: string[]; citedMessageIds?: string[]; kind?: string }) => {
+  const runEngineTurn = async (opts: { text: string; citedIds?: string[]; citedMessageIds?: string[]; kind?: string; comando?: ComandoTurno }) => {
     setHarnessPhase('Trabajando en el DAW…')
     setActiveTurnMode(agentMode)
     const { handle, assistantMsgId } = startCoproducerTurn(dawStore, {
@@ -652,6 +702,7 @@ export function CoProducerPanel() {
       citedMessageIds: opts.citedMessageIds,
       preferLocal: aiStatus !== 'online',
       kind: opts.kind,
+      comando: opts.comando,
     })
     const refreshed = getConversation(conversation.id)
     if (refreshed) setConversation(refreshed)
@@ -659,80 +710,150 @@ export function CoProducerPanel() {
     await followTurn(handle, conversation.id, assistantMsgId)
   }
 
+  /** Respuesta local (sin modelo): deja constancia del comando y su resultado en la conversación. */
+  const responderLocal = (textoUsuario: string, respuesta: string) => {
+    appendMessage(conversation.id, { role: 'user', content: textoUsuario })
+    appendMessage(conversation.id, { role: 'assistant', content: respuesta })
+    const refreshed = getConversation(conversation.id)
+    if (refreshed) setConversation(refreshed)
+  }
+
+  /** `/programar …`: crea, lista o cancela tareas del planificador. */
+  const gestionarProgramar = (textoUsuario: string, args: string) => {
+    const ahora = Date.now()
+    if (/^(lista|list|ls)$/i.test(args)) {
+      const tareas = planificadorTareas.lista(projectId)
+      responderLocal(
+        textoUsuario,
+        tareas.length
+          ? `**Tareas programadas** (${tareas.length}):\n${tareas.map((t, i) => `${i + 1}. ${t.prompt} — ${describirCuando(t, ahora)}`).join('\n')}\n\nPara cancelar una escribe, por ejemplo, «/programar cancelar 1».`
+          : 'No hay tareas programadas. Por ejemplo: «/programar en 10 minutos revisar la mezcla».',
+      )
+      return
+    }
+    const cancelar = /^(?:cancelar|cancel|borrar)\s+(\S+)$/i.exec(args)
+    if (cancelar) {
+      const lista = planificadorTareas.lista(projectId)
+      const n = Number(cancelar[1])
+      const objetivo = Number.isInteger(n) && n >= 1 ? lista[n - 1] : lista.find((t) => t.id === cancelar[1])
+      const ok = objetivo ? planificadorTareas.cancelar(projectId, objetivo.id) : false
+      responderLocal(textoUsuario, ok ? `Cancelada: «${objetivo!.prompt}».` : 'No encontré esa tarea. Escribe «/programar lista» para ver las que hay.')
+      return
+    }
+    if (!args) {
+      responderLocal(textoUsuario, ayudaComando('programar'))
+      return
+    }
+    const t = planificadorTareas.programar(projectId, args)
+    responderLocal(
+      textoUsuario,
+      `**Tarea programada** ${describirCuando(t, Date.now())}:\n> ${t.prompt}\n\nLa haré yo mismo mientras este proyecto esté abierto.`,
+    )
+  }
+
+  /** El texto tal como lo recibe el motor: la etiqueta de modo vuelve a ser «/comando …». */
+  const componerEntrada = (texto: string) => (comandoChip ? `${comandoChip.token} ${texto}` : texto)
+
+  const limpiarEntrada = () => {
+    setInputMessage('')
+    setComandoChip(null)
+  }
+
   const handleSendMessage = async (overrideText?: string) => {
-    let rawInput = (overrideText ?? inputMessage).trim()
+    const textoUsuario = (overrideText ?? componerEntrada(inputMessage)).trim()
+    const cmd = parsearComandoChat(textoUsuario)
+
+    // Comandos locales (no llaman al modelo): se resuelven aunque haya un turno en curso
+    if (cmd && (cmd.tipo === 'aprender' || cmd.tipo === 'aprender-deshacer' || cmd.tipo === 'programar')) {
+      try {
+        if (cmd.tipo === 'aprender-deshacer') {
+          responderLocal(
+            textoUsuario,
+            deshacerUltimaReglaAprendida(projectId) ? 'Listo, olvidé la última preferencia que me enseñaste.' : 'No hay ninguna preferencia que olvidar.',
+          )
+        } else if (cmd.tipo === 'aprender') {
+          if (!cmd.texto) {
+            responderLocal(textoUsuario, ayudaComando('aprender'))
+          } else {
+            const r = await aprenderReglaOConocimiento(projectId, cmd.texto)
+            responderLocal(
+              textoUsuario,
+              r.duplicada
+                ? `Eso ya lo tenía en cuenta:\n> ${r.regla}`
+                : `**Aprendido.** Lo tendré en cuenta en este proyecto:\n> ${r.regla}\n\nSi me equivoqué, escribe «/aprender deshacer».`,
+            )
+          }
+        } else {
+          gestionarProgramar(textoUsuario, cmd.texto)
+        }
+        limpiarEntrada()
+      } catch (err) {
+        // El texto se conserva en el input para corregirlo
+        responderLocal(textoUsuario, `No pude hacerlo: ${err instanceof Error ? err.message : String(err)}`)
+      }
+      return
+    }
+
+    // Mientras la banda trabaja, el chat habla con el agente en turno: lo que el usuario ve y oye y los
+    // agentes no. «@Bajista …» o «Bajista: …» se lo dice a uno en particular.
+    if (!cmd && textoUsuario && orquestadorBandaSingleton.getState().activo) {
+      const d = orquestadorBandaSingleton.destinatarioDeTexto(textoUsuario)
+      if (orquestadorBandaSingleton.enviarNota(d.texto, d.para)) {
+        const nombre = d.para ? orquestadorBandaSingleton.getState().participantes.find((p) => p.id === d.para)?.nombre : undefined
+        responderLocal(textoUsuario, nombre ? `Se lo paso a ${nombre}; en la banda verás cuándo lo tiene en cuenta.` : 'Se lo paso al agente en turno; en la banda verás cuándo lo tiene en cuenta.')
+        limpiarEntrada()
+        return
+      }
+    }
+
+    let rawInput = textoUsuario
     if (!rawInput && attachedSample) {
-      rawInput = `He grabado esta nota de voz: "${attachedSample.name}". Por favor analiza su melodía o ritmo con las herramientas DSP y crea el clip MIDI en el DAW.`
+      rawInput = `He grabado esta nota de voz: "${attachedSample.name}". Por favor analiza su melodía o ritmo con las herramientas DSP (analysis.voiceToMelody o analysis.voiceToDrums con audioRef "${attachedSample.id}") y crea el clip MIDI en el DAW.`
     }
     if (!rawInput || isGenerating) return
 
-    if (attachedSample && !rawInput.includes(`"${attachedSample.name}"`)) {
-      rawInput = `[Audio adjunto: "${attachedSample.name}" (${attachedSample.durationSec.toFixed(1)}s, ${attachedSample.sampleRate}Hz)]\n${rawInput}`
+    // /meta sin objetivo no debe inventarse uno (antes disparaba «producción completa»)
+    if (cmd?.tipo === 'meta' && !cmd.texto) {
+      limpiarEntrada()
+      responderLocal(textoUsuario, ayudaComando('meta'))
+      return
     }
 
     const lower = rawInput.toLowerCase()
     const esPedidoBanda =
-      lower.startsWith('/banda') ||
+      cmd?.tipo === 'banda' ||
       lower.startsWith('banda:') ||
       lower.includes('producir tema completo') ||
       lower.includes('orquesta virtual') ||
       lower.includes('producción completa con banda')
 
     if (esPedidoBanda) {
-      const promptLimpio = rawInput.replace(/^\/banda\s*/i, '').replace(/^banda:\s*/i, '').trim()
+      // La producción la hace el equipo de agentes (turno «banda»); el panel en vivo sigue sus etapas.
       setMostrarBandaLive(true)
-      setInputMessage('')
-      void orquestadorBandaSingleton.iniciarSesionBanda(
-        promptLimpio || 'Componer y producir canción completa con orquesta virtual y control de calidad QA',
-        dawStore,
-      )
+      limpiarEntrada()
+      await runEngineTurn({ text: rawInput, kind: KIND_BANDA })
       return
     }
 
-    // Intercepción de comandos de agentes y base de conocimiento
-    if (lower.startsWith('/aprender') || lower.startsWith('/learn')) {
-      const regla = rawInput.replace(/^\/(?:aprender|learn)\s*/i, '').trim()
-      setInputMessage('')
-      if (regla) {
-        await aprenderReglaOConocimiento(projectId, regla)
-        appendMessage(conversation.id, {
-          role: 'user',
-          content: rawInput,
-        })
-        appendMessage(conversation.id, {
-          role: 'assistant',
-          content: `✅ **Preferencia / Regla aprendida y guardada** en \`docs/conocimiento.md\` bajo RBAC de propietario (Owner):\n> ${regla}\n\nLos especialistas (@guitarrista, @baterista, etc.) y el coproductor aplicarán esta directiva en todos los turnos.`,
-        })
-        const refreshed = getConversation(conversation.id)
-        if (refreshed) setConversation(refreshed)
-        return
-      }
-    }
-
-    if (lower.startsWith('/meta') || lower.startsWith('/goal')) {
-      const metaObj = rawInput.replace(/^\/(?:meta|goal)\s*/i, '').trim()
-      rawInput = `[DIRECTIVA /META: Ejecuta este objetivo continuo y exhaustivo sin detenerte hasta completarlo totalmente: "${metaObj || 'Finalizar producción completa'}"]\n${rawInput}`
-    } else if (lower.startsWith('/entrevista') || lower.startsWith('/grill-me')) {
-      const tema = rawInput.replace(/^\/(?:entrevista|grill-me)\s*/i, '').trim()
-      rawInput = `[DIRECTIVA /ENTREVISTA: Activa el modo de alineación interactiva. Hazme preguntas de opción múltiple usando <<<CLARIFY [ ... ] CLARIFY>>> para definir las decisiones del proyecto: "${tema || 'Definición de estilo, instrumentación y mezcla'}"]\n${rawInput}`
-    } else if (lower.startsWith('/plan')) {
-      const planTxt = rawInput.replace(/^\/plan\s*/i, '').trim()
-      rawInput = `[DIRECTIVA /PLAN: Crea o actualiza docs/plan.md con tareas comprobables e intención musical, y evalúa el progreso respecto al DAW: "${planTxt || 'Revisar y estructurar plan de trabajo'}"]\n${rawInput}`
-    } else if (lower.startsWith('/programar') || lower.startsWith('/schedule')) {
-      const progTxt = rawInput.replace(/^\/(?:programar|schedule)\s*/i, '').trim()
-      rawInput = `[DIRECTIVA /PROGRAMAR: Configura un recordatorio o tarea programada para: "${progTxt || 'Revisión periódica de mezcla'}"]\n${rawInput}`
+    // /meta, /plan, /entrevista y /configurar viajan como modo del turno; después, el prefijo del audio adjunto
+    const comando: ComandoTurno | undefined =
+      cmd && (cmd.tipo === 'meta' || cmd.tipo === 'plan' || cmd.tipo === 'entrevista' || cmd.tipo === 'configurar')
+        ? { tipo: cmd.tipo, texto: cmd.texto }
+        : undefined
+    if (attachedSample && !rawInput.includes(`"${attachedSample.name}"`)) {
+      rawInput = `[Audio adjunto: "${attachedSample.name}" · audioRef: "${attachedSample.id}" (${attachedSample.durationSec.toFixed(1)}s)]\n${rawInput}`
     }
 
     const cited = collectCitedMessages(rawInput, citedIds, dawStore.obtenerEstado(), messages)
     const turnCitedIds = citedIds
-    setInputMessage('')
+    limpiarEntrada()
     setCitedIds([])
-    await runEngineTurn({ text: rawInput, citedIds: turnCitedIds, citedMessageIds: cited.map((m) => m.id) })
+    await runEngineTurn({ text: rawInput, citedIds: turnCitedIds, citedMessageIds: cited.map((m) => m.id), comando })
   }
 
   const runQuick = (label: string) => {
     if (isGenerating) return
-    setInputMessage('')
+    limpiarEntrada()
     // Chips de inicio: turno «quick» del motor (respuesta local, sin modelo remoto).
     void runEngineTurn({ text: label, kind: 'quick' })
   }
@@ -760,6 +881,23 @@ export function CoProducerPanel() {
   handleSendRef.current = (t?: string) => {
     void handleSendMessage(t)
   }
+
+  // /programar: las tareas vencidas de este proyecto se lanzan como un turno normal; si hay un turno en
+  // curso devuelve false y el planificador las reintenta en su siguiente ciclo (no se pierden).
+  const isGeneratingRef = useRef(false)
+  isGeneratingRef.current = isGenerating
+  useEffect(() => {
+    const quitar = planificadorTareas.registrarEjecutor((t) => {
+      if (isGeneratingRef.current) return false
+      handleSendRef.current(`Tarea programada: ${t.prompt}`)
+      return true
+    }, projectId)
+    planificadorTareas.iniciar()
+    return () => {
+      quitar()
+      planificadorTareas.detener()
+    }
+  }, [projectId])
 
   /** A3: si el texto suena a otro modo, la UI sugiere cambiar (el selector sigue mandando). */
   const modeSuggestion = inputMessage.trim() ? resolveMode(agentMode, inputMessage).suggestion : undefined
@@ -798,16 +936,21 @@ export function CoProducerPanel() {
       }}
       className="relative flex h-full w-full min-w-0 flex-col bg-panel outline-none"
     >
-      <header className="flex flex-col gap-1.5 border-b border-border px-3 py-2">
-        <div className="flex items-center gap-2.5">
-          <JasWaveLogo className="h-10 w-auto max-w-[120px] shrink-0" alt="Asistente Jas" />
-          <div className="min-w-0 flex-1 truncate">
+      {/*
+        La cabecera se adapta al ancho del PANEL (consultas de contenedor, no de la ventana): lo que no cabe baja a
+        otra línea o se queda en icono con su título; nunca se sale ni obliga a hacer scroll horizontal.
+      */}
+      <header className="@container flex min-w-0 flex-col gap-1.5 border-b border-border px-3 py-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+          <JasWaveLogo className="hidden h-10 w-auto max-w-[120px] shrink-0 @[340px]:block" alt="Asistente Jas" />
+          {/* Base ancha: si título y botones no caben juntos, los botones bajan de fila en vez de cortar el título. */}
+          <div className="min-w-0 shrink grow basis-[11rem] truncate">
             <h2 className="truncate text-[13px] font-semibold text-foreground">Asistente Jas</h2>
             <p className="truncate text-[11px] text-muted-foreground">
               {projectName} • {trackCount} pistas
             </p>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">
             <button
               type="button"
               title="Alejar texto del chat (Ctrl+-)"
@@ -816,7 +959,7 @@ export function CoProducerPanel() {
             >
               <ZoomOut className="size-3.5" />
             </button>
-            <span className="min-w-[2.4rem] text-center text-[10px] tabular-nums text-muted-foreground">
+            <span className="hidden min-w-[2.4rem] text-center text-[10px] tabular-nums text-muted-foreground @[380px]:inline">
               {Math.round(chatTextZoom * 100)}%
             </span>
             <button
@@ -858,8 +1001,13 @@ export function CoProducerPanel() {
             </button>
             <button
               type="button"
+              aria-label="Banda Virtual"
               title={mostrarBandaLive ? 'Ocultar Orquesta Virtual' : 'Ver Orquesta Virtual Multi-Agente'}
-              onClick={() => setMostrarBandaLive((prev) => !prev)}
+              onClick={() =>
+                vistaBandaActual.ubicacion === 'panel'
+                  ? abrirPanelBanda('botón Banda Virtual del chat', (id) => requestOpenTool(id as never, { zone: 'right' }))
+                  : setMostrarBandaLive((prev) => !prev)
+              }
               className={`flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors ${
                 mostrarBandaLive
                   ? 'bg-purple-600/25 text-purple-300 ring-1 ring-purple-500/50'
@@ -867,7 +1015,7 @@ export function CoProducerPanel() {
               }`}
             >
               <Users className="size-3.5 text-purple-400" />
-              <span className="hidden sm:inline">Banda Virtual</span>
+              <span className="hidden @[440px]:inline">Banda Virtual</span>
             </button>
           </div>
         </div>
@@ -934,7 +1082,7 @@ export function CoProducerPanel() {
       ) : null}
       {interruptedRun && !isGenerating ? (
         <div className="flex items-center gap-2 border-b border-border bg-accent-amber/10 px-3 py-1.5 text-[11px] text-foreground" data-testid="engine-interrupted">
-          <span className="min-w-0 flex-1 truncate">
+          <span className="min-w-0 flex-1 break-words">
             {interruptedRun.status === 'paused' ? 'Turno en pausa' : 'Turno interrumpido'}: «{messagePreview(interruptedRun.userText, 40)}»
           </span>
           <button type="button" className="shrink-0 text-accent-amber hover:underline" onClick={resumeInterrupted} data-testid="turn-resume">
@@ -955,7 +1103,7 @@ export function CoProducerPanel() {
           >
             {agentModeLabel(activeTurnMode ?? agentMode)}
           </span>
-          <span className="min-w-0 flex-1 truncate">{harnessPhase}</span>
+          <span className="min-w-0 flex-1 break-words">{harnessPhase}</span>
           {turnBudget ? (
             <span
               className="shrink-0 font-mono text-[10px] text-muted-foreground"
@@ -997,9 +1145,10 @@ export function CoProducerPanel() {
         </div>
       ) : null}
 
-      {mostrarBandaLive && (
-        <div className="shrink-0 border-b border-border p-2 bg-panel-base/70 max-h-[380px] overflow-y-auto">
-          <BandaLiveOrchestrator />
+      {/* En el chat la banda es una línea; el detalle sale al pasar el ratón y la vista completa, en su panel. */}
+      {mostrarBandaLive && bandaEnChat(vistaBandaActual) && (
+        <div className="relative z-20 shrink-0 border-b border-border bg-panel-base/70 px-3 py-1.5">
+          <BandaLineaCompacta />
         </div>
       )}
 
@@ -1064,11 +1213,17 @@ export function CoProducerPanel() {
                     live={isGenerating && msg.id === messages.at(-1)?.id}
                   />
                 ) : null}
+                {msg.agente ? (
+                  <AgenteProgreso
+                    progreso={msg.agente}
+                    vivo={isGenerating && msg.id === liveAssistantMsgIdRef.current && msg.agente.estado === 'trabajando'}
+                  />
+                ) : null}
                 {msg.content ? (
-                  <ChatMarkdown text={msg.content} />
+                  <MensajeConComando texto={msg.content} usuario={msg.role === 'user'} />
                 ) : isGenerating && msg.role === 'assistant' && streamText && msg.id === liveAssistantMsgIdRef.current ? (
                   <ChatMarkdown text={stripProtocolForStream(streamText)} />
-                ) : isGenerating && msg.role === 'assistant' ? (
+                ) : isGenerating && msg.role === 'assistant' && !msg.agente ? (
                   <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground/70">
                     <Loader2 className="size-3.5 animate-spin" /> {harnessPhase || 'Trabajando en el DAW…'}
                   </span>
@@ -1116,6 +1271,7 @@ export function CoProducerPanel() {
                     onSkip={() => {
                       const qs = msg.clarifications!.questions as ClarificationQuestion[]
                       const isKael = qs.some((q) => q.id === 'kael_feedback')
+                      const delAgente = qs.some((q) => q.id === ID_PREGUNTA_AGENTE)
                       patchMessage(conversation.id, msg.id, {
                         clarifications: {
                           ...msg.clarifications!,
@@ -1128,7 +1284,9 @@ export function CoProducerPanel() {
                               qs,
                               [{ id: 'kael_feedback', optionIndexes: [0], value: 'Sí, quedó bien' }],
                             )
-                          : 'Usa defaults razonables según el plan y mi pedido. Emite <<<ACTIONS>>> ahora (propuesta para Aplicar). No preguntes más.',
+                          : delAgente
+                            ? RESPUESTA_DECIDE_AGENTE
+                            : 'Usa defaults razonables según el plan y mi pedido. Emite <<<ACTIONS>>> ahora (propuesta para Aplicar). No preguntes más.',
                       )
                     }}
                   />
@@ -1276,7 +1434,7 @@ export function CoProducerPanel() {
 
       {pendingProposal ? (
         <div className="flex items-center gap-3 border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">
-          <span className="min-w-0 flex-1 truncate">
+          <span className="min-w-0 flex-1 break-words">
             {pendingProposal.count} cambio{pendingProposal.count === 1 ? '' : 's'} por aplicar
           </span>
           <button
@@ -1332,27 +1490,47 @@ export function CoProducerPanel() {
           </div>
         ) : null}
         {mentionQuery != null ? (
-          <div className="absolute inset-x-3 bottom-full z-20 mb-1 max-h-64 overflow-y-auto rounded-md border border-border bg-panel-raised shadow-lg">
+          <div
+            id="jw-mention-list"
+            role="listbox"
+            aria-label={mentionTrigger === '/' ? 'Comandos' : 'Referencias'}
+            className="absolute inset-x-3 bottom-full z-20 mb-1 max-h-64 overflow-y-auto overscroll-contain rounded-md border border-border bg-panel-raised shadow-lg"
+          >
+            <div className="border-b border-border px-3 py-1 text-[10px] text-muted-foreground">
+              {mentionTrigger === '/'
+                ? '¿Qué quieres hacer?'
+                : 'Menciona algo de tu proyecto'}
+            </div>
             {mentionHits.length === 0 ? (
               <div className="px-3 py-2 text-[11px] text-muted-foreground">Sin coincidencias</div>
             ) : (
               mentionGroups.map((g) => (
                 <div key={g.kind}>
-                  <div className="sticky top-0 bg-panel-raised px-3 py-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <div className="sticky top-0 z-10 bg-panel-raised px-3 py-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
                     {g.label}
                   </div>
                   {g.items.map((item) => {
-                    const flatIndex = mentionHits.indexOf(item)
-                    const active = flatIndex === mentionIndex
+                    const active = item.id === mentionActive?.id
                     return (
                       <button
                         key={item.id}
+                        id={`jw-mention-${item.id}`}
+                        ref={(el) => {
+                          if (el) mentionOptionRefs.current.set(item.id, el)
+                          else mentionOptionRefs.current.delete(item.id)
+                        }}
+                        role="option"
+                        aria-selected={active}
                         type="button"
                         onMouseDown={(e) => {
                           e.preventDefault()
                           insertMention(item)
                         }}
-                        className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] ${
+                        onMouseMove={() => {
+                          const idx = mentionHits.findIndex((h) => h.id === item.id)
+                          if (idx >= 0 && idx !== mentionIndex) setMentionIndex(idx)
+                        }}
+                        className={`flex w-full scroll-my-7 items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] ${
                           active ? 'bg-accent-amber/20' : 'hover:bg-accent-amber/15'
                         }`}
                       >
@@ -1383,7 +1561,7 @@ export function CoProducerPanel() {
           {selectionLabel ? (
             <div className="flex items-center gap-2 rounded-md bg-accent-amber/10 px-2 py-1 text-[11px] text-foreground ring-1 ring-accent-amber/40">
               <Quote className="size-3 shrink-0 text-accent-amber" />
-              <span className="min-w-0 flex-1 truncate" title={selectionLabel}>
+              <span className="min-w-0 flex-1 break-words" title={selectionLabel}>
                 Contexto: {selectionLabel}
               </span>
               <button
@@ -1405,7 +1583,7 @@ export function CoProducerPanel() {
               className="flex items-center gap-2 rounded-md bg-panel-raised px-2 py-1 text-[11px] text-muted-foreground ring-1 ring-border"
               data-testid="mode-suggestion"
             >
-              <span className="min-w-0 flex-1 truncate">
+              <span className="min-w-0 flex-1 break-words">
                 Este pedido suena a modo «{agentModeLabel(modeSuggestion)}».
               </span>
               <button
@@ -1430,27 +1608,40 @@ export function CoProducerPanel() {
             }}
             disabled={isGenerating}
           />
-          <div className="flex items-end gap-2 rounded-lg bg-panel-raised px-2 py-2 ring-1 ring-border focus-within:ring-2 focus-within:ring-ring">
-            <AgentModePicker value={agentMode} onChange={setAgentMode} />
-            <SpeechToTextButton
-              disabled={isGenerating}
-              onTranscript={(text) => {
-                setInputMessage((prev) => {
-                  const spacer = prev && !prev.endsWith(' ') ? ' ' : ''
-                  return prev + spacer + text
-                })
-                if (inputRef.current) {
-                  inputRef.current.focus()
-                }
-              }}
-            />
+          {comandoChip ? (
+            <div className="flex items-center gap-1.5 px-0.5">
+              <ChipComando
+                tipo={comandoChip.tipo}
+                onQuitar={() => {
+                  setComandoChip(null)
+                  inputRef.current?.focus()
+                }}
+              />
+            </div>
+          ) : null}
+          {/* Texto a todo el ancho y, debajo, la barra (modo, dictado, enviar): en paneles estrechos nada se aprieta. */}
+          <div className="flex min-w-0 flex-col gap-1.5 rounded-lg bg-panel-raised px-2 py-2 ring-1 ring-border focus-within:ring-2 focus-within:ring-ring">
           <textarea
             ref={inputRef}
             rows={1}
             value={inputMessage}
             onChange={(e) => onInputChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
-            onKeyUp={(e) => onInputChange(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+            onKeyUp={(e) => {
+              // Escape, Enter, Tab y las flechas verticales las gestiona onKeyDown; reevaluar aquí reabriría la lista.
+              if (['Escape', 'Enter', 'Tab', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown'].includes(e.key)) return
+              onInputChange(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)
+            }}
             onKeyDown={(e) => {
+              if (
+                e.key === 'Backspace' &&
+                comandoChip &&
+                e.currentTarget.selectionStart === 0 &&
+                e.currentTarget.selectionEnd === 0
+              ) {
+                e.preventDefault()
+                setComandoChip(null)
+                return
+              }
               if (e.key === 'Escape') {
                 setMentionQuery(null)
                 if (isGenerating) stopGeneration()
@@ -1462,45 +1653,74 @@ export function CoProducerPanel() {
                 return
               }
               if (mentionQuery != null && mentionHits.length > 0) {
-                if (e.key === 'ArrowDown') {
+                const total = mentionHits.length
+                const mover = (siguiente: number) => {
                   e.preventDefault()
-                  setMentionIndex((i) => Math.min(mentionHits.length - 1, i + 1))
-                } else if (e.key === 'ArrowUp') {
+                  setMentionIndex(((siguiente % total) + total) % total)
+                }
+                if (e.key === 'ArrowDown') mover(mentionIndex + 1)
+                else if (e.key === 'ArrowUp') mover(mentionIndex - 1)
+                else if (e.key === 'PageDown') mover(Math.min(total - 1, mentionIndex + 8))
+                else if (e.key === 'PageUp') mover(Math.max(0, mentionIndex - 8))
+                else if (e.key === 'Home' && e.ctrlKey) mover(0)
+                else if (e.key === 'End' && e.ctrlKey) mover(total - 1)
+                else if (e.key === 'Enter' || e.key === 'Tab') {
                   e.preventDefault()
-                  setMentionIndex((i) => Math.max(0, i - 1))
-                } else if (e.key === 'Enter') {
-                  e.preventDefault()
-                  insertMention(mentionHits[mentionIndex] ?? mentionHits[0]!)
-                } else if (e.key === 'Tab') {
-                  e.preventDefault()
-                  insertMention(mentionHits[mentionIndex] ?? mentionHits[0]!)
+                  if (mentionActive) insertMention(mentionActive)
                 }
               }
             }}
-            disabled={isGenerating}
-            placeholder="Pide un clip, o @ / Ctrl+L selección… (Shift+Enter nueva línea)"
-            className="max-h-40 min-h-8 flex-1 resize-none bg-transparent py-1 text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
+            aria-controls={mentionQuery != null ? 'jw-mention-list' : undefined}
+            aria-activedescendant={mentionQuery != null && mentionActive ? `jw-mention-${mentionActive.id}` : undefined}
+            disabled={isGenerating && !bandaActiva}
+            placeholder={
+              comandoChip
+                ? CHIPS_COMANDO[comandoChip.tipo].pista
+                : bandaActiva
+                  ? 'Dile a la banda lo que ves y ellos no («@Bajista …» para uno en concreto)'
+                  : 'Pide lo que quieras o escribe /'
+            }
+            // field-sizing: crece con el texto y con la pista (placeholder) al estrecharse, sin scroll interno.
+            className="max-h-40 min-h-8 w-full [field-sizing:content] min-w-0 resize-none bg-transparent px-1 py-1 text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
           />
+          <div className="flex min-w-0 items-center gap-2">
+            <AgentModePicker value={agentMode} onChange={setAgentMode} />
+            {/* G7: el host compone ancla + dictado (sin duplicar); en «enviar al pausar» manda el mensaje. */}
+            <SpeechToTextButton
+              disabled={isGenerating && !bandaActiva}
+              value={inputMessage}
+              inputRef={inputRef}
+              onChange={(text) => setInputMessage(text)}
+              onAutoSubmit={(text) => {
+                setMentionQuery(null)
+                void handleSendMessage(componerEntrada(text))
+                requestAnimationFrame(() => inputRef.current?.focus())
+              }}
+            />
+            <div className="flex-1" />
+          {/* Con la banda trabajando se ven los dos: detener la producción y enviar una indicación. */}
           {isGenerating ? (
             <button
               type="button"
               onClick={stopGeneration}
               aria-label="Detener agente"
-              title="Detener"
+              title={bandaActiva ? 'Detener la banda' : 'Detener'}
               className="flex size-7 items-center justify-center rounded-full bg-destructive text-destructive-foreground transition-opacity hover:opacity-90"
             >
               <Square className="size-3 fill-current" />
             </button>
-          ) : (
+          ) : null}
+          {isGenerating && !bandaActiva ? null : (
             <button
               type="submit"
-              disabled={!inputMessage.trim() && !attachedSample}
-              aria-label="Enviar mensaje"
+              disabled={!inputMessage.trim() && !attachedSample && !comandoChip}
+              aria-label={bandaActiva ? 'Enviar indicación a la banda' : 'Enviar mensaje'}
               className="flex size-7 items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-90 disabled:opacity-40"
             >
               <ArrowUp className="size-4" />
             </button>
           )}
+          </div>
           </div>
         </form>
       </div>

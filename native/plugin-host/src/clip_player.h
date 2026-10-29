@@ -28,8 +28,23 @@ void clip_unload_all();
  * Programa reproducción relativa al reloj de transporte.
  * startSample / durationSamples en el sample rate del device (host clock).
  */
+/** Fundidos de un clip: límites del clip entero en muestras de la línea de tiempo y largo de cada fade. */
+struct ClipFades {
+  int64_t clipStartSample{0};
+  int64_t clipEndSample{0};
+  int64_t inSamples{0};
+  int64_t outSamples{0};
+  int inCurve{0};   // 0 lineal · 1 exponencial · 2 logarítmica
+  int outCurve{0};
+  /** Clip invertido: la región [regionStart, regionStart+regionLen) del audio se lee al revés. */
+  bool reverse{false};
+  int64_t regionStart{0};
+  int64_t regionLen{0};
+};
+
 void clip_schedule(const std::string& clipId, uint16_t trackIndex, int64_t startSample,
-                   int64_t durationSamples, int64_t sourceOffsetSamples, float gain, float pan);
+                   int64_t durationSamples, int64_t sourceOffsetSamples, float gain, float pan,
+                   const ClipFades& fades = {});
 void clip_stop_all_scheduled();
 
 /** Suma audio de clips activos al stem interleaved (REPLACE semantics: add into buffer). */

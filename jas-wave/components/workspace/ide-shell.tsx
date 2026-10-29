@@ -9,6 +9,16 @@ import { usePluginEditorTabTitle } from '@/components/plugin-editor-panel'
 
 const ZONE_DROP = 'application/x-jaswave-tool'
 
+/**
+ * Herramientas cuyo montaje es caro (cientos de nodos, canvas por clip, formas de onda):
+ * al cambiar de pestaña se quedan montadas pero ocultas (`visibility: hidden`, conserva
+ * el scroll). Desmontar/remontar el arrange con ~90 clips bloqueaba el hilo principal
+ * cientos de ms y dejaba sin notas al scheduler MIDI del renderer.
+ * El resto sigue desmontándose para no pagar re-renders de paneles ocultos (p. ej. el
+ * mixer con medidores, o el piano roll que fija el foco de audición al montarse).
+ */
+const HERRAMIENTAS_PERSISTENTES: ReadonlySet<ToolId> = new Set<ToolId>(['arrange'])
+
 /** Icono que aporta un módulo a su herramienta (las del núcleo no llevan). */
 function IconoHerramienta({ toolId }: { toolId: ToolId }) {
   const Icono = TOOL_CATALOG[toolId]?.icono
@@ -120,6 +130,14 @@ export function DockZonePanel({
   const tools = toolsInZone(zone)
   const active = layout.activeTab[zone]
   const visibleTool = active && tools.includes(active) ? active : tools[0] ?? null
+  const [montadas, setMontadas] = useState<ToolId[]>([])
+  useEffect(() => {
+    if (!visibleTool || !HERRAMIENTAS_PERSISTENTES.has(visibleTool)) return
+    setMontadas((prev) => (prev.includes(visibleTool) ? prev : [...prev, visibleTool]))
+  }, [visibleTool])
+  const herramientasMontadas: ToolId[] = []
+  for (const t of montadas) if (tools.includes(t)) herramientasMontadas.push(t)
+  if (visibleTool && !herramientasMontadas.includes(visibleTool)) herramientasMontadas.push(visibleTool)
 
   if (!layout.zoneVisible[zone] && zone !== 'center') {
     return null
@@ -257,8 +275,19 @@ export function DockZonePanel({
           </button>
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-hidden bg-panel">
-        {visibleTool ? <ToolHost toolId={visibleTool} /> : null}
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-panel">
+        {herramientasMontadas.map((toolId) => {
+          const visible = toolId === visibleTool
+          return (
+            <div
+              key={toolId}
+              className={visible ? 'absolute inset-0' : 'pointer-events-none invisible absolute inset-0'}
+              aria-hidden={visible ? undefined : true}
+            >
+              <ToolHost toolId={toolId} />
+            </div>
+          )
+        })}
       </div>
     </div>
   )

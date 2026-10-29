@@ -3,6 +3,7 @@ import { ChevronRight } from 'lucide-react'
 import { ChatMarkdown, sanitizeAssistantMarkdown } from '@jaswave/ui-markdown'
 import type { StoredChatMessage } from '../motor/ai-chat-store'
 import { cn } from '@jaswave/host-sdk'
+import { tituloHerramientaParaUsuario } from '../motor/describe-action'
 
 type Step = NonNullable<StoredChatMessage['reasoningSteps']>[number]
 
@@ -21,17 +22,32 @@ function isEmptyStep(step: Step): boolean {
   return false
 }
 
+/** Títulos internos de fases (inglés/jerga) → español natural. */
+function tituloPaso(title: string | undefined): string {
+  const t = String(title ?? '').trim()
+  if (!t) return 'Paso'
+  const k = t.toLowerCase()
+  if (/^(plan|planning|planner)$/.test(k)) return 'Planificando'
+  if (/^(analy[sz]e|analysis|analisis)$/.test(k)) return 'Analizando'
+  if (/^(execute|execution|act|run|tools?)$/.test(k)) return 'Haciendo cambios'
+  if (/^(verify|verification|check|critic|review)$/.test(k)) return 'Revisando el resultado'
+  if (/^(council|consejo)$/.test(k)) return 'Consultando a los especialistas'
+  if (/^(answer|respond|final|summary)$/.test(k)) return 'Preparando la respuesta'
+  if (/^(think|thinking|reason|reasoning)$/.test(k)) return 'Pensando'
+  return t
+}
+
 function thoughtLabel(steps: Step[], live: boolean): string {
-  if (live) return 'Consejo dialogando…'
+  if (live) return 'Pensando…'
   const stamps = steps
     .flatMap((s) => [s.startedAt, s.endedAt])
     .filter((n): n is number => typeof n === 'number' && n > 0)
   if (stamps.length >= 2) {
     const sec = Math.max(1, Math.round((Math.max(...stamps) - Math.min(...stamps)) / 1000))
-    if (sec < 3) return 'Consejo breve'
-    return `Consejo · ${sec}s`
+    if (sec < 3) return 'Pensó un momento'
+    return `Pensó ${sec} s`
   }
-  return 'Consejo de modelos'
+  return 'Razonamiento'
 }
 
 export function ReasoningStepsPanel({ steps, live = false }: Props) {
@@ -90,10 +106,10 @@ export function ReasoningStepsPanel({ steps, live = false }: Props) {
                       stepOpen[i] && 'rotate-90',
                     )}
                   />
-                  <span className="min-w-0 flex-1 truncate">{step.title}</span>
+                  <span className="min-w-0 flex-1 break-words">{tituloPaso(step.title)}</span>
                   {step.toolsUsed?.length ? (
                     <span className="min-w-0 max-w-[40%] shrink-0 truncate text-[0.8em] text-muted-foreground/50">
-                      {step.toolsUsed.join(', ')}
+                      {[...new Set(step.toolsUsed.map((t) => tituloHerramientaParaUsuario(t)))].join(', ')}
                     </span>
                   ) : null}
                 </button>

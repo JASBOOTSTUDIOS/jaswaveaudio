@@ -1,0 +1,230 @@
+{
+  "id": "com.jaswave.plugin.vocal-tune",
+  "name": "JasWave Vocal Tune",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "vendor": "JasWave Audio",
+  "description": "Afinador automático de voz: detección de tono YIN, corrección a escala/tónica con PSOLA que conserva los formantes, preservación de vibrato, humanización y latencia de 2,5 ms en modo de baja latencia.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveVocalTune.vst3"
+  },
+  "vst3": {
+    "classId": "{4A617357-5654-5545-5072-6F6356335431}",
+    "subCategories": "Fx|Pitch Shift"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "productor",
+    "mezcla",
+    "qa"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.vocal-tune",
+    "features": []
+  },
+  "ai": {
+    "summary": "Corrige la afinación de voces monofónicas hacia la escala elegida de forma natural, sin efecto robótico salvo con Retune Speed a 0.",
+    "intents": [
+      "afinar-voz",
+      "corregir-desafinacion",
+      "efecto-robotico",
+      "cambiar-formantes"
+    ],
+    "parameters": [
+      {
+        "id": "bypass",
+        "vstParamId": 0,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "bypass": true,
+        "basico": true
+      },
+      {
+        "id": "vt.retune",
+        "vstParamId": 1,
+        "name": "Velocidad de corrección (Retune Speed)",
+        "min": 0,
+        "max": 400,
+        "default": 40,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "vt.humanize",
+        "vstParamId": 2,
+        "name": "Humanización de notas sostenidas",
+        "min": 0,
+        "max": 100,
+        "default": 20,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "vt.vibrato",
+        "vstParamId": 3,
+        "name": "Preservar vibrato",
+        "min": 0,
+        "max": 100,
+        "default": 70,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vt.formantes",
+        "vstParamId": 4,
+        "name": "Desplazamiento de formantes",
+        "min": -12,
+        "max": 12,
+        "default": 0,
+        "unit": "st",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vt.garganta",
+        "vstParamId": 5,
+        "name": "Longitud de garganta",
+        "min": 50,
+        "max": 200,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vt.tracking",
+        "vstParamId": 6,
+        "name": "Sensibilidad de detección",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vt.escala",
+        "vstParamId": 7,
+        "name": "Escala",
+        "min": 0,
+        "max": 9,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Chromatic",
+          "Major",
+          "Natural Minor",
+          "Harmonic Minor",
+          "Melodic Minor",
+          "Major Pentatonic",
+          "Minor Pentatonic",
+          "Blues",
+          "Dorian",
+          "Mixolydian"
+        ],
+        "basico": true
+      },
+      {
+        "id": "vt.tonica",
+        "vstParamId": 8,
+        "name": "Tónica",
+        "min": 0,
+        "max": 11,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "C",
+          "C#",
+          "D",
+          "D#",
+          "E",
+          "F",
+          "F#",
+          "G",
+          "G#",
+          "A",
+          "A#",
+          "B"
+        ],
+        "basico": true
+      },
+      {
+        "id": "vt.mezcla",
+        "vstParamId": 9,
+        "name": "Mezcla",
+        "min": 0,
+        "max": 100,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "vt.baja-latencia",
+        "vstParamId": 10,
+        "name": "Modo de baja latencia",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "vt.tono-detectado",
+        "vstParamId": 40,
+        "name": "Tono detectado (medidor)",
+        "min": 0,
+        "max": 2000,
+        "default": 0,
+        "unit": "Hz",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      },
+      {
+        "id": "vt.correccion",
+        "vstParamId": 41,
+        "name": "Corrección aplicada en cents (medidor)",
+        "min": -300,
+        "max": 300,
+        "default": 0,
+        "unit": "cents",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      }
+    ]
+  },
+  "download": {
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.vocal-tune-1.0.0.jwx",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
+}

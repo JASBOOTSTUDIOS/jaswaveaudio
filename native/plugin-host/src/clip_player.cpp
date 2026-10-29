@@ -37,7 +37,37 @@ struct ClipVoice {
   float gain{1.f};
   float pan{0.f};
   bool active{true};
+  // Fundidos en muestras absolutas de la línea de tiempo (límites del clip entero, no de la voz:
+  // si se reproduce desde la mitad del clip, el fundido sigue en su sitio).
+  int64_t fadeInStart{0};
+  int64_t fadeInEnd{0};
+  int64_t fadeOutStart{0};
+  int64_t fadeOutEnd{0};
+  int fadeInCurve{0};   // 0 lineal · 1 exponencial · 2 logarítmica
+  int fadeOutCurve{0};
+  bool reverse{false};
+  int64_t regionStart{0};
+  int64_t regionLen{0};
 };
+
+/** Forma del fundido para x ∈ [0,1] (0 = silencio, 1 = nivel completo). */
+static float fadeShape(float x, int curve) {
+  x = std::clamp(x, 0.f, 1.f);
+  if (curve == 1) return x * x;           // exponencial: arranca suave
+  if (curve == 2) return std::sqrt(x);    // logarítmica: sube rápido
+  return x;
+}
+
+static float fadeGainAt(const ClipVoice& v, int64_t absS) {
+  float g = 1.f;
+  if (v.fadeInEnd > v.fadeInStart && absS < v.fadeInEnd) {
+    g *= fadeShape(static_cast<float>(absS - v.fadeInStart) / static_cast<float>(v.fadeInEnd - v.fadeInStart), v.fadeInCurve);
+  }
+  if (v.fadeOutEnd > v.fadeOutStart && absS >= v.fadeOutStart) {
+    g *= fadeShape(static_cast<float>(v.fadeOutEnd - absS) / static_cast<float>(v.fadeOutEnd - v.fadeOutStart), v.fadeOutCurve);
+  }
+  return g;
+}
 
 // Subida por trozos (clip.loadBegin/Chunk/End): evita un unico mensaje gigante.
 struct PendingUpload {
@@ -144,11 +174,13 @@ void renderVoiceInto(const ClipVoice& v, const ClipBuffer& buf, int64_t clockSam
   for (uint32_t i = 0; i < frames; ++i) {
     const int64_t absS = clockSamples + static_cast<int64_t>(i);
     if (absS < v.startSample || absS >= voiceEnd) continue;
-    const int64_t into = absS - v.startSample + v.sourceOffset;
+    int64_t into = absS - v.startSample + v.sourceOffset;
+    if (v.reverse && v.regionLen > 0) into = v.regionStart + v.regionLen - 1 - (into - v.regionStart);
     if (into < 0 || into >= static_cast<int64_t>(buf.frames)) continue;
     const size_t si = static_cast<size_t>(into) * 2u;
-    interleaved[i * 2] += buf.interleaved[si] * gL;
-    interleaved[i * 2 + 1] += buf.interleaved[si + 1] * gR;
+    const float f = fadeGainAt(v, absS);
+    interleaved[i * 2] += buf.interleaved[si] * gL * f;
+    interleaved[i * 2 + 1] += buf.interleaved[si + 1] * gR * f;
   }
 }
 
@@ -357,10 +389,24 @@ void clip_unload_all() {
 }
 
 void clip_schedule(const std::string& clipId, uint16_t trackIndex, int64_t startSample,
-                   int64_t durationSamples, int64_t sourceOffsetSamples, float gain, float pan) {
+                   int64_t durationSamples, int64_t sourceOffsetSamples, float gain, float pan,
+                   const ClipFades& fades) {
   std::lock_guard<std::mutex> lock(gMu);
   if (gBuffers.find(clipId) == gBuffers.end()) return;
   ClipVoice v;
+  if (fades.inSamples > 0) {
+    v.fadeInStart = fades.clipStartSample;
+    v.fadeInEnd = fades.clipStartSample + fades.inSamples;
+    v.fadeInCurve = fades.inCurve;
+  }
+  if (fades.outSamples > 0) {
+    v.fadeOutStart = fades.clipEndSample - fades.outSamples;
+    v.fadeOutEnd = fades.clipEndSample;
+    v.fadeOutCurve = fades.outCurve;
+  }
+  v.reverse = fades.reverse;
+  v.regionStart = std::max<int64_t>(0, fades.regionStart);
+  v.regionLen = std::max<int64_t>(0, fades.regionLen);
   v.clipId = clipId;
   v.trackIndex = trackIndex;
   v.startSample = std::max<int64_t>(0, startSample);

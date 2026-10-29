@@ -1,7 +1,7 @@
 #pragma once
 /**
  * Slot hospedado exclusivo VST3 64-bit (JasWave DAW).
- * Retiro definitivo de VST2 según el Plan Maestro (Fase 1).
+ * VST2 retirado (ADR-0019): este host solo carga .vst3.
  */
 
 #include <atomic>
@@ -23,10 +23,6 @@
 class HostedSlot {
 public:
   enum class Format { Vst3 };
-
-  static bool pathLooksVst2(const std::string& /*path*/) {
-    return false;
-  }
 
   static std::unique_ptr<HostedSlot> createForPath(const std::string& /*path*/) {
     auto s = std::unique_ptr<HostedSlot>(new HostedSlot());
@@ -66,6 +62,10 @@ public:
   }
   void allNotesOff() {
     if (vst3_) vst3_->allNotesOff();
+  }
+  /** Stop duro: vacía voces y colas (reverb/delay) del plugin sin tocar sus parámetros. Hilo UI. */
+  void flushDsp() {
+    if (vst3_) vst3_->flushDsp();
   }
   void setParameterNormalized(uint32_t paramId, double normalized) {
     if (vst3_) vst3_->setParameterNormalized(paramId, normalized);
@@ -143,6 +143,12 @@ public:
     if (vst3_) vst3_->closeEditor();
   }
   bool hasEditor() const { return vst3_ ? vst3_->hasEditor() : false; }
+  void setEditorPinned(bool pinned) { if (vst3_) vst3_->setEditorPinned(pinned); }
+  bool editorPinned() const { return vst3_ && vst3_->editorPinned(); }
+  void raiseEditorPinned() { if (vst3_) vst3_->raiseEditorPinned(); }
+  void setEditorPinVisible(bool visible) { if (vst3_) vst3_->setEditorPinVisible(visible); }
+  bool editorTopmost() const { return vst3_ && vst3_->editorTopmost(); }
+  std::uintptr_t editorHwnd() const { return vst3_ ? vst3_->editorHwnd() : 0; }
   bool editorEmbedded() const { return vst3_ && vst3_->editorEmbedded(); }
   void setEditorTitle(const std::string& utf8) { if (vst3_) vst3_->setEditorTitle(utf8); }
 

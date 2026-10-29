@@ -18,6 +18,7 @@ import {
   type ToolId,
   type WorkspaceLayout,
 } from './types'
+import { restablecerAvisosEspacio } from './space-guard'
 import { useDAW } from '@/src/context/daw-context'
 import { resolvePianoRollClip } from '@/src/lib/selection-helpers'
 
@@ -317,7 +318,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`
       window.open(url, `jaswave-${toolId}`, 'width=900,height=700')
     } else {
-      await api.openToolWindow(toolId, title, extra)
+      // Si la ventana no se pudo crear (IPC rechazado, renderer sin cargar) el panel debe
+      // quedarse acoplado: antes el rechazo escapaba sin capturar y el layout marcaba la
+      // herramienta como flotante sin ventana (panel "perdido").
+      try {
+        const res = await api.openToolWindow(toolId, title, extra)
+        if (res && res.success === false) return
+      } catch (err) {
+        console.warn('[workspace] no se pudo abrir la ventana flotante', toolId, err)
+        return
+      }
     }
     setLayout((prev) => {
       let next = stripTool(prev, toolId)
@@ -386,6 +396,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const resetLayout = useCallback(() => {
     setLayout(structuredClone(DEFAULT_WORKSPACE))
+    restablecerAvisosEspacio()
   }, [])
 
   const value = useMemo(
@@ -428,6 +439,11 @@ export function useWorkspace() {
   const ctx = useContext(WorkspaceContext)
   if (!ctx) throw new Error('useWorkspace must be used within WorkspaceProvider')
   return ctx
+}
+
+/** Como {@link useWorkspace}, pero null fuera del proveedor (ventanas flotantes, pruebas). */
+export function useWorkspaceOptional() {
+  return useContext(WorkspaceContext)
 }
 
 /** Id de herramienta bien formado (del núcleo o de un módulo). */

@@ -224,3 +224,41 @@ describe('Validación al guardar', () => {
     expect(await fileService.existe(ruta)).toBe(true);
   });
 });
+
+describe('Validación de dominio: carpetas-bus (padreId)', () => {
+  async function crearCarpeta(tienda: ReturnType<typeof nuevaTienda>, nombre: string): Promise<string> {
+    const r = await tienda.executor.execute('track.create', { nombre, tipo: 'carpeta' });
+    expect(r.success).toBe(true);
+    return (r.result as { trackId: string }).trackId;
+  }
+
+  it('mete una pista en una carpeta, la saca y lo deshace', async () => {
+    const tienda = nuevaTienda();
+    const carpeta = await crearCarpeta(tienda, 'Cuerdas');
+    const pista = await crearPistaMidi(tienda, 'Violín');
+    const r = await tienda.executor.execute('track.update', { trackId: pista, datos: { padreId: carpeta } });
+    expect(r.success).toBe(true);
+    expect(pistaDe(tienda.obtenerEstado(), pista).padreId).toBe(carpeta);
+    const fuera = await tienda.executor.execute('track.update', { trackId: pista, datos: { padreId: null } });
+    expect(fuera.success).toBe(true);
+    expect(pistaDe(tienda.obtenerEstado(), pista).padreId ?? null).toBeNull();
+  });
+
+  it('rechaza un padre que no es carpeta, inexistente o que crea un ciclo', async () => {
+    const tienda = nuevaTienda();
+    const a = await crearCarpeta(tienda, 'A');
+    const b = await crearCarpeta(tienda, 'B');
+    const midi = await crearPistaMidi(tienda, 'Piano');
+    expect((await tienda.executor.execute('track.update', { trackId: b, datos: { padreId: a } })).success).toBe(true);
+    for (const [trackId, padreId] of [
+      [midi, midi],
+      [a, b],
+      [a, a],
+      [midi, 'no-existe'],
+      [b, midi],
+    ] as const) {
+      const r = await tienda.executor.execute('track.update', { trackId, datos: { padreId } });
+      expect(r.success, `${trackId} → ${padreId}`).toBe(false);
+    }
+  });
+});

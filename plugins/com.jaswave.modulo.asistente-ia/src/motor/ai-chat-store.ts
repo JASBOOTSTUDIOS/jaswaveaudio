@@ -123,6 +123,19 @@ export type StoredChatMessage = {
   }
   /** Plan de ejecución paso a paso (Continuar confirma cada tarea). */
   agentChecklist?: import('./ai-agent-checklist').AgentChecklist
+  /** Progreso del agente: tareas que planificó, lo que fue haciendo y sus subagentes (solo textos legibles). */
+  agente?: ProgresoAgente
+}
+
+export type ProgresoAgente = {
+  /** 'banda': una línea en el chat con el detalle al pasar el ratón (la banda hace mucho trabajo). */
+  tipo?: 'banda'
+  estado: 'trabajando' | 'listo' | 'detenido' | 'error'
+  tareas: Array<{ titulo: string; estado: 'pendiente' | 'en_curso' | 'hecha' }>
+  actividad: Array<{ id: string; texto: string; estado: 'en_curso' | 'ok' | 'error'; quien?: string }>
+  subagentes: Array<{ id: string; nombre: string; tarea: string; estado: 'en_curso' | 'ok' | 'error'; resumen?: string }>
+  inicio: number
+  fin?: number
 }
 
 export type ChatConversation = {

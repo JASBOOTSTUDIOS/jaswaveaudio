@@ -4,6 +4,10 @@
 
 import type { CommandDefinition, StateTransition } from '../types/command'
 import type { DAWState } from '../types/state'
+import type { Track } from '../types/tracks'
+import type { MidiClip, MidiNote } from '../types/clips'
+import { crearPista } from './domain-commands'
+import { nombreTrackUnico } from '../state/validacion-dominio'
 import type { LoudnessData } from '../types/analisis'
 import { renderJobGet, renderJobList } from '../render/job-store'
 import {
@@ -28,6 +32,7 @@ import {
   type MedidaMezcla,
   type MedidaPista,
 } from '../audio/diagnosis'
+import { diagnosticarSonidoPistas } from '../audio/diagnostico-sonido'
 import { beatsASegundos } from '../types/tiempo'
 import { getStateRevision } from '../state/state-revision'
 import {
@@ -641,6 +646,28 @@ export function crearComandoAnalysisDiagnose(): CommandDefinition<any> {
   }
 }
 
+/** `analysis.trackSound`: ¿cada pista con música va a sonar? (instrumento cargado, mute/solo, fader). */
+export function crearComandoAnalysisTrackSound(): CommandDefinition<any> {
+  return {
+    type: 'analysis.trackSound',
+    replicacion: 'resultado',
+    description:
+      'Revisa si cada pista con partes va a sonar: notas MIDI sin instrumento o con un VST que no cargó o está en bypass, ' +
+      'pistas en mute o tapadas por un solo, y faders casi a cero o desequilibrados. Cada problema dice con qué herramienta corregirlo.',
+    risk: 'read',
+    schema: {
+      type: 'object',
+      properties: { pistas: { type: 'array', items: { type: 'string' }, description: 'Ids de pista a revisar (vacío = todas)' } },
+      additionalProperties: false,
+    },
+    handler: (estado, payload) => ({
+      state: estado,
+      events: [],
+      result: diagnosticarSonidoPistas(estado, { pistas: Array.isArray(payload?.pistas) ? payload.pistas.map(String) : undefined }),
+    }),
+  }
+}
+
 /** `analysis.audioLens`: Análisis descriptivo musical, tonalidad, acordes y desglose de percusión para IA. */
 export function crearComandoAnalysisAudioLens(): CommandDefinition<any> {
   return {
@@ -693,104 +720,245 @@ export function crearComandoAnalysisAudioLens(): CommandDefinition<any> {
   }
 }
 
+// ── Voz → MIDI ─────────────────────────────────────────────────────────────
+
+type CuantizacionVoz = 'off' | '1/16' | '1/8' | '1/4'
+type InstrumentoVoz = 'guitar' | 'piano' | 'bass' | 'lead' | 'strings'
+type EscalaVoz = 'mayor' | 'menor' | 'dórica' | 'pentatónica' | 'cromática'
+
+type PayloadVozBase = {
+  clipId?: string
+  trackId?: string
+  audioData?: ArrayLike<number>
+  sampleRate?: number
+  bpm?: number
+  cuantizar?: CuantizacionVoz
+  sensibilidad?: number
+  inicioCompas?: number
+}
+type PayloadVoiceToDrums = PayloadVozBase & { crearPista?: boolean; nombrePista?: string }
+type PayloadVoiceToMelody = PayloadVozBase & {
+  ajusteEscala?: boolean
+  tonalidadRaiz?: string
+  tonalidadEscala?: EscalaVoz
+  instrumento?: InstrumentoVoz
+  crearPista?: boolean
+  nombrePista?: string
+}
+type PayloadExtractMidi = PayloadVozBase & {
+  tipo?: 'melody' | 'drums' | 'both' | 'all'
+  instrumento?: InstrumentoVoz
+  crearPistas?: boolean
+}
+
+type ResultadoVoiceToDrums = {
+  bpm: number
+  totalNotas: number
+  conteo: { kicks: number; snares: number; hihats: number; otros: number }
+  notas: NotaBateriaMidi[]
+  metricas: ReturnType<typeof clasificarPercusionVocal>['metricas']
+  trackId?: string
+  clipId?: string
+}
+type ResultadoVoiceToMelody = {
+  bpm: number
+  totalNotas: number
+  notas: ReturnType<typeof extraerMelodiaMidiDeAudio>['notas']
+  metricas: ReturnType<typeof extraerMelodiaMidiDeAudio>['metricas']
+  trackId?: string
+  clipId?: string
+}
+type ResultadoExtractMidi = {
+  bpm: number
+  tonalidad: AnalisisMusicalDescriptivo['tonalidad']
+  progresionAcordes: AnalisisMusicalDescriptivo['progresionAcordes']
+  pistasCreadas: { tipo: 'melodia' | 'bateria'; trackId: string; clipId: string }[]
+  melodia: {
+    totalNotas: number
+    notas: ReturnType<typeof extraerMelodiaMidiDeAudio>['notas']
+    metricas: ReturnType<typeof extraerMelodiaMidiDeAudio>['metricas']
+  }
+  bateria: { totalGolpes: number; kicks: number; snares: number; hihats: number; notas: NotaBateriaMidi[] }
+  resumenParaIA: string
+}
+
+const MENSAJE_SIN_AUDIO =
+  'Falta audioData: el estado del proyecto no guarda el audio de los clips, así que la app debe decodificar ' +
+  'el clip (o la nota de voz) y pasar sus muestras PCM mono junto con su sampleRate.'
+
+/** Valida y normaliza las muestras: nunca se analiza silencio inventado. */
+function muestrasDeVoz(payload: PayloadVozBase): { muestras: Float64Array; sr: number } {
+  const sr = payload.sampleRate ?? 44100
+  if (!Number.isFinite(sr) || sr < 8000 || sr > 384000) {
+    throw new Error(`sampleRate inválido (${String(payload.sampleRate)}): debe estar entre 8000 y 384000 Hz`)
+  }
+  const datos = payload.audioData
+  if (!datos || typeof datos.length !== 'number' || datos.length === 0) throw new Error(MENSAJE_SIN_AUDIO)
+  const muestras = Float64Array.from(datos as ArrayLike<number>)
+  for (let i = 0; i < muestras.length; i++) {
+    if (!Number.isFinite(muestras[i])) throw new Error(`audioData contiene un valor no numérico en la muestra ${i}`)
+  }
+  return { muestras, sr }
+}
+
+function bpmDeVoz(estado: DAWState, payload: PayloadVozBase): number {
+  const bpm = payload.bpm ?? bpmProyecto(estado)
+  if (!Number.isFinite(bpm) || bpm < 20 || bpm > 400) throw new Error(`bpm inválido (${String(payload.bpm)}): debe estar entre 20 y 400`)
+  return bpm
+}
+
+function sensibilidadDeVoz(payload: PayloadVozBase): number {
+  const v = payload.sensibilidad ?? 1
+  return Number.isFinite(v) ? Math.min(2, Math.max(0.5, v)) : 1
+}
+
+type NotaCruda = { pitch: number; beat: number; duracionBeats: number; velocidad: number }
+
+function notasMidiDeVoz(notas: NotaCruda[]): MidiNote[] {
+  return notas.map((n) => ({
+    id: entorno.uuid(),
+    pitch: Math.max(0, Math.min(127, Math.round(n.pitch))),
+    velocidad: Math.max(1, Math.min(127, Math.round(n.velocidad))),
+    inicio: Math.max(0, n.beat),
+    duracion: Math.max(0.0625, n.duracionBeats),
+    canal: 0,
+    presion: 0,
+    seleccionada: false,
+    source: 'generated',
+  }))
+}
+
+function clipMidiDeVoz(trackId: string, nombre: string, color: string, inicioBeats: number, notas: MidiNote[]): MidiClip {
+  const fin = notas.reduce((max, n) => Math.max(max, n.inicio + n.duracion), 4)
+  const duracion = Math.max(4, Math.ceil(fin))
+  return {
+    id: entorno.uuid(),
+    trackId,
+    nombre,
+    inicio: inicioBeats,
+    duracion,
+    color,
+    seleccionado: false,
+    tipo: 'midi',
+    notas,
+    velocidadGlobal: 1,
+    cuantizacion: 0.25,
+    loop: { activo: false, inicio: 0, fin: duracion },
+  }
+}
+
+/** Añade un clip MIDI a una pista existente (que debe admitirlo) o a una pista de instrumento nueva. */
+function insertarClipDeVoz(
+  estado: DAWState,
+  destino: { trackId?: string; nombrePista: string; color: string },
+  nombreClip: string,
+  inicioBeats: number,
+  notas: MidiNote[],
+  events: EventoDominio[],
+): { estado: DAWState; trackId: string; clipId: string } {
+  const proyecto = estado.project
+  let pista: Track
+  let existentes: Track[]
+  if (destino.trackId) {
+    const existente = proyecto.tracks.find((t) => t.id === destino.trackId)
+    if (!existente) throw new Error(`Pista no encontrada: ${destino.trackId}`)
+    if (existente.tipo !== 'midi' && existente.tipo !== 'instrumento') {
+      throw new Error(`La pista «${existente.nombre}» (${existente.tipo}) no admite clips MIDI`)
+    }
+    pista = existente
+    existentes = proyecto.tracks
+  } else {
+    pista = crearPista(nombreTrackUnico(destino.nombrePista, proyecto.tracks), 'instrumento', destino.color, entorno.uuid())
+    existentes = [...proyecto.tracks, pista]
+    events.push(ev('track.creada', { trackId: pista.id, nombre: pista.nombre, tipo: 'instrumento' }))
+  }
+  const clip = clipMidiDeVoz(pista.id, nombreClip, pista.color || destino.color, inicioBeats, notas)
+  const actualizada = { ...pista, clips: [...((pista.clips as MidiClip[] | undefined) ?? []), clip] } as Track
+  events.push(ev('clip.creado', { trackId: pista.id, clipId: clip.id, tipo: 'midi', notas: notas.length }))
+  return {
+    estado: {
+      ...estado,
+      project: {
+        ...proyecto,
+        tracks: existentes.map((t) => (t.id === actualizada.id ? actualizada : t)),
+        modificado: true,
+        fechaModificacion: entorno.ahora(),
+      },
+    },
+    trackId: pista.id,
+    clipId: clip.id,
+  }
+}
+
+function inicioEnBeats(payload: PayloadVozBase): number {
+  const c = payload.inicioCompas
+  return typeof c === 'number' && Number.isFinite(c) ? Math.max(0, c * 4) : 0
+}
+
+function conteoBateria(notas: NotaBateriaMidi[]): { kicks: number; snares: number; hihats: number; otros: number } {
+  const conteo = { kicks: 0, snares: 0, hihats: 0, otros: 0 }
+  for (const n of notas) {
+    if (n.instrumento === 'kick') conteo.kicks++
+    else if (n.instrumento === 'snare') conteo.snares++
+    else if (n.instrumento === 'hihat_closed' || n.instrumento === 'hihat_open') conteo.hihats++
+    else conteo.otros++
+  }
+  return conteo
+}
+
+const SCHEMA_VOZ_BASE = {
+  clipId: { type: 'string' },
+  trackId: { type: 'string' },
+  audioData: { type: 'array', items: { type: 'number' } },
+  sampleRate: { type: 'number' },
+  bpm: { type: 'number' },
+  cuantizar: { type: 'string', enum: ['off', '1/16', '1/8', '1/4'] },
+  sensibilidad: { type: 'number' },
+  inicioCompas: { type: 'number' },
+} as const
+
 /** `analysis.voiceToDrums`: Convierte percusión vocal / beatbox a eventos MIDI de batería y opcionalmente crea la pista. */
-export function crearComandoAnalysisVoiceToDrums(): CommandDefinition<any> {
+export function crearComandoAnalysisVoiceToDrums(): CommandDefinition<PayloadVoiceToDrums, ResultadoVoiceToDrums> {
   return {
     type: 'analysis.voiceToDrums',
     replicacion: 'operacion',
     description: 'Transforma audio de beatbox o percusión vocal en notas MIDI de batería alineadas al tempo',
     risk: 'write',
+    historialUndo: 'instantanea',
     schema: {
       type: 'object',
-      properties: {
-        clipId: { type: 'string' },
-        trackId: { type: 'string' },
-        audioData: { type: 'array', items: { type: 'number' } },
-        sampleRate: { type: 'number' },
-        bpm: { type: 'number' },
-        cuantizar: { type: 'string', enum: ['off', '1/16', '1/8', '1/4'] },
-        sensibilidad: { type: 'number' },
-        crearPista: { type: 'boolean' },
-        nombrePista: { type: 'string' },
-      },
+      properties: { ...SCHEMA_VOZ_BASE, crearPista: { type: 'boolean' }, nombrePista: { type: 'string' } },
       additionalProperties: false,
     },
     handler: (estado, payload) => {
-      const bpm = payload.bpm ?? bpmProyecto(estado)
-      const sr = payload.sampleRate ?? 44100
-      let muestras: Float64Array
-
-      if (payload.audioData && Array.isArray(payload.audioData) && payload.audioData.length > 0) {
-        muestras = new Float64Array(payload.audioData)
-      } else {
-        const clip = estado.project.tracks
-          .flatMap((t) => t.clips ?? [])
-          .find((c) => c.id === payload.clipId)
-        const numMuestras = Math.floor(Math.max(1, (clip?.duracion ?? 4) * (60 / bpm)) * sr)
-        muestras = new Float64Array(numMuestras)
-      }
-
+      const bpm = bpmDeVoz(estado, payload)
+      const { muestras, sr } = muestrasDeVoz(payload)
+      const cuantizar = payload.cuantizar ?? '1/16'
       const clasificacion = clasificarPercusionVocal(muestras, sr, {
         bpmProyecto: bpm,
-        cuantizar: payload.cuantizar ?? '1/16',
-        sensibilidad: payload.sensibilidad ?? 1.0,
+        cuantizar,
+        sensibilidad: sensibilidadDeVoz(payload),
       })
 
       let nuevoEstado = estado
       const events: EventoDominio[] = [
-        ev('audio.voicetodrums.convertido', {
-          totalNotas: clasificacion.notas.length,
-          bpm,
-          cuantizar: payload.cuantizar ?? '1/16',
-        }),
+        ev('audio.voicetodrums.convertido', { totalNotas: clasificacion.notas.length, bpm, cuantizar }),
       ]
-
-      // Si el usuario solicitó crear la pista de batería en el proyecto directamente
-      if (payload.crearPista && clasificacion.notas.length > 0) {
-        const pistaId = `track-drums-${entorno.ahora()}`
-        const clipId = `clip-drums-${entorno.ahora()}`
-        const duracionTotalBeats = Math.max(4, Math.ceil(Math.max(...clasificacion.notas.map((n) => n.beat + n.duracionBeats), 4)))
-
-        const nuevaPista = {
-          id: pistaId,
-          nombre: payload.nombrePista || 'Batería Beatbox (IA)',
-          tipo: 'instrumento' as const,
-          color: '#e74c3c',
-          volumen: 0,
-          pan: 0,
-          mute: false,
-          solo: false,
-          efectos: [],
-          clips: [
-            {
-              id: clipId,
-              nombre: 'Patrón Beatbox',
-              inicio: 0,
-              duracion: duracionTotalBeats,
-              tipo: 'midi' as const,
-              color: '#e74c3c',
-              notas: clasificacion.notas.map((n, idx) => ({
-                id: `note-${idx}`,
-                pitch: n.notaMidi,
-                inicio: n.beat,
-                duracion: n.duracionBeats,
-                velocidad: n.velocidad,
-              })),
-            },
-          ],
-        }
-
-        nuevoEstado = {
-          ...estado,
-          project: {
-            ...estado.project,
-            tracks: [...estado.project.tracks, nuevaPista as any],
-            modificado: true,
-            fechaModificacion: entorno.ahora(),
-          },
-        }
-
-        events.push(ev('track.creada', { trackId: pistaId, nombre: nuevaPista.nombre }))
+      let trackId: string | undefined
+      let clipId: string | undefined
+      if ((payload.crearPista || payload.trackId) && clasificacion.notas.length > 0) {
+        const notas = notasMidiDeVoz(clasificacion.notas.map((n) => ({ ...n, pitch: n.notaMidi })))
+        const r = insertarClipDeVoz(
+          estado,
+          { trackId: payload.trackId, nombrePista: payload.nombrePista || 'Batería Beatbox (IA)', color: '#e74c3c' },
+          'Patrón Beatbox',
+          inicioEnBeats(payload),
+          notas,
+          events,
+        )
+        nuevoEstado = r.estado
+        trackId = r.trackId
+        clipId = r.clipId
       }
 
       return {
@@ -799,70 +967,59 @@ export function crearComandoAnalysisVoiceToDrums(): CommandDefinition<any> {
         result: {
           bpm,
           totalNotas: clasificacion.notas.length,
+          conteo: conteoBateria(clasificacion.notas),
           notas: clasificacion.notas,
           metricas: clasificacion.metricas,
+          trackId,
+          clipId,
         },
       }
     },
   }
 }
 
-/** Colores y nombres sugeridos según instrumento */
-const CONFIG_INSTRUMENTOS: Record<string, { nombre: string; color: string }> = {
-  guitar: { nombre: 'Guitarra Eléctrica (Melodía IA)', color: '#f59e0b' },
+/** Nombres y colores sugeridos según instrumento (la app asigna después el VST correspondiente). */
+const CONFIG_INSTRUMENTOS: Record<InstrumentoVoz, { nombre: string; color: string }> = {
+  guitar: { nombre: 'JasWave Electric Guitar (IA)', color: '#f59e0b' },
   piano: { nombre: 'JasWave Grand Piano (IA)', color: '#3b82f6' },
   bass: { nombre: 'JasWave Electric Bass (IA)', color: '#8b5cf6' },
-  lead: { nombre: 'Sintetizador Lead (IA)', color: '#ec4899' },
+  lead: { nombre: 'JasWave Shimmer Pad (IA)', color: '#ec4899' },
   strings: { nombre: 'JasWave Strings Section (IA)', color: '#10b981' },
 }
 
 /** `analysis.voiceToMelody`: Convierte tarareo / voz / solo en notas MIDI melódicas y opcionalmente crea la pista. */
-export function crearComandoAnalysisVoiceToMelody(): CommandDefinition<any> {
+export function crearComandoAnalysisVoiceToMelody(): CommandDefinition<PayloadVoiceToMelody, ResultadoVoiceToMelody> {
   return {
     type: 'analysis.voiceToMelody',
     replicacion: 'operacion',
     description: 'Transforma audio vocal o tarareo en notas MIDI melódicas afinadas y cuantizadas',
     risk: 'write',
+    historialUndo: 'instantanea',
     schema: {
       type: 'object',
       properties: {
-        clipId: { type: 'string' },
-        trackId: { type: 'string' },
-        audioData: { type: 'array', items: { type: 'number' } },
-        sampleRate: { type: 'number' },
-        bpm: { type: 'number' },
-        cuantizar: { type: 'string', enum: ['off', '1/16', '1/8', '1/4'] },
-        sensibilidad: { type: 'number' },
+        ...SCHEMA_VOZ_BASE,
         ajusteEscala: { type: 'boolean' },
         tonalidadRaiz: { type: 'string' },
         tonalidadEscala: { type: 'string', enum: ['mayor', 'menor', 'dórica', 'pentatónica', 'cromática'] },
         instrumento: { type: 'string', enum: ['guitar', 'piano', 'bass', 'lead', 'strings'] },
         crearPista: { type: 'boolean' },
         nombrePista: { type: 'string' },
-        inicioCompas: { type: 'number' },
       },
       additionalProperties: false,
     },
     handler: (estado, payload) => {
-      const bpm = payload.bpm ?? bpmProyecto(estado)
-      const sr = payload.sampleRate ?? 44100
-      let muestras: Float64Array
-
-      if (payload.audioData && Array.isArray(payload.audioData) && payload.audioData.length > 0) {
-        muestras = new Float64Array(payload.audioData)
-      } else {
-        const clip = estado.project.tracks
-          .flatMap((t) => t.clips ?? [])
-          .find((c) => c.id === payload.clipId)
-        const numMuestras = Math.floor(Math.max(1, (clip?.duracion ?? 4) * (60 / bpm)) * sr)
-        muestras = new Float64Array(numMuestras)
-      }
+      const bpm = bpmDeVoz(estado, payload)
+      const { muestras, sr } = muestrasDeVoz(payload)
+      const cuantizar = payload.cuantizar ?? '1/16'
+      const instrumento = payload.instrumento ?? 'guitar'
+      const cfg = CONFIG_INSTRUMENTOS[instrumento] ?? CONFIG_INSTRUMENTOS.guitar
 
       const resMelodia = extraerMelodiaMidiDeAudio(muestras, {
         sampleRate: sr,
         bpmProyecto: bpm,
-        cuantizar: payload.cuantizar ?? '1/16',
-        sensibilidad: payload.sensibilidad ?? 1.0,
+        cuantizar,
+        sensibilidad: sensibilidadDeVoz(payload),
         ajusteEscala: payload.ajusteEscala ?? true,
         tonalidadRaiz: payload.tonalidadRaiz ?? 'C',
         tonalidadEscala: payload.tonalidadEscala ?? 'menor',
@@ -870,97 +1027,23 @@ export function crearComandoAnalysisVoiceToMelody(): CommandDefinition<any> {
 
       let nuevoEstado = estado
       const events: EventoDominio[] = [
-        ev('audio.voicetomelody.convertido', {
-          totalNotas: resMelodia.notas.length,
-          bpm,
-          cuantizar: payload.cuantizar ?? '1/16',
-          instrumento: payload.instrumento ?? 'guitar',
-        }),
+        ev('audio.voicetomelody.convertido', { totalNotas: resMelodia.notas.length, bpm, cuantizar, instrumento }),
       ]
-
-      const duracionTotalBeats = Math.max(4, Math.ceil(Math.max(...resMelodia.notas.map((n) => n.beat + n.duracionBeats), 4)))
-      const inicioBeats = typeof payload.inicioCompas === 'number' ? Math.max(0, payload.inicioCompas * 4) : 0
-
-      // Si se especificó una pista destino existente
-      if (payload.trackId && resMelodia.notas.length > 0) {
-        const pistaExistente = estado.project.tracks.find((t) => t.id === payload.trackId)
-        if (pistaExistente) {
-          const clipId = `clip-melody-${entorno.ahora()}`
-          const nuevoClip = {
-            id: clipId,
-            nombre: `Melodía (${pistaExistente.nombre})`,
-            inicio: inicioBeats,
-            duracion: duracionTotalBeats,
-            tipo: 'midi' as const,
-            color: pistaExistente.color || '#f59e0b',
-            notas: resMelodia.notas.map((n, idx) => ({
-              id: `melody-note-${idx}`,
-              pitch: n.pitch,
-              inicio: n.beat,
-              duracion: n.duracionBeats,
-              velocidad: n.velocidad,
-            })),
-          }
-
-          nuevoEstado = {
-            ...estado,
-            project: {
-              ...estado.project,
-              tracks: estado.project.tracks.map((t) =>
-                t.id === payload.trackId ? { ...t, clips: [...(t.clips ?? []), nuevoClip as any] } : t,
-              ),
-              modificado: true,
-              fechaModificacion: entorno.ahora(),
-            },
-          }
-          events.push(ev('clip.creado', { trackId: payload.trackId, clipId }))
-        }
-      } else if (payload.crearPista && resMelodia.notas.length > 0) {
-        // Crear pista nueva dedicada
-        const tipoInst = payload.instrumento ?? 'guitar'
-        const cfg = CONFIG_INSTRUMENTOS[tipoInst] ?? CONFIG_INSTRUMENTOS.guitar!
-        const pistaId = `track-melody-${entorno.ahora()}`
-        const clipId = `clip-melody-${entorno.ahora()}`
-
-        const nuevaPista = {
-          id: pistaId,
-          nombre: payload.nombrePista || cfg.nombre,
-          tipo: 'instrumento' as const,
-          color: cfg.color,
-          volumen: 0,
-          pan: 0,
-          mute: false,
-          solo: false,
-          efectos: [],
-          clips: [
-            {
-              id: clipId,
-              nombre: 'Melodía Voz-a-MIDI',
-              inicio: inicioBeats,
-              duracion: duracionTotalBeats,
-              tipo: 'midi' as const,
-              color: cfg.color,
-              notas: resMelodia.notas.map((n, idx) => ({
-                id: `melody-note-${idx}`,
-                pitch: n.pitch,
-                inicio: n.beat,
-                duracion: n.duracionBeats,
-                velocidad: n.velocidad,
-              })),
-            },
-          ],
-        }
-
-        nuevoEstado = {
-          ...estado,
-          project: {
-            ...estado.project,
-            tracks: [...estado.project.tracks, nuevaPista as any],
-            modificado: true,
-            fechaModificacion: entorno.ahora(),
-          },
-        }
-        events.push(ev('track.creada', { trackId: pistaId, nombre: nuevaPista.nombre }))
+      let trackId: string | undefined
+      let clipId: string | undefined
+      if ((payload.crearPista || payload.trackId) && resMelodia.notas.length > 0) {
+        const notas = notasMidiDeVoz(resMelodia.notas)
+        const r = insertarClipDeVoz(
+          estado,
+          { trackId: payload.trackId, nombrePista: payload.nombrePista || cfg.nombre, color: cfg.color },
+          'Melodía Voz-a-MIDI',
+          inicioEnBeats(payload),
+          notas,
+          events,
+        )
+        nuevoEstado = r.estado
+        trackId = r.trackId
+        clipId = r.clipId
       }
 
       return {
@@ -971,6 +1054,8 @@ export function crearComandoAnalysisVoiceToMelody(): CommandDefinition<any> {
           totalNotas: resMelodia.notas.length,
           notas: resMelodia.notas,
           metricas: resMelodia.metricas,
+          trackId,
+          clipId,
         },
       }
     },
@@ -978,57 +1063,38 @@ export function crearComandoAnalysisVoiceToMelody(): CommandDefinition<any> {
 }
 
 /** `analysis.extractMidi`: Herramienta analítica unificada completa (Melodía f0 + Batería + AudioLens). */
-export function crearComandoAnalysisExtractMidi(): CommandDefinition<any> {
+export function crearComandoAnalysisExtractMidi(): CommandDefinition<PayloadExtractMidi, ResultadoExtractMidi> {
   return {
     type: 'analysis.extractMidi',
     replicacion: 'operacion',
     description: 'Extracción completa unificada de parámetros musicales por Audio Lens: melodía f0, ritmo beatbox, acordes y tonalidad',
     risk: 'write',
+    historialUndo: 'instantanea',
     schema: {
       type: 'object',
       properties: {
-        clipId: { type: 'string' },
-        trackId: { type: 'string' },
-        audioData: { type: 'array', items: { type: 'number' } },
-        sampleRate: { type: 'number' },
-        bpm: { type: 'number' },
+        ...SCHEMA_VOZ_BASE,
         tipo: { type: 'string', enum: ['melody', 'drums', 'both', 'all'] },
-        cuantizar: { type: 'string', enum: ['off', '1/16', '1/8', '1/4'] },
-        sensibilidad: { type: 'number' },
         instrumento: { type: 'string', enum: ['guitar', 'piano', 'bass', 'lead', 'strings'] },
         crearPistas: { type: 'boolean' },
-        inicioCompas: { type: 'number' },
       },
       additionalProperties: false,
     },
     handler: (estado, payload) => {
-      const bpm = payload.bpm ?? bpmProyecto(estado)
-      const sr = payload.sampleRate ?? 44100
-      let muestras: Float64Array
-
-      if (payload.audioData && Array.isArray(payload.audioData) && payload.audioData.length > 0) {
-        muestras = new Float64Array(payload.audioData)
-      } else {
-        const clip = estado.project.tracks
-          .flatMap((t) => t.clips ?? [])
-          .find((c) => c.id === payload.clipId)
-        const numMuestras = Math.floor(Math.max(1, (clip?.duracion ?? 4) * (60 / bpm)) * sr)
-        muestras = new Float64Array(numMuestras)
-      }
+      const bpm = bpmDeVoz(estado, payload)
+      const { muestras, sr } = muestrasDeVoz(payload)
+      const cuantizar = payload.cuantizar ?? '1/16'
+      const sensibilidad = sensibilidadDeVoz(payload)
 
       // 1. Análisis armónico y rítmico general
-      const audioLensRes = generarDescripcionMusicalAudio(muestras, sr, {
-        bpmProyecto: bpm,
-        cuantizar: payload.cuantizar ?? '1/16',
-        sensibilidad: payload.sensibilidad ?? 1.0,
-      })
+      const audioLensRes = generarDescripcionMusicalAudio(muestras, sr, { bpmProyecto: bpm, cuantizar, sensibilidad })
 
-      // 2. Extracción melódica
+      // 2. Extracción melódica ajustada a la tonalidad detectada
       const melodiaRes = extraerMelodiaMidiDeAudio(muestras, {
         sampleRate: sr,
         bpmProyecto: bpm,
-        cuantizar: payload.cuantizar ?? '1/16',
-        sensibilidad: payload.sensibilidad ?? 1.0,
+        cuantizar,
+        sensibilidad,
         ajusteEscala: true,
         tonalidadRaiz: audioLensRes.tonalidad.raiz,
         tonalidadEscala: audioLensRes.tonalidad.escala,
@@ -1043,95 +1109,35 @@ export function crearComandoAnalysisExtractMidi(): CommandDefinition<any> {
           bpm,
         }),
       ]
+      const pistasCreadas: { tipo: 'melodia' | 'bateria'; trackId: string; clipId: string }[] = []
 
-      // Si se solicitó crear pistas automáticamente en el DAW
       if (payload.crearPistas) {
-        const inicioBeats = typeof payload.inicioCompas === 'number' ? Math.max(0, payload.inicioCompas * 4) : 0
-        const nuevasPistas: any[] = []
-
-        // Pista melódica si se detectaron notas y se pidió
-        if ((payload.tipo === 'melody' || payload.tipo === 'both' || payload.tipo === 'all' || !payload.tipo) && melodiaRes.notas.length > 0) {
-          const cfg = CONFIG_INSTRUMENTOS[payload.instrumento ?? 'guitar'] ?? CONFIG_INSTRUMENTOS.guitar!
-          const durBeats = Math.max(4, Math.ceil(Math.max(...melodiaRes.notas.map((n) => n.beat + n.duracionBeats), 4)))
-          const pistaId = `track-melody-${entorno.ahora()}`
-
-          nuevasPistas.push({
-            id: pistaId,
-            nombre: cfg.nombre,
-            tipo: 'instrumento',
-            color: cfg.color,
-            volumen: 0,
-            pan: 0,
-            mute: false,
-            solo: false,
-            efectos: [],
-            clips: [
-              {
-                id: `clip-melody-${entorno.ahora()}`,
-                nombre: 'Melodía Extraída',
-                inicio: inicioBeats,
-                duracion: durBeats,
-                tipo: 'midi',
-                color: cfg.color,
-                notas: melodiaRes.notas.map((n, idx) => ({
-                  id: `mel-note-${idx}`,
-                  pitch: n.pitch,
-                  inicio: n.beat,
-                  duracion: n.duracionBeats,
-                  velocidad: n.velocidad,
-                })),
-              },
-            ],
-          })
-          events.push(ev('track.creada', { trackId: pistaId, nombre: cfg.nombre }))
+        const inicioBeats = inicioEnBeats(payload)
+        const tipo = payload.tipo ?? 'melody'
+        if ((tipo === 'melody' || tipo === 'both' || tipo === 'all') && melodiaRes.notas.length > 0) {
+          const cfg = CONFIG_INSTRUMENTOS[payload.instrumento ?? 'guitar'] ?? CONFIG_INSTRUMENTOS.guitar
+          const r = insertarClipDeVoz(
+            nuevoEstado,
+            { nombrePista: cfg.nombre, color: cfg.color },
+            'Melodía Extraída',
+            inicioBeats,
+            notasMidiDeVoz(melodiaRes.notas),
+            events,
+          )
+          nuevoEstado = r.estado
+          pistasCreadas.push({ tipo: 'melodia', trackId: r.trackId, clipId: r.clipId })
         }
-
-        // Pista de batería si se detectaron golpes percusivos
-        if ((payload.tipo === 'drums' || payload.tipo === 'both' || payload.tipo === 'all') && audioLensRes.bateriaDetectada.totalGolpes > 0) {
-          const durBeats = Math.max(4, Math.ceil(Math.max(...audioLensRes.bateriaDetectada.notas.map((n) => n.beat + n.duracionBeats), 4)))
-          const pistaId = `track-drums-${entorno.ahora() + 1}`
-
-          nuevasPistas.push({
-            id: pistaId,
-            nombre: 'JasWave Worship Drums (IA)',
-            tipo: 'instrumento',
-            color: '#ef4444',
-            volumen: 0,
-            pan: 0,
-            mute: false,
-            solo: false,
-            efectos: [],
-            clips: [
-              {
-                id: `clip-drums-${entorno.ahora() + 1}`,
-                nombre: 'Patrón Batería Extraído',
-                inicio: inicioBeats,
-                duracion: durBeats,
-                tipo: 'midi',
-                color: '#ef4444',
-                notas: audioLensRes.bateriaDetectada.notas.map((n, idx) => ({
-                  id: `drum-note-${idx}`,
-                  pitch: n.notaMidi,
-                  inicio: n.beat,
-                  duracion: n.duracionBeats,
-                  velocidad: n.velocidad,
-                })),
-              },
-            ],
-          })
-          events.push(ev('track.creada', { trackId: pistaId, nombre: 'JasWave Worship Drums (IA)' }))
-        }
-
-        if (nuevasPistas.length > 0) {
-          nuevoEstado = {
-            ...estado,
-            project: {
-              ...estado.project,
-              tracks: [...estado.project.tracks, ...nuevasPistas],
-              modificado: true,
-              fechaModificacion: entorno.ahora(),
-            },
-          }
+        if ((tipo === 'drums' || tipo === 'both' || tipo === 'all') && audioLensRes.bateriaDetectada.totalGolpes > 0) {
+          const r = insertarClipDeVoz(
+            nuevoEstado,
+            { nombrePista: 'JasWave Worship Drums (IA)', color: '#ef4444' },
+            'Patrón Batería Extraído',
+            inicioBeats,
+            notasMidiDeVoz(audioLensRes.bateriaDetectada.notas.map((n) => ({ ...n, pitch: n.notaMidi }))),
+            events,
+          )
+          nuevoEstado = r.estado
+          pistasCreadas.push({ tipo: 'bateria', trackId: r.trackId, clipId: r.clipId })
         }
       }
 
@@ -1142,6 +1148,7 @@ export function crearComandoAnalysisExtractMidi(): CommandDefinition<any> {
           bpm,
           tonalidad: audioLensRes.tonalidad,
           progresionAcordes: audioLensRes.progresionAcordes,
+          pistasCreadas,
           melodia: {
             totalNotas: melodiaRes.notas.length,
             notas: melodiaRes.notas,

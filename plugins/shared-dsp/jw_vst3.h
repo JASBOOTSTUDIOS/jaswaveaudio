@@ -51,6 +51,9 @@ struct PluginDescriptor {
     const FeatureDef* features;
     int featureCount;
     bool instrument;
+    // Efecto MIDI: audio estéreo de paso + bus de eventos de entrada y de salida (el plugin reescribe el MIDI
+    // en processEvents()). Compatible con la inicialización agregada de los plugins existentes.
+    bool midiFx = false;
 };
 
 inline void configureLicense(const PluginDescriptor& d) {
@@ -217,6 +220,49 @@ inline bool readLegacyDoubles(IBStream* state, const ParamTable& table, std::vec
     return any;
 }
 
+// Lista de eventos del bloque = notas del teclado del editor (offset 0) seguidas de las del host.
+// Vive en el procesador: sin asignaciones en el hilo de audio.
+class EventosConTeclado : public IEventList {
+public:
+    static constexpr int32 kMax = 32;
+    void reset(IEventList* host) { host_ = host; n_ = 0; }
+    void add(int nota, float velocidad) {
+        if (n_ >= kMax) return;
+        Event& e = ui_[static_cast<size_t>(n_++)];
+        e = Event{};
+        e.busIndex = 0;
+        e.sampleOffset = 0;
+        if (velocidad > 0.0f) {
+            e.type = Event::kNoteOnEvent;
+            e.noteOn.channel = 0;
+            e.noteOn.pitch = static_cast<int16>(nota);
+            e.noteOn.velocity = velocidad;
+            e.noteOn.noteId = -1;
+        } else {
+            e.type = Event::kNoteOffEvent;
+            e.noteOff.channel = 0;
+            e.noteOff.pitch = static_cast<int16>(nota);
+            e.noteOff.velocity = 0.0f;
+            e.noteOff.noteId = -1;
+        }
+    }
+    int32 count() const { return n_; }
+    int32 PLUGIN_API getEventCount() SMTG_OVERRIDE { return n_ + (host_ ? host_->getEventCount() : 0); }
+    tresult PLUGIN_API getEvent(int32 index, Event& e) SMTG_OVERRIDE {
+        if (index < 0) return kInvalidArgument;
+        if (index < n_) { e = ui_[static_cast<size_t>(index)]; return kResultOk; }
+        return host_ ? host_->getEvent(index - n_, e) : kInvalidArgument;
+    }
+    tresult PLUGIN_API addEvent(Event&) SMTG_OVERRIDE { return kResultFalse; }
+    tresult PLUGIN_API queryInterface(const TUID, void** obj) SMTG_OVERRIDE { if (obj) *obj = nullptr; return kNoInterface; }
+    uint32 PLUGIN_API addRef() SMTG_OVERRIDE { return 1; }
+    uint32 PLUGIN_API release() SMTG_OVERRIDE { return 1; }
+private:
+    IEventList* host_{nullptr};
+    std::array<Event, kMax> ui_{};
+    int32 n_{0};
+};
+
 // ---- Procesador base ----
 class JwProcessor : public AudioEffect {
 public:
@@ -243,6 +289,10 @@ public:
             addEventInput(STR16("MIDI In"), 16);
         } else {
             addAudioInput(STR16("Stereo In"), SpeakerArr::kStereo);
+            if (desc_.midiFx) {
+                addEventInput(STR16("MIDI In"), 16);
+                addEventOutput(STR16("MIDI Out"), 16);
+            }
         }
         addAudioOutput(STR16("Stereo Out"), SpeakerArr::kStereo);
         if (!licAcquired_) { JasWaveLicense::Manager::instance().acquire(); licAcquired_ = true; }
@@ -318,9 +368,19 @@ public:
         lic_ = JasWaveLicense::Manager::instance().state();   // atómico, sin bloqueo
         if (changed || lic_ != lastLic_) { updateParams(); lastLic_ = lic_; }
         if (data.numSamples <= 0) return kResultOk;            // flush de parámetros
+        // Efectos MIDI: los eventos se procesan aunque el host no conecte audio (p. ej. pista MIDI sin entrada)
+        if (desc_.midiFx) processEvents(data);
         if (data.numOutputs < 1 || !data.outputs || data.outputs[0].numChannels < 1) return kResultOk;
         const int32 outCh = data.outputs[0].numChannels;
         if (!desc_.instrument && (data.numInputs < 1 || !data.inputs || data.inputs[0].numChannels < 1)) return kResultOk;
+
+        // Instrumentos: las teclas pulsadas con el ratón en el editor suenan como MIDI de entrada
+        IEventList* const eventosHost = data.inputEvents;
+        if (desc_.instrument && bus_) {
+            eventosTeclado_.reset(eventosHost);
+            bus_->notasUi.drenar([this](int nota, float vel) { eventosTeclado_.add(nota, vel); }, EventosConTeclado::kMax);
+            if (eventosTeclado_.count() > 0) data.inputEvents = &eventosTeclado_;
+        }
 
         int32 done = 0;
         while (done < data.numSamples) {
@@ -329,6 +389,7 @@ public:
             else runChunk<float>(data, done, n, outCh);
             done += n;
         }
+        data.inputEvents = eventosHost;
         data.outputs[0].silenceFlags = 0;
         writeOutputParams(data);
         return kResultOk;
@@ -348,6 +409,9 @@ protected:
     virtual uint32 tailSamples() { return static_cast<uint32>(sr_ * 0.25); }
     virtual LegacyStateFn legacyState() { return nullptr; }
     virtual void writeOutputParams(ProcessData&) {}
+    // Efectos MIDI (PluginDescriptor::midiFx): reescribir data.inputEvents / inputParameterChanges en data.outputEvents.
+    // Se llama una vez por bloque, antes del audio, con los offsets de muestra del bloque completo.
+    virtual void processEvents(ProcessData&) {}
 
     // ---- utilidades ----
     bool licensed() const { return JasWaveLicense::isLicensed(lic_); }
@@ -385,6 +449,8 @@ protected:
     std::shared_ptr<JasWaveDsp::MeterBusBase> bus_;
 
 private:
+    EventosConTeclado eventosTeclado_;   // notas del teclado del editor + MIDI del host (instrumentos)
+
     template <class T>
     std::vector<T>& scratchL();
     template <class T>
@@ -524,6 +590,37 @@ public:
         const ParamDef* d = table_.find(id);
         return d ? JasWaveVst::toPlain(*d, const_cast<JwController*>(this)->getParamNormalized(id)) : 0.0;
     }
+    // Modo del editor [ BÁSICO | AVANZADO ] de esta instancia (1 = Avanzado, por defecto). Se guarda en el estado del
+    // controlador (getState/setState), así cada instancia del plugin reabre su editor en el último modo usado.
+    int modoEditor() const { return modoEditor_; }
+    void setModoEditor(int modo) {
+        const int m = modo == 0 ? 0 : 1;
+        if (m == modoEditor_) return;
+        modoEditor_ = m;
+        if (componentHandler) {
+            IComponentHandler2* h2 = nullptr;
+            if (componentHandler->queryInterface(IComponentHandler2::iid, reinterpret_cast<void**>(&h2)) == kResultOk && h2) {
+                h2->setDirty(true);
+                h2->release();
+            }
+        }
+    }
+    tresult PLUGIN_API setState(IBStream* state) SMTG_OVERRIDE {
+        if (!state) return kResultFalse;
+        IBStreamer s(state, kLittleEndian);
+        int32 magic = 0, version = 0, modo = 1;
+        if (s.readInt32(magic) && magic == kUiStateMagic && s.readInt32(version) && version >= 1 && s.readInt32(modo)) modoEditor_ = modo == 0 ? 0 : 1;
+        return kResultOk;
+    }
+    tresult PLUGIN_API getState(IBStream* state) SMTG_OVERRIDE {
+        if (!state) return kResultFalse;
+        IBStreamer s(state, kLittleEndian);
+        s.writeInt32(kUiStateMagic);
+        s.writeInt32(1);
+        s.writeInt32(modoEditor_);
+        return kResultOk;
+    }
+
     // Editor específico de cada plugin
     virtual std::unique_ptr<JasWaveUI::PluginEditor> createEditor() = 0;
     // Solo herramienta de capturas: ajustes de demostración (valores planos) y tipo de señal
@@ -547,6 +644,8 @@ protected:
     mutable std::mutex busMutex_;
     std::shared_ptr<JasWaveDsp::MeterBusBase> bus_;
     bool licAcquired_{false};
+    static constexpr int32 kUiStateMagic = 0x4A575549;   // 'JWUI': estado del controlador (solo UI)
+    int modoEditor_{1};
 };
 
 } // namespace JasWaveVst

@@ -8,6 +8,8 @@ import { isolationForFormat } from './isolation-policy'
 import { guessIsInstrument, VST2_NOT_HOSTED_MSG } from './plugin-info-adapter'
 import { pluginRegistry } from './registry'
 import { expandPluginSearchPath, pluginSearchPaths } from './search-paths'
+import { bundleJasWave, esRutaJasWave, nombreBase, normalizarRuta, prioridadDeRutaJasWave } from './rutas-jaswave'
+export { prioridadDeRutaJasWave } from './rutas-jaswave'
 import type { PluginDescriptor, PluginHostDiscoveredPlugin } from './types'
 
 function hashId(pathStr: string, format: PluginDescriptor['format'] = 'vst3'): string {
@@ -39,10 +41,13 @@ export function descriptorFromDiscovered(
   const pluginPath = item.path
   const format = discoveredFormat(item)
   const isVst2 = format === 'vst2' || /\.dll$/i.test(pluginPath)
+  const propio = bundleJasWave(pluginPath)
+  // En los propios manda el nombre comercial: el host devuelve el del archivo («JasWaveGrandPiano»).
   const name =
+    propio?.nombre ||
     item.name ||
     pluginPath.replace(/^.*[/\\]/, '').replace(/\.(vst3|dll)$/i, '')
-  const isInstrument = guessIsInstrument(name, pluginPath)
+  const isInstrument = propio ? propio.instrumento : guessIsInstrument(name, pluginPath)
   // VST2 está descontinuado: nunca se marca hostReady para prevenir inestabilidad de audio/proceso.
   const hostReady = !isVst2 && item.hostReady === true
   return {
@@ -73,6 +78,33 @@ export function descriptorFromDiscovered(
   }
 }
 
+/**
+ * Deja una sola copia por ruta (sin distinguir mayúsculas ni tipo de barra) y, para los plugins `JasWave*`
+ * repetidos en varias carpetas, la de mejor prioridad.
+ */
+export function elegirCopiasDelCatalogo(items: PluginHostDiscoveredPlugin[]): PluginHostDiscoveredPlugin[] {
+  const vistas = new Set<string>()
+  const unicas: PluginHostDiscoveredPlugin[] = []
+  for (const it of items) {
+    const k = normalizarRuta(it.path)
+    if (vistas.has(k)) continue
+    vistas.add(k)
+    unicas.push(it)
+  }
+  const mejorPorNombre = new Map<string, PluginHostDiscoveredPlugin>()
+  for (const it of unicas) {
+    const base = nombreBase(normalizarRuta(it.path))
+    if (!esRutaJasWave(it.path)) continue
+    const prev = mejorPorNombre.get(base)
+    if (!prev || prioridadDeRutaJasWave(it.path) < prioridadDeRutaJasWave(prev.path)) mejorPorNombre.set(base, it)
+  }
+  return unicas.filter((it) => {
+    const base = nombreBase(normalizarRuta(it.path))
+    if (!esRutaJasWave(it.path)) return true
+    return mejorPorNombre.get(base) === it
+  })
+}
+
 export type DiscoverResult = {
   discovered: PluginDescriptor[]
   registered: number
@@ -96,8 +128,7 @@ export async function discoverVst3Plugins(
     ? paths.map(expandPluginSearchPath)
     : pluginSearchPaths.enabledExpandedPaths()
 
-  const discovered: PluginDescriptor[] = []
-  const seen = new Set<string>()
+  const hallados: PluginHostDiscoveredPlugin[] = []
   let lastError: string | undefined
 
   for (const root of roots) {
@@ -108,12 +139,24 @@ export async function discoverVst3Plugins(
       continue
     }
     for (const item of reply.plugins ?? []) {
-      if (!item.path || seen.has(item.path)) continue
-      seen.add(item.path)
-      const desc = descriptorFromDiscovered(item)
-      discovered.push(desc)
-      pluginRegistry.register(desc)
+      if (item.path) hallados.push(item)
     }
+  }
+
+  const discovered: PluginDescriptor[] = []
+  for (const item of elegirCopiasDelCatalogo(hallados)) {
+    const desc = descriptorFromDiscovered(item)
+    discovered.push(desc)
+    // El mismo archivo ya registrado con otro id (manifiesto del plugin, Piano/Roles): no se duplica en el catálogo.
+    const ruta = normalizarRuta(desc.path ?? '')
+    const yaEsta = pluginRegistry.list().some((d) => d.pluginId !== desc.pluginId && !!d.path && normalizarRuta(d.path) === ruta)
+    if (!yaEsta) pluginRegistry.register(desc)
+  }
+  // El catálogo se persiste y las copias antiguas (p. ej. la compilación de desarrollo ya superada por una
+  // instalación nueva) seguían en él para siempre: se podan las de plugins propios que perdieron la elección.
+  const elegidas = new Set(discovered.map((d) => normalizarRuta(d.path ?? '')))
+  for (const d of pluginRegistry.list()) {
+    if (d.path && esRutaJasWave(d.path) && !elegidas.has(normalizarRuta(d.path))) pluginRegistry.unregister(d.pluginId)
   }
 
   persistPluginCatalog(discovered)

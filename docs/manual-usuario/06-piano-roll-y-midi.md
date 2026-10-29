@@ -66,6 +66,25 @@ Las notas suenan por el **VST de la pista**. Si no oyes nada:
 3. Activa **monitor** en la pista para thru.
 4. **Ctrl+Shift+M** — **MIDI Learn** / Control MIDI para mapear faders a acciones o parámetros.
 
+**Timing:** el motor sella cada nota del teclado en cuanto llega (reloj de alta resolución de Windows) y la
+coloca en su muestra exacta dentro del bloque de audio, así que lo que tocas no «baila» con el tamaño del
+buffer. Al grabar, la nota queda donde la tocaste, no donde la vio la interfaz.
+
+El Asistente también escucha lo que tocas: pídele *«analiza lo que acabo de tocar»* (o *«tócalo como yo»*) y
+mide tus últimos segundos: notas, rango, dinámica, tempo, adelantos/retrasos respecto a la rejilla en ms,
+flams y acordes arpegiados (acción `analysis.midiPlayed`).
+
+### Tu toque
+
+El Asistente puede aprender **cómo tocas** a partir de tus clips MIDI o de lo que acabas de tocar: micro-tiempos
+de cada nota en ms (en el tiempo fuerte, los débiles, los contratiempos y las subdivisiones), si arpegias los
+acordes (grave→agudo o al revés, ms entre notas), la microdinámica (qué voz del acorde destacas, curva de los
+arpegios, ataque al empezar una frase) y la articulación (legato o staccato). Pídele *«analiza mi toque en esta
+pista»* (`analysis.touch`), *«guarda mi toque de piano como “Mi piano”»* (`style.touch.learn`) y *«aplica mi
+toque a la melodía nueva»* (`style.touch.apply`, se deshace con Ctrl+Z). Guarda un perfil por instrumento; con
+pocas notas el perfil se marca de confianza baja. Al producir un tema de worship puedes pedir que cada rol use tu
+toque (`perfilToque`).
+
 ## Expresión
 
 Lanes de CC (p. ej. sustain CC64, mod wheel) y pitch bend según el editor.  

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { MessageCircleQuestion, Send } from 'lucide-react'
+import { Check, MessageCircleQuestion, Send } from 'lucide-react'
 import type { ClarificationAnswer, ClarificationQuestion } from '../motor/ai-clarify'
 import { cn } from '@jaswave/host-sdk'
 
@@ -59,7 +59,7 @@ export function ClarificationCard({ questions, status = 'pending', onSubmit, onS
   if (done) {
     return (
       <div className="mt-2 rounded-md border border-border/70 bg-panel-raised/40 px-2.5 py-2 text-[11px] text-muted-foreground">
-        Respuestas enviadas — la IA continúa con tu criterio.
+        Respuestas enviadas. El asistente continúa con lo que elegiste.
       </div>
     )
   }
@@ -68,10 +68,7 @@ export function ClarificationCard({ questions, status = 'pending', onSubmit, onS
     <div className="mt-2 space-y-3 rounded-md border border-accent-amber/40 bg-panel-raised/50 p-2.5">
       <div className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground">
         <MessageCircleQuestion className="size-3.5 text-accent-amber" />
-        Elige una opción por pregunta
-        <span className="font-normal text-muted-foreground">
-          (multi = varias · luego Continuar)
-        </span>
+        Antes de seguir, ayúdame con esto
       </div>
 
       {questions.map((q) => {
@@ -82,7 +79,7 @@ export function ClarificationCard({ questions, status = 'pending', onSubmit, onS
               {q.question}
               {q.multi ? (
                 <span className="ml-1 text-[10px] font-normal text-muted-foreground">
-                  · selección múltiple
+                  (puedes elegir varias)
                 </span>
               ) : null}
             </p>
@@ -102,8 +99,11 @@ export function ClarificationCard({ questions, status = 'pending', onSubmit, onS
                     )}
                   >
                     {q.multi ? (
-                      <span className="mr-1.5 inline-block w-3 font-mono text-[10px] opacity-80">
-                        {on ? '☑' : '☐'}
+                      <span
+                        aria-hidden
+                        className="mr-1.5 inline-flex size-3 items-center justify-center rounded-sm border border-current align-[-2px] opacity-80"
+                      >
+                        {on ? <Check className="size-2.5" /> : null}
                       </span>
                     ) : null}
                     {opt}
@@ -122,7 +122,7 @@ export function ClarificationCard({ questions, status = 'pending', onSubmit, onS
         <textarea
           value={formCustom}
           rows={2}
-          placeholder="Respuesta personalizada (se envía al modelo junto con lo que seleccionaste)…"
+          placeholder="Escribe tu respuesta con tus palabras…"
           className="mt-0.5 w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 text-[11px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber/60"
           onChange={(e) => setFormCustom(e.target.value)}
         />
@@ -138,7 +138,7 @@ export function ClarificationCard({ questions, status = 'pending', onSubmit, onS
             }}
             className="rounded px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground"
           >
-            Usar defaults
+            Que decida el asistente
           </button>
         ) : null}
         <button

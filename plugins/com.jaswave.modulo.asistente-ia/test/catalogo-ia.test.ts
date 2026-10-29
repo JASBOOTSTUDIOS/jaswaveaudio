@@ -177,3 +177,51 @@ describe('M2 — catálogo de IA y enrutado', () => {
     )
   })
 })
+
+describe('petición con cobertura (aiChatHedged)', () => {
+  const espera = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+  it('si el modelo activo tarda, gana el siguiente y se cancela el lento; el modelo elegido no cambia', async () => {
+    const { cat, ajustes } = await modulos()
+    cat.fijarCatalogoIA({ permisos: { usar: true, modeloPropio: false, proveedores: ['principal'] }, proveedores: [ADMIN] })
+    ajustes.saveAiSettings(ajustes.selectCatalogModel(ajustes.loadAiSettings(), ADMIN.id, 'gpt-a'))
+    const llamadas: string[] = []
+    const chat = async (r: AiChatRequest) => {
+      llamadas.push(r.model)
+      if (r.model === 'gpt-a') {
+        await espera(300)
+        return { success: true, content: 'lento' }
+      }
+      await espera(20)
+      return { success: true, content: 'rápido' }
+    }
+    const r = await ajustes.aiChatHedged(chat, [{ role: 'user', content: 'hola' }], { temperature: 0.5, maxTokens: 100, hedgeAfterMs: 50 })
+    assert.equal(r.content, 'rápido')
+    assert.equal(r.usedModel, 'gpt-b')
+    assert.equal(r.fallbackUsed, false)
+    assert.deepEqual(llamadas, ['gpt-a', 'gpt-b'])
+    assert.equal(ajustes.getActiveProvider(ajustes.loadAiSettings()).selectedModel, 'gpt-a')
+  })
+
+  it('si el activo responde a tiempo no se lanza la cobertura; si falla rápido entra el siguiente al momento', async () => {
+    const { cat, ajustes } = await modulos()
+    cat.fijarCatalogoIA({ permisos: { usar: true, modeloPropio: false, proveedores: ['principal'] }, proveedores: [ADMIN] })
+    ajustes.saveAiSettings(ajustes.selectCatalogModel(ajustes.loadAiSettings(), ADMIN.id, 'gpt-a'))
+    const llamadas: string[] = []
+    const rapido = await ajustes.aiChatHedged(
+      async (r) => (llamadas.push(r.model), { success: true, content: 'ok' }),
+      [{ role: 'user', content: 'hola' }],
+      { temperature: 0.5, maxTokens: 100, hedgeAfterMs: 1000 },
+    )
+    assert.equal(rapido.content, 'ok')
+    assert.deepEqual(llamadas, ['gpt-a'])
+    const t0 = Date.now()
+    const vacio = await ajustes.aiChatHedged(
+      async (r) => (r.model === 'gpt-a' ? { success: true, content: '' } : { success: true, content: 'b' }),
+      [{ role: 'user', content: 'hola' }],
+      { temperature: 0.5, maxTokens: 100, hedgeAfterMs: 5000 },
+    )
+    assert.equal(vacio.content, 'b')
+    assert.ok(Date.now() - t0 < 1000, 'no espera al temporizador si el primero ya falló')
+  })
+})

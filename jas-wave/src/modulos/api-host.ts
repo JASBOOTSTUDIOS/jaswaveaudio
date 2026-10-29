@@ -41,8 +41,15 @@ export { espectroDePista } from './api-espectro'
 export type { EspectroPista } from './api-espectro'
 
 // Añadido al extraer com.jaswave.modulo.asistente-ia
-export { HARNESS_MAX_ACTIONS_PER_REPAIR, HARNESS_MAX_REPAIR_TURNS, HARNESS_MIN_AUDIBLE_PEAK, HARNESS_STALE_LIMIT, actionFingerprint, agentActionClass, agentActionClassOfType, agentDecisionFromToolCalls, auditStep, auditarProyecto, buildHarnessRepairMessage, buildHarnessReviewMessage, cancelAgentJobs, createAgentBudgetTracker, createAgentJobQueueStore, createBudgetGuard, createHarnessJobContextStore, createTurnEngine, engineChat, enqueueAgentJob, filterRedundantRepairActions, formatAgentBudgetStopFor, formatDawDebugDump, formatHarnessProgress, formatHarnessStopLine, gateAgentActionExecution, getAgentJobState, harnessReviewNeeded, harnessShouldRepair, healthSignature, inspectDawHealth, isProjectWipeIntent, isReadOnlyAction, isSongRefineIntent, isSyntheticReadTool, isTempoOnlyRefine, listarAuditHistorial, observeAgentContext, parseAgentDecisionFromText, parseEngineRun, parsePlan, peekHarnessJobContext, planHasPendingTasks, registerAgentJobRunner, registroHerramientasPlugins, runAbbreviatedReasoning, runAgentLoop, runCouncilReviewReasoning, runHarnessFollowups, runHarnessUntilPlanComplete, runReasoningLoop, seedAttemptedFingerprints, serializeEngineRun, setPlanMarkdownResolver, shouldContinueHarness, siguientePasoPendiente, stashHarnessJobContext, subscribeAgentJobs, syntheticReadResult, tendenciaMetrica, toolCallsToLegacyActions } from '@jaswave/ai-harness'
-export type { ActionResult, AgentBudget, AgentBudgetTracker, AgentBudgetUsage, AgentDecision, AgentJob, AgentJobKind, AgentJobRunner, AgentLoopChatReply, AgentLoopToolCall, AgentLoopToolResult, AgentMode, AgentRunResult, DawAction, DawHealthIssue, DawHealthReport, EngineAgentRole, EngineAnswer, EngineChatMessage, EngineChatOptions, EngineChatResult, EngineEvent, EngineHost, EngineHostChatResponse, EngineMode, EngineNeed, EngineRun, HarnessAuditTrack, HarnessDawAction, HarnessFollowupResult, HarnessFollowupTurn, HarnessHealthContext, HarnessJobContext, HarnessProgressEvent, HarnessStopReason, PlanEstructurado, PlanEvaluation, PlanPaso, ReasoningChatTurn, ReasoningStep, TurnContext, TurnEngine, TurnHandle, TurnProgram, TurnProgramOutcome } from '@jaswave/ai-harness'
+export { HARNESS_MAX_ACTIONS_PER_REPAIR, HARNESS_MAX_REPAIR_TURNS, HARNESS_MIN_AUDIBLE_PEAK, HARNESS_STALE_LIMIT, actionFingerprint, agentActionClass, agentActionClassOfType, agentDecisionFromToolCalls, auditStep, auditarProyecto, buildHarnessRepairMessage, buildHarnessReviewMessage, cancelAgentJobs, createAgentBudgetTracker, createAgentJobQueueStore, createBudgetGuard, createHarnessJobContextStore, createTurnEngine, elegirHabilidad, HABILIDADES, compilarHabilidad, compilarHabilidadLocal, esProcedimientoHabilidad, habilidadDesdeProcedimiento, instruccionesCompactasProcedimiento, mensajesCompilarHabilidad, validarProcedimiento, engineChat, enqueueAgentJob, filterRedundantRepairActions, formatAgentBudgetStopFor, formatDawDebugDump, formatHarnessProgress, formatHarnessStopLine, gateAgentActionExecution, getAgentJobState, harnessReviewNeeded, harnessShouldRepair, healthSignature, inspectDawHealth, isProjectWipeIntent, isReadOnlyAction, isSongRefineIntent, isSyntheticReadTool, isTempoOnlyRefine, listarAuditHistorial, observeAgentContext, parseAgentDecisionFromText, parseEngineRun, parsePlan, peekHarnessJobContext, planHasPendingTasks, registerAgentJobRunner, registroHerramientasPlugins, runAbbreviatedReasoning, runAgentLoop, runCouncilReviewReasoning, runHarnessFollowups, runHarnessUntilPlanComplete, runReasoningLoop, seedAttemptedFingerprints, serializeEngineRun, setPlanMarkdownResolver, shouldContinueHarness, siguientePasoPendiente, stashHarnessJobContext, subscribeAgentJobs, syntheticReadResult, tendenciaMetrica, toolCallsToLegacyActions } from '@jaswave/ai-harness'
+export type { ActionResult, AgentBudget, AgentBudgetTracker, AgentBudgetUsage, AgentDecision, AgentJob, AgentJobKind, AgentJobRunner, AgentLoopChatReply, AgentLoopToolCall, AgentLoopToolResult, AgentMode, AgentRunResult, DawAction, DawHealthIssue, DawHealthReport, EngineAgentRole, Habilidad, PlanHabilidad, ContextoHabilidad, HerramientaCatalogo, PasoProcedimiento, ProcedimientoHabilidad, ResultadoCompilacion, VariableProcedimiento, EngineAnswer, EngineChatMessage, EngineChatOptions, EngineChatResult, EngineEvent, EngineHost, EngineHostChatResponse, EngineMode, EngineNeed, EngineRun, HarnessAuditTrack, HarnessDawAction, HarnessFollowupResult, HarnessFollowupTurn, HarnessHealthContext, HarnessJobContext, HarnessProgressEvent, HarnessStopReason, PlanEstructurado, PlanEvaluation, PlanPaso, ReasoningChatTurn, ReasoningStep, TurnContext, TurnEngine, TurnHandle, TurnProgram, TurnProgramOutcome } from '@jaswave/ai-harness'
+export { NOMBRE_ETAPA, ejecutarProduccion } from '@jaswave/ai-harness'
+export type { Encargo, EtapaMedible, EtapaProduccion, EventoProduccion, MedicionQA, NotaUsuario, ParticipanteProduccion, ResultadoProduccionAgentes, RolProduccion, VeredictoQA } from '@jaswave/ai-harness'
+// Habilidades por agente (skills con revelación progresiva: lista en el sistema, contenido con `leer_habilidad`)
+export { H_LEER_HABILIDAD, buscarHabilidad, habilidadDesdeMarkdown, listadoHabilidades, slugHabilidad, unirHabilidades } from '@jaswave/ai-harness'
+export type { HabilidadAgente } from '@jaswave/ai-harness'
+export { buscarHerramientas, compactarResultado, ejecutarAgente, esModoSoloLectura, limpiarTextoUsuario, seleccionarIniciales, sistemaAgente, sistemaSubagente, tituloHerramienta } from '@jaswave/ai-harness'
+export type { ChatAgente, ClaseHerramienta, EventoAgente, HerramientaAgente, LlamadaAgente, MensajeAgente, PerfilSubagente, RegistroLlamada, ResultadoAgente, ResultadoHerramienta, Tarea as TareaAgente } from '@jaswave/ai-harness'
 export { JasWaveLogo } from '../../components/brand'
 export { Aviso, Boton, Seccion } from '../../components/cuenta/ui'
 export { CambiarClave, FormularioProveedorIA } from '../../components/ia/formulario-proveedor-ia'
@@ -61,8 +68,8 @@ export { buildAgentSystemPrompt, executeDawActions, fallbackActionsFromUserInten
 export type { ExecuteDawOptions } from '../lib/ai-daw-agent'
 export { appendAiDawAudit, clearAiDawAudit, exportAiDawAuditJson, listAiDawAudit, listAiDawAuditForMessage, subscribeAiDawAudit } from '../lib/ai-daw-audit-store'
 export type { AiDawAuditEntry } from '../lib/ai-daw-audit-store'
-export { MAX_CITED_MESSAGES, collectCitedMessages, filterMentionables, formatUserTurnWithCitations, groupMentionables, historyWithCitedPins, listMentionables, mentionDraftAtCaret, messagePreview } from '../lib/ai-mentions'
-export type { Mentionable } from '../lib/ai-mentions'
+export { MAX_CITED_MESSAGES, collectCitedMessages, filterMentionables, formatUserTurnWithCitations, groupMentionables, historyWithCitedPins, listMentionables, mentionDraftAtCaret, mentionKindsFor, messagePreview, orderedMentionables } from '../lib/ai-mentions'
+export type { Mentionable, MentionTrigger } from '../lib/ai-mentions'
 export { clearMidiProposalOverlay, notesFromActionPayload, publishMidiProposalFromActions, setMidiProposalOverlay } from '../lib/ai-midi-proposal-store'
 export { AGENT_MODE_META, agentModeLabel, inferBpmFromTempoIntent, isClipSectionSplitIntent, isGenreRewriteIntent, isMidiClipEditIntent, isProjectAuditIntent, isStyleApplyIntent, isStyleGapIntent, loadAgentMode, nextAgentMode, resolveMode, saveAgentMode, wantsFullProject, workingMode } from '../lib/ai-modes'
 export { actionsLackMidiNoteEdits, answerLocalReadQuery, buildMidiAuditClarifications, buildMidiAuditFixActions, buildMidiAuditReport, buildMidiClipEditActions, buildReadOnlyProjectContext, buildSplitLongClipsActions, buildStyleEnhanceActions, buildStyleGapReport, isGarbageAssistantReply, isOffTopicCreatePlanReply, styleEnhanceProfileFromText } from '../lib/ai-read-context'
@@ -134,3 +141,43 @@ export { publishMidiProposalFromMdPreview } from '../lib/ai-midi-proposal-store'
 
 // Configuración del backend del DAW (los módulos no tienen variables de compilación propias)
 export { backendConfigurado, configBackend } from '../lib/backend/config'
+
+// Audio adjunto del chat disponible para las herramientas de análisis del agente (audioRef)
+export { registrarAudioAdjunto, quitarAudioAdjunto } from '../lib/audio-fuente-analisis'
+// Carpeta de configuración del asistente (reglas, habilidades, prompts y planes en Markdown)
+export {
+  CARPETAS_ASISTENTE,
+  EVENTO_CARPETA_ASISTENTE,
+  RUTA_REGLAS,
+  carpetaAsistente,
+  escribirDocumentoAsistente,
+  leerDocumentoAsistente,
+  rutaAsistente,
+  rutaAsistenteValida,
+  slugAsistente,
+} from '../lib/asistente-carpeta'
+export type { ArchivoAsistente, CarpetaAsistente, DocumentoAsistente } from '../lib/asistente-carpeta'
+// «Insertar como clip de audio»: guarda el audio en el proyecto y crea el clip con su archivo
+export { importAudioBytesToTrack } from '../lib/audio-import-agent'
+export type { AudioBytesImportOpts } from '../lib/audio-import-agent'
+
+// Comandos de barra del chat, tareas programadas (/programar) y permisos de documentos (RBAC)
+export { ayudaComando, directivaParaModelo, parsearComandoChat } from '../lib/comandos-chat'
+export type { ComandoChat } from '../lib/comandos-chat'
+export { describirCuando, planificadorTareas } from '../lib/agent-scheduler'
+export type { TareaProgramada } from '../lib/agent-scheduler'
+export { deshacerUltimaReglaAprendida, fijarRolDocumentos, rolDocumentos } from '../lib/agent-docs'
+
+// Producción de temas de worship (compositor determinista + mezcla por medición), usada por /banda
+export { medidorMezclaApp, producirWorshipEnApp } from '../lib/worship-build-app'
+export { diagnosticarSonidoPistas, instrumentosInstalados } from '../../../shared/src/audio/diagnostico-sonido'
+export type { DiagnosticoSonido, ProblemaSonido } from '../../../shared/src/audio/diagnostico-sonido'
+export type { PasoBuild, ResultadoProduccion } from '../lib/worship-build'
+
+// Dictado por voz (G7): botón de micrófono, hook y formateo del texto dictado
+export { VoiceDictationButton } from '../../components/ui/voice-dictation-button'
+export type { VoiceDictationButtonProps } from '../../components/ui/voice-dictation-button'
+export { useVoiceDictation } from '../../hooks/use-voice-dictation'
+export type { UseVoiceDictationOptions, VoiceDictation } from '../../hooks/use-voice-dictation'
+export type { ModoDictado } from '../lib/voice-dictation-core'
+export { componerTextoDictado, formatearTextoDictado } from '../../../shared/src/voice/voice-text-formatter'

@@ -563,6 +563,10 @@ export function detectarFaltaDinamica(medida: MedidaMezcla): MixDiagnosis[] {
   return out
 }
 
+/** Pico pre-fader por pista que sí cuenta como clipping (en coma flotante, por debajo no se oye nada). */
+export const CLIPPING_PISTA_TOLERANCIA_DBTP = 1
+export const CLIPPING_PISTA_MUESTRAS_MINIMAS = 50
+
 /** Clipping en el master o en pistas. */
 export function detectarClipping(medida: MedidaMezcla): MixDiagnosis[] {
   const out: MixDiagnosis[] = []
@@ -578,6 +582,10 @@ export function detectarClipping(medida: MedidaMezcla): MixDiagnosis[] {
   }
   for (const p of medida.pistas) {
     if (!p.clipping) continue
+    // El audio interno va en coma flotante: un pico pre-fader apenas por encima de 0 dBFS en unas pocas
+    // muestras no recorta nada (el fader lo baja después). Antes el QA de la banda se atascaba en «+0,03 dBTP
+    // y 1 muestra» de la batería, ronda tras ronda.
+    if (p.truePeakDb <= CLIPPING_PISTA_TOLERANCIA_DBTP && (p.clippingSamples ?? 0) < CLIPPING_PISTA_MUESTRAS_MINIMAS) continue
     out.push({
       regla: 'clipping-pista',
       problema: `Clipping en ${p.nombre}`,

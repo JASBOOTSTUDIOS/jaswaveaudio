@@ -15,16 +15,21 @@ import {
 import { compactUntrustedBlocks, wrapUntrustedToolResult } from './untrusted'
 import {
   clampReasoningDepth,
+  DEFAULT_REASONING_PROFILE,
   parseModelIntentBrief,
+  planFastReasoning,
   planReasoningPhases,
   remainingPhasesAfterNormalize,
   stripIntentBlock,
   type ModelIntentBrief,
+  type ReasoningProfile,
   REASONING_MAX_STEPS,
   REASONING_MIN_STEPS,
 } from './reasoning-depth'
 import {
   buildFinalTurnUserMessage,
+  fastPhaseCue,
+  fastReasoningSystemPreamble,
   formatPhaseTitle,
   promptForPhase,
   reasoningSeedUserMessage,
@@ -192,6 +197,8 @@ export type RunReasoningLoopOpts = {
    * Sin valor → defaults (DEFAULT_AGENT_BUDGET).
    */
   budget?: AgentBudgetTracker | Partial<AgentBudget>
+  /** `rapido` por defecto (≤ 2 llamadas); `profundo` = consejo de 2–10 capas. */
+  perfil?: ReasoningProfile
   onDepthPlan?: (plan: {
     depth: number
     reason: string
@@ -226,10 +233,43 @@ export async function runReasoningLoop(
   let depthReason = 'mínimo'
   let depthSource: 'model' | 'heuristic' | 'override' = 'heuristic'
   let intentBrief: ModelIntentBrief | undefined
+  const rapido = (opts.perfil ?? DEFAULT_REASONING_PROFILE) === 'rapido'
 
   try {
-  // Override explícito: plan fijo (p. ej. reparación)
-  if (opts.phases?.length) {
+  if (rapido) {
+    // Perfil rápido: sin capa «traducir» ni consejo. Un override (p. ej. reparación) se reduce a un plan.
+    const plan = opts.phases?.length
+      ? { depth: 1, phases: ['commit'] as ReasoningPhase[], reason: 'plan fijo en un paso' }
+      : planFastReasoning(opts.userText, opts.mode)
+    depth = plan.depth
+    depthReason = plan.reason
+    depthSource = opts.phases?.length ? 'override' : 'heuristic'
+    opts.onDepthPlan?.({ depth, reason: depthReason, phases: plan.phases, source: depthSource })
+    if (plan.phases.length) {
+      const thread: ReasoningChatTurn[] = [
+        { role: 'system', content: fastReasoningSystemPreamble(opts.mode) },
+        {
+          role: 'user',
+          content: reasoningSeedUserMessage({ userText: opts.userText, projectContext: opts.projectContext, rapido: true }),
+        },
+      ]
+      for (let i = 0; i < plan.phases.length; i++) {
+        if (opts.abort?.aborted) throw new DOMException('Aborted', 'AbortError')
+        const phase = plan.phases[i]!
+        await runOnePhase(opts, {
+          phase,
+          index: i + 1,
+          total: plan.phases.length,
+          userText: opts.userText,
+          thread,
+          steps,
+          rapido: true,
+          titleOverride: phase === 'commit' ? 'Plan' : 'Consultando datos',
+        })
+      }
+    }
+  } else if (opts.phases?.length) {
+    // Override explícito: plan fijo (p. ej. reparación)
     const plan = planReasoningPhases(opts.userText, opts.mode, opts.phases)
     depth = plan.depth
     depthReason = plan.reason
@@ -382,6 +422,7 @@ export async function runReasoningLoop(
     stepsSummary: summarizeSteps(steps),
     mode: opts.mode,
     depth,
+    rapido,
   })
 
   return {
@@ -431,6 +472,7 @@ async function runOnePhase(
     thread: ReasoningChatTurn[]
     steps: ReasoningStep[]
     titleOverride?: string
+    rapido?: boolean
   },
 ): Promise<string> {
   if (opts.abort?.aborted) throw new DOMException('Aborted', 'AbortError')
@@ -440,15 +482,17 @@ async function runOnePhase(
     args.titleOverride ??
     formatPhaseTitle(phase, index, Math.max(total, REASONING_MIN_STEPS))
 
-  const cue = promptForPhase(phase, {
-    userText,
-    mode: opts.mode,
-    projectContext: opts.projectContext,
-    priorSteps: '',
-    continuum: true,
-    phaseIndex: index,
-    phaseTotal: total > 0 ? total : Math.max(index, REASONING_MAX_STEPS),
-  })
+  const cue = args.rapido
+    ? fastPhaseCue(phase, { userText, mode: opts.mode })
+    : promptForPhase(phase, {
+        userText,
+        mode: opts.mode,
+        projectContext: opts.projectContext,
+        priorSteps: '',
+        continuum: true,
+        phaseIndex: index,
+        phaseTotal: total > 0 ? total : Math.max(index, REASONING_MAX_STEPS),
+      })
   thread.push({ role: 'user', content: cue })
 
   if (opts.abort?.aborted) throw new DOMException('Aborted', 'AbortError')
@@ -464,8 +508,9 @@ async function runOnePhase(
     if (opts.abort?.aborted) throw new DOMException('Aborted', 'AbortError')
     thread.push({
       role: 'user',
-      content:
-        'La capa anterior falló vacía. ESCRIBE ahora 5–8 bullets de compromiso (diagnóstico/gaps o ACTIONS). PROHIBIDO vacío, ¡¡¡ o plan multi-día.',
+      content: args.rapido
+        ? 'La respuesta llegó vacía. Escribe ahora el plan: 5–8 viñetas cortas (decisiones y acciones en orden).'
+        : 'La capa anterior falló vacía. ESCRIBE ahora 5–8 bullets de compromiso (diagnóstico/gaps o ACTIONS). PROHIBIDO vacío, ¡¡¡ o plan multi-día.',
     })
     result = await chatWithBudget(opts, tracker, thread)
     raw = result.success && result.content?.trim() ? result.content.trim() : ''
@@ -483,7 +528,7 @@ async function runOnePhase(
     let readActions = parseReadBlockFromText(raw)
     // Si pidió internet y estamos en research2 sin web.search, inyéctalo
     if (
-      phase === 'research2' &&
+      (phase === 'research2' || args.rapido) &&
       (wantsWebResearch(userText) || isStyleGapIntent(userText)) &&
       !readActions.some((a) => a.type === 'web.search')
     ) {
@@ -568,6 +613,18 @@ export async function runAbbreviatedReasoning(
 export async function runCouncilReviewReasoning(
   opts: Omit<RunReasoningLoopOpts, 'phases'> & { applyOutcome: string },
 ): Promise<Awaited<ReturnType<typeof runReasoningLoop>>> {
+  // Perfil rápido: nada de capas tras Aplicar. El agente continúa con el estado real del DAW (track.list,
+  // diagnósticos) en lugar de cuatro llamadas de texto que solo retrasaban el siguiente paso.
+  if ((opts.perfil ?? DEFAULT_REASONING_PROFILE) === 'rapido') {
+    return {
+      steps: [],
+      decisionBrief: '',
+      finalUserMessage: '',
+      depth: 0,
+      depthReason: 'perfil rápido: sin revisión por capas tras Aplicar',
+      canonicalPrompt: opts.userText,
+    }
+  }
   return runReasoningLoop({
     ...opts,
     userText: [

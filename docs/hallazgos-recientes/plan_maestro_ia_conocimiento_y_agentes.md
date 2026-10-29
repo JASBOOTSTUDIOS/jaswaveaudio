@@ -102,26 +102,33 @@ Cada instrumento es su propio paquete y plugin individual e independiente (no co
 
 ## 2. Hoja de Ruta de Ejecución Secuenciada
 
-1. **Fase 3 (Foco Inmediato Prioritario Consensuado en Grill-Me)**:
-   - [ ] Implementar algoritmo DSP de Pitch Tracking $f_0$ con ajuste a escala en `@jaswave/shared/src/audio/pitch-tracking.ts`.
-   - [ ] Crear y registrar el comando `analysis.voiceToMelody` y la herramienta analítica `analysis.extractMidi`.
-   - [ ] Integrar botón de notas de voz tipo WhatsApp en `audio-sample-recorder.tsx` y `coproducer-panel.tsx`.
-   - [ ] Habilitar drag & drop de audio sobre el chat y autocompletado `@clip:`.
-   - [ ] Conectar la acción de inspección y modificación de FX chain por los especialistas IA.
-   - [ ] Test unitarios con Vitest y verificación funcional en caliente.
+> Estado verificado el 2026-10-26: `npm run verify` y `npm run build` en verde. Las casillas marcadas tienen código y tests; lo que depende de oír el resultado en el DAW sigue abierto.
 
-2. **Fase 4 (Suite de 6 Plugins VST3/WASM Independientes)**:
-   - [ ] Estructurar los 6 paquetes independientes bajo `plugins/` con sus manifiestos V5 y parámetros IA.
-   - [ ] Implementar los motores sonoros híbridos (DSP C++ para VST3 y AudioWorklet para Web).
-   - [ ] UI futurista JasWave compartida entre editor nativo y réplica web.
+1. **Fase 3 (Voz→MIDI y agentes)**:
+   - [x] DSP de Pitch Tracking f0 con ajuste cíclico a escala (`shared/src/audio/pitch-tracking.ts`, con tests).
+   - [x] Comandos `analysis.voiceToMelody`, `voiceToDrums` y `analysis.extractMidi` con undo, registrados en el catálogo del agente.
+   - [x] Notas de voz tipo WhatsApp en `audio-sample-recorder.tsx` y `coproducer-panel.tsx` (remuestreo real a 22 050 Hz, cancelación, limpieza).
+   - [x] Drag & drop de audio sobre toda el área del chat y menciones `@clip:` (prueba manual en la app pendiente).
+   - [x] FX chain por especialistas: `plugin.insert/remove/bypass/setParameter` con undo exacto; existen `@guitarrista`, `@baterista`, `@bajista`, `@pianista`, `@director`, `@mezcla`.
+   - [ ] Botón «Insertar como Clip de Audio»: sigue siendo un stub.
+   - [ ] Prueba funcional en caliente con micrófono real.
 
-3. **Fase 1 y 2 (Limpieza de Motor C++ y Waveforms 0 ms)**:
-   - [ ] Retirar código VST2 de `native/plugin-host` (`vst2_slot.*`) y depurar escáner VST3.
-   - [ ] Implementar waveforms cacheadas en `.peak` y buffer elástico de Named Pipe.
+2. **Fase 4 (6 plugins independientes VST3 + web)**:
+   - [x] Seis paquetes en `plugins/` con manifiestos, parámetros para la IA, réplica AudioWorklet y botón RESET.
+   - [x] Validator de Steinberg 47/47 y tests de render por plugin.
+   - [ ] Calidad sonora: el usuario los oye artificiales; en curso la versión con samples libres (CC0 / CC-BY con créditos).
 
-4. **Fase 5 y 6 (Comandos, Base de Conocimientos y Sincronización Multiusuario)**:
-   - [ ] Comandos `/aprender`, `/meta`, `/plan`, etc., y servicio RBAC de conocimientos `.md`.
-   - [ ] Sincronización WebSocket offline-first y presencia estilo Figma.
+3. **Fase 1 y 2 (motor C++ y waveforms)**:
+   - [x] VST2 retirado (ADR-0019); solo VST3 64-bit.
+   - [x] `.peak` versionado con firma del audio de origen.
+   - [x] Host nativo: corrección de corrupción de memoria al reconfigurar buses, cierre limpio (código 0) y relevo del host sin carreras (este último pendiente de reiniciar la app para probarlo).
+   - [ ] «Buffer elástico» del Named Pipe: hoy es solo `highWaterMark`.
 
-5. **Fase 7 (Verificación Integral y Lints)**:
-   - [ ] `npm run verify` completo en verde y certificación del sistema.
+4. **Fase 5 y 6 (comandos, conocimiento, sync)**:
+   - [x] `/aprender`, `/meta`, `/plan`, `/entrevista`, `/programar` (planificador real) y RBAC de `.md`.
+   - [x] Sync con reconciliación vectorial (`shared/src/sync`, tests de convergencia).
+   - [ ] El rol de sala no se conecta aún al RBAC; falta la presencia estilo Figma en la UI.
+
+5. **Fase 7 (verificación)**:
+   - [x] `npm run verify` y `npm run build` en verde.
+   - [ ] Certificación auditiva de la canción worship en el DAW.

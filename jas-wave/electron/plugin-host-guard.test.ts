@@ -29,6 +29,19 @@ describe('plugin-host-guard', () => {
     assert.equal(checkHostCommand({ type: 'renderOfflineStart', outPath: 'C:\\Windows\\mix.wav' }, g).ok, false)
   })
 
+  it('los stems del export necesitan escritura en cada ruta', () => {
+    const g = grants()
+    const base = { type: 'renderOfflineStart', outPath: 'D:\\Proyectos\\cancion\\mix.wav' }
+    const ok = checkHostCommand(
+      { ...base, stemOuts: '0|D:\\Proyectos\\cancion\\mix-stems\\01 - Bajo.wav;3|D:\\Proyectos\\cancion\\mix-stems\\04 - Voz.wav' },
+      g,
+    )
+    assert.equal(ok.ok, true)
+    assert.equal(checkHostCommand({ ...base, stemOuts: '0|C:\\Windows\\x.wav' }, g).ok, false)
+    assert.equal(checkHostCommand({ ...base, stemOuts: 'x|D:\\Proyectos\\cancion\\a.wav' }, g).ok, false)
+    assert.equal(checkHostCommand({ ...base, stemOuts: '0|D:\\Proyectos\\cancion\\a.exe' }, g).ok, false)
+  })
+
   it('permite comandos sin rutas', () => {
     assert.equal(checkHostCommand({ type: 'noteOn', note: 60 }, grants()).ok, true)
     assert.equal(checkHostCommand({ type: 'clip.load', clipId: 'a', pcmBase64: '' }, grants()).ok, true)
@@ -82,5 +95,17 @@ describe('plugin-host-guard: renders de análisis (A7b)', () => {
       grants(),
     )
     assert.equal(mal.ok, false)
+  })
+})
+
+import { expandirVariablesDeEntorno } from './plugin-host-guard'
+
+describe('expandirVariablesDeEntorno', () => {
+  const env = { LOCALAPPDATA: 'C:/Users/a/AppData/Local', CommonProgramFiles: 'C:/Program Files/Common Files' }
+  it('expande variables sin distinguir mayúsculas y deja las desconocidas tal cual', () => {
+    assert.equal(expandirVariablesDeEntorno('%LOCALAPPDATA%/Programs/Common/VST3', env), 'C:/Users/a/AppData/Local/Programs/Common/VST3')
+    assert.equal(expandirVariablesDeEntorno('%commonprogramfiles%/VST3', env), 'C:/Program Files/Common Files/VST3')
+    assert.equal(expandirVariablesDeEntorno('%NO_EXISTE%/VST3', env), '%NO_EXISTE%/VST3')
+    assert.equal(expandirVariablesDeEntorno('D:/Studio/VST', env), 'D:/Studio/VST')
   })
 })

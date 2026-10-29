@@ -9,6 +9,7 @@
 import { iaRemotaDisponible, transporteIA } from '../ia/transporte-ia'
 
 import {
+  aiChatHedged,
   aiChatWithFallback,
   loadAiSettings,
   saveAiSettings,
@@ -28,7 +29,10 @@ import { listAgentToolSchemas } from './agent-tool-schemas'
 import { computeFallbackActions, isFallbackTool } from './agent-fallback-tools'
 import { appendMessage, getConversation, patchMessage } from './ai-chat-store'
 
-import { createLegacyTurnProgram, finishAgentTurn, type LegacyTurnContext } from './agent-legacy-turn'
+import { finishAgentTurn, type LegacyTurnContext } from './agent-legacy-turn'
+import { createAgenteTurnProgram } from './turno/programa'
+import type { ComandoTurno } from './turno/turno-agente'
+import { KIND_BANDA } from './turno/turno-banda'
 import { revertUndoToDepth } from './agent-turn-undo'
 import { A9_TOOL_NAMES, PLAN_SLUG, agentActionClass, auditStep, auditarProyecto, buildAgentSystemPrompt, createAgentBudgetTracker, createBudgetGuard, createTurnEngine, engineChat, esHerramientaDePlugin, executeDawActions, formatActionResultsForUser, formatMusicalSelectionForPrompt, getAgentDoc, getMusicalSelectionAnchor, parseActionsFromText, parseEngineRun, planificarHerramientaPlugin, runAuditTool, runPostTurnCertifyPipeline, serializeEngineRun, writeAgentDoc, almacenEjecucionesAgente, registrarError } from '@jaswave/host-sdk'
 import type { AgentMode, EngineAgentRole, EngineChatOptions, EngineChatResult, EngineEvent, EngineHost, EngineHostChatResponse, EngineMode, EngineRun, TiendaDAW, TurnEngine, TurnHandle } from '@jaswave/host-sdk'
@@ -83,14 +87,23 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
       if (!transporte) {
         return { success: false, error: 'No hay modelo remoto disponible.', errorCode: 'not_available' }
       }
-      const cfg = loadAiSettings()
+      const ajustes = loadAiSettings()
+      // JasWave IA reparte, cubre y reintenta en el servidor: aquí una sola petición por llamada.
+      const servicioJasWave = ajustes.activeProviderId === 'jaswave'
+      const cfg = servicioJasWave ? { ...ajustes, fallbackEnabled: false } : ajustes
       const streamChat = transporte.chatStream
         ? (r: AiChatRequest, onDelta: (t: string) => void) =>
             transporte.chatStream!(r, (e) => {
               if (e.type === 'delta' && e.text) onDelta(e.text)
             })
         : undefined
-      const r = await aiChatWithFallback((x) => transporte.chat(x), req.messages, {
+      // Plan y briefs (sin herramientas ni streaming): cobertura con el siguiente modelo si el activo tarda.
+      const cubrir = !servicioJasWave && req.meta.purpose === 'reasoning' && !req.tools?.length && !opts.onDelta
+      const llamar = cubrir
+        ? (x: Parameters<typeof aiChatWithFallback>[0], m: Parameters<typeof aiChatWithFallback>[1], o: Parameters<typeof aiChatWithFallback>[2]) =>
+            aiChatHedged(x, m, { ...o, hedgeAfterMs: 40_000 })
+        : aiChatWithFallback
+      const r = await llamar((x) => transporte.chat(x), req.messages, {
         temperature: req.temperature ?? cfg.temperature,
         maxTokens: req.maxTokens ?? cfg.maxTokens,
         settings: cfg,
@@ -116,7 +129,7 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
       const turns = chatMessages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
       return [
         buildAssembledAgentContext(tienda, state, userText, turns, ''),
-        formatMusicalSelectionForPrompt(getMusicalSelectionAnchor()),
+        formatMusicalSelectionForPrompt(getMusicalSelectionAnchor(), userText),
         base,
       ]
         .filter(Boolean)
@@ -152,13 +165,18 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
       const a9Results = await Promise.all(
         a9.map(async (c) => {
           try {
-            const data = await (runAuditTool as any)(
-              tienda.obtenerEstado(),
-              c.name,
-              (c.arguments ?? {}) as Record<string, unknown>,
-              getAgentEngine(tienda),
-            )
-            return { callId: c.id, name: c.name, status: 'success' as const, data }
+            const pid = projectId()
+            const r = runAuditTool(c.name, (c.arguments ?? {}) as Record<string, unknown>, {
+              state: tienda.obtenerEstado(),
+              projectId: pid,
+              getPlan: () => getAgentDoc(pid, PLAN_SLUG)?.content ?? null,
+              writePlan: (md) => void writeAgentDoc(pid, PLAN_SLUG, md, { origin: 'ai', preserveUserNotes: true }),
+              getRun: (id) => (id ? deps.getRun?.(id) : run) as never,
+              agente: ctx.role,
+            })
+            return r.success
+              ? { callId: c.id, name: c.name, status: 'success' as const, data: r.data }
+              : { callId: c.id, name: c.name, status: 'error' as const, error: r.error ?? { code: 'audit_failed', message: 'No se pudo completar la revisión.' } }
           } catch (e) {
             return {
               callId: c.id,
@@ -174,7 +192,11 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
       const pluginResults = []
       for (const c of deplugins) {
         try {
-          const plan = planificarHerramientaPlugin(c.name, (c.arguments ?? {}) as Record<string, unknown>)
+          const bruto = (c.arguments ?? {}) as Record<string, unknown>
+          // Las herramientas de plugin piden trackId; el modelo manda a menudo pistaId.
+          const { pistaId, ...resto } = bruto
+          const argsPlugin = resto.trackId == null && pistaId != null ? { ...resto, trackId: pistaId } : bruto
+          const plan = planificarHerramientaPlugin(c.name, argsPlugin, tienda.obtenerEstado().project)
           if (plan.tipo === 'respuesta') {
             pluginResults.push({ callId: c.id, name: c.name, status: 'success' as const, data: plan.data })
             continue
@@ -294,7 +316,7 @@ export function createJasWaveEngineHost(deps: JasWaveEngineHostDeps): EngineHost
       return parseEngineRun(raw ?? memoryRuns.get(runId) ?? '')
     },
 
-    program: createLegacyTurnProgram({ tienda }),
+    program: createAgenteTurnProgram({ tienda }),
   }
 }
 
@@ -319,6 +341,11 @@ function newMsgId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
+/** Presupuesto de un turno de banda (producción completa por etapas). */
+// Una canción completa con arreglista y rondas de corrección ronda las 500–700 llamadas; el historial ya va
+// compactado, pero cada agente arrastra su contexto en cada paso.
+export const PRESUPUESTO_BANDA = { maxModelCalls: 1500, maxInputChars: 60_000_000, maxWallMs: 90 * 60_000 }
+
 export type StartCoproducerTurnInput = {
   conversationId: string
   projectId: string
@@ -330,6 +357,8 @@ export type StartCoproducerTurnInput = {
   preferLocal?: boolean
   /** Variante: 'quick' (chips de inicio sin modelo). */
   kind?: string
+  /** Modo pedido con un comando de barra (/meta, /plan, /entrevista, /configurar). */
+  comando?: ComandoTurno
 }
 
 /**
@@ -350,12 +379,13 @@ export function startCoproducerTurn(
     citedMessageIds: input.citedMessageIds,
   }, input.projectId)
   appendMessage(input.conversationId, { id: assistantMsgId, role: 'assistant', content: '' }, input.projectId)
-  const context: LegacyTurnContext = {
+  const context: LegacyTurnContext & { comando?: ComandoTurno } = {
     userMsgId,
     assistantMsgId,
     citedIds: input.citedIds ?? [],
     preferLocal: input.preferLocal === true,
     projectId: input.projectId,
+    comando: input.comando,
   }
   const handle = engine.runTurn({
     text: input.text,
@@ -364,6 +394,9 @@ export function startCoproducerTurn(
     messageId: assistantMsgId,
     kind: input.kind,
     context,
+    // La banda reparte el turno entre muchos agentes (7+ músicos, mezcla, máster y sus QA): con el tope
+    // de un chat normal los últimos músicos se quedaban sin presupuesto y sus pistas vacías.
+    ...(input.kind === KIND_BANDA ? { budget: PRESUPUESTO_BANDA } : {}),
   })
   patchMessage(input.conversationId, assistantMsgId, { engineRunId: handle.runId })
   return { handle, userMsgId, assistantMsgId }

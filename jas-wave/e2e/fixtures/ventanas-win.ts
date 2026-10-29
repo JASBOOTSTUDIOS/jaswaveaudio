@@ -138,3 +138,64 @@ public static class JwCaptura {
       `[JwCaptura]::Guardar(${hwnd}, '${archivo.replace(/'/g, "''")}')\n`,
   )
 }
+
+/** Mueve/redimensiona una ventana (píxeles físicos). */
+export function moverVentana(hwnd: string, r: Rect): void {
+  const cs = String.raw`
+using System;
+using System.Runtime.InteropServices;
+public static class JwMover {
+  [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int hh, bool repaint);
+  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr c);
+}`
+  powershell(
+    `$cs = @'\n${cs}\n'@\nAdd-Type -TypeDefinition $cs -Language CSharp\n` +
+      `[void][JwMover]::SetThreadDpiAwarenessContext([IntPtr](-4))\n[void][JwMover]::MoveWindow([IntPtr]${hwnd}, ${r.x}, ${r.y}, ${r.w}, ${r.h}, $true)\n`,
+  )
+}
+
+/** Estilos Win32 de una ventana (GWL_STYLE / GWL_EXSTYLE) para comprobar sus botones de marco. */
+export function estilosVentana(hwnd: string): { estilo: number; estiloEx: number } {
+  const cs = String.raw`
+using System;
+using System.Runtime.InteropServices;
+public static class JwEstilos {
+  [DllImport("user32.dll")] public static extern IntPtr GetWindowLongPtr(IntPtr h, int i);
+}`
+  const out = powershell(
+    `$cs = @'\n${cs}\n'@\nAdd-Type -TypeDefinition $cs -Language CSharp\n` +
+      `$h = [IntPtr]${hwnd}\nWrite-Output ("" + [JwEstilos]::GetWindowLongPtr($h, -16).ToInt64() + "," + [JwEstilos]::GetWindowLongPtr($h, -20).ToInt64())\n`,
+  )
+  const [a, b] = out.split(',').map(Number)
+  return { estilo: a! >>> 0, estiloEx: b! >>> 0 }
+}
+
+/** Imagen de la ventana ENTERA (incluidos los botones de ventana del overlay), sin copiar la pantalla. */
+export function capturarVentanaEntera(hwnd: string, archivo: string): void {
+  const cs = String.raw`
+using System;
+using System.Drawing;
+using System.Runtime.InteropServices;
+public static class JwCapturaEntera {
+  [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
+  [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr c);
+  public static void Guardar(long hwnd, string archivo) {
+    SetThreadDpiAwarenessContext(new IntPtr(-4));
+    var h = new IntPtr(hwnd);
+    RECT r; GetWindowRect(h, out r);
+    using (var b = new Bitmap(Math.Max(1, r.R - r.L), Math.Max(1, r.B - r.T)))
+    using (var g = Graphics.FromImage(b)) {
+      var hdc = g.GetHdc();
+      PrintWindow(h, hdc, 2); // PW_RENDERFULLCONTENT
+      g.ReleaseHdc(hdc);
+      b.Save(archivo, System.Drawing.Imaging.ImageFormat.Png);
+    }
+  }
+}`
+  powershell(
+    `$cs = @'\n${cs}\n'@\nAdd-Type -TypeDefinition $cs -Language CSharp -ReferencedAssemblies System.Drawing\n` +
+      `[JwCapturaEntera]::Guardar(${hwnd}, '${archivo.replace(/'/g, "''")}')\n`,
+  )
+}

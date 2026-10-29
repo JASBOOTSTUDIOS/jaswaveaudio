@@ -18,11 +18,5 @@ export {
   PROMPTS,
   obtenerPrompt,
 } from './prompts'
-export {
-  type EspecialistaCustom,
-  cargarEspecialistasCustom,
-  guardarEspecialistasCustom,
-  obtenerEspecialistasPorDefecto,
-  listarAgentesEfectivos,
-  obtenerPromptFinalDeAgente,
-} from './especialistas-config'
+// La configuración de especialistas del usuario vive en el módulo asistente
+// (`motor/especialistas-storage.ts`, clave v2): es la única fuente.

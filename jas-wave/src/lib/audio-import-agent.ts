@@ -7,7 +7,9 @@ import { obtenerProveedorAnalisis } from '../../../shared/src/audio/analysis-pro
 import { getStateRevision } from '../../../shared/src/state/state-revision'
 import { audioEngine } from '@/lib/audio-engine'
 import { extractStereoPeaks, packStereoPeaks } from '@/lib/stereo-peaks'
-import { copiarRutaAlProyecto } from '@/src/lib/project-media'
+import { copiarRutaAlProyecto, guardarWaveformPeak, sanitizarNombreArchivo } from '@/src/lib/project-media'
+import { makeRecordingFileName, saveRecordingWav, saveRecordingWavFallback } from '@/src/lib/audio-recording-persist'
+import { encodeWavFromAudioBuffer } from '@/src/lib/encode-wav'
 
 function projectBpm(st: ReturnType<TiendaDAW['obtenerEstado']>): number {
   const bpmObj = st.project?.bpm as { valor?: number } | undefined
@@ -113,6 +115,68 @@ export async function importAudioToTrack(
   }
 
   return { trackId, bufferKey, durationSec, clipId }
+}
+
+export type AudioBytesImportOpts = {
+  /** Audio en cualquier formato que Web Audio sepa decodificar (wav, mp3, webm…). */
+  bytes: ArrayBuffer
+  nombre: string
+  trackId?: string
+  inicio?: number
+  /** Nombre de la pista si hay que crearla. */
+  trackName?: string
+}
+
+/**
+ * Inserta audio en memoria (nota de voz del chat, archivo soltado) como clip
+ * real: se guarda como WAV en `media/grabaciones/` del proyecto (o en userData
+ * si aún no hay proyecto) y el clip apunta a ese archivo, así suena, se exporta
+ * y sobrevive al guardar y reabrir. Todo pasa por comandos (deshacer).
+ */
+export async function importAudioBytesToTrack(
+  tienda: TiendaDAW,
+  opts: AudioBytesImportOpts,
+): Promise<{ trackId: string; clipId?: string; sourceId: string; durationSec: number; dentroDelProyecto: boolean }> {
+  const tempKey = `chat-audio-${Date.now()}`
+  const buffer = await audioEngine.decodeArrayBuffer(tempKey, opts.bytes.slice(0))
+  const durationSec = buffer.duration
+  if (!(durationSec > 0.02)) throw new Error('El audio está vacío')
+
+  const wav = encodeWavFromAudioBuffer(buffer)
+  const fileName = makeRecordingFileName(sanitizarNombreArchivo(opts.nombre).replace(/\.[^.]+$/, '') || 'audio')
+  const ruta = tienda.obtenerEstado().project?.ruta
+  const guardado = (await saveRecordingWav(wav, fileName, ruta)) ?? (await saveRecordingWavFallback(wav, fileName))
+  if (!guardado) throw new Error('No se pudo guardar el audio en disco: revisa los permisos o el espacio libre')
+  const sourceId = guardado.sourceId
+  audioEngine.setAudioBuffer(sourceId, buffer)
+
+  let trackId = opts.trackId
+  if (!trackId) {
+    const created = await tienda.executor.execute('track.create', { nombre: opts.trackName ?? 'Audio', tipo: 'audio' })
+    if (!created.success) throw new Error(created.error?.message ?? 'No se pudo crear la pista de audio')
+    trackId = (created.result as { trackId?: string })?.trackId
+  }
+  if (!trackId) throw new Error('No se pudo crear la pista de audio')
+
+  const buckets = Math.min(4096, Math.max(256, Math.floor(durationSec * 80)))
+  const waveform = packStereoPeaks(extractStereoPeaks(buffer, buckets))
+  const clipRes = await tienda.executor.execute('clip.create', {
+    pistaId: trackId,
+    nombre: opts.nombre.replace(/\.[^.]+$/, '') || 'Audio',
+    inicio: opts.inicio ?? 0,
+    duracion: secondsToBeats(durationSec, projectBpm(tienda.obtenerEstado())),
+    sourceId,
+    waveform,
+  })
+  if (!clipRes.success) throw new Error(clipRes.error?.message ?? 'No se pudo crear el clip')
+  void guardarWaveformPeak(sourceId, waveform, ruta)
+  return {
+    trackId,
+    clipId: (clipRes.result as { clipId?: string })?.clipId,
+    sourceId,
+    durationSec,
+    dentroDelProyecto: sourceId !== guardado.absPath,
+  }
 }
 
 type ReferenceAbState = {

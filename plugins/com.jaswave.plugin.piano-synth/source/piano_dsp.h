@@ -40,6 +40,7 @@ inline const std::vector<ParamDef>& paramDefs() {
         v.push_back(linearP(kTune, "Tune A4", "Hz", 430.0, 450.0, 440.0, 1));
         v.push_back(linearP(kHardness, "Hammer Hardness", "%", 0.0, 100.0, 50.0, 0));
         v.push_back(toggleP(kSustain, "Sustain Pedal", 0));
+        marcarBasicos(v, { kBypass, kBrightness, kHardness, kDecay, kVolume, kSustain });   // modo Básico del editor
         return v;
     }();
     return defs;

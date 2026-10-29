@@ -27,6 +27,19 @@ describe('agent-tool-schemas', () => {
     assert.ok(qa.every((t) => agentActionClassOfType(t.name) === 'read'))
   })
 
+  it('los esquemas salen del registro con comandos (el de la tienda) y traen tipos y nombres reales', async () => {
+    // En la app el registro global está vacío: sin el de la tienda, el modelo veía `properties: {}`.
+    const { registroComandos } = await import('@jaswave/host-sdk')
+    const conComandos = registroComandos.list().length ? registroComandos : (await import('@jaswave/host-sdk')).getSharedStore().registroComandos
+    assert.ok(conComandos.list().length > 30)
+    const props = (n: string) => (allAgentToolSchemas().find((t) => t.name === n)?.parameters.properties ?? {}) as Record<string, { type?: string }>
+    assert.equal(props('project.setBpm').bpm?.type, 'number')
+    assert.equal(props('midi.clip.create').notas?.type, 'array')
+    assert.equal(props('project.setTimeSignature').numerador?.type, 'number')
+    const vacio = { list: () => [] }
+    assert.notDeepEqual(allAgentToolSchemas(vacio), allAgentToolSchemas(), 'la caché no mezcla registros')
+  })
+
   it('fallback.* calculan propuestas sin mutar el estado', () => {
     const state = crearEstadoInicial()
     const before = JSON.stringify(state)

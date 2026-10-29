@@ -10,13 +10,49 @@ import { crearClienteApi, type ClienteApi, type Identidad } from './api'
 
 let supabase: SupabaseClient | null = null
 
+/** Espera entre comprobaciones cuando el servidor no responde: 5 s, 10 s, 20 s… hasta 5 min. */
+export function esperaTrasFallo(fallosSeguidos: number): number {
+  return Math.min(5_000 * 2 ** Math.max(0, fallosSeguidos - 1), 300_000)
+}
+const ESPERA_SERVIDOR_VIVO_MS = 60_000
+
+/**
+ * La renovación automática del token de Supabase reintenta sin parar si el servidor está apagado (p. ej. el
+ * Supabase local en desarrollo) y llena la consola de ERR_CONNECTION_REFUSED. Aquí solo se activa mientras el
+ * servidor responde a su comprobación de salud; si cae, se detiene y se vuelve a comprobar con espera creciente.
+ */
+function vigilarServidor(sb: SupabaseClient, urlSalud: string, anonKey: string): void {
+  if (typeof window === 'undefined' || typeof fetch === 'undefined') return
+  let fallos = 0
+  const comprobar = async () => {
+    let vivo = false
+    try {
+      const r = await fetch(urlSalud, { headers: { apikey: anonKey }, signal: AbortSignal.timeout(4_000) })
+      vivo = r.status < 500
+    } catch {
+      vivo = false
+    }
+    if (vivo) {
+      fallos = 0
+      void sb.auth.startAutoRefresh()
+    } else {
+      fallos += 1
+      void sb.auth.stopAutoRefresh()
+    }
+    setTimeout(comprobar, vivo ? ESPERA_SERVIDOR_VIVO_MS : esperaTrasFallo(fallos))
+  }
+  void comprobar()
+}
+
 export function clienteSupabase(): SupabaseClient {
   if (!supabase) {
     const c = configBackend()
     if (!backendConfigurado(c)) throw new Error('Falta configurar VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY / VITE_API_URL')
     supabase = createClient(c.supabaseUrl, c.supabaseAnonKey, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+      // La renovación la gobierna vigilarServidor(): solo corre si el servidor responde.
+      auth: { persistSession: true, autoRefreshToken: false, detectSessionInUrl: true },
     })
+    vigilarServidor(supabase, `${c.supabaseUrl}/auth/v1/health`, c.supabaseAnonKey)
   }
   return supabase
 }

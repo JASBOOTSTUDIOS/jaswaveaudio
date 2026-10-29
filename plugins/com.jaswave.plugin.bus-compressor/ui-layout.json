@@ -70,6 +70,17 @@
     "caidaDbS": 14
   },
   "modoParam": null,
+  "modos": {
+    "selector": [
+      358,
+      48,
+      476,
+      68
+    ],
+    "corte": 410,
+    "defecto": "avanzado"
+  },
+  "parametrosCubiertos": [],
   "widgets": [
     {
       "tipo": "section",
@@ -79,7 +90,8 @@
         1048,
         404
       ],
-      "etiqueta": "COMPRESOR"
+      "etiqueta": "COMPRESOR",
+      "basico": true
     },
     {
       "tipo": "knob",
@@ -91,6 +103,13 @@
       ],
       "etiqueta": "UMBRAL",
       "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        761.5,
+        140,
+        837.5,
+        234
+      ],
       "param": 1,
       "min": -60,
       "max": 0,
@@ -113,6 +132,13 @@
       ],
       "etiqueta": "RATIO",
       "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        876.5,
+        140,
+        952.5,
+        234
+      ],
       "param": 2,
       "min": 1,
       "max": 20,
@@ -135,6 +161,7 @@
       ],
       "etiqueta": "RODILLA",
       "tamano": 64,
+      "basico": false,
       "param": 5,
       "min": 0,
       "max": 24,
@@ -157,6 +184,13 @@
       ],
       "etiqueta": "ATAQUE",
       "tamano": 44,
+      "basico": true,
+      "rectBasico": [
+        777.5,
+        278,
+        833.5,
+        352
+      ],
       "param": 3,
       "min": 0.1,
       "max": 200,
@@ -179,6 +213,13 @@
       ],
       "etiqueta": "RELEASE",
       "tamano": 44,
+      "basico": true,
+      "rectBasico": [
+        880.5,
+        278,
+        936.5,
+        352
+      ],
       "param": 4,
       "min": 5,
       "max": 2000,
@@ -200,6 +241,7 @@
         314
       ],
       "etiqueta": "DET",
+      "basico": false,
       "param": 9,
       "min": 0,
       "max": 1,
@@ -225,6 +267,7 @@
         556
       ],
       "etiqueta": "SALIDA",
+      "basico": true,
       "param": 0,
       "min": 0,
       "max": 1,
@@ -250,6 +293,7 @@
         552
       ],
       "etiqueta": "MAKEUP",
+      "basico": true,
       "param": 6,
       "min": -24,
       "max": 24,
@@ -272,6 +316,13 @@
       ],
       "etiqueta": "MEZCLA",
       "tamano": 44,
+      "basico": true,
+      "rectBasico": [
+        823,
+        458,
+        879,
+        532
+      ],
       "param": 7,
       "min": 0,
       "max": 100,
@@ -295,6 +346,7 @@
       ],
       "etiqueta": "SC HPF",
       "tamano": 44,
+      "basico": false,
       "param": 8,
       "min": 0,
       "max": 500,
@@ -316,7 +368,8 @@
         985,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -326,7 +379,8 @@
         999,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -336,7 +390,8 @@
         1029,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -346,7 +401,31 @@
         1043,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "modo",
+      "rect": [
+        358,
+        48,
+        476,
+        68
+      ],
+      "etiqueta": "BÁSICO|AVANZADO",
+      "basico": true,
+      "corte": 410
+    },
+    {
+      "tipo": "reset",
+      "rect": [
+        624,
+        48,
+        684,
+        68
+      ],
+      "etiqueta": "RESET",
+      "basico": true
     }
   ]
 }

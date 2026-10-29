@@ -7,6 +7,7 @@ import { claveDesdeJwksLocal, crearVerificadorJwt } from '../../src/auth/verific
 import { crearDb, type Db } from '../../src/db.js';
 import { generarParClaves } from '../../src/license/token-licencia.js';
 import { crearServicioIA, PRODUCTO_IA, sembrarProductoIA } from '../../src/ia/proveedores.js';
+import { crearServicioJasWave } from '../../src/ia/jaswave/servicio.js';
 import { claveMaestraDesdeBase64, generarClaveMaestra } from '../../src/seguridad/cifrado.js';
 import { crearEmisorPrueba } from '../jwt-local.js';
 import { URL_BD_PRUEBAS as URL_DB } from './preparar-bd.js';
@@ -14,6 +15,9 @@ import { URL_BD_PRUEBAS as URL_DB } from './preparar-bd.js';
 const ADMIN = 'admin@jaswave.test';
 const CLAVE_PROVEEDOR = 'sk-proveedor-super-secreta';
 const CLAVE_PROPIA = 'sk-propia-del-usuario';
+const CLAVE_GRUPO = 'sk-del-grupo';
+/** El proveedor falso rechaza esta clave al listar modelos. */
+const CLAVE_RECHAZADA = 'sk-rechazada';
 
 /** Proveedor falso compatible con OpenAI: devuelve qué Authorization recibió. */
 function proveedorFalso() {
@@ -23,6 +27,11 @@ function proveedorFalso() {
     req.on('data', (d) => (datos += d));
     req.on('end', () => {
       recibidas.push(req.headers.authorization);
+      if (req.headers.authorization === `Bearer ${CLAVE_RECHAZADA}`) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'clave no válida' } }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       if (!req.url?.endsWith('/chat/completions')) {
         res.end(JSON.stringify({ data: [{ id: 'modelo-a' }] }));
@@ -47,10 +56,13 @@ describe('M2 — proveedores de IA en BD con permisos por rol (integración)', (
     await new Promise<void>((ok) => falso.servidor.listen(0, '127.0.0.1', () => ok()));
     baseUrl = `http://127.0.0.1:${(falso.servidor.address() as AddressInfo).port}/v1`;
     const verificar = crearVerificadorJwt({ claves: claveDesdeJwksLocal(emisor.jwks), adminsIniciales: [ADMIN] });
+    const claveMaestra = claveMaestraDesdeBase64(generarClaveMaestra());
+    const ia = crearServicioIA({ db, claveMaestra });
     app = crearApp({
       verificar,
       origenesCors: [],
-      ia: crearServicioIA({ db, claveMaestra: claveMaestraDesdeBase64(generarClaveMaestra()) }),
+      ia,
+      jaswave: crearServicioJasWave({ db, claveMaestra, permisos: (id) => ia.permisos(id), chat: async () => ({ ok: false, error: 'sin red' }) as never }),
       datos: { db, clavePrivadaPem: generarParClaves().privada, reloj: () => new Date() },
     });
   });
@@ -182,5 +194,35 @@ describe('M2 — proveedores de IA en BD con permisos por rol (integración)', (
     const p = await crearProveedorAdmin();
     const r = await request(app).post(`/admin/ia/proveedores/${p.id}/probar`).set('Authorization', await admin());
     expect(r.body).toMatchObject({ estado: 'healthy' });
+  });
+
+  it('probar conexión usa las claves del grupo si la principal falla', async () => {
+    const auth = await admin();
+    const r = await request(app)
+      .post('/admin/ia/proveedores')
+      .set('Authorization', auth)
+      .send({ slug: 'grupo', nombre: 'Grupo', tipo: 'openai-compatible', baseUrl, modelos: ['modelo-a'], apiKey: CLAVE_RECHAZADA });
+    const id = r.body.proveedor.id as string;
+    await request(app).post(`/admin/ia/proveedores/${id}/claves`).set('Authorization', auth).send({ apiKey: CLAVE_GRUPO, etiqueta: 'segunda' }).expect(201);
+    const probar = await request(app).post(`/admin/ia/proveedores/${id}/probar`).set('Authorization', auth);
+    expect(probar.body).toMatchObject({ estado: 'healthy' });
+    expect(falso.recibidas.at(-1)).toBe(`Bearer ${CLAVE_GRUPO}`);
+    expect(JSON.stringify(probar.body)).not.toContain(CLAVE_GRUPO);
+  });
+
+  it('la clave principal se puede quitar desde el grupo, pero no pausar', async () => {
+    const auth = await admin();
+    const p = await crearProveedorAdmin();
+    const claves = `/admin/ia/proveedores/${p.id}/claves`;
+    const lista = await request(app).get(claves).set('Authorization', auth);
+    const principal = (lista.body.claves as { id: string; principal: boolean }[]).find((k) => k.principal)!;
+    expect(principal.id).toBe(`${p.id}:principal`);
+    const pausar = await request(app).put(`${claves}/${principal.id}`).set('Authorization', auth).send({ activa: false });
+    expect(pausar.status).toBe(400);
+    expect(pausar.body.error.codigo).toBe('clave_principal');
+    await request(app).delete(`${claves}/${principal.id}`).set('Authorization', auth).expect(204);
+    const despues = await request(app).get(claves).set('Authorization', auth);
+    expect(despues.body.claves).toEqual([]);
+    expect((await request(app).put(`${claves}/no-es-id`).set('Authorization', auth).send({})).status).toBe(400);
   });
 });

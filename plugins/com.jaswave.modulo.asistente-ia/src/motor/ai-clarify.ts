@@ -81,11 +81,47 @@ export function stripProseClarifyLists(text: string): string {
   return stripClarificationsBlock(text)
 }
 
+/** Id de la tarjeta de preguntas que crea el agente (`turno-agente.ts`). */
+export const ID_PREGUNTA_AGENTE = 'agente'
+/** Respuesta del botón «Que decida el asistente» en una pregunta del agente. */
+export const RESPUESTA_DECIDE_AGENTE = 'Decide tú con tu criterio.'
+
+/**
+ * El modelo a veces enumera en el texto de la pregunta las mismas opciones que van como botones: se corta el
+ * texto donde empieza la primera (con su «1.», «-» o «(recomendado)» delante) para que no salgan dos veces.
+ */
+export function sinOpcionesEnTexto(texto: string, opciones: string[]): string {
+  const norm = (s: string) => s.replace(/\s*\(recomendad[ao]\)\s*/gi, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
+  const bajo = texto.toLowerCase()
+  let corte = -1
+  for (const o of opciones) {
+    const nucleo = norm(o).slice(0, 30)
+    if (nucleo.length < 6) continue
+    const i = bajo.indexOf(nucleo)
+    if (i >= 0 && (corte < 0 || i < corte)) corte = i
+  }
+  if (corte < 0) return texto
+  const antes = texto.slice(0, corte).replace(/(?:\s*(?:\d+[.)]|[-*•]|\(recomendad[ao]\)))+\s*$/i, '').trim()
+  return antes.length >= 8 ? antes : texto
+}
+
+function respuestaAgente(questions: ClarificationQuestion[], answers: ClarificationAnswer[], formCustom?: string): string {
+  const partes = questions
+    .map((q) => answers.find((x) => x.id === q.id)?.value.trim() ?? '')
+    .filter((v) => v && !v.startsWith('(sin preferencia'))
+    .map((v) => v.replace(/\s*\(recomendad[ao]\)\s*/gi, ' ').trim())
+  if (formCustom?.trim()) partes.push(formCustom.trim())
+  return partes.join('. ') || RESPUESTA_DECIDE_AGENTE
+}
+
 export function formatClarificationAnswersForPrompt(
   questions: ClarificationQuestion[],
   answers: ClarificationAnswer[],
   formCustom?: string,
 ): string {
+  // Pregunta del agente (`preguntar`): la respuesta viaja como un mensaje normal del usuario. Las
+  // directivas de abajo son del motor antiguo (forzaban «producir la canción» y se veían en el chat).
+  if (questions.some((q) => q.id === ID_PREGUNTA_AGENTE)) return respuestaAgente(questions, answers, formCustom)
   const lines = ['[Respuestas a clarificación]']
   const isMidiAudit = questions.some((q) => q.id === 'midi_audit_fix')
   const isTrackPick = questions.some((q) => q.id === 'track_pick')
@@ -106,7 +142,7 @@ export function formatClarificationAnswersForPrompt(
       'OBLIGATORIO: usa el trackId/pistaId indicado en TODAS las acciones MIDI de este turno.',
     )
     lines.push(
-      'Para editar SOLO una sección: midi.notes.patch { pistaId, rangeStart, rangeEnd, notas } (crea el clip si no existe). NO reemplaces el clip entero si solo pidió una parte.',
+      'Para editar SOLO una sección: midi.notes.patch { pistaId, clipId, upsert: [notas con su id si ya existen], removeIds } o, por tramo, { pistaId, rangeStart, rangeEnd, notas } (sustituye lo que hay en ese tramo de un clip existente). NO reemplaces el clip entero si solo pidió una parte.',
     )
     lines.push('PROHIBIDO: track.create, daw.musicBuild u otro <<<CLARIFY>>>.')
     return lines.join('\n')

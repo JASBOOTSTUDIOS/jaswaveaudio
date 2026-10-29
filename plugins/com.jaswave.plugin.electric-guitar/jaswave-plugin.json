@@ -4,17 +4,18 @@
   "version": "1.0.0",
   "category": "instrument",
   "vendor": "JasWave Audio",
-  "description": "Guitarra eléctrica solista y rítmica. Modelado físico de cuerda con amplificador valvular de alta ganancia, emulación de pantalla (cab sim), delay y chorus estéreo.",
+  "description": "Guitarra eléctrica de worship moderno: banco de muestras + cadena de efectos + cuerda por guía de ondas de respaldo, con sistema de TÉCNICAS de guitarra controlable por MIDI estándar: slides y glissando (legato por solape, slide-in/out), hammer-on/pull-off, rasgueo con dirección y velocidad por cuerda, palm mute, notas muertas, armónicos, bends/pre-bend, vibrato con retardo, tremolo picking, volume swell (CC11), ruido de dedo/traste/púa; amplificador valvular con sobremuestreo, pantalla 4x12, chorus, delay ping-pong sincronizado y reverb de plato. Rack de mezcla comun integrado (ids FX · 100..230): paso-altos/bajos, ecualizador parametrico de 6 bandas, compresor, saturacion cinta/valvula, chorus, delay sincronizable al tempo, reverb plate/hall/room y anchura. Todo apagado por defecto (On = 0): no cambia el sonido hasta activarlo.",
   "targetPlatforms": [
     "win-x64",
-    "web-wasm"
+    "web"
   ],
   "entrypoints": {
-    "dspDesktop": "bin/JasWaveElectricGuitar.vst3"
+    "dspDesktop": "bin/JasWaveElectricGuitar.vst3",
+    "dspWeb": "web/electric-guitar-worklet.js"
   },
   "vst3": {
     "classId": "{B3A7C9E5-4D2F-4A8B-9E6C-1F3D5A7B8C01}",
-    "subCategories": "Instrument|Guitar"
+    "subCategories": "Instrument|Synth"
   },
   "permissions": {
     "realtimeAudio": true,
@@ -37,46 +38,63 @@
     ]
   },
   "ai": {
-    "summary": "Guitarra eléctrica con control de ganancia de ampli, respuesta de pantalla acústica, tono, delay y chorus estéreo.",
+    "summary": "Guitarra eléctrica de worship con técnicas. MIDI: keyswitches (C4=60) 12 normal/reset, 13 palm mute, 14 nota muerta, 15 armónico natural, 16 artificial, 17 tremolo picking, 18 slide-in, 19/20 slide-out abajo/arriba (solo la siguiente nota), 21 pre-bend, 22 bend-up (siguiente nota), 23 modo legato (solape<=3 st hammer/pull, 4-12 st slide), 24 modo slide (todo solape se desliza), 25/26/27 rasgueo abajo/arriba/alterno, 11 auto-swell. Sin 23/24 las notas solapadas NO se ligan. CC1 vibrato (retardo), CC11 swell de pedal, CC80 articulación (0,25,51,76,102,127), CC81 legato (0 off/64 legato/127 slide), CC82 dirección de rasgueo, CC83 slide in/out; acordes simultáneos = rasgueo. Incluye el FX Rack comun (ids 100..230, apagado por defecto): paso-altos/bajos, EQ de 6 bandas, compresor, saturacion, chorus, delay con sync, reverb y anchura; todo configurable con plugin.setParameter.",
     "intents": [
       "guitarra-electrica",
+      "guitarra-worship",
+      "arpegio-limpio",
+      "riff-crunch",
       "solo-guitarra",
-      "riff-rock",
-      "melodia-lead"
+      "melodia-lead",
+      "delay-punteado",
+      "slide-guitarra",
+      "hammer-on",
+      "pull-off",
+      "rasgueo",
+      "palm-mute",
+      "armonicos",
+      "bend",
+      "volume-swell",
+      "tremolo-picking",
+      "nota-muerta",
+      "legato"
     ],
     "parameters": [
       {
         "id": "amp_gain",
         "vstParamId": 0,
-        "name": "Ganancia de Amplificador (Overdrive)",
+        "name": "Ganancia de Amplificador (limpio a lead)",
         "min": 0,
         "max": 100,
-        "default": 45,
+        "default": 20,
         "unit": "%",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "cab_sim",
         "vstParamId": 1,
-        "name": "Simulación de Pantalla 4x12",
+        "name": "Simulación de Pantalla 4x12 (mezcla DI/cab)",
         "min": 0,
         "max": 100,
-        "default": 60,
+        "default": 35,
         "unit": "%",
         "scale": "linear",
-        "feature": "guitar.cab-sim-hd"
+        "feature": "guitar.cab-sim-hd",
+        "basico": true
       },
       {
         "id": "tone",
         "vstParamId": 2,
-        "name": "Control de Tono / Brillo",
+        "name": "Tono (graves ↔ agudos y presencia)",
         "min": 0,
         "max": 100,
         "default": 55,
         "unit": "%",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "delay_feedback",
@@ -84,7 +102,7 @@
         "name": "Retroalimentación de Delay",
         "min": 0,
         "max": 95,
-        "default": 30,
+        "default": 38,
         "unit": "%",
         "scale": "linear",
         "feature": null
@@ -92,10 +110,10 @@
       {
         "id": "chorus_mix",
         "vstParamId": 4,
-        "name": "Mezcla de Chorus Espacial",
+        "name": "Mezcla de Chorus",
         "min": 0,
         "max": 100,
-        "default": 25,
+        "default": 22,
         "unit": "%",
         "scale": "linear",
         "feature": null
@@ -108,8 +126,9 @@
         "max": 1,
         "default": 0,
         "unit": "",
-        "scale": "stepped",
-        "feature": null
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
       },
       {
         "id": "volume",
@@ -120,8 +139,1076 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "delay_mix",
+        "vstParamId": 7,
+        "name": "Mezcla de Delay",
+        "min": 0,
+        "max": 100,
+        "default": 28,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "delay_div",
+        "vstParamId": 8,
+        "name": "División del Delay (tempo del host)",
+        "min": 0,
+        "max": 4,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "1/8 con puntillo",
+          "1/4",
+          "1/8",
+          "1/16",
+          "Libre (ms)"
+        ]
+      },
+      {
+        "id": "delay_time",
+        "vstParamId": 9,
+        "name": "Tiempo de Delay libre / sin tempo",
+        "min": 40,
+        "max": 2000,
+        "default": 380,
+        "unit": "ms",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "reverb_mix",
+        "vstParamId": 10,
+        "name": "Mezcla de Reverb de plato",
+        "min": 0,
+        "max": 100,
+        "default": 22,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "pick_pos",
+        "vstParamId": 11,
+        "name": "Posición de la púa",
+        "min": 0,
+        "max": 100,
+        "default": 30,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "sustain",
+        "vstParamId": 12,
+        "name": "Sustain del lead (realimentación acotada)",
+        "min": 0,
+        "max": 100,
+        "default": 0,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "bend_range",
+        "vstParamId": 13,
+        "name": "Rango de pitch bend",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "±2 semitonos",
+          "±12 semitonos"
+        ]
+      },
+      {
+        "id": "pitch_bend",
+        "vstParamId": 14,
+        "name": "Pitch Bend (CC)",
+        "min": -1,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "mod_wheel",
+        "vstParamId": 15,
+        "name": "Vibrato / rueda de modulación (CC1)",
+        "min": 0,
+        "max": 100,
+        "default": 0,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "pedal",
+        "vstParamId": 16,
+        "name": "Pedal de sustain (CC64)",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "strum",
+        "vstParamId": 17,
+        "name": "Spread/velocidad del rasgueo y humanización de acordes (más alto = más lento y abierto)",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "low_cut",
+        "vstParamId": 18,
+        "name": "Corte de graves (pasa-altos suave)",
+        "min": 20,
+        "max": 400,
+        "default": 70,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "high_cut",
+        "vstParamId": 19,
+        "name": "Corte de agudos (suaviza el aire digital)",
+        "min": 2500,
+        "max": 20000,
+        "default": 9000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "stereo_width",
+        "vstParamId": 20,
+        "name": "Anchura estéreo",
+        "min": 0,
+        "max": 150,
+        "default": 90,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "soft_comp",
+        "vstParamId": 21,
+        "name": "Compresor suave",
+        "min": 0,
+        "max": 100,
+        "default": 30,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "tape_warmth",
+        "vstParamId": 22,
+        "name": "Calidez de cinta (saturación sutil)",
+        "min": 0,
+        "max": 100,
+        "default": 15,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "expression",
+        "vstParamId": 23,
+        "name": "Expresión / volume swell de pedal (CC11): ganancia previa al ampli y a los efectos",
+        "min": 0,
+        "max": 100,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "articulation",
+        "vstParamId": 24,
+        "name": "Articulación (equivale a keyswitches 12-17 y CC80)",
+        "min": 0,
+        "max": 5,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "values": [
+          "Normal",
+          "Palm mute",
+          "Nota muerta",
+          "Armónico natural",
+          "Armónico artificial",
+          "Tremolo picking"
+        ],
+        "feature": null
+      },
+      {
+        "id": "legato_slide",
+        "vstParamId": 25,
+        "name": "Modo Legato/Slide (ks 23-24, CC81): Off | Legato solapado (hammer/pull/slide) | Slide siempre",
+        "min": 0,
+        "max": 2,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "values": [
+          "Off",
+          "Legato",
+          "Slide"
+        ],
+        "feature": null
+      },
+      {
+        "id": "slide_time",
+        "vstParamId": 26,
+        "name": "Tiempo del slide / glissando (también slide-in y slide-out)",
+        "min": 40,
+        "max": 1500,
+        "default": 140,
+        "unit": "ms",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "slide_curve",
+        "vstParamId": 27,
+        "name": "Curva del slide (0 lineal; + lento al inicio y rápido al final; - al revés)",
+        "min": -100,
+        "max": 100,
+        "default": 0,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "slide_mode",
+        "vstParamId": 28,
+        "name": "Slide in/out permanente en todas las notas (equivale a keyswitches 18-20 y CC83)",
+        "min": 0,
+        "max": 3,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "values": [
+          "Off",
+          "Slide-in desde abajo",
+          "Slide-out hacia abajo",
+          "Slide-out hacia arriba"
+        ],
+        "feature": null
+      },
+      {
+        "id": "slide_range",
+        "vstParamId": 29,
+        "name": "Recorrido del slide-in/out",
+        "min": 1,
+        "max": 12,
+        "default": 5,
+        "unit": "st",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "strum_dir",
+        "vstParamId": 30,
+        "name": "Dirección del rasgueo de acordes (equivale a keyswitches 25-27 y CC82)",
+        "min": 0,
+        "max": 2,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "values": [
+          "Abajo (graves primero)",
+          "Arriba (agudos primero)",
+          "Alterno"
+        ],
+        "feature": null
+      },
+      {
+        "id": "strum_accent",
+        "vstParamId": 31,
+        "name": "Diferencia de velocidad por cuerda en el rasgueo",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "pick_noise",
+        "vstParamId": 32,
+        "name": "Ruido de púa, dedo, traste y deslizamiento sobre la cuerda",
+        "min": 0,
+        "max": 100,
+        "default": 40,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vib_delay",
+        "vstParamId": 33,
+        "name": "Retardo de entrada del vibrato (CC1) tras cada nota",
+        "min": 0,
+        "max": 1500,
+        "default": 350,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "swell_time",
+        "vstParamId": 34,
+        "name": "Auto-swell: cada nota entra con subida de volumen de este tiempo (0 = off; keyswitch 11 lo activa con 700 ms)",
+        "min": 0,
+        "max": 3000,
+        "default": 0,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "bend_amount",
+        "vstParamId": 35,
+        "name": "Cantidad del pre-bend / bend-up por keyswitch",
+        "min": 0.5,
+        "max": 4,
+        "default": 2,
+        "unit": "st",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "trem_rate",
+        "vstParamId": 36,
+        "name": "Velocidad del tremolo picking",
+        "min": 4,
+        "max": 16,
+        "default": 9,
+        "unit": "Hz",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_hpf_on",
+        "vstParamId": 100,
+        "name": "FX · HPF On — Activa el filtro paso-altos (corta graves)",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "fx_hpf_freq",
+        "vstParamId": 101,
+        "name": "FX · HPF Freq — Frecuencia de corte del paso-altos",
+        "min": 20,
+        "max": 1000,
+        "default": 80,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_hpf_slope",
+        "vstParamId": 102,
+        "name": "FX · HPF Slope — Pendiente del paso-altos (0 = 12 dB/oct, 1 = 24 dB/oct)",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "12 dB/oct",
+          "24 dB/oct"
+        ]
+      },
+      {
+        "id": "fx_lpf_on",
+        "vstParamId": 103,
+        "name": "FX · LPF On — Activa el filtro paso-bajos (suaviza agudos)",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "fx_lpf_freq",
+        "vstParamId": 104,
+        "name": "FX · LPF Freq — Frecuencia de corte del paso-bajos",
+        "min": 1000,
+        "max": 20000,
+        "default": 16000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_lpf_slope",
+        "vstParamId": 105,
+        "name": "FX · LPF Slope — Pendiente del paso-bajos (0 = 12 dB/oct, 1 = 24 dB/oct)",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "12 dB/oct",
+          "24 dB/oct"
+        ]
+      },
+      {
+        "id": "fx_eq_on",
+        "vstParamId": 116,
+        "name": "FX · EQ On — Activa el ecualizador parametrico de 6 bandas",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b1_freq",
+        "vstParamId": 117,
+        "name": "FX · EQ Band 1 Freq — Banda 1 (low shelf): frecuencia central/esquina",
+        "min": 20,
+        "max": 1000,
+        "default": 80,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b1_gain",
+        "vstParamId": 118,
+        "name": "FX · EQ Band 1 Gain — Banda 1 (low shelf): ganancia en dB (0 = transparente)",
+        "min": -18,
+        "max": 18,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b1_q",
+        "vstParamId": 119,
+        "name": "FX · EQ Band 1 Q — Banda 1 (low shelf): factor de calidad Q (ancho de banda)",
+        "min": 0.3,
+        "max": 2,
+        "default": 0.71,
+        "unit": "",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b2_freq",
+        "vstParamId": 120,
+        "name": "FX · EQ Band 2 Freq — Banda 2 (campana): frecuencia central/esquina",
+        "min": 20,
+        "max": 20000,
+        "default": 200,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b2_gain",
+        "vstParamId": 121,
+        "name": "FX · EQ Band 2 Gain — Banda 2 (campana): ganancia en dB (0 = transparente)",
+        "min": -18,
+        "max": 18,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b2_q",
+        "vstParamId": 122,
+        "name": "FX · EQ Band 2 Q — Banda 2 (campana): factor de calidad Q (ancho de banda)",
+        "min": 0.1,
+        "max": 10,
+        "default": 1,
+        "unit": "",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b3_freq",
+        "vstParamId": 123,
+        "name": "FX · EQ Band 3 Freq — Banda 3 (campana): frecuencia central/esquina",
+        "min": 20,
+        "max": 20000,
+        "default": 800,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b3_gain",
+        "vstParamId": 124,
+        "name": "FX · EQ Band 3 Gain — Banda 3 (campana): ganancia en dB (0 = transparente)",
+        "min": -18,
+        "max": 18,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b3_q",
+        "vstParamId": 125,
+        "name": "FX · EQ Band 3 Q — Banda 3 (campana): factor de calidad Q (ancho de banda)",
+        "min": 0.1,
+        "max": 10,
+        "default": 1,
+        "unit": "",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b4_freq",
+        "vstParamId": 126,
+        "name": "FX · EQ Band 4 Freq — Banda 4 (campana): frecuencia central/esquina",
+        "min": 20,
+        "max": 20000,
+        "default": 2500,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b4_gain",
+        "vstParamId": 127,
+        "name": "FX · EQ Band 4 Gain — Banda 4 (campana): ganancia en dB (0 = transparente)",
+        "min": -18,
+        "max": 18,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b4_q",
+        "vstParamId": 128,
+        "name": "FX · EQ Band 4 Q — Banda 4 (campana): factor de calidad Q (ancho de banda)",
+        "min": 0.1,
+        "max": 10,
+        "default": 1,
+        "unit": "",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b5_freq",
+        "vstParamId": 129,
+        "name": "FX · EQ Band 5 Freq — Banda 5 (campana): frecuencia central/esquina",
+        "min": 20,
+        "max": 20000,
+        "default": 6000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b5_gain",
+        "vstParamId": 130,
+        "name": "FX · EQ Band 5 Gain — Banda 5 (campana): ganancia en dB (0 = transparente)",
+        "min": -18,
+        "max": 18,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b5_q",
+        "vstParamId": 131,
+        "name": "FX · EQ Band 5 Q — Banda 5 (campana): factor de calidad Q (ancho de banda)",
+        "min": 0.1,
+        "max": 10,
+        "default": 1,
+        "unit": "",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b6_freq",
+        "vstParamId": 132,
+        "name": "FX · EQ Band 6 Freq — Banda 6 (high shelf): frecuencia central/esquina",
+        "min": 1000,
+        "max": 20000,
+        "default": 10000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b6_gain",
+        "vstParamId": 133,
+        "name": "FX · EQ Band 6 Gain — Banda 6 (high shelf): ganancia en dB (0 = transparente)",
+        "min": -18,
+        "max": 18,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_eq_b6_q",
+        "vstParamId": 134,
+        "name": "FX · EQ Band 6 Q — Banda 6 (high shelf): factor de calidad Q (ancho de banda)",
+        "min": 0.3,
+        "max": 2,
+        "default": 0.71,
+        "unit": "",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_comp_on",
+        "vstParamId": 148,
+        "name": "FX · Comp On — Activa el compresor integrado",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "fx_comp_threshold",
+        "vstParamId": 149,
+        "name": "FX · Comp Threshold — Umbral del compresor en dBFS",
+        "min": -60,
+        "max": 0,
+        "default": -18,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_comp_ratio",
+        "vstParamId": 150,
+        "name": "FX · Comp Ratio — Relacion de compresion (n:1)",
+        "min": 1,
+        "max": 20,
+        "default": 3,
+        "unit": ":1",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_comp_attack",
+        "vstParamId": 151,
+        "name": "FX · Comp Attack — Tiempo de ataque",
+        "min": 0.1,
+        "max": 200,
+        "default": 10,
+        "unit": "ms",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_comp_release",
+        "vstParamId": 152,
+        "name": "FX · Comp Release — Tiempo de liberacion",
+        "min": 10,
+        "max": 2000,
+        "default": 120,
+        "unit": "ms",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_comp_knee",
+        "vstParamId": 153,
+        "name": "FX · Comp Knee — Rodilla suave (0 = dura)",
+        "min": 0,
+        "max": 24,
+        "default": 6,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_comp_makeup",
+        "vstParamId": 154,
+        "name": "FX · Comp Makeup — Ganancia de compensacion",
+        "min": 0,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_comp_mix",
+        "vstParamId": 155,
+        "name": "FX · Comp Mix — Mezcla paralela (100 = solo comprimido)",
+        "min": 0,
+        "max": 100,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_sat_on",
+        "vstParamId": 164,
+        "name": "FX · Sat On — Activa la saturacion",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "fx_sat_type",
+        "vstParamId": 165,
+        "name": "FX · Sat Type — Tipo: 0 = cinta (simetrica, armonicos impares), 1 = valvula (asimetrica, armonicos pares)",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Tape",
+          "Tube"
+        ]
+      },
+      {
+        "id": "fx_sat_drive",
+        "vstParamId": 166,
+        "name": "FX · Sat Drive — Cantidad de saturacion",
+        "min": 0,
+        "max": 100,
+        "default": 30,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_sat_tone",
+        "vstParamId": 167,
+        "name": "FX · Sat Tone — Paso-bajos posterior (oscurece los armonicos)",
+        "min": 1000,
+        "max": 20000,
+        "default": 12000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_sat_mix",
+        "vstParamId": 168,
+        "name": "FX · Sat Mix — Mezcla seco/saturado",
+        "min": 0,
+        "max": 100,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_chorus_on",
+        "vstParamId": 180,
+        "name": "FX · Chorus On — Activa el chorus / ensemble",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "fx_chorus_depth",
+        "vstParamId": 181,
+        "name": "FX · Chorus Depth — Profundidad de la modulacion",
+        "min": 0,
+        "max": 100,
+        "default": 40,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_chorus_rate",
+        "vstParamId": 182,
+        "name": "FX · Chorus Rate — Velocidad del LFO",
+        "min": 0.05,
+        "max": 5,
+        "default": 0.6,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_chorus_mix",
+        "vstParamId": 183,
+        "name": "FX · Chorus Mix — Mezcla (100 = ensemble 50/50)",
+        "min": 0,
+        "max": 100,
+        "default": 35,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_delay_on",
+        "vstParamId": 196,
+        "name": "FX · Delay On — Activa el delay estereo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "fx_delay_sync",
+        "vstParamId": 197,
+        "name": "FX · Delay Sync — Sincronia al tempo del host: 0 = libre (Time), 1 = 1/4, 2 = 1/8, 3 = 1/8 con puntillo, 4 = 1/16",
+        "min": 0,
+        "max": 4,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Free",
+          "1/4",
+          "1/8",
+          "1/8.",
+          "1/16"
+        ]
+      },
+      {
+        "id": "fx_delay_time",
+        "vstParamId": 198,
+        "name": "FX · Delay Time — Tiempo del delay en modo libre",
+        "min": 20,
+        "max": 2000,
+        "default": 350,
+        "unit": "ms",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_delay_feedback",
+        "vstParamId": 199,
+        "name": "FX · Delay Feedback — Realimentacion (repeticiones)",
+        "min": 0,
+        "max": 90,
+        "default": 35,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_delay_tone",
+        "vstParamId": 200,
+        "name": "FX · Delay Tone — Paso-bajos en el lazo de realimentacion",
+        "min": 500,
+        "max": 16000,
+        "default": 5000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "fx_delay_mix",
+        "vstParamId": 201,
+        "name": "FX · Delay Mix — Nivel del delay sumado a la senal seca",
+        "min": 0,
+        "max": 100,
+        "default": 25,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_delay_pingpong",
+        "vstParamId": 202,
+        "name": "FX · Delay Ping-Pong — Rebote izquierda-derecha de las repeticiones",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "fx_reverb_on",
+        "vstParamId": 212,
+        "name": "FX · Reverb On — Activa la reverb",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "fx_reverb_type",
+        "vstParamId": 213,
+        "name": "FX · Reverb Type — Tipo: 0 = plate, 1 = hall, 2 = room",
+        "min": 0,
+        "max": 2,
+        "default": 1,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Plate",
+          "Hall",
+          "Room"
+        ]
+      },
+      {
+        "id": "fx_reverb_size",
+        "vstParamId": 214,
+        "name": "FX · Reverb Size — Tamano / duracion de la cola",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_reverb_damping",
+        "vstParamId": 215,
+        "name": "FX · Reverb Damping — Amortiguacion de agudos de la cola",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_reverb_predelay",
+        "vstParamId": 216,
+        "name": "FX · Reverb Pre-Delay — Retardo previo a la reverb",
+        "min": 0,
+        "max": 200,
+        "default": 20,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_reverb_mix",
+        "vstParamId": 217,
+        "name": "FX · Reverb Mix — Nivel de la reverb sumado a la senal seca",
+        "min": 0,
+        "max": 100,
+        "default": 20,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_out_on",
+        "vstParamId": 228,
+        "name": "FX · Out On — Activa la anchura estereo y la ganancia de salida del rack",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "fx_out_width",
+        "vstParamId": 229,
+        "name": "FX · Out Width — Anchura estereo (0 = mono, 100 = original, 200 = doble)",
+        "min": 0,
+        "max": 200,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "fx_out_gain",
+        "vstParamId": 230,
+        "name": "FX · Out Gain — Ganancia de salida del rack",
+        "min": -24,
+        "max": 12,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
         "feature": null
       }
     ]
+  },
+  "tecnicas": {
+    "contrato": "Notas MIDI numeradas con C4 = 60. Los keyswitches están por debajo del registro de la guitarra (28+), no suenan y no necesitan note-off.",
+    "keyswitchesFijos": {
+      "11": "Auto-swell por nota",
+      "12": "Normal: reinicia articulación, legato, dirección de rasgueo y auto-swell",
+      "13": "Palm mute",
+      "14": "Nota muerta / ghost",
+      "15": "Armónico natural",
+      "16": "Armónico artificial (pinch)",
+      "17": "Tremolo picking",
+      "23": "Modo legato (solape: <=3 st hammer-on/pull-off, 4-12 st slide)",
+      "24": "Modo slide (solape o nota anterior aún sonando: siempre desliza, hasta 12 st)",
+      "25": "Rasgueo abajo",
+      "26": "Rasgueo arriba",
+      "27": "Rasgueo alterno"
+    },
+    "keyswitchesSiguienteNota": {
+      "18": "Slide-in desde abajo",
+      "19": "Slide-out hacia abajo al soltar",
+      "20": "Slide-out hacia arriba al soltar",
+      "21": "Pre-bend (empieza doblada y se relaja)",
+      "22": "Bend-up (la nota sube tras el ataque)"
+    },
+    "cc": {
+      "1": "Vibrato (rueda de modulación) con retardo de entrada (param vib_delay)",
+      "11": "Expresión: swell de volumen de pedal",
+      "64": "Sustain",
+      "80": "Articulación: 0 normal, 25 palm mute, 51 muerta, 76 armónico natural, 102 armónico artificial, 127 tremolo picking",
+      "81": "Legato/slide: 0-31 off, 32-95 legato, 96-127 slide",
+      "82": "Dirección de rasgueo: 0-31 abajo, 32-95 arriba, 96-127 alterno",
+      "83": "Slide in/out permanente: 0 off, 42 slide-in, 85 slide-out abajo, 127 slide-out arriba",
+      "pitchBend": "Bend de rueda (±2 ó ±12 st según bend_range)"
+    },
+    "comportamiento": {
+      "legato": "Solo con modo legato/slide activo. Un solape de menos de 60 ms (25 ms en modo slide) se trata como acorde, no como ligadura. Sin modo activo las notas solapadas suenan independientes (arpegios).",
+      "rasgueo": "Notas que llegan en el mismo instante con param strum > 0 se rasguean: graves primero en abajo, agudos primero en arriba; las cuerdas del lado donde empieza el golpe suenan más fuertes (strum_accent); ruido de púa.",
+      "slideOut": "Empieza al soltar la nota (note-off): la afinación cae/sube slide_range semitonos en slide_time ms mientras la nota se apaga."
+    }
   }
 }

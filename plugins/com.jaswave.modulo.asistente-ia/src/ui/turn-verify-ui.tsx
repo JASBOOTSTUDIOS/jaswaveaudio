@@ -15,7 +15,7 @@ type CertifyProps = {
 export function TurnCertifyBadges({ certify }: CertifyProps) {
   const planLabel =
     certify.planPlanned != null && certify.planPlanned > 0
-      ? `Plan ${certify.planDone ?? 0}/${certify.planPlanned}`
+      ? `Plan: ${certify.planDone ?? 0} de ${certify.planPlanned} pasos`
       : null
   const issueTitle = certify.issues.length ? certify.issues.join('\n') : undefined
   const gaps = certify.sectionGaps ?? 0
@@ -24,16 +24,24 @@ export function TurnCertifyBadges({ certify }: CertifyProps) {
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[0.8em] text-muted-foreground/70">
       {certify.healthOk && !certify.shouldRepair ? (
-        <span>ok</span>
+        <span>Todo en orden</span>
       ) : (
         <span title={issueTitle} className={certify.shouldRepair ? 'text-destructive/80' : undefined}>
-          {certify.shouldRepair ? 'reparar' : 'avisos'}
-          {certify.issues.length ? ` · ${certify.issues.length}` : ''}
+          {certify.shouldRepair ? 'Necesita corrección' : 'Con avisos'}
+          {certify.issues.length ? ` (${certify.issues.length})` : ''}
         </span>
       )}
-      {planLabel ? <span>{planLabel.toLowerCase()}</span> : null}
-      {gaps > 0 ? <span title="Huecos sección×pista">huecos {gaps}</span> : null}
-      {audit > 0 ? <span title="Errores del auditor de producción">audit {audit}</span> : null}
+      {planLabel ? <span>{planLabel}</span> : null}
+      {gaps > 0 ? (
+        <span title="Secciones de la canción donde alguna pista no tiene contenido">
+          {gaps === 1 ? '1 sección incompleta' : `${gaps} secciones incompletas`}
+        </span>
+      ) : null}
+      {audit > 0 ? (
+        <span title="Problemas encontrados al revisar la producción">
+          {audit === 1 ? '1 problema de producción' : `${audit} problemas de producción`}
+        </span>
+      ) : null}
       {certify.issues.length > 0 && !certify.shouldRepair ? (
         <span className="min-w-0 truncate" title={issueTitle}>
           {certify.issues[0]}
@@ -85,8 +93,8 @@ export function RevertTurnButton({
       patchMessage(conversationId, messageId, {
         reverted: r.ok,
         actionsSummary: r.ok
-          ? `↩ Revertido: ${r.message}`
-          : `↩ Revert parcial: ${r.message}`,
+          ? `Cambios deshechos. ${r.message}`
+          : `Solo se pudieron deshacer algunos cambios. ${r.message}`,
       })
       onDone?.()
     } finally {
@@ -99,15 +107,15 @@ export function RevertTurnButton({
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-2">
       {reverted ? (
-        <span className="text-[10px] text-muted-foreground">↩ Respuesta revertida</span>
+        <span className="text-[10px] text-muted-foreground">Se deshicieron los cambios de esta respuesta</span>
       ) : (
         <button
           type="button"
           disabled={!enabled || busy}
           title={
             enabled
-              ? 'Deshacer los comandos de esta respuesta'
-              : 'No hay mutaciones de este turno en la pila de undo (o ya se deshicieron)'
+              ? 'Deshacer los cambios que hizo esta respuesta'
+              : 'Esta respuesta no tiene cambios que deshacer (o ya se deshicieron)'
           }
           onClick={() => void onRevert()}
           className={cn(
@@ -118,7 +126,7 @@ export function RevertTurnButton({
           )}
         >
           <RotateCcw className={cn('size-3', busy && 'animate-spin')} />
-          Revertir esta respuesta
+          Deshacer los cambios de esta respuesta
         </button>
       )}
       {note ? <span className="text-[10px] text-muted-foreground">{note}</span> : null}

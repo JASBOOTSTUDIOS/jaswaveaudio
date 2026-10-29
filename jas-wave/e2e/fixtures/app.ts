@@ -31,6 +31,8 @@ export type LaunchOptions = {
   label?: string
   /** Variables de entorno extra para el proceso (p. ej. JASWAVE_AI_MOCK). */
   env?: Record<string, string>
+  /** Se llama con la carpeta userData vacía antes de arrancar (p. ej. para copiar `audio-device.json`). */
+  prepararUserData?: (userDataDir: string) => void
 }
 
 export type JasWaveApp = {
@@ -149,6 +151,7 @@ export async function launchJasWave(opts: LaunchOptions = {}): Promise<JasWaveAp
   const workDir = path.join(tmpRoot, 'work')
   fs.mkdirSync(userDataDir, { recursive: true })
   fs.mkdirSync(workDir, { recursive: true })
+  opts.prepararUserData?.(userDataDir)
 
   const cdpPort = await freePort()
   const bridgePort = await freePort()
@@ -162,6 +165,8 @@ export async function launchJasWave(opts: LaunchOptions = {}): Promise<JasWaveAp
   if (opts.bridge) env.JASWAVE_AGENT_TOKEN = bridgeToken
   else delete env.JASWAVE_AGENT_TOKEN
   delete env.JASWAVE_AI_MOCK
+  // Los proyectos nuevos de la instancia van a su carpeta temporal, nunca a los Documentos del usuario.
+  env.JASWAVE_PROYECTOS_DIR = path.join(workDir, 'proyectos')
   Object.assign(env, opts.env ?? {})
 
   let output = ''
@@ -194,7 +199,9 @@ export async function launchJasWave(opts: LaunchOptions = {}): Promise<JasWaveAp
       },
       90_000,
     )
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, { timeout: 60_000 })
+    // JASWAVE_E2E_SLOWMO=<ms>: pausa entre acciones para que una persona pueda seguir la prueba en pantalla.
+    const slowMo = Number(process.env.JASWAVE_E2E_SLOWMO ?? 0) || undefined
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, { timeout: 60_000, slowMo })
     page = await waitFor(
       'ventana principal',
       async () => {
@@ -212,8 +219,14 @@ export async function launchJasWave(opts: LaunchOptions = {}): Promise<JasWaveAp
   const consoleErrors: string[] = []
   page.on('console', (msg: ConsoleMessage) => {
     if (msg.type() === 'error') consoleErrors.push(msg.text())
+    // Trazas del asistente (habilidades): sirven para diagnosticar pruebas largas con IA.
+    else if (msg.type() === 'info' && /^\[(habilidad|banda)\]/.test(msg.text())) consoleErrors.push(msg.text())
   })
-  page.on('pageerror', (err) => consoleErrors.push(`pageerror: ${err.message}`))
+  // Con las primeras líneas de la pila: sin ellas un «Maximum call stack size exceeded» no se puede ubicar.
+  page.on('pageerror', (err) => {
+    const pila = (err.stack ?? '').split('\n').slice(1, 6).map((l) => l.trim()).join(' <- ')
+    consoleErrors.push(`pageerror: ${err.message}${pila ? ` [${pila}]` : ''}`)
+  })
 
   let userData = userDataDir
   try {

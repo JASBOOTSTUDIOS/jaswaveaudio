@@ -45,7 +45,8 @@ export async function runMasterPass(
   tienda: TiendaDAW,
   opts: MasterPassOpts = {},
 ): Promise<MasterPassResult> {
-  const target = opts.target ?? 'streaming'
+  // La IA a veces manda un objetivo inventado («worship», «-14»): sin esto targetLufs quedaba undefined.
+  const target = opts.target && opts.target in LOUDNESS_TARGETS ? opts.target : 'streaming'
   const targetLufs = LOUDNESS_TARGETS[target]
   const plugins = pickMasterPlugins(opts.genero)
 
@@ -79,11 +80,11 @@ export async function runMasterPass(
   for (let i = 0; i < 2; i++) {
     iterations++
     const st = tienda.obtenerEstado()
-    const endSec = Math.max(8, (opts.minutes ?? 1) * 60)
+    // Sin `minutes` se mide la canción entera (final detectado del contenido); con `minutes`, ese tramo.
     const start = await tienda.executor.execute('render.start', {
       format: 'wav',
       startSec: 0,
-      endSec,
+      ...(opts.minutes != null ? { endSec: Math.max(8, opts.minutes * 60) } : {}),
       listenTarget: target,
       normalize: false,
     })

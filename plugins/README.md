@@ -11,8 +11,15 @@ por cuenta (`CONTRATO-V5.md`). El manifiesto `jaswave-plugin.json` (esquema V5) 
 | `com.jaswave.plugin.truepeak-limiter` | `JasWaveTruePeakLimiter.vst3` | Limitador true-peak | `limitador.medicion-lufs`, `limitador.dither` |
 | `com.jaswave.plugin.smart-deesser` | `JasWaveSmartDeEsser.vst3` | De-esser | `deesser.escucha-sidechain`, `deesser.deteccion-relativa` |
 | `com.jaswave.plugin.utility-tool` | `JasWaveUtility.vst3` | Utilidad de canal | `utilidad.mono-graves`, `utilidad.ancho-estereo` |
+| `com.jaswave.plugin.pedal-fix` | `JasWavePedalFix.vst3` | Efecto MIDI: pedal de sustain unificado por canal, polaridad, sustain forzado, canal fijo, transposición | — |
 | `com.jaswave.plugin.piano-synth` | `JasWavePiano.vst3` | Instrumento (piano modal) | `piano.polifonia-extendida`, `piano.imagen-estereo` |
 | `com.jaswave.plugin.roles-vst` | `JasWaveRoles.vst3` | Instrumento por roles | `roles.bateria`, `roles.efectos` |
+| `com.jaswave.plugin.vocal-tune` | `JasWaveVocalTune.vst3` | Afinador de voz (YIN + PSOLA con formantes, 2,5 ms) | — |
+
+Todos los editores tienen en la cabecera el selector **[ BÁSICO | AVANZADO ]**: Básico muestra solo los parámetros
+marcados como esenciales (`ParamDef::basico`, `"basico": true` en el manifiesto) y recoloca los controles; Avanzado
+expone el 100 % de la tabla (lo que el editor no dibuja va a la página automática «+N PARÁM.»). El modo se guarda en
+el estado del controlador de cada instancia.
 
 Sin licencia válida el audio pasa en bypass limpio (instrumentos: silencio con fundido) y el editor muestra
 "ACTIVAR JASWAVE". Una feature no concedida desactiva esa función en el DSP y bloquea su control (candado).

@@ -1,14 +1,20 @@
 import { useEffect, useState } from 'react'
-import { ChevronRight, Terminal } from 'lucide-react'
+import { ChevronRight, Wrench } from 'lucide-react'
 import { cn, listAiDawAuditForMessage, subscribeAiDawAudit } from '@jaswave/host-sdk'
 import type { AiDawAuditEntry } from '@jaswave/host-sdk'
+import { describeActionForUser, tituloHerramientaParaUsuario } from '../motor/describe-action'
+import { DetallesTecnicos, modoDesarrollador, textoLegible, textoTecnico } from './detalles-tecnicos'
 
-function formatBody(e: AiDawAuditEntry): string {
-  const bits: string[] = []
-  if (Object.keys(e.params ?? {}).length) bits.push(JSON.stringify(e.params, null, 2))
-  if (e.result?.message) bits.push(e.result.message)
-  if (e.result?.error) bits.push(e.result.error)
-  return bits.join('\n') || e.status
+function tituloEntrada(e: AiDawAuditEntry): string {
+  const label = describeActionForUser({ type: e.tool, payload: e.params ?? {} }).label
+  return label || tituloHerramientaParaUsuario(e.tool)
+}
+
+function estadoEntrada(e: AiDawAuditEntry, failed: boolean, running: boolean): string {
+  if (failed) return 'no se pudo'
+  if (e.status === 'rejected') return 'omitido'
+  if (running) return 'pendiente'
+  return 'hecho'
 }
 
 export function AgentToolLog({ entries }: { entries: AiDawAuditEntry[] }) {
@@ -46,33 +52,52 @@ export function AgentToolRow({
     (entry.result?.success === false && !pendingMsg && entry.status !== 'proposed')
   const running =
     entry.status === 'proposed' || entry.status === 'pending_confirm' || pendingMsg
-  const body = formatBody(entry)
+  const titulo = tituloEntrada(entry)
+  const resultado =
+    textoLegible(entry.result?.error) ||
+    (pendingMsg ? '' : textoLegible(entry.result?.message)) ||
+    (failed ? 'No se pudo completar este paso.' : '')
+  const verTecnico = modoDesarrollador()
+  const expandible = Boolean(resultado) || verTecnico
+  const tecnico = [
+    entry.tool,
+    textoTecnico(entry.params ?? {}, 800),
+    entry.result?.message ?? '',
+    entry.result?.error ?? '',
+  ]
+    .filter(Boolean)
+    .join('\n')
   return (
     <div className="w-full min-w-0 overflow-x-hidden">
       <button
         type="button"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => expandible && setOpen((o) => !o)}
         className="flex w-full min-w-0 items-center gap-1.5 py-0.5 text-left text-[0.8em] text-muted-foreground hover:text-foreground"
       >
         <ChevronRight
-          className={cn('size-3 shrink-0 transition-transform duration-150', open && 'rotate-90')}
+          className={cn(
+            'size-3 shrink-0 transition-transform duration-150',
+            open && 'rotate-90',
+            !expandible && 'opacity-0',
+          )}
         />
-        <Terminal className="size-3 shrink-0 opacity-70" />
-        <span className="min-w-0 flex-1 truncate font-mono">{entry.tool}</span>
+        <Wrench className="size-3 shrink-0 opacity-70" />
+        <span className="min-w-0 flex-1 break-words">{titulo}</span>
         <span
           className={cn(
             'shrink-0 text-[10px]',
             failed ? 'text-destructive/80' : running ? 'text-accent-amber/80' : 'text-muted-foreground/50',
           )}
         >
-          {failed ? 'fail' : running ? 'pendiente' : 'ok'}
+          {estadoEntrada(entry, failed, running)}
         </span>
       </button>
-      {open ? (
-        <pre className="mb-1 w-full min-w-0 overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-border/50 bg-background/50 px-2 py-1.5 font-mono text-[11px] leading-snug text-muted-foreground">
-          {body}
-        </pre>
+      {open && expandible ? (
+        <div className="mb-1 w-full min-w-0 pl-6 text-[11px] leading-snug text-muted-foreground">
+          {resultado ? <p className="whitespace-pre-wrap break-words">{resultado}</p> : null}
+          <DetallesTecnicos>{tecnico}</DetallesTecnicos>
+        </div>
       ) : null}
     </div>
   )

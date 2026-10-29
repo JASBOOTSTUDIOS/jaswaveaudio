@@ -126,7 +126,7 @@ export function registrarMidiAiTools(registry: ToolRegistry, getState: GetState)
     (type: string): ToolHandler =>
     async (params, ctx) => {
       try {
-        return ok(await ctx.commandExecutor.execute(type, params as never));
+        return ok(await ctx.commandExecutor.execute(type, params as never, ctx.source));
       } catch (e) {
         return fail('COMMAND_FAILED', e instanceof Error ? e.message : String(e));
       }

@@ -8,6 +8,7 @@ import {
   hostClipLoadPath,
   hostClipLoadPcm,
   hostClipSchedule,
+  curvaFadeAHost,
   hostClipStopAll,
 } from '@/src/lib/plugin/host-transport'
 import { bakeVolumeAutomationIntoStem } from './automation-runtime'
@@ -127,8 +128,20 @@ export async function prepareNativeClipsForBounce(
         startSample,
         durationSamples,
         sourceOffsetSamples,
-        gain: 1,
+        gain: clip.gananciaDb != null && Number.isFinite(clip.gananciaDb) ? Math.pow(10, clip.gananciaDb / 20) : 1,
         pan: 0,
+        // El reloj del render empieza en startSec: los límites del clip se expresan respecto a ese 0.
+        fades: {
+          clipStartSample: Math.round((clip.inicioSec - opts.startSec) * opts.sampleRate),
+          clipEndSample: Math.round((clip.inicioSec + clip.duracionSec - opts.startSec) * opts.sampleRate),
+          inSamples: Math.round(Math.max(0, clip.fadeInSec ?? 0) * opts.sampleRate),
+          outSamples: Math.round(Math.max(0, clip.fadeOutSec ?? 0) * opts.sampleRate),
+          inCurve: curvaFadeAHost(clip.fadeInCurva),
+          outCurve: curvaFadeAHost(clip.fadeOutCurva),
+          reverse: clip.inverso === true,
+          regionStartSample: Math.round(clip.clipInicioSec * opts.sampleRate),
+          regionLenSamples: Math.round(clip.duracionSec * opts.sampleRate),
+        },
       })
       scheduled += 1
     }

@@ -33,6 +33,7 @@ inline const std::vector<ParamDef>& paramDefs() {
         v.push_back(linearP(kLookahead, "Lookahead", "ms", 0.0, 10.0, 2.0, 1));
         v.push_back(withFeature(stepP(kDither, "Dither", 2, 0, kDitherLabels), kFeatDither));
         v.push_back(asReadOnly(linearP(kGrMeter, "GR", "dB", -60.0, 0.0, 0.0, 1)));
+        marcarBasicos(v, { kBypass, kCeiling, kGain, kRelease });   // modo Básico del editor
         return v;
     }();
     return defs;

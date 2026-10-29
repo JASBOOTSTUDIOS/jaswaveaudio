@@ -1,6 +1,22 @@
 import { PLAN_SLUG, buildReadOnlyProjectContext, getAgentDoc, listAgentDocs, toolRegistry } from '@jaswave/host-sdk'
 import type { DAWState, TiendaDAW } from '@jaswave/host-sdk'
-import { cargarEspecialistas } from './especialistas-storage'
+import { cargarEspecialistas, type EspecialistaConfig } from './especialistas-storage'
+import { instruccionesHabilidadesEspecialista } from './especialistas-habilidades'
+
+/** Habilidades ejecutables del especialista: instrucciones numeradas compactas (para modelos pequeños). */
+function habilidadesBlock(e: EspecialistaConfig): string {
+  const txt = instruccionesHabilidadesEspecialista(e)
+  return txt ? `\n  Habilidades ejecutables de @${e.nombre}:\n${txt.replace(/^/gm, '    ')}` : ''
+}
+
+/** Máximo por documento en el prompt: conserva el inicio (contexto) y el FINAL (donde se añaden las reglas nuevas). */
+const MAX_DOC_PROMPT = 4000
+const CABECERA_DOC_PROMPT = 1200
+function recortarDocParaPrompt(contenido: string): string {
+  if (contenido.length <= MAX_DOC_PROMPT) return contenido
+  const resto = MAX_DOC_PROMPT - CABECERA_DOC_PROMPT
+  return `${contenido.slice(0, CABECERA_DOC_PROMPT).trimEnd()}\n[… recortado …]\n${contenido.slice(-resto).trimStart()}`
+}
 
 export type SessionRules = {
   genre?: string
@@ -99,12 +115,12 @@ export function buildAssembledAgentContext(
   const especialistas = cargarEspecialistas().filter((e) => e.activo)
   const especialistasBlock = [
     '## Equipo de Especialistas y Músicos Virtuales Disponibles',
-    'El usuario puede invocar a cada especialista mencionándolo en el chat con @nombre (ej. @pianista, @baterista, @bajista, @qa, @director, etc.):',
+    'El usuario puede invocar a cada especialista mencionándolo en el chat con @nombre (ej. @pianista, @guitarrista, @baterista, @bajista, @qa, @director, etc.):',
     ...especialistas.map(
       (e) =>
         `- **@${e.nombre}** (${e.role}${e.instrumento ? ` · ${e.instrumento}` : ''}): ${e.descripcion || ''} | Skills: [${e.skills.join(', ')}]${
           e.instruccionesPersonalizadas ? ` | Reglas personalizadas: "${e.instruccionesPersonalizadas}"` : ''
-        }`,
+        }${habilidadesBlock(e)}`,
     ),
   ].join('\n')
 
@@ -121,7 +137,7 @@ export function buildAssembledAgentContext(
       ? [
           '## Base de Conocimientos Markdown (.md) del Proyecto',
           'El usuario ha creado o incorporado estos documentos de referencia técnica y musical. Úsalos como fuentes de verdad para tus respuestas y ejecución:',
-          ...knowledgeDocs.map((d) => `### Documento: ${d.title || d.slug} (@${d.slug})\n${d.content.slice(0, 4000)}`),
+          ...knowledgeDocs.map((d) => `### Documento: ${d.title || d.slug} (@${d.slug})\n${recortarDocParaPrompt(d.content)}`),
         ].join('\n\n')
       : ''
 
@@ -130,7 +146,7 @@ export function buildAssembledAgentContext(
     '## Catálogo de Skills Musicales y de Producción JasWave',
     '- **Worship Moderno / Íntimo**: Pianos con voicings abiertos (1-5-9 o 1-5-10), arpegios sutiles, pads envolventes con modulación lenta, tempo habitualmente entre 68 y 78 BPM, baterías con bombo redondo y dinámicas en coros, reverbs estéreo largas en envíos.',
     '- **Análisis de Audio (Lens)**: Usa analysis.timing para detectar BPM real y confidence; analysis.buffer para perfil armónico/tonalidad; analysis.mix para balance espectral y headroom. Aplica las configuraciones inmediatamente a project.setBpm y project.setKey.',
-    '- **Control de Calidad (QA)**: Comprobación estricta de clipping (True Peak < -0.5 dBTP), coherencia armónica en la escala del tema y ausencia de vacíos o solapes de notas anómalos.',
+    '- **Control de Calidad (QA)**: Comprobación estricta de clipping (True Peak ≤ -1.0 dBTP), coherencia armónica en la escala del tema y ausencia de vacíos o solapes de notas anómalos.',
   ].join('\n')
 
   // Inspección profunda de FX y Plugins de la pista seleccionada y del proyecto
@@ -153,12 +169,12 @@ export function buildAssembledAgentContext(
   const fxInspectionBlock = fxInspectionLines.length > 1 ? fxInspectionLines.join('\n') : ''
 
   const specialistFxDirectives = [
-    '## Directiva de Especialistas: Inspección y Gestión Quirúrgica de Plugins (FX Chain)',
-    'Como especialista musical o técnico (@guitarrista, @baterista, @bajista, @pianista, @director, @mezcla), tienes acceso y potestad para inspeccionar y gobernar la cadena de efectos de la pista:',
-    '- **Inspección activa**: Analiza los plugins presentes en la pista antes de procesar.',
-    '- **Añadir FX faltantes (`plugin.insert`)**: Si a la guitarra le falta simulador de amplificador, añade `JasWave Electric Guitar` o simulación; si a la batería le falta compresión de pegada, insértala.',
-    '- **Retirar o silenciar sobrantes (`plugin.remove` / `plugin.bypass`)**: Elimina plugins redundantes o que ensucian la mezcla (ej. reverbs largas en bombos o bajos).',
-    '- **Ajuste fino (`plugin.setParameter`)**: Modifica ganancia, tono, compresión, ataques y envíos para perfeccionar el timbre.',
+    '## Directiva de Especialistas: Inspección y Gestión de Plugins (FX Chain)',
+    'Los especialistas activos listados arriba pueden proponer cambios en la cadena de efectos. Cada cambio se ejecuta con un comando (con undo) y respeta la autonomía del usuario; los plugins de otros fabricantes o por ruta requieren confirmación.',
+    '- **Inspección**: revisa la FX chain de la pista (bloque anterior; las posiciones se numeran desde 1, los comandos usan índice desde 0) antes de actuar.',
+    '- **Añadir (`plugin.insert`)** solo plugins del catálogo: JasWave Param EQ, Bus Compressor, Smart De-esser, Ambience (reverb/espacio), TruePeak Limiter, Utility. Para guitarra, bajo, piano, cuerdas, pad y batería el instrumento ya incluye su propio procesado (amp/cab/delay, drive, reverb de sala…): ajústalo con `plugin.setParameter` en lugar de añadir otro.',
+    '- **Retirar o silenciar (`plugin.remove` / `plugin.bypass`)**: solo lo redundante o que ensucia la mezcla (p. ej. reverbs largas en bombo o bajo).',
+    '- **Ajuste fino (`plugin.setParameter`)**: valores normalizados entre 0 y 1; lee antes los parámetros con `plugin.listParameters`.',
   ].join('\n')
 
   return [

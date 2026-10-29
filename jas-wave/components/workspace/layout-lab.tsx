@@ -25,7 +25,8 @@ export function LayoutLab() {
       className="fixed left-0 top-0 z-[99999] overflow-hidden border border-accent-amber bg-panel"
       style={{ width: lab.w, height: lab.h }}
     >
-      <ToolHost toolId={lab.toolId} />
+      {/* Sin aviso de espacio: el banco mide el panel en sí, no el banner superpuesto. */}
+      <ToolHost toolId={lab.toolId} avisoEspacio={false} />
     </div>
   )
 }

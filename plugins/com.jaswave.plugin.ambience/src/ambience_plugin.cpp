@@ -160,6 +160,7 @@ inline const std::vector<ParamDef>& paramDefs() {
 
         // Selector de Presets
         v.push_back(stepP(kPresetSelect, "Preset Worship", kNumPresetDefs - 1, 1, pLabels.data()));
+        marcarBasicos(v, { kBypass, kOutGain, kRevMix, kRevSize, kDlyMix, kShMix, kWidth, kPresetSelect });   // modo Básico del editor
         return v;
     }();
     return defs;

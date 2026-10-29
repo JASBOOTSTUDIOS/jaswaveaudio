@@ -12,6 +12,8 @@ import { useCatalogoIA } from '../ia/use-catalogo-ia'
 import { Aviso, Boton, CambiarClave, FormularioProveedorIA, Seccion, apiJasWave, puenteIAEscritorio } from '@jaswave/host-sdk'
 import type { DatosProveedorIA, ProveedorIAApi } from '@jaswave/host-sdk'
 import { EspecialistasPanel } from './especialistas-panel'
+import { ConfigAgentePanel } from './config-agente-panel'
+import { textoLegible } from './detalles-tecnicos'
 
 export function AjustesIA() {
   const { catalogo, refrescar, error, sesion } = useCatalogoIA()
@@ -25,9 +27,15 @@ export function AjustesIA() {
   const actuales = loadAiSettings()
   const perfiles = actuales.providers
 
-  if (sesion.sinConfigurar) return <Aviso>Este build no tiene servidor de JasWave configurado: el asistente no está disponible.</Aviso>
+  if (sesion.sinConfigurar) return <Aviso>Esta versión de JasWave no tiene conexión con el servidor, así que el asistente no está disponible.</Aviso>
   if (!sesion.cargando && !sesion.session) {
-    return <Aviso>Inicia sesión en Cuenta para usar el asistente. Los modelos los asigna tu administrador.</Aviso>
+    // La carpeta de configuración es local: se puede preparar aunque todavía no haya sesión.
+    return (
+      <div className="flex flex-col gap-3" data-testid="ajustes-ia">
+        <Aviso>Inicia sesión en Cuenta para usar el asistente. Los modelos los asigna tu administrador.</Aviso>
+        <ConfigAgentePanel />
+      </div>
+    )
   }
 
   return (
@@ -40,7 +48,11 @@ export function AjustesIA() {
           </Boton>
         }
       >
-        {error ? <Aviso tipo="error">No se pudo cargar: {error}</Aviso> : null}
+        {error ? (
+          <Aviso tipo="error">
+            {textoLegible(error) || 'No se pudieron cargar los modelos. Revisa tu conexión e inténtalo de nuevo.'}
+          </Aviso>
+        ) : null}
         {!catalogo.permisos.usar ? (
           <Aviso>Tu cuenta no tiene acceso al asistente. Pídeselo a tu administrador.</Aviso>
         ) : !perfiles.length ? (
@@ -76,8 +88,8 @@ export function AjustesIA() {
           </ul>
         )}
         <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-          <label className="flex items-center gap-1">
-            Temperatura
+          <label className="flex items-center gap-1" title="0 = respuestas más precisas; valores altos = más creativas">
+            Creatividad
             <input
               type="number"
               min={0}
@@ -88,8 +100,8 @@ export function AjustesIA() {
               className="w-14 rounded-md border border-border bg-panel-raised px-1.5 py-0.5"
             />
           </label>
-          <label className="flex items-center gap-1">
-            Tokens
+          <label className="flex items-center gap-1" title="Cuánto puede escribir el asistente en cada respuesta">
+            Longitud máxima de respuesta
             <input
               type="number"
               min={256}
@@ -110,6 +122,8 @@ export function AjustesIA() {
           </label>
         </div>
       </Seccion>
+
+      <ConfigAgentePanel />
 
       <EspecialistasPanel />
 
@@ -132,7 +146,10 @@ function MisModelos() {
       await refrescarCatalogoIA()
       setAviso({ tipo: 'ok', texto: ok })
     } catch (e) {
-      setAviso({ tipo: 'error', texto: e instanceof Error ? e.message : String(e) })
+      setAviso({
+        tipo: 'error',
+        texto: textoLegible(e instanceof Error ? e.message : String(e)) || 'No se pudo completar. Revisa los datos e inténtalo de nuevo.',
+      })
       throw e
     }
   }

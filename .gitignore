@@ -45,6 +45,7 @@ native/audio-engine/build/
 
 # CLI: scripts/probes temporales con prefijo "_" (los versionados siguen trackeados)
 jas-wave/cli/_*
+backend/scripts/_tmp/
 jas-wave/jas-wave/
 
 # Worktrees/estado local de agentes

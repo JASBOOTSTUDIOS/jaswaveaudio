@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { WindowTitleBar } from '@/components/window-title-bar'
 import { proyectoParaGuardar } from '../../shared/src/project/ciclo-vida'
 import type { ProjectState } from '../../shared/src/types/proyecto'
 
@@ -76,29 +77,35 @@ export class AppErrorBoundary extends Component<Props, State> {
     }
 
     return (
-      <div role="alert" className="flex h-screen flex-col items-center justify-center gap-4 bg-background p-8 text-foreground">
-        <h1 className="text-lg font-semibold">JasWave encontró un error inesperado</h1>
-        <p className="max-w-xl text-center text-sm text-muted-foreground">{error.message}</p>
-        <p className="max-w-xl text-center text-sm">
-          {savedPath
-            ? `Se guardó una copia de emergencia del proyecto en: ${savedPath}`
-            : saveError
-              ? `No se pudo guardar la copia de emergencia: ${saveError}`
-              : 'Guardando copia de emergencia…'}
-        </p>
-        <div className="flex gap-2">
-          <button type="button" onClick={this.retry} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
-            Volver a intentar
-          </button>
-          <button type="button" onClick={() => location.reload()} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
-            Recargar la app
-          </button>
-          <button type="button" onClick={() => void this.save()} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
-            Guardar otra copia
-          </button>
-          <button type="button" onClick={() => void window.electron?.openLogsFolder?.()} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
-            Abrir logs
-          </button>
+      <div className="flex h-screen flex-col bg-background text-foreground">
+        {/* Sin marco: aun tras un fallo, minimizar / maximizar / cerrar tienen que verse */}
+        <WindowTitleBar soloEscritorio>
+          <span className="px-3 text-[12px] font-semibold text-foreground">JasWave</span>
+        </WindowTitleBar>
+        <div role="alert" className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 p-8">
+          <h1 className="text-lg font-semibold">JasWave encontró un error inesperado</h1>
+          <p className="max-w-xl text-center text-sm text-muted-foreground">{error.message}</p>
+          <p className="max-w-xl text-center text-sm">
+            {savedPath
+              ? `Se guardó una copia de emergencia del proyecto en: ${savedPath}`
+              : saveError
+                ? `No se pudo guardar la copia de emergencia: ${saveError}`
+                : 'Guardando copia de emergencia…'}
+          </p>
+          <div className="flex gap-2">
+            <button type="button" onClick={this.retry} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
+              Volver a intentar
+            </button>
+            <button type="button" onClick={() => location.reload()} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
+              Recargar la app
+            </button>
+            <button type="button" onClick={() => void this.save()} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
+              Guardar otra copia
+            </button>
+            <button type="button" onClick={() => void window.electron?.openLogsFolder?.()} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
+              Abrir logs
+            </button>
+          </div>
         </div>
       </div>
     )

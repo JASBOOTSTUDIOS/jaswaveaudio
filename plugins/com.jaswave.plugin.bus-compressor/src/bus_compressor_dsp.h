@@ -36,6 +36,7 @@ inline const std::vector<ParamDef>& paramDefs() {
         v.push_back(withFeature(linearP(kScHpf, "Sidechain HP", "Hz", 0.0, 500.0, 0.0, 0), kFeatScFilter));
         v.push_back(stepP(kDetector, "Detector", 1, 1, kDet));
         v.push_back(asReadOnly(linearP(kGrMeter, "GR", "dB", -60.0, 0.0, 0.0, 1)));
+        marcarBasicos(v, { kBypass, kThreshold, kRatio, kAttack, kRelease, kMakeup, kMix });   // modo Básico del editor
         return v;
     }();
     return defs;

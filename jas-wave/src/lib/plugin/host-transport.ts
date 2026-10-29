@@ -282,6 +282,24 @@ export function hostClipEnsureBuffer(clipId: string, buffer: AudioBuffer): Promi
   return p
 }
 
+/** 0 lineal · 1 exponencial · 2 logarítmica (mismo código que el clip_player nativo). */
+export type HostClipFades = {
+  clipStartSample: number
+  clipEndSample: number
+  inSamples: number
+  outSamples: number
+  inCurve: number
+  outCurve: number
+  /** Clip invertido: región del audio de origen (muestras) que se lee al revés. */
+  reverse?: boolean
+  regionStartSample?: number
+  regionLenSamples?: number
+}
+
+export function curvaFadeAHost(curva: unknown): number {
+  return curva === 'exponencial' ? 1 : curva === 'logaritmica' ? 2 : 0
+}
+
 export function hostClipSchedule(opts: {
   clipId: string
   trackIndex: number
@@ -290,6 +308,8 @@ export function hostClipSchedule(opts: {
   sourceOffsetSamples?: number
   gain?: number
   pan?: number
+  /** Fundidos sobre los límites del clip entero (muestras de la línea de tiempo). */
+  fades?: HostClipFades
 }): void {
   try {
     void electronApi()?.pluginHostSend?.({
@@ -301,6 +321,23 @@ export function hostClipSchedule(opts: {
       sourceOffsetSamples: opts.sourceOffsetSamples ?? 0,
       gain: opts.gain ?? 1,
       pan: opts.pan ?? 0,
+      ...(opts.fades
+        ? {
+            clipStartSample: opts.fades.clipStartSample,
+            clipEndSample: opts.fades.clipEndSample,
+            fadeInSamples: opts.fades.inSamples,
+            fadeOutSamples: opts.fades.outSamples,
+            fadeInCurve: opts.fades.inCurve,
+            fadeOutCurve: opts.fades.outCurve,
+            ...(opts.fades.reverse
+              ? {
+                  reverse: true,
+                  regionStartSample: opts.fades.regionStartSample ?? 0,
+                  regionLenSamples: opts.fades.regionLenSamples ?? 0,
+                }
+              : {}),
+          }
+        : {}),
     })
   } catch {
     /* ignore */

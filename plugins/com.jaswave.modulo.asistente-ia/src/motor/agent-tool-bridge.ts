@@ -58,10 +58,10 @@ export async function dryRunDawActions(
     .join('; ')
 
   if (!commands.length) {
-    return { ok: true, summary: orchSummary || 'Orquestador listo' }
+    return { ok: true, summary: orchSummary || 'Listo' }
   }
 
-  if (!txManager) return { ok: true, summary: orchSummary || 'Sin transaction manager' }
+  if (!txManager) return { ok: true, summary: orchSummary || 'Listo' }
   const tx = txManager.begin('preview coproducer')
   for (const a of commands) {
     txManager.addCommand(tx, { type: a.type, payload: a.payload ?? {} })

@@ -163,6 +163,36 @@ export function crearReglasDominio(): ReglasDominio {
     },
   };
 
+  const trackPadreValido: DomainRule = {
+    name: 'TrackPadreValido',
+    code: 'TRACK_PARENT_INVALID',
+    description: 'Una pista solo puede ir dentro de una carpeta existente, sin anidarse en sí misma ni en una hija.',
+    appliesTo: ['track.update'],
+    validate: (state: DAWState, payload: unknown): ValidationResult => {
+      if (!esObjeto(payload) || !esObjeto(payload.datos) || !('padreId' in payload.datos)) return ok();
+      const padreId = payload.datos.padreId;
+      // null / '' / undefined = sacar de la carpeta (a la raíz).
+      if (padreId === null || padreId === undefined || padreId === '') return ok();
+      if (typeof padreId !== 'string') return fallo([error('TRACK_PARENT_INVALID', 'padreId', 'padreId debe ser un id de pista')]);
+      const tracks = state.project.tracks;
+      const padre = tracks.find((t) => t.id === padreId);
+      if (!padre) return fallo([error('TRACK_PARENT_NOT_FOUND', 'padreId', `No existe la pista ${padreId}`)]);
+      if (padre.tipo !== 'carpeta') {
+        return fallo([error('TRACK_PARENT_NOT_FOLDER', 'padreId', `«${padre.nombre}» no es una carpeta`)]);
+      }
+      // Ciclo: el nuevo padre no puede ser la propia pista ni colgar de ella.
+      const porId = new Map(tracks.map((t) => [t.id, t]));
+      const vistos = new Set<string>();
+      for (let actual: string | undefined = padreId; actual && !vistos.has(actual); actual = porId.get(actual)?.padreId) {
+        if (actual === payload.trackId) {
+          return fallo([error('TRACK_PARENT_CYCLE', 'padreId', 'Una carpeta no puede ir dentro de sí misma ni de una de sus pistas')]);
+        }
+        vistos.add(actual);
+      }
+      return ok();
+    },
+  };
+
   const masterVolumenPaneo: DomainRule = {
     name: 'MasterVolumenPaneo',
     code: 'MASTER_MIX_INVALID',
@@ -351,6 +381,7 @@ export function crearReglasDominio(): ReglasDominio {
     trackNombreValido,
     trackCamposInmutables,
     trackVolumenPaneo,
+    trackPadreValido,
     masterVolumenPaneo,
     bpmValido,
     compasValido,

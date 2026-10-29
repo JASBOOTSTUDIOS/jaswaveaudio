@@ -4,14 +4,17 @@
  */
 import { useEffect, useSyncExternalStore } from 'react'
 import { AppWindow, X } from 'lucide-react'
-import { useDAW } from '@/src/context/daw-context'
+import { useDAW, useDAWStateOptional } from '@/src/context/daw-context'
 import {
   closeAllPluginWindows,
   closePluginWindow,
   getPluginWindows,
   subscribePluginWindows,
 } from '@/src/lib/plugin/plugin-windows'
-import { openPluginEditor, registrarLectorProyecto } from '@/src/lib/plugin/plugin-editor-store'
+import { openPluginEditor, registrarLectorProyecto, registrarNotificadorEditor } from '@/src/lib/plugin/plugin-editor-store'
+import { establecerProyectoPins } from '@/src/lib/pins/pins-cliente'
+import { PinEditorButton } from '@/components/pin-button'
+import { PinsJerarquia } from '@/components/pins-jerarquia'
 
 export function PluginWindowsBar() {
   const tienda = useDAW()
@@ -19,11 +22,21 @@ export function PluginWindowsBar() {
   // Siempre montada: permite resolver plugin y pista cuando cualquier panel pide abrir un editor
   useEffect(() => {
     registrarLectorProyecto(() => tienda.obtenerEstado() as never)
+    // Que «no abre» nunca sea mudo: el motivo llega como aviso (toast) al usuario.
+    registrarNotificadorEditor((mensaje) => tienda.busEventos.emit('comando.fallido', { type: 'plugin.abrirEditor', error: mensaje, code: 'PLUGIN_EDITOR' }))
     // Gancho de pruebas (solo desarrollo): permite abrir editores desde un script sin pasar por los paneles
     if (import.meta.env.DEV) (window as unknown as { __jwOpenPluginEditor?: typeof openPluginEditor }).__jwOpenPluginEditor = openPluginEditor
-    return () => registrarLectorProyecto(null)
+    return () => {
+      registrarLectorProyecto(null)
+      registrarNotificadorEditor(null)
+    }
   }, [tienda])
-  if (windows.length === 0) return null
+  // Pin: cada proyecto conserva su propia jerarquía de anclados
+  const proyectoId = useDAWStateOptional((st) => st.project?.id ?? '', '')
+  useEffect(() => {
+    void establecerProyectoPins(proyectoId)
+  }, [proyectoId])
+  if (windows.length === 0) return <PinsJerarquia />
   return (
     <div className="flex min-w-0 items-center gap-1" data-testid="plugin-windows-bar">
       <AppWindow className="size-3 shrink-0 text-accent-amber" />
@@ -46,6 +59,7 @@ export function PluginWindowsBar() {
               {w.name}
               {w.trackName ? <span className="text-muted-foreground"> · {w.trackName}</span> : null}
             </button>
+            <PinEditorButton trackId={w.trackId} pluginId={w.pluginId} nombre={w.name} size="size-2.5" />
             <button
               type="button"
               aria-label={`Cerrar ${w.name}`}
@@ -66,6 +80,7 @@ export function PluginWindowsBar() {
           Cerrar todas
         </button>
       )}
+      <PinsJerarquia />
     </div>
   )
 }

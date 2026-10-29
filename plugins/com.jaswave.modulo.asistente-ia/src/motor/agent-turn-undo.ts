@@ -19,7 +19,7 @@ export async function revertUndoToDepth(
 ): Promise<{ ok: boolean; undone: number; message: string }> {
   const start = tienda.executor.getUndoDepth()
   if (start <= targetDepth) {
-    return { ok: true, undone: 0, message: 'Nada que revertir (ya deshecho o sin mutaciones).' }
+    return { ok: true, undone: 0, message: 'No hay cambios que deshacer: ya se deshicieron o esta respuesta no cambió nada.' }
   }
   let undone = 0
   while (tienda.executor.getUndoDepth() > targetDepth && undone < MAX_REVERT_STEPS) {
@@ -28,7 +28,7 @@ export async function revertUndoToDepth(
       return {
         ok: false,
         undone,
-        message: r.error?.message ?? 'Error al deshacer',
+        message: 'No se pudo deshacer uno de los cambios.',
       }
     }
     undone += 1
@@ -37,10 +37,10 @@ export async function revertUndoToDepth(
     return {
       ok: false,
       undone,
-      message: `Tope de seguridad (${MAX_REVERT_STEPS} undos). Quedan pasos por deshacer.`,
+      message: `Por seguridad se deshicieron ${MAX_REVERT_STEPS} cambios; quedan más (puedes seguir con Ctrl+Z).`,
     }
   }
-  return { ok: true, undone, message: `Revertidos ${undone} comando(s).` }
+  return { ok: true, undone, message: undone === 1 ? 'Se deshizo 1 cambio.' : `Se deshicieron ${undone} cambios.` }
 }
 
 export function canRevertTurn(opts: {

@@ -109,12 +109,12 @@ export function MidiGenerationPreview({ preview, status = 'pending', onStatusCha
     <div className="mt-2 overflow-hidden rounded-lg border border-border bg-background/50 ring-1 ring-accent-amber/20">
       <div className="flex items-center justify-between gap-2 border-b border-border/60 px-2.5 py-1.5">
         <div className="min-w-0">
-          <div className="truncate text-[12px] font-semibold text-foreground">{preview.nombre}</div>
+          <div className="truncate text-[12px] font-semibold text-foreground" title={preview.nombre}>{preview.nombre}</div>
           <div className="truncate text-[10px] text-muted-foreground">
             {preview.keyLabel}
             {preview.mood ? ` · ${preview.mood}` : ''}
-            {preview.style ? `/${preview.style}` : ''} · {preview.notes.length} notas · {mins} min ·{' '}
-            {preview.structureLabel}
+            {preview.style ? ` · ${preview.style}` : ''} · {preview.notes.length} notas · {mins.replace('.', ',')} min
+            {preview.structureLabel ? ` · ${preview.structureLabel}` : ''}
           </div>
         </div>
         {localStatus === 'applied' ? (

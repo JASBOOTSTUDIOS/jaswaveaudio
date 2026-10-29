@@ -41,9 +41,6 @@ async function action(type, payload = {}) {
   return res.results?.[0] || { success: false }
 }
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms))
-}
 
 console.log('══════════════════════════════════════════════════════════════════')
 console.log('  JASWAVE — CERTIFICACIÓN INTEGRAL DE AUDIO, VSTs Y WORSHIP')
@@ -172,8 +169,7 @@ if (padArchivo) {
   console.log(`✓ Pad Worship localizado: "${padArchivo}" (${megas} MB)`)
   console.log('→ Validando límites y defensas contra desbordamiento...')
   const t0Pad = performance.now()
-  // Crear pista para el pad masivo de adoración
-  const trkPad = await action('track.create', {
+  await action('track.create', {
     nombre: 'F# Major Pad (Ambiental 144MB)',
     tipo: 'audio',
     volumen: 0.75,

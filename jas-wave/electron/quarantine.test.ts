@@ -7,6 +7,7 @@ import {
   VENTANA_PRIMER_BLOQUE_MS,
   evaluarCuarentena,
   mensajeMotivoCuarentena,
+  salidaAtribuibleAPlugin,
   type ContextoCuarentena,
 } from './quarantine'
 
@@ -85,6 +86,16 @@ describe('evaluarCuarentena', () => {
       bloqueAbierto: false,
     })
     assert.equal(d, null)
+  })
+
+  it('una salida limpia (0) o del driver (1) no aparta al plugin aunque se estuviera cargando', () => {
+    const cargando = { ...base, cargaEnCurso: { tipo: 'load', ruta: 'C:/plugins/pad.vst3' } }
+    assert.equal(evaluarCuarentena({ ...cargando, codigoSalida: 1 }), null)
+    assert.equal(evaluarCuarentena({ ...cargando, codigoSalida: 0 }), null)
+    // Access violation (0xC0000005) o muerte por señal: sí es atribuible.
+    assert.equal(evaluarCuarentena({ ...cargando, codigoSalida: 0xc0000005 })?.motivo, 'carga-en-curso')
+    assert.equal(evaluarCuarentena({ ...cargando, codigoSalida: null })?.motivo, 'carga-en-curso')
+    assert.equal(salidaAtribuibleAPlugin(3), true)
   })
 
   it('el motivo tiene texto legible', () => {

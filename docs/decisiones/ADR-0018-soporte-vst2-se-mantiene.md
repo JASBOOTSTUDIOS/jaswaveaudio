@@ -1,6 +1,6 @@
 # ADR-0018: Soporte VST2 se mantiene
 
-**Estado:** aceptada · **Fecha:** 2026-10-19 · **Decide:** JASBOOTSTUDIOS (propietario)
+**Estado:** sustituida por [ADR-0019](ADR-0019-retiro-de-vst2.md) · **Fecha:** 2026-10-19 · **Decide:** JASBOOTSTUDIOS (propietario)
 
 ## Contexto
 

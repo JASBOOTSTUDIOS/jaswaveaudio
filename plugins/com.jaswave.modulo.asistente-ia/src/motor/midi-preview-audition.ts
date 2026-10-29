@@ -244,7 +244,7 @@ export async function openPreviewPluginEditor(opts: {
   if (!prepared) {
     return {
       ok: false,
-      message: getLastVstLoadError() || 'No se pudo cargar el instrumento en el Plugin Host.',
+      message: getLastVstLoadError() || 'No se pudo cargar el instrumento para escucharlo.',
     }
   }
   openPluginEditor({

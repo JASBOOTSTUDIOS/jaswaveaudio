@@ -25,6 +25,7 @@ const NOMBRES_HEREDADOS: ReadonlyArray<[RegExp, string]> = [
   [/^jaswave\s*limitador$/i, 'com.jaswave.plugin.truepeak-limiter'],
   [/^jaswave\s*utility$/i, 'com.jaswave.plugin.utility-tool'],
   [/^jaswave\s*de-?esser$/i, 'com.jaswave.plugin.smart-deesser'],
+  [/^jaswave\s*pedal\s*fix$/i, 'com.jaswave.plugin.pedal-fix'],
   [/^jaswave\s*piano/i, 'com.jaswave.plugin.piano-synth'],
   [/^jaswave\s*roles$/i, 'com.jaswave.plugin.roles-vst'],
 ]

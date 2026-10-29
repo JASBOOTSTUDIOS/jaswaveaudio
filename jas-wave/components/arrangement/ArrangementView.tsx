@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, LayoutGrid, MoreVertical, Circle, Music, FileAudio, Headphones, GripVertical, AlertTriangle } from 'lucide-react'
+import { Plus, LayoutGrid, MoreVertical, Circle, Music, FileAudio, Headphones, GripVertical, AlertTriangle, Folder } from 'lucide-react'
 import { usePlaybackActions } from '@/components/playback-provider'
 import { createProjection } from '@/lib/timeline-projection'
 import { TRACKS, type Track as UiTrack } from '@/lib/daw-data'
@@ -7,17 +7,21 @@ import { useDAW, useDAWState } from '../../src/context/daw-context'
 import type { DAWState } from '../../../shared/src'
 import { linealADb, panADisplay } from '@/lib/audio-conversions'
 import { ConfirmDialog } from '../ui/confirm-dialog'
+import { BrilloIA, CAMPOS_BRILLO_PISTA } from '../ui/resalto-ia'
 import { StereoWaveform } from '../stereo-waveform'
 import { audioEngine } from '@/lib/audio-engine'
 import { executeOrNotify } from '@/src/lib/execute-or-toast'
 import { registrarConfirmacionBorrarPista } from '@/src/lib/track-delete-request'
 import { requestOpenTool } from '@/src/workspace/types'
+import type { NuevoProyectoDetalle } from '@/components/nuevo-proyecto-dialog'
 import { TrackButton } from './TrackButton'
 import { TimelineRuler } from './TimelineRuler'
 import { GridLayer } from './GridLayer'
 import { PlayheadOverlay } from './PlayheadOverlay'
+import { StartMarkerOverlay } from './StartMarkerOverlay'
 import { ArrangeBoard } from './ArrangeBoard'
 import { MidiClipPreview } from './MidiClipPreview'
+import { ClipEditHandles, ClipMutedOverlay, type EdicionClip } from './ClipEditHandles'
 import { TrackContextMenu, type TrackMenuState } from './TrackContextMenu'
 import { TakeLanesPanel } from '@/components/take-lanes-panel'
 import { ClipContextMenu, type ClipMenuState } from './ClipContextMenu'
@@ -37,6 +41,8 @@ import {
 import { useTimelineScale } from '@/hooks/arrangement/useTimelineScale'
 import { useSnap } from '@/hooks/arrangement/useSnap'
 import { getSelectedTrackId, selectTrackPayload } from '@/src/lib/selection-helpers'
+import { revelarEnScroller } from '@/src/lib/scroll-reveal'
+import { padresEfectivos, planSoltarPista, profundidad } from '@/src/lib/plugin/track-hierarchy'
 import { resolveSnapDivision } from '@/src/lib/timeline-snap'
 import { snapPlayheadBeat } from './timeline-grid-math'
 
@@ -54,6 +60,15 @@ type UiLikeTrack = UiTrack & {
 }
 
 type TrackToggle = { muted: boolean; solo: boolean; input: boolean; armed: boolean }
+
+/** Sangría por nivel de carpeta en las cabeceras. */
+const SANGRIA_PX = 12
+
+/** Arrastrar sobre la mitad derecha de una cabecera de carpeta = meter dentro. */
+function soltarEnMitadDerecha(e: { clientX: number; currentTarget: Element }): boolean {
+  const r = e.currentTarget.getBoundingClientRect()
+  return e.clientX - r.left > r.width / 2
+}
 
 function toUiLikeTrack(track: unknown): UiLikeTrack {
   const anyTrack = track as Record<string, unknown>
@@ -122,6 +137,14 @@ export function ArrangementView() {
   const scrollLeft = useDAWState((state: DAWState) => state.ui?.scrollX ?? 0)
   const selectedClipIds = useDAWState((state: DAWState) => state.selection?.idsClips ?? [])
   const selectedTrackId = useDAWState((state: DAWState) => getSelectedTrackId(state))
+  /** Datos de edición de cada clip (mute, ganancia, fades, slip) desde el store. */
+  const edicionPorClip = useMemo(() => {
+    const m = new Map<string, EdicionClip & { clipInicio?: number }>()
+    for (const t of sharedTracks) for (const c of (t.clips ?? []) as Array<EdicionClip & { id: string; clipInicio?: number }>) m.set(c.id, c)
+    return m
+  }, [sharedTracks])
+  /** Slip (Alt+Shift+arrastrar): desplazamiento del audio dentro del clip mientras se arrastra (beats). */
+  const [slip, setSlip] = useState<{ clipId: string; clipInicio: number } | null>(null)
   const loopActivo = Boolean(loopState?.activo)
   const loopInicioBeats = loopState?.inicio?.beats ?? 0
   const loopFinBeats = loopState?.fin?.beats ?? 0
@@ -131,6 +154,12 @@ export function ArrangementView() {
   const lanesScrollRef = useRef<HTMLDivElement>(null)
   const rulerScrollRef = useRef<HTMLDivElement>(null)
   const seekOriginRef = useRef<'lanes' | 'ruler'>('lanes')
+  /** Cabecera de cada pista: al seleccionarla (aquí o en el Mixer) se desplaza en vertical hasta verse. */
+  const cabecerasRef = useRef(new Map<string, HTMLDivElement>())
+  useEffect(() => {
+    if (!selectedTrackId) return
+    revelarEnScroller(lanesScrollRef.current, cabecerasRef.current.get(selectedTrackId), 'y')
+  }, [selectedTrackId])
   const syncingScroll = useRef(false)
   const lastPointerXRef = useRef<number | null>(null)
 
@@ -165,6 +194,7 @@ export function ArrangementView() {
   const clipLassoActiveRef = useRef(false)
   const [dragTrackId, setDragTrackId] = useState<string | null>(null)
   const [dragOverTrackId, setDragOverTrackId] = useState<string | null>(null)
+  const [soltarDentro, setSoltarDentro] = useState(false)
 
   const tracks: UiLikeTrack[] = useMemo(() => {
     return sharedTracks.map((raw: unknown) => toUiLikeTrack(raw))
@@ -253,37 +283,39 @@ export function ArrangementView() {
     return () => obs.disconnect()
   }, [])
 
-  const handleAddTrack = async (tipo: 'audio' | 'midi') => {
+  const handleAddTrack = async (tipo: 'audio' | 'midi' | 'carpeta') => {
     const estado = tienda.obtenerEstado()
     if (!estado.project.ruta) {
-      window.dispatchEvent(
-        new CustomEvent('jaswave-nuevo-proyecto', {
-          detail: {
-            mensaje:
-              'Para asegurar que tus pistas y audios no se pierdan al reiniciar o refrescar, primero asigna un nombre y carpeta a tu proyecto.',
-          },
-        }),
-      )
+      // Se guarda el proyecto actual (sin vaciarlo) y luego se crea la pista que se pidió.
+      const detail: NuevoProyectoDetalle = {
+        mensaje:
+          'Para asegurar que tus pistas y audios no se pierdan al reiniciar o refrescar, primero asigna un nombre y carpeta a tu proyecto.',
+        conservar: true,
+        alCrear: () => void handleAddTrack(tipo),
+      }
+      window.dispatchEvent(new CustomEvent('jaswave-nuevo-proyecto', { detail }))
       setShowAddTrackMenu(false)
       return
     }
     const count = sharedTracks.length + 1
-    const nombre = tipo === 'midi' ? `MIDI ${count}` : `Audio ${count}`
-    await tienda.executor.execute('track.create', { nombre, tipo })
+    const nombre = tipo === 'midi' ? `MIDI ${count}` : tipo === 'carpeta' ? `Carpeta ${count}` : `Audio ${count}`
+    const created = await tienda.executor.execute('track.create', { nombre, tipo })
+    // La pista nueva queda seleccionada: el catálogo y el inspector apuntan a ella sin un clic extra.
+    const trackId = created.success ? (created.result as { trackId?: string })?.trackId : undefined
+    if (trackId) void tienda.executor.execute('selection.set', selectTrackPayload(trackId))
     setShowAddTrackMenu(false)
   }
 
   const handleImportToTrack = async (trackId: string, file: File) => {
     const estado = tienda.obtenerEstado()
     if (!estado.project.ruta) {
-      window.dispatchEvent(
-        new CustomEvent('jaswave-nuevo-proyecto', {
-          detail: {
-            mensaje:
-              'Para asegurar que el audio no se pierda al reiniciar o refrescar, primero asigna un nombre y carpeta a tu proyecto.',
-          },
-        }),
-      )
+      const detail: NuevoProyectoDetalle = {
+        mensaje:
+          'Para asegurar que el audio no se pierda al reiniciar o refrescar, primero asigna un nombre y carpeta a tu proyecto.',
+        conservar: true,
+        alCrear: () => void handleImportToTrack(trackId, file),
+      }
+      window.dispatchEvent(new CustomEvent('jaswave-nuevo-proyecto', { detail }))
       return
     }
     try {
@@ -341,9 +373,13 @@ export function ArrangementView() {
     }
   }
 
-  const moveTrackToIndex = useCallback(
-    (trackId: string, toIndex: number) => {
-      void tienda.executor.execute('track.move', { trackId, toIndex })
+  // Carpetas-bus: sangría por profundidad y soltar dentro / fuera de una carpeta en un solo paso de deshacer.
+  const padres = useMemo(() => padresEfectivos(sharedTracks), [sharedTracks])
+  const soltarPista = useCallback(
+    (trackId: string, destinoId: string, dentro: boolean) => {
+      const plan = planSoltarPista(tienda.obtenerEstado().project.tracks, trackId, destinoId, dentro)
+      if (plan.length === 1) void tienda.executor.execute(plan[0]!.type, plan[0]!.payload)
+      else if (plan.length > 1) void tienda.executor.batch(plan)
     },
     [tienda],
   )
@@ -1112,6 +1148,32 @@ export function ArrangementView() {
       return
     }
 
+    // Slip: Alt+Shift+arrastrar desplaza el audio dentro del clip sin mover sus bordes.
+    if (e.altKey && e.shiftKey && edicionPorClip.has(clip.id) && (clip as { kind?: string }).kind !== 'midi') {
+      const ini = edicionPorClip.get(clip.id)?.clipInicio ?? 0
+      const x0 = e.clientX
+      let valor = ini
+      setSlip({ clipId: clip.id, clipInicio: ini })
+      const move = (ev: PointerEvent) => {
+        // Arrastrar a la derecha adelanta el audio: se lee desde antes en el archivo.
+        valor = Math.max(0, ini - (ev.clientX - x0) / pixelsPerBeat)
+        setSlip({ clipId: clip.id, clipInicio: valor })
+      }
+      const up = () => {
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+        window.removeEventListener('pointercancel', up)
+        setSlip(null)
+        if (Math.abs(valor - ini) > 1e-4) {
+          void tienda.executor.execute('clip.resize', { pistaId: trackId, clipId: clip.id, clipInicio: valor })
+        }
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+      window.addEventListener('pointercancel', up)
+      return
+    }
+
     const rect = e.currentTarget.getBoundingClientRect()
     const offsetX = e.clientX - rect.left
 
@@ -1149,6 +1211,34 @@ export function ArrangementView() {
     void tienda.executor.execute('selection.set', selectTrackPayload(trackId))
   }
 
+  const esPistaMidi = (trackId: string) => sharedTracks.find((t) => t.id === trackId)?.tipo === 'midi'
+
+  /** Clip MIDI vacío de un compás en `beat`: queda seleccionado y se abre en el piano roll para escribir notas. */
+  const crearClipMidiEnCarril = async (trackId: string, beat: number) => {
+    const id = `clip-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+    const inicio = Math.max(0, Math.floor(beat / beatsPerBar) * beatsPerBar)
+    const r = await executeOrNotify(tienda, 'midi.clip.create', {
+      pistaId: trackId,
+      id,
+      nombre: 'Clip MIDI',
+      inicio,
+      duracion: beatsPerBar,
+      notas: [],
+    })
+    if (!r.success) return
+    await tienda.executor.execute('selection.set', { idsClips: [id], idsPistas: [trackId], idPrincipal: trackId })
+    requestOpenTool('piano-roll', { zone: 'bottom' })
+  }
+
+  /** Doble clic en un hueco de una pista MIDI: crea un clip (lo que indica el piano roll vacío). */
+  const handleTrackLaneDoubleClick = (e: React.MouseEvent, trackId: string) => {
+    if ((e.target as HTMLElement).closest('[data-clip-id]')) return
+    if (!esPistaMidi(trackId)) return
+    e.preventDefault()
+    e.stopPropagation()
+    void crearClipMidiEnCarril(trackId, clientXToBeat(e.clientX))
+  }
+
   const handleTrackLaneClick = (e: React.MouseEvent, trackId: string) => {
     if (suppressLaneClickRef.current) {
       suppressLaneClickRef.current = false
@@ -1157,6 +1247,12 @@ export function ArrangementView() {
     if (activeTool === 'pencil') {
       const clickBeat = clientXToBeat(e.clientX)
       const snappedClick = snapBeat(clickBeat)
+      // En una pista MIDI el lápiz crea un clip MIDI (antes creaba un clip de audio vacío).
+      if (esPistaMidi(trackId)) {
+        void crearClipMidiEnCarril(trackId, snappedClick)
+        selectTrack(trackId)
+        return
+      }
 
       void tienda.executor.execute('clip.create', {
         pistaId: trackId,
@@ -1348,10 +1444,19 @@ export function ArrangementView() {
                 <button
                   type="button"
                   onClick={() => handleAddTrack('midi')}
-                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] text-foreground hover:bg-panel-raised rounded-b-lg"
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] text-foreground hover:bg-panel-raised"
                 >
                   <Music className="size-3.5 text-accent-cyan" />
                   Pista MIDI
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAddTrack('carpeta')}
+                  title="Agrupa pistas: arrastra una pista sobre la mitad derecha de la carpeta para meterla. Su fader, FX, mute y solo afectan a todas."
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] text-foreground hover:bg-panel-raised rounded-b-lg"
+                >
+                  <Folder className="size-3.5 text-accent-amber" />
+                  Carpeta (bus)
                 </button>
               </div>
             )}
@@ -1403,6 +1508,8 @@ export function ArrangementView() {
           </div>
         )}
         playhead={(
+          <>
+          <StartMarkerOverlay bpm={bpm} pixelsPerBeat={pixelsPerBeat} getScrollX={getLanesScrollX} />
           <PlayheadOverlay
             mode="viewport"
             getSeconds={getPlayheadSeconds}
@@ -1417,6 +1524,7 @@ export function ArrangementView() {
             }
             onPointerDown={(e) => handlePlayheadPointerDown(e, 'ruler')}
           />
+          </>
         )}
         headers={(
           <>
@@ -1425,30 +1533,32 @@ export function ArrangementView() {
               {Array.from({ length: EMPTY_LANE_COUNT }, (_, i) => (
                 <div
                   key={`ghost-h-${i}`}
-                  className="relative flex items-center border-b border-border/60 bg-panel/80 px-3"
+                  className="relative flex items-center overflow-hidden border-b border-border/60 bg-panel/80 px-3"
                   style={{ height: rowH }}
                   onDoubleClick={handleBlankDoubleClick}
                 >
                   {i === 0 ? (
-                    <div className="flex w-full flex-col items-start justify-center gap-2 py-2">
-                      <p className="text-[12px] font-semibold text-foreground">Sin pistas</p>
-                      <p className="text-[10px] text-muted-foreground">
-                        Crea una pista de audio o MIDI para empezar.
-                      </p>
-                      <div className="flex flex-wrap gap-1.5">
+                    // Cabe en la altura de una fila: si se desborda, la fila siguiente tapa los botones.
+                    <div className="flex w-full flex-col items-start justify-center gap-1">
+                      <p className="truncate text-[10px] text-muted-foreground">Sin pistas: crea una para empezar.</p>
+                      <div className="flex gap-1.5">
                         <button
                           type="button"
                           onClick={() => void handleAddTrack('audio')}
-                          className="rounded-md bg-accent-amber px-2.5 py-1 text-[11px] font-medium text-background hover:opacity-90"
+                          title="Nueva pista de audio"
+                          aria-label="Nueva pista de audio"
+                          className="rounded-md bg-accent-amber px-2 py-0.5 text-[11px] font-medium text-background hover:opacity-90"
                         >
-                          Nueva pista de audio
+                          + Audio
                         </button>
                         <button
                           type="button"
                           onClick={() => void handleAddTrack('midi')}
-                          className="rounded-md border border-border px-2.5 py-1 text-[11px] text-foreground hover:bg-panel-raised"
+                          title="Nueva pista MIDI"
+                          aria-label="Nueva pista MIDI"
+                          className="rounded-md border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-panel-raised"
                         >
-                          Nueva pista MIDI
+                          + MIDI
                         </button>
                       </div>
                     </div>
@@ -1459,7 +1569,7 @@ export function ArrangementView() {
               ))}
             </>
           )}
-          {tracks.map((track, trackIndex) => {
+          {tracks.map((track) => {
             const t = toggles[track.id] ?? {
               muted: false,
               solo: false,
@@ -1468,11 +1578,18 @@ export function ArrangementView() {
             }
             const isSelected = selectedTrackId === track.id
             const isDragOver = dragOverTrackId === track.id && dragTrackId !== track.id
+            const esCarpeta = track.tipo === 'carpeta'
+            const nivel = profundidad(track.id, padres)
             return (
               <div
                 key={track.id}
+                ref={(el) => {
+                  if (el) cabecerasRef.current.set(track.id, el)
+                  else cabecerasRef.current.delete(track.id)
+                }}
                 role="button"
                 tabIndex={0}
+                data-testid={`arrange-track-header-${track.id}`}
                 onClick={() => selectTrack(track.id)}
                 onContextMenu={(e) => {
                   e.preventDefault()
@@ -1480,7 +1597,9 @@ export function ArrangementView() {
                   openTrackMenu(track.id, e.clientX, e.clientY)
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
+                  // Solo Enter: la barra espaciadora es reproducir/pausar en todo el DAW (aquí se «consumía»
+                  // con preventDefault y el atajo global ya no la veía).
+                  if (e.key === 'Enter') {
                     e.preventDefault()
                     selectTrack(track.id)
                   }
@@ -1490,6 +1609,7 @@ export function ArrangementView() {
                   e.preventDefault()
                   e.dataTransfer.dropEffect = 'move'
                   setDragOverTrackId(track.id)
+                  setSoltarDentro(esCarpeta && soltarEnMitadDerecha(e))
                 }}
                 onDragLeave={() => {
                   if (dragOverTrackId === track.id) setDragOverTrackId(null)
@@ -1500,15 +1620,18 @@ export function ArrangementView() {
                   setDragOverTrackId(null)
                   setDragTrackId(null)
                   if (!id || id === track.id) return
-                  moveTrackToIndex(id, trackIndex)
+                  soltarPista(id, track.id, esCarpeta && soltarEnMitadDerecha(e))
                 }}
-                className={`flex cursor-pointer items-center gap-1 border-b border-border bg-panel px-0.5 ${
+                className={`relative flex cursor-pointer items-center gap-1 border-b border-border bg-panel px-0.5 ${
                   isSelected ? 'bg-accent-amber/20 ring-1 ring-inset ring-accent-amber/50' : 'hover:bg-panel-raised'
-                } ${isDragOver ? 'ring-1 ring-inset ring-accent-amber' : ''} ${
+                } ${isDragOver ? (soltarDentro && esCarpeta ? 'ring-2 ring-inset ring-accent-cyan' : 'ring-1 ring-inset ring-accent-amber') : ''} ${
                   dragTrackId === track.id ? 'opacity-60' : ''
                 }`}
-                style={{ height: rowH }}
+                style={{ height: rowH, paddingLeft: 2 + nivel * SANGRIA_PX }}
+                data-nivel={nivel}
+                title={isDragOver && esCarpeta ? (soltarDentro ? 'Soltar dentro de la carpeta' : 'Soltar aquí (fuera de la carpeta)') : undefined}
               >
+                <BrilloIA trackId={track.id} campos={CAMPOS_BRILLO_PISTA} />
                 <span
                   className="h-full w-1 shrink-0 self-stretch"
                   style={{ backgroundColor: track.color }}
@@ -1533,6 +1656,7 @@ export function ArrangementView() {
                 >
                   <GripVertical className="size-3.5" />
                 </button>
+                {esCarpeta ? <Folder className="size-3 shrink-0 text-muted-foreground" aria-label="Carpeta" /> : null}
                 <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground" title={track.name}>
                   {track.name}
                 </span>
@@ -1738,6 +1862,7 @@ export function ArrangementView() {
                   style={{ height: rowH }}
                   onPointerDown={(e) => beginCreateMidiClipDrag(e, track.id)}
                   onClick={(e) => handleTrackLaneClick(e, track.id)}
+                  onDoubleClick={(e) => handleTrackLaneDoubleClick(e, track.id)}
                   onContextMenu={(e) => {
                     if ((e.target as HTMLElement).closest('[data-clip-id]')) return
                     e.preventDefault()
@@ -1754,14 +1879,16 @@ export function ArrangementView() {
                     if (files.length === 0) return
                     const estado = tienda.obtenerEstado()
                     if (!estado.project.ruta) {
-                      window.dispatchEvent(
-                        new CustomEvent('jaswave-nuevo-proyecto', {
-                          detail: {
-                            mensaje:
-                              'Para asegurar que el audio no se pierda al reiniciar o refrescar, primero asigna un nombre y carpeta a tu proyecto.',
-                          },
-                        }),
-                      )
+                      // Tras guardar, los archivos soltados se importan en esta pista.
+                      const detail: NuevoProyectoDetalle = {
+                        mensaje:
+                          'Para asegurar que el audio no se pierda al reiniciar o refrescar, primero asigna un nombre y carpeta a tu proyecto.',
+                        conservar: true,
+                        alCrear: () => {
+                          for (const f of files) void handleImportToTrack(track.id, f)
+                        },
+                      }
+                      window.dispatchEvent(new CustomEvent('jaswave-nuevo-proyecto', { detail }))
                       return
                     }
                     const dropBeat = clientXToBeat(e.clientX)
@@ -1823,6 +1950,8 @@ export function ArrangementView() {
                       const barCount = barEnd - barStart + 1
 
                       const isAudioMissing = clip.kind !== 'midi' && Boolean(clip.missing)
+                      const edicion = edicionPorClip.get(clip.id)
+                      const clipSilenciado = edicion?.silenciado === true
                       return (
                         <div
                           key={clip.id}
@@ -1874,16 +2003,36 @@ export function ArrangementView() {
                               : isAudioMissing
                                 ? 'rgba(245, 158, 11, 0.7)'
                                 : `color-mix(in oklch, ${track.color} 80%, transparent)`,
-                            opacity: t.muted ? 0.35 : isDupGhost ? 0.85 : isAudioMissing ? 0.45 : 1,
+                            opacity: t.muted ? 0.35 : clipSilenciado ? 0.4 : isDupGhost ? 0.85 : isAudioMissing ? 0.45 : 1,
                           }}
                           title={
                             isAudioMissing
                               ? `⚠️ ${clip.name} — Archivo de audio no encontrado en el proyecto`
                               : isDupGhost
                                 ? 'Copia (Ctrl+arrastrar)'
-                                : `${clip.name} — Compás ${barStart}→${barEnd} (${clip.duracionSeconds.toFixed(2)}s)`
+                                : slip?.clipId === clip.id
+                                  ? `Desplazamiento interno: ${slip.clipInicio.toFixed(2)} beats`
+                                  : `${clip.name} — Compás ${barStart}→${barEnd} (${clip.duracionSeconds.toFixed(2)}s)${
+                                      clipSilenciado ? ' · silenciado (0)' : ''
+                                    }${clip.kind !== 'midi' ? ' · Alt+Shift+arrastrar: desplazar el audio' : ''}`
                           }
                         >
+                          {clipSilenciado && <ClipMutedOverlay />}
+                          {clip.kind !== 'midi' && !isDupGhost && edicion && (
+                            <ClipEditHandles
+                              pistaId={clip.trackId}
+                              clipId={clip.id}
+                              edicion={edicion}
+                              anchoPx={clipWidth}
+                              altoPx={rowH - 8}
+                              duracionSec={clip.duracionSeconds}
+                            />
+                          )}
+                          {slip?.clipId === clip.id && (
+                            <span className="pointer-events-none absolute bottom-0.5 left-1 z-[17] rounded bg-black/70 px-1 font-mono text-[9px] tabular-nums text-amber-200">
+                              ↔ {slip.clipInicio.toFixed(2)} beats
+                            </span>
+                          )}
                           <div
                             className="absolute bottom-0 left-0 top-0 z-10 w-2 cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100"
                             style={{ background: `linear-gradient(to right, ${track.color}, transparent)` }}

@@ -112,6 +112,13 @@ Acciones (vía executeDawActions, igual que el chat)
 Atajos transporte
   play | pause | stop | toggle | seek <sec>
 
+Exportación (sin --end detecta sola dónde termina la canción y recorta el silencio)
+  export mix <ruta> [--format wav|aiff|flac|mp3|ogg|aac|opus] [--bits 16|24|32] [--sr 48000]
+                    [--bitrate 320] [--start s|mm:ss] [--end s|mm:ss] [--normalize lufs|peak] [--stems]
+  export stems <ruta-mezcla> [--tracks id1,id2] [--pre]   Mezcla + un WAV por pista (con FX y fader)
+  export midi <ruta.mid> [--tracks id1,id2] [--clip id]
+  export project <ruta.jaswave.zip>                       Proyecto + todo su audio
+
 Audio (sale por la tarjeta; se refleja en Ajustes/proyecto)
   audio list | audio get | audio ensure [preferName]
   audio set '{"backend":"asio","deviceId":"…","sampleRate":48000,"bufferSize":512}'
@@ -300,6 +307,52 @@ async function main() {
         return
       }
       throw new Error('audio list|get|ensure [name]|set <json>')
+    }
+
+    if (cmd === 'export') {
+      const sub = argv[1]
+      const ruta = argv[2]
+      if (!sub || !ruta) throw new Error('export mix|stems|midi|project <ruta> [opciones] (ver --help)')
+      const opt = (name) => {
+        const i = argv.indexOf(`--${name}`)
+        return i >= 0 ? argv[i + 1] : undefined
+      }
+      const has = (name) => argv.includes(`--${name}`)
+      const segundos = (v) => {
+        if (v == null) return undefined
+        const partes = String(v).split(':').map(Number)
+        if (partes.some((n) => !Number.isFinite(n))) throw new Error(`tiempo no válido: ${v} (usa segundos o mm:ss)`)
+        return partes.reduce((acc, n) => acc * 60 + n, 0)
+      }
+      const lista = (v) => (v ? String(v).split(',').map((s) => s.trim()).filter(Boolean) : undefined)
+      let action
+      if (sub === 'mix' || sub === 'stems') {
+        const num = (v) => (v == null ? undefined : Number(v))
+        action = {
+          type: 'render.start',
+          payload: {
+            outputPath: ruta,
+            format: opt('format') ?? 'wav',
+            ...(opt('bits') ? { bitDepth: num(opt('bits')) } : {}),
+            ...(opt('sr') ? { sampleRate: num(opt('sr')) } : {}),
+            ...(opt('bitrate') ? { bitrate: num(opt('bitrate')) } : {}),
+            ...(opt('start') ? { startSec: segundos(opt('start')) } : {}),
+            ...(opt('end') ? { endSec: segundos(opt('end')) } : {}),
+            ...(opt('normalize') ? { normalize: opt('normalize') } : {}),
+            ...(sub === 'stems' || has('stems') ? { stems: true } : {}),
+            ...(lista(opt('tracks')) ? { stemTrackIds: lista(opt('tracks')) } : {}),
+            ...(has('pre') ? { stemsTap: 'pre' } : {}),
+          },
+        }
+      } else if (sub === 'midi') {
+        action = { type: 'export.midi', payload: { ruta, trackIds: lista(opt('tracks')), clipId: opt('clip') } }
+      } else if (sub === 'project') {
+        action = { type: 'export.projectBundle', payload: { ruta } }
+      } else {
+        throw new Error(`export ${sub}: usa mix, stems, midi o project`)
+      }
+      printActionResults(await req('/actions', { method: 'POST', body: JSON.stringify(action) }))
+      return
     }
 
     if (cmd === 'action' || cmd === 'cmd') {

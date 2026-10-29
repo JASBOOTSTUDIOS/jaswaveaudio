@@ -49,6 +49,19 @@ describe('plugin FX chain commands', () => {
     trackId = tracks[tracks.length - 1]!.id
   })
 
+  it('rechaza pasar del máximo de plugins que procesa el motor, con mensaje claro', async () => {
+    for (let i = 0; i < 24; i++) {
+      const r = await tienda.executor.execute('plugin.insert', { trackId, plugin: eqPlugin(`eq-${i}`) })
+      expect(r.success).toBe(true)
+    }
+    const r = await tienda.executor.execute('plugin.insert', { trackId, plugin: eqPlugin('eq-sobra') })
+    expect(r.success).toBe(false)
+    expect(JSON.stringify(r)).toMatch(/máximo que procesa el motor/)
+    const dup = await tienda.executor.execute('plugin.duplicate', { trackId, pluginInstanceId: 'eq-0' })
+    expect(dup.success).toBe(false)
+    expect(tienda.obtenerEstado().project.tracks.find((t) => t.id === trackId)!.plugins).toHaveLength(24)
+  })
+
   it('insert move bypass duplicate remove', async () => {
     await tienda.executor.execute('plugin.insert', {
       trackId,

@@ -104,6 +104,10 @@ public:
     const wchar_t* title() const override { return L"PIANO SYNTH"; }
     const wchar_t* subtitle() const override { return L"SÍNTESIS MODAL · CUERDAS AL UNÍSONO · 88 TECLAS"; }
     const char* visualizer() const override { return "espectro-instrumento"; }
+    // Teclado en pantalla tocable con el ratón
+    bool vizDown(const JasWaveUI::MouseEvent& e, JasWaveUI::EditorContext& c) override { return teclado_.pulsar(e, c.params.bus()); }
+    void vizDrag(const JasWaveUI::MouseEvent& e, JasWaveUI::EditorContext&) override { teclado_.arrastrar(e); }
+    void vizUp(const JasWaveUI::MouseEvent&, JasWaveUI::EditorContext&) override { teclado_.soltar(); }
     void build(JasWaveUI::EditorContext& c) override {
         namespace P = JasWaveUI::Plantilla;
         P::controles(c, L"MARTILLO · CUERDA");

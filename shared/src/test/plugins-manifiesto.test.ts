@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validarManifiesto, aliasPlugin, type ManifiestoPlugin } from '../plugins/manifiesto';
-import { herramientasDesdeManifiesto, traducirAjuste, normalizarValor, describirPlugin } from '../plugins/herramientas-ia';
+import { herramientasDesdeManifiesto, traducirAjuste, normalizarValor, describirPlugin, resolverInstanciaPlugin } from '../plugins/herramientas-ia';
 
 const base = () => ({
   id: 'com.jaswave.plugin.param-eq',
@@ -97,6 +97,26 @@ describe('P1 — herramientas de IA desde el manifiesto', () => {
         payload: { trackId: 't1', pluginInstanceId: 'p1', parameterId: '3', normalizedValue: 0.625, plainValue: 6, name: 'Banda 1 Ganancia' },
       },
     ]);
+  });
+
+  it('resuelve la instancia real: id del manifiesto, plugin del máster o pista equivocada', () => {
+    const m = valido();
+    const proyecto = {
+      tracks: [
+        { id: 't1', nombre: 'Piano', plugins: [{ id: 'inst-1', nombre: 'Piano VST' }] },
+        { id: 't2', nombre: 'Bajo', plugins: [{ id: 'eq-2', nombre: m.name }] },
+      ],
+      master: { plugins: [{ id: 'eq-m', nombre: m.name }] },
+    };
+    // En la pista indicada (por nombre, aunque mande el id del manifiesto).
+    expect(resolverInstanciaPlugin(m, proyecto, 't2', m.id)).toEqual({ trackId: 't2', pluginInstanceId: 'eq-2' });
+    // Máster por su alias.
+    expect(resolverInstanciaPlugin(m, proyecto, 'master', m.id)).toEqual({ trackId: 'master', pluginInstanceId: 'eq-m' });
+    // Id de instancia correcto con la pista equivocada.
+    expect(resolverInstanciaPlugin(m, proyecto, 't1', 'eq-m')).toEqual({ trackId: 'master', pluginInstanceId: 'eq-m' });
+    // En una pista que no lo tiene y hay dos: pide elegir; si no hay ninguno, pide insertarlo.
+    expect(() => resolverInstanciaPlugin(m, proyecto, 't1', m.id)).toThrow(/varios/);
+    expect(() => resolverInstanciaPlugin(m, { tracks: [{ id: 't1', plugins: [] }] }, 't1', 'x')).toThrow(/no está insertado/);
   });
 
   it('bloquea parámetros desconocidos y los que la licencia no concede', () => {

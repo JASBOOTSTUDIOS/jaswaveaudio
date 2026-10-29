@@ -1,17 +1,17 @@
 # Plugin Host Process (ADR-0011 — aislamiento híbrido C)
 
-Proceso **separado** del main de Electron para plugins de terceros (VST3 + VST2 x64).
+Proceso **separado** del main de Electron para plugins de terceros (solo VST3 de 64 bits; VST2 retirado, ver ADR-0019).
 
 ## Capacidades (build-vst3 + SDK)
 
 | Capacidad | Estado |
 |-----------|--------|
-| Discover `.vst3` y `.dll` VST2 | ✅ |
-| Load + prepare + MIDI + audio (VST3 / VST2 x64) | ✅ |
+| Discover `.vst3` | ✅ |
+| Load + prepare + MIDI + audio (VST3 x64) | ✅ |
 | Editor HWND **misma instancia** que process | ✅ (STA + GetMessage; no editorhost) |
 | Device WASAPI / Exclusive / DSound / WinMM / ASIO / JACK | ✅ seleccionable |
 | Soft Pad | reemplazado por JasWaveRoles.vst3 (nativo) |
-| VST2 32-bit | ❌ (requiere bridge externo) |
+| VST2 y VST3 de 32 bits | ❌ (no soportados) |
 
 ## Build
 

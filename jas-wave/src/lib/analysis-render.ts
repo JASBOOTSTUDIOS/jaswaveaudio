@@ -105,13 +105,28 @@ export function desintercalar(pcm: Float32Array, frames: number): SegmentoPcm {
  */
 function huellaMezcla(estado: DAWState): string {
   const tracks = estado.project?.tracks ?? []
+  // Parámetros de plugins (EQ, compresor…), envíos y enrutado también cambian lo que suena: sin ellos,
+  // tras ajustar una EQ la caché devolvía la medida anterior y la IA «comprobaba» un cambio que no medía.
   const bits: string[] = tracks.map(
-    (t) => `${t.id}:${t.volumen ?? 0}:${t.paneo ?? 0}:${t.silenciada ? 1 : 0}:${t.soloActiva ? 1 : 0}`,
+    (t) =>
+      `${t.id}:${t.volumen ?? 0}:${t.paneo ?? 0}:${t.silenciada ? 1 : 0}:${t.soloActiva ? 1 : 0}:${hashTexto(
+        JSON.stringify([t.plugins ?? [], (t as { envios?: unknown }).envios ?? null]),
+      )}`,
   )
   const m = estado.project?.master
   const plugins = (m?.plugins ?? []).map((p) => `${p.id}:${p.bypass ? 1 : 0}`).join(',')
-  bits.push(`m:${m?.volumen ?? 0}:${m?.muted ? 1 : 0}:${plugins}`)
+  bits.push(`m:${m?.volumen ?? 0}:${m?.muted ? 1 : 0}:${plugins}:${hashTexto(JSON.stringify([m?.plugins ?? [], estado.project?.routing ?? null]))}`)
   return bits.join('|')
+}
+
+/** FNV-1a de 32 bits (huella compacta, no criptográfica). */
+function hashTexto(s: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(36)
 }
 
 /**

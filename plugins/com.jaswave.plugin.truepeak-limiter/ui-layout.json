@@ -70,6 +70,17 @@
     "caidaDbS": 14
   },
   "modoParam": null,
+  "modos": {
+    "selector": [
+      358,
+      48,
+      476,
+      68
+    ],
+    "corte": 410,
+    "defecto": "avanzado"
+  },
+  "parametrosCubiertos": [],
   "widgets": [
     {
       "tipo": "section",
@@ -79,7 +90,8 @@
         1048,
         404
       ],
-      "etiqueta": "LIMITADOR"
+      "etiqueta": "LIMITADOR",
+      "basico": true
     },
     {
       "tipo": "knob",
@@ -91,6 +103,13 @@
       ],
       "etiqueta": "GANANCIA",
       "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        761.5,
+        213,
+        837.5,
+        307
+      ],
       "param": 2,
       "min": 0,
       "max": 24,
@@ -113,6 +132,13 @@
       ],
       "etiqueta": "RELEASE",
       "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        876.5,
+        213,
+        952.5,
+        307
+      ],
       "param": 3,
       "min": 1,
       "max": 1000,
@@ -135,6 +161,7 @@
       ],
       "etiqueta": "LOOKAHEAD",
       "tamano": 64,
+      "basico": false,
       "param": 4,
       "min": 0,
       "max": 10,
@@ -156,6 +183,7 @@
         314
       ],
       "etiqueta": "DITHER",
+      "basico": false,
       "param": 5,
       "min": 0,
       "max": 2,
@@ -183,6 +211,7 @@
         556
       ],
       "etiqueta": "SALIDA",
+      "basico": true,
       "param": 0,
       "min": 0,
       "max": 1,
@@ -208,6 +237,7 @@
         552
       ],
       "etiqueta": "TECHO",
+      "basico": true,
       "param": 1,
       "min": -12,
       "max": 0,
@@ -228,7 +258,8 @@
         783,
         544
       ],
-      "etiqueta": "GR"
+      "etiqueta": "GR",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -238,7 +269,8 @@
         857,
         544
       ],
-      "etiqueta": "TP"
+      "etiqueta": "TP",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -248,7 +280,8 @@
         985,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -258,7 +291,8 @@
         999,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -268,7 +302,8 @@
         1029,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -278,7 +313,31 @@
         1043,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "modo",
+      "rect": [
+        358,
+        48,
+        476,
+        68
+      ],
+      "etiqueta": "BÁSICO|AVANZADO",
+      "basico": true,
+      "corte": 410
+    },
+    {
+      "tipo": "reset",
+      "rect": [
+        624,
+        48,
+        684,
+        68
+      ],
+      "etiqueta": "RESET",
+      "basico": true
     }
   ]
 }

@@ -964,6 +964,13 @@ export function crearComandoMasterNormalizar(): CommandDefinition<NormalizarPayl
       if (!medida) {
         throw new Error('No hay medición del master disponible para normalizar (ejecuta analysis.mix primero)');
       }
+      // Una medición en silencio (p. ej. un análisis que no renderiza los VST) daría una subida absurda (+56 dB).
+      if (!Number.isFinite(medida.integrated) || medida.integrated < -60) {
+        throw new Error(
+          `La medición del master está vacía (${Number.isFinite(medida.integrated) ? medida.integrated.toFixed(1) : 'NaN'} LUFS): no se normaliza. ` +
+            'El análisis offline web no procesa los instrumentos VST; mide con un bounce nativo.',
+        );
+      }
       const master = estado.project.master;
       const volumenAntes = master.volumen;
       const deltaDb = objetivo - medida.integrated;

@@ -59,7 +59,8 @@
         "unit": "",
         "scale": "toggle",
         "feature": null,
-        "bypass": true
+        "bypass": true,
+        "basico": true
       },
       {
         "id": "lim.techo",
@@ -70,7 +71,8 @@
         "default": -1,
         "unit": "dBTP",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "lim.ganancia",
@@ -81,7 +83,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "lim.release",
@@ -92,7 +95,8 @@
         "default": 100,
         "unit": "ms",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "lim.lookahead",

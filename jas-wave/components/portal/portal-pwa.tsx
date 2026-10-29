@@ -18,8 +18,9 @@ import {
   EyeOff,
 } from 'lucide-react'
 import { JasWaveAppIcon, JasWaveLogo } from '@/components/brand'
+import { WindowTitleBar } from '@/components/window-title-bar'
 import { useSesion, cerrarSesion, iniciarSesion, clienteSupabase } from '@/src/lib/backend/sesion'
-import { PanelAdmin } from '@/components/admin/panel-admin'
+import { abrirAppAdmin } from '@/src/admin-app/abrir'
 
 interface PortalCatalogoPWAProps {
   onEntrarAlDaw: () => void
@@ -29,7 +30,6 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
   const sesion = useSesion()
   const { session, identidad, cargando, sinConfigurar } = sesion
   const [modalAuthAbierto, setModalAuthAbierto] = useState(false)
-  const [modalAdminAbierto, setModalAdminAbierto] = useState(false)
   const [modoAuth, setModoAuth] = useState<'login' | 'registro'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -133,6 +133,16 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
       incluidoEn: 'Gratuito',
     },
     {
+      id: 'com.jaswave.plugin.pedal-fix',
+      nombre: 'JasWave Pedal Fix',
+      categoria: 'efectos',
+      tipo: 'Efecto MIDI para el pedal de sustain',
+      desc: 'Unifica el pedal de teclados que lo mandan por varios canales (PSR-E373), corrige la polaridad, fuerza el sustain, fija el canal y transpone; retiene las notas hasta soltar el pedal.',
+      icono: Cpu,
+      badges: ['Pedal unificado', 'Polaridad', 'Canal fijo'],
+      incluidoEn: 'Gratuito',
+    },
+    {
       id: 'com.jaswave.plugin.piano-synth',
       nombre: 'JasWave Piano Synth',
       categoria: 'instrumentos',
@@ -161,6 +171,15 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
 
   return (
     <div className="relative min-h-screen bg-[#05060F] text-slate-100 font-sans selection:bg-[#19D9FF]/30 selection:text-white">
+      {/* Escritorio: el Portal también es la ventana sin marco → minimizar / maximizar / cerrar siempre visibles */}
+      <div className="sticky top-0 z-[60]">
+        <WindowTitleBar soloEscritorio color="#05060F">
+          <div className="flex min-w-0 items-center gap-2 px-3 text-[12px] font-semibold text-[#D6D9EE]">
+            <JasWaveAppIcon className="size-[22px] shrink-0 text-[#19D9FF]" />
+            <span className="truncate">JasWave · Portal</span>
+          </div>
+        </WindowTitleBar>
+      </div>
       {/* Fondo con viñeta cibernética y retícula Direct2D */}
       <div
         className="pointer-events-none fixed inset-0"
@@ -224,7 +243,8 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
               {esAdmin && (
                 <button
                   type="button"
-                  onClick={() => setModalAdminAbierto(true)}
+                  onClick={() => void abrirAppAdmin()}
+                  title="Abrir JasWave Admin (app aparte)"
                   className="flex items-center gap-1 rounded border border-fuchsia-500/50 bg-fuchsia-500/10 px-2.5 py-1 text-xs font-semibold text-fuchsia-300 shadow-[0_0_10px_rgba(224,82,255,0.25)] hover:bg-fuchsia-500/20"
                 >
                   <Settings className="size-3" />
@@ -604,27 +624,6 @@ export function PortalCatalogoPWA({ onEntrarAlDaw }: PortalCatalogoPWAProps) {
         </div>
       )}
 
-      {/* Modal Admin */}
-      {modalAdminAbierto && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
-          <div className="relative w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-xl border border-fuchsia-500/50 bg-[#0B0D27] p-6 shadow-2xl">
-            <button
-              type="button"
-              onClick={() => setModalAdminAbierto(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white"
-            >
-              <X className="size-5" />
-            </button>
-            <div className="flex items-center gap-2 mb-4">
-              <Settings className="size-5 text-fuchsia-400" />
-              <h3 className="text-lg font-bold text-white uppercase tracking-wider">
-                Panel Maestro de Administración
-              </h3>
-            </div>
-            <PanelAdmin />
-          </div>
-        </div>
-      )}
     </div>
   )
 }

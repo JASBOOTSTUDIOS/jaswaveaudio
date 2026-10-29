@@ -13,7 +13,7 @@ type Options = {
    * executor para que todo el gesto sea una sola entrada de undo.
    */
   onChange: (value: number, gestureId?: string) => void
-  /** valor al que vuelve con doble clic (por defecto no hace nada) */
+  /** valor al que vuelve con doble clic o clic central (sin él no hace nada) */
   resetTo?: number
 }
 
@@ -41,7 +41,7 @@ export function useDragValue({
       if (e.button === 1) {
         e.preventDefault()
         e.stopPropagation()
-        if (resetTo !== undefined) onChange(resetTo)
+        if (resetTo !== undefined && resetTo !== value) onChange(resetTo)
         return
       }
       if (e.button !== 0) return
@@ -80,30 +80,21 @@ export function useDragValue({
   )
 
   const onDoubleClick = useCallback(() => {
-    if (resetTo !== undefined) onChange(resetTo)
-  }, [resetTo, onChange])
+    if (resetTo !== undefined && resetTo !== value) onChange(resetTo)
+  }, [resetTo, value, onChange])
 
-  const onAuxClick = useCallback((e: React.MouseEvent) => {
+  /** Rueda pulsada: el reset ya lo hizo pointerdown; aquí solo se evita el autoscroll del navegador. */
+  const suprimirMedio = useCallback((e: React.MouseEvent) => {
     if (e.button === 1) {
       e.preventDefault()
       e.stopPropagation()
-      if (resetTo !== undefined) onChange(resetTo)
     }
-  }, [resetTo, onChange])
-
-  const onMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.button === 1) {
-        e.preventDefault()
-        e.stopPropagation()
-        if (resetTo !== undefined) onChange(resetTo)
-      }
-    },
-    [resetTo, onChange],
-  )
+  }, [])
+  const onAuxClick = suprimirMedio
+  const onMouseDown = suprimirMedio
 
   const onWheel = useCallback(
-    (e: React.WheelEvent) => {
+    (e: WheelEvent) => {
       e.preventDefault()
       e.stopPropagation()
       const step = (e.shiftKey ? 0.25 : 1) * (sensitivity * 2)
@@ -112,6 +103,21 @@ export function useDragValue({
     },
     [value, min, max, sensitivity, onChange, gestoTeclado],
   )
+  const wheelActual = useRef(onWheel)
+  wheelActual.current = onWheel
+  const quitarWheel = useRef<(() => void) | null>(null)
+  /**
+   * Ref del control para la rueda. React registra `onWheel` como pasivo y ahí `preventDefault` no
+   * evita el scroll del panel (y avisa en consola): se usa un listener nativo con `passive: false`.
+   */
+  const wheelRef = useCallback((el: HTMLElement | null) => {
+    quitarWheel.current?.()
+    quitarWheel.current = null
+    if (!el) return
+    const h = (e: WheelEvent) => wheelActual.current(e)
+    el.addEventListener('wheel', h, { passive: false })
+    quitarWheel.current = () => el.removeEventListener('wheel', h)
+  }, [])
 
   /** Cambio por teclado: coalesce las pulsaciones seguidas. */
   const onKeyStep = useCallback(
@@ -119,5 +125,5 @@ export function useDragValue({
     [min, max, onChange, gestoTeclado],
   )
 
-  return { onPointerDown, onMouseDown, onDoubleClick, onAuxClick, onWheel, onKeyStep }
+  return { onPointerDown, onMouseDown, onDoubleClick, onAuxClick, wheelRef, onKeyStep }
 }

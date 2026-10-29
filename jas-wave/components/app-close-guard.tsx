@@ -4,7 +4,7 @@ import { confirmarCambiosIO } from '@/src/lib/project-io'
 import { flushSessionForClose } from '@/src/lib/session-persist'
 
 /** Tope para el flush de sesión antes de cerrar (main tiene su propio timeout de acuse). */
-const FLUSH_SESION_MAX_MS = 3000
+const FLUSH_SESION_MAX_MS = 5500 // incluye la captura del estado VST (hasta 2,5 s) + volcado a IndexedDB
 
 /**
  * Cierre de la ventana principal (X, Alt+F4, menú Salir): main lo retiene y pregunta aquí.

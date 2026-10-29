@@ -36,6 +36,17 @@ export type ContextoCuarentena = {
   cargadoEn: number
   /** El primer bloque del plugin sigue abierto. */
   bloqueAbierto: boolean
+  /** Código de salida del host (null = matado por señal; undefined = desconocido). */
+  codigoSalida?: number | null
+}
+
+/**
+ * Un plugin que revienta deja una excepción (0xC0000005, 0xC0000374…) o un abort (3); el host sale con 0
+ * al cerrarse stdin y con 1 cuando lo termina el driver de audio (p. ej. otra instancia abrió el ASIO).
+ * Esas dos últimas salidas no son culpa de ningún plugin.
+ */
+export function salidaAtribuibleAPlugin(codigo: number | null | undefined): boolean {
+  return codigo !== 0 && codigo !== 1
 }
 
 export type MotivoCuarentena = 'carga-en-curso' | 'primer-bloque'
@@ -50,6 +61,7 @@ export type DecisionCuarentena = {
  * (la causa de la muerte no es atribuible a un plugin).
  */
 export function evaluarCuarentena(ctx: ContextoCuarentena): DecisionCuarentena | null {
+  if (!salidaAtribuibleAPlugin(ctx.codigoSalida)) return null
   const enCurso = ctx.cargaEnCurso
   if (
     enCurso &&

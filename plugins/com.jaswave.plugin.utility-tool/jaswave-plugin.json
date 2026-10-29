@@ -63,7 +63,8 @@
         "unit": "",
         "scale": "toggle",
         "feature": null,
-        "bypass": true
+        "bypass": true,
+        "basico": true
       },
       {
         "id": "util.ganancia",
@@ -74,7 +75,8 @@
         "default": 0,
         "unit": "dB",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "util.ancho",
@@ -85,7 +87,8 @@
         "default": 100,
         "unit": "%",
         "scale": "linear",
-        "feature": "utilidad.ancho-estereo"
+        "feature": "utilidad.ancho-estereo",
+        "basico": true
       },
       {
         "id": "util.mono-bajo",
@@ -129,7 +132,8 @@
         "default": 0,
         "unit": "",
         "scale": "linear",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "util.dc",
@@ -162,7 +166,8 @@
         "default": 0,
         "unit": "",
         "scale": "toggle",
-        "feature": null
+        "feature": null,
+        "basico": true
       }
     ]
   },

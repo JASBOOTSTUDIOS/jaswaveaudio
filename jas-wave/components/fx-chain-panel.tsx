@@ -4,6 +4,7 @@
 
 import { useSyncExternalStore, useEffect, useMemo, useState } from 'react'
 import {
+  Activity,
   ChevronDown,
   ChevronUp,
   ClipboardPaste,
@@ -12,6 +13,7 @@ import {
   Plus,
   Replace,
   RotateCcw,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   Waves,
@@ -25,6 +27,7 @@ import {
   subscribeFxChainFocus,
 } from '@/src/lib/plugin/fx-chain-store'
 import { openPluginEditor } from '@/src/lib/plugin/plugin-editor-store'
+import { PinEditorButton } from '@/components/pin-button'
 import { PluginPicker } from '@/components/plugin-picker'
 import { insertPluginOnTrack } from '@/src/lib/plugin/insert-plugin'
 import { selectTrackPayload } from '@/src/lib/selection-helpers'
@@ -38,9 +41,12 @@ import {
   pluginRuntimeCaption,
 } from '@/src/lib/plugin/plugin-info-adapter'
 import type { PluginDescriptor } from '@/src/lib/plugin/types'
-import { slotIdForTrackPlugin } from '@/src/lib/plugin/track-vst-runtime'
+import { PluginControlPanel } from '@/components/plugin-control-panel'
+import { accionPluginUsuario } from '@/src/lib/plugin/plugin-ui-acciones'
 import {
+  describeVstLoadError,
   getVstRuntimeGeneration,
+  getVstSlotLoadError,
   isPluginAudioReady,
   subscribeVstRuntime,
 } from '@/src/lib/plugin/track-vst-runtime'
@@ -99,6 +105,7 @@ export function FxChainPanel() {
   const [msg, setMsg] = useState('')
   const [fxPresets, setFxPresets] = useState<LibraryPreset[]>([])
   const [loadPresetId, setLoadPresetId] = useState('')
+  const [abierto, setAbierto] = useState<string | null>(null)
 
   useEffect(() => {
     hydratePluginCatalog()
@@ -164,35 +171,24 @@ export function FxChainPanel() {
     await run('plugin.replace', { trackId, pluginInstanceId, plugin: info })
   }
 
+  /** Valores por defecto que reporta el propio VST, en un paso de deshacer (la misma acción que la IA). */
   const resetPlugin = async (p: PluginInfo) => {
     setBusy(true)
     try {
-      const slotId = slotIdForTrackPlugin(trackId, p.id)
-      tienda.establecerEstado((s) => {
-        const tracks = (s.project?.tracks ?? []).map((t) => {
-          if (t.id !== trackId) return t
-          return {
-            ...t,
-            plugins: (t.plugins ?? []).map((plug) => {
-              if (plug.id !== p.id) return plug
-              const params = (plug.parametros ?? []).map((param, idx) => {
-                const defaultVal =
-                  (param as { defecto?: number }).defecto ??
-                  (param.minimo <= 0 && param.maximo >= 0 ? 0 : (param.minimo + param.maximo) / 2)
-                const range = param.maximo - param.minimo
-                const norm = range > 0 ? Math.max(0, Math.min(1, (defaultVal - param.minimo) / range)) : 0.5
-                void window.electron?.pluginHostSend?.({ type: 'setParameter', slotId, paramId: idx, normalizedValue: norm })
-                return { ...param, valor: defaultVal }
-              })
-              return { ...plug, parametros: params }
-            }),
-          }
-        })
-        return { ...s, project: { ...s.project!, tracks } }
-      })
-      setMsg(`«${p.nombre}» restablecido a valores predeterminados.`)
-    } catch {
-      /* ignore */
+      const r = await accionPluginUsuario(tienda, 'plugin.resetDefaults', { trackId, pluginInstanceId: p.id })
+      setMsg(r.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Bypass A/B de cada FX midiendo el buffer: dice qué plugin degrada el audio y restaura la cadena. */
+  const fxBlame = async () => {
+    setBusy(true)
+    setMsg('Analizando la cadena (bypass A/B de cada FX)…')
+    try {
+      const r = await accionPluginUsuario(tienda, 'analysis.fxBlame', { trackId })
+      setMsg(r.message)
     } finally {
       setBusy(false)
     }
@@ -255,6 +251,15 @@ export function FxChainPanel() {
         <span className="text-[10px] text-muted-foreground">{plugins.length} plugs</span>
         <button
           type="button"
+          disabled={busy || plugins.length === 0}
+          title="¿Qué FX degrada el audio? (bypass A/B de cada plugin; la cadena queda como estaba)"
+          onClick={() => void fxBlame()}
+          className="rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-30"
+        >
+          <Activity className="size-3.5" />
+        </button>
+        <button
+          type="button"
           disabled={busy}
           title="Copiar cadena"
           onClick={() => void copyChain()}
@@ -281,10 +286,10 @@ export function FxChainPanel() {
         ) : (
           <ul className="flex flex-col gap-1.5">
             {plugins.map((p, index) => (
-              <li
-                key={p.id}
+              <li key={p.id}>
+              <div
                 className={`flex items-start gap-2 rounded-md border px-2 py-2 ${
-                  isMissing(p)
+                  isMissing(p) || getVstSlotLoadError(trackId, p.id)
                     ? 'border-destructive/50 bg-destructive/5'
                     : isInstrument(p)
                       ? 'border-accent-amber/40 bg-accent-amber/5'
@@ -331,6 +336,21 @@ export function FxChainPanel() {
                     })}
                     {p.latencia ? ` · ${p.latencia} smp` : ''}
                   </div>
+                  {getVstSlotLoadError(trackId, p.id) ? (
+                    <div role="alert" className="mt-0.5 text-[10px] leading-snug text-destructive">
+                      {describeVstLoadError(getVstSlotLoadError(trackId, p.id))}
+                    </div>
+                  ) : null}
+                </button>
+                <PinEditorButton trackId={trackId} pluginId={p.id} nombre={p.nombre} size="size-3.5" />
+                <button
+                  type="button"
+                  aria-expanded={abierto === p.id}
+                  title="Controles: parámetros, presets y herramientas"
+                  onClick={() => setAbierto((cur) => (cur === p.id ? null : p.id))}
+                  className={`rounded p-0.5 hover:text-foreground ${abierto === p.id ? 'text-accent-amber' : 'text-muted-foreground'}`}
+                >
+                  <SlidersHorizontal className="size-3.5" />
                 </button>
                 <div className="flex flex-col gap-0.5">
                   <button
@@ -410,6 +430,8 @@ export function FxChainPanel() {
                 >
                   <Trash2 className="size-3.5" />
                 </button>
+              </div>
+              {abierto === p.id ? <PluginControlPanel trackId={trackId} plugin={p} /> : null}
               </li>
             ))}
           </ul>

@@ -1,5 +1,5 @@
 import { useMemo, useCallback, useEffect, useRef, useState } from 'react'
-import { Minus, SlidersHorizontal, Wand2, Shuffle, Headphones, GripVertical } from 'lucide-react'
+import { Minus, SlidersHorizontal, Wand2, Shuffle, Headphones, GripVertical, ChartColumn } from 'lucide-react'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { Track as SharedTrack, AudioTrack } from '../../shared/src/types/tracks'
 import type { DAWState } from '../../shared/src/types/state'
@@ -9,16 +9,30 @@ import {
   DB_INFERIOR,
   linealADb,
   dbALineal,
-  formatearDb,
+  formatearPan,
   panADisplay,
 } from '@/lib/audio-conversions'
-import { FaderControl, KnobControl, LevelMeterBarHorizontal } from './ui/controls'
+import { KnobControl, LevelMeterBarHorizontal } from './ui/controls'
+import { CAMPOS_IA, ResaltoIA } from './ui/resalto-ia'
+import { ChannelFaderBlock } from './ui/channel-fader-block'
+import { MiniSpectrum } from './mini-spectrum'
 import { useElementSize, useTierConHisteresis } from '@/hooks/use-element-size'
 import { ChannelFxBank } from '@/components/channel-fx-bank'
 import { TrackMidiInput } from '@/components/track-midi-input'
 import { TrackAudioInput } from '@/components/track-audio-input'
 import { getSelectedTrackId, selectTrackPayload } from '@/src/lib/selection-helpers'
+import { revelarEnScroller } from '@/src/lib/scroll-reveal'
 import { midiInputOf } from '@/src/lib/midi-track-io'
+import {
+  ANCHO_ESTRECHO,
+  ANCHO_TIRA,
+  anchoConRueda,
+  guardarAnchoTira,
+  leerAnchoTira,
+  seccionesMixer,
+  umbralesMixer,
+  type PaneoMixer,
+} from '@/src/lib/mixer-layout'
 import { audioInputOf } from '@/src/lib/audio-track-io'
 import { audioEngine } from '@/lib/audio-engine'
 import {
@@ -33,12 +47,8 @@ import { crearVentanaGesto, opcionesGesto } from '@/src/lib/gesture-id'
 import { batchOrNotify } from '@/src/lib/execute-or-toast'
 
 
-/** El VU del motor usa curva peak^0.6; invertir para lectura en dBFS. */
-function meterLevelToDbLabel(meter: number): string {
-  if (meter < 0.0005) return '−∞'
-  const linear = Math.min(1, Math.pow(meter, 1 / 0.6))
-  return `${formatearDb(linealADb(linear))} dB`
-}
+type StereoPeaks = { l: number; r: number }
+const SILENCIO: StereoPeaks = { l: 0, r: 0 }
 
 type MixerRow = {
   id: string
@@ -115,8 +125,81 @@ function TrackButton({
   )
 }
 
-/** Altos (px) a partir de los cuales el mixer pasa a cada nivel de detalle (de menor a mayor). */
-const UMBRALES_MIXER = [150, 250, 380] as const
+/**
+ * Paneo de la tira: perilla si hay alto, barra fina si no (así el hueco que deja la perilla no queda vacío).
+ * Doble clic o clic central: centro.
+ */
+function PanControl({
+  modo,
+  value,
+  color,
+  onChange,
+}: {
+  modo: PaneoMixer
+  value: number
+  color: string
+  onChange: (pan: number, gestureId?: string) => void
+}) {
+  const gesto = useMemo(() => crearVentanaGesto(600), [])
+  if (modo === 'oculto') return null
+  if (modo === 'perilla') {
+    return (
+      <div className="mt-1 flex shrink-0 justify-center">
+        <KnobControl value={value} color={color} onChange={onChange} size="size-8" />
+      </div>
+    )
+  }
+  const centrar = () => {
+    if (value !== 0) onChange(0)
+  }
+  return (
+    <label className="mt-1 flex h-4 shrink-0 items-center gap-1" title={`Paneo ${formatearPan(value / 100)} · doble clic: centro`}>
+      <span className="w-3 shrink-0 font-mono text-[8px] text-muted-foreground">L</span>
+      <input
+        type="range"
+        min={-100}
+        max={100}
+        value={value}
+        aria-label="Paneo"
+        className="h-1 min-w-0 flex-1"
+        style={{ accentColor: color.startsWith('var(') ? undefined : color }}
+        onChange={(e) => onChange(Number(e.target.value), gesto())}
+        onDoubleClick={centrar}
+        onMouseDown={(e) => {
+          if (e.button === 1) {
+            e.preventDefault()
+            centrar()
+          }
+        }}
+        onAuxClick={(e) => {
+          if (e.button === 1) e.preventDefault()
+        }}
+      />
+      <span className="w-3 shrink-0 text-right font-mono text-[8px] text-muted-foreground">R</span>
+    </label>
+  )
+}
+
+/** Botón de la cabecera de la tira que abre/cierra su mini espectro. */
+function SpectrumToggle({ abierto, nombre, onToggle }: { abierto: boolean; nombre: string; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={`Espectro de ${nombre}`}
+      aria-pressed={abierto}
+      title={abierto ? 'Ocultar espectro' : 'Mostrar espectro'}
+      onClick={(e) => {
+        e.stopPropagation()
+        onToggle()
+      }}
+      className={`flex size-4 shrink-0 items-center justify-center rounded ${
+        abierto ? 'bg-accent-cyan text-background' : 'text-muted-foreground hover:text-foreground'
+      }`}
+    >
+      <ChartColumn className="size-3" />
+    </button>
+  )
+}
 
 export function Mixer() {
   const tienda = useDAW()
@@ -124,19 +207,50 @@ export function Mixer() {
   const master = useDAWState((s: DAWState) => s.project?.master)
   const routing = useDAWState((s: DAWState) => s.project?.routing)
   const collapsedUser = useDAWState((s: DAWState) => s.ui?.estadoMezcladorUI?.colapsado ?? false)
-  // Si el panel es bajo, el mixer pasa solo a modo compacto: el fader tiene prioridad sobre los extras.
-  // Se mide el contenedor EXTERIOR (su alto no cambia si aparece la barra de scroll horizontal) y el nivel
-  // usa histéresis: sin esto, al aparecer/desaparecer la barra el alto oscilaba y el mixer parpadeaba.
+  // Ancho de las tiras: solo lo decide el usuario (Ctrl + rueda o el botón de colapsar), nunca el alto.
+  const [anchoTira, setAnchoTira] = useState(leerAnchoTira)
+  const ancho = collapsedUser ? ANCHO_TIRA.min : anchoTira
+  const estrecho = ancho < ANCHO_ESTRECHO
+  // El alto decide qué se ve (primero se quitan FX/envíos, luego el paneo; M/S + volumen siempre). Se mide el
+  // contenedor EXTERIOR (no cambia con la barra de scroll horizontal) y con histéresis para no parpadear.
   const stripsRef = useRef<HTMLDivElement>(null)
+  /** Scroller horizontal de las tiras. */
+  const scrollTirasRef = useRef<HTMLDivElement>(null)
   const { height: stripsH } = useElementSize(stripsRef)
-  const dens = useTierConHisteresis(stripsH, UMBRALES_MIXER)   // 0 = micro, 1 = mini, 2 = compacto, 3 = completo
-  const tier = 3 - dens
-  const collapsed = collapsedUser || tier >= 1
-  const mini = tier >= 2   // sin perilla de pan ni IN/rec
-  const micro = tier >= 3  // solo nombre, M/S y un medidor
+  const umbrales = useMemo(() => umbralesMixer(estrecho), [estrecho])
+  const { paneo: modoPaneo, extras: verExtras } = seccionesMixer(useTierConHisteresis(stripsH, umbrales))
+
+  useEffect(() => {
+    const el = stripsRef.current
+    if (!el) return
+    // Listener nativo no pasivo: con Ctrl la rueda cambia el ancho y no llega a faders, scroll ni zoom global.
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      e.stopPropagation()
+      setAnchoTira((a) => {
+        const n = anchoConRueda(a, e.deltaY)
+        if (n !== a) guardarAnchoTira(n)
+        return n
+      })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => el.removeEventListener('wheel', onWheel, { capture: true })
+  }, [])
   const selectedTrackId = useDAWState((s: DAWState) => getSelectedTrackId(s))
   const stripRefs = useRef(new Map<string, HTMLDivElement | null>())
   const [meters, setMeters] = useState<Record<string, number>>({})
+  const [stereo, setStereo] = useState<Record<string, StereoPeaks>>({})
+  /** Tiras con el mini espectro abierto: cada una es independiente (el host tiene un tap por pista). */
+  const [espectros, setEspectros] = useState<ReadonlySet<string>>(() => new Set())
+  const alternarEspectro = useCallback((id: string) => {
+    setEspectros((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
   const [dragTrackId, setDragTrackId] = useState<string | null>(null)
   const [dragOverTrackId, setDragOverTrackId] = useState<string | null>(null)
   const trackIdsKey = tracks.map((t) => t.id).join('|')
@@ -162,11 +276,14 @@ export function Mixer() {
         const apply = () => {
           if (cancelled) return
           const next: Record<string, number> = { master: audioEngine.getMasterMeterLevel() }
+          const nextStereo: Record<string, StereoPeaks> = { master: audioEngine.getMasterStereoPeaks() }
           for (const id of ids) {
             next[id] = audioEngine.getMeterLevel(id)
             next[`in:${id}`] = audioEngine.getInputMeterLevel(id)
+            nextStereo[id] = audioEngine.getStereoMeterPeaks(id)
           }
           setMeters(next)
+          setStereo(nextStereo)
         }
         if (isNativeMeterHostAvailable()) {
           void refreshNativeMixMeters().then(apply)
@@ -183,9 +300,11 @@ export function Mixer() {
     }
   }, [trackIdsKey])
 
+  // Pista seleccionada (aquí o en el Arrange): su tira se desplaza a la vista, solo en horizontal y solo
+  // dentro del mixer (scrollIntoView movía también el layout del workspace).
   useEffect(() => {
     if (!selectedTrackId) return
-    stripRefs.current.get(selectedTrackId)?.scrollIntoView({ inline: 'nearest', block: 'nearest' })
+    revelarEnScroller(scrollTirasRef.current, stripRefs.current.get(selectedTrackId), 'x')
   }, [selectedTrackId])
 
   const handleToggleMute = (id: string) => {
@@ -307,7 +426,7 @@ export function Mixer() {
 
       {/* Tiras de canal */}
       <div ref={stripsRef} className="relative min-h-0 flex-1 bg-panel">
-      <div className="jw-scrollbar absolute inset-0 flex overflow-x-auto overflow-y-hidden">
+      <div ref={scrollTirasRef} className="jw-scrollbar absolute inset-0 flex overflow-x-auto overflow-y-hidden">
         {trackList.map((track, trackIndex) => (
           <div
             key={track.id}
@@ -331,7 +450,10 @@ export function Mixer() {
               if (!id || id === track.id) return
               moveTrackToIndex(id, trackIndex)
             }}
-            className={`flex shrink-0 cursor-pointer flex-col border-r border-border px-2 py-2 ${collapsed ? 'w-[52px]' : 'w-[124px]'} ${
+            data-testid={`mixer-strip-${track.id}`}
+            style={{ width: ancho }}
+            title="Ctrl + rueda: ancho de las tiras"
+            className={`flex h-full min-h-0 shrink-0 cursor-pointer flex-col border-r border-border px-2 py-2 ${
               selectedTrackId === track.id
                 ? 'bg-accent-amber/20 ring-1 ring-inset ring-accent-amber/50'
                 : 'hover:bg-panel-raised/40'
@@ -368,41 +490,35 @@ export function Mixer() {
               >
                 {track.name}
               </p>
+              {!estrecho && verExtras ? (
+                <SpectrumToggle
+                  abierto={espectros.has(track.id)}
+                  nombre={track.name}
+                  onToggle={() => alternarEspectro(track.id)}
+                />
+              ) : null}
             </div>
-            {!mini && (track.tipo === 'midi' || track.tipo === 'instrumento') && (
-              <p className="mb-1 text-center text-[8px] font-semibold uppercase tracking-wider text-accent-amber">
-                MIDI
-              </p>
-            )}
-            {!mini && track.tipo === 'audio' && (
-              <p className="mb-1 text-center text-[8px] font-semibold uppercase tracking-wider text-muted-foreground">
-                AUDIO+MIDI
-              </p>
-            )}
-
-            {/* M / S */}
-            <div className="mb-1 flex items-center justify-center gap-1">
-              <TrackButton
-                label={`Silenciar ${track.name}`}
-                active={track.muted}
-                onClick={() => handleToggleMute(track.id)}
-              >
-                M
-              </TrackButton>
-              <TrackButton
-                label={`Solo ${track.name}`}
-                active={track.solo}
-                activeClass="bg-track-vocals text-background"
-                onClick={() => handleToggleSolo(track.id)}
-              >
-                S
-              </TrackButton>
-            </div>
-
-            {!mini && (
-            <>
-            {/* IN / rec */}
-            <div className="mb-1 flex items-center justify-center gap-1">
+            {/* Botones de la pista (M, S, monitor, grabación): siempre fuera del scroll. */}
+            <div className="mb-1 flex shrink-0 flex-wrap items-center justify-center gap-1" data-testid={`mixer-botones-${track.id}`}>
+              <ResaltoIA trackId={track.id} campos={CAMPOS_IA.mute}>
+                <TrackButton
+                  label={`Silenciar ${track.name}`}
+                  active={track.muted}
+                  onClick={() => handleToggleMute(track.id)}
+                >
+                  M
+                </TrackButton>
+              </ResaltoIA>
+              <ResaltoIA trackId={track.id} campos={CAMPOS_IA.solo}>
+                <TrackButton
+                  label={`Solo ${track.name}`}
+                  active={track.solo}
+                  activeClass="bg-track-vocals text-background"
+                  onClick={() => handleToggleSolo(track.id)}
+                >
+                  S
+                </TrackButton>
+              </ResaltoIA>
               <TrackButton
                 label={`Monitor de entrada ${track.name}`}
                 active={track.input}
@@ -421,16 +537,28 @@ export function Mixer() {
                 />
               </TrackButton>
             </div>
-            </>
-            )}
-            {(track.tipo === 'midi' || track.tipo === 'instrumento' || track.tipo === 'audio') && !collapsed ? (
+
+            {/*
+              Entradas (MIDI/audio), tipo, espectro y medidores quedan fijos; SOLO los FX tienen scroll propio y
+              ocupan el alto sobrante. Sin sitio para ellos, el sobrante queda como separación hasta el paneo.
+            */}
+            {!verExtras ? (
+              <div className="min-h-0 flex-1" />
+            ) : (
+            <>
+            <div className="shrink-0">
+            {espectros.has(track.id) && !estrecho ? (
+              <div className="mb-1">
+                <MiniSpectrum trackId={track.id} color={track.color} />
+              </div>
+            ) : null}
+            {(track.tipo === 'midi' || track.tipo === 'instrumento' || track.tipo === 'audio') ? (
               <div className="mb-1">
                 <TrackMidiInput trackId={track.id} assignedId={track.entrada} compact />
               </div>
             ) : null}
             {(track.tipo === 'midi' || track.tipo === 'instrumento') &&
-            trackHasHostVst(track.plugins) &&
-            !collapsed ? (
+            trackHasHostVst(track.plugins) ? (
               <div
                 className="mb-1 h-1 overflow-hidden rounded-full bg-panel-raised"
                 title="Nivel VST (post-fader)"
@@ -438,7 +566,7 @@ export function Mixer() {
                 <LevelMeterBarHorizontal level={meters[track.id] ?? 0} />
               </div>
             ) : null}
-            {track.tipo === 'audio' && !collapsed ? (
+            {track.tipo === 'audio' ? (
               <div className="mb-1">
                 <TrackAudioInput trackId={track.id} assignedId={track.dispositivoEntrada} compact />
                 {(track.input || track.armed) ? (
@@ -451,23 +579,21 @@ export function Mixer() {
                 ) : null}
               </div>
             ) : null}
-            {!collapsed ? (
-              <div className="mb-2">
+            </div>
+            <div className="jw-scrollbar -mx-1 mb-1 min-h-0 flex-1 overflow-y-auto px-1 py-0.5" data-testid={`mixer-inserts-${track.id}`}>
+              <ResaltoIA trackId={track.id} campos={CAMPOS_IA.fx}>
                 <ChannelFxBank
                   trackId={track.id}
                   trackName={track.name}
                   plugins={track.plugins}
                 />
-              </div>
-            ) : null}
+              </ResaltoIA>
+            </div>
 
-            {/* Knob de balance */}
-            {!mini && <KnobControl value={track.pan} color={track.color} onChange={(pan, gestureId) => handleChangePan(track.id, pan, gestureId)} size="size-9" />}
-
-            {/* Sends post-fader (MVP) */}
-            {!collapsed && (routing?.buses?.length ?? 0) > 0 ? (
-              <div className="mt-1 space-y-0.5">
-                {(routing?.buses ?? []).slice(0, 2).map((bus) => {
+            {/* Sends post-fader (MVP): fijos, debajo de los FX */}
+            {(routing?.buses?.length ?? 0) > 0 ? (
+              <ResaltoIA trackId={track.id} campos={CAMPOS_IA.envios} className="mb-1 shrink-0 space-y-0.5">
+                {(routing?.buses ?? []).map((bus) => {
                   const send = routing?.sends?.find(
                     (e) => e.origenTrackId === track.id && e.destinoBusId === bus.id && e.activo,
                   )
@@ -486,6 +612,7 @@ export function Mixer() {
                         value={amount}
                         className="h-1 w-full accent-accent-amber"
                         onDoubleClick={() => {
+                          if (amount === 0) return
                           void tienda.executor.execute(
                             'send.set',
                             { trackId: track.id, busId: bus.id, amount: 0 },
@@ -495,6 +622,7 @@ export function Mixer() {
                         onMouseDown={(e) => {
                           if (e.button === 1) {
                             e.preventDefault()
+                            if (amount === 0) return
                             void tienda.executor.execute(
                               'send.set',
                               { trackId: track.id, busId: bus.id, amount: 0 },
@@ -503,14 +631,8 @@ export function Mixer() {
                           }
                         }}
                         onAuxClick={(e) => {
-                          if (e.button === 1) {
-                            e.preventDefault()
-                            void tienda.executor.execute(
-                              'send.set',
-                              { trackId: track.id, busId: bus.id, amount: 0 },
-                              'user',
-                            )
-                          }
+                          // el reset ya lo hizo mousedown: solo evita el autoscroll
+                          if (e.button === 1) e.preventDefault()
                         }}
                         onChange={(e) => {
                           const v = Number(e.target.value) / 100
@@ -526,96 +648,107 @@ export function Mixer() {
                     </label>
                   )
                 })}
-              </div>
+              </ResaltoIA>
             ) : null}
+            </>
+            )}
 
-            {micro ? (
-              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-panel-raised" title="Nivel">
-                <LevelMeterBarHorizontal level={meters[track.id] ?? 0} alwaysShowRail />
-              </div>
-            ) : (
-              <>
-            {/* Fader */}
-            <div className="mt-2 min-h-[56px] flex-1" data-testid={`mixer-fader-${track.id}`}>
-              <FaderControl db={track.db} color={track.color} meter={meters[track.id] ?? 0} onChange={(db, gestureId) => handleChangeDb(track.id, db, gestureId)} showScale />
-            </div>
+            {/* Paneo (perilla centrada o barra fina según el alto) */}
+            <ResaltoIA trackId={track.id} campos={CAMPOS_IA.paneo} className="shrink-0">
+              <PanControl modo={modoPaneo} value={track.pan} color={track.color} onChange={(pan, gestureId) => handleChangePan(track.id, pan, gestureId)} />
+            </ResaltoIA>
 
-            {/* Valor en dB */}
-            <p className="mt-1 text-center font-mono text-[10px] tabular-nums text-muted-foreground">
-              {formatearDb(track.db)}
-            </p>
+            {/* Bloque de volumen de alto fijo: fader 160 px, VU L/R, dB y pico */}
+            <ResaltoIA trackId={track.id} campos={CAMPOS_IA.volumen} className="mt-1">
+              <ChannelFaderBlock
+                db={track.db}
+                color={track.color}
+                stereo={stereo[track.id] ?? SILENCIO}
+                onChange={(db, gestureId) => handleChangeDb(track.id, db, gestureId)}
+                testId={`mixer-fader-${track.id}`}
+                estrecho={estrecho}
+              />
+            </ResaltoIA>
 
             {/* Medidor de color */}
             <div
-              className="mt-1 h-1 w-full rounded-full transition-opacity"
+              className="mt-1 h-1 w-full shrink-0 rounded-full transition-opacity"
               style={{
                 backgroundColor: track.color,
                 opacity: track.muted ? 0.25 : 1,
               }}
             />
-              </>
-            )}
           </div>
         ))}
-        <div key={masterTrack.id} className="flex w-[124px] shrink-0 flex-col border-r border-border px-2 py-2">
-          <p className="mb-1.5 truncate text-center text-[11px] font-medium text-foreground" title={masterTrack.name}>
-            {masterTrack.name}
-          </p>
-          <div
-            className="mb-1 h-1.5 overflow-hidden rounded-full bg-panel-raised"
-            title="Nivel Master (post-fader)"
-          >
-            <LevelMeterBarHorizontal level={meters.master ?? 0} alwaysShowRail />
-          </div>
-          {!mini && <div className="mb-1">
-            <ChannelFxBank
-              trackId="master"
-              trackName="Master"
-              plugins={master?.plugins ?? []}
-            />
-          </div>}
-
-          <div className="mb-1 flex items-center justify-center gap-1">
-            <TrackButton label={`Silenciar Master`} active={Boolean(master?.muted)} onClick={() => {
-              void tienda.executor.execute('master.update', { datos: { muted: !master?.muted } })
-            }}>
-              M
-            </TrackButton>
+        <div
+          key={masterTrack.id}
+          data-testid="mixer-strip-master"
+          style={{ width: ancho }}
+          className="flex h-full min-h-0 shrink-0 flex-col border-r border-border px-2 py-2"
+        >
+          <div className="mb-1.5 flex items-center justify-center gap-0.5">
+            <p className="min-w-0 truncate text-center text-[11px] font-medium text-foreground" title={masterTrack.name}>
+              {masterTrack.name}
+            </p>
+            {!estrecho && verExtras ? (
+              <SpectrumToggle
+                abierto={espectros.has('master')}
+                nombre="Master"
+                onToggle={() => alternarEspectro('master')}
+              />
+            ) : null}
           </div>
 
-          {!mini && <KnobControl value={masterTrack.pan} color={masterTrack.color} onChange={(pan, gestureId) => {
-            void tienda.executor.execute('master.update', { datos: { paneo: pan / 100 } }, 'user', undefined, opcionesGesto('mixer.paneo:master', gestureId))
-          }} />}
+          <div className="mb-1 flex shrink-0 items-center justify-center gap-1">
+            <ResaltoIA trackId="master" campos={CAMPOS_IA.mute}>
+              <TrackButton label={`Silenciar Master`} active={Boolean(master?.muted)} onClick={() => {
+                void tienda.executor.execute('master.update', { datos: { muted: !master?.muted } })
+              }}>
+                M
+              </TrackButton>
+            </ResaltoIA>
+          </div>
 
-          {!micro && (
-          <>
-          <div className="mt-2 min-h-[104px] flex-1">
-            <FaderControl
+          {!verExtras ? (
+            <div className="min-h-0 flex-1" />
+          ) : (
+            <>
+              {espectros.has('master') && !estrecho ? (
+                <div className="mb-1 shrink-0">
+                  <MiniSpectrum trackId="master" color={masterTrack.color} />
+                </div>
+              ) : null}
+              <div className="jw-scrollbar -mx-1 mb-1 min-h-0 flex-1 overflow-y-auto px-1" data-testid="mixer-inserts-master">
+                <ResaltoIA trackId="master" campos={CAMPOS_IA.fx}>
+                  <ChannelFxBank
+                    trackId="master"
+                    trackName="Master"
+                    plugins={master?.plugins ?? []}
+                  />
+                </ResaltoIA>
+              </div>
+            </>
+          )}
+
+          <ResaltoIA trackId="master" campos={CAMPOS_IA.paneo} className="shrink-0">
+            <PanControl modo={modoPaneo} value={masterTrack.pan} color={masterTrack.color} onChange={(pan, gestureId) => {
+              void tienda.executor.execute('master.update', { datos: { paneo: pan / 100 } }, 'user', undefined, opcionesGesto('mixer.paneo:master', gestureId))
+            }} />
+          </ResaltoIA>
+
+          <ResaltoIA trackId="master" campos={CAMPOS_IA.volumen} className="mt-1">
+            <ChannelFaderBlock
               db={masterTrack.db}
               color={masterTrack.color}
-              meter={meters.master ?? 0}
-              showScale
+              stereo={stereo.master ?? SILENCIO}
+              testId="mixer-fader-master"
+              estrecho={estrecho}
               onChange={(db, gestureId) => {
                 const volumen = db > DB_INFERIOR ? dbALineal(db) : 0
                 void tienda.executor.execute('master.update', { datos: { volumen } }, 'user', undefined, opcionesGesto('mixer.volumen:master', gestureId))
               }}
-
             />
-          </div>
-
-          <p
-            className="mt-1 text-center font-mono text-[10px] tabular-nums text-foreground"
-            title="Ganancia del fader Master"
-          >
-            {formatearDb(masterTrack.db)}
-            <span className="text-muted-foreground"> dB</span>
-          </p>
-          <p
-            className="text-center font-mono text-[9px] tabular-nums text-muted-foreground"
-            title="Pico de nivel (medidor)"
-          >
-            pk {meterLevelToDbLabel(meters.master ?? 0)}
-          </p>
+          </ResaltoIA>
 
           <div
             className="mt-1 h-1 w-full rounded-full transition-opacity"
@@ -624,8 +757,6 @@ export function Mixer() {
               opacity: master?.muted ? 0.25 : 1,
             }}
           />
-          </>
-          )}
         </div>
 
         {/* Espacio en blanco: doble clic → nueva pista */}

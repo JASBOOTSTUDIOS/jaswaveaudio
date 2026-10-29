@@ -448,6 +448,83 @@ export async function aiChatWithFallback(
   }
 }
 
+/**
+ * Petición con cobertura: arranca el modelo activo y, si a los `hedgeAfterMs` no ha respondido (o falla),
+ * lanza en paralelo el siguiente de la cadena; gana la primera respuesta con contenido y el resto se cancela.
+ * Pensado para llamadas cortas sin herramientas ni streaming (plan, brief de habilidades) con modelos
+ * gratuitos cuya latencia varía de segundos a minutos. No cambia el modelo elegido por el usuario.
+ */
+export async function aiChatHedged(
+  chat: (req: AiChatRequest) => Promise<AiChatResult>,
+  messages: AiChatRequest['messages'],
+  opts: Parameters<typeof aiChatWithFallback>[2] & { hedgeAfterMs: number; maxParalelo?: number },
+): Promise<AiChatWithFallbackResult> {
+  const settings = opts.settings ?? loadAiSettings()
+  const chain = settings.fallbackEnabled === false ? [] : buildFallbackAttempts(settings)
+  if (chain.length < 2 || opts.tools?.length || opts.onDelta) return aiChatWithFallback(chat, messages, opts)
+
+  const maxParalelo = Math.max(2, opts.maxParalelo ?? 2)
+  return new Promise<AiChatWithFallbackResult>((resolve) => {
+    let siguiente = 0
+    let enVuelo = 0
+    let terminado = false
+    let httpAttempts = 0
+    let ultimo: AiChatResult = { success: false, error: 'Sin intentos', errorCode: 'unknown' }
+    const pendientes = new Set<string>()
+    const temporizadores: Array<ReturnType<typeof setTimeout>> = []
+
+    const cerrar = (r: AiChatWithFallbackResult) => {
+      if (terminado) return
+      terminado = true
+      temporizadores.forEach(clearTimeout)
+      for (const id of pendientes) void transporteIA()?.cancelar(id)
+      resolve({ ...r, httpAttempts })
+    }
+    const lanzar = () => {
+      if (terminado || siguiente >= chain.length || enVuelo >= maxParalelo) return
+      if (opts.abort?.aborted) return cerrar({ success: false, error: 'Abortado', errorCode: 'cancelled' })
+      const i = siguiente++
+      const attempt = chain[i]!
+      const info = { label: attempt.label, index: i, total: chain.length }
+      if (opts.beforeAttempt && !opts.beforeAttempt(info)) {
+        if (enVuelo === 0) cerrar({ ...ultimo, success: false, error: ultimo.error || 'Presupuesto agotado' })
+        return
+      }
+      opts.onAttempt?.(info)
+      const req = toAiChatPayload(attempt.provider, messages, {
+        temperature: opts.temperature,
+        maxTokens: opts.maxTokens,
+        model: attempt.model,
+        meta: opts.meta,
+      })
+      req.requestId = `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+      pendientes.add(req.requestId)
+      enVuelo++
+      // Si este intento tarda, se cubre con el siguiente modelo.
+      temporizadores.push(setTimeout(lanzar, opts.hedgeAfterMs))
+      void chat(req)
+        .catch((e): AiChatResult => ({ success: false, error: e instanceof Error ? e.message : String(e), errorCode: 'connection' }))
+        .then((r) => {
+          pendientes.delete(req.requestId!)
+          enVuelo--
+          httpAttempts += Math.max(1, Number(r.httpAttempts) || 1)
+          if (terminado) return
+          if (r.success && r.content?.trim()) {
+            return cerrar({ ...r, usedProviderId: attempt.provider.id, usedModel: attempt.model, attempts: i + 1, fallbackUsed: false, model: attempt.model, provider: attempt.provider.kind })
+          }
+          ultimo = r
+          if (!isRetryableAiFailure(r) && enVuelo === 0) return cerrar({ ...r, attempts: i + 1 })
+          lanzar() // falló rápido: el siguiente entra ya
+          if (enVuelo === 0 && siguiente >= chain.length) {
+            cerrar({ ...ultimo, attempts: chain.length, error: ultimo.error || 'Ningún modelo del catálogo respondió.' })
+          }
+        })
+    }
+    opts.abort?.addEventListener('abort', () => cerrar({ success: false, error: 'Abortado', errorCode: 'cancelled' }), { once: true })
+    lanzar()
+  })
+}
+
 type Preferencias = {
   activeProviderId?: string
   /** Modelo elegido por proveedor. */
@@ -575,7 +652,7 @@ export function formatAiUserError(result: {
     else if (result.errorCode === 'rate_limit') errorLine = 'Límite de peticiones del proveedor.'
   }
   const parts = [
-    `⚠️ ${errorLine}`,
+    errorLine,
     result.provider ? `Proveedor: ${result.provider}` : '',
     result.hint ? `Qué hacer: ${result.hint}` : '',
   ].filter(Boolean)

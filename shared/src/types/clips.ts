@@ -30,6 +30,8 @@ export interface BaseClip {
   duracion: number;
   color: string;
   seleccionado: boolean;
+  /** Clip silenciado: se ve atenuado y no suena (ni en Play ni en el export). */
+  silenciado?: boolean;
 }
 
 export interface AudioClip extends BaseClip {
@@ -40,6 +42,8 @@ export interface AudioClip extends BaseClip {
   warp: boolean;
   velocidad: number;
   inverso: boolean;
+  /** Ganancia del clip en dB (0 = sin cambio), antes del fader de la pista. */
+  ganancia?: number;
   waveform?: number[];
   source: {
     ruta: string;

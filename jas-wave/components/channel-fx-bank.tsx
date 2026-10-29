@@ -3,11 +3,19 @@
  * bypass, clic para abrir el editor, + para añadir.
  */
 
-import { Plus } from 'lucide-react'
+import { useSyncExternalStore } from 'react'
+import { AlertTriangle, Plus } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
+import {
+  describeVstLoadError,
+  getVstRuntimeGeneration,
+  getVstSlotLoadError,
+  subscribeVstRuntime,
+} from '@/src/lib/plugin/track-vst-runtime'
 import type { PluginInfo } from '../../shared/src/types/entidades'
 import { openFxChain } from '@/src/lib/plugin/fx-chain-store'
 import { openPluginEditor } from '@/src/lib/plugin/plugin-editor-store'
+import { PinEditorButton } from '@/components/pin-button'
 import { selectTrackPayload } from '@/src/lib/selection-helpers'
 import { MASTER_FX_TRACK_ID } from '../../shared/src/commands/plugin-commands'
 
@@ -27,6 +35,8 @@ export function ChannelFxBank({
   const sidechains = useDAWState((s) => s.project?.routing?.sidechains ?? [])
   const scFrom = sidechains.find((sc) => sc.destinoTrackId === trackId && sc.activo !== false)
   const maxH = compact ? 'max-h-[80px]' : 'max-h-[160px]'
+  // Re-render cuando cambia el estado de carga de los VST (fallos visibles por slot).
+  useSyncExternalStore(subscribeVstRuntime, getVstRuntimeGeneration, () => 0)
 
   const openChain = () => {
     if (trackId !== MASTER_FX_TRACK_ID) {
@@ -69,12 +79,15 @@ export function ChannelFxBank({
             vacío
           </button>
         ) : (
-          plugins.map((p) => (
+          plugins.map((p) => {
+            const loadError = getVstSlotLoadError(trackId, p.id)
+            return (
             <div
               key={p.id}
+              title={loadError ? describeVstLoadError(loadError) : undefined}
               className={`flex items-center gap-0.5 border-b border-border/40 px-0.5 py-px ${
                 p.bypass ? 'opacity-45' : ''
-              }`}
+              } ${loadError ? 'bg-destructive/10' : ''}`}
             >
               <input
                 type="checkbox"
@@ -100,12 +113,19 @@ export function ChannelFxBank({
                     zone: 'right',
                   })
                 }
-                className="min-w-0 flex-1 truncate text-left text-[9px] leading-4 text-foreground hover:text-accent-amber"
+                className={`min-w-0 flex-1 truncate text-left text-[9px] leading-4 hover:text-accent-amber ${
+                  loadError ? 'text-destructive line-through decoration-destructive/60' : 'text-foreground'
+                }`}
               >
                 {p.nombre}
               </button>
+              {loadError ? (
+                <AlertTriangle className="size-2.5 shrink-0 text-destructive" aria-label="No cargado" />
+              ) : null}
+              <PinEditorButton trackId={trackId} pluginId={p.id} nombre={p.nombre} size="size-2.5" className="!p-0" />
             </div>
-          ))
+            )
+          })
         )}
       </div>
       {trackId !== MASTER_FX_TRACK_ID && plugins.length > 0 ? (

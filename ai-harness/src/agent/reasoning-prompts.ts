@@ -23,6 +23,7 @@ export const APP_VOCAB_GLOSSARY = [
   'estilo X / como <artista> / suena a <género> → style_gap + web.search sobre ESA referencia; compara la pista EXISTENTE',
   'referencia de estilo con perfil guardado → style.profile.search { query: "<referencia del usuario>" } (si no hay perfil, deriva rasgos de la búsqueda web)',
   'antes de inventar groove → style.profile.search; aplicar con style.profile.apply (no copiar MIDI)',
+  'mi toque / como yo toco / mis grabaciones / mi interpretación → analysis.touch (leer) · style.touch.learn {nombre} (guardar) · style.touch.apply {nombre, trackId} (aplicar)',
   'investiga en internet / busca online → OBLIGATORIO <<<READ [{"type":"web.search",...}]>>>',
   'más lenta / baja el tempo → project.setBpm (+ refine si pide estilo)',
   'silencia / mute → track.toggleMute',
@@ -217,6 +218,55 @@ export function reasoningSystemPreamble(mode: AgentMode, depthHint?: number): st
   ].join('\n')
 }
 
+/**
+ * Perfil rápido (modelos de poco razonamiento): un planificador, sin personajes ni diálogo.
+ * Instrucciones cortas y una salida con forma fija: es lo que un modelo pequeño sigue bien.
+ */
+export function fastReasoningSystemPreamble(mode: AgentMode): string {
+  return [
+    'Eres el planificador de JasWave (un DAW). Preparas un plan corto que otro paso ejecutará con herramientas.',
+    'Responde siempre en español. Nada de saludos, personajes ni diálogo: solo el plan.',
+    'Criterio de productor: BPM real del género, clips en beats, IDs reales del proyecto, densidad MIDI razonable.',
+    'Si piden AUDITAR/ANALIZAR lo existente: no inventes una canción nueva; usa el Timeline MIDI.',
+    '',
+    modePromptBlock(mode === 'auto' ? 'create' : mode),
+    '',
+    READ_TOOLS_HELP,
+    '',
+    UNTRUSTED_TOOL_DATA_RULE,
+  ].join('\n')
+}
+
+/** Cue de cada paso del perfil rápido (`research1` = pedir lecturas; `commit` = plan). */
+export function fastPhaseCue(phase: ReasoningPhase, opts: { userText: string; mode: AgentMode }): string {
+  if (phase === 'research1') {
+    return [
+      '## Paso 1/2 · Qué necesitas consultar',
+      'En 1–2 líneas di qué dato te falta y pídelo con un bloque <<<READ [...] READ>>> (máx. 4 lecturas).',
+      needsWeb(opts.userText) ? 'El pedido exige internet: incluye web.search con la referencia del usuario.' : '',
+    ]
+      .filter(Boolean)
+      .join('\n')
+  }
+  const styleGap = isStyleGap(opts.userText)
+  const audit = isAudit(opts.userText) || opts.mode === 'ask'
+  return [
+    '## Plan (máx. 10 viñetas, frases cortas)',
+    '1. Pedido en una frase.',
+    '2. Datos reales del proyecto que importan (pistas con su id, BPM, compás, tonalidad, clips y dónde acaban).',
+    styleGap || audit
+      ? '3. Diagnóstico priorizado (P1/P2) con datos: pista, clip, beats. SIN crear canción ni musicBuild.'
+      : [
+          '3. Decisiones musicales concretas: tonalidad, progresión de acordes, secciones (compás de inicio y',
+          '   duración en beats), instrumentos JasWave por pista y cómo dar sensación humana (velocidades y variaciones).',
+          '4. Acciones en orden: tipo de herramienta + parámetros clave. Prefiere pocas herramientas de alto nivel',
+          '   (p. ej. daw.musicBuild procedural, track.create + instrumento, midi.clip.create con notas) a muchas pequeñas.',
+          '   Respeta lo que ya existe: no borres ni dupliques pistas o clips del usuario salvo que lo pida.',
+        ].join('\n'),
+    'Si falta un dato crítico que no se puede suponer: una línea «CLARIFY: <pregunta>». Si se puede suponer, supón y sigue.',
+  ].join('\n')
+}
+
 function isRefine(userText: string): boolean {
   return (
     isSongRefineIntent(userText) ||
@@ -242,9 +292,12 @@ function needsWeb(userText: string): boolean {
 export function reasoningSeedUserMessage(opts: {
   userText: string
   projectContext: string
+  rapido?: boolean
 }): string {
   return [
-    '## Pedido del usuario (el consejo NO le responde aún — solo dialogan entre ellos)',
+    opts.rapido
+      ? '## Pedido del usuario (aún no le respondes: solo planificas)'
+      : '## Pedido del usuario (el consejo NO le responde aún — solo dialogan entre ellos)',
     opts.userText,
     '',
     '## Estado del proyecto (solo lectura)',
@@ -493,6 +546,8 @@ export function buildFinalTurnUserMessage(opts: {
   stepsSummary: string
   mode?: AgentMode
   depth?: number
+  /** Perfil rápido: sin cabeceras del consejo; si no hubo plan, el pedido va tal cual con las reglas de salida. */
+  rapido?: boolean
 }): string {
   const mode = opts.mode ?? 'create'
   const createish = mode === 'create' || mode === 'auto'
@@ -512,31 +567,46 @@ export function buildFinalTurnUserMessage(opts: {
           opts.canonicalPrompt.trim(),
         ]
       : ['## Pedido original', opts.userText]
+  const cabecera = opts.rapido
+    ? opts.decisionBrief.trim()
+      ? [
+          '## Plan interno (ya hecho) — ejecútalo; NO lo copies al usuario',
+          opts.decisionBrief.slice(0, 12000),
+          '',
+        ]
+      : []
+    : [
+        `## Diálogo interno del consejo (${depth} capas) — ya cerrado`,
+        'Usa estas notas; NO las copies al usuario ni digas «según mi razonamiento» / «según Nexus».',
+        opts.stepsSummary.slice(0, 48000),
+        '',
+        '## Compromiso (última capa)',
+        opts.decisionBrief.slice(0, 16000),
+        '',
+      ]
   return [
-    `## Diálogo interno del consejo (${depth} capas) — ya cerrado`,
-    'Usa estas notas; NO las copies al usuario ni digas «según mi razonamiento» / «según Nexus».',
-    opts.stepsSummary.slice(0, 48000),
-    '',
-    '## Compromiso (última capa)',
-    opts.decisionBrief.slice(0, 16000),
-    '',
+    ...cabecera,
     ...pedidoBlock,
     '',
     '## Ahora sí: salida al usuario',
-    'Habla como el consejo, pero la voz que cierra con el usuario tras un trabajo hecho es Kael (QA).',
+    opts.rapido
+      ? 'Habla como un productor: breve, concreto y en español.'
+      : 'Habla como el consejo, pero la voz que cierra con el usuario tras un trabajo hecho es Kael (QA).',
     styleGap
       ? [
           'GAP ANALYSIS: (1) qué hay YA, (2) rasgos del estilo, (3) qué falta P1/P2/P3, (4) sugerencias MIDI.',
           'PROHIBIDO plan multi-día, musicBuild, «¡Entendido!».',
           web ? 'Refleja hallazgos de internet si hubo search.' : '',
-          'Al final: Kael pregunta si el diagnóstico le sirve / si quiere que aplique fixes.',
+          opts.rapido
+            ? 'Al final pregunta si el diagnóstico le sirve / si quiere que aplique los arreglos.'
+            : 'Al final: Kael pregunta si el diagnóstico le sirve / si quiere que aplique fixes.',
         ]
           .filter(Boolean)
           .join('\n')
       : audit
         ? [
             'Diagnostica con datos (pista, clip, beats). 1–3 frases + lista priorizada.',
-            'Cierra con Kael: ¿quieres que corrija los P1 ahora?',
+            opts.rapido ? 'Cierra preguntando: ¿quieres que corrija los P1 ahora?' : 'Cierra con Kael: ¿quieres que corrija los P1 ahora?',
           ].join('\n')
         : [
             '1–2 frases de lo que vas a hacer / hiciste (productor).',

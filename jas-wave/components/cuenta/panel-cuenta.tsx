@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { KeyRound, LogOut, RefreshCw, ShieldCheck } from 'lucide-react'
 import { apiJasWave, cerrarSesion, useSesion } from '@/src/lib/backend/sesion'
 import { msHastaRenovar, puertoEscritorio, renovarLicenciaEquipo, type EstadoLicenciaEquipo } from '@/src/lib/backend/licencia-equipo'
-import { requestOpenTool } from '@/src/workspace/types'
+import { abrirAppAdmin } from '@/src/admin-app/abrir'
 import { pluginsActivos } from '@/src/lib/plugins/registro-plugins'
 import { FormularioLogin } from './formulario-login'
 import { CatalogoPluginsCuenta } from './catalogo-plugins'
@@ -130,8 +130,8 @@ export function PanelCuenta() {
       <ContinuarEnEscritorio session={sesion.session} />
 
       {sesion.identidad?.esAdmin ? (
-        <Boton primario onClick={() => requestOpenTool('admin')}>
-          Abrir panel de administración
+        <Boton primario onClick={() => void abrirAppAdmin()}>
+          Abrir JasWave Admin
         </Boton>
       ) : null}
     </div>

@@ -3,8 +3,10 @@
  */
 
 #include <algorithm>
+#include <map>
 #include <atomic>
 #include <cctype>
+#include <filesystem>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -47,6 +49,36 @@
 #include "asio_output.h"
 #endif
 
+#ifdef _WIN32
+/** Las rutas llegan en UTF-8 por JSON; fopen/remove de la CRT las leerían como ANSI («Batería» → «BaterÃ­a»). */
+static std::wstring utf8ToWide(const std::string& s) {
+  if (s.empty()) return {};
+  const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+  std::wstring w(static_cast<size_t>(n > 0 ? n : 0), L'\0');
+  if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
+  return w;
+}
+#endif
+
+static FILE* openFileUtf8(const std::string& path, const char* mode) {
+#ifdef _WIN32
+  FILE* f = nullptr;
+  const std::wstring wmode(mode, mode + std::strlen(mode));
+  if (_wfopen_s(&f, utf8ToWide(path).c_str(), wmode.c_str()) != 0) return nullptr;
+  return f;
+#else
+  return std::fopen(path.c_str(), mode);
+#endif
+}
+
+static void removeFileUtf8(const std::string& path) {
+#ifdef _WIN32
+  _wremove(utf8ToWide(path).c_str());
+#else
+  std::remove(path.c_str());
+#endif
+}
+
 static std::string jsonEscape(const std::string& s) {
   std::string o;
   o.reserve(s.size() + 8);
@@ -62,11 +94,24 @@ static std::string jsonEscape(const std::string& s) {
   return o;
 }
 
+/**
+ * Id de la petición en curso (campo "rid" del comando). Se devuelve en cada respuesta para que
+ * el puente empareje respuestas asíncronas (load en el hilo UI) sin depender del orden.
+ * thread_local: el hilo de stdin y el hilo UI responden cada uno a su petición.
+ */
+static thread_local long long tReplyRid = -1;
+static std::mutex gReplyMu;
+
+static std::string ridSuffix() {
+  return tReplyRid >= 0 ? ",\"rid\":" + std::to_string(tReplyRid) : std::string();
+}
+
 static void replyOk(const std::string& extraJson = "") {
+  std::lock_guard<std::mutex> lock(gReplyMu);
   if (extraJson.empty()) {
-    std::cout << "{\"ok\":true,\"processId\":\"jaswave-plugin-host\"}\n" << std::flush;
+    std::cout << "{\"ok\":true,\"processId\":\"jaswave-plugin-host\"" << ridSuffix() << "}\n" << std::flush;
   } else {
-    std::cout << "{\"ok\":true,\"processId\":\"jaswave-plugin-host\"," << extraJson << "}\n"
+    std::cout << "{\"ok\":true,\"processId\":\"jaswave-plugin-host\"," << extraJson << ridSuffix() << "}\n"
               << std::flush;
   }
 }
@@ -82,13 +127,14 @@ static void appendJsonFloat(std::ostringstream& js, float v) {
 }
 
 static void replyFail(const char* code, const std::string& message, const std::string& extraJson = "") {
+  std::lock_guard<std::mutex> lock(gReplyMu);
   if (extraJson.empty()) {
     std::cout << "{\"ok\":false,\"code\":\"" << code << "\",\"message\":\"" << jsonEscape(message)
-              << "\"}\n"
+              << "\"" << ridSuffix() << "}\n"
               << std::flush;
   } else {
     std::cout << "{\"ok\":false,\"code\":\"" << code << "\",\"message\":\"" << jsonEscape(message)
-              << "\"," << extraJson << "}\n"
+              << "\"," << extraJson << ridSuffix() << "}\n"
               << std::flush;
   }
 }
@@ -175,7 +221,7 @@ static bool getBoolField(const std::string& json, const char* key, bool fallback
 
 struct DiscoveredPluginFile {
   std::string path;
-  std::string format;  // vst3 | vst2
+  std::string format;  // siempre "vst3" (VST2 retirado, ADR-0019)
 };
 
 static std::string toLowerCopy(std::string s) {
@@ -186,16 +232,6 @@ static std::string toLowerCopy(std::string s) {
 static bool endsWithLower(const std::string& nameLower, const char* ext) {
   const size_t n = std::strlen(ext);
   return nameLower.size() >= n && nameLower.compare(nameLower.size() - n, n, ext) == 0;
-}
-
-static bool skipVst2DllName(const std::string& nameLower) {
-  static const char* kSkip[] = {"msvcp", "vcruntime", "ucrtbase", "concrt", "vccorlib",
-                                "d3dcompiler", "api-ms-", "ext-ms-", "unins", "crashpad",
-                                "ffmpeg", "avcodec", "libcrypto", "opengl32", "dxgi."};
-  for (auto* p : kSkip) {
-    if (nameLower.find(p) != std::string::npos) return true;
-  }
-  return false;
 }
 
 #ifdef _WIN32
@@ -329,7 +365,12 @@ static std::vector<std::string> splitCsv(const std::string& s) {
   return out;
 }
 
+/** Puerto de entrada "todas" (pista con entrada MIDI = all): recibe de cualquier dispositivo. */
+static constexpr int kLiveMidiPortOmni = -2;
+
+/** "winmm:N" → N · "all" → kLiveMidiPortOmni · cualquier otro (vacío, desconocido) → -1 (sin entrada). */
 static int parseWinmmPortId(const std::string& id) {
+  if (id == "all") return kLiveMidiPortOmni;
   const char* pfx = "winmm:";
   if (id.size() <= 6) return -1;
   for (int i = 0; i < 6; ++i) {
@@ -376,48 +417,85 @@ static bool liveEatHas(const std::atomic<uint64_t>* lo, const std::atomic<uint64
   const int b = n < 64 ? n : n - 64;
   return (bits & (1ull << b)) != 0;
 }
-/** Sustain host-side: muchos VST3 ignoran kLegacyMIDICCOutEvent; el pedal debe sostener igual. */
-static bool gLiveSustainDown = false;
-static uint8_t gLiveKeyDown[128]{};
-static uint8_t gLiveLatched[128]{};
-
-static void liveSlotsNoteOn(HostedSlot** slots, int ns, int pitch, float vel) {
+// El sustain del lado del host (retener note-off con el pedal pisado) vive en cada Vst3Slot: así vale para la
+// entrada WinMM, para los comandos del renderer (Web MIDI, MIDI Learn, teclado en pantalla) y para los clips.
+static void liveSlotsNoteOn(HostedSlot** slots, int ns, int pitch, float vel, int off) {
   if (pitch < 0 || pitch > 127) return;
-  if (gLiveLatched[pitch] || gLiveKeyDown[pitch]) {
-    for (int s = 0; s < ns; ++s) slots[s]->noteOff(pitch, 0);
-  }
-  gLiveKeyDown[pitch] = 1;
-  gLiveLatched[pitch] = 0;
-  for (int s = 0; s < ns; ++s) slots[s]->noteOn(pitch, vel, 0);
+  for (int s = 0; s < ns; ++s) slots[s]->noteOn(pitch, vel, off);
 }
 
-static void liveSlotsNoteOff(HostedSlot** slots, int ns, int pitch) {
+static void liveSlotsNoteOff(HostedSlot** slots, int ns, int pitch, int off) {
   if (pitch < 0 || pitch > 127) return;
-  gLiveKeyDown[pitch] = 0;
-  if (gLiveSustainDown) {
-    gLiveLatched[pitch] = 1;
-    return;
-  }
-  for (int s = 0; s < ns; ++s) slots[s]->noteOff(pitch, 0);
+  for (int s = 0; s < ns; ++s) slots[s]->noteOff(pitch, off);
 }
 
-static void liveSlotsCc(HostedSlot** slots, int ns, int cc, int value) {
-  for (int s = 0; s < ns; ++s) slots[s]->midiCc(cc, value, 0);
-  if (cc != 64) return;
-  const bool down = value >= 64;
-  if (down == gLiveSustainDown) return;
-  gLiveSustainDown = down;
-  if (down) return;
-  for (int p = 0; p < 128; ++p) {
-    if (!gLiveLatched[p]) continue;
-    gLiveLatched[p] = 0;
-    if (!gLiveKeyDown[p]) {
-      for (int s = 0; s < ns; ++s) slots[s]->noteOff(p, 0);
-    }
+static void liveSlotsCc(HostedSlot** slots, int ns, int cc, int value, int off) {
+  for (int s = 0; s < ns; ++s) slots[s]->midiCc(cc, value, off);
+}
+
+/**
+ * Pedales conmutados (CC64 sustain, CC66 sostenuto, CC67 suave, CC69 hold 2) unificados por canal.
+ * Teclados como el Yamaha PSR-E373 mandan cada pisada por varios canales a la vez (voz principal, dual y
+ * split): B0 40 7F · B1 40 7F · B2 40 00 en el mismo milisegundo. En modo omni el último mensaje («suelto»
+ * en el canal sin voz) anulaba la pisada y el sustain nunca se aplicaba. Valor efectivo = máximo entre los
+ * 16 canales; solo se reenvía cuando cambia. Solo lo toca el audio thread.
+ */
+struct LivePedal {
+  uint8_t porCanal[16]{};
+  int emitido{-1};
+};
+static LivePedal gLivePedales[4];
+
+static int livePedalIndex(int cc) {
+  switch (cc) {
+    case 64: return 0;
+    case 66: return 1;
+    case 67: return 2;
+    case 69: return 3;
+    default: return -1;
   }
 }
 
-static void applyLiveMidiFromWinmm() {
+/** true si hay que reenviar el CC (con `out` como valor efectivo); false si no cambia el estado del pedal. */
+static bool livePedalUnificar(int cc, int ch, int value, int& out) {
+  const int i = livePedalIndex(cc);
+  if (i < 0) {
+    out = value;
+    return true;
+  }
+  LivePedal& p = gLivePedales[i];
+  p.porCanal[ch & 15] = static_cast<uint8_t>(std::clamp(value, 0, 127));
+  int mx = 0;
+  for (int c = 0; c < 16; ++c) mx = std::max(mx, static_cast<int>(p.porCanal[c]));
+  if (mx == p.emitido) return false;
+  p.emitido = mx;
+  out = mx;
+  return true;
+}
+
+static double currentSampleRate();
+
+/** Instante (QPC ns) del bloque anterior: los eventos llegados desde entonces se reparten en este bloque. */
+static int64_t gLiveMidiBlockNs = 0;
+
+/**
+ * Desfase en muestras de un evento dentro del bloque actual. Se reproduce un bloque después de llegar pero
+ * con su espaciado real (sin jitter de buffer): off = (t_evento − t_bloque_anterior) × sr. Si el reloj
+ * no es fiable (primer bloque, pausa larga) el evento va al inicio, como antes.
+ */
+static int liveMidiOffset(int64_t evNs, int64_t prevNs, int64_t nowNs, int frames) {
+  if (evNs <= 0 || prevNs <= 0 || evNs < prevNs || frames <= 1) return 0;
+  const double sr = currentSampleRate();
+  const double bloqueNs = 1e9 * frames / (sr > 0 ? sr : 48000.0);
+  if (static_cast<double>(nowNs - prevNs) > 4.0 * bloqueNs) return 0;
+  const double off = static_cast<double>(evNs - prevNs) * sr / 1e9;
+  return std::max(0, std::min(frames - 1, static_cast<int>(off)));
+}
+
+static void applyLiveMidiFromWinmm(int frames) {
+  const int64_t nowNs = jaswave_midi_now_ns();
+  const int64_t prevNs = gLiveMidiBlockNs;
+  gLiveMidiBlockNs = nowNs;
   JaswaveMidiEvent evs[128];
   int guard = 0;
   while (guard++ < 8) {
@@ -437,23 +515,28 @@ static void applyLiveMidiFromWinmm() {
       } else if (hi == 0xb0) {
         if (liveEatHas(&gLiveEatCcLo, &gLiveEatCcHi, pitch)) continue;
       }
+      int ccValor = static_cast<int>(e.data2);
+      // El estado del pedal se actualiza aunque ahora mismo no haya destino: al asignar una pista ya está al día.
+      if (hi == 0xb0 && !livePedalUnificar(pitch, ch, ccValor, ccValor)) continue;
       HostedSlot* dest[8];
       int nd = 0;
       for (int s = 0; s < count && s < 8; ++s) {
         auto* slot = gLiveMidiSlots[s].load(std::memory_order_acquire);
         if (!slot) continue;
         const int port = gLiveMidiPort[s].load(std::memory_order_relaxed);
-        if (port < 0 || port != static_cast<int>(e.port)) continue;
+        if (port == -1) continue;  // sin entrada asignada
+        if (port != kLiveMidiPortOmni && port != static_cast<int>(e.port)) continue;
         dest[nd++] = slot;
       }
       if (!nd) continue;
+      const int off = liveMidiOffset(e.timestampNs, prevNs, nowNs, frames);
       if (hi == 0x90) {
-        if (e.data2 == 0) liveSlotsNoteOff(dest, nd, pitch);
-        else liveSlotsNoteOn(dest, nd, pitch, static_cast<float>(e.data2) / 127.f);
+        if (e.data2 == 0) liveSlotsNoteOff(dest, nd, pitch, off);
+        else liveSlotsNoteOn(dest, nd, pitch, static_cast<float>(e.data2) / 127.f, off);
       } else if (hi == 0x80) {
-        liveSlotsNoteOff(dest, nd, pitch);
+        liveSlotsNoteOff(dest, nd, pitch, off);
       } else if (hi == 0xb0) {
-        liveSlotsCc(dest, nd, static_cast<int>(e.data1), static_cast<int>(e.data2));
+        liveSlotsCc(dest, nd, pitch, ccValor, off);
       }
     }
     if (n < 128) return;
@@ -463,6 +546,10 @@ static std::string gMixPipeName;
 static std::atomic<float> gMasterGain{1.f};
 static std::atomic<bool> gMasterMuted{false};
 static std::atomic<float> gMasterPan{0.f};
+// Monitorización: volumen hacia el dispositivo (altavoces/auriculares). No toca el bounce ni los medidores:
+// el usuario puede ver señal en el master y, a la vez, no sacar nada por la salida.
+static std::atomic<float> gMonitorGain{1.f};
+static std::atomic<bool> gMonitorMuted{false};
 static float gMixL[8192];
 static float gMixR[8192];
 static float gTmpL[8192];
@@ -497,8 +584,11 @@ struct RtSidechain {
   uint16_t srcStem{0};
   float amount{0.f};
 };
+static constexpr uint16_t kSinPadre = 0xFFFF;
 struct RtTrackChain {
   uint16_t stemIndex{0};
+  /** Carpeta-bus a la que va su salida post-fader (stem), o kSinPadre = al master. */
+  uint16_t parentStem{kSinPadre};
   float gain{1.f};
   float pan{0.f};
   bool muted{false};
@@ -520,11 +610,22 @@ static float gScMixL[8192]{};
 static float gScMixR[8192]{};
 static float gPreL[kMaxGraphTracks][8192]{};
 static float gPreR[kMaxGraphTracks][8192]{};
+/** Salida post-fader de cada stem (lo que exporta su stem), vaya al master o a su carpeta-bus. */
 static float gStemAccL[kMaxGraphTracks][8192]{};
 static float gStemAccR[kMaxGraphTracks][8192]{};
+/** Entrada de cada stem desde el grafo: hijas de una carpeta y envíos a un bus (pasan por sus FX). */
+static float gInL[kMaxGraphTracks][8192]{};
+static float gInR[kMaxGraphTracks][8192]{};
 
 static RtTrackChain gRtTracks[2][kMaxGraphTracks]{};
 static uint8_t gRtTrackCount[2]{0, 0};
+/**
+ * Orden topológico (índices de cadena): cada pista antes que su carpeta y que los buses a los que envía.
+ * `gRtRank` = posición de cada cadena en ese orden; `gRtStemChain` = cadena de cada stem (0xFF = ninguna).
+ */
+static uint8_t gRtOrder[2][kMaxGraphTracks]{};
+static uint8_t gRtRank[2][kMaxGraphTracks]{};
+static uint8_t gRtStemChain[2][kMaxGraphTracks]{};
 static RtChainSlot gRtMaster[2][kMaxChainSlots]{};
 static uint8_t gRtMasterCount[2]{0, 0};
 static std::atomic<int> gRtBuf{0};
@@ -539,9 +640,28 @@ static uint32_t gPdcW[kMaxGraphTracks]{};
 static float gPdcDawL[kMaxPdc]{};
 static float gPdcDawR[kMaxPdc]{};
 static uint32_t gPdcDawW{0};
+/**
+ * Stop duro en curso: la salida es silencio desde el bloque siguiente y no se procesa ningún plugin hasta
+ * que el hilo UI termina de vaciarlos (voces, reverb, delay). Pausa no lo usa: ahí las colas caen solas.
+ */
+static std::atomic<bool> gHardStop{false};
+
+/** Borra el audio retenido por el host (líneas de compensación de latencia y sidechain previo). */
+static void clearHostDelayLines() {
+  for (int t = 0; t < kMaxGraphTracks; ++t) {
+    std::fill(gPdcL[t], gPdcL[t] + kMaxPdc, 0.f);
+    std::fill(gPdcR[t], gPdcR[t] + kMaxPdc, 0.f);
+    std::fill(gPrevPostL[t], gPrevPostL[t] + 8192, 0.f);
+    std::fill(gPrevPostR[t], gPrevPostR[t] + 8192, 0.f);
+  }
+  std::fill(gPdcDawL, gPdcDawL + kMaxPdc, 0.f);
+  std::fill(gPdcDawR, gPdcDawR + kMaxPdc, 0.f);
+}
 
 /** Peaks post-fader (stemIndex 0..63) + master; audio thread escribe, control lee snapshot. */
 static std::atomic<float> gMeterStemPeak[kMaxGraphTracks]{};
+static std::atomic<float> gMeterStemPeakL[kMaxGraphTracks]{};
+static std::atomic<float> gMeterStemPeakR[kMaxGraphTracks]{};
 static std::atomic<float> gMeterSidechainPeak[kMaxGraphTracks]{};
 static std::atomic<float> gMeterMasterPeak{0.f};
 static constexpr float kMeterDecay = 0.92f;
@@ -553,6 +673,12 @@ static JasWaveDsp::LoudnessMeter gMasterLoudness;
 static uint32_t gMasterLoudnessSr = 0;
 static JasWaveDsp::SpectrumTap gMasterTap;   // mono (L+R)/2 de la salida, para el espectro del master
 static float gMasterTapL[8192], gMasterTapR[8192];
+/**
+ * Espectro por pista, independiente: cada tira del mixer con el espectro abierto activa el tap de su stem
+ * (el hilo de audio solo copia a los activos). Un tap que nadie consulta en 2 s se apaga solo.
+ */
+static JasWaveDsp::SpectrumTap gStemTaps[kMaxGraphTracks];
+static std::atomic<bool> gStemTapActivo[kMaxGraphTracks]{};
 static std::atomic<bool> gMasterLoudnessReset{false};
 static double currentSampleRate();
 static char gMeterTrackOrder[kMaxGraphTracks][kSlotIdLen]{};
@@ -589,8 +715,20 @@ static std::atomic<bool> gOfflineSetup{false};
 static FILE* gOfflineFile{nullptr};
 static uint32_t gOfflineSampleRate{48000};
 static uint32_t gOfflineFramesWritten{0};
+/** Render sin la ganancia ×1.35 ni el limitador suave del master (freeze, stems, análisis). */
+static std::atomic<bool> gOfflineTransparentMaster{false};
 
-/** Escribe la cabecera WAV (44 bytes) con los tamaños reservados. */
+/** Stem exportado durante el bounce: salida de una pista (o bus) a su propio WAV, en la misma pasada. */
+struct OfflineStemOut {
+  uint16_t stemIndex{0};
+  std::string path;
+  FILE* file{nullptr};
+  bool preFader{false};
+};
+static std::vector<OfflineStemOut> gOfflineStems;
+static constexpr size_t kMaxOfflineStems = 64;
+
+/** Escribe la cabecera WAV (44 bytes) con los tamaños reservados. bits=32 → PCM float IEEE. */
 static bool writeOfflineWavHeader(FILE* f, uint32_t sampleRate, uint16_t bits, uint32_t frames) {
   if (!f) return false;
   const uint16_t numCh = 2;
@@ -611,7 +749,7 @@ static bool writeOfflineWavHeader(FILE* f, uint32_t sampleRate, uint16_t bits, u
   std::fwrite("WAVE", 1, 4, f);
   std::fwrite("fmt ", 1, 4, f);
   w32(16);
-  w16(1);
+  w16(bits == 32 ? 3 : 1);  // 3 = WAVE_FORMAT_IEEE_FLOAT
   w16(numCh);
   w32(sampleRate);
   w32(byteRate);
@@ -623,14 +761,23 @@ static bool writeOfflineWavHeader(FILE* f, uint32_t sampleRate, uint16_t bits, u
   return std::ferror(f) == 0;
 }
 
-/** Escribe un bloque estéreo interlequeado a disco (con dithering TPDF). */
-static bool writeOfflinePcmBlock(FILE* f, const std::vector<float>& block, uint16_t bits) {
+/** Escribe un bloque estéreo interlequeado a disco (enteros con dithering TPDF; float tal cual). */
+static bool writeOfflinePcmBlock(FILE* f, const float* block, size_t count, uint16_t bits) {
   if (!f) return false;
+  if (bits == 32) {
+    // Float: sin recorte ni dither (conserva overs para masterizar después).
+    for (size_t i = 0; i < count; ++i) {
+      float x = block[i];
+      if (!std::isfinite(x)) x = 0.f;
+      if (std::fwrite(&x, sizeof(float), 1, f) != 1) return false;
+    }
+    return std::ferror(f) == 0;
+  }
   auto randUnit = []() {
     return static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
   };
   const float lsb = bits == 24 ? (1.f / 8388608.f) : (1.f / 32768.f);
-  for (size_t i = 0; i < block.size(); ++i) {
+  for (size_t i = 0; i < count; ++i) {
     float x = block[i];
     if (x < -1.f) x = -1.f;
     if (x > 1.f) x = 1.f;
@@ -669,6 +816,106 @@ static bool finalizeOfflineWav(FILE* f, uint32_t sampleRate, uint16_t bits, uint
   std::fflush(f);
   std::fclose(f);
   return ok;
+}
+
+/** Cierra los WAV de stems; con `finalize` parchea cabeceras, si no borra los parciales. */
+static bool closeOfflineStems(bool finalize) {
+  bool ok = true;
+  for (auto& st : gOfflineStems) {
+    if (!st.file) continue;
+    if (finalize) {
+      ok = finalizeOfflineWav(st.file, gOfflineSampleRate, gOfflineBits, gOfflineFramesWritten) && ok;
+    } else {
+      std::fclose(st.file);
+      removeFileUtf8(st.path);
+    }
+    st.file = nullptr;
+  }
+  gOfflineStems.clear();
+  return ok;
+}
+
+/** Abre un WAV por stem a partir de "stemIndex|ruta;stemIndex|ruta". Cadena vacía = sin stems. */
+static bool openOfflineStems(const std::string& spec, bool preFader, std::string& err) {
+  closeOfflineStems(false);
+  size_t pos = 0;
+  while (pos < spec.size()) {
+    size_t end = spec.find(';', pos);
+    if (end == std::string::npos) end = spec.size();
+    const std::string item = spec.substr(pos, end - pos);
+    pos = end + 1;
+    if (item.empty()) continue;
+    const size_t bar = item.find('|');
+    if (bar == std::string::npos || bar == 0 || bar + 1 >= item.size()) {
+      err = "stemOuts inválido: " + item;
+      closeOfflineStems(false);
+      return false;
+    }
+    int idx = 0;
+    try {
+      idx = std::stoi(item.substr(0, bar));
+    } catch (...) {
+      idx = -1;
+    }
+    if (idx < 0 || idx >= kMaxGraphTracks || gOfflineStems.size() >= kMaxOfflineStems) {
+      err = "stemOuts: índice de stem fuera de rango: " + item.substr(0, bar);
+      closeOfflineStems(false);
+      return false;
+    }
+    OfflineStemOut st;
+    st.stemIndex = static_cast<uint16_t>(idx);
+    st.path = item.substr(bar + 1);
+    st.preFader = preFader;
+    st.file = openFileUtf8(st.path, "wb");
+    if (!st.file || !writeOfflineWavHeader(st.file, gOfflineSampleRate, gOfflineBits, gOfflineTotal)) {
+      if (st.file) std::fclose(st.file);
+      err = "No se pudo crear el stem: " + st.path;
+      closeOfflineStems(false);
+      return false;
+    }
+    gOfflineStems.push_back(std::move(st));
+  }
+  return true;
+}
+
+/**
+ * Tras renderMix: escribe el bloque de cada stem. Post-fader = salida de la pista con fader, paneo,
+ * mute, PDC y lo que le llega por envíos (un bus de retorno incluye su reverb); pre-fader = salida
+ * de la cadena de inserts antes del fader. Sin grafo nativo el stem queda en silencio.
+ */
+static bool writeOfflineStemsBlock(uint32_t frames) {
+  if (gOfflineStems.empty()) return true;
+  static std::vector<float> inter;
+  inter.assign(static_cast<size_t>(frames) * 2u, 0.f);
+  const bool useGraph = gGraphActive.load(std::memory_order_acquire);
+  const int idx = gRtBuf.load(std::memory_order_acquire);
+  for (auto& st : gOfflineStems) {
+    std::fill(inter.begin(), inter.end(), 0.f);
+    if (useGraph) {
+      const float* l = nullptr;
+      const float* r = nullptr;
+      if (st.preFader) {
+        for (uint8_t t = 0; t < gRtTrackCount[idx] && t < kMaxGraphTracks; ++t) {
+          if (gRtTracks[idx][t].stemIndex == st.stemIndex) {
+            l = gPreL[t];
+            r = gPreR[t];
+            break;
+          }
+        }
+      } else {
+        l = gStemAccL[st.stemIndex];
+        r = gStemAccR[st.stemIndex];
+      }
+      if (l && r) {
+        for (uint32_t i = 0; i < frames; ++i) {
+          inter[i * 2] = l[i];
+          inter[i * 2 + 1] = r[i];
+        }
+      }
+    }
+    if (!writeOfflinePcmBlock(st.file, inter.data(), inter.size(), gOfflineBits)) return false;
+  }
+  return true;
 }
 
 static int b64Val(char c) {
@@ -745,15 +992,24 @@ static void meterUpdatePeak(std::atomic<float>& slot, float blockPeak) {
   slot.store(next > 1.f ? 1.f : next, std::memory_order_relaxed);
 }
 
-static float blockPeakAbs(const float* l, const float* r, int frames) {
+static float channelPeakAbs(const float* x, int frames) {
   float p = 0.f;
   for (int i = 0; i < frames; ++i) {
-    const float a = std::fabs(l[i]);
-    const float b = std::fabs(r[i]);
+    const float a = std::fabs(x[i]);
     if (a > p) p = a;
-    if (b > p) p = b;
   }
   return p > 1.f ? 1.f : p;
+}
+
+/** Actualiza el pico combinado y los picos L/R del stem (VU estéreo del mixer). */
+static void meterUpdateStem(int si, const float* l, const float* r, int frames) {
+  if (si < 0 || si >= kMaxGraphTracks) return;
+  const float pl = channelPeakAbs(l, frames);
+  const float pr = channelPeakAbs(r, frames);
+  meterUpdatePeak(gMeterStemPeak[si], pl > pr ? pl : pr);
+  meterUpdatePeak(gMeterStemPeakL[si], pl);
+  meterUpdatePeak(gMeterStemPeakR[si], pr);
+  if (gStemTapActivo[si].load(std::memory_order_relaxed)) gStemTaps[si].push(l, r, frames > 8192 ? 8192 : frames);
 }
 
 struct TrackChainSlot {
@@ -772,6 +1028,7 @@ struct TrackSidechain {
 };
 struct TrackChain {
   uint16_t stemIndex{0};
+  uint16_t parentStem{kSinPadre};
   float gain{1.f};
   float pan{0.f};
   bool muted{false};
@@ -795,6 +1052,7 @@ static void publishGraphUnlocked(const std::vector<TrackChain>& tracks,
     if (tn >= kMaxGraphTracks) break;
     RtTrackChain& out = gRtTracks[write][tn];
     out.stemIndex = tr.stemIndex;
+    out.parentStem = tr.parentStem;
     out.gain = tr.gain;
     out.pan = tr.pan;
     out.muted = tr.muted;
@@ -826,25 +1084,89 @@ static void publishGraphUnlocked(const std::vector<TrackChain>& tracks,
     }
     ++tn;
   }
-  int maxLat = 0;
-  int lats[kMaxGraphTracks]{};
-  for (uint8_t t = 0; t < tn; ++t) {
-    int lat = 0;
-    RtTrackChain& out = gRtTracks[write][t];
-    for (uint8_t s = 0; s < out.slotCount; ++s) {
-      const RtChainSlot& cs = out.slots[s];
-      if (cs.bypass || !cs.slot) continue;
-      lat += std::max(0, cs.slot->latencySamples());
+  // Orden topológico (Kahn): arista hija → carpeta y origen → bus de cada envío. Lo que quede en un
+  // ciclo se procesa al final en el orden recibido y sus aristas «hacia atrás» caen al master (como antes).
+  {
+    uint8_t* stemChain = gRtStemChain[write];
+    std::fill(stemChain, stemChain + kMaxGraphTracks, static_cast<uint8_t>(0xFF));
+    for (uint8_t t = 0; t < tn; ++t) {
+      const uint16_t st = gRtTracks[write][t].stemIndex;
+      if (st < kMaxGraphTracks) stemChain[st] = t;
     }
-    lats[t] = lat;
-    if (lat > maxLat) maxLat = lat;
+    auto destinoDe = [&](uint16_t stem) -> int {
+      return stem < kMaxGraphTracks && stemChain[stem] != 0xFF ? stemChain[stem] : -1;
+    };
+    int grado[kMaxGraphTracks]{};
+    for (uint8_t t = 0; t < tn; ++t) {
+      const RtTrackChain& c = gRtTracks[write][t];
+      const int p = destinoDe(c.parentStem);
+      if (p >= 0 && p != t) ++grado[p];
+      for (uint8_t s = 0; s < c.sendCount; ++s) {
+        const int d = destinoDe(c.sends[s].destStem);
+        if (d >= 0 && d != t) ++grado[d];
+      }
+    }
+    bool puesto[kMaxGraphTracks]{};
+    uint8_t n = 0;
+    for (bool avanzo = true; avanzo && n < tn;) {
+      avanzo = false;
+      for (uint8_t t = 0; t < tn; ++t) {
+        if (puesto[t] || grado[t] > 0) continue;
+        puesto[t] = true;
+        gRtOrder[write][n++] = t;
+        avanzo = true;
+        const RtTrackChain& c = gRtTracks[write][t];
+        const int p = destinoDe(c.parentStem);
+        if (p >= 0 && p != t) --grado[p];
+        for (uint8_t s = 0; s < c.sendCount; ++s) {
+          const int d = destinoDe(c.sends[s].destStem);
+          if (d >= 0 && d != t) --grado[d];
+        }
+      }
+    }
+    for (uint8_t t = 0; t < tn; ++t) {
+      if (!puesto[t]) gRtOrder[write][n++] = t;
+    }
+    for (uint8_t k = 0; k < tn; ++k) gRtRank[write][gRtOrder[write][k]] = k;
   }
-  if (maxLat > kMaxPdc - 1) maxLat = kMaxPdc - 1;
-  for (uint8_t t = 0; t < tn; ++t) {
-    const int lat = std::min(lats[t], maxLat);
-    gRtTracks[write][t].delaySamples = static_cast<uint16_t>(maxLat - lat);
+
+  // PDC por ruta: llegada A(t) = máx. llegada de sus entradas (hijas) + latencia propia. Cada hija se
+  // retrasa hasta la llegada más tardía de su carpeta y cada pista raíz hasta la más tardía del master.
+  // Los envíos no cuentan (como antes: se toman tras el PDC de su pista).
+  {
+    int lat[kMaxGraphTracks]{};
+    int entrada[kMaxGraphTracks]{};
+    int llegada[kMaxGraphTracks]{};
+    for (uint8_t t = 0; t < tn; ++t) {
+      RtTrackChain& out = gRtTracks[write][t];
+      for (uint8_t s = 0; s < out.slotCount; ++s) {
+        const RtChainSlot& cs = out.slots[s];
+        if (cs.bypass || !cs.slot) continue;
+        lat[t] += std::max(0, cs.slot->latencySamples());
+      }
+    }
+    auto padreValido = [&](uint8_t t) -> int {
+      const uint16_t ps = gRtTracks[write][t].parentStem;
+      if (ps >= kMaxGraphTracks) return -1;
+      const uint8_t p = gRtStemChain[write][ps];
+      return (p != 0xFF && p != t && gRtRank[write][p] > gRtRank[write][t]) ? p : -1;
+    };
+    int maxRaiz = 0;
+    for (uint8_t k = 0; k < tn; ++k) {
+      const uint8_t t = gRtOrder[write][k];
+      llegada[t] = entrada[t] + lat[t];
+      const int p = padreValido(t);
+      if (p >= 0) entrada[p] = std::max(entrada[p], llegada[t]);
+      else maxRaiz = std::max(maxRaiz, llegada[t]);
+    }
+    for (uint8_t t = 0; t < tn; ++t) {
+      const int p = padreValido(t);
+      const int objetivo = p >= 0 ? entrada[p] : maxRaiz;
+      gRtTracks[write][t].delaySamples =
+          static_cast<uint16_t>(std::min(kMaxPdc - 1, std::max(0, objetivo - llegada[t])));
+    }
+    gRtMaxDelay[write] = static_cast<uint16_t>(std::min(kMaxPdc - 1, maxRaiz));
   }
-  gRtMaxDelay[write] = static_cast<uint16_t>(maxLat);
   gRtTrackCount[write] = tn;
 
   uint8_t mn = 0;
@@ -966,8 +1288,10 @@ static void mixSidechainForTrack(uint8_t destT, int idx, uint8_t trackN, int fra
     const uint16_t srcT =
         side.srcStem < kMaxGraphTracks ? stemToChain[side.srcStem] : 0xFFFF;
     if (srcT == 0xFFFF || srcT >= trackN) continue;
-    const float* sl = (srcT < destT) ? gPostL[srcT] : gPrevPostL[srcT];
-    const float* sr = (srcT < destT) ? gPostR[srcT] : gPrevPostR[srcT];
+    // Origen ya procesado en este bloque (antes en el orden topológico): su salida actual; si no, la anterior.
+    const bool yaProcesado = gRtRank[idx][srcT] < gRtRank[idx][destT];
+    const float* sl = yaProcesado ? gPostL[srcT] : gPrevPostL[srcT];
+    const float* sr = yaProcesado ? gPostR[srcT] : gPrevPostR[srcT];
     for (int i = 0; i < frames; ++i) {
       gScMixL[i] += sl[i] * side.amount;
       gScMixR[i] += sr[i] * side.amount;
@@ -976,9 +1300,13 @@ static void mixSidechainForTrack(uint8_t destT, int idx, uint8_t trackN, int fra
 }
 
 static void renderMix(float* interleaved, uint32_t frameCount) {
-  if (!gOfflineRunning) applyLiveMidiFromWinmm();
   const int frames = static_cast<int>(std::min<uint32_t>(frameCount, 8192));
   if (frames <= 0) return;
+  if (gHardStop.load(std::memory_order_acquire) && !gOfflineRunning) {
+    std::fill(interleaved, interleaved + static_cast<size_t>(frames) * 2u, 0.f);
+    return;
+  }
+  if (!gOfflineRunning) applyLiveMidiFromWinmm(frames);
   jaswave::transport_clock_set_sample_rate(currentSampleRate());
   jaswave_mix_bus_begin_block(static_cast<uint32_t>(frames));
   std::fill(gMixL, gMixL + frames, 0.f);
@@ -994,15 +1322,51 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
       std::fill(gPostR[t], gPostR[t] + frames, 0.f);
       std::fill(gStemAccL[t], gStemAccL[t] + frames, 0.f);
       std::fill(gStemAccR[t], gStemAccR[t] + frames, 0.f);
+      std::fill(gInL[t], gInL[t] + frames, 0.f);
+      std::fill(gInR[t], gInR[t] + frames, 0.f);
     }
-    for (uint8_t t = 0; t < trackN && t < kMaxGraphTracks; ++t) {
+    // Suma a destino: si el destino aún no se procesó (va después en el orden topológico) entra por su
+    // cadena (FX de la carpeta / del bus); si no (ciclo), va directo al master como antes.
+    auto sumarHacia = [&](uint16_t destStem, uint8_t origenT, const float* l, const float* r, float k) {
+      if (destStem >= kMaxGraphTracks) return false;
+      const uint8_t d = gRtStemChain[idx][destStem];
+      if (d == 0xFF || d == origenT) return false;
+      if (gRtRank[idx][d] > gRtRank[idx][origenT]) {
+        for (int i = 0; i < frames; ++i) {
+          gInL[destStem][i] += l[i] * k;
+          gInR[destStem][i] += r[i] * k;
+        }
+      } else {
+        for (int i = 0; i < frames; ++i) {
+          gMixL[i] += l[i] * k;
+          gMixR[i] += r[i] * k;
+        }
+      }
+      return true;
+    };
+    for (uint8_t k = 0; k < trackN && k < kMaxGraphTracks; ++k) {
+      const uint8_t t = gRtOrder[idx][k];
       const RtTrackChain& tr = gRtTracks[idx][t];
-      // Motor único: clip_player nativo (live y offline).
+      // Motor único: clip_player nativo (live y offline) + lo que llega por el grafo (hijas, envíos).
       std::memset(gStemInterleaved, 0, static_cast<size_t>(frames) * 2 * sizeof(float));
       jaswave::clip_render_stem(tr.stemIndex, gStemInterleaved, static_cast<uint32_t>(frames));
+      const bool conEntrada = tr.stemIndex < kMaxGraphTracks;
       for (int i = 0; i < frames; ++i) {
-        gChainL[i] = gStemInterleaved[i * 2];
-        gChainR[i] = gStemInterleaved[i * 2 + 1];
+        gChainL[i] = gStemInterleaved[i * 2] + (conEntrada ? gInL[tr.stemIndex][i] : 0.f);
+        gChainR[i] = gStemInterleaved[i * 2 + 1] + (conEntrada ? gInR[tr.stemIndex][i] : 0.f);
+      }
+      // Capas: todos los instrumentos de la pista suenan en paralelo y su suma entra a TODA la cadena de
+      // FX, esté donde esté el instrumento en la lista (antes uno puesto tras un FX se lo saltaba).
+      for (uint8_t s = 0; s < tr.slotCount; ++s) {
+        const RtChainSlot& cs = tr.slots[s];
+        HostedSlot* slot = cs.slot;
+        if (!cs.instrument || cs.bypass || !slot || !slot->isPrepared()) continue;
+        slot->process(nullptr, nullptr, gFxL, gFxR, frames);
+        applyInstrumentTrim(gFxL, gFxR, frames);
+        for (int i = 0; i < frames; ++i) {
+          gChainL[i] += gFxL[i];
+          gChainR[i] += gFxR[i];
+        }
       }
       for (uint8_t s = 0; s < tr.slotCount; ++s) {
         const RtChainSlot& cs = tr.slots[s];
@@ -1010,12 +1374,7 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
         if (!slot || !slot->isPrepared()) continue;
         if (cs.bypass) continue;
         if (cs.instrument) {
-          slot->process(nullptr, nullptr, gFxL, gFxR, frames);
-          applyInstrumentTrim(gFxL, gFxR, frames);
-          for (int i = 0; i < frames; ++i) {
-            gChainL[i] += gFxL[i];
-            gChainR[i] += gFxR[i];
-          }
+          continue;
         } else {
           if (slot->hasSidechainInput() && tr.sidechainCount > 0) {
             mixSidechainForTrack(t, idx, trackN, frames);
@@ -1034,18 +1393,27 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
       applyPdc(gChainL, gChainR, frames, gPdcL[t], gPdcR[t], gPdcW[t],
                static_cast<int>(tr.delaySamples));
       {
-        const uint16_t si = tr.stemIndex;
-        if (si < kMaxGraphTracks) {
-          meterUpdatePeak(gMeterStemPeak[si], blockPeakAbs(gChainL, gChainR, frames));
-        }
+        meterUpdateStem(static_cast<int>(tr.stemIndex), gChainL, gChainR, frames);
       }
       std::memcpy(gPostL[t], gChainL, static_cast<size_t>(frames) * sizeof(float));
       std::memcpy(gPostR[t], gChainR, static_cast<size_t>(frames) * sizeof(float));
       if (tr.stemIndex < kMaxGraphTracks) {
+        std::memcpy(gStemAccL[tr.stemIndex], gChainL, static_cast<size_t>(frames) * sizeof(float));
+        std::memcpy(gStemAccR[tr.stemIndex], gChainR, static_cast<size_t>(frames) * sizeof(float));
+      }
+      // Salida: a su carpeta-bus o al master.
+      if (!sumarHacia(tr.parentStem, t, gChainL, gChainR, 1.f)) {
         for (int i = 0; i < frames; ++i) {
-          gStemAccL[tr.stemIndex][i] += gChainL[i];
-          gStemAccR[tr.stemIndex][i] += gChainR[i];
+          gMixL[i] += gChainL[i];
+          gMixR[i] += gChainR[i];
         }
+      }
+      // Envíos: entran por la cadena del bus destino (su reverb/delay los procesa).
+      for (uint8_t s = 0; s < tr.sendCount; ++s) {
+        const RtSend& sn = tr.sends[s];
+        if (sn.amount <= 0.f) continue;
+        sumarHacia(sn.destStem, t, sn.preFader ? gPreL[t] : gPostL[t], sn.preFader ? gPreR[t] : gPostR[t],
+                   sn.amount);
       }
     }
     // Sidechain metering (I/O host confirmado para harness)
@@ -1074,26 +1442,6 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
         if (tr.stemIndex < kMaxGraphTracks && scPeak > 0.f) {
           meterUpdatePeak(gMeterSidechainPeak[tr.stemIndex], scPeak);
         }
-      }
-    }
-    // Pass 2: sends sample-accurate (origen → stem destino)
-    for (uint8_t t = 0; t < trackN && t < kMaxGraphTracks; ++t) {
-      const RtTrackChain& tr = gRtTracks[idx][t];
-      for (uint8_t s = 0; s < tr.sendCount; ++s) {
-        const RtSend& sn = tr.sends[s];
-        if (sn.amount <= 0.f || sn.destStem >= kMaxGraphTracks) continue;
-        for (int i = 0; i < frames; ++i) {
-          const float sl = sn.preFader ? gPreL[t][i] : gPostL[t][i];
-          const float sr = sn.preFader ? gPreR[t][i] : gPostR[t][i];
-          gStemAccL[sn.destStem][i] += sl * sn.amount;
-          gStemAccR[sn.destStem][i] += sr * sn.amount;
-        }
-      }
-    }
-    for (uint8_t stem = 0; stem < trackN && stem < kMaxGraphTracks; ++stem) {
-      for (int i = 0; i < frames; ++i) {
-        gMixL[i] += gStemAccL[stem][i];
-        gMixR[i] += gStemAccR[stem][i];
       }
     }
     const uint8_t masterN = gRtMasterCount[idx];
@@ -1127,11 +1475,7 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
       applyInstrumentTrim(gTmpL, gTmpR, frames);
       snapshot[s]->applyMix(gTmpL, gTmpR, frames);
       {
-        const int stem = meterStemFromSlotId(snapshotSlotId[s]);
-        if (stem >= 0 && stem < kMaxGraphTracks) {
-          meterUpdatePeak(gMeterStemPeak[stem],
-                          blockPeakAbs(gTmpL, gTmpR, frames));
-        }
+        meterUpdateStem(meterStemFromSlotId(snapshotSlotId[s]), gTmpL, gTmpR, frames);
       }
       for (int i = 0; i < frames; ++i) {
         gMixL[i] += gTmpL[i];
@@ -1141,17 +1485,20 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
     jaswave::clip_render_mix(gMixL, gMixR, static_cast<uint32_t>(frames));
   }
 
+  const bool transparent = gOfflineRunning && gOfflineTransparentMaster.load(std::memory_order_relaxed);
   const float masterG = (gMasterMuted.load(std::memory_order_relaxed)
                             ? 0.f
-                            : gMasterGain.load(std::memory_order_relaxed)) * 1.35f;
+                            : gMasterGain.load(std::memory_order_relaxed)) * (transparent ? 1.f : 1.35f);
   // Pan del master: ley de potencia constante, 0 dB al centro (como el pan por pista).
   const float masterPan = std::max(-1.f, std::min(1.f, gMasterPan.load(std::memory_order_relaxed)));
   const float panAng = (masterPan + 1.f) * 0.78539816339f;
   const float panL = std::cos(panAng) * 1.41421356237f;
   const float panR = std::sin(panAng) * 1.41421356237f;
   for (int i = 0; i < frames; ++i) {
-    interleaved[i * 2 + 0] = softLimitSample(gMixL[i] * masterG * panL);
-    interleaved[i * 2 + 1] = softLimitSample(gMixR[i] * masterG * panR);
+    const float l = gMixL[i] * masterG * panL;
+    const float r = gMixR[i] * masterG * panR;
+    interleaved[i * 2 + 0] = transparent ? l : softLimitSample(l);
+    interleaved[i * 2 + 1] = transparent ? r : softLimitSample(r);
   }
   // Legacy Chromium/Soft Pad bus: skip when Reaper graph owns all track audio.
   if (!useGraph) {
@@ -1167,7 +1514,8 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
       interleaved[i * 2 + 1] = softLimitSample(interleaved[i * 2 + 1] + gTmpR[i]);
     }
   }
-  jaswave::metronome_render(interleaved, static_cast<uint32_t>(frames));
+  // El metrónomo es solo de monitorización: nunca entra en un bounce.
+  if (!gOfflineRunning) jaswave::metronome_render(interleaved, static_cast<uint32_t>(frames));
   {
     float mp = 0.f;
     for (int i = 0; i < frames; ++i) {
@@ -1211,6 +1559,13 @@ static void renderMix(float* interleaved, uint32_t frameCount) {
       gMasterTap.push(gMasterTapL, gMasterTapR, m);
     }
   }
+  // Volumen de monitorización: solo lo que va al dispositivo (los medidores y el bounce ya quedaron arriba).
+  if (!gOfflineRunning) {
+    const float mg = gMonitorMuted.load(std::memory_order_relaxed) ? 0.f : gMonitorGain.load(std::memory_order_relaxed);
+    if (mg != 1.f) {
+      for (int i = 0; i < frames * 2; ++i) interleaved[i] *= mg;
+    }
+  }
   jaswave::transport_clock_advance(static_cast<uint32_t>(frames));
 }
 
@@ -1226,13 +1581,20 @@ struct UiJob {
     GetDevice,
     TestTone,
     AsioPanel,
-    EnsureAudio
+    EnsureAudio,
+    GetState,  // getPluginState: IComponent::getState en el hilo UI (JUCE/Kontakt/BFD lo exigen)
+    SetState,  // setPluginState
+    PinEditor,   // pinEditor: ancla/desancla (TOPMOST) la ventana del editor de un slot
+    RepinAll,    // reaplica el orden por índice de los editores anclados
+    PinsVisible, // setPinsVisible: oculta/muestra los anclados (app minimizada)
+    HardStop     // hardStop: vacía el DSP de todos los slots (stop del transporte)
   } kind{};
   std::string json;
   std::string err;
   std::string extraJson;
   bool ok{false};
   bool replyWhenDone{true};
+  long long rid{-1};  // id de la petición que responde este job (ver tReplyRid)
   std::mutex mu;
   std::condition_variable cv;
   bool done{false};
@@ -1244,6 +1606,36 @@ static std::vector<std::shared_ptr<UiJob>> gUiQueue;
 static HostedSlot* findSlotUnlocked(const std::string& slotId) {
   auto it = gSlots.find(slotId);
   return it == gSlots.end() ? nullptr : it->second.get();
+}
+
+// ── Pin de editores: slotId → índice (0 = el de más arriba). Solo se toca desde el hilo UI. ──────────
+static std::map<std::string, int> gPins;
+static bool gPinsVisible = true;
+
+/** Reaplica el apilado de los anclados: del índice más alto al 0, cada uno sube a la cima de la banda
+ *  TOPMOST sin activarse; el último (índice 0) queda encima de todos. Los no anclados quedan debajo. */
+static void reapplyPins() {
+  std::vector<std::pair<int, std::string>> orden;
+  for (const auto& [id, idx] : gPins) orden.emplace_back(idx, id);
+  std::sort(orden.begin(), orden.end(), [](const auto& a, const auto& b) {
+    return a.first != b.first ? a.first > b.first : a.second > b.second;
+  });
+  std::lock_guard<std::mutex> lock(gSlotsMutex);
+  for (const auto& [idx, id] : orden) {
+    (void)idx;
+    if (auto* slot = findSlotUnlocked(id)) slot->raiseEditorPinned();
+  }
+}
+
+static bool gRepinQueued = false;  // desduplica avisos de activación (hilo UI)
+
+static void enqueueUiAsync(UiJob::Kind kind, const std::string& json, bool replyWhenDone);
+
+/** Hook de vst3_slot.cpp: un editor anclado se activó → reaplicar el orden en el siguiente turno. */
+static void onPinnedEditorActivated() {
+  if (gRepinQueued) return;
+  gRepinQueued = true;
+  enqueueUiAsync(UiJob::Kind::RepinAll, "{}", false);
 }
 
 static bool ensureAudioDevice(std::string& err) {
@@ -1291,6 +1683,7 @@ static std::string audioStatusJsonObject() {
     << ",\"bufferSize\":" << (st.actualBufferSize ? st.actualBufferSize : st.cfg.bufferSize)
     << ",\"exclusive\":" << (st.cfg.exclusive ? "true" : "false")
     << ",\"running\":" << (st.running ? "true" : "false")
+    << ",\"engineOwned\":" << (jaswave_audio_engine_owned() ? "true" : "false")
     << ",\"lastError\":\"" << jsonEscape(st.lastError) << "\"}";
   return o.str();
 }
@@ -1321,6 +1714,8 @@ static std::string listDevicesExtraJson() {
 }
 
 static bool applyAudioConfigFromJson(const std::string& json, std::string& err) {
+  // Sin la reserva del motor no se suspenden los slots: el fallo sería seguro pero inútil.
+  if (!jaswave_audio_engine_acquire(err)) return false;
   JaswaveAudioConfig cfg;
   cfg.backend = getStringField(json, "backend");
   if (cfg.backend.empty()) cfg.backend = getStringField(json, "api");
@@ -1336,7 +1731,9 @@ static bool applyAudioConfigFromJson(const std::string& json, std::string& err) 
   const bool haveSharedWasapi = st.running && !st.cfg.exclusive && st.cfg.backend != "asio" &&
                                 (st.cfg.backend.empty() || st.cfg.backend == "wasapi" ||
                                  st.cfg.backend == "auto");
-  if (haveSharedWasapi && wantSharedWasapi) {
+  // Otra salida WASAPI pedida explícitamente: se reabre (antes se ignoraba y el audio seguía en la anterior).
+  const bool sameSharedDevice =cfg.deviceId.empty() || cfg.deviceId == "default" || cfg.deviceId == st.cfg.deviceId;
+  if (haveSharedWasapi && wantSharedWasapi && sameSharedDevice) {
     /* Un segundo ma_device_init en la UMC (y suspend/reprepare de BFD) corrompe el heap. */
     jaswave_audio_set_renderer(renderMix);
     const uint32_t sr = st.actualSampleRate ? st.actualSampleRate : st.cfg.sampleRate;
@@ -1356,6 +1753,14 @@ static bool applyAudioConfigFromJson(const std::string& json, std::string& err) 
   }
   for (auto* slot : toSuspend) slot->suspendForAudioRestart();
   if (!jaswave_audio_start(cfg, err)) {
+    // El arranque falló: los slots ya estaban suspendidos (setActive(false)); sin reactivarlos quedaban
+    // mudos y, en el siguiente reprepare, "de fábrica". Se reactivan (reprepare reaplica el estado guardado).
+    for (auto* slot : toSuspend) {
+      std::string perr;
+      if (!slot->reprepare(currentSampleRate(), static_cast<int32_t>(currentBlockSize()), perr)) {
+        std::cerr << "[jaswave-plugin-host] reprepare tras fallo de dispositivo: " << perr << "\n";
+      }
+    }
     jaswave_audio_set_renderer(renderMix);
     return false;
   }
@@ -1392,6 +1797,15 @@ static bool ensureSlotLoaded(const std::string& slotId, const std::string& path,
     return false;
   }
   const std::string expanded = expandEnvPath(path);
+  // Solo VST3: cargar una .dll VST2 (u otra) ejecutaría su DllMain dentro del proceso del host.
+  {
+    std::string ext = std::filesystem::path(expanded).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (ext != ".vst3") {
+      err = "Formato no soportado (solo .vst3): " + expanded;
+      return false;
+    }
+  }
   auto slot = HostedSlot::createForPath(expanded);
   slot->setSlotId(slotId);
   if (!ensureAudioDevice(err)) return false;
@@ -1467,12 +1881,78 @@ static void executeUiJob(UiJob& job) {
       return;
     }
     slot->setEditorTitle(getStringField(json, "title"));
+    // Pin: si este slot está anclado, la ventana nace TOPMOST (sobrevive a cerrar/reabrir el editor).
+    slot->setEditorPinned(gPins.count(slotId) > 0);
     if (!slot->openEditor(parent, x, y, w, h, err)) {
       job.ok = false;
       job.err = err;
       return;
     }
     gActiveSlot = slotId;
+    if (!gPins.empty()) reapplyPins();
+    job.ok = true;
+    return;
+  }
+
+  if (job.kind == UiJob::Kind::PinEditor) {
+    const bool pinned = getBoolField(json, "pinned", true);
+    const int index = std::max(0, static_cast<int>(getNumberField(json, "index", 0)));
+    bool hasEditor = false;
+    bool topmost = false;
+    std::uintptr_t hwnd = 0;
+    {
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      auto* slot = findSlotUnlocked(slotId);
+      if (pinned) {
+        gPins[slotId] = index;
+        if (slot) slot->setEditorPinned(true);
+      } else {
+        gPins.erase(slotId);
+        if (slot) slot->setEditorPinned(false);
+      }
+      if (slot) {
+        hasEditor = slot->hasEditor();
+        hwnd = slot->editorHwnd();
+      }
+    }
+    // El orden de los anclados depende de todos los índices: por defecto se reaplica entero. Con
+    // reorder:false + raise:true solo sube este (main intercala editores y paneles Electron en secuencia).
+    if (pinned && gPinsVisible) {
+      if (getBoolField(json, "reorder", true)) {
+        reapplyPins();
+      } else if (getBoolField(json, "raise", false)) {
+        std::lock_guard<std::mutex> lock(gSlotsMutex);
+        if (auto* slot = findSlotUnlocked(slotId)) slot->raiseEditorPinned();
+      }
+    }
+    {
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      if (auto* slot = findSlotUnlocked(slotId)) topmost = slot->editorTopmost();
+    }
+    job.ok = true;
+    job.extraJson = "\"slotId\":\"" + jsonEscape(slotId) + "\",\"pinned\":" + (pinned ? "true" : "false") +
+                    ",\"index\":" + std::to_string(index) + ",\"hasEditor\":" + (hasEditor ? "true" : "false") +
+                    ",\"topmost\":" + (topmost ? "true" : "false") + ",\"hwnd\":\"" + std::to_string(hwnd) + "\"";
+    return;
+  }
+
+  if (job.kind == UiJob::Kind::RepinAll) {
+    gRepinQueued = false;
+    if (gPinsVisible) reapplyPins();
+    job.ok = true;
+    return;
+  }
+
+  if (job.kind == UiJob::Kind::PinsVisible) {
+    gPinsVisible = getBoolField(json, "visible", true);
+    {
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      for (const auto& [id, idx] : gPins) {
+        (void)idx;
+        if (auto* slot = findSlotUnlocked(id)) slot->setEditorPinVisible(gPinsVisible);
+      }
+    }
+    if (gPinsVisible) reapplyPins();
     job.ok = true;
     return;
   }
@@ -1508,6 +1988,47 @@ static void executeUiJob(UiJob& job) {
     return;
   }
 
+  if (job.kind == UiJob::Kind::GetState || job.kind == UiJob::Kind::SetState) {
+    // Estado de plugin en el hilo UI (los VST3 basados en JUCE/Kontakt/BFD asumen hilo principal).
+    if (slotId.empty()) slotId = gActiveSlot;
+    std::vector<uint8_t> bytes;
+    if (job.kind == UiJob::Kind::SetState) {
+      const std::string b64 = getStringField(json, "stateBase64");
+      if (b64.empty() || !decodeBase64(b64, bytes) || bytes.empty()) {
+        job.ok = false;
+        job.err = "stateBase64 inválido";
+        return;
+      }
+    }
+    std::lock_guard<std::mutex> lock(gSlotsMutex);
+    auto* slot = findSlotUnlocked(slotId);
+    if (!slot) {
+      job.ok = false;
+      job.err = "slot no cargado: " + slotId;
+      return;
+    }
+    std::string err;
+    if (job.kind == UiJob::Kind::GetState) {
+      if (!slot->getStateChunk(bytes, err)) {
+        job.ok = false;
+        job.err = err;
+        return;
+      }
+      job.extraJson = "\"slotId\":\"" + jsonEscape(slotId) + "\",\"stateBytes\":" +
+                      std::to_string(bytes.size()) + ",\"stateBase64\":\"" +
+                      jsonEscape(encodeBase64(bytes.data(), bytes.size())) + "\"";
+    } else {
+      if (!slot->setStateChunk(bytes.data(), bytes.size(), err)) {
+        job.ok = false;
+        job.err = err;
+        return;
+      }
+      job.extraJson = "\"slotId\":\"" + jsonEscape(slotId) + "\",\"stateBytes\":" + std::to_string(bytes.size());
+    }
+    job.ok = true;
+    return;
+  }
+
   if (job.kind == UiJob::Kind::Load) {
     std::string err;
     if (!ensureSlotLoaded(slotId, path, err)) {
@@ -1537,6 +2058,7 @@ static void executeUiJob(UiJob& job) {
         gSlots.erase(it);
       }
       if (gActiveSlot == slotId) gActiveSlot.clear();
+      gPins.erase(slotId);  // slot descargado: el pin desaparece con él
       if (doomed) {
         clearSlotPointersInGraph(doomed.get());
         int liveN = gLiveMidiCount.load(std::memory_order_acquire);
@@ -1554,6 +2076,24 @@ static void executeUiJob(UiJob& job) {
     if (doomed) doomed->unload();
     job.ok = true;
     job.extraJson = "\"slotId\":\"" + jsonEscape(slotId) + "\"";
+    return;
+  }
+
+  if (job.kind == UiJob::Kind::HardStop) {
+    // Se recogen los slots bajo el mutex y se vacían fuera de él (setActive puede tardar en samplers grandes).
+    std::vector<HostedSlot*> slots;
+    {
+      std::lock_guard<std::mutex> lock(gSlotsMutex);
+      for (auto& [id, slot] : gSlots) {
+        (void)id;
+        if (slot) slots.push_back(slot.get());
+      }
+    }
+    for (auto* s : slots) s->flushDsp();
+    clearHostDelayLines();
+    gHardStop.store(false, std::memory_order_release);
+    job.ok = true;
+    job.extraJson = "\"flushed\":" + std::to_string(slots.size());
     return;
   }
 
@@ -1628,6 +2168,7 @@ static void enqueueUiAsync(UiJob::Kind kind, const std::string& json, bool reply
   job->kind = kind;
   job->json = json;
   job->replyWhenDone = replyWhenDone;
+  job->rid = replyWhenDone ? tReplyRid : -1;
   {
     std::lock_guard<std::mutex> lock(gUiQueueMu);
     gUiQueue.push_back(job);
@@ -1652,6 +2193,12 @@ static void enqueueUiAndWait(const std::shared_ptr<UiJob>& job) {
 
 static void finishUiJob(const std::shared_ptr<UiJob>& job) {
   if (!job->replyWhenDone) return;
+  // Se responde desde el hilo UI: restaurar el id de la petición original.
+  struct RidScope {
+    long long prev;
+    explicit RidScope(long long rid) : prev(tReplyRid) { tReplyRid = rid; }
+    ~RidScope() { tReplyRid = prev; }
+  } ridScope(job->rid);
   std::string slotId = getStringField(job->json, "slotId");
   if (slotId.empty()) slotId = getStringField(job->json, "pluginId");
   if (job->ok) {
@@ -1663,8 +2210,12 @@ static void finishUiJob(const std::shared_ptr<UiJob>& job) {
   } else {
     const char* code =
         (job->kind == UiJob::Kind::Load) ? "PluginLoadFailed" : "PluginEditorFailed";
-    if (job->kind == UiJob::Kind::SetDevice) code = "AudioDeviceFailed";
+    if (job->kind == UiJob::Kind::GetState) code = (job->err.rfind("slot no cargado", 0) == 0) ? "PluginNotFound" : "NoChunk";
+    else if (job->kind == UiJob::Kind::SetState) code = (job->err.rfind("slot no cargado", 0) == 0) ? "PluginNotFound" : "SetChunkFailed";
+    else if (job->kind == UiJob::Kind::SetDevice) code = "AudioDeviceFailed";
     else if (job->kind == UiJob::Kind::ListDevices) code = "HostNotReady";
+    // Otra instancia tiene el motor de audio: código propio para que la app no caiga a WASAPI ni reinicie.
+    if (job->err.rfind("AudioEngineBusy", 0) == 0) code = "AudioEngineBusy";
     replyFail(code, job->err.empty() ? "UI job failed" : job->err, job->extraJson);
   }
 }
@@ -1709,6 +2260,7 @@ static void handleUiRpc(UiJob::Kind kind, const std::string& json) {
   job->kind = kind;
   job->json = json;
   job->replyWhenDone = true;
+  job->rid = tReplyRid;
   enqueueUiAndWait(job);
 }
 
@@ -1741,11 +2293,21 @@ static void handleNote(const std::string& json, bool on) {
 
 #endif // JASWAVE_HAS_VST3_SDK
 
+static void handleLineImpl(const std::string& line);
+
 static void handleLine(const std::string& line) {
   if (line.empty()) return;
+  // "rid" (opcional): el puente lo usa para emparejar respuestas; sin él se responde como antes.
+  const double rid = getNumberField(line, "rid", -1);
+  tReplyRid = rid >= 0 ? static_cast<long long>(rid) : -1;
+  handleLineImpl(line);
+  tReplyRid = -1;
+}
+
+static void handleLineImpl(const std::string& line) {
   const std::string type = getStringField(line, "type");
   if (type == "ping") {
-    std::string extra = std::string("\"latencySamples\":0,\"editorReady\":") +
+    std::string extra = std::string("\"ridEcho\":true,\"latencySamples\":0,\"editorReady\":") +
                         (kAudioReady ? "true" : "false") + ",\"audioReady\":" +
                         (kAudioReady ? "true" : "false");
 #if defined(JASWAVE_HAS_VST3_SDK)
@@ -1812,6 +2374,12 @@ static void handleLine(const std::string& line) {
     jaswave_mix_bus_set_input_rate(sr);
 #endif
     return;  // fire-and-forget: no reply (no mezclar con la cola RPC)
+  }
+  if (type == "setMonitorMix") {
+    const float g = static_cast<float>(getNumberField(line, "gain", 1));
+    gMonitorGain.store(std::max(0.f, std::min(2.f, g)), std::memory_order_relaxed);
+    gMonitorMuted.store(getBoolField(line, "muted", false), std::memory_order_relaxed);
+    return;  // fire-and-forget
   }
   if (type == "setSlotMix" || type == "setMasterMix") {
 #if defined(JASWAVE_HAS_VST3_SDK)
@@ -1899,8 +2467,16 @@ static void handleLine(const std::string& line) {
             if (t2 != std::string::npos) tc.gain = std::stof(seg.substr(tilde + 1, t2 - tilde - 1));
             if (t2 != std::string::npos && t3 != std::string::npos)
               tc.pan = std::stof(seg.substr(t2 + 1, t3 - t2 - 1));
+            // Opcional `~padre` (stem de la carpeta-bus; vacío o -1 = master).
+            const size_t t4 = t3 == std::string::npos ? std::string::npos : seg.find('~', t3 + 1);
+            const bool conPadre = t4 != std::string::npos && t4 < firstBar;
             if (t3 != std::string::npos && t3 < firstBar)
-              tc.muted = seg.substr(t3 + 1, firstBar - t3 - 1) == "1";
+              tc.muted = seg.substr(t3 + 1, (conPadre ? t4 : firstBar) - t3 - 1) == "1";
+            if (conPadre) {
+              const std::string ps = seg.substr(t4 + 1, firstBar - t4 - 1);
+              const int pv = ps.empty() ? -1 : std::stoi(ps);
+              tc.parentStem = (pv >= 0 && pv < kMaxGraphTracks) ? static_cast<uint16_t>(pv) : kSinPadre;
+            }
           } catch (...) {
           }
         }
@@ -2033,6 +2609,22 @@ static void handleLine(const std::string& line) {
   }
   if (type == "noteOff") {
     handleNote(line, false);
+    return;
+  }
+  if (type == "hardStop") {
+    // Stop del transporte: silencio inmediato (el siguiente bloque ya sale vacío) y reinicio del DSP de cada
+    // plugin en el hilo UI. Durante un bounce no se toca nada.
+#if defined(JASWAVE_HAS_VST3_SDK)
+    if (gOfflineActive.load()) {
+      replyFail("RenderBusy", "Hay un bounce en curso");
+      return;
+    }
+    gHardStop.store(true, std::memory_order_release);
+    jaswave::clip_stop_all_scheduled();
+    enqueueUiAsync(UiJob::Kind::HardStop, line, true);
+#else
+    replyOk();
+#endif
     return;
   }
   if (type == "allNotesOff") {
@@ -2205,7 +2797,18 @@ static void handleLine(const std::string& line) {
     const int64_t sourceOffset = static_cast<int64_t>(getNumberField(line, "sourceOffsetSamples", 0));
     const float gain = static_cast<float>(getNumberField(line, "gain", 1.0));
     const float pan = static_cast<float>(getNumberField(line, "pan", 0.0));
-    jaswave::clip_schedule(clipId, trackIndex, startSample, durationSamples, sourceOffset, gain, pan);
+    jaswave::ClipFades fades;
+    fades.clipStartSample = static_cast<int64_t>(getNumberField(line, "clipStartSample", static_cast<double>(startSample)));
+    fades.clipEndSample = static_cast<int64_t>(
+        getNumberField(line, "clipEndSample", static_cast<double>(startSample + durationSamples)));
+    fades.inSamples = std::max<int64_t>(0, static_cast<int64_t>(getNumberField(line, "fadeInSamples", 0)));
+    fades.outSamples = std::max<int64_t>(0, static_cast<int64_t>(getNumberField(line, "fadeOutSamples", 0)));
+    fades.inCurve = static_cast<int>(getNumberField(line, "fadeInCurve", 0));
+    fades.outCurve = static_cast<int>(getNumberField(line, "fadeOutCurve", 0));
+    fades.reverse = getBoolField(line, "reverse", false);
+    fades.regionStart = static_cast<int64_t>(getNumberField(line, "regionStartSample", 0));
+    fades.regionLen = static_cast<int64_t>(getNumberField(line, "regionLenSamples", 0));
+    jaswave::clip_schedule(clipId, trackIndex, startSample, durationSamples, sourceOffset, gain, pan, fades);
     return;
   }
   if (type == "clip.stopAll") {
@@ -2269,45 +2872,12 @@ static void handleLine(const std::string& line) {
     return;
   }
   if (type == "getPluginState") {
-    std::string slotId = getStringField(line, "slotId");
-    if (slotId.empty()) slotId = gActiveSlot;
-    std::lock_guard<std::mutex> lock(gSlotsMutex);
-    auto* slot = findSlotUnlocked(slotId);
-    if (!slot) {
-      replyFail("PluginNotFound", "slot no cargado: " + slotId);
-      return;
-    }
-    std::vector<uint8_t> bytes;
-    std::string err;
-    if (!slot->getStateChunk(bytes, err)) {
-      replyFail("NoChunk", err);
-      return;
-    }
-    replyOk("\"slotId\":\"" + jsonEscape(slotId) + "\",\"stateBase64\":\"" +
-            jsonEscape(encodeBase64(bytes.data(), bytes.size())) + "\"");
+    // Hilo UI + respuesta asíncrona (no bloquea stdin/MIDI mientras un sampler pesado serializa su estado).
+    enqueueUiAsync(UiJob::Kind::GetState, line, true);
     return;
   }
   if (type == "setPluginState") {
-    std::string slotId = getStringField(line, "slotId");
-    if (slotId.empty()) slotId = gActiveSlot;
-    const std::string b64 = getStringField(line, "stateBase64");
-    std::vector<uint8_t> bytes;
-    if (b64.empty() || !decodeBase64(b64, bytes) || bytes.empty()) {
-      replyFail("InvalidArgs", "stateBase64 inválido");
-      return;
-    }
-    std::lock_guard<std::mutex> lock(gSlotsMutex);
-    auto* slot = findSlotUnlocked(slotId);
-    if (!slot) {
-      replyFail("PluginNotFound", "slot no cargado: " + slotId);
-      return;
-    }
-    std::string err;
-    if (!slot->setStateChunk(bytes.data(), bytes.size(), err)) {
-      replyFail("SetChunkFailed", err);
-      return;
-    }
-    replyOk("\"slotId\":\"" + jsonEscape(slotId) + "\"");
+    enqueueUiAsync(UiJob::Kind::SetState, line, true);
     return;
   }
   if (type == "openEditor") {
@@ -2360,6 +2930,17 @@ static void handleLine(const std::string& line) {
     replyOk();
     return;
   }
+  if (type == "pinEditor") {
+    // {slotId, pinned, index}: ancla (TOPMOST) el editor flotante; index 0 = el de más arriba entre anclados.
+    handleUiRpc(UiJob::Kind::PinEditor, line);
+    return;
+  }
+  if (type == "setPinsVisible") {
+    // {visible}: política con la app minimizada: los anclados se ocultan y vuelven al restaurar.
+    enqueueUiAsync(UiJob::Kind::PinsVisible, line, false);
+    replyOk();
+    return;
+  }
   if (type == "listAudioDevices") {
     handleUiRpc(UiJob::Kind::ListDevices, line);
     return;
@@ -2375,6 +2956,41 @@ static void handleLine(const std::string& line) {
   }
   if (type == "getAudioDevice") {
     handleUiRpc(UiJob::Kind::GetDevice, line);
+    return;
+  }
+  if (type == "acquireAudioEngine") {
+    // Reserva del motor de audio de la sesión antes de abrir dispositivo (una sola instancia suena).
+    std::string err;
+    if (!jaswave_audio_engine_acquire(err)) {
+      replyFail("AudioEngineBusy", err);
+      return;
+    }
+    replyOk("\"engineOwned\":true");
+    return;
+  }
+  if (type == "requestAudioEngine") {
+    // "Usar audio aquí": pide al host dueño (otra instancia) que ceda el motor; luego se reintenta la reserva.
+    if (jaswave_audio_engine_owned()) {
+      replyOk("\"engineOwned\":true");
+      return;
+    }
+    if (!jaswave_audio_engine_request_release()) {
+      replyFail("AudioEngineBusy", "no se pudo avisar a la otra instancia");
+      return;
+    }
+    replyOk("\"requested\":true");
+    return;
+  }
+  if (type == "releaseAudioEngine") {
+    // Cede el motor: se para el dispositivo y se suelta la reserva; los plugins siguen cargados.
+    if (gOfflineActive.load()) {
+      replyFail("RenderBusy", "Hay un bounce en curso: el motor no se puede ceder ahora");
+      return;
+    }
+    jaswave_audio_set_renderer(nullptr);
+    jaswave_audio_engine_release();
+    jaswave_audio_set_renderer(renderMix);
+    replyOk("\"engineOwned\":false");
     return;
   }
   if (type == "testTone") {
@@ -2413,7 +3029,7 @@ static void handleLine(const std::string& line) {
         if (!slot || !slot->hasEditor()) continue;
         if (!first) js << ",";
         first = false;
-        js << "{\"slot\":\"" << jsonEscape(id) << "\",\"embedded\":" << (slot->editorEmbedded() ? "true" : "false") << "}";
+        js << "{\"slot\":\"" << jsonEscape(id) << "\",\"embedded\":" << (slot->editorEmbedded() ? "true" : "false") << ",\"pinned\":" << (slot->editorPinned() ? "true" : "false") << "}";
       }
     }
     js << "]";
@@ -2506,6 +3122,57 @@ static void handleLine(const std::string& line) {
     replyOk(js.str());
     return;
   }
+  if (type == "getStemSpectrum") {
+    // Igual que getMasterSpectrum pero de la salida post-fader de un stem. Cada stem tiene su tap y su
+    // analizador: varias tiras pueden mostrar su espectro a la vez. {index, release:true} apaga ese tap;
+    // index < 0 los apaga todos.
+    struct EstadoEspectroStem {
+      std::unique_ptr<JasWaveDsp::SpectrumAnalyzer> analyzer;
+      std::chrono::steady_clock::time_point last{};
+    };
+    static EstadoEspectroStem estados[kMaxGraphTracks];
+    const auto now = std::chrono::steady_clock::now();
+    // Taps abandonados (tira cerrada sin avisar, renderer recargado): dejan de costar en el hilo de audio.
+    for (int i = 0; i < kMaxGraphTracks; ++i) {
+      if (gStemTapActivo[i].load(std::memory_order_relaxed) && now - estados[i].last > std::chrono::seconds(2)) {
+        gStemTapActivo[i].store(false, std::memory_order_relaxed);
+      }
+    }
+    const int index = static_cast<int>(getNumberField(line, "index", -1));
+    if (index < 0 || index >= kMaxGraphTracks) {
+      for (auto& a : gStemTapActivo) a.store(false, std::memory_order_relaxed);
+      replyOk();
+      return;
+    }
+    auto& est = estados[index];
+    if (getBoolField(line, "release", false)) {
+      gStemTapActivo[index].store(false, std::memory_order_relaxed);
+      replyOk();
+      return;
+    }
+    if (!est.analyzer) est.analyzer = std::make_unique<JasWaveDsp::SpectrumAnalyzer>();
+    if (!gStemTapActivo[index].exchange(true, std::memory_order_relaxed)) {
+      est.analyzer->reset();
+      est.last = now;
+    }
+    const float dt = std::chrono::duration<float>(now - est.last).count();
+    est.last = now;
+    const int count = static_cast<int>(std::max(8.0, std::min(256.0, getNumberField(line, "count", 48))));
+    auto& analyzer = *est.analyzer;
+    analyzer.updateBalistica(gStemTaps[index], currentSampleRate(), dt, 14.0f);
+    std::vector<float> cols;
+    analyzer.columns(cols, count, 20.0, 20000.0, 0.0);
+    std::ostringstream js;
+    js << "\"index\":" << index << ",\"columns\":[";
+    for (size_t i = 0; i < cols.size(); ++i) {
+      char nb[24];
+      std::snprintf(nb, sizeof(nb), "%s%.1f", i ? "," : "", static_cast<double>(cols[i] < -140.f ? -140.f : cols[i]));
+      js << nb;
+    }
+    js << "]";
+    replyOk(js.str());
+    return;
+  }
   if (type == "resetMasterLoudness") {
     gMasterLoudnessReset.store(true, std::memory_order_relaxed);
     replyOk();
@@ -2536,29 +3203,28 @@ static void handleLine(const std::string& line) {
     const int idx = gRtBuf.load(std::memory_order_acquire);
     const uint8_t trackN = gRtTrackCount[idx];
     bool first = true;
+    auto emitStem = [&](uint16_t si) {
+      if (!first) js << ',';
+      first = false;
+      js << "{\"index\":" << si << ",\"peak\":";
+      appendJsonFloat(js, gMeterStemPeak[si].load(std::memory_order_relaxed));
+      js << ",\"peakL\":";
+      appendJsonFloat(js, gMeterStemPeakL[si].load(std::memory_order_relaxed));
+      js << ",\"peakR\":";
+      appendJsonFloat(js, gMeterStemPeakR[si].load(std::memory_order_relaxed));
+      js << ",\"sidechainPeak\":";
+      appendJsonFloat(js, gMeterSidechainPeak[si].load(std::memory_order_relaxed));
+      js << '}';
+    };
     if (trackN > 0) {
       for (uint8_t t = 0; t < trackN && t < kMaxGraphTracks; ++t) {
         uint16_t si = gRtTracks[idx][t].stemIndex;
         if (si >= kMaxGraphTracks) si = t;
-        if (!first) js << ',';
-        first = false;
-        js << "{\"index\":" << si << ",\"peak\":";
-        appendJsonFloat(js, gMeterStemPeak[si].load(std::memory_order_relaxed));
-        js << ",\"sidechainPeak\":";
-        appendJsonFloat(js, gMeterSidechainPeak[si].load(std::memory_order_relaxed));
-        js << '}';
+        emitStem(si);
       }
     } else {
       // Graph aún no publicado: devolver picos por índice lineal (layout Web Audio).
-      for (uint16_t si = 0; si < 16; ++si) {
-        if (!first) js << ',';
-        first = false;
-        js << "{\"index\":" << si << ",\"peak\":";
-        appendJsonFloat(js, gMeterStemPeak[si].load(std::memory_order_relaxed));
-        js << ",\"sidechainPeak\":";
-        appendJsonFloat(js, gMeterSidechainPeak[si].load(std::memory_order_relaxed));
-        js << '}';
-      }
+      for (uint16_t si = 0; si < 16; ++si) emitStem(si);
     }
     js << ']';
     replyOk(js.str());
@@ -2582,7 +3248,8 @@ static void handleLine(const std::string& line) {
     gOfflineCancel.store(false);
     gOfflinePcm.clear();
     const double bits = getNumberField(line, "bitDepth", 16);
-    gOfflineBits = bits >= 24 ? 24u : 16u;
+    gOfflineBits = bits >= 32 ? 32u : bits >= 24 ? 24u : 16u;
+    gOfflineTransparentMaster.store(getBoolField(line, "transparentMaster", false));
     const double sr = getNumberField(line, "sampleRate", currentSampleRate());
     gOfflineSampleRate = sr >= 8000 ? static_cast<uint32_t>(sr) : static_cast<uint32_t>(currentSampleRate());
     // Streaming a disco: se abre el WAV y se escribe la cabecera por adelantado.
@@ -2591,11 +3258,7 @@ static void handleLine(const std::string& line) {
       std::fclose(gOfflineFile);
       gOfflineFile = nullptr;
     }
-#ifdef _WIN32
-    if (fopen_s(&gOfflineFile, gOfflineOutPath.c_str(), "wb") != 0) gOfflineFile = nullptr;
-#else
-    gOfflineFile = std::fopen(gOfflineOutPath.c_str(), "wb");
-#endif
+    gOfflineFile = openFileUtf8(gOfflineOutPath, "wb");
     if (!gOfflineFile) {
       replyFail("RenderWriteFailed", "No se pudo abrir outPath");
       return;
@@ -2604,8 +3267,17 @@ static void handleLine(const std::string& line) {
     if (!writeOfflineWavHeader(gOfflineFile, gOfflineSampleRate, gOfflineBits, gOfflineTotal)) {
       std::fclose(gOfflineFile);
       gOfflineFile = nullptr;
-      std::remove(gOfflineOutPath.c_str());
+      removeFileUtf8(gOfflineOutPath);
       replyFail("RenderWriteFailed", "No se pudo escribir la cabecera WAV");
+      return;
+    }
+    // stemOuts: "stemIndex|ruta;stemIndex|ruta…" — un WAV por pista/bus en la misma pasada.
+    std::string stemErr;
+    if (!openOfflineStems(getStringField(line, "stemOuts"), getStringField(line, "stemTap") == "pre", stemErr)) {
+      std::fclose(gOfflineFile);
+      gOfflineFile = nullptr;
+      removeFileUtf8(gOfflineOutPath);
+      replyFail("RenderWriteFailed", stemErr);
       return;
     }
     gOfflineRunning = true;
@@ -2644,7 +3316,8 @@ static void handleLine(const std::string& line) {
     // A partir del primer bloque ya no se admiten cambios en la línea de tiempo.
     gOfflineSetup.store(false);
     // El PCM se escribe a disco: no se acumula en RAM (renders largos).
-    if (!writeOfflinePcmBlock(gOfflineFile, block, gOfflineBits)) {
+    if (!writeOfflinePcmBlock(gOfflineFile, block.data(), block.size(), gOfflineBits) ||
+        !writeOfflineStemsBlock(frames)) {
       gOfflineRunning = false;
       gOfflineActive.store(false);
       gOfflineSetup.store(false);
@@ -2653,7 +3326,8 @@ static void handleLine(const std::string& line) {
         gOfflineFile = nullptr;
       }
       // Se borra el WAV parcial: no es utilizable.
-      if (!gOfflineOutPath.empty()) std::remove(gOfflineOutPath.c_str());
+      if (!gOfflineOutPath.empty()) removeFileUtf8(gOfflineOutPath);
+      closeOfflineStems(false);
       jaswave_mix_bus_set_offline(false);
       jaswave_audio_set_renderer(renderMix);
       replyFail("RenderWriteFailed", "No se pudo escribir en outPath");
@@ -2682,7 +3356,9 @@ static void handleLine(const std::string& line) {
       std::fclose(gOfflineFile);
       gOfflineFile = nullptr;
     }
-    if (parcial && !gOfflineOutPath.empty()) std::remove(gOfflineOutPath.c_str());
+    if (parcial && !gOfflineOutPath.empty()) removeFileUtf8(gOfflineOutPath);
+    closeOfflineStems(false);
+    gOfflineTransparentMaster.store(false);
     jaswave::transport_clock_set_playing(false);
     jaswave_mix_bus_set_offline(false);
     jaswave_audio_set_renderer(renderMix);
@@ -2704,6 +3380,8 @@ static void handleLine(const std::string& line) {
         std::fclose(gOfflineFile);
         gOfflineFile = nullptr;
       }
+      closeOfflineStems(false);
+      gOfflineTransparentMaster.store(false);
       jaswave_mix_bus_set_offline(false);
       jaswave_audio_set_renderer(renderMix);
       replyFail("RenderWriteFailed", msg);
@@ -2717,7 +3395,9 @@ static void handleLine(const std::string& line) {
         std::fclose(gOfflineFile);
         gOfflineFile = nullptr;
       }
-      if (!gOfflineOutPath.empty()) std::remove(gOfflineOutPath.c_str());
+      if (!gOfflineOutPath.empty()) removeFileUtf8(gOfflineOutPath);
+      closeOfflineStems(false);
+      gOfflineTransparentMaster.store(false);
       jaswave::transport_clock_set_playing(false);
       jaswave_mix_bus_set_offline(false);
       jaswave_audio_set_renderer(renderMix);
@@ -2737,15 +3417,29 @@ static void handleLine(const std::string& line) {
     }
     gOfflineFile = nullptr;
     const std::string path = gOfflineOutPath;
+    std::string stemsJson = "[";
+    for (size_t i = 0; i < gOfflineStems.size(); ++i) {
+      if (i) stemsJson += ",";
+      stemsJson += "{\"stemIndex\":" + std::to_string(gOfflineStems[i].stemIndex) + ",\"path\":\"" +
+                   jsonEscape(gOfflineStems[i].path) + "\"}";
+    }
+    stemsJson += "]";
+    const bool stemsOk = closeOfflineStems(true);
     gOfflineRunning = false;
     gOfflineActive.store(false);
     gOfflineSetup.store(false);
     gOfflinePcm.clear();
+    gOfflineTransparentMaster.store(false);
     jaswave::transport_clock_set_playing(false);
     jaswave_mix_bus_set_offline(false);
     jaswave_audio_set_renderer(renderMix);
+    if (!stemsOk) {
+      replyFail("RenderWriteFailed", "La mezcla se escribió, pero no se pudieron cerrar los stems");
+      return;
+    }
     replyOk("\"path\":\"" + jsonEscape(path) + "\",\"frames\":" + std::to_string(frames) +
-            ",\"sampleRate\":" + std::to_string(sr) + ",\"bitDepth\":" + std::to_string(gOfflineBits));
+            ",\"sampleRate\":" + std::to_string(sr) + ",\"bitDepth\":" + std::to_string(gOfflineBits) +
+            ",\"stems\":" + stemsJson);
     return;
   }
   if (type == "focusEditor" || type == "crashReport") {
@@ -2801,6 +3495,7 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
 #if defined(JASWAVE_HAS_VST3_SDK)
   gMainThreadId = GetCurrentThreadId();
+  vst3SetPinActivatedHook(&onPinnedEditorActivated);
   jaswave_audio_set_renderer(renderMix);
   {
     std::string mixErr;
@@ -2811,12 +3506,36 @@ int main(int argc, char** argv) {
     }
   }
   jaswave_midi_open_all();
+  // Otra instancia pide el motor: lo decide la app (para el transporte antes de soltar).
+  jaswave_audio_engine_on_release_request([] {
+    std::fprintf(stderr, "JW_ENGINE_RELEASE_REQUEST\n");
+    std::fflush(stderr);
+  });
   MSG pumpInit{};
   PeekMessageW(&pumpInit, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
 #endif
 #endif
 
   std::atomic<bool> running{true};
+#ifdef _WIN32
+  const DWORD mainThreadId = GetCurrentThreadId();
+  // Barra espaciadora con el foco en la ventana de un plugin = Play/Stop del DAW (como en el resto de la app).
+  // Se consume (el plugin no la ve) salvo en campos de texto del propio plugin, donde se escribe un espacio.
+  auto esEspacioDeTransporte = [](const MSG& m) -> bool {
+    if (m.message != WM_KEYDOWN && m.message != WM_KEYUP) return false;
+    if (m.wParam != VK_SPACE) return false;
+    if (GetKeyState(VK_CONTROL) < 0 || GetKeyState(VK_MENU) < 0 || GetKeyState(VK_SHIFT) < 0) return false;
+    wchar_t clase[64]{};
+    GetClassNameW(m.hwnd, clase, 63);
+    if (wcsstr(clase, L"Edit") || wcsstr(clase, L"EDIT") || wcsstr(clase, L"RichEdit")) return false;
+    // Solo al pulsar (sin autorepetición); el keyup se consume para que el plugin no reciba medio evento.
+    if (m.message == WM_KEYDOWN && (m.lParam & (1 << 30)) == 0) {
+      std::fprintf(stderr, "JW_TRANSPORT_TOGGLE\n");
+      std::fflush(stderr);
+    }
+    return true;
+  };
+#endif
   std::thread stdinThread([&] {
     std::string line;
     while (std::getline(std::cin, line)) {
@@ -2828,7 +3547,8 @@ int main(int argc, char** argv) {
     stopAudioDevice();
 #endif
 #ifdef _WIN32
-    PostQuitMessage(0);
+    // WM_QUIT debe ir a la cola del hilo principal (PostQuitMessage lo enviaría a la de este hilo).
+    PostThreadMessageW(mainThreadId, WM_QUIT, 0, 0);
 #endif
   });
 #ifdef _WIN32
@@ -2843,7 +3563,7 @@ int main(int argc, char** argv) {
       running = false;
       break;
     }
-    if (msg.message != WM_JASWAVE_JOB) {
+    if (msg.message != WM_JASWAVE_JOB && !esEspacioDeTransporte(msg)) {
       TranslateMessage(&msg);
       DispatchMessageW(&msg);
     }
@@ -2867,6 +3587,8 @@ int main(int argc, char** argv) {
   stopAudioDevice();
   jaswave_mix_bus_stop();
 #endif
+  // Sin esto el std::thread de MIDI sigue unible al salir y std::terminate mata el proceso (0xC0000409).
+  jaswave_midi_close_all();
 #ifdef _WIN32
   OleUninitialize();
 #endif

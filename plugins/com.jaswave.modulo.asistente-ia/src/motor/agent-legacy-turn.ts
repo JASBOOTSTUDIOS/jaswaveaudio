@@ -32,6 +32,7 @@ import {
 } from './ai-clarify'
 
 import { buildAssembledAgentContext } from './agent-context-bridge'
+import { habilidadesDeEspecialistas } from './especialistas-habilidades'
 import { dryRunDawActions, ensureToolRegistryContext, planDawActions } from './agent-tool-bridge'
 
 import { enqueueAgentJob, planHasPendingTasks } from './agent-job-queue'
@@ -58,7 +59,7 @@ import { listAgentToolSchemas } from './agent-tool-schemas'
 import { FALLBACK_TOOLS, runFallbackTool } from './agent-fallback-tools'
 import type { ApplyPendingAnswer } from './agent-engine-host'
 import { iaRemotaDisponible } from '../ia/transporte-ia'
-import { actionsLackMidiNoteEdits, agentDecisionFromToolCalls, answerLocalReadQuery, appendAiDawAudit, applyMarkdownDocsFromModel, autonomyBlocksMutation, bindAgentDocsDisk, buildAgentSystemPrompt, buildHarnessHealthContext, buildMidiAuditClarifications, buildMidiAuditReport, buildReadOnlyProjectContext, buildStyleGapReport, buildTrackPickClarifications, collectCitedMessages, createBudgetGuard, ensureMusicBuildForFullProject, ensurePlanFromCompose, ensureWipeProjectAction, executeDawActions, extractTrackHintFromUserText, extractTrackIdFromClarifyAnswer, forcePreviewAplicar, formatActionResultsForUser, formatAgentBudgetStopFor, formatMusicalSelectionForPrompt, formatResolvedTrackContext, formatUserTurnWithCitations, getMusicalSelectionAnchor, historyWithCitedPins, inferBpmFromTempoIntent, isClassifiedAction, isClipSectionSplitIntent, isGarbageAssistantReply, isGenreRewriteIntent, isMidiClipEditIntent, isMutatingAction, isOffTopicCreatePlanReply, isProjectAuditIntent, isProjectWipeIntent, isSoloMusicBuildPending, isSongRefineIntent, isStyleApplyIntent, isStyleGapIntent, isTempoOnlyRefine, limitToOneMutatingAction, logPermissionForAction, modeBlocksMutation, parseActionsFromText, parseAgentDecisionFromText, parseDocBlocksFromText, parsePlanFromText, partitionActions, requestOpenTool, resolveTrackHint, runPostTurnCertifyPipeline, specToProjectPlan, stripActionsBlock, styleEnhanceProfileFromText, syncPlanAfterDawChange, wantsFullProject, withAplicarTrue, workingMode } from '@jaswave/host-sdk'
+import { actionsLackMidiNoteEdits, agentDecisionFromToolCalls, answerLocalReadQuery, appendAiDawAudit, applyMarkdownDocsFromModel, autonomyBlocksMutation, bindAgentDocsDisk, buildAgentSystemPrompt, buildHarnessHealthContext, buildMidiAuditClarifications, buildMidiAuditReport, buildReadOnlyProjectContext, buildStyleGapReport, buildTrackPickClarifications, collectCitedMessages, createBudgetGuard, HABILIDADES, elegirHabilidad, ensureMusicBuildForFullProject, ensurePlanFromCompose, ensureWipeProjectAction, executeDawActions, extractTrackHintFromUserText, extractTrackIdFromClarifyAnswer, forcePreviewAplicar, formatActionResultsForUser, formatAgentBudgetStopFor, formatMusicalSelectionForPrompt, formatResolvedTrackContext, formatUserTurnWithCitations, getMusicalSelectionAnchor, historyWithCitedPins, inferBpmFromTempoIntent, isClassifiedAction, isClipSectionSplitIntent, isGarbageAssistantReply, isGenreRewriteIntent, isMidiClipEditIntent, isMutatingAction, isOffTopicCreatePlanReply, isProjectAuditIntent, isProjectWipeIntent, isSoloMusicBuildPending, isSongRefineIntent, isStyleApplyIntent, isStyleGapIntent, isTempoOnlyRefine, limitToOneMutatingAction, logPermissionForAction, modeBlocksMutation, parseActionsFromText, parseAgentDecisionFromText, parseDocBlocksFromText, parsePlanFromText, partitionActions, requestOpenTool, resolveTrackHint, runPostTurnCertifyPipeline, specToProjectPlan, stripActionsBlock, styleEnhanceProfileFromText, syncPlanAfterDawChange, wantsFullProject, withAplicarTrue, workingMode } from '@jaswave/host-sdk'
 import type { ActionResult, AgentLoopChatReply, AgentMode, DAWState, DawAction, EngineAnswer, EngineChatMessage, EngineNeed, MusicBuildResult, PlanEvaluation, TiendaDAW, TurnContext, TurnProgram, TurnProgramOutcome, ProjectPlanData } from '@jaswave/host-sdk'
 
 export const LEGACY_PROGRAM_ID = 'coproductor-legacy'
@@ -535,6 +536,10 @@ async function runCoproducerTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<T
       const wantsAuditFix =
         isMidiAuditFixReply(userText) ||
         (/^arr[eé]glalo\b/i.test(userText.trim()) && !auditIntent)
+      const habilidad =
+        resolvedMode !== 'ask' && !auditIntent && !wantsAuditFix && !styleGapIntent && !isClarificationReply(userText)
+          ? elegirHabilidad({ userText: workText, state }, [...HABILIDADES, ...habilidadesDeEspecialistas()])
+          : null
 
       if (isGreetingOrChitchat(userText)) {
         accumulated = 'Hola. Dime qué quieres crear o cambiar: pista, MIDI, tempo…'
@@ -599,6 +604,90 @@ async function runCoproducerTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<T
         }
       } else if (isMidiAuditSkipFixReply(userText)) {
         accumulated = 'De acuerdo — dejo el proyecto como está. El informe anterior sigue válido.'
+      } else if (!local && !skipAiTurn && habilidad) {
+        // Habilidad ejecutable: una sola llamada creativa (brief JSON) + herramientas deterministas.
+        // Rápido y fiable con modelos pequeños; si el modelo falla, la habilidad usa su propio criterio.
+        const inicioHabilidad = Date.now()
+        setHarnessPhase(`${habilidad.nombre}: diseñando…`)
+        const [sistemaBrief, ...usuarioBrief] = habilidad.mensajesBrief({ userText: workText, state })
+        let respuestaBrief: string | null = null
+        if (iaRemotaDisponible()) {
+          const cfgBrief = loadAiSettings()
+          // Tope amplio: los modelos con razonamiento oculto gastan tokens «pensando» y, con un tope bajo,
+          // devuelven el contenido vacío. El tope no cuesta tiempo si el modelo termina antes.
+          // Un modelo gratuito puede tardar minutos: pasado el límite se sigue con el criterio de la habilidad.
+          const LIMITE_BRIEF_MS = 150_000
+          const pedirBrief = async (system: string | undefined, contenido: string) => {
+            let temporizador: ReturnType<typeof setTimeout> | undefined
+            const limite = new Promise<null>((resolve) => {
+              temporizador = setTimeout(() => resolve(null), LIMITE_BRIEF_MS)
+            })
+            const r = await Promise.race([limite, ctx.chat({
+              purpose: 'reasoning',
+              system,
+              messages: [{ role: 'user', content: contenido }] as EngineChatMessage[],
+              temperature: Math.min(0.95, Math.max(cfgBrief.temperature, 0.7)),
+              maxTokens: Math.max(cfgBrief.maxTokens, 12000),
+              skipPlan: true,
+            })])
+            clearTimeout(temporizador)
+            if (!stillMine()) throw new DOMException('Aborted', 'AbortError')
+            return r?.success && r.content?.trim() ? r.content : null
+          }
+          const usuario = usuarioBrief.map((m) => m.content).join('\n\n')
+          respuestaBrief = await pedirBrief(sistemaBrief?.content, usuario)
+          const quedaTiempo = Date.now() - inicioHabilidad < 60_000
+          if (quedaTiempo && (!respuestaBrief || !/\{/.test(respuestaBrief))) {
+            // Reintento compacto: todo en un único mensaje de usuario (algunos modelos gratuitos ignoran el system).
+            setHarnessPhase(`${habilidad.nombre}: reintentando con el modelo…`)
+            respuestaBrief = (await pedirBrief(undefined, [sistemaBrief?.content ?? '', usuario].join('\n\n'))) ?? respuestaBrief
+          }
+        }
+        const planHabilidad = habilidad.planificar({ userText: workText, state }, respuestaBrief)
+        console.info(
+          `[habilidad] ${habilidad.id}: brief ${respuestaBrief ? `${respuestaBrief.length} car.` : 'vacío'} · ` +
+            `${planHabilidad.creativoDelModelo ? 'decisiones del modelo' : 'respaldo local'} · ${Date.now() - inicioHabilidad} ms` +
+            (respuestaBrief && !planHabilidad.creativoDelModelo ? ` · «${respuestaBrief.replace(/\s+/g, ' ').slice(0, 600)}»` : ''),
+        )
+        finalReasoningSteps = [
+          {
+            phase: 'commit',
+            title: habilidad.nombre,
+            content: planHabilidad.decisiones.map((d) => `- ${d}`).join('\n'),
+            collapsed: true,
+            startedAt: inicioHabilidad,
+            endedAt: Date.now(),
+          },
+        ]
+        if (planHabilidad.preguntas?.length) {
+          // Falta un dato imprescindible: se pregunta en lugar de inventar pistas o clips.
+          accumulated = [planHabilidad.resumen, ...planHabilidad.preguntas.map((q) => `- ${q}`)].filter(Boolean).join('\n')
+        } else {
+          const out = await processActionsForMode({
+            tienda: dawStore,
+            actions: planHabilidad.acciones as DawAction[],
+            resolvedMode,
+            userText,
+            conversationId: conversation.id,
+            messageId: assistantMsgId,
+            source: 'fallback',
+          })
+          lastResults = out.results
+          docEdits = appendDocEdits(docEdits, out.results)
+          pendingActions = out.pendingActions
+          confirmActions = out.confirmActions
+          ranMutations = out.ranMutations
+          absorbTurnMeta(out, turnMeta)
+          actionsSummary = formatActionResultsForUser(resultsOrPending(out))
+          accumulated = [
+            planHabilidad.resumen,
+            modeBlocksMutation(resolvedMode) || out.pendingActions?.actions.length
+              ? 'Revisa la propuesta y pulsa **Aplicar** (o **Todas**) para producirla.'
+              : actionsSummary,
+          ]
+            .filter(Boolean)
+            .join('\n\n')
+        }
       } else if (!local && !skipAiTurn) {
         if (!iaRemotaDisponible()) {
           // Sin modelo remoto (ni Electron ni backend): si pide crear, ejecutamos igual en el DAW local
@@ -699,8 +788,10 @@ async function runCoproducerTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<T
               const r = await ctx.chat({
                 purpose: 'reasoning',
                 messages: reasonMessages as EngineChatMessage[],
-                temperature: Math.min(0.9, Math.max(cfg.temperature, 0.55)),
-                maxTokens: Math.max(cfg.maxTokens, 16384),
+                // Plan breve: los modelos débiles divagan con temperatura alta y presupuestos enormes.
+                temperature: Math.min(0.6, Math.max(cfg.temperature, 0.3)),
+                // Tope amplio por los modelos con razonamiento oculto (ver brief de habilidades); el plan es corto igualmente.
+                maxTokens: Math.max(cfg.maxTokens, 12000),
                 skipPlan: true,
               })
               if (!stillMine()) return { success: false }
@@ -712,7 +803,7 @@ async function runCoproducerTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<T
 
           const systemContext = [
             buildAssembledAgentContext(dawStore, state, userText, chatTurns, presetsBlock),
-            formatMusicalSelectionForPrompt(getMusicalSelectionAnchor()),
+            formatMusicalSelectionForPrompt(getMusicalSelectionAnchor(), userText),
             buildAgentSystemPrompt(state, userText, agentMode, messages),
             styleGapSeed
               ? [
@@ -1687,7 +1778,7 @@ async function runCoproducerTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<T
           ? `Te preparé el plan de **${musicBuild.spec.nombre}** (${musicBuild.spec.tracks.length} pistas). Revisa la tarjeta y pulsa **Crear en el proyecto**.`
           : musicBuild?.applied
             ? `Listo: **${musicBuild.spec.nombre}** ya está en el arrange.`
-            : accumulated || '⚠️ Sin respuesta.'
+            : accumulated || 'No recibí respuesta. Inténtalo de nuevo.'
       updateMessageContent(
         conversation.id,
         assistantMsgId,
@@ -1716,7 +1807,7 @@ async function runCoproducerTurn(ctx: TurnContext, tienda: TiendaDAW): Promise<T
   } catch (err: unknown) {
     const aborted = (err instanceof DOMException && err.name === 'AbortError') || ac.signal.aborted
     if (aborted) {
-      updateMessageContent(conversation.id, assistantMsgId, '⏹ Ejecución detenida.')
+      updateMessageContent(conversation.id, assistantMsgId, 'Detenido.')
       touch()
       throw err
     }

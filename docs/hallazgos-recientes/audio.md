@@ -200,3 +200,5 @@ await in (anonymous)
 (anonymous) @ track-vst-runtime.ts:560
 (anonymous) @ track-vst-runtime.ts:573
 track-vst-runtime.ts:462 [track-vst] load failed C:\Studio_Musical\Reaper_VST\4Front E-Piano x64.dll load falló
+
+5. a mi me dijeron que tu claude tienes una herramienta que es capaz de controlar la PC y probar las apps y grabar videos de lo que haces es verdad?, si es asi, prueba la app con esa herramienta para ver el flujo como si la estuviese usando un usuario normal.

@@ -100,7 +100,8 @@ function isClarificationOrTrackPick(text: string): boolean {
 function isAffirmativeShort(text: string): boolean {
   const t = text.trim()
   if (!t || t.length > 80) return false
-  return /^(s[ií]|ok|vale|dale|hazlo|cr[eé]alo|aplica(lo)?|construir|construye|adelante|go|yes|do it|contin[uú]a)[\s!.]*$/i.test(
+  // Una o varias afirmaciones seguidas («sí, hazlo», «ok dale»).
+  return /^((s[ií]|ok|vale|dale|hazlo|cr[eé]alo|aplica(lo)?|construir|construye|adelante|go|yes|do it|contin[uú]a)[\s,!.]*)+$/i.test(
     t,
   )
 }
@@ -212,6 +213,31 @@ export function estimateReasoningDepth(userText: string, mode: AgentMode): Reaso
     return { depth: 7, phases: phasesForDepth(7), reason: 'planificación' }
   }
   return { depth: 6, phases: phasesForDepth(6), reason: 'complejidad media' }
+}
+
+/**
+ * Perfil del razonamiento previo al turno.
+ * - `rapido` (por defecto): pensado para modelos de poco razonamiento. Como mucho una llamada de plan
+ *   (dos si el pedido exige investigar) y nada tras Aplicar: la verificación la hacen las herramientas
+ *   deterministas del harness, no más capas de texto.
+ * - `profundo`: el consejo de 2–10 capas (un modelo simulando varias voces). Lento: cada capa es una
+ *   llamada secuencial; con modelos pequeños añade ruido más que calidad.
+ */
+export type ReasoningProfile = 'rapido' | 'profundo'
+export const DEFAULT_REASONING_PROFILE: ReasoningProfile = 'rapido'
+
+/** Perfil rápido: 0 capas (directo al turno), 1 (plan) o 2 (investigar + plan). Sin llamada de «traducir». */
+export function planFastReasoning(userText: string, mode: AgentMode): ReasoningDepthPlan {
+  const text = userText.trim()
+  const directo = (reason: string): ReasoningDepthPlan => ({ depth: 0, phases: [], reason })
+  if (isClarificationOrTrackPick(text) || isAffirmativeShort(text)) return directo('confirmación / clarificación')
+  if (isSimpleTransportOrTrackToggle(text) || isSimpleBpmOnly(text)) return directo('acción simple')
+  if (isProjectWipeIntent(text) && !isGenreRewriteIntent(text)) return directo('vaciar proyecto')
+  if (isShortAsk(text, mode)) return directo('consulta corta')
+  if (isStyleGapIntent(text) || wantsWebResearch(text)) {
+    return { depth: 2, phases: ['research1', 'commit'], reason: 'investigar y planificar' }
+  }
+  return { depth: 1, phases: ['commit'], reason: 'plan en un paso' }
 }
 
 export function planReasoningPhases(

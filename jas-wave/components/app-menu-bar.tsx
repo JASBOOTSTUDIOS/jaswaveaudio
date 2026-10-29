@@ -38,8 +38,10 @@ export type MenuActionId =
   | 'transporte.inicio'
   | 'pista.nueva'
   | 'pista.nuevaMidi'
+  | 'pista.nuevaCarpeta'
   | 'ventana.ajustes'
   | 'archivo.exportarBounce'
+  | 'archivo.abrirPaquete'
   | 'archivo.exportarPartituras'
   | 'archivo.exportarProyectoConPartituras'
 
@@ -57,10 +59,16 @@ const MENUS: MenuGroup[] = [
     items: [
       { type: 'action', id: 'proyecto.nuevo', label: 'Nuevo proyecto', shortcut: 'Ctrl+N' },
       { type: 'action', id: 'proyecto.abrir', label: 'Abrir…', shortcut: 'Ctrl+O' },
+      { type: 'action', id: 'archivo.abrirPaquete', label: 'Abrir proyecto empaquetado (.zip)…' },
       { type: 'separator' },
       { type: 'action', id: 'proyecto.guardar', label: 'Guardar', shortcut: 'Ctrl+S' },
       { type: 'action', id: 'proyecto.guardarComo', label: 'Guardar como…', shortcut: 'Ctrl+Shift+S' },
-      { type: 'action', id: 'archivo.exportarBounce', label: 'Exportar bounce WAV…' },
+      {
+        type: 'action',
+        id: 'archivo.exportarBounce',
+        label: 'Exportar (canción, pistas, MIDI, proyecto)…',
+        shortcut: 'Ctrl+Alt+R',
+      },
       { type: 'action', id: 'archivo.exportarPartituras', label: 'Exportar partituras PDF…' },
       {
         type: 'action',
@@ -127,6 +135,7 @@ const MENUS: MenuGroup[] = [
     items: [
       { type: 'action', id: 'pista.nueva', label: 'Nueva pista de audio' },
       { type: 'action', id: 'pista.nuevaMidi', label: 'Nueva pista MIDI' },
+      { type: 'action', id: 'pista.nuevaCarpeta', label: 'Nueva carpeta (bus)' },
       { type: 'separator' },
       { type: 'action', id: 'ventana.ajustes', label: 'Ajustes del proyecto…' },
     ],

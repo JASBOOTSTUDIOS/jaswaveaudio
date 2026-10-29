@@ -103,6 +103,15 @@ export function PlayheadOverlay({
       className="pointer-events-auto absolute top-0 bottom-0 z-30 w-0.5 cursor-ew-resize bg-accent-amber will-change-transform"
       style={{ left: 0, transform: `translate3d(${initial}px, 0, 0)` }}
       onPointerDown={onPointerDown}
+      onDoubleClick={(e) => {
+        // El primer clic de un doble clic coloca el cursor justo bajo el ratón y el segundo cae en esta línea:
+        // el doble clic se reenvía a lo que hay debajo (crear un clip en la pista, abrir un clip…).
+        const linea = lineRef.current
+        const debajo = document.elementsFromPoint(e.clientX, e.clientY).find((el) => el !== linea && !linea?.contains(el))
+        debajo?.dispatchEvent(
+          new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: e.clientX, clientY: e.clientY, detail: 2 }),
+        )
+      }}
     >
       <div className="absolute -left-1.5 top-0 size-3 rounded-full bg-accent-amber" />
       {showTooltip && tooltipLabel && (

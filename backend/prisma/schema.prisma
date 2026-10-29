@@ -121,8 +121,11 @@ model Licencia {
   productoId String
   estado     EstadoLicencia @default(activa)
   actualizadaEn DateTime    @updatedAt
+  /// Solo en la licencia del «Asistente IA»: límites de uso de los modelos JasWave.
+  planIAId   String?
   usuario    Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
   producto   Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  planIA     PlanIA?  @relation(fields: [planIAId], references: [id], onDelete: SetNull)
 
   @@unique([usuarioId, productoId])
 }
@@ -296,6 +299,75 @@ model ProveedorIA {
   creadoEn            DateTime    @default(now())
   actualizadoEn       DateTime    @updatedAt
   propietario         Usuario?    @relation(fields: [propietarioId], references: [id], onDelete: Cascade)
+  claves              ClaveProveedorIA[]
 
   @@index([propietarioId])
+}
+
+/// Claves adicionales de una conexión del admin (grupo con rotación). La clave de `ProveedorIA`
+/// sigue siendo la principal; estas se reparten la carga y se enfrían ante 429/401.
+model ClaveProveedorIA {
+  id           String      @id @default(uuid())
+  proveedorId  String
+  etiqueta     String      @default("")
+  claveCifrada Bytes
+  activa       Boolean     @default(true)
+  creadaEn     DateTime    @default(now())
+  proveedor    ProveedorIA @relation(fields: [proveedorId], references: [id], onDelete: Cascade)
+
+  @@index([proveedorId])
+}
+
+// ---------- JasWave IA: modelos de marca, planes y consumo ----------
+
+/// Modelo que ven los usuarios («JasWave Rápido»…). Por dentro es una cadena ordenada de
+/// conexión + modelo real; el servidor elige, cubre con el siguiente si tarda y nunca expone la cadena.
+model ModeloJasWave {
+  id                String   @id
+  nombre            String
+  descripcion       String   @default("")
+  orden             Int      @default(0)
+  activo            Boolean  @default(true)
+  /// [{ proveedorId, modelo, razonamiento: "off" | "bajo" | "normal" }]
+  cadena            Json     @default("[]")
+  creditosPorMil    Float    @default(1)
+  maxTokens         Int      @default(8192)
+  creadoEn          DateTime @default(now())
+  actualizadoEn     DateTime @updatedAt
+}
+
+/// Plan de uso de IA. Se asigna a la licencia del producto «Asistente IA» de cada usuario;
+/// sin plan asignado se aplica el plan por defecto.
+model PlanIA {
+  id               String     @id @default(uuid())
+  nombre           String     @unique
+  descripcion      String     @default("")
+  /// null = sin límite
+  creditosDia      Int?
+  creditosMes      Int?
+  peticionesMinuto Int        @default(20)
+  /// Ids de ModeloJasWave permitidos; vacío = todos.
+  modelos          String[]   @default([])
+  porDefecto       Boolean    @default(false)
+  creadoEn         DateTime   @default(now())
+  licencias        Licencia[]
+}
+
+/// Una fila por petición a un modelo JasWave (o a una conexión directa).
+model ConsumoIA {
+  id             String   @id @default(uuid())
+  usuarioId      String
+  modelo         String
+  modeloReal     String   @default("")
+  proveedorId    String?
+  proposito      String   @default("")
+  tokensEntrada  Int      @default(0)
+  tokensSalida   Int      @default(0)
+  creditos       Float    @default(0)
+  ms             Int      @default(0)
+  ok             Boolean  @default(true)
+  creadoEn       DateTime @default(now())
+
+  @@index([usuarioId, creadoEn])
+  @@index([creadoEn])
 }

@@ -54,7 +54,8 @@ export interface ToolDefinitionUI {
  */
 const TAMANO_MINIMO: Record<string, { w: number; h: number }> = {
   arrange: { w: 420, h: 220 },
-  mixer: { w: 160, h: 70 },
+  // Barra (36) + tira mínima estrecha (nombre, M/S y volumen fijo de 160 px): por debajo, scroll, nunca deformar.
+  mixer: { w: 160, h: 320 },
   'piano-roll': { w: 380, h: 240 },
   library: { w: 220, h: 200 },
   'track-detail': { w: 250, h: 260 },
@@ -198,7 +199,7 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
   admin: {
     id: 'admin',
     title: 'Administración',
-    description: 'Plugins licenciables, roles, accesos por usuario, dispositivos y auditoría (solo administradores)',
+    description: 'Abre JasWave Admin, la app de administración aparte del DAW (solo administradores)',
     defaultZone: 'center',
     singleton: true,
     bajoDemanda: true,

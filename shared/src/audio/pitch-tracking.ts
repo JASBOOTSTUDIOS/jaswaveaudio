@@ -83,15 +83,15 @@ export function ajustarMidiAEscala(
     return pitchRedondeado
   }
 
-  // Buscar el grado de la escala más cercano
+  // Buscar el grado de la escala más cercano. La distancia es cíclica y con signo (−6..+5): el grado 0 está
+  // un semitono por encima del 11, no once por debajo; si no, la sensible caería casi una octava.
   let minDiff = 12
   let mejorOffset = 0
   for (const grado of intervalos) {
-    const diff = Math.abs(grado - semitonoRelativo)
-    const diffCiclica = Math.min(diff, 12 - diff)
-    if (diffCiclica < minDiff) {
-      minDiff = diffCiclica
-      mejorOffset = grado - semitonoRelativo
+    const offset = ((((grado - semitonoRelativo) % 12) + 18) % 12) - 6
+    if (Math.abs(offset) < minDiff) {
+      minDiff = Math.abs(offset)
+      mejorOffset = offset
     }
   }
 

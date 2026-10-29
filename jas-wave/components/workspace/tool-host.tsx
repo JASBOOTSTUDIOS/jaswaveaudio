@@ -1,4 +1,6 @@
+import { useRef } from 'react'
 import { Boxes, Construction, GitBranch } from 'lucide-react'
+import { PanelSpaceGuard } from './panel-space-guard'
 import { DawTerminalPanel } from '@/components/daw-terminal-panel'
 import { ArrangeView } from '@/components/arrange-view'
 import { Mixer } from '@/components/mixer'
@@ -14,7 +16,7 @@ import { MidiMapPanel } from '@/components/midi-map-panel'
 import { SettingsPanel } from '@/components/project-settings-dialog'
 import { ProjectFileExplorer } from './project-file-explorer'
 import { PanelCuenta } from '@/components/cuenta/panel-cuenta'
-import { PanelAdmin } from '@/components/admin/panel-admin'
+import { PanelAbrirAdmin } from '@/components/admin/abrir-admin'
 import { PanelModulos } from '@/components/modulos/panel-modulos'
 import { panelDeHerramienta } from '@/src/modulos/registro-modulos'
 import { useVersionModulos } from '@/src/modulos/use-modulos'
@@ -35,19 +37,26 @@ function _PlaceholderTool({ title }: { title: string }) {
   )
 }
 
-/** Cada panel tiene su boundary: un fallo en uno no tumba el DAW ni el audio. */
-export function ToolHost({ toolId }: { toolId: ToolId }) {
+/**
+ * Cada panel tiene su boundary: un fallo en uno no tumba el DAW ni el audio.
+ * `avisoEspacio`: ofrecer flotar/ocultar el panel cuando su zona queda pequeña (no en ventanas flotantes).
+ */
+export function ToolHost({ toolId, avisoEspacio = true }: { toolId: ToolId; avisoEspacio?: boolean }) {
   const min = tamanoMinimoHerramienta(toolId)
+  const viewportRef = useRef<HTMLDivElement>(null)
   return (
     <AppErrorBoundary key={toolId} area={toolId} compact>
-      {/*
-        Visor con tamaño mínimo: si la zona se hace más pequeña que el panel, este contenedor hace scroll y el
-        contenido mantiene sus proporciones (nada de faders aplastados ni controles superpuestos).
-      */}
-      <div className="jw-scrollbar relative h-full w-full overflow-auto" data-tool-viewport={toolId}>
-        <div className="h-full w-full" style={{ minWidth: min.w, minHeight: min.h }}>
-          <ToolContent toolId={toolId} />
+      <div className="relative h-full w-full">
+        {/*
+          Visor con tamaño mínimo: si la zona se hace más pequeña que el panel, este contenedor hace scroll y el
+          contenido mantiene sus proporciones (nada de faders aplastados ni controles superpuestos).
+        */}
+        <div ref={viewportRef} className="jw-scrollbar relative h-full w-full overflow-auto" data-tool-viewport={toolId}>
+          <div className="h-full w-full" style={{ minWidth: min.w, minHeight: min.h }}>
+            <ToolContent toolId={toolId} />
+          </div>
         </div>
+        {avisoEspacio ? <PanelSpaceGuard toolId={toolId} viewportRef={viewportRef} /> : null}
       </div>
     </AppErrorBoundary>
   )
@@ -87,7 +96,7 @@ function ToolContent({ toolId }: { toolId: ToolId }) {
     case 'cuenta':
       return <PanelCuenta />
     case 'admin':
-      return <PanelAdmin />
+      return <PanelAbrirAdmin />
     case 'modulos':
       return <PanelModulos />
     case 'library':

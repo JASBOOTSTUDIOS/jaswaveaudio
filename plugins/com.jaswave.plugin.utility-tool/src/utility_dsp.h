@@ -30,6 +30,7 @@ inline const std::vector<ParamDef>& paramDefs() {
         v.push_back(toggleP(kDcFilter, "DC Filter", 0));
         v.push_back(toggleP(kSwap, "Swap L/R", 0));
         v.push_back(toggleP(kMono, "Mono", 0));
+        marcarBasicos(v, { kBypass, kGain, kWidth, kBalance, kMono });   // modo Básico del editor
         return v;
     }();
     return defs;

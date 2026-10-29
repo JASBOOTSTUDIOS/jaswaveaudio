@@ -11,6 +11,7 @@ import { rutasCatalogo, rutasModulos } from './catalog/rutas.js';
 import { rutasHandover } from './handover/rutas.js';
 import { rutasAdminIA, rutasIA } from './ia/rutas.js';
 import type { ServicioProveedoresIA } from './ia/proveedores.js';
+import type { ServicioJasWave } from './ia/jaswave/servicio.js';
 import type { Reloj } from './license/servicio.js';
 
 export type OpcionesApp = {
@@ -19,6 +20,8 @@ export type OpcionesApp = {
   log?: RegistroErrores;
   /** Proveedores de IA (M2, en BD); null/ausente = IA no configurada (responde 503). */
   ia?: ServicioProveedoresIA | null;
+  /** JasWave IA: modelos de marca, planes y consumo (requiere `ia`). */
+  jaswave?: ServicioJasWave | null;
   /** Dependencias de datos y licencias; sin ellas solo quedan /health y /me. */
   datos?: { db: Db; clavePrivadaPem: string; reloj: Reloj };
 };
@@ -40,8 +43,8 @@ export function crearApp(opciones: OpcionesApp): Express {
     app.use('/handover', rutasHandover({ db, verificar: opciones.verificar, reloj }));
   }
   // IA: contexto y herramientas pueden superar 256 KB (límite propio de 4 MB).
-  app.use('/ia', rutasIA({ verificar: opciones.verificar, servicio: opciones.ia ?? null }));
-  if (opciones.ia?.admin) app.use('/admin/ia', rutasAdminIA({ verificar: opciones.verificar, admin: opciones.ia.admin }));
+  app.use('/ia', rutasIA({ verificar: opciones.verificar, servicio: opciones.ia ?? null, jaswave: opciones.jaswave ?? null }));
+  if (opciones.ia?.admin) app.use('/admin/ia', rutasAdminIA({ verificar: opciones.verificar, admin: opciones.ia.admin, jaswave: opciones.jaswave ?? null }));
   // Publicar archivos de módulos (M3, solo admin) lleva el bundle completo en base64.
   app.use('/catalogo/modulos', express.json({ limit: '40mb' }));
   app.use(express.json({ limit: '256kb' }));

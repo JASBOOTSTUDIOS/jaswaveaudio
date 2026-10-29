@@ -15,6 +15,8 @@ const opt = (n, d) => { const i = args.indexOf(`--${n}`); return i >= 0 && args[
 const build = path.resolve(opt('build', path.join(root, 'build')))
 const config = opt('config', 'Release')
 const check = args.includes('--check')
+// --only <nombre corto|target>: solo ese plugin (p. ej. compilado por separado en plugins/build_<slug>)
+const only = opt('only', '')
 
 const fuid = (a, b, c, d) => {
   const h = (x) => x.toString(16).toUpperCase().padStart(8, '0')
@@ -85,6 +87,19 @@ const PLUGINS = [
     ids: { 0: ['bypass', 'Bypass'], 1: ['util.ganancia', 'Ganancia'], 2: ['util.ancho', 'Ancho estéreo'], 3: ['util.mono-bajo', 'Mono por debajo de (0 = off)'], 4: ['util.fase-l', 'Invertir fase L'], 5: ['util.fase-r', 'Invertir fase R'], 6: ['util.balance', 'Balance'], 7: ['util.dc', 'Filtro DC'], 8: ['util.swap', 'Intercambiar L/R'], 9: ['util.mono', 'Mono'] },
   },
   {
+    dir: 'com.jaswave.plugin.pedal-fix', target: 'JasWavePedalFix', name: 'JasWave Pedal Fix', category: 'audio-effect',
+    description: 'Efecto MIDI (entrada y salida de eventos, audio de paso): unifica el pedal de sustain/sostenuto/suave que los teclados con voz dual/split (Yamaha PSR-E373 y familia) mandan por varios canales a la vez, corrige la polaridad, fuerza el sustain reteniendo los note-off para instrumentos que ignoran CC64, fija el canal de salida, transpone y escala la velocidad.',
+    classId: fuid(0x4A617357, 0x5045444C, 0x50726F63, 0x56335431), sub: 'Fx|Tools', roles: ['director', 'productor', 'qa'],
+    summary: 'Arregla el pedal de sustain de teclados que lo mandan por varios canales y hace que cualquier instrumento sostenga aunque ignore CC64.',
+    intents: ['arreglar-sustain', 'unificar-pedal', 'invertir-pedal', 'fijar-canal-midi', 'transponer-midi'],
+    ids: {
+      0: ['bypass', 'Bypass'], 1: ['pedal.umbral', 'Umbral del pedal (valor desde el que cuenta como pisado)'], 2: ['pedal.transponer', 'Transposición'],
+      3: ['pedal.velocidad', 'Escala de velocidad'], 4: ['pedal.fuente', 'Pedal que gobierna el sustain'], 5: ['pedal.canal', 'Canal de salida'],
+      6: ['pedal.polaridad', 'Polaridad del pedal'], 7: ['pedal.forzar', 'Forzar sustain (retener note-off con el pedal pisado)'],
+      8: ['pedal.unificar', 'Unificar canales (máximo entre los 16 canales)'], 9: ['pedal.redisparo', 'Redisparar notas retenidas'],
+    },
+  },
+  {
     dir: 'com.jaswave.plugin.piano-synth', target: 'JasWavePiano', name: 'JasWave Piano Synth', category: 'instrument',
     description: 'Piano de síntesis modal (sin muestras): parciales inarmónicos, cuerdas al unísono, martillo, pedal de sustain y polifonía de hasta 64 voces.',
     classId: fuid(0xB3A7C9E1, 0x4D2F4A8B, 0x9E6C1F3D, 0x5A7B8C0D), sub: 'Instrument|Piano', roles: ['productor'],
@@ -100,11 +115,26 @@ const PLUGINS = [
     intents: ['bateria-basica', 'linea-de-bajo', 'pad-ambiente', 'cuerdas', 'boceto-arreglo'],
     ids: { 0: ['roles.rol', 'Rol'], 1: ['roles.ataque', 'Ataque'], 2: ['roles.release', 'Release'], 3: ['roles.corte', 'Corte del filtro'], 4: ['roles.resonancia', 'Resonancia'], 5: ['roles.nivel', 'Nivel'], 6: ['roles.voces', 'Voces'], 7: ['roles.drive', 'Drive'], 8: ['roles.gate', 'Gate'], 9: ['roles.chorus', 'Chorus'], 10: ['roles.delay', 'Delay'], 11: ['roles.reverb', 'Reverb'], 12: ['roles.eq-graves', 'EQ graves'], 13: ['roles.eq-agudos', 'EQ agudos'] },
   },
+  {
+    dir: 'com.jaswave.plugin.vocal-tune', target: 'JasWaveVocalTune', name: 'JasWave Vocal Tune', category: 'audio-effect',
+    description: 'Afinador automático de voz: detección de tono YIN, corrección a escala/tónica con PSOLA que conserva los formantes, preservación de vibrato, humanización y latencia de 2,5 ms en modo de baja latencia.',
+    classId: fuid(0x4A617357, 0x56545545, 0x50726F63, 0x56335431), sub: 'Fx|Pitch Shift', roles: ['productor', 'mezcla', 'qa'],
+    summary: 'Corrige la afinación de voces monofónicas hacia la escala elegida de forma natural, sin efecto robótico salvo con Retune Speed a 0.',
+    intents: ['afinar-voz', 'corregir-desafinacion', 'efecto-robotico', 'cambiar-formantes'],
+    ids: {
+      0: ['bypass', 'Bypass'], 1: ['vt.retune', 'Velocidad de corrección (Retune Speed)'], 2: ['vt.humanize', 'Humanización de notas sostenidas'],
+      3: ['vt.vibrato', 'Preservar vibrato'], 4: ['vt.formantes', 'Desplazamiento de formantes'], 5: ['vt.garganta', 'Longitud de garganta'],
+      6: ['vt.tracking', 'Sensibilidad de detección'], 7: ['vt.escala', 'Escala'], 8: ['vt.tonica', 'Tónica'], 9: ['vt.mezcla', 'Mezcla'],
+      10: ['vt.baja-latencia', 'Modo de baja latencia'], 40: ['vt.tono-detectado', 'Tono detectado (medidor)'], 41: ['vt.correccion', 'Corrección aplicada en cents (medidor)'],
+    },
+  },
 ]
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jw-params-'))
 let mismatches = 0
-for (const p of PLUGINS) {
+const seleccion = only ? PLUGINS.filter((p) => p.dir.endsWith(only) || p.target === only) : PLUGINS
+if (!seleccion.length) { console.error(`--only ${only}: ningún plugin con ese nombre`); process.exit(2) }
+for (const p of seleccion) {
   const exe = path.join(build, 'tools', config, `${p.target}_snapshot.exe`)
   if (!fs.existsSync(exe)) { console.error(`falta ${exe}: compila los plugins`); process.exit(2) }
   const dumpFile = path.join(tmp, `${p.target}.json`)
@@ -122,6 +152,8 @@ for (const p of PLUGINS) {
     if (q.map === 'stepped' && !toggle) out.values = q.labels
     if (q.readOnly) out.readOnly = true
     if (q.bypass) out.bypass = true
+    // control esencial: visible en el modo Básico del editor (el modo Avanzado muestra todos)
+    if (q.basico) out.basico = true
     return out
   })
   const bundle = `${p.target}.vst3`

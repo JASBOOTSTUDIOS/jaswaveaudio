@@ -4,6 +4,7 @@
 
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { buildRuntimeBounceContent, runNativeBounce } from './bounce-service'
+import { detectarFinProyecto } from '../../../shared/src/render/fin-proyecto'
 
 export type FreezeResult = {
   ok: boolean
@@ -18,22 +19,22 @@ export async function freezeTrack(tienda: TiendaDAW, trackId: string): Promise<F
   if (!track) return { ok: false, message: 'Pista no encontrada' }
   if (track.frozen) return { ok: true, message: 'Ya estaba frozen', audioPath: track.comentario }
 
-  // Solo esta pista
-  for (const t of st.project.tracks) {
-    if (t.id === trackId) {
-      if (t.silenciada) await tienda.executor.execute('track.toggleMute', { trackId: t.id })
-      if (!t.soloActiva) await tienda.executor.execute('track.toggleSolo', { trackId: t.id })
-    } else if (t.soloActiva) {
-      await tienda.executor.execute('track.toggleSolo', { trackId: t.id })
-    }
-  }
-
-  const endSec = Math.max(8, estimateProjectEndSec(st))
+  // Se congela el stem PRE-fader de la pista (instrumento + inserts): el fader, el paneo y los envíos
+  // siguen actuando sobre el audio congelado, y no se tocan mute/solo del proyecto. Master transparente:
+  // la ganancia y el limitador de monitorización no se hornean en el clip.
+  const finPista = detectarFinProyecto({
+    bpm: st.project.bpm,
+    tracks: [{ ...track, silenciada: false, soloActiva: false }],
+  })
+  if (finPista.vacio) return { ok: false, message: `«${track.nombre}» no tiene clips que congelar.` }
   const start = await tienda.executor.execute('render.start', {
     format: 'wav',
+    bitDepth: 32,
     startSec: 0,
-    endSec,
-    stems: false,
+    endSec: finPista.finSegundos + 4,
+    stemTrackIds: [trackId],
+    stemsTap: 'pre',
+    transparentMaster: true,
   })
   if (!start.success || !start.result) {
     return { ok: false, message: start.error?.message ?? 'render.start falló' }
@@ -41,20 +42,18 @@ export async function freezeTrack(tienda: TiendaDAW, trackId: string): Promise<F
   const job = start.result as import('../../../shared/src/types/render').RenderJob
   const content = buildRuntimeBounceContent(tienda.obtenerEstado(), {
     startSec: 0,
-    endSec,
+    endSec: finPista.finSegundos + 4,
   })
   const done = await runNativeBounce(job, content, undefined, tienda.obtenerEstado())
-  if (done.status !== 'completed' || !done.outputPath) {
+  const audioPath = done.stemsPaths?.[0]
+  if (done.status !== 'completed' || !audioPath) {
     return { ok: false, message: done.error ?? 'Bounce freeze falló' }
   }
-
-  // Quitar solo
-  const st2 = tienda.obtenerEstado()
-  for (const t of st2.project.tracks) {
-    if (t.soloActiva) await tienda.executor.execute('track.toggleSolo', { trackId: t.id })
-  }
-
-  const audioPath = done.outputPath
+  const bpm = Number(st.project.bpm?.valor) > 0 ? Number(st.project.bpm.valor) : 120
+  const sr = job.sampleRate || 48000
+  const segundos = (done.frames ?? Math.round((finPista.finSegundos + 4) * sr)) / sr
+  // clip.create trabaja en beats.
+  const duracionBeats = (segundos * bpm) / 60
   // Limpiar clips MIDI previos (el audio congelado los sustituye)
   const trackBeforeClips = tienda.obtenerEstado().project.tracks.find((t) => t.id === trackId)
   for (const c of trackBeforeClips?.clips ?? []) {
@@ -64,7 +63,7 @@ export async function freezeTrack(tienda: TiendaDAW, trackId: string): Promise<F
     pistaId: trackId,
     nombre: `${track.nombre} (frozen)`,
     inicio: 0,
-    duracion: endSec,
+    duracion: duracionBeats,
     sourceId: audioPath,
   })
   let clipId: string | undefined
@@ -100,22 +99,4 @@ export async function unfreezeTrack(tienda: TiendaDAW, trackId: string): Promise
     ok: r.success,
     message: r.success ? 'Unfrozen' : r.error?.message ?? 'falló',
   }
-}
-
-function estimateProjectEndSec(st: ReturnType<TiendaDAW['obtenerEstado']>): number {
-  let max = 8
-  const bpmRaw = st.project.bpm
-  const bpm =
-    typeof bpmRaw === 'number'
-      ? bpmRaw
-      : typeof bpmRaw === 'object' && bpmRaw && 'valor' in bpmRaw
-        ? Number((bpmRaw as { valor?: number }).valor) || 120
-        : 120
-  for (const t of st.project.tracks) {
-    for (const c of t.clips ?? []) {
-      const end = Number(c.inicio ?? 0) + Number(c.duracion ?? 0)
-      max = Math.max(max, (end * 60) / bpm + 1)
-    }
-  }
-  return max
 }

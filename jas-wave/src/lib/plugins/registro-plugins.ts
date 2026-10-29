@@ -12,8 +12,10 @@ import {
   aliasPlugin,
   describirPlugin,
   herramientasDesdeManifiesto,
+  resolverInstanciaPlugin,
   traducirAjuste,
   validarManifiesto,
+  type CadenasProyecto,
   type ManifiestoPlugin,
 } from '@jaswave/shared'
 import { pluginRegistry } from '../plugin/registry'
@@ -192,7 +194,7 @@ export type PlanHerramientaPlugin =
   | { tipo: 'comandos'; llamadas: { tool: string; arguments: Record<string, unknown> }[] }
 
 /** Traduce una llamada `plugin.<alias>.<accion>`; lanza si no es válida (el host la devuelve como error). */
-export function planificarHerramientaPlugin(nombre: string, args: Record<string, unknown>): PlanHerramientaPlugin {
+export function planificarHerramientaPlugin(nombre: string, args: Record<string, unknown>, proyecto?: CadenasProyecto): PlanHerramientaPlugin {
   const [, alias, accion] = nombre.split('.')
   const id = alias ? porAlias.get(alias) : undefined
   const plugin = id ? activos.get(id) : undefined
@@ -202,14 +204,12 @@ export function planificarHerramientaPlugin(nombre: string, args: Record<string,
   if (accion === 'describir') return { tipo: 'respuesta', data: describirPlugin(m, concedidas) }
   if (accion === 'ajustar') {
     const valores = args.valores
-    if (typeof args.trackId !== 'string' || typeof args.pluginInstanceId !== 'string' || !valores || typeof valores !== 'object') {
-      throw new Error('ajustar requiere trackId, pluginInstanceId y valores')
-    }
-    const comandos = traducirAjuste(
-      m,
-      { trackId: args.trackId, pluginInstanceId: args.pluginInstanceId, valores: valores as Record<string, number> },
-      concedidas,
-    )
+    if (!valores || typeof valores !== 'object') throw new Error('ajustar requiere trackId, pluginInstanceId y valores')
+    let destino = { trackId: typeof args.trackId === 'string' ? args.trackId : '', pluginInstanceId: typeof args.pluginInstanceId === 'string' ? args.pluginInstanceId : '' }
+    // Con el proyecto a mano se corrige la instancia (id de manifiesto, pista equivocada, plugin del máster).
+    if (proyecto) destino = resolverInstanciaPlugin(m, proyecto, destino.trackId, destino.pluginInstanceId)
+    else if (!destino.trackId || !destino.pluginInstanceId) throw new Error('ajustar requiere trackId, pluginInstanceId y valores')
+    const comandos = traducirAjuste(m, { ...destino, valores: valores as Record<string, number> }, concedidas)
     return { tipo: 'comandos', llamadas: comandos.map((c) => ({ tool: c.type, arguments: c.payload })) }
   }
   throw new Error(`acción desconocida: ${nombre}`)

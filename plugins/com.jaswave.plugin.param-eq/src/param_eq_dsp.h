@@ -92,6 +92,10 @@ inline const std::vector<ParamDef>& paramDefs() {
             v.push_back(withFeature(toggleP(extParam(b, eSolo), nm(p + "Solo"), 0), feat));
         }
         for (int b = kLegacyBands; b < kBands; ++b) baseBand(b);
+        // modo Básico del editor: salida y tipo / frecuencia / ganancia / Q / activación de cada banda
+        marcarBasicos(v, { kBypass, kOutput });
+        for (int b = 0; b < kBands; ++b)
+            for (BandField f : { fType, fFreq, fGain, fQ, fOn }) marcarBasicos(v, { bandParam(b, f) });
         return v;
     }();
     return defs;

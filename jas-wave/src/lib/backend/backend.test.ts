@@ -145,3 +145,14 @@ describe('backend — licencia del equipo', () => {
     assert.equal(msHastaRenovar({ estado: 'error', mensaje: 'x' }), 5 * 60 * 1000)
   })
 })
+
+describe('backend — sesión sin servidor', () => {
+  it('la espera entre comprobaciones crece hasta 5 minutos y no se desborda', async () => {
+    const { esperaTrasFallo } = await import('./sesion')
+    assert.equal(esperaTrasFallo(1), 5_000)
+    assert.equal(esperaTrasFallo(2), 10_000)
+    assert.equal(esperaTrasFallo(4), 40_000)
+    assert.equal(esperaTrasFallo(50), 300_000)
+    assert.equal(esperaTrasFallo(0), 5_000)
+  })
+})

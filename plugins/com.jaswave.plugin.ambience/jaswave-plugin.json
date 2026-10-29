@@ -68,7 +68,8 @@
         "default": 0,
         "unit": "",
         "scale": "toggle",
-        "feature": null
+        "feature": null,
+        "basico": true
       },
       {
         "id": "ambience.rev-mix",
@@ -79,7 +80,8 @@
         "default": 40,
         "unit": "%",
         "scale": "linear",
-        "feature": "ambience.reverb"
+        "feature": "ambience.reverb",
+        "basico": true
       },
       {
         "id": "ambience.rev-decay",
@@ -90,7 +92,8 @@
         "default": 4.2,
         "unit": "s",
         "scale": "linear",
-        "feature": "ambience.reverb"
+        "feature": "ambience.reverb",
+        "basico": true
       },
       {
         "id": "ambience.dly-mix",
@@ -101,7 +104,8 @@
         "default": 22,
         "unit": "%",
         "scale": "linear",
-        "feature": "ambience.delay"
+        "feature": "ambience.delay",
+        "basico": true
       },
       {
         "id": "ambience.sh-mix",
@@ -112,7 +116,8 @@
         "default": 0,
         "unit": "%",
         "scale": "linear",
-        "feature": "ambience.shimmer"
+        "feature": "ambience.shimmer",
+        "basico": true
       },
       {
         "id": "ambience.sw-depth",
@@ -135,6 +140,7 @@
         "unit": "",
         "scale": "enum",
         "feature": null,
+        "basico": true,
         "values": [
           "Room",
           "Worship Hall",

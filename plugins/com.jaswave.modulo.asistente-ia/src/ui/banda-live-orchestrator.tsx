@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useSyncExternalStore } from 'react'
+import { escuchaEnVivo } from '../motor/escucha-en-vivo'
 import {
   orquestadorBandaSingleton,
   type BandaLiveState,
@@ -17,13 +18,205 @@ import {
   Music,
   ShieldCheck,
   ChevronRight,
+  ChevronDown,
+  PanelRightOpen,
+  MessageSquare,
+  Headphones,
+  HeadphoneOff,
+  Send,
 } from 'lucide-react'
+import { requestOpenTool } from '@jaswave/host-sdk'
+import { abrirPanelBanda, cambiarVistaBanda, useVistaBanda } from './banda-vista-store'
 
-export function BandaLiveOrchestrator() {
+/** Interruptor «Escuchar en vivo»: oír cada parte que se graba y la mezcla mientras se hace. */
+export function BotonEscucha({ conTexto = false }: { conTexto?: boolean }) {
+  const activa = useSyncExternalStore(
+    (cb) => escuchaEnVivo.suscribir(cb),
+    () => escuchaEnVivo.estaActiva(),
+  )
+  const titulo = activa
+    ? 'Escuchando en vivo: suena cada parte que se graba y la mezcla mientras se hace. Clic para trabajar en silencio.'
+    : 'En silencio. Clic para escuchar en vivo cada parte que se graba y la mezcla.'
+  return (
+    <button
+      type="button"
+      aria-pressed={activa}
+      aria-label="Escuchar en vivo lo que hace la banda"
+      title={titulo}
+      onClick={() => escuchaEnVivo.fijarActiva(!activa)}
+      className={`flex shrink-0 items-center gap-1 rounded p-0.5 text-[10px] ${activa ? 'text-accent-amber hover:bg-accent-amber/15' : 'text-muted-foreground hover:bg-panel-base hover:text-foreground'}`}
+    >
+      {activa ? <Headphones className="size-3.5" /> : <HeadphoneOff className="size-3.5" />}
+      {conTexto ? <span>{activa ? 'Escuchando' : 'En silencio'}</span> : null}
+    </button>
+  )
+}
+
+const FASE_CORTA: Record<FaseBanda, string> = {
+  idle: 'En espera',
+  planificacion: 'Planificando',
+  direccion: 'Repartiendo el trabajo',
+  grabacion_musicos: 'Los músicos graban',
+  ensayo: 'Ensayando: la banda se pone de acuerdo',
+  coherencia: 'Encajando tiempo, armonía y ritmo',
+  qa_musicos: 'Revisando las partes',
+  mezcla: 'Mezclando',
+  qa_mezcla: 'Revisando la mezcla',
+  mastering: 'Preparando el máster',
+  qa_final: 'Revisión final',
+  completado: 'Terminada',
+  error: 'Detenida',
+}
+
+/**
+ * La banda en el chat: una sola línea (etapa, avance y lo último que pasó). El detalle aparece al pasar
+ * el ratón (o con el foco) en un globo flotante que no ocupa sitio; el panel aparte tiene la vista completa.
+ */
+export function BandaLineaCompacta() {
+  const [s, setS] = useState<BandaLiveState>(() => orquestadorBandaSingleton.getState())
+  useEffect(() => orquestadorBandaSingleton.subscribe((next) => setS({ ...next })), [])
+  if (!s.activo && s.eventos.length === 0) return null
+  const ultimo = s.eventos.at(-1)
+  const paso = ({ planificacion: 1, direccion: 2, grabacion_musicos: 3, ensayo: 3, coherencia: 3, qa_musicos: 3, mezcla: 4, qa_mezcla: 4, mastering: 5, qa_final: 5, completado: 6 } as Partial<Record<FaseBanda, number>>)[s.faseActual] ?? 0
+  const porcentaje = s.faseActual === 'completado' ? 100 : Math.round((Math.max(0, paso - 1) / 5) * 100)
+  return (
+    <div data-testid="banda-linea" className="group relative min-w-0" tabIndex={0} aria-label="Banda virtual: pasa el ratón para ver el detalle">
+      <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+        <Users className={`size-3.5 shrink-0 text-accent-amber ${s.activo ? 'animate-pulse' : ''}`} />
+        <span className="shrink-0 font-medium text-foreground">Banda</span>
+        <span className="shrink-0">· {FASE_CORTA[s.faseActual]}{s.activo ? ` · ${porcentaje} %` : ''}</span>
+        {ultimo ? <span className="min-w-0 flex-1 truncate">· {ultimo.agenteNombre}: {ultimo.mensaje}</span> : <span className="flex-1" />}
+        <BotonEscucha />
+        <button
+          type="button"
+          onClick={() => {
+            cambiarVistaBanda({ ubicacion: 'panel' })
+            abrirPanelBanda('línea del chat', (id) => requestOpenTool(id as never, { zone: 'right' }))
+          }}
+          title="Ver la banda completa en su panel"
+          aria-label="Abrir la banda en un panel aparte"
+          className="shrink-0 rounded p-0.5 hover:bg-panel-base hover:text-foreground"
+        >
+          <PanelRightOpen className="size-3.5" />
+        </button>
+        {s.activo ? (
+          <button
+            type="button"
+            onClick={() => orquestadorBandaSingleton.detener()}
+            title="Detener la banda"
+            aria-label="Detener la banda"
+            className="shrink-0 rounded p-0.5 text-rose-300 hover:bg-rose-500/20"
+          >
+            <Square className="size-3 fill-current" />
+          </button>
+        ) : null}
+      </div>
+      {s.activo ? (
+        <div className="mt-1 h-0.5 w-full overflow-hidden rounded-full bg-panel-base/80">
+          <div className="h-full bg-accent-amber transition-all duration-300" style={{ width: `${porcentaje}%` }} />
+        </div>
+      ) : null}
+      {/* Globo con el detalle: solo al pasar el ratón o con el foco; flota sobre el chat. */}
+      <div className="invisible absolute inset-x-0 top-full z-40 mt-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-panel-raised p-2 text-[11px] opacity-0 shadow-xl transition-opacity group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100">
+        <div className="mb-1 font-medium text-foreground">{faseLarga(s.faseActual)}</div>
+        <ul className="space-y-0.5">
+          {s.eventos.slice(-8).map((ev) => (
+            <li key={ev.id} className="break-words leading-snug text-muted-foreground">
+              <span className="font-semibold" style={{ color: ev.color }}>{ev.agenteNombre}:</span> {ev.mensaje}
+            </li>
+          ))}
+        </ul>
+        {s.qaReporte.detalles.length ? (
+          <div className="mt-1 border-t border-border/50 pt-1 text-muted-foreground">
+            Revisión: {s.qaReporte.musicosAprobados} de {s.qaReporte.musicosTotal} músicos aprobados
+            {s.qaReporte.mezclaAprobada ? ' · mezcla aprobada' : ''}
+            {s.qaReporte.masterAprobado ? ' · máster aprobado' : ''}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function faseLarga(f: FaseBanda): string {
+  return f === 'completado' || f === 'error' || f === 'idle' ? FASE_CORTA[f] : `Ahora: ${FASE_CORTA[f].toLowerCase()}`
+}
+
+/**
+ * Escribirle a la banda mientras trabaja: lo que el usuario ve y oye en el DAW y los agentes no. A toda la
+ * banda (el agente en turno lo recibe entre dos pasos) o a un participante en particular, elegido en el
+ * selector o pulsando su nombre en la consola.
+ */
+function EntradaNotaBanda({ state, para, onPara }: { state: BandaLiveState; para: string; onPara: (id: string) => void }) {
+  const [texto, setTexto] = useState('')
+  const [aviso, setAviso] = useState<string | null>(null)
+  const participantes = state.participantes ?? []
+  const destino = participantes.find((p) => p.id === para)
+  const enviar = () => {
+    const base = texto.trim()
+    if (!base) return
+    const d = destino ? { texto: base, para: destino.id } : orquestadorBandaSingleton.destinatarioDeTexto(base)
+    if (orquestadorBandaSingleton.enviarNota(d.texto, d.para)) {
+      setTexto('')
+      setAviso(null)
+    } else setAviso('No se pudo entregar: la producción ya no está en curso.')
+  }
+  return (
+    <form
+      data-testid="banda-nota"
+      onSubmit={(e) => {
+        e.preventDefault()
+        enviar()
+      }}
+      className="flex flex-col gap-1 rounded-lg border border-border/60 bg-panel-base/60 p-1.5"
+    >
+      <div className="flex min-w-0 items-center gap-1.5">
+        <select
+          aria-label="A quién le escribes"
+          title="A quién le escribes: a toda la banda o a un participante en particular"
+          value={destino?.id ?? ''}
+          onChange={(e) => onPara(e.target.value)}
+          className="h-7 max-w-[40%] shrink-0 truncate rounded border border-border/60 bg-panel-raised px-1 text-[10px] text-foreground outline-none focus:ring-1 focus:ring-ring"
+        >
+          <option value="">Toda la banda</option>
+          {participantes.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.nombre}
+            </option>
+          ))}
+        </select>
+        <input
+          data-testid="banda-nota-texto"
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+          placeholder={destino ? `Escríbele a ${destino.nombre}…` : 'Dile a la banda lo que ves y ellos no…'}
+          aria-label="Indicación para la banda"
+          className="h-7 min-w-0 flex-1 rounded border border-border/60 bg-panel-raised px-2 text-[11px] text-foreground outline-none placeholder:text-muted-foreground focus:ring-1 focus:ring-ring"
+        />
+        <button
+          type="submit"
+          disabled={!texto.trim()}
+          aria-label={destino ? `Enviar a ${destino.nombre}` : 'Enviar a la banda'}
+          title={destino ? `Enviar a ${destino.nombre}` : 'Enviar a la banda (el agente en turno lo recibe entre dos pasos)'}
+          className="flex size-7 shrink-0 items-center justify-center rounded bg-accent-amber/20 text-accent-amber hover:bg-accent-amber/30 disabled:opacity-40"
+        >
+          <Send className="size-3.5" />
+        </button>
+      </div>
+      {aviso ? <div className="text-[10px] text-rose-300">{aviso}</div> : null}
+    </form>
+  )
+}
+
+/** Banda virtual en vivo. `enPanel`: dibujada en su propio panel (no dentro del chat). */
+export function BandaLiveOrchestrator({ enPanel = false }: { enPanel?: boolean } = {}) {
+  const vista = useVistaBanda()
   const [liveState, setLiveState] = useState<BandaLiveState>(() =>
     orquestadorBandaSingleton.getState(),
   )
-  const logEndRef = useRef<HTMLDivElement>(null)
+  const [verTodo, setVerTodo] = useState(false)
+  /** Participante al que va la próxima indicación ('' = toda la banda). */
+  const [para, setPara] = useState('')
 
   useEffect(() => {
     return orquestadorBandaSingleton.subscribe((next) => {
@@ -31,22 +224,20 @@ export function BandaLiveOrchestrator() {
     })
   }, [])
 
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [liveState.eventos.length])
-
   const faseLabels: Record<FaseBanda, string> = {
     idle: 'En espera',
-    planificacion: '1. Planificación Musical',
-    direccion: '2. Asignación del Director',
-    grabacion_musicos: '3. Grabación de Músicos',
-    qa_musicos: '4. Auditoría QA Musical',
-    mezcla: '5. Mezcla y Balance FX',
-    qa_mezcla: '6. Auditoría QA Mezcla',
-    mastering: '7. Masterización Final',
-    qa_final: '8. Inspección QA Final',
-    completado: '✓ Producción Finalizada',
-    error: 'Error',
+    planificacion: 'Paso 1: planificando la canción',
+    direccion: 'Paso 2: el director reparte el trabajo',
+    grabacion_musicos: 'Paso 3: los músicos graban',
+    ensayo: 'Paso 4: ensayo, la banda se escucha y se pone de acuerdo',
+    coherencia: 'Paso 5: el arreglista encaja tiempo, armonía y ritmo',
+    qa_musicos: 'Paso 6: revisando lo que grabaron',
+    mezcla: 'Paso 7: mezclando',
+    qa_mezcla: 'Paso 8: revisando la mezcla',
+    mastering: 'Paso 9: preparando el máster',
+    qa_final: 'Paso 10: revisión final',
+    completado: 'Producción terminada',
+    error: 'La producción se detuvo',
   }
 
   const faseIndex = (fase: FaseBanda): number => {
@@ -56,6 +247,8 @@ export function BandaLiveOrchestrator() {
       case 'direccion':
         return 2
       case 'grabacion_musicos':
+      case 'ensayo':
+      case 'coherencia':
       case 'qa_musicos':
         return 3
       case 'mezcla':
@@ -72,17 +265,43 @@ export function BandaLiveOrchestrator() {
   }
 
   const currentStep = faseIndex(liveState.faseActual)
-  const latestEvent = liveState.eventos[liveState.eventos.length - 1]
+  const porcentaje = liveState.faseActual === 'completado' ? 100 : Math.round((Math.max(0, currentStep - 1) / 5) * 100)
 
   if (!liveState.activo && liveState.eventos.length === 0) {
-    return null
+    if (!enPanel) return null
+    return (
+      <div data-testid="banda-vacia" className="flex flex-col items-center gap-2 p-6 text-center text-xs text-muted-foreground">
+        <Users className="size-5 text-accent-amber/70" />
+        <span>No hay ninguna producción en curso.</span>
+        <span>Pide una canción en el chat con el modo «Banda» y verás aquí a los agentes trabajando.</span>
+      </div>
+    )
+  }
+
+  const plegada = vista.plegada
+  const moverA = (ubicacion: 'chat' | 'panel') => {
+    cambiarVistaBanda({ ubicacion })
+    if (ubicacion === 'panel') abrirPanelBanda('botón de la tarjeta', (id) => requestOpenTool(id as never, { zone: 'right' }))
+    else requestOpenTool('coproducer', { zone: 'left' })
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-accent-amber/40 bg-panel-raised/95 p-3 text-xs shadow-lg ring-1 ring-accent-amber/20">
+    <div
+      data-testid="banda-live"
+      data-plegada={plegada ? 'si' : 'no'}
+      className="@container flex min-w-0 flex-col gap-2 rounded-xl border border-accent-amber/40 bg-panel-raised/95 p-3 text-xs shadow-lg ring-1 ring-accent-amber/20"
+    >
       {/* Encabezado con estado en vivo */}
-      <div className="flex items-center justify-between border-b border-border/60 pb-2">
-        <div className="flex items-center gap-2">
+      <div className={`flex items-center justify-between gap-2 ${plegada ? '' : 'border-b border-border/60 pb-2'}`}>
+        <button
+          type="button"
+          aria-expanded={!plegada}
+          aria-label={plegada ? 'Desplegar la banda virtual' : 'Plegar la banda virtual'}
+          title={plegada ? 'Desplegar' : 'Plegar'}
+          onClick={() => cambiarVistaBanda({ plegada: !plegada })}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          {plegada ? <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" /> : <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />}
           <div className="relative flex size-6 items-center justify-center rounded-full bg-accent-amber/20 text-accent-amber">
             <Users className="size-3.5" />
             {liveState.activo && (
@@ -92,18 +311,30 @@ export function BandaLiveOrchestrator() {
               </span>
             )}
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="font-semibold text-foreground text-[12px] flex items-center gap-1.5">
-              <span>Banda Virtual de Músicos IA</span>
+              <span>Banda virtual</span>
               <span className="rounded bg-accent-amber/15 px-1.5 py-0.2 text-[9px] font-bold text-accent-amber uppercase tracking-wider">
-                {liveState.activo ? 'En Vivo' : 'Completado'}
+                {liveState.activo ? 'Trabajando' : liveState.faseActual === 'error' ? 'Detenida' : 'Terminada'}
               </span>
             </div>
             <div className="text-[10px] text-muted-foreground truncate max-w-xs" title={liveState.promptUsuario}>
               {faseLabels[liveState.faseActual]}
+              {plegada && liveState.activo ? ` · ${porcentaje} %` : ''}
             </div>
           </div>
-        </div>
+        </button>
+
+        <BotonEscucha conTexto />
+        <button
+          type="button"
+          onClick={() => moverA(enPanel ? 'chat' : 'panel')}
+          title={enPanel ? 'Mostrar en el chat' : 'Abrir en un panel aparte'}
+          aria-label={enPanel ? 'Mostrar la banda en el chat' : 'Abrir la banda en un panel aparte'}
+          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-panel-base hover:text-foreground"
+        >
+          {enPanel ? <MessageSquare className="size-3.5" /> : <PanelRightOpen className="size-3.5" />}
+        </button>
 
         {liveState.activo && (
           <button
@@ -117,15 +348,18 @@ export function BandaLiveOrchestrator() {
         )}
       </div>
 
+      {plegada ? null : (
+        <>
       {/* Flujo de fases visual estilo Pipeline */}
-      <div className="grid grid-cols-6 gap-1 pt-1 text-[10px] text-center font-medium">
+      {/* Seis etapas en una fila si caben enteras; si no, en dos filas de tres (sin nombres cortados). */}
+      <div className="grid grid-cols-3 gap-1 pt-1 text-center text-[10px] font-medium @[400px]:grid-cols-6">
         {[
           { num: 1, label: 'Plan', icon: Sparkles },
           { num: 2, label: 'Director', icon: Users },
           { num: 3, label: 'Músicos', icon: Music },
           { num: 4, label: 'Mezcla', icon: Sliders },
-          { num: 5, label: 'Master', icon: Disc },
-          { num: 6, label: 'QA Listo', icon: ShieldCheck },
+          { num: 5, label: 'Máster', icon: Disc },
+          { num: 6, label: 'Revisión', icon: ShieldCheck },
         ].map((step) => {
           const isDone = currentStep > step.num || liveState.faseActual === 'completado'
           const isCurrent = currentStep === step.num && liveState.activo
@@ -142,25 +376,31 @@ export function BandaLiveOrchestrator() {
               }`}
             >
               <Icon className="size-3.5" />
-              <span className="truncate w-full text-[9px]">{step.label}</span>
+              <span className="w-full text-[9px]">{step.label}</span>
             </div>
           )
         })}
       </div>
 
       {/* Barra de progreso interactiva */}
-      {latestEvent?.progresoPorcentaje != null && (
+      {liveState.activo && (
         <div className="w-full bg-panel-base/80 h-1.5 rounded-full overflow-hidden mt-1">
-          <div
-            className="bg-accent-amber h-full transition-all duration-300"
-            style={{ width: `${latestEvent.progresoPorcentaje}%` }}
-          />
+          <div className="bg-accent-amber h-full transition-all duration-300" style={{ width: `${porcentaje}%` }} />
         </div>
       )}
 
       {/* Consola de eventos y auditoría en tiempo real */}
-      <div className="flex flex-col gap-1.5 max-h-44 overflow-y-auto rounded-lg bg-panel-base/80 p-2 border border-border/60">
-        {liveState.eventos.map((ev) => (
+      <div className="flex flex-col gap-1.5 rounded-lg border border-border/60 bg-panel-base/80 p-2">
+        {liveState.eventos.length > 6 ? (
+          <button
+            type="button"
+            onClick={() => setVerTodo((v) => !v)}
+            className="self-start text-[10px] text-muted-foreground hover:text-foreground"
+          >
+            {verTodo ? 'Ver solo lo último' : `Ver todo (${liveState.eventos.length - 6} más)`}
+          </button>
+        ) : null}
+        {(verTodo ? liveState.eventos : liveState.eventos.slice(-6)).map((ev) => (
           <div key={ev.id} className="flex items-start gap-1.5 text-[11px] leading-tight">
             {ev.estadoQA === 'aprobado' ? (
               <CheckCircle2 className="size-3.5 shrink-0 text-emerald-400 mt-0.5" />
@@ -173,31 +413,50 @@ export function BandaLiveOrchestrator() {
             )}
 
             <div className="flex-1 min-w-0">
-              <span className="font-semibold text-foreground mr-1" style={{ color: ev.color }}>
-                [{ev.agenteNombre}]:
-              </span>
-              <span className="text-foreground/90">{ev.mensaje}</span>
+              {liveState.activo && (liveState.participantes ?? []).some((p) => p.id === ev.agenteId) ? (
+                <button
+                  type="button"
+                  onClick={() => setPara(ev.agenteId)}
+                  title={`Escribirle a ${ev.agenteNombre}`}
+                  className="mr-1 font-semibold text-foreground hover:underline"
+                  style={{ color: ev.color }}
+                >
+                  {ev.agenteNombre}:
+                </button>
+              ) : (
+                <span className="font-semibold text-foreground mr-1" style={{ color: ev.color }}>
+                  {ev.agenteNombre}:
+                </span>
+              )}
+              <span className="break-words text-foreground/90">{ev.mensaje}</span>
               {ev.accionDetalle && (
-                <div className="text-[10px] text-muted-foreground font-mono bg-panel-raised/50 rounded px-1.5 py-0.5 mt-0.5 border border-border/40">
+                <div className="mt-0.5 whitespace-pre-line rounded border border-border/40 bg-panel-raised/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
                   {ev.accionDetalle}
                 </div>
               )}
             </div>
           </div>
         ))}
-        <div ref={logEndRef} />
       </div>
+
+      {/* Escribirle a la banda (o a un participante) mientras trabaja */}
+      {liveState.activo ? <EntradaNotaBanda state={liveState} para={para} onPara={setPara} /> : null}
 
       {/* Resumen de QA */}
       {liveState.qaReporte.detalles.length > 0 && (
-        <div className="flex items-center gap-2 pt-1 border-t border-border/50 text-[10px] text-muted-foreground">
+        <div className="flex items-start gap-2 pt-1 border-t border-border/50 text-[10px] text-muted-foreground">
           <ShieldCheck className="size-3.5 text-emerald-400 shrink-0" />
-          <span className="truncate">
-            Auditoría QA: {liveState.qaReporte.musicosAprobados}/{liveState.qaReporte.musicosTotal} músicos aprobados
-            {liveState.qaReporte.mezclaAprobada ? ' · Mezcla OK' : ''}
-            {liveState.qaReporte.masterAprobado ? ' · Master OK' : ''}
+          <span className="min-w-0 break-words">
+            Revisión de calidad: {liveState.qaReporte.musicosAprobados} de {liveState.qaReporte.musicosTotal} músicos aprobados
+            {liveState.qaReporte.mezclaAprobada ? ' · mezcla aprobada' : ''}
+            {liveState.qaReporte.masterAprobado ? ' · máster aprobado' : ''}
+            {liveState.qaReporte.rondas
+              ? ` · ${liveState.qaReporte.rondas} ${liveState.qaReporte.rondas === 1 ? 'corrección' : 'correcciones'}`
+              : ''}
           </span>
         </div>
+      )}
+        </>
       )}
     </div>
   )

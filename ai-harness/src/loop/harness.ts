@@ -63,6 +63,9 @@ const READ_ONLY = new Set([
   'analysis.reference',
   'analysis.diagnose',
   'analysis.timing',
+  'analysis.midiPlayed',
+  'analysis.touch',
+  'style.touch.list',
   'analysis.buffer',
   'analysis.fxBlame',
   'render.getStatus',
@@ -163,6 +166,7 @@ export function harnessReviewNeeded(results: ActionResult[]): boolean {
 const NO_RETRY = new Set([
   'track.create',
   'plugin.insert',
+  'track.addVstLayer',
   'daw.musicBuild',
   'daw.composeProject',
   'midi.clip.create',

@@ -32,6 +32,28 @@ describe('Voice-to-Melody Pitch Tracking', () => {
     expect(ajustarMidiAEscala(63.2, false)).toBe(63)
   })
 
+  it('el ajuste a escala da la vuelta a la octava (la sensible no cae una octava)', () => {
+    // B (semitono 11) no pertenece a C menor: el vecino más cercano es C una octava arriba (72) o Bb (70)
+    expect([70, 72]).toContain(ajustarMidiAEscala(71, true, 'C', 'menor'))
+    // G# (68) en A menor natural → A (69) o G (67), nunca una octava abajo
+    const gSostenido = ajustarMidiAEscala(68, true, 'A', 'menor')
+    expect([67, 69]).toContain(gSostenido)
+    // El resultado nunca se aleja más de 2 semitonos de la nota original, en ninguna raíz ni escala
+    for (const raiz of ['C', 'C#', 'D', 'Eb', 'F#', 'G', 'A', 'Bb', 'B']) {
+      for (const escala of ['mayor', 'menor', 'dórica', 'pentatónica'] as const) {
+        for (let p = 48; p <= 84; p++) {
+          const ajustado = ajustarMidiAEscala(p, true, raiz, escala)
+          expect(Math.abs(ajustado - p), `${raiz} ${escala} ${p}`).toBeLessThanOrEqual(2)
+        }
+      }
+    }
+  })
+
+  it('en Re mayor las notas de la escala no se tocan y D# sube a E o baja a D', () => {
+    for (const nota of [62, 64, 66, 67, 69, 71, 73]) expect(ajustarMidiAEscala(nota, true, 'D', 'mayor')).toBe(nota)
+    expect([62, 64]).toContain(ajustarMidiAEscala(63, true, 'D', 'mayor'))
+  })
+
   it('estima con precisión la frecuencia fundamental (f0) con algoritmo YIN', () => {
     const sr = 44100
     const durationSec = 0.2

@@ -21,8 +21,9 @@ export type GraphSidechain = { srcStem: number; amount: number; destSlotId?: str
 
 /**
  * encoding Reaper graph:
- *   `idx~gain~pan~muted|slot:i:0,slot:e:1#dest:amt+dest2:amt2;...||masterSlot:e:0`
- * Sends opcionales tras `#` (post-fader, sample-accurate en renderMix).
+ *   `idx~gain~pan~muted[~padre]|slot:i:0,slot:e:1#dest:amt+dest2:amt2;...||masterSlot:e:0`
+ * Sends opcionales tras `#` (post-fader; entran por la cadena del bus destino).
+ * `~padre` (opcional): stem de la carpeta-bus a la que va la salida de la pista en lugar del master.
  */
 export function encodeTrackGraph(params: {
   tracks: Array<{
@@ -30,6 +31,8 @@ export function encodeTrackGraph(params: {
     gain: number
     pan: number
     muted: boolean
+    /** Stem de la carpeta-bus madre (undefined = al master). */
+    parentStem?: number
     slots: Array<{ slotId: string; instrument: boolean; bypass: boolean }>
     sends?: GraphSend[]
     sidechains?: GraphSidechain[]
@@ -56,7 +59,8 @@ export function encodeTrackGraph(params: {
             )
             .join('+')}`
         : ''
-    return `${t.stemIndex}~${t.gain}~${t.pan}~${t.muted ? '1' : '0'}|${slots}${sends}${sidechains}`
+    const padre = t.parentStem != null && t.parentStem >= 0 && t.parentStem !== t.stemIndex ? `~${t.parentStem}` : ''
+    return `${t.stemIndex}~${t.gain}~${t.pan}~${t.muted ? '1' : '0'}${padre}|${slots}${sends}${sidechains}`
   })
   const master = params.master
     .map((s) => `${s.slotId}:${s.instrument ? 'i' : 'e'}:${s.bypass ? '1' : '0'}`)

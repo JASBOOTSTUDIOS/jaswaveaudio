@@ -1,10 +1,14 @@
-import { cargarEspecialistas, type EspecialistaConfig } from './especialistas-storage'
+import { limpiarTextoUsuario } from '@jaswave/host-sdk'
+import type { EtapaProduccion, EventoProduccion, NotaUsuario, ParticipanteProduccion, ResultadoProduccionAgentes } from '@jaswave/host-sdk'
+import { cargarEspecialistas } from './especialistas-storage'
 
 export type FaseBanda =
   | 'idle'
   | 'planificacion'
   | 'direccion'
   | 'grabacion_musicos'
+  | 'ensayo'
+  | 'coherencia'
   | 'qa_musicos'
   | 'mezcla'
   | 'qa_mezcla'
@@ -24,7 +28,15 @@ export interface EventoOrquestador {
   mensaje: string
   accionDetalle?: string
   estadoQA?: 'aprobado' | 'corrigiendo' | 'pendiente'
-  progresoPorcentaje?: number
+  /** Ronda de corrección (0 = primera revisión). */
+  ronda?: number
+}
+
+export interface ParticipanteBanda {
+  id: string
+  nombre: string
+  rol: string
+  color?: string
 }
 
 export interface BandaLiveState {
@@ -32,40 +44,154 @@ export interface BandaLiveState {
   faseActual: FaseBanda
   promptUsuario: string
   agenteActivoId: string | null
+  /** Quiénes forman la banda (para escribirle a uno en particular). */
+  participantes: ParticipanteBanda[]
   eventos: EventoOrquestador[]
-  pistasCreadas: string[]
-  vstsInsertados: string[]
   qaReporte: {
     musicosAprobados: number
     musicosTotal: number
     mezclaAprobada: boolean
     masterAprobado: boolean
+    rondas: number
     detalles: string[]
   }
 }
 
 type ListenerLive = (state: BandaLiveState) => void
 
+const ESTADO_INICIAL = (prompt: string): BandaLiveState => ({
+  activo: false,
+  faseActual: 'idle',
+  promptUsuario: prompt,
+  agenteActivoId: null,
+  participantes: [],
+  eventos: [],
+  qaReporte: { musicosAprobados: 0, musicosTotal: 0, mezclaAprobada: false, masterAprobado: false, rondas: 0, detalles: [] },
+})
+
+const FASE: Record<EtapaProduccion, FaseBanda> = {
+  plan: 'planificacion',
+  direccion: 'direccion',
+  musicos: 'grabacion_musicos',
+  ensayo: 'ensayo',
+  coherencia: 'coherencia',
+  qa_musicos: 'qa_musicos',
+  mezcla: 'mezcla',
+  qa_mezcla: 'qa_mezcla',
+  master: 'mastering',
+  qa_master: 'qa_final',
+  entrega: 'completado',
+}
+
+const INICIO_ETAPA: Partial<Record<EtapaProduccion, string>> = {
+  plan: 'Planificando la canción…',
+  direccion: 'Preparando el proyecto y repartiendo el trabajo…',
+  musicos: 'Los músicos están grabando sus partes a la vez…',
+  ensayo: 'Ensayo: la banda se escucha y se pone de acuerdo…',
+  coherencia: 'Revisando que todo encaje en tiempo, armonía y ritmo…',
+  qa_musicos: 'Revisando lo que grabaron…',
+  mezcla: 'Mezclando…',
+  qa_mezcla: 'Revisando la mezcla…',
+  master: 'Preparando el máster…',
+  qa_master: 'Revisión final del máster…',
+}
+
+const MAX_EVENTOS = 200
+let contadorEventos = 0
+
+/**
+ * Canal entre ventanas: la producción corre en la ventana principal y su panel puede estar en una ventana
+ * flotante (otro renderer, otro singleton). Sin esto el panel flotante se veía vacío.
+ */
+export const CANAL_BANDA = 'jaswave-banda-v1'
+type MensajeBanda = { tipo: 'estado'; state: BandaLiveState } | { tipo: 'pedir' } | { tipo: 'detener' } | { tipo: 'nota'; texto: string; para?: string }
+
+/** Quien escribe las indicaciones durante la producción (fila propia en la consola de la banda). */
+export const USUARIO_BANDA = { id: 'usuario', nombre: 'Tú', rol: 'usuario', color: '#f5d0a9' } as const
+const MAX_NOTA = 600
+
+/**
+ * Estado en vivo de la banda virtual. La producción la hacen agentes reales por etapas (turno «banda»,
+ * `motor/turno/turno-banda.ts`); este objeto traduce sus eventos al panel: etapa, quién trabaja, qué
+ * hace, veredictos del QA y rondas de corrección.
+ */
 export class BandaOrchestrator {
   private listeners = new Set<ListenerLive>()
-  private state: BandaLiveState = {
-    activo: false,
-    faseActual: 'idle',
-    promptUsuario: '',
-    agenteActivoId: null,
-    eventos: [],
-    pistasCreadas: [],
-    vstsInsertados: [],
-    qaReporte: {
-      musicosAprobados: 0,
-      musicosTotal: 0,
-      mezclaAprobada: false,
-      masterAprobado: false,
-      detalles: [],
-    },
+  private state: BandaLiveState = ESTADO_INICIAL('')
+  private abortar: (() => void) | null = null
+  private participantes: ParticipanteProduccion[] = []
+  private colores = new Map<string, string>()
+  private canal: { postMessage: (m: MensajeBanda) => void } | null = null
+  /** Esta instancia solo refleja la producción de otra ventana (panel flotante). */
+  private reflejo = false
+  /** Indicaciones del usuario que la producción aún no ha recogido (`tomarNotas`). */
+  private notasPendientes: NotaUsuario[] = []
+
+  constructor(canal?: { postMessage: (m: MensajeBanda) => void; onmessage?: ((ev: { data: unknown }) => void) | null } | null) {
+    if (canal !== undefined) {
+      this.canal = canal
+      if (canal) canal.onmessage = (ev) => this.recibir(ev.data)
+      this.canal?.postMessage({ tipo: 'pedir' })
+      return
+    }
+    // Solo en el renderer: en Node (pruebas) un BroadcastChannel abierto mantendría vivo el proceso.
+    if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') return
+    try {
+      const bc = new BroadcastChannel(CANAL_BANDA)
+      bc.onmessage = (ev: MessageEvent) => this.recibir(ev.data)
+      // En Node (pruebas con `window` simulado) el canal no debe mantener vivo el proceso.
+      ;(bc as unknown as { unref?: () => void }).unref?.()
+      this.canal = bc
+      bc.postMessage({ tipo: 'pedir' } satisfies MensajeBanda)
+    } catch {
+      this.canal = null
+    }
   }
 
-  private abortController: AbortController | null = null
+  /** Lo que llega de otra ventana (dato, no orden: solo se refleja si aquí no hay producción propia). */
+  public recibir(m: unknown): void {
+    const msg = (m ?? null) as MensajeBanda | null
+    if (!msg || typeof msg !== 'object') return
+    if (msg.tipo === 'pedir') {
+      if (!this.reflejo && (this.abortar || this.state.eventos.length)) this.publicar()
+      return
+    }
+    if (msg.tipo === 'detener') {
+      this.abortar?.()
+      return
+    }
+    if (msg.tipo === 'nota') {
+      // Escrita en un panel flotante: la recoge la ventana que lleva la producción.
+      if (this.abortar && typeof msg.texto === 'string') this.enviarNota(msg.texto, typeof msg.para === 'string' ? msg.para : undefined)
+      return
+    }
+    if (msg.tipo === 'estado' && msg.state && typeof msg.state === 'object') {
+      if (this.abortar) return
+      this.reflejo = true
+      // El estado viene de otra ventana (quizá de una versión sin `participantes`): nunca dejar huecos
+      // que tumben el panel.
+      const recibido = msg.state as Partial<BandaLiveState>
+      this.state = {
+        ...ESTADO_INICIAL(typeof recibido.promptUsuario === 'string' ? recibido.promptUsuario : ''),
+        ...recibido,
+        participantes: Array.isArray(recibido.participantes) ? recibido.participantes : [],
+        eventos: Array.isArray(recibido.eventos) ? recibido.eventos : [],
+      }
+      for (const l of this.listeners) l(this.state)
+    }
+  }
+
+  public esReflejo(): boolean {
+    return this.reflejo
+  }
+
+  private publicar() {
+    try {
+      this.canal?.postMessage({ tipo: 'estado', state: this.state })
+    } catch {
+      /* canal cerrado */
+    }
+  }
 
   public subscribe(fn: ListenerLive): () => void {
     this.listeners.add(fn)
@@ -75,358 +201,214 @@ export class BandaOrchestrator {
     }
   }
 
-  private emit() {
-    for (const l of this.listeners) l(this.state)
-  }
-
-  private pushEvent(
-    fase: FaseBanda,
-    agente: EspecialistaConfig | undefined,
-    mensaje: string,
-    opts?: { accionDetalle?: string; estadoQA?: 'aprobado' | 'corrigiendo' | 'pendiente'; progreso?: number },
-  ) {
-    const evento: EventoOrquestador = {
-      id: `ev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      timestamp: Date.now(),
-      fase,
-      agenteId: agente?.id ?? 'sistema',
-      agenteNombre: agente?.nombre ?? 'Sistema',
-      rol: agente?.role ?? 'sistema',
-      color: agente?.color ?? '#8b5cf6',
-      mensaje,
-      accionDetalle: opts?.accionDetalle,
-      estadoQA: opts?.estadoQA,
-      progresoPorcentaje: opts?.progreso,
-    }
-    this.state.eventos.push(evento)
-    this.state.faseActual = fase
-    this.state.agenteActivoId = agente?.id ?? null
-    this.emit()
-  }
-
   public getState(): BandaLiveState {
     return this.state
   }
 
-  public detener() {
-    if (this.abortController) {
-      this.abortController.abort()
-      this.abortController = null
+  private emit() {
+    for (const l of this.listeners) l(this.state)
+    if (!this.reflejo) this.publicar()
+  }
+
+  private quien(id: string | undefined): { id: string; nombre: string; rol: string; color?: string } {
+    if (id === USUARIO_BANDA.id) return { ...USUARIO_BANDA }
+    const p = this.participantes.find((x) => x.id === id)
+    return p ? { id: p.id, nombre: p.nombre, rol: p.rol, color: this.colores.get(p.id) } : { id: 'sistema', nombre: 'Banda', rol: 'sistema', color: '#8b5cf6' }
+  }
+
+  private push(fase: FaseBanda, quienId: string | undefined, mensaje: string, extra: Partial<EventoOrquestador> = {}) {
+    const q = this.quien(quienId)
+    const ev: EventoOrquestador = {
+      id: `ev-${Date.now()}-${++contadorEventos}`,
+      timestamp: Date.now(),
+      fase,
+      agenteId: q.id,
+      agenteNombre: q.nombre,
+      rol: q.rol,
+      color: q.color,
+      mensaje,
+      ...extra,
     }
-    this.state.activo = false
-    this.state.faseActual = 'idle'
-    this.pushEvent('idle', undefined, '⏹ Orquestación detenida por el usuario.')
+    // Una línea del usuario no cambia quién está trabajando.
+    const agenteActivoId = q.id === USUARIO_BANDA.id ? this.state.agenteActivoId : q.id
+    this.state = { ...this.state, eventos: [...this.state.eventos, ev].slice(-MAX_EVENTOS), faseActual: fase, agenteActivoId }
+    this.emit()
   }
 
   /**
-   * Ejecuta el pipeline completo de la Banda Virtual con bucle de calidad QA
+   * Indicación del usuario para el agente en turno (lo que él ve y oye y los agentes no). Queda en la consola
+   * como «Tú: …» y la producción la recoge con `tomarNotas`; desde un panel flotante viaja a la ventana que
+   * lleva la producción. Devuelve false si no hay producción en curso.
    */
-  public async iniciarSesionBanda(
-    promptUsuario: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tienda: any,
-  ): Promise<boolean> {
-    if (this.state.activo) return false
+  public enviarNota(texto: string, para?: string): boolean {
+    const t = limpiarTextoUsuario(texto).replace(/\s+/g, ' ').trim().slice(0, MAX_NOTA)
+    if (!t || !this.state.activo) return false
+    // Destinatario: un participante concreto (por id) o toda la banda.
+    const destino = para ? this.state.participantes.find((p) => p.id === para) : undefined
+    if (para && !destino) return false
+    if (this.abortar) {
+      this.notasPendientes.push({ texto: t, ...(destino ? { para: destino.id } : {}) })
+      this.push(this.state.faseActual, USUARIO_BANDA.id, destino ? `Para ${destino.nombre}: ${t}` : t)
+      return true
+    }
+    if (!this.reflejo) return false
+    try {
+      this.canal?.postMessage({ tipo: 'nota', texto: t, ...(destino ? { para: destino.id } : {}) })
+      return true
+    } catch {
+      return false
+    }
+  }
 
-    this.abortController = new AbortController()
-    const { signal } = this.abortController
+  /**
+   * Resuelve a quién va una indicación escrita en el chat: «@Bajista …» o «Bajista: …» (nombre o id de un
+   * participante, sin distinguir mayúsculas) → ese participante y el texto sin el prefijo; si no, a todos.
+   */
+  public destinatarioDeTexto(texto: string): { texto: string; para?: string } {
+    const t = texto.trim()
+    const m = /^@?\s*([^:@\n]{1,40}?)\s*[:,]\s+(.+)$/s.exec(t) ?? /^@\s*(\S+)\s+(.+)$/s.exec(t)
+    if (!m) return { texto: t }
+    const nombre = m[1]!.trim().toLowerCase()
+    const p = this.state.participantes.find((x) => x.nombre.trim().toLowerCase() === nombre || x.id.toLowerCase() === nombre)
+    return p ? { texto: m[2]!.trim(), para: p.id } : { texto: t }
+  }
 
+  /** Lo llama la producción (a menudo): indicaciones nuevas desde la última vez, en orden. */
+  public tomarNotas(): NotaUsuario[] {
+    if (!this.notasPendientes.length) return []
+    const n = this.notasPendientes
+    this.notasPendientes = []
+    return n
+  }
+
+  /** Lo llama el turno al empezar: deja el panel listo y guarda cómo detenerlo. */
+  public comenzar(prompt: string, participantes: ParticipanteProduccion[], abortar: () => void): void {
+    this.reflejo = false
+    this.participantes = participantes
+    this.colores = new Map(cargarEspecialistas().map((e) => [e.id, e.color ?? '#6366f1']))
+    this.abortar = abortar
+    this.notasPendientes = []
     this.state = {
+      ...ESTADO_INICIAL(prompt),
       activo: true,
       faseActual: 'planificacion',
-      promptUsuario,
-      agenteActivoId: 'planificador',
-      eventos: [],
-      pistasCreadas: [],
-      vstsInsertados: [],
-      qaReporte: {
-        musicosAprobados: 0,
-        musicosTotal: 0,
-        mezclaAprobada: false,
-        masterAprobado: false,
-        detalles: [],
-      },
+      participantes: participantes.map((p) => ({ id: p.id, nombre: p.nombre, rol: p.rol, color: this.colores.get(p.id) })),
+      qaReporte: { ...ESTADO_INICIAL(prompt).qaReporte, musicosTotal: participantes.filter((p) => p.rol === 'musico').length },
     }
     this.emit()
+  }
 
-    const especialistas = cargarEspecialistas().filter((e) => e.activo)
-    const planificador = especialistas.find((e) => e.role === 'planificador') || especialistas[0]
-    const director = especialistas.find((e) => e.role === 'director') || planificador
-    const qa = especialistas.find((e) => e.role === 'qa')
-    const mezclador = especialistas.find((e) => e.role === 'mezcla')
-    const masterizador = especialistas.find((e) => e.role === 'mastering')
-    const musicos = especialistas.filter((e) => e.role === 'musico')
-
-    try {
-      // ==========================================
-      // FASE 1: PLANIFICACIÓN
-      // ==========================================
-      this.pushEvent('planificacion', planificador, `Analizando encargo musical: "${promptUsuario}"...`, { progreso: 10 })
-      await new Promise((r) => setTimeout(r, 600))
-      if (signal.aborted) return false
-
-      const bpm = tienda?.obtenerEstado?.()?.project?.tempo || 120
-      const tonalidadEstimada = /menor|sad|melancol/i.test(promptUsuario) ? 'A minor (Am)' : 'C major (C)'
-      this.pushEvent(
-        'planificacion',
-        planificador,
-        `Plan formulado: Tempo ${bpm} BPM, Tonalidad ${tonalidadEstimada}. Instrumentación requerida: ${musicos.map((m) => m.nombre).join(', ') || 'Piano, Batería, Bajo'}.`,
-        { accionDetalle: `Tempo: ${bpm} BPM | Escala: ${tonalidadEstimada}`, progreso: 20 },
-      )
-      await new Promise((r) => setTimeout(r, 700))
-      if (signal.aborted) return false
-
-      // ==========================================
-      // FASE 2: DIRECCIÓN Y ASIGNACIÓN DE TAREAS
-      // ==========================================
-      this.pushEvent('direccion', director, 'El Director coordina la sesión y asigna partituras y roles a los músicos.', { progreso: 25 })
-      await new Promise((r) => setTimeout(r, 500))
-      if (signal.aborted) return false
-
-      // Lista de músicos a ejecutar (predeterminados o personalizados)
-      const musicosAEjecutar = musicos.length > 0 ? musicos : [
-        { id: 'pianista', nombre: 'Pianista', role: 'musico' as const, skills: ['piano'], activo: true },
-        { id: 'baterista', nombre: 'Baterista', role: 'musico' as const, skills: ['drums'], activo: true },
-        { id: 'bajista', nombre: 'Bajista', role: 'musico' as const, skills: ['bass'], activo: true },
-      ]
-
-      this.state.qaReporte.musicosTotal = musicosAEjecutar.length
-      this.emit()
-
-      // ==========================================
-      // FASE 3: GRABACIÓN DE MÚSICOS + BUCLE QA
-      // ==========================================
-      for (let i = 0; i < musicosAEjecutar.length; i++) {
-        if (signal.aborted) return false
-        const musico = musicosAEjecutar[i]!
-        const progresoBase = 30 + Math.round((i / musicosAEjecutar.length) * 35)
-
-        // 3.1 Músico compone y crea la pista
-        this.pushEvent(
-          'grabacion_musicos',
-          musico,
-          `${musico.nombre} preparando instrumento y componiendo pasajes para el tema...`,
-          { progreso: progresoBase },
+  public evento(e: EventoProduccion): void {
+    if (e.tipo === 'etapa') {
+      if (e.etapa === 'entrega') return
+      if (e.fase === 'inicio') {
+        if (e.ronda) return
+        const responsable = this.participantes.find((p) =>
+          e.etapa === 'plan' ? p.rol === 'planificador' : e.etapa === 'direccion' ? p.rol === 'director' : e.etapa === 'coherencia' ? p.rol === 'coherencia' : e.etapa.startsWith('qa_') ? p.rol === 'qa' : e.etapa === 'mezcla' ? p.rol === 'mezcla' : e.etapa === 'master' ? p.rol === 'master' : false,
         )
-
-        // Ejecutar creación real en el DAW a través del executor si está disponible
-        const trackName = `${musico.nombre} (${musico.instrumento || 'Inst'})`
-        try {
-          if (tienda?.executor?.execute) {
-            const trkRes = await tienda.executor.execute('track.create', {
-              nombre: trackName,
-              tipo: 'midi',
-            })
-            const trackId = trkRes?.result?.id ?? (trkRes?.state?.project?.tracks?.slice(-1)[0]?.id)
-            if (trackId) {
-              this.state.pistasCreadas.push(trackName)
-              // Crear notas según instrumento
-              const notas = musico.skills.includes('drums')
-                ? [
-                    { pitch: 36, inicio: 0, duracion: 0.5, velocidad: 100 }, // Kick
-                    { pitch: 42, inicio: 0, duracion: 0.5, velocidad: 80 },  // Hat
-                    { pitch: 42, inicio: 1, duracion: 0.5, velocidad: 85 },
-                    { pitch: 38, inicio: 1, duracion: 0.5, velocidad: 95 },  // Snare
-                    { pitch: 42, inicio: 2, duracion: 0.5, velocidad: 80 },
-                    { pitch: 36, inicio: 2, duracion: 0.5, velocidad: 100 },
-                    { pitch: 42, inicio: 3, duracion: 0.5, velocidad: 85 },
-                    { pitch: 38, inicio: 3, duracion: 0.5, velocidad: 95 },
-                    { pitch: 36, inicio: 4, duracion: 0.5, velocidad: 100 },
-                    { pitch: 42, inicio: 4, duracion: 0.5, velocidad: 80 },
-                    { pitch: 38, inicio: 5, duracion: 0.5, velocidad: 95 },
-                    { pitch: 36, inicio: 6, duracion: 0.5, velocidad: 100 },
-                    { pitch: 38, inicio: 7, duracion: 0.5, velocidad: 95 },
-                  ]
-                : musico.skills.includes('bass')
-                  ? [
-                      { pitch: 36, inicio: 0, duracion: 1.5, velocidad: 90 }, // C1
-                      { pitch: 36, inicio: 2, duracion: 1.5, velocidad: 90 },
-                      { pitch: 41, inicio: 4, duracion: 1.5, velocidad: 90 }, // F1
-                      { pitch: 43, inicio: 6, duracion: 1.5, velocidad: 90 }, // G1
-                    ]
-                  : [
-                      { pitch: 60, inicio: 0, duracion: 2, velocidad: 85 }, // C4
-                      { pitch: 64, inicio: 0, duracion: 2, velocidad: 80 }, // E4
-                      { pitch: 67, inicio: 0, duracion: 2, velocidad: 82 }, // G4
-                      { pitch: 62, inicio: 2, duracion: 2, velocidad: 88 }, // D4
-                      { pitch: 65, inicio: 2, duracion: 2, velocidad: 84 }, // F4
-                      { pitch: 69, inicio: 2, duracion: 2, velocidad: 86 }, // A4
-                      { pitch: 60, inicio: 4, duracion: 2, velocidad: 85 },
-                      { pitch: 64, inicio: 4, duracion: 2, velocidad: 80 },
-                      { pitch: 67, inicio: 4, duracion: 2, velocidad: 82 },
-                      { pitch: 59, inicio: 6, duracion: 2, velocidad: 86 }, // B3
-                      { pitch: 62, inicio: 6, duracion: 2, velocidad: 84 },
-                      { pitch: 67, inicio: 6, duracion: 2, velocidad: 88 },
-                    ]
-
-              await tienda.executor.execute('midi.clip.create', {
-                pistaId: trackId,
-                nombre: `${musico.nombre} Clip`,
-                inicio: 0,
-                duracion: 8,
-                notas,
-              })
-            }
-          }
-        } catch (e) {
-          console.warn('[banda-live] comando track falló pero continuamos flujo:', e)
-        }
-
-        await new Promise((r) => setTimeout(r, 800))
-        if (signal.aborted) return false
-
-        this.pushEvent(
-          'grabacion_musicos',
-          musico,
-          `✓ ${musico.nombre} finalizó su interpretación y entregó la pista al Director.`,
-          { accionDetalle: `Pista "${trackName}" creada en el timeline con notas cuantizadas.`, progreso: progresoBase + 5 },
-        )
-
-        // 3.2 Bucle de Auditoría QA
-        this.pushEvent(
-          'qa_musicos',
-          qa,
-          `QA Musical analizando la toma de ${musico.nombre} (dinámica, rango, afinación y coherencia)...`,
-          { estadoQA: 'pendiente' },
-        )
-        await new Promise((r) => setTimeout(r, 600))
-        if (signal.aborted) return false
-
-        // Simular o auditar con análisis de audio
-        const tieneDetalleAjuste = i === 0 && Math.random() < 0.25 // Caso didáctico ocasional de corrección
-        if (tieneDetalleAjuste) {
-          this.pushEvent(
-            'qa_musicos',
-            qa,
-            `QA detectó leve exceso de velocidad en notas de paso. Solicitando micro-ajuste a ${musico.nombre}...`,
-            { estadoQA: 'corrigiendo' },
-          )
-          await new Promise((r) => setTimeout(r, 600))
-          this.pushEvent(
-            'grabacion_musicos',
-            musico,
-            `${musico.nombre} aplicó la corrección indicada por QA.`,
-            { estadoQA: 'aprobado' },
-          )
-        }
-
-        this.state.qaReporte.musicosAprobados += 1
-        this.state.qaReporte.detalles.push(`✓ Pista de ${musico.nombre} aprobada por QA`)
-        this.pushEvent(
-          'qa_musicos',
-          qa,
-          `✓ QA aprobó la pista de ${musico.nombre}. Criterios de armonía y tempo cumplidos sin clipping.`,
-          { estadoQA: 'aprobado' },
-        )
-        await new Promise((r) => setTimeout(r, 400))
+        this.push(FASE[e.etapa], responsable?.id, INICIO_ETAPA[e.etapa] ?? '')
       }
-
-      // ==========================================
-      // FASE 4: MEZCLA Y BALANCE GENERAL
-      // ==========================================
-      if (signal.aborted) return false
-      this.pushEvent(
-        'mezcla',
-        mezclador,
-        'Ingeniero de Mezcla analizando enmascaramiento, balance de frecuencias e insertando plugins VST...',
-        { progreso: 75 },
+      return
+    }
+    if (e.tipo === 'ensayo') {
+      const nombre = (id: string) => this.quien(id).nombre
+      if (e.conformes.length) this.push('ensayo', undefined, `Conformes con su parte: ${e.conformes.map(nombre).join(', ')}.`)
+      for (const p of e.propuestas) {
+        this.push('ensayo', p.de, `Propone ${p.para === p.de ? 'ajustar su parte' : `a ${nombre(p.para)}`}: ${limpiarTextoUsuario(p.ajuste).slice(0, 200)}`)
+      }
+      const director = this.participantes.find((p) => p.rol === 'director')
+      if (e.propuestas.length) {
+        this.push(
+          'ensayo',
+          director?.id,
+          e.acordados.length ? `Acordado: ${e.acordados.map((a) => `${nombre(a.musico)} ${limpiarTextoUsuario(a.ajuste).slice(0, 120)}`).join(' · ')}` : `La banda lo deja como está.${e.nota ? ` ${limpiarTextoUsuario(e.nota)}` : ''}`,
+          e.acordados.length ? { estadoQA: 'corrigiendo', accionDetalle: e.nota ? limpiarTextoUsuario(e.nota) : undefined } : {},
+        )
+      } else this.push('ensayo', director?.id, 'La banda está de acuerdo: cada parte encaja con las demás.', { estadoQA: 'aprobado' })
+      return
+    }
+    if (e.tipo === 'devolucion') {
+      const d = e.devolucion
+      const a = d.destino === 'musicos' ? (d.musico ? this.quien(d.musico).nombre : 'los músicos') : d.destino === 'arreglista' ? 'el arreglista' : 'la mezcla'
+      this.push(FASE[e.etapa], e.participante.id, `Devuelve el trabajo a ${a}: ${limpiarTextoUsuario(d.problema).slice(0, 200)}`, { estadoQA: 'corrigiendo' })
+      return
+    }
+    if (e.tipo === 'encargos') {
+      for (const x of e.encargos) this.push('direccion', x.participante, `Encargo: ${limpiarTextoUsuario(x.encargo).slice(0, 160)}`)
+      return
+    }
+    if (e.tipo === 'nota') {
+      this.push(FASE[e.etapa], e.participante.id, `Tiene en cuenta tu indicación: «${limpiarTextoUsuario(e.texto).slice(0, 120)}»`)
+      return
+    }
+    if (e.tipo === 'agente') {
+      const ev = e.evento
+      if (ev.tipo === 'herramienta' && ev.fase === 'fin') {
+        // El motivo real (error de la herramienta) ayuda al usuario y a quien depura a ver por qué insiste.
+        const motivo = ev.ok ? '' : limpiarTextoUsuario(String(ev.resumen ?? '')).replace(/\s+/g, ' ').slice(0, 160)
+        this.push(FASE[e.etapa], e.participante.id, ev.titulo, ev.ok ? {} : { accionDetalle: motivo ? `No salió bien: ${motivo}` : 'No salió bien; lo intenta de otra forma.' })
+      }
+      return
+    }
+    if (e.tipo === 'qa') {
+      const v = e.veredicto
+      const qa = this.participantes.find((p) => p.rol === (e.etapa === 'coherencia' ? 'coherencia' : 'qa'))
+      const problemas = v.problemas.map((p) => `${p.quien ? `${this.quien(p.quien).nombre}: ` : ''}${limpiarTextoUsuario(p.problema)}`)
+      this.push(
+        FASE[e.etapa],
+        qa?.id,
+        v.aprobado ? `Aprobado. ${limpiarTextoUsuario(v.resumen)}`.trim() : `Hay que corregir${e.ronda ? ` (ronda ${e.ronda + 1})` : ''}.`,
+        {
+          estadoQA: v.aprobado ? 'aprobado' : 'corrigiendo',
+          ronda: e.ronda,
+          accionDetalle: [...new Set([...problemas, ...(e.medicion?.detalles ?? [])].filter(Boolean))].join('\n') || undefined,
+        },
       )
-      await new Promise((r) => setTimeout(r, 900))
-      if (signal.aborted) return false
+      const r = this.state.qaReporte
+      this.state = {
+        ...this.state,
+        qaReporte: {
+          ...r,
+          rondas: Math.max(r.rondas, e.ronda),
+          musicosAprobados: e.etapa === 'qa_musicos' ? (v.aprobado ? r.musicosTotal : r.musicosTotal - new Set(v.problemas.map((p) => p.quien).filter(Boolean)).size) : r.musicosAprobados,
+          mezclaAprobada: e.etapa === 'qa_mezcla' ? v.aprobado : r.mezclaAprobada,
+          masterAprobado: e.etapa === 'qa_master' ? v.aprobado : r.masterAprobado,
+        },
+      }
+      this.emit()
+    }
+  }
 
-      // Aplicar ganancias, paneo y VSTs de mezcla si hay tienda
+  /** Lo llama el turno al terminar (bien, con avisos, con fallo o detenido). */
+  public terminar(r: ResultadoProduccionAgentes): void {
+    this.abortar = null
+    this.notasPendientes = []
+    const detalles = r.etapas.filter((x) => x.etapa.startsWith('qa_')).map((x) => `${x.ok ? 'Aprobada' : 'Con avisos'}: ${limpiarTextoUsuario(x.resumen)}`)
+    this.state = { ...this.state, activo: false, qaReporte: { ...this.state.qaReporte, detalles } }
+    const fase: FaseBanda = r.estado === 'fallo' || r.estado === 'cancelado' ? 'error' : 'completado'
+    const mensaje =
+      r.estado === 'cancelado'
+        ? 'Producción detenida. Lo que ya se creó se puede deshacer desde el chat.'
+        : r.estado === 'fallo'
+          ? 'La producción se detuvo por un problema. Lo que ya se creó se puede deshacer desde el chat.'
+          : r.estado === 'completado'
+            ? 'Producción terminada y revisada.'
+            : 'Producción terminada con algunos avisos: revisa el informe.'
+    this.push(fase, undefined, mensaje)
+  }
+
+  /** Detiene la producción propia; desde un panel flotante, se lo pide a la ventana que la lleva. */
+  public detener(): void {
+    if (this.abortar) {
+      this.abortar()
+      return
+    }
+    if (this.reflejo) {
       try {
-        if (tienda?.obtenerEstado && tienda?.executor?.execute) {
-          const st = tienda.obtenerEstado()
-          const tracks = st.project.tracks ?? []
-          for (const trk of tracks) {
-            let volumen = trk.volumen ?? 0.85
-            let paneo = trk.paneo ?? 0
-            if (/bater/i.test(trk.nombre)) {
-              volumen = 0.9
-              paneo = 0
-              this.state.vstsInsertados.push(`Compresor VST en ${trk.nombre}`)
-            } else if (/piano|key/i.test(trk.nombre)) {
-              volumen = 0.8
-              paneo = -0.2
-              this.state.vstsInsertados.push(`EQ Paramétrico en ${trk.nombre}`)
-            } else if (/bajo|bass/i.test(trk.nombre)) {
-              volumen = 0.88
-              paneo = 0
-              this.state.vstsInsertados.push(`Saturador de Cinta en ${trk.nombre}`)
-            } else {
-              paneo = 0.25
-            }
-            await tienda.executor.execute('track.update', {
-              trackId: trk.id,
-              patch: { volumen, paneo },
-            })
-          }
-        }
+        this.canal?.postMessage({ tipo: 'detener' })
       } catch {
-        /* ignore */
+        /* canal cerrado */
       }
-
-      this.pushEvent(
-        'mezcla',
-        mezclador,
-        '✓ Mezcla finalizada: Gain staging equilibrado, curvas de EQ aplicadas y reverb enviada al bus de espacio.',
-        { accionDetalle: 'Pistas ecualizadas, paneadas en campo estéreo y limpias de barro en 250 Hz.', progreso: 82 },
-      )
-      await new Promise((r) => setTimeout(r, 600))
-
-      // 4.2 QA valida la mezcla
-      this.pushEvent('qa_mezcla', qa, 'QA auditando el balance estéreo y enmascaramiento espectral de la mezcla...', { estadoQA: 'pendiente' })
-      await new Promise((r) => setTimeout(r, 600))
-      if (signal.aborted) return false
-
-      this.state.qaReporte.mezclaAprobada = true
-      this.state.qaReporte.detalles.push('✓ Mezcla aprobada: Correlación estéreo óptima (+0.85), sin barro.')
-      this.pushEvent('qa_mezcla', qa, '✓ QA aprobó la mezcla. Espacio estéreo y dinámica general certificados.', { estadoQA: 'aprobado', progreso: 88 })
-      await new Promise((r) => setTimeout(r, 500))
-
-      // ==========================================
-      // FASE 5: MASTERIZACIÓN
-      // ==========================================
-      if (signal.aborted) return false
-      this.pushEvent(
-        'mastering',
-        masterizador,
-        'Ingeniero de Mastering calibrando el bus Master (True Peak a -0.5 dB, Limitador y curva LUFS para streaming)...',
-        { progreso: 92 },
-      )
-      await new Promise((r) => setTimeout(r, 800))
-      if (signal.aborted) return false
-
-      this.pushEvent(
-        'mastering',
-        masterizador,
-        '✓ Masterización completada a -14.0 LUFS integrados y True Peak de -0.5 dBFS.',
-        { accionDetalle: 'Limitador de techo estricto activo, presencia en agudos y graves definidos.', progreso: 96 },
-      )
-
-      // 5.2 QA final
-      this.pushEvent('qa_final', qa, 'QA realizando la inspección final de masterización...', { estadoQA: 'pendiente' })
-      await new Promise((r) => setTimeout(r, 500))
-      if (signal.aborted) return false
-
-      this.state.qaReporte.masterAprobado = true
-      this.state.qaReporte.detalles.push('✓ Master final verificado y aprobado para distribución.')
-      this.pushEvent(
-        'completado',
-        director,
-        '🎉 ¡Producción musical completada con éxito! La banda virtual finalizó todas las pistas, mezcla y mastering con certificación de QA.',
-        { estadoQA: 'aprobado', progreso: 100 },
-      )
-
-      return true
-    } catch (err) {
-      console.error('[banda-orchestrator] error en sesión:', err)
-      this.pushEvent('error', undefined, `Error en la producción: ${err instanceof Error ? err.message : String(err)}`)
-      return false
-    } finally {
-      this.state.activo = false
-      this.emit()
     }
   }
 }

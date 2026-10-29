@@ -117,6 +117,7 @@ describe('inyección vía web.search en el razonamiento', () => {
       mode: 'ask',
       projectContext: 'Pistas: Batería (t1)',
       phases: ['normalize', 'research2', 'commit'],
+      perfil: 'profundo',
       runReadTools: async () => INJECTION,
       chat: async (messages) => {
         calls.push(messages)
@@ -302,6 +303,7 @@ describe('presupuesto del agente', () => {
       mode: 'create',
       projectContext: 'vacío',
       phases: ['normalize', 'sense', 'frame', 'explore', 'commit'],
+      perfil: 'profundo',
       runReadTools: async () => '',
       budget: { maxModelCalls: 2 },
       chat: async () => {

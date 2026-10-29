@@ -12,7 +12,8 @@ import { exigirAdmin, exigirAutenticacion } from '../http/auth-middleware.js';
 import { ErrorApi } from '../http/errores.js';
 import { conRedRestringida } from '../seguridad/red-restringida.js';
 import { aiChat, aiChatStream, aiHealth, cancelAiChat, type AiChatRequest } from './gateway/ai-gateway.js';
-import type { ProveedorResuelto, ServicioAdminIA, ServicioProveedoresIA } from './proveedores.js';
+import type { ProveedorPublico, ProveedorResuelto, ServicioAdminIA, ServicioProveedoresIA } from './proveedores.js';
+import { MODELO_AUTO, NOMBRE_SERVICIO, type CatalogoJasWave, type ServicioJasWave } from './jaswave/servicio.js';
 
 const mensaje = z
   .object({
@@ -59,6 +60,8 @@ function ejecutar<T>(p: ProveedorResuelto, fn: () => Promise<T>): Promise<T> {
 export type OpcionesIA = {
   verificar: VerificadorJwt;
   servicio: ServicioProveedoresIA | null;
+  /** JasWave IA (modelos de marca, planes y consumo). Sin él, las peticiones sin proveedor usan el primero permitido. */
+  jaswave?: ServicioJasWave | null;
   /** Inyectables para pruebas. */
   chat?: typeof aiChat;
   chatStream?: typeof aiChatStream;
@@ -109,10 +112,45 @@ export function rutasIA(o: OpcionesIA): Router {
     };
   };
 
-  /** Proveedores y modelos permitidos para el usuario, con sus permisos de IA. */
+  /** Proveedores y modelos permitidos para el usuario, con sus permisos de IA. JasWave IA va primero. */
   r.get('/proveedores', async (req, res) => {
-    res.json(await servicio().disponibles(req.identidad!));
+    const disp = await servicio().disponibles(req.identidad!);
+    if (!o.jaswave) {
+      res.json(disp);
+      return;
+    }
+    const jw = await o.jaswave.catalogo(req.identidad!, disp.permisos);
+    res.json({ ...disp, proveedores: [...(jw.modelos.length ? [proveedorJasWave(jw)] : []), ...disp.proveedores], jaswave: jw });
   });
+
+  /** Créditos usados y límites del plan del usuario. */
+  r.get('/consumo', async (req, res) => {
+    if (!o.jaswave) throw new ErrorApi(503, 'ia_no_configurada', 'la IA no está configurada en este servidor');
+    res.json(await o.jaswave.consumo(req.identidad!));
+  });
+
+  /** Petición a JasWave IA (sin proveedorId): el servidor elige modelo real, clave y cobertura. */
+  const usaJasWave = async (d: z.infer<typeof esquemaChat>) => Boolean(o.jaswave && !d.proveedorId && (await o.jaswave.esModelo(d.model)));
+  const baseDe = (req: Request, d: z.infer<typeof esquemaChat>) => ({
+    messages: d.messages as AiChatRequest['messages'],
+    ...(d.maxTokens !== undefined ? { maxTokens: d.maxTokens } : {}),
+    ...(d.temperature !== undefined ? { temperature: d.temperature } : {}),
+    ...(d.tools ? { tools: d.tools } : {}),
+    ...(d.toolChoice ? { toolChoice: d.toolChoice } : {}),
+    ...(d.requestId ? { requestId: `${req.identidad!.userId}:${d.requestId}` } : {}),
+    ...(d.meta ? { meta: d.meta } : {}),
+  });
+  /** Cancelación de peticiones de JasWave IA por requestId (aislado por usuario). */
+  const enCurso = new Map<string, AbortController>();
+  const conCancelacion = async <T>(clave: string | undefined, fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    const ctl = new AbortController();
+    if (clave) enCurso.set(clave, ctl);
+    try {
+      return await fn(ctl.signal);
+    } finally {
+      if (clave) enCurso.delete(clave);
+    }
+  };
 
   /** Disponibilidad del proveedor pedido (o el predeterminado del usuario). */
   r.get('/estado', async (req, res) => {
@@ -121,6 +159,18 @@ export function rutasIA(o: OpcionesIA): Router {
       return;
     }
     const pedido = typeof req.query.proveedorId === 'string' ? idProveedor.parse(req.query.proveedorId) : undefined;
+    if (!pedido && o.jaswave) {
+      const jw = await o.jaswave.catalogo(req.identidad!);
+      res.json({
+        disponible: jw.modelos.length > 0,
+        proveedorId: 'jaswave',
+        proveedor: 'jaswave',
+        modelo: MODELO_AUTO,
+        modelos: jw.modelos.map((m) => m.id),
+        ...(jw.modelos.length ? {} : { motivo: 'ia_no_configurada', mensaje: `${NOMBRE_SERVICIO} no está disponible para tu cuenta.` }),
+      });
+      return;
+    }
     let p: ProveedorResuelto;
     try {
       p = await o.servicio.resolver(req.identidad!, pedido);
@@ -143,12 +193,48 @@ export function rutasIA(o: OpcionesIA): Router {
   });
 
   r.post('/chat', async (req, res) => {
+    const d = esquemaChat.parse(req.body);
+    if (await usaJasWave(d)) {
+      const base = baseDe(req, d);
+      res.json(await conCancelacion(base.requestId, (signal) => o.jaswave!.chat(req.identidad!, { modelo: d.model, proposito: d.meta?.purpose, base }, { signal })));
+      return;
+    }
     const { proveedor, peticion } = await preparar(req);
-    res.json(await ejecutar(proveedor, () => chat(peticion)));
+    const t0 = Date.now();
+    const resultado = await ejecutar(proveedor, () => chat(peticion));
+    void o.jaswave?.registrarDirecto(req.identidad!, { proveedorId: proveedor.id, modeloReal: peticion.model, proposito: d.meta?.purpose, base: peticion, resultado, ms: Date.now() - t0 });
+    res.json(resultado);
   });
 
   /** Streaming por SSE: `data: {"type":"delta","text"}` … y al final `data: {"type":"done","result"}`. */
   r.post('/chat/stream', async (req, res) => {
+    const d = esquemaChat.parse(req.body);
+    if (await usaJasWave(d)) {
+      const base = baseDe(req, d);
+      const ctl = new AbortController();
+      // Validaciones (permiso, cuota) antes de abrir el stream: así llegan como error HTTP normal.
+      await o.jaswave!.consumo(req.identidad!);
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+      const enviar = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+      res.on('close', () => {
+        if (!res.writableEnded) ctl.abort();
+      });
+      if (base.requestId) enCurso.set(base.requestId, ctl);
+      try {
+        const resultado = await o.jaswave!.chat(req.identidad!, { modelo: d.model, proposito: d.meta?.purpose, base }, { signal: ctl.signal, onDelta: (text) => enviar({ type: 'delta', text }) });
+        enviar({ type: 'done', result: resultado });
+      } catch (e) {
+        const err =
+          e instanceof ErrorApi
+            ? { success: false, error: e.message, errorCode: e.estado === 429 ? 'rate_limit' : e.estado === 403 ? 'forbidden' : 'not_available' }
+            : { success: false, error: `${NOMBRE_SERVICIO} no pudo responder.` };
+        enviar({ type: 'done', result: err });
+      } finally {
+        if (base.requestId) enCurso.delete(base.requestId);
+      }
+      res.end();
+      return;
+    }
     const { proveedor, peticion } = await preparar(req);
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
     const enviar = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
@@ -166,7 +252,10 @@ export function rutasIA(o: OpcionesIA): Router {
 
   r.post('/cancelar', (req, res) => {
     const { requestId } = z.object({ requestId: z.string().regex(/^[\w-]{1,80}$/) }).parse(req.body);
-    res.json({ cancelada: cancelAiChat(`${req.identidad!.userId}:${requestId}`) });
+    const clave = `${req.identidad!.userId}:${requestId}`;
+    const propia = enCurso.get(clave);
+    propia?.abort();
+    res.json({ cancelada: Boolean(propia) || cancelAiChat(clave) });
   });
 
   // ---------- Modelos propios (requieren ia.modelo-propio) ----------
@@ -202,8 +291,28 @@ export function rutasIA(o: OpcionesIA): Router {
   return r;
 }
 
+/** Proveedor sintético con los modelos JasWave (el cliente lo trata como un proveedor más, sin URL ni clave). */
+export function proveedorJasWave(jw: CatalogoJasWave): ProveedorPublico & { nombresModelos: Record<string, string>; descripcionesModelos: Record<string, string> } {
+  return {
+    id: 'jaswave',
+    slug: 'jaswave',
+    nombre: NOMBRE_SERVICIO,
+    tipo: 'jaswave',
+    modelos: jw.modelos.map((m) => m.id),
+    modeloPorDefecto: MODELO_AUTO,
+    maxTokens: 16_000,
+    herramientas: true,
+    origen: 'admin',
+    ejecucion: 'servidor',
+    activo: true,
+    tieneClave: true,
+    nombresModelos: Object.fromEntries(jw.modelos.map((m) => [m.id, m.nombre])),
+    descripcionesModelos: Object.fromEntries(jw.modelos.map((m) => [m.id, m.descripcion])),
+  };
+}
+
 /** Administración de proveedores de IA (solo administradores). Las claves son de solo escritura. */
-export function rutasAdminIA(o: { verificar: VerificadorJwt; admin: ServicioAdminIA; salud?: typeof aiHealth }): Router {
+export function rutasAdminIA(o: { verificar: VerificadorJwt; admin: ServicioAdminIA; jaswave?: ServicioJasWave | null; salud?: typeof aiHealth }): Router {
   const r = Router();
   const salud = o.salud ?? aiHealth;
   r.use(express.json({ limit: '64kb' }));
@@ -232,9 +341,78 @@ export function rutasAdminIA(o: { verificar: VerificadorJwt; admin: ServicioAdmi
     res.status(204).end();
   });
   r.post('/proveedores/:id/probar', async (req, res) => {
-    const p = await o.admin.resolverPorId(idProveedor.parse(req.params.id));
-    const s = await ejecutar(p, () => salud({ ...p.destino }));
+    const id = idProveedor.parse(req.params.id);
+    const p = await o.admin.resolverPorId(id);
+    // Con la principal y, si no basta, con cada clave del grupo (una conexión puede no tener principal).
+    const extra = o.jaswave && p.origen === 'admin' ? await o.jaswave.admin.clavesParaProbar(id).catch(() => []) : [];
+    const candidatas = [...(p.destino.apiKey ? [p.destino.apiKey] : []), ...extra];
+    let s = await ejecutar(p, () => salud({ ...p.destino }));
+    for (const apiKey of candidatas.slice(p.destino.apiKey ? 1 : 0)) {
+      if (s.status === 'healthy' && s.models?.length) break;
+      s = await ejecutar(p, () => salud({ ...p.destino, apiKey }));
+    }
     res.json({ estado: s.status, modelos: s.models, ...(s.error ? { error: s.error } : {}), ...(s.hint ? { pista: s.hint } : {}) });
+  });
+
+  // ---------- JasWave IA: modelos de marca, planes, consumo y grupo de claves ----------
+  const jw = () => {
+    if (!o.jaswave) throw new ErrorApi(503, 'ia_no_configurada', 'JasWave IA no está configurada en este servidor');
+    return o.jaswave.admin;
+  };
+  const idPlan = z.string().uuid();
+  /** Claves del grupo (uuid) o la principal de la conexión (`<conexión>:principal`). */
+  const idClave = z.union([z.string().uuid(), z.string().regex(/^(?:[0-9a-f-]{36}:)?principal$/i)]);
+  r.get('/modelos', async (_req, res) => {
+    res.json({ modelos: await jw().modelos() });
+  });
+  r.put('/modelos/:id', async (req, res) => {
+    res.json({ modelo: await jw().guardarModelo(actor(req), String(req.params.id), req.body) });
+  });
+  r.post('/modelos/:id/probar', async (req, res) => {
+    res.json({ eslabones: await jw().probarModelo(String(req.params.id)) });
+  });
+  r.delete('/modelos/:id', async (req, res) => {
+    await jw().eliminarModelo(actor(req), String(req.params.id));
+    res.status(204).end();
+  });
+  r.get('/planes', async (_req, res) => {
+    res.json({ planes: await jw().planes() });
+  });
+  r.post('/planes', async (req, res) => {
+    res.status(201).json({ plan: await jw().guardarPlan(actor(req), null, req.body) });
+  });
+  r.put('/planes/:id', async (req, res) => {
+    res.json({ plan: await jw().guardarPlan(actor(req), idPlan.parse(req.params.id), req.body) });
+  });
+  r.delete('/planes/:id', async (req, res) => {
+    await jw().eliminarPlan(actor(req), idPlan.parse(req.params.id));
+    res.status(204).end();
+  });
+  r.put('/usuarios/:id/plan', async (req, res) => {
+    const { planId } = z.object({ planId: idPlan.nullable() }).parse(req.body);
+    await jw().asignarPlan(actor(req), z.string().uuid().parse(req.params.id), planId);
+    res.json({ ok: true });
+  });
+  r.get('/consumo', async (req, res) => {
+    const dias = z.coerce.number().int().min(1).max(365).default(30).parse(req.query.dias ?? 30);
+    res.json(await jw().consumo(dias));
+  });
+  r.get('/proveedores/:id/claves', async (req, res) => {
+    res.json({ claves: await jw().claves(idProveedor.parse(req.params.id)) });
+  });
+  r.post('/proveedores/:id/claves', async (req, res) => {
+    const d = z.object({ apiKey: z.string().min(1).max(4000), etiqueta: z.string().max(60).default('') }).parse(req.body);
+    await jw().agregarClave(actor(req), idProveedor.parse(req.params.id), d.apiKey, d.etiqueta);
+    res.status(201).json({ ok: true });
+  });
+  r.put('/proveedores/:id/claves/:claveId', async (req, res) => {
+    const d = z.object({ activa: z.boolean().optional(), etiqueta: z.string().max(60).optional() }).parse(req.body);
+    await jw().cambiarClave(actor(req), idProveedor.parse(req.params.id), idClave.parse(req.params.claveId), d);
+    res.json({ ok: true });
+  });
+  r.delete('/proveedores/:id/claves/:claveId', async (req, res) => {
+    await jw().quitarClave(actor(req), idProveedor.parse(req.params.id), idClave.parse(req.params.claveId));
+    res.status(204).end();
   });
 
   return r;

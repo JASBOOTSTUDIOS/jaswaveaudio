@@ -70,6 +70,17 @@
     "caidaDbS": 14
   },
   "modoParam": null,
+  "modos": {
+    "selector": [
+      358,
+      48,
+      476,
+      68
+    ],
+    "corte": 410,
+    "defecto": "avanzado"
+  },
+  "parametrosCubiertos": [],
   "widgets": [
     {
       "tipo": "section",
@@ -79,7 +90,8 @@
         1048,
         404
       ],
-      "etiqueta": "IMAGEN ESTÉREO"
+      "etiqueta": "IMAGEN ESTÉREO",
+      "basico": true
     },
     {
       "tipo": "knob",
@@ -91,6 +103,13 @@
       ],
       "etiqueta": "BALANCE",
       "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        761.5,
+        140,
+        837.5,
+        234
+      ],
       "param": 6,
       "min": -1,
       "max": 1,
@@ -113,6 +132,13 @@
       ],
       "etiqueta": "ANCHO",
       "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        876.5,
+        140,
+        952.5,
+        234
+      ],
       "param": 2,
       "min": 0,
       "max": 200,
@@ -136,6 +162,7 @@
       ],
       "etiqueta": "MONO <",
       "tamano": 64,
+      "basico": false,
       "param": 3,
       "min": 0,
       "max": 200,
@@ -158,6 +185,13 @@
         316
       ],
       "etiqueta": "MONO",
+      "basico": true,
+      "rectBasico": [
+        805,
+        292,
+        909,
+        316
+      ],
       "param": 9,
       "min": 0,
       "max": 1,
@@ -183,6 +217,7 @@
         316
       ],
       "etiqueta": "Ø L",
+      "basico": false,
       "param": 4,
       "min": 0,
       "max": 1,
@@ -208,6 +243,7 @@
         316
       ],
       "etiqueta": "Ø R",
+      "basico": false,
       "param": 5,
       "min": 0,
       "max": 1,
@@ -233,6 +269,7 @@
         556
       ],
       "etiqueta": "SALIDA",
+      "basico": true,
       "param": 0,
       "min": 0,
       "max": 1,
@@ -258,6 +295,7 @@
         552
       ],
       "etiqueta": "GANANCIA",
+      "basico": true,
       "param": 1,
       "min": -24,
       "max": 24,
@@ -279,6 +317,7 @@
         478
       ],
       "etiqueta": "L ⇄ R",
+      "basico": false,
       "param": 8,
       "min": 0,
       "max": 1,
@@ -304,6 +343,7 @@
         478
       ],
       "etiqueta": "DC",
+      "basico": false,
       "param": 7,
       "min": 0,
       "max": 1,
@@ -328,7 +368,8 @@
         985,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -338,7 +379,8 @@
         999,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -348,7 +390,8 @@
         1029,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
     },
     {
       "tipo": "meter",
@@ -358,7 +401,31 @@
         1043,
         528
       ],
-      "etiqueta": ""
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "modo",
+      "rect": [
+        358,
+        48,
+        476,
+        68
+      ],
+      "etiqueta": "BÁSICO|AVANZADO",
+      "basico": true,
+      "corte": 410
+    },
+    {
+      "tipo": "reset",
+      "rect": [
+        624,
+        48,
+        684,
+        68
+      ],
+      "etiqueta": "RESET",
+      "basico": true
     }
   ]
 }

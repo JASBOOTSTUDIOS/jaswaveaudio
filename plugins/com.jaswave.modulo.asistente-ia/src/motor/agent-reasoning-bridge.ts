@@ -97,7 +97,10 @@ export async function runAgentReasoningForTurn(opts: {
       }
       const src = source === 'model' ? 'IA' : source === 'override' ? 'fijo' : 'auto'
       opts.onPhaseLabel?.(
-        depth <= 3
+        // Perfil rápido (por defecto): 1–2 llamadas de plan, sin consejo.
+        depth <= 2
+          ? depth === 1 ? 'Planificando…' : 'Consultando datos y planificando…'
+          : depth <= 3
           ? `Consejo rápido (${depth} voces, ${src})…`
           : depth >= 8
             ? `Consejo en debate profundo (${depth} capas, ${src})…`

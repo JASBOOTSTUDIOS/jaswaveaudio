@@ -150,6 +150,7 @@ type FilaProveedor = {
 };
 
 const aad = (id: string, version: number) => `ia-proveedor:${id}:${version}`;
+export const aadProveedor = aad;
 
 function publico(f: FilaProveedor, conDetalle: boolean): ProveedorPublico {
   return {
@@ -180,6 +181,8 @@ export type OpcionesServicioIA = {
   ahora?: () => Date;
   /** Inyectable en pruebas (DNS). */
   resolverDns?: Resolver;
+  /** Avisa de cambios en las conexiones del admin (JasWave IA refresca su caché). */
+  alCambiarConexiones?: () => void;
 };
 
 export function crearServicioIA(o: OpcionesServicioIA): ServicioProveedoresIA {
@@ -192,7 +195,7 @@ export function crearServicioIA(o: OpcionesServicioIA): ServicioProveedoresIA {
 
   async function permisos(id: Identidad): Promise<PermisosIA> {
     const slugsAdmin = async () =>
-      (await db.proveedorIA.findMany({ where: { propietarioId: null }, select: { slug: true }, orderBy: { creadoEn: 'asc' } })).map((p) => p.slug);
+      (await db.proveedorIA.findMany({ where: { propietarioId: null, activo: true }, select: { slug: true }, orderBy: { creadoEn: 'asc' } })).map((p) => p.slug);
     if (id.esAdmin) return { usar: true, modeloPropio: true, proveedores: await slugsAdmin() };
     const usuario = await sincronizarUsuario(db, id);
     const acciones = new Set(await accionesEfectivas(db, usuario.id, PRODUCTO_IA, ahora()));
@@ -370,6 +373,7 @@ export function crearServicioIA(o: OpcionesServicioIA): ServicioProveedoresIA {
         });
         return creado;
       });
+      o.alCambiarConexiones?.();
       await auditar(db, actor, 'ia.proveedor.crear', fila.id, { slug: fila.slug, tipo: fila.tipo, tieneClave: Boolean(d.apiKey) });
       return publico(fila as FilaProveedor, true);
     },
@@ -392,6 +396,7 @@ export function crearServicioIA(o: OpcionesServicioIA): ServicioProveedoresIA {
           ...(d.activo !== undefined ? { activo: d.activo } : {}),
         },
       });
+      o.alCambiarConexiones?.();
       await auditar(db, actor, 'ia.proveedor.actualizar', fila.id, { campos: Object.keys(d) });
       return publico(act as FilaProveedor, true);
     },
@@ -402,6 +407,7 @@ export function crearServicioIA(o: OpcionesServicioIA): ServicioProveedoresIA {
         where: { id: fila.id },
         data: { versionClave: version, claveCifrada: nueva ? cifrarSecreto(clave(), nueva, aad(fila.id, version)) : null },
       });
+      o.alCambiarConexiones?.();
       await auditar(db, actor, 'ia.proveedor.clave', fila.id, { tieneClave: Boolean(nueva) });
     },
     async eliminar(actor, proveedorId) {
@@ -410,6 +416,7 @@ export function crearServicioIA(o: OpcionesServicioIA): ServicioProveedoresIA {
         db.proveedorIA.delete({ where: { id: fila.id } }),
         db.accion.deleteMany({ where: { productoId: PRODUCTO_IA, clave: accionDeProveedor(fila.slug) } }),
       ]);
+      o.alCambiarConexiones?.();
       await auditar(db, actor, 'ia.proveedor.eliminar', fila.id, { slug: fila.slug });
     },
     async resolverPorId(proveedorId) {

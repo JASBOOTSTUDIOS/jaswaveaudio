@@ -14,6 +14,7 @@ import {
 import { MidiPreviewTransport } from './midi-preview-transport'
 import { stopMidiPreviewAudition } from '../motor/midi-preview-audition'
 import { patchMessage } from '../motor/ai-chat-store'
+import { nombreRolInstrumento } from '../motor/describe-action'
 import { composeMidiFromBrief, executeDawActions, expandSectionsToBarPlan, hashSeed, parseMidiBriefFromText, pluginRegistry, useDAW } from '@jaswave/host-sdk'
 import type { Articulation, GeneratedNote, MusicBuildResult, MusicBuildStage, MusicBuildStageStatus, MusicBuildTrackSpec } from '@jaswave/host-sdk'
 
@@ -36,11 +37,11 @@ const ROLE_LABEL: Record<string, string> = {
   lead: 'Melodía',
   guitar: 'Guitarra',
   vocal: 'Voz',
-  fx: 'FX',
+  fx: 'Efectos',
 }
 
 function roleLabel(rol: string): string {
-  return ROLE_LABEL[rol.toLowerCase()] ?? rol
+  return ROLE_LABEL[rol.toLowerCase()] ?? nombreRolInstrumento(rol)
 }
 
 function RoleIcon({ rol }: { rol: string }) {
@@ -300,12 +301,12 @@ export function MusicBuildPreview({ build, status = 'pending', conversationId, m
               <Layers className="size-3.5" />
             </span>
             <div className="min-w-0">
-              <h3 className="truncate text-[13px] font-semibold tracking-tight text-foreground">
+              <h3 className="truncate text-[13px] font-semibold tracking-tight text-foreground" title={spec.nombre}>
                 {spec.nombre}
               </h3>
               <p className="text-[11px] text-muted-foreground">
                 {genre ? `${genre.charAt(0).toUpperCase()}${genre.slice(1)} · ` : ''}
-                {spec.keyLabel} · {spec.bpm} BPM · ~{spec.minutes} min
+                {spec.keyLabel} · {spec.bpm} BPM · unos {spec.minutes} min
               </p>
             </div>
           </div>

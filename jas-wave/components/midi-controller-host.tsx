@@ -14,6 +14,7 @@ import { audioEngine } from '@/lib/audio-engine'
 import { isUndockWindow } from '@/lib/undock-window'
 import { segundosABeats } from '@/lib/audio-conversions'
 import { midiController, type MidiParsed, type MidiSource } from '@/src/lib/midi-controller'
+import { AgregadorPedales, unificarPedal } from '@/src/lib/midi-pedal'
 import {
   clipSpanBeats,
   createMidiRecorder,
@@ -147,6 +148,9 @@ export function MidiControllerHost() {
   const bpmRef = useRef(bpm)
   const tracksRef = useRef<MidiRouteTrack[]>(tracks)
   const selectedRef = useRef<string | null>(null)
+  // Pedales (CC64/66/67/69) unificados por canal: el PSR-E373 manda «pisado» por dos canales y «suelto» por un
+  // tercero en el mismo instante; sin esto el último mensaje anulaba la pisada y el sustain nunca se aplicaba.
+  const pedalesRef = useRef(new AgregadorPedales())
 
   playingRef.current = playing
   bpmRef.current = bpm
@@ -181,7 +185,10 @@ export function MidiControllerHost() {
     const unsubRt = subscribeVstRuntime(push)
     const unsubDev = midiController.subscribeDevices(push)
     const unsubMap = midiMapStore.subscribe(push)
-    const offRestart = window.electron?.onPluginHostRestarted?.(push)
+    const offRestart = window.electron?.onPluginHostRestarted?.(() => {
+      pedalesRef.current.reiniciar()
+      push()
+    })
     return () => {
       unsubRt()
       unsubDev()
@@ -204,18 +211,23 @@ export function MidiControllerHost() {
 
   useEffect(() => {
     if (isUndockWindow()) return
-    return midiController.subscribeMessages((msg, _t, source, deviceId) => {
+    return midiController.subscribeMessages((crudo, tEvento, source, deviceId) => {
       const list = tracksRef.current
       const id = deviceId ?? ''
+      const msg = unificarPedal(pedalesRef.current, crudo)
+      if (!msg) return
       if (dispatchMidiMapMessage(msg)) return
       playLive(midiLiveTargetIds(list, id), selectedRef.current, msg, source, id, list)
       if (recMapRef.current.size === 0) return
       if (msg.kind !== 'noteOn' && msg.kind !== 'noteOff') return
       const recIds = midiRecordTargetIds(list, id)
       if (recIds.length === 0) return
-      const now = playingRef.current
-        ? audioEngine.getTimelineSeconds()
-        : recStartSecRef.current + (performance.now() - recStartPerfRef.current) / 1000
+      // El evento se tocó `retraso` s antes de llegar aquí (sello del host / Web MIDI): se graba en su sitio.
+      const retraso = Math.min(0.5, Math.max(0, performance.now() / 1000 - tEvento))
+      const now =
+        (playingRef.current
+          ? audioEngine.getTimelineSeconds()
+          : recStartSecRef.current + (performance.now() - recStartPerfRef.current) / 1000) - retraso
       for (const trackId of recIds) {
         const rec = recMapRef.current.get(trackId)
         if (!rec) continue

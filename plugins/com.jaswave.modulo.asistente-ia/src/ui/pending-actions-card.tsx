@@ -9,10 +9,12 @@ import {
   advanceChecklistAfterStep,
   normalizeChecklist,
 } from '../motor/ai-agent-checklist'
-import { describeActionForUser } from '../motor/describe-action'
+import { describeActionForUser, nombreNota } from '../motor/describe-action'
+import { DetallesTecnicos, modoDesarrollador, textoTecnico } from './detalles-tecnicos'
+import { BotonVerTodo, useVerTodo } from './lista-expandible'
 import { snapshotUndoDepth, toStoredCertify } from '../motor/agent-turn-undo'
 import { actionRiskLevel, appendAiDawAudit, beatsASegundos, clearMidiProposalOverlay, cn, formatSemanticDiffSummary, notesFromActionPayload, publishMidiProposalFromActions, routeMidiToTrack, runPostTurnCertifyPipeline, safeProjectBpm, setPreferredVstPreviewTrack, useDAW } from '@jaswave/host-sdk'
-import type { DawAction, SemanticStateDiff } from '@jaswave/host-sdk'
+import type { DAWState, DawAction, SemanticStateDiff } from '@jaswave/host-sdk'
 
 type Props = {
   conversationId: string
@@ -99,31 +101,45 @@ function defaultSelected(
   return new Set(pendingIndices(actions, statuses ?? {}))
 }
 
-function diffRows(diff?: SemanticStateDiff): string[] {
+function nombrePistaPorId(estado: DAWState | null, id: string): string {
+  try {
+    const t = estado?.project?.tracks?.find((x) => String(x.id) === String(id))
+    const n = typeof t?.nombre === 'string' ? t.nombre.trim() : ''
+    return n ? `«${n}»` : 'una pista'
+  } catch {
+    return 'una pista'
+  }
+}
+
+function nivel(v: number): string {
+  return Math.abs(v) <= 2 ? `${Math.round(v * 100)} %` : String(Math.round(v * 10) / 10)
+}
+
+function diffRows(diff?: SemanticStateDiff, estado: DAWState | null = null): string[] {
   if (!diff) return []
   const rows: string[] = []
-  for (const n of diff.tracksAdded) rows.push(`+ pista «${n}»`)
-  for (const n of diff.tracksRemoved) rows.push(`− pista «${n}»`)
-  if (diff.clipsAdded) rows.push(`+${diff.clipsAdded} clip(s)`)
-  if (diff.clipsRemoved) rows.push(`−${diff.clipsRemoved} clip(s)`)
+  for (const n of diff.tracksAdded) rows.push(`+ Pista nueva «${n}»`)
+  for (const n of diff.tracksRemoved) rows.push(`− Se elimina la pista «${n}»`)
+  if (diff.clipsAdded) rows.push(`+ ${diff.clipsAdded} ${diff.clipsAdded === 1 ? 'clip nuevo' : 'clips nuevos'}`)
+  if (diff.clipsRemoved) rows.push(`− ${diff.clipsRemoved} ${diff.clipsRemoved === 1 ? 'clip eliminado' : 'clips eliminados'}`)
   for (const v of diff.volumeChanges.slice(0, 6)) {
-    rows.push(`volumen ${v.trackId}: ${v.before.toFixed(2)} → ${v.after.toFixed(2)}`)
+    rows.push(`Volumen de ${nombrePistaPorId(estado, v.trackId)}: de ${nivel(v.before)} a ${nivel(v.after)}`)
   }
-  for (const p of diff.pluginsLoaded.slice(0, 6)) rows.push(`+ plugin ${p}`)
-  for (const p of diff.pluginsUnloaded.slice(0, 4)) rows.push(`− plugin ${p}`)
-  if (diff.sendsAdded) rows.push(`+${diff.sendsAdded} send(s)`)
-  if (diff.sidechainsAdded) rows.push(`+${diff.sidechainsAdded} sidechain(s)`)
+  for (const p of diff.pluginsLoaded.slice(0, 6)) rows.push(`+ Efecto o instrumento «${p}»`)
+  for (const p of diff.pluginsUnloaded.slice(0, 4)) rows.push(`− Se quita «${p}»`)
+  if (diff.sendsAdded) rows.push(`+ ${diff.sendsAdded} ${diff.sendsAdded === 1 ? 'envío nuevo' : 'envíos nuevos'}`)
+  if (diff.sidechainsAdded) rows.push(`+ ${diff.sidechainsAdded} ${diff.sidechainsAdded === 1 ? 'conexión sidechain' : 'conexiones sidechain'}`)
   return rows
 }
 
 function riskBadge(risk: 'read' | 'write' | 'dangerous') {
   if (risk === 'dangerous') {
-    return <span className="shrink-0 text-[10px] text-destructive/80">peligro</span>
+    return <span className="shrink-0 text-[10px] text-destructive/80">borra datos</span>
   }
   if (risk === 'write') {
-    return <span className="shrink-0 text-[10px] text-muted-foreground/50">escribe</span>
+    return <span className="shrink-0 text-[10px] text-muted-foreground/50">cambia el proyecto</span>
   }
-  return <span className="shrink-0 text-[10px] text-muted-foreground/40">lectura</span>
+  return <span className="shrink-0 text-[10px] text-muted-foreground/40">solo consulta</span>
 }
 
 function syncChecklistStep(
@@ -170,6 +186,8 @@ export function PendingActionsCard({
   const [auditioning, setAuditioning] = useState(false)
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set())
   const [open, setOpen] = useState(status === 'pending')
+  const indices = useMemo(() => actions.map((_, i) => i), [actions])
+  const listaAcciones = useVerTodo(indices, 8)
 
   useEffect(() => {
     setLocal(status)
@@ -210,7 +228,15 @@ export function PendingActionsCard({
     () => previewSummary || (previewDiff ? formatSemanticDiffSummary(previewDiff) : ''),
     [previewDiff, previewSummary],
   )
-  const rows = useMemo(() => diffRows(previewDiff), [previewDiff])
+  const rows = useMemo(() => {
+    let estado: DAWState | null = null
+    try {
+      estado = tienda.obtenerEstado()
+    } catch {
+      estado = null
+    }
+    return diffRows(previewDiff, estado)
+  }, [previewDiff, tienda])
 
   const persist = useCallback(
     (statuses: Record<string, ItemStatus>, extra: Partial<StoredChatMessage> = {}) => {
@@ -289,7 +315,7 @@ export function PendingActionsCard({
             const label = e.label
             setSummary((prev) => {
               const base = prev?.split('\n')[0] ?? ''
-              return [base, `💬 ${label}`].filter(Boolean).join('\n')
+              return [base, label].filter(Boolean).join('\n')
             })
             onDone?.()
           } else if (e.type === 'agent.message' && (e.data as { kind?: string } | undefined)?.kind === 'council-steps') {
@@ -325,7 +351,7 @@ export function PendingActionsCard({
               status: 'pending',
               actions: nextActions,
               agentMode,
-              previewSummary: out.loopSummary || 'Siguiente paso — pulsa Aplicar para continuar',
+              previewSummary: out.loopSummary || 'Siguiente paso: pulsa Aplicar para continuar.',
               actionStatuses: Object.fromEntries(
                 nextActions.map((_, i) => [String(i), 'pending' as const]),
               ),
@@ -344,7 +370,7 @@ export function PendingActionsCard({
           setSelected(new Set(nextActions.map((_, i) => i)))
           setLocal('pending')
           setSummary((prev) =>
-            [prev, line, 'Siguiente paso listo — pulsa Aplicar.'].filter(Boolean).join('\n'),
+            [prev, line, 'Siguiente paso listo: pulsa Aplicar.'].filter(Boolean).join('\n'),
           )
           onDone?.()
           return
@@ -474,6 +500,14 @@ export function PendingActionsCard({
 
   if (actions.length === 0) return null
 
+  let estadoDaw: DAWState | null = null
+  try {
+    estadoDaw = tienda.obtenerEstado()
+  } catch {
+    estadoDaw = null
+  }
+  const verTecnico = modoDesarrollador()
+
   const appliedCount = actions.filter((_, i) => itemStatus[String(i)] === 'accepted').length
   const statusLabel =
     local === 'applied'
@@ -497,7 +531,7 @@ export function PendingActionsCard({
         />
         <span className="min-w-0 truncate">
           {actions.length} cambio{actions.length === 1 ? '' : 's'} · {statusLabel}
-          {appliedCount && local === 'pending' ? ` · ${appliedCount} ok` : ''}
+          {appliedCount && local === 'pending' ? ` · ${appliedCount} hecho${appliedCount === 1 ? '' : 's'}` : ''}
         </span>
       </button>
       {open ? (
@@ -506,8 +540,8 @@ export function PendingActionsCard({
             <p className="text-[0.8em] text-muted-foreground/70">{summaryLine}</p>
           ) : null}
           {rows.length ? (
-            <ul className="max-h-24 space-y-0.5 overflow-y-auto font-mono text-[10px] text-muted-foreground/70">
-              {rows.map((r, i) => (
+            <ul className="space-y-0.5 break-words text-[10px] text-muted-foreground/70">
+              {rows.slice(0, 10).map((r, i) => (
                 <li
                   key={i}
                   className={cn(r.startsWith('+') && 'text-foreground/70', r.startsWith('−') && 'text-destructive/70')}
@@ -515,6 +549,7 @@ export function PendingActionsCard({
                   {r}
                 </li>
               ))}
+              {rows.length > 10 ? <li>y {rows.length - 10} cambios más</li> : null}
             </ul>
           ) : null}
 
@@ -522,7 +557,7 @@ export function PendingActionsCard({
             <div className="space-y-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[0.8em] text-muted-foreground">
-                  MIDI · {midiPreview.notes.length} notas
+                  Notas MIDI propuestas: {midiPreview.notes.length}
                 </span>
                 <button
                   type="button"
@@ -530,7 +565,7 @@ export function PendingActionsCard({
                   onClick={() => void auditionMidi()}
                   className="text-[0.8em] text-muted-foreground hover:text-foreground disabled:opacity-40"
                 >
-                  {auditioning ? '…' : 'Escuchar'}
+                  {auditioning ? 'Sonando…' : 'Escuchar'}
                 </button>
               </div>
               <div className="relative h-10 overflow-hidden">
@@ -544,7 +579,7 @@ export function PendingActionsCard({
                       key={i}
                       className="absolute h-1 rounded-sm bg-foreground/40"
                       style={{ left, width, top }}
-                      title={`pitch ${n.pitch}`}
+                      title={nombreNota(n.pitch)}
                     />
                   )
                 })}
@@ -552,11 +587,13 @@ export function PendingActionsCard({
             </div>
           ) : null}
 
-          <ul className="max-h-52 space-y-0.5 overflow-y-auto text-[0.85em]">
-            {actions.map((a, i) => {
+          <ul className="space-y-0.5 text-[0.85em]">
+            {listaAcciones.visibles.map((i) => {
+              const a = actions[i]!
               const st = itemStatus[String(i)] ?? 'pending'
               const on = selected.has(i)
-              const desc = describeActionForUser(a)
+              const desc = describeActionForUser(a, estadoDaw)
+              const hayDetalle = Boolean(desc.detail) || verTecnico
               const risk = actionRiskLevel(a)
               const detailOpen = expanded.has(i)
               const pending = st === 'pending' && local === 'pending'
@@ -571,21 +608,25 @@ export function PendingActionsCard({
                       onChange={() => toggle(i)}
                       aria-label={desc.label}
                     />
-                    <button
-                      type="button"
-                      className="mt-0.5 shrink-0 text-muted-foreground/60"
-                      onClick={() => toggleExpand(i)}
-                      title="Detalle"
-                      aria-expanded={detailOpen}
-                    >
-                      {detailOpen ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-                    </button>
+                    {hayDetalle ? (
+                      <button
+                        type="button"
+                        className="mt-0.5 shrink-0 text-muted-foreground/60"
+                        onClick={() => toggleExpand(i)}
+                        title="Ver más"
+                        aria-expanded={detailOpen}
+                      >
+                        {detailOpen ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+                      </button>
+                    ) : (
+                      <span className="mt-0.5 size-3 shrink-0" aria-hidden />
+                    )}
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                        <span className="min-w-0 flex-1 text-foreground/90">{desc.label}</span>
+                        <span className="min-w-0 flex-1 break-words text-foreground/90">{desc.label}</span>
                         {riskBadge(risk)}
                         {st === 'accepted' ? (
-                          <span className="shrink-0 text-[10px] text-muted-foreground/50">ok</span>
+                          <span className="shrink-0 text-[10px] text-muted-foreground/50">hecho</span>
                         ) : st === 'rejected' ? (
                           <span className="shrink-0 text-[10px] text-muted-foreground/40">omitido</span>
                         ) : (
@@ -609,12 +650,17 @@ export function PendingActionsCard({
                           </span>
                         )}
                       </div>
-                      {detailOpen ? (
-                        <pre className="mt-0.5 max-h-24 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] text-muted-foreground/70">
-                          {desc.detail ?? a.type}
-                          {'\n'}
-                          {JSON.stringify(a.payload ?? {}, null, 2).slice(0, 800)}
-                        </pre>
+                      {detailOpen && hayDetalle ? (
+                        <div className="mt-0.5">
+                          {desc.detail ? (
+                            <p className="text-[10px] text-muted-foreground/70">{desc.detail}</p>
+                          ) : null}
+                          <DetallesTecnicos>
+                            {a.type}
+                            {'\n'}
+                            {textoTecnico(a.payload ?? {}, 800)}
+                          </DetallesTecnicos>
+                        </div>
                       ) : null}
                     </div>
                   </div>
@@ -622,8 +668,15 @@ export function PendingActionsCard({
               )
             })}
           </ul>
+          <BotonVerTodo
+            ocultos={listaAcciones.ocultos}
+            todo={listaAcciones.todo}
+            onClick={listaAcciones.alternar}
+          />
 
-          {summary ? <p className="text-[0.8em] text-muted-foreground/70">{summary}</p> : null}
+          {summary ? (
+            <p className="whitespace-pre-line break-words text-[0.8em] text-muted-foreground/70">{summary}</p>
+          ) : null}
 
           {local === 'pending' ? (
             <div className="flex flex-wrap items-center gap-3 pt-0.5">
@@ -643,7 +696,7 @@ export function PendingActionsCard({
                 onClick={() => void applyIndices(leftover)}
                 className="text-[0.85em] text-muted-foreground/70 hover:text-foreground disabled:opacity-50"
               >
-                Todas
+                Aplicar todas
               </button>
               <button
                 type="button"

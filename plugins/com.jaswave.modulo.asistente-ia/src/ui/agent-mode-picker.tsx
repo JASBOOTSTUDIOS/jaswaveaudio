@@ -8,13 +8,13 @@ type Props = {
 }
 
 const MODE_TABLE = [
-  'Modo del coproducer (atajo: Ctrl+Shift+M para alternar)',
+  'Cómo trabaja el asistente (Ctrl+Shift+M para cambiar)',
   '',
-  '· Consulta — responde con evidencia; no muta el DAW',
-  '· Pensar — diagnóstico y propuesta de arreglo; no escribe ni muta',
-  '· Plan — escribe el plan estructurado en plan.md; no muta',
-  '· Crear — planifica y ejecuta hasta terminar (pide aprobación una vez)',
-  '· Auto — como Crear, pero el plan se aprueba solo',
+  'Consulta: responde a tus preguntas sin cambiar nada del proyecto.',
+  'Pensar: analiza y te propone ideas, sin cambiar nada.',
+  'Plan: escribe el plan de trabajo, sin cambiar la música.',
+  'Crear: planifica y hace los cambios (te pide permiso una vez).',
+  'Auto: como Crear, pero sin pedir permiso para el plan.',
 ].join('\n')
 
 export function AgentModePicker({ value, onChange }: Props) {
@@ -26,7 +26,7 @@ export function AgentModePicker({ value, onChange }: Props) {
       className={selectClass}
       value={value}
       title={MODE_TABLE}
-      aria-label="Modo del coproducer (Ctrl+Shift+M alterna)"
+      aria-label="Cómo trabaja el asistente (Ctrl+Shift+M para cambiar)"
       data-agent-mode-picker
       onChange={(e) => {
         const m = e.target.value as AgentMode
@@ -34,7 +34,7 @@ export function AgentModePicker({ value, onChange }: Props) {
         saveAgentMode(m)
       }}
     >
-      <option value="auto" title="Decide según el pedido; aprueba el plan solo">
+      <option value="auto" title="Decide según lo que pidas y no te pide permiso para el plan">
         Auto
       </option>
       {(Object.keys(AGENT_MODE_META) as Exclude<AgentMode, 'auto'>[]).map((id) => (

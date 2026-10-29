@@ -108,6 +108,7 @@ std::string jsonEsc(const char* s) {
 int wmain(int argc, wchar_t** argv) {
     std::wstring outDir = L".", base = L"plugin", dump, dumpLayout;
     UINT W = 1100, H = 620;
+    int modo = -1;
     for (int i = 1; i < argc; ++i) {
         const std::wstring a = argv[i];
         if (a == L"--out" && i + 1 < argc) outDir = argv[++i];
@@ -116,6 +117,8 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--height" && i + 1 < argc) H = static_cast<UINT>(_wtoi(argv[++i]));
         else if (a == L"--dump-params" && i + 1 < argc) dump = argv[++i];
         else if (a == L"--dump-layout" && i + 1 < argc) dumpLayout = argv[++i];
+        else if (a == L"--page" && i + 1 < argc) JasWaveUI::gPaginaInicial = _wtoi(argv[++i]);   // abre una pagina extra (1 = MIX / FX, 2 = PARÁMETROS)
+        else if (a == L"--modo" && i + 1 < argc) modo = std::wstring(argv[++i]) == L"basico" ? 0 : 1;   // modo del editor (basico | avanzado)
     }
 
     IPluginFactory* f = GetPluginFactory();
@@ -140,6 +143,7 @@ int wmain(int argc, wchar_t** argv) {
     ctrlIface->initialize(&host);
     auto* ctl = dynamic_cast<JasWaveVst::JwController*>(ctrlIface);
     if (!ctl) { std::fprintf(stderr, "el controlador no es JwController\n"); return 1; }
+    if (modo >= 0) ctl->setModoEditor(modo);
 
     if (!dump.empty()) {
         // Volcado de la tabla de parámetros (fuente de verdad para ai.parameters del manifiesto)
@@ -157,11 +161,11 @@ int wmain(int argc, wchar_t** argv) {
             if (p.labels) for (int k = 0; k <= p.steps; ++k) labels += std::string(k ? "," : "") + "\"" + jsonEsc(p.labels[k]) + "\"";
             std::fprintf(fp,
                          "    {\"vstParamId\":%u,\"name\":\"%s\",\"units\":\"%s\",\"map\":\"%s\",\"min\":%.10g,\"max\":%.10g,\"default\":%.10g,"
-                         "\"steps\":%d,\"feature\":%s,\"readOnly\":%s,\"bypass\":%s,\"labels\":[%s]}%s\n",
+                         "\"steps\":%d,\"feature\":%s,\"readOnly\":%s,\"bypass\":%s,\"basico\":%s,\"labels\":[%s]}%s\n",
                          p.id, jsonEsc(p.name).c_str(), jsonEsc(p.units).c_str(),
                          p.map == JasWaveVst::Map::Log ? "log" : p.map == JasWaveVst::Map::Stepped ? "stepped" : "linear", p.minV, p.maxV, p.defV, p.steps,
                          p.feature >= 0 ? ("\"" + std::string(d.features[p.feature].key) + "\"").c_str() : "null", p.readOnly ? "true" : "false",
-                         p.bypass ? "true" : "false", labels.c_str(), i + 1 < t.count() ? "," : "");
+                         p.bypass ? "true" : "false", p.basico ? "true" : "false", labels.c_str(), i + 1 < t.count() ? "," : "");
         }
         std::fprintf(fp, "  ]\n}\n");
         std::fclose(fp);

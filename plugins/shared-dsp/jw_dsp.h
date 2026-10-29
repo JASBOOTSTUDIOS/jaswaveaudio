@@ -264,14 +264,48 @@ private:
 // 8192 muestras = una ventana de la FFT del analizador (V3 §4.2)
 using SpectrumTap = AudioTap<8192>;
 
+// Notas tocadas con el ratón en el teclado del editor (hilo UI → hilo de audio). Un productor y un
+// consumidor, sin bloqueo: si el procesador no drena (bloque parado), las más antiguas se descartan.
+class ColaNotasUi {
+public:
+    static constexpr uint32_t N = 64;
+    // velocidad 0 = note-off
+    void push(int nota, float velocidad) {
+        if (nota < 0 || nota > 127) return;
+        const uint32_t v = static_cast<uint32_t>(std::clamp(velocidad, 0.0f, 1.0f) * 127.0f + 0.5f);
+        const uint32_t w = w_.load(std::memory_order_relaxed);
+        buf_[w & (N - 1)].store(static_cast<uint32_t>(nota) | (v << 8), std::memory_order_relaxed);
+        w_.store(w + 1, std::memory_order_release);
+    }
+    // f(nota, velocidad 0..1); devuelve cuántas entregó
+    template <class F>
+    int drenar(F&& f, int maximo) {
+        const uint32_t w = w_.load(std::memory_order_acquire);
+        uint32_t r = r_.load(std::memory_order_relaxed);
+        if (w - r > N) r = w - N;
+        int n = 0;
+        for (; r != w && n < maximo; ++r, ++n) {
+            const uint32_t e = buf_[r & (N - 1)].load(std::memory_order_relaxed);
+            f(static_cast<int>(e & 0x7Fu), static_cast<float>((e >> 8) & 0x7Fu) / 127.0f);
+        }
+        r_.store(r, std::memory_order_relaxed);
+        return n;
+    }
+private:
+    std::array<std::atomic<uint32_t>, N> buf_{};
+    std::atomic<uint32_t> w_{0}, r_{0};
+};
+
 // Telemetría compartida procesador ↔ editor (V3). Todos los plugins publican el espectro de entrada y
 // de salida; el procesador solo los alimenta mientras el editor está abierto (coste cero cerrado).
 struct MeterBusBase {
+    ColaNotasUi notasUi;                    // instrumentos: teclado del editor tocable con el ratón
     virtual ~MeterBusBase() = default;
     std::atomic<double> sampleRate{48000.0};
     std::atomic<int> editoresAbiertos{0};   // vistas abiertas (las cuenta la vista del editor al crearse/cerrarse)
     SpectrumTap espIn, espOut;
     PeakMeter velocidadMidi;                // instrumentos: velocidad de las notas (medidor de entrada)
+    std::atomic<float> fxGrDb{0.0f};        // FX Rack comun (jw_fxrack.h): reduccion del compresor integrado (dB, >= 0)
     bool vistaAbierta() const { return editoresAbiertos.load(std::memory_order_relaxed) > 0; }
     template <class T>
     void entrada(const T* l, const T* r, int n) { if (vistaAbierta()) espIn.pushT(l, r, n); }

@@ -110,3 +110,13 @@ degradado (`gradienteMarca`) se usa en la marca, el borde de la pantalla y los L
   `kFader`, celdas y medidores IN/OUT en x=976), espectro dual IN/OUT (−120..0 dBFS, 14 dB/s), teclado de
   88 teclas, historial de GR y lecturas del mini-panel. Cada plugin solo elige su acento (`accent()`) y su
   contenido propio dentro de esas zonas. `node plugins/scripts/ui-layout.mjs` comprueba que se cumple.
+
+## 7. Páginas extra a pantalla completa: «MIX / FX» (FX Rack)
+
+`jw_fxrack_page.h` añade a cualquier editor, con una llamada al final de `build()` (`Plantilla::paginaMixFx(c)`), un botón
+«MIX / FX» en la cabecera (x 484..568, y 48..68; LED si algún bloque del rack está activo) y una página que sustituye al editor del
+plugin: ecualizador de 6 bandas con curva en vivo sobre el espectro de salida y nodos arrastrables, filtros HPF/LPF, compresor con
+medidor de reducción, saturación, chorus, delay, reverb y salida/anchura, más RESET FX. Mecanismo genérico (reutilizable por otras páginas):
+`Widget::pagina` marca los widgets de la página (el volcado de layout los emite con `"pagina": N` y `layoutExtra()` para los gráficos
+propios), la página oculta los widgets del plugin y pone `EditorContext::suppressPanels` (no se pinta `drawPanels` ni se enrutan los
+eventos del visualizador). `<Plugin>_snapshot --page 1` captura la página. Ver `docs/plans/F4-fxrack-integracion.md`.

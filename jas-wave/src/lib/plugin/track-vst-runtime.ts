@@ -11,12 +11,27 @@ import {
   isBuiltinPlugin,
   isLikelyAudioFx,
   resolveHostPluginPath,
+  VST2_NOT_HOSTED_MSG,
 } from './plugin-info-adapter'
 import { setActiveVstVoiceTarget, getActiveVstVoiceTarget } from './vst-voice-router'
 import { encodeTrackGraph } from './track-graph-encoding'
+import { padresEfectivos, pistasAudibles } from './track-hierarchy'
 import { audioEngine } from '@/lib/audio-engine'
+import { isUndockWindow } from '@/lib/undock-window'
 import type { HostParameterRaw } from './plugin-parameter-intel'
 import { getEditorPreviewTrackId } from './editor-preview-focus'
+import {
+  crearAutoguardadoEstadoVst,
+  descartarEstadoParaMover,
+  guardarEstadoParaMover,
+  limpiarEstadoParaMover,
+  listarRestauracionesPendientes,
+  marcarRestauracionPendiente,
+  olvidarRestauraciones,
+  restauracionPendiente,
+  restaurarEstadoSlot,
+  verEstadoParaMover,
+} from './vst-estado'
 
 export { extractHostPluginPath, extractHostPluginPath as extractVst3Path, resolveHostPluginPath }
 
@@ -108,9 +123,40 @@ const loadFailLogged = new Set<string>()
 const runtimeListeners = new Set<() => void>()
 let runtimeGeneration = 0
 let lastVstLoadError = ''
+/** Último fallo de carga por slot: la UI lo muestra en el slot (deshabilitado + motivo + qué hacer). */
+const slotLoadErrors = new Map<string, string>()
 
 export function getLastVstLoadError(): string {
   return lastVstLoadError
+}
+
+/** Motivo por el que el plugin de esa pista no está sonando, o '' si cargó (o aún no se intentó). */
+export function getVstSlotLoadError(trackId: string, pluginId: string): string {
+  return slotLoadErrors.get(slotIdForTrackPlugin(trackId, pluginId)) ?? ''
+}
+
+function setSlotLoadError(slotId: string, msg: string) {
+  if (msg) {
+    if (slotLoadErrors.get(slotId) === msg) return
+    slotLoadErrors.set(slotId, msg)
+  } else if (!slotLoadErrors.delete(slotId)) {
+    return
+  }
+  emitRuntime()
+}
+
+/** Texto para el usuario a partir del error del host: qué pasó y qué puede hacer. */
+export function describeVstLoadError(msg: string): string {
+  if (!msg) return ''
+  if (/solo \.vst3|VST2|\.dll/i.test(msg)) return VST2_NOT_HOSTED_MSG + ' Reemplázalo por su versión VST3.'
+  if (isQuarantineLoadError(msg)) {
+    return 'Este plugin cerró el motor de audio y quedó aislado. Quítalo o pulsa «Reintentar plugins aislados» en Ajustes de audio.'
+  }
+  if (/HostNotReady|stdin|no está en ejecución/i.test(msg)) {
+    return 'El motor de audio se está reiniciando. El plugin se cargará solo cuando esté listo.'
+  }
+  if (/Timeout/i.test(msg)) return 'El plugin tardó demasiado en cargar. Se reintentará en un minuto; si persiste, quítalo.'
+  return `No se pudo cargar el plugin (${msg}). Comprueba que el archivo existe y es VST3 de 64 bits.`
 }
 
 function emitRuntime() {
@@ -155,6 +201,19 @@ export function getLoadedInstrumentForTrack(trackId: string): LoadedPlugin | nul
     else if (!fallback) fallback = p
   }
   return lastInst ?? fallback
+}
+
+/**
+ * Todos los instrumentos cargados de la pista (capas), el principal primero. El MIDI de la pista
+ * se envía a cada uno; el host suma sus salidas antes de los efectos.
+ */
+export function getLoadedInstrumentsForTrack(trackId: string): LoadedPlugin[] {
+  const principal = byTrack.get(trackId)
+  const out: LoadedPlugin[] = principal ? [principal] : []
+  for (const p of bySlot.values()) {
+    if (p.trackId === trackId && p.instrument && p.slotId !== principal?.slotId) out.push(p)
+  }
+  return out
 }
 
 let resyncProjectGraph: (() => void) | null = null
@@ -275,11 +334,14 @@ export function forgetHostPlugins(): void {
   bySlot.clear()
   byTrack.clear()
   loadPromises.clear()
+  olvidarRestauraciones()
   lastVstLoadError = ''
   emitRuntime()
 }
 
 export async function releaseSlot(slotId: string): Promise<void> {
+  olvidarRestauraciones(slotId)
+  slotLoadErrors.delete(slotId)
   try {
     await window.electron?.pluginHostSend?.({ type: 'closeEditor', slotId })
     await window.electron?.pluginHostSend?.({ type: 'unload', slotId })
@@ -316,8 +378,19 @@ export async function syncLoadedSlotsWithProject(
     if (isBuiltinInstrument(p)) continue
     if (resolveHostPluginPath(p)) live.add(slotIdForTrackPlugin('master', p.id))
   }
+  // Ids de plugin que siguen en el proyecto (en la misma pista o en otra): si su slot se descarga porque
+  // cambió de cadena/pista, el estado VIVO se guarda antes (el chunk del proyecto puede ser más viejo).
+  const idsVivos = new Set<string>()
+  for (const t of tracks) for (const p of t.plugins ?? []) idsVivos.add(p.id)
+  for (const p of masterPlugins ?? []) idsVivos.add(p.id)
   for (const slotId of [...bySlot.keys()]) {
-    if (!live.has(slotId)) await releaseSlot(slotId)
+    if (live.has(slotId)) continue
+    const info = bySlot.get(slotId)
+    if (info && idsVivos.has(info.pluginId) && !restauracionPendiente(slotId)) {
+      const chunk = await getSlotPluginStateBase64(slotId)
+      if (chunk) guardarEstadoParaMover(info.pluginId, chunk)
+    }
+    await releaseSlot(slotId)
   }
 }
 
@@ -340,6 +413,36 @@ export function isVstQuarantineError(msg: string): boolean {
 /** Tras audio.clearQuarantine: permite reintentar load sin spam de consola. */
 export function clearVstQuarantineWarnCache(): void {
   quarantineWarned.clear()
+  // También el «no reintentar» de fallos recientes: sin esto, tras limpiar la cuarentena el plugin
+  // seguía devolviendo el mismo error hasta 5 minutos sin llegar a intentarse.
+  loadFailCache.clear()
+  loadFailLogged.clear()
+}
+
+/**
+ * Olvida el fallo reciente de un plugin. Se llama cuando el usuario pide abrirlo o insertarlo a propósito:
+ * una acción explícita siempre se intenta (el «no reintentar» solo protege de los disparadores automáticos).
+ */
+export function olvidarFalloVst(rutaPlugin: string): void {
+  const k = rutaPlugin.replace(/\//g, '\\').toLowerCase()
+  loadFailCache.delete(k)
+  loadFailLogged.delete(k)
+  quarantineWarned.delete(k)
+}
+
+function esMotorOcupado(msg: string): boolean {
+  return /AudioEngineBusy|usando el motor de audio/i.test(msg)
+}
+
+/** Al recuperar el motor de audio: olvida los fallos «motor ocupado» para que los plugins se carguen ya. */
+export function olvidarFallosPorMotorOcupado(): void {
+  for (const [k, v] of loadFailCache) {
+    if (esMotorOcupado(v.msg)) {
+      loadFailCache.delete(k)
+      loadFailLogged.delete(k)
+    }
+  }
+  for (const [slot, msg] of slotLoadErrors) if (esMotorOcupado(msg)) slotLoadErrors.delete(slot)
 }
 
 export async function ensureTrackVstPlugin(
@@ -359,6 +462,13 @@ export async function ensureTrackVstPlugin(
     return false
   }
   const slotId = slotIdForTrackPlugin(trackId, plugin.id)
+  // Proyectos antiguos guardan VST2 (.dll): el host los rechaza (ADR-0019). No se envía `load`
+  // (ocupaba el host y llenaba la consola); el slot queda marcado para que el usuario lo sustituya.
+  if (/\.dll$/i.test(path)) {
+    lastVstLoadError = VST2_NOT_HOSTED_MSG
+    setSlotLoadError(slotId, VST2_NOT_HOSTED_MSG)
+    return false
+  }
   const instrument = isVstInstrumentPlugin(plugin, path)
   const st = typeof window !== 'undefined' ? await window.electron?.pluginHostStatus?.() : undefined
   const pid = typeof st?.nativePid === 'number' ? st.nativePid : 0
@@ -400,15 +510,15 @@ export async function ensureTrackVstPlugin(
           pluginId: existing.pluginId,
         })
       }
-      await restorePluginStateAfterLoad(trackId, plugin)
+      // Slot YA cargado y vivo: su estado es el bueno. Reaplicar aquí el chunk del proyecto (más viejo que
+      // lo que el usuario hizo en el editor) era una de las vías por las que se "botaba" la configuración.
+      // Solo se reintenta si la restauración inicial quedó pendiente (falló o llegó tarde).
+      if (restauracionPendiente(slotId)) await restorePluginStateAfterLoad(trackId, plugin)
       resyncProjectGraph?.()
       return true
     }
     // getLatency falló: no borrar el mapa todavía — re-load abajo; si falla, conservar slot.
   }
-
-  // No destruir el instrumento previo antes de cargar: la música debe seguir sonando
-  const prevInst = instrument ? byTrack.get(trackId) : null
 
   const pending = loadPromises.get(slotId)
   if (pending) return pending
@@ -461,7 +571,12 @@ export async function ensureTrackVstPlugin(
           loadFailLogged.add(failKey)
           console.error('[track-vst] load failed', path, msg)
         }
-        loadFailCache.set(failKey, { until: Date.now() + 300_000, msg })
+        // Los disparadores automáticos esperan un poco antes de reintentar; con cuarentena, muy poco, para que
+        // limpiarla o recompilar el plugin surta efecto enseguida.
+        // Motor ocupado por otra ventana: causa pasajera, no un fallo del plugin (se limpia al recuperar el motor).
+        const breve = isQuarantineLoadError(msg) || esMotorOcupado(msg)
+        loadFailCache.set(failKey, { until: Date.now() + (breve ? 5_000 : 60_000), msg })
+        setSlotLoadError(slotId, msg)
         // Conservar slot previo si el re-load falla (evita silenciar MIDI mid-play).
         if (existing) {
           if (instrument) byTrack.set(trackId, existing)
@@ -470,14 +585,16 @@ export async function ensureTrackVstPlugin(
         return false
       }
       lastVstLoadError = ''
+      slotLoadErrors.delete(slotId)
       const loaded: LoadedPlugin = { trackId, pluginId: plugin.id, path, slotId, instrument }
+      // Antes de publicar el slot: desde este momento un snapshot vería el estado de fábrica.
+      if (plugin.estadoPluginBase64 || verEstadoParaMover(plugin.id)) marcarRestauracionPendiente(slotId)
       bySlot.set(slotId, loaded)
       if (instrument) {
         byTrack.set(trackId, loaded)
         setActiveVstVoiceTarget({ slotId, path, trackId, pluginId: plugin.id })
-        if (prevInst && prevInst.slotId !== slotId) {
-          void releaseSlot(prevInst.slotId)
-        }
+        // El instrumento previo NO se descarga aquí: puede ser otra capa de la misma pista. Si se sustituyó,
+        // syncLoadedSlotsWithProject lo quita al no estar ya en la cadena del proyecto.
       }
       await restorePluginStateAfterLoad(trackId, plugin)
       emitRuntime()
@@ -594,6 +711,8 @@ export function syncReaperTrackGraph(
     paneo?: number
     silenciada?: boolean
     soloActiva?: boolean
+    tipo?: string
+    padreId?: string
   }>,
   masterPlugins?: PluginInfo[],
   routing?: {
@@ -621,16 +740,13 @@ export function syncReaperTrackGraph(
     omitirLayout?: boolean
   },
 ): void {
-  const anySolo = tracks.some((t) => t.soloActiva)
   // Buses/returns no se silencian por el solo de otra pista (si no, los sends a reverb desaparecen).
   const busIds = new Set((routing?.buses ?? []).map((b) => b.id))
+  // Mute/solo heredados de las carpetas-bus.
+  const audibles = pistasAudibles(tracks, busIds)
+  const padres = padresEfectivos(tracks)
 
   const stemByTrackId = new Map(tracks.map((t, i) => [t.id, i]))
-  for (const b of routing?.buses ?? []) {
-    if (!stemByTrackId.has(b.id)) {
-      // bus id puede coincidir con track id; si no, se resuelve vía destinoBusId→track
-    }
-  }
 
   const sendsBySrc = new Map<string, Array<{ destStem: number; amount: number; preFader?: boolean }>>()
   for (const send of routing?.sends ?? []) {
@@ -662,8 +778,9 @@ export function syncReaperTrackGraph(
 
   const graphTracks = tracks.map((t, stemIndex) => {
     const previewId = getEditorPreviewTrackId()
-    const muted =
-      previewId === t.id ? false : anySolo ? !t.soloActiva && !busIds.has(t.id) : Boolean(t.silenciada)
+    const muted = previewId === t.id ? false : !audibles.has(t.id)
+    const padreId = padres.get(t.id)
+    const parentStem = padreId != null ? stemByTrackId.get(padreId) : undefined
     const slots: Array<{ slotId: string; instrument: boolean; bypass: boolean }> = []
     for (const p of t.plugins ?? []) {
       // VST3 con ruta: nunca tratar como builtin (licencia «JasWave» ≠ in-process).
@@ -693,6 +810,7 @@ export function syncReaperTrackGraph(
       gain: typeof t.volumen === 'number' ? t.volumen : 1,
       pan: typeof t.paneo === 'number' ? t.paneo : 0,
       muted,
+      parentStem,
       slots,
       sends: sendsBySrc.get(t.id) ?? [],
       sidechains: sidechainsByDest.get(t.id) ?? [],
@@ -714,6 +832,7 @@ export function syncReaperTrackGraph(
       gain: 0.95,
       pan: 0,
       muted: false,
+      parentStem: undefined,
       slots: [{ slotId: loaded.slotId, instrument: true, bypass: false }],
       sends: [],
       sidechains: [],
@@ -923,11 +1042,15 @@ type PluginSnapshotFields = {
   estado: 'cargado'
 }
 
+const avisadoSinChunk = new Set<string>()
+
 async function readLivePluginSnapshot(
   slotId: string,
   previous?: PluginInfo,
 ): Promise<PluginSnapshotFields | null> {
   if (!bySlot.has(slotId)) return null
+  // Restauración pendiente: el estado vivo es el de fábrica; capturarlo pisaría el chunk bueno del proyecto.
+  if (restauracionPendiente(slotId)) return null
   // Chunk primero: si no cambió respecto al guardado, se reutilizan los parámetros previos y se evita
   // listParameters (hasta 400 params con el mutex del host tomado) en cada autosave.
   const chunk = await getSlotPluginStateBase64(slotId)
@@ -947,7 +1070,11 @@ async function readLivePluginSnapshot(
       etiqueta: rp.name || String(rp.parameterId),
     }))
   }
-  if (!chunk) {
+  // Host caído/reiniciándose: sin chunk y sin parámetros no hay nada fiable que capturar; no pisar el
+  // estado guardado con una lista vacía.
+  if (!chunk && parametros.length === 0) return null
+  if (!chunk && !avisadoSinChunk.has(slotId)) {
+    avisadoSinChunk.add(slotId) // una vez por slot: el autoguardado periódico no debe inundar la consola
     console.warn('[track-vst] snapshot sin chunk para', slotId, '— se conserva estado previo si existe')
   }
   return {
@@ -994,9 +1121,13 @@ export async function snapshotTrackPluginIntoProject(
 /** Lee params (+ chunk VST2/VST3) del host y los escribe en DAWState.plugins. */
 export async function snapshotLoadedPluginsIntoProject(
   tienda: import('../../../../shared/src/state/tienda').TiendaDAW,
+  opts?: {
+    /** false = solo slots ya cargados (autoguardado periódico: no debe cargar plugins en segundo plano). */
+    cargar?: boolean
+  },
 ): Promise<{ slots: number; withChunk: number }> {
   // Asegura slots cargados antes de snapshot (evita guardar sin chunk en pistas recién abiertas).
-  try {
+  if (opts?.cargar !== false) try {
     const st = tienda.obtenerEstado()
     await ensureProjectVstInstruments(
       (st.project.tracks ?? []).map((t) => ({ id: t.id, plugins: t.plugins })),
@@ -1032,16 +1163,107 @@ export async function snapshotLoadedPluginsIntoProject(
 
 async function restorePluginStateAfterLoad(trackId: string, plugin: PluginInfo): Promise<void> {
   const slotId = slotIdForTrackPlugin(trackId, plugin.id)
-  // Chunk VST = fuente de verdad. No overlay de params (pisaría el estado del editor).
-  if (plugin.estadoPluginBase64) {
-    const ok = await setSlotPluginStateBase64(slotId, plugin.estadoPluginBase64)
-    if (ok) return
-    console.warn('[track-vst] setPluginState falló; fallback a parámetros', slotId)
+  // Chunk VST = fuente de verdad. El estado vivo guardado al mover el plugin de cadena es más nuevo que el
+  // del proyecto. No overlay de params si el chunk entra (pisaría el estado del editor).
+  const chunk = verEstadoParaMover(plugin.id) ?? plugin.estadoPluginBase64
+  const ok = await restaurarEstadoSlot({
+    slotId,
+    chunk,
+    aplicar: setSlotPluginStateBase64,
+    aplicarParametros: async () => {
+      for (const p of plugin.parametros ?? []) {
+        if (p.id == null || p.valor == null) continue
+        await setSlotParameter(slotId, p.id, p.valor)
+      }
+    },
+  })
+  if (ok) {
+    descartarEstadoParaMover(plugin.id)
+  } else {
+    console.warn(
+      '[track-vst] setPluginState falló; el slot queda pendiente (no se sobrescribe el estado guardado)',
+      slotId,
+    )
   }
-  for (const p of plugin.parametros ?? []) {
-    if (p.id == null || p.valor == null) continue
-    await setSlotParameter(slotId, p.id, p.valor)
+}
+
+/** Reintenta las restauraciones pendientes (llamado por el autoguardado). */
+export async function reintentarRestauracionesPendientes(
+  tienda: import('../../../../shared/src/state/tienda').TiendaDAW,
+): Promise<void> {
+  for (const slotId of listarRestauracionesPendientes()) {
+    const info = bySlot.get(slotId)
+    if (!info) {
+      olvidarRestauraciones(slotId)
+      continue
+    }
+    const st = tienda.obtenerEstado().project
+    const chain = info.trackId === 'master' ? st.master?.plugins : st.tracks.find((t) => t.id === info.trackId)?.plugins
+    const plugin = (chain ?? []).find((p) => p.id === info.pluginId)
+    if (!plugin) {
+      olvidarRestauraciones(slotId)
+      continue
+    }
+    await restorePluginStateAfterLoad(info.trackId, plugin)
   }
+}
+
+/**
+ * Autoguardado periódico del estado de los VST cargados hacia el proyecto (y al cerrarse un editor).
+ * El estado interno de un plugin (kit de BFD, mezcla…) no mueve la tienda, así que ningún otro disparador de
+ * autoguardado lo detecta. Corre en segundo plano, se omite durante el play y no carga plugins.
+ */
+export function iniciarAutoguardadoEstadoVst(
+  tienda: import('../../../../shared/src/state/tienda').TiendaDAW,
+  opts?: { intervaloMs?: number },
+): { detener: () => void; ahora: () => Promise<boolean> } {
+  // Las ventanas satélite (undock) no son dueñas del proyecto: no capturan estado.
+  try {
+    if (isUndockWindow()) return { detener: () => undefined, ahora: async () => false }
+  } catch {
+    /* ignore */
+  }
+  const auto = crearAutoguardadoEstadoVst({
+    intervaloMs: opts?.intervaloMs,
+    ocupado: () => audioEngine.getIsPlaying() || bySlot.size === 0,
+    reintentarPendientes: () => reintentarRestauracionesPendientes(tienda),
+    capturar: () => snapshotLoadedPluginsIntoProject(tienda, { cargar: false }),
+  })
+  auto.start()
+  void import('./plugin-windows').then((m) => {
+    m.registrarCapturaAlCerrarEditor(async (w) => {
+      await snapshotTrackPluginIntoProject(tienda, w.trackId, w.pluginId)
+    })
+  })
+  return {
+    detener: () => {
+      auto.stop()
+      void import('./plugin-windows').then((m) => m.registrarCapturaAlCerrarEditor(null))
+    },
+    ahora: auto.tick,
+  }
+}
+
+/**
+ * Captura final antes de cerrar la app (el host sigue vivo en este punto). Con tope de tiempo: el cierre
+ * no puede quedar colgado por un sampler pesado.
+ */
+export async function capturarEstadoVstAlCerrar(
+  tienda: import('../../../../shared/src/state/tienda').TiendaDAW,
+  maxMs = 2500,
+): Promise<boolean> {
+  if (bySlot.size === 0) return true
+  const r = await Promise.race([
+    snapshotLoadedPluginsIntoProject(tienda, { cargar: false }).then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), maxMs)),
+  ]).catch(() => false)
+  return r
+}
+
+/** Solo pruebas. */
+export function __resetEstadoVstParaPruebas(): void {
+  olvidarRestauraciones()
+  limpiarEstadoParaMover()
 }
 
 export type PluginProbeResult = {

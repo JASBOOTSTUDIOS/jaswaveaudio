@@ -68,7 +68,7 @@ export function herramientasDesdeManifiesto(m: ManifiestoPlugin): HerramientaMan
   if (params.length > 0 && m.permissions.commands.includes('plugin.setParameter')) {
     out.push({
       name: `plugin.${alias}.ajustar`,
-      description: `Ajusta parámetros de una instancia de ${m.name} en una pista. Valores en unidades reales (${params
+      description: `Ajusta parámetros de una instancia de ${m.name} en una pista o en el máster (trackId "master"); pluginInstanceId es el id de la instancia en la cadena. Valores en unidades reales (${params
         .slice(0, 6)
         .map((p) => `${p.id}: ${p.min}–${p.max}${p.unit ? ' ' + p.unit : ''}`)
         .join('; ')}${params.length > 6 ? '; …' : ''}).`,
@@ -121,6 +121,43 @@ export function describirPlugin(m: ManifiestoPlugin, accionesConcedidas?: readon
   };
 }
 
+/** Lo mínimo del proyecto para ubicar una instancia de plugin (pistas y cadena del máster). */
+export type CadenasProyecto = {
+  tracks: ReadonlyArray<{ id: string; nombre?: string; plugins?: ReadonlyArray<{ id: string; nombre?: string; bypass?: boolean }> }>;
+  master?: { plugins?: ReadonlyArray<{ id: string; nombre?: string; bypass?: boolean }> };
+};
+
+const ES_MASTER = /^(master|__master__|máster)$/i;
+
+/**
+ * Instancia real a la que apunta `ajustar`. El modelo suele mandar el id del manifiesto
+ * («com.jaswave.plugin.truepeak-limiter»), su alias o la pista equivocada (el limitador está en el
+ * máster): se busca el plugin por nombre en la pista indicada, luego en el máster y luego en el resto.
+ */
+export function resolverInstanciaPlugin(
+  m: ManifiestoPlugin,
+  proyecto: CadenasProyecto,
+  trackId: string,
+  pluginInstanceId: string,
+): { trackId: string; pluginInstanceId: string } {
+  const master = { id: 'master', nombre: 'Máster', plugins: proyecto.master?.plugins ?? [] };
+  const cadenas = [master, ...proyecto.tracks];
+  const destino = ES_MASTER.test(trackId) ? master : proyecto.tracks.find((t) => t.id === trackId);
+  if (destino?.plugins?.some((p) => p.id === pluginInstanceId)) return { trackId: destino.id, pluginInstanceId };
+  // El id de instancia es único: si está en otra cadena, esa manda.
+  const conId = cadenas.find((c) => c.plugins?.some((p) => p.id === pluginInstanceId));
+  if (conId) return { trackId: conId.id, pluginInstanceId };
+  const esEste = (p: { nombre?: string; bypass?: boolean }) => (p.nombre ?? '').toLowerCase() === m.name.toLowerCase();
+  const enDestino = destino?.plugins?.filter(esEste) ?? [];
+  if (enDestino.length) return { trackId: destino!.id, pluginInstanceId: (enDestino.find((p) => !p.bypass) ?? enDestino[0]!).id };
+  const encontrados = cadenas.flatMap((c) => (c.plugins ?? []).filter(esEste).map((p) => ({ trackId: c.id, nombre: c.nombre ?? c.id, pluginInstanceId: p.id })));
+  if (encontrados.length === 1) return { trackId: encontrados[0]!.trackId, pluginInstanceId: encontrados[0]!.pluginInstanceId };
+  if (!encontrados.length) {
+    throw new Error(`${m.name} no está insertado en ${destino ? `«${destino.nombre ?? destino.id}»` : 'el proyecto'}: insértalo antes (en el máster usa trackId "master").`);
+  }
+  throw new Error(`Hay varios ${m.name}: indica trackId y pluginInstanceId de uno de estos: ${encontrados.map((e) => `«${e.nombre}» trackId "${e.trackId}" pluginInstanceId "${e.pluginInstanceId}"`).join('; ')}.`);
+}
+
 /**
  * Traduce `ajustar` a comandos `plugin.setParameter`. Rechaza parámetros desconocidos y los que
  * requieren una función no concedida por la licencia (`accionesConcedidas`).
@@ -134,7 +171,7 @@ export function traducirAjuste(
   const porId = new Map((m.ai?.parameters ?? []).map((p) => [p.id, p]));
   return Object.entries(args.valores).map(([id, crudo]) => {
     const p = porId.get(id);
-    if (!p) throw new Error(`parámetro desconocido en ${m.id}: ${id}`);
+    if (!p) throw new Error(`parámetro desconocido en ${m.id}: ${id}. Parámetros válidos: ${[...porId.keys()].join(', ')}`);
     if (p.readOnly) throw new Error(`"${p.name}" es una medición de solo lectura`);
     const valor = valorNumerico(p, crudo);
     if (p.feature && accionesConcedidas && !accionesConcedidas.includes(p.feature)) {

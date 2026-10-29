@@ -36,6 +36,8 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'library.preset.searchGlobal': 'read',
   'style.profile.list': 'read',
   'style.profile.search': 'read',
+  'style.touch.list': 'read',
+  'analysis.touch': 'read',
   'doc.evaluate': 'read',
   'doc.read': 'read',
   'doc.list': 'read',
@@ -51,7 +53,9 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'analysis.section': 'read',
   'analysis.reference': 'read',
   'analysis.diagnose': 'read',
+  'analysis.trackSound': 'read',
   'analysis.timing': 'read',
+  'analysis.midiPlayed': 'read',
   'analysis.buffer': 'read',
   'analysis.fxBlame': 'read',
   'analysis.audioLens': 'read',
@@ -116,6 +120,13 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'clip.split': 'write',
   'clip.merge': 'write',
   'clip.resize': 'write',
+  // G3: edición de clips y notas (todas con undo)
+  'clip.setMute': 'write',
+  'clip.setFade': 'write',
+  'clip.setGain': 'write',
+  'clip.setReverse': 'write',
+  'midi.notes.mute': 'write',
+  'midi.notes.split': 'write',
   'clip.move': 'write',
   'midi.clip.splitIntoSections': 'write',
   'midi.notes.set': 'write',
@@ -141,11 +152,14 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'midi.setCC': 'write',
   'midi.setPitchBend': 'write',
   'plugin.insert': 'write',
+  'track.addVstLayer': 'write',
+  'track.setParent': 'write',
   'plugin.move': 'write',
   'plugin.bypass': 'write',
   'plugin.duplicate': 'write',
   'plugin.replace': 'write',
   'plugin.setParameter': 'write',
+  'plugin.resetDefaults': 'write',
   'plugin.snapshotState': 'write',
   'fxChain.copy': 'write',
   'fxChain.paste': 'write',
@@ -192,9 +206,14 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'library.preset.saveFxChainGlobal': 'write',
   'style.profile.saveFromClip': 'write',
   'style.profile.apply': 'write',
+  // Toque del intérprete: learn guarda en la biblioteca del usuario; apply reescribe notas (midi.notes.set, undo).
+  'style.touch.learn': 'write',
+  'style.touch.apply': 'write',
   'audio.armNative': 'write',
   'daw.musicBuild': 'write',
   'daw.composeProject': 'write',
+  'daw.composeWorship': 'write',
+  'marker.create': 'write',
   'daw.generateMidiSong': 'write',
   'daw.masterPass': 'write',
 
@@ -230,6 +249,9 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'reference.import': 'system',
   'render.start': 'system',
   'render.cancel': 'system',
+  // Escriben archivos fuera del proyecto: confirmación como cualquier export.
+  'export.midi': 'system',
+  'export.projectBundle': 'system',
   'score.exportClip': 'system',
   'score.exportProject': 'system',
   'terminal.execute': 'system',
@@ -237,6 +259,9 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
 
 /** Claves de payload que indican una ruta de disco (plugin.insert con path → system). */
 const PATH_PAYLOAD_KEYS = ['path', 'ruta', 'filePath', 'pluginPath', 'vstPath', 'dllPath']
+
+/** Rastro de ruta de binario de plugin en texto libre o ids (`path:…`, `X:\…`, `.vst3`, `.dll`). */
+const PLUGIN_PATH_HINT = /\.(?:vst3|dll)\b|\bpath:|[A-Za-z]:[\/]/i
 
 function payloadHasPath(p: Record<string, unknown>): boolean {
   for (const k of PATH_PAYLOAD_KEYS) {
@@ -248,6 +273,13 @@ function payloadHasPath(p: Record<string, unknown>): boolean {
     for (const k of PATH_PAYLOAD_KEYS) {
       if (typeof pl[k] === 'string' && String(pl[k]).trim()) return true
     }
+    // El host también deriva la ruta de `plugin.descripcion` y de ids `path:…` (extractHostPluginPath).
+    for (const k of ['descripcion', 'id', 'pluginId']) {
+      if (typeof pl[k] === 'string' && PLUGIN_PATH_HINT.test(String(pl[k]))) return true
+    }
+  }
+  for (const k of ['descripcion', 'pluginId']) {
+    if (typeof p[k] === 'string' && PLUGIN_PATH_HINT.test(String(p[k]))) return true
   }
   return false
 }
@@ -272,7 +304,7 @@ export function agentActionClass(action: AgentAction): AgentActionClass | undefi
   const base = agentActionClassOfType(action.type)
   if (!base) return undefined
   const p = payloadOfAction(action)
-  if (action.type === 'plugin.insert' && payloadHasPath(p)) return 'system'
+  if ((action.type === 'plugin.insert' || action.type === 'track.addVstLayer') && payloadHasPath(p)) return 'system'
   if (action.type === 'midi.notes.set') {
     const notas = p.notas ?? p.notes
     if (Array.isArray(notas) && notas.length === 0) return 'destructive'

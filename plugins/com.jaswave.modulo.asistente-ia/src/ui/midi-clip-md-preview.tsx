@@ -3,6 +3,8 @@ import { Check, ExternalLink, Loader2, Trash2 } from 'lucide-react'
 
 import { stopMidiPreviewAudition } from '../motor/midi-preview-audition'
 import { MidiPreviewTransport } from './midi-preview-transport'
+import { BotonVerTodo, useVerTodo } from './lista-expandible'
+import { textoLegible } from './detalles-tecnicos'
 import { clearMidiProposalOverlay, executeDawActions, pitchToName, requestOpenTool, setMidiProposalOverlay, useDAW } from '@jaswave/host-sdk'
 
 export type MidiClipMdPreviewData = {
@@ -59,7 +61,8 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
     [preview.notes],
   )
 
-  const noteRows = useMemo(() => preview.notes.slice(0, 48), [preview.notes])
+  const filas = useVerTodo(preview.notes, 12)
+  const avisos = (preview.errors ?? []).map((e) => textoLegible(e)).filter(Boolean)
 
   const stopPreview = useCallback(() => {
     stopMidiPreviewAudition()
@@ -127,7 +130,7 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
   if (localStatus === 'discarded') {
     return (
       <div className="mt-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-        Preview .md descartado («{preview.nombre}»).
+        Propuesta de notas descartada («{preview.nombre}»).
       </div>
     )
   }
@@ -138,11 +141,11 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
     <div className="mt-2 overflow-hidden rounded-md border border-emerald-500/30 bg-emerald-500/5">
       <div className="flex flex-wrap items-center gap-2 border-b border-border/50 px-3 py-2">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-medium text-foreground">
-            Clip .md · {preview.nombre}
+          <div className="truncate text-xs font-medium text-foreground" title={preview.nombre}>
+            Notas propuestas · {preview.nombre}
           </div>
           <div className="truncate text-[10px] text-muted-foreground">
-            {preview.slug} · {preview.notes.length} notas · {preview.bpm} BPM · preview (no timeline del arrange)
+            {preview.notes.length} {preview.notes.length === 1 ? 'nota' : 'notas'} · {preview.bpm} BPM · vista previa, todavía no está en el proyecto
           </div>
         </div>
         {localStatus === 'applied' ? (
@@ -153,8 +156,9 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
       </div>
 
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-        <label className="text-[10px] text-muted-foreground">Pista / VST</label>
+        <label className="text-[10px] text-muted-foreground">Escuchar con</label>
         <select
+          aria-label="Pista con la que escuchar"
           className="max-w-[180px] rounded border border-border bg-background px-1.5 py-0.5 text-[10px]"
           value={auditionTrackId}
           onChange={(e) => setAuditionTrackId(e.target.value)}
@@ -166,7 +170,7 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
           ))}
         </select>
         {preview.instrumentoHint ? (
-          <span className="text-[10px] text-muted-foreground">hint: {preview.instrumentoHint}</span>
+          <span className="text-[10px] text-muted-foreground">Instrumento sugerido: {preview.instrumentoHint}</span>
         ) : null}
       </div>
 
@@ -182,38 +186,41 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
         />
       </div>
 
-      <div className="max-h-32 overflow-auto px-3 pb-2">
-        <table className="w-full text-left text-[10px]">
-          <thead className="sticky top-0 bg-emerald-500/10 text-muted-foreground">
+      <div className="px-3 pb-2">
+        <table className="w-full table-fixed text-left text-[10px]">
+          <thead className="text-muted-foreground">
             <tr>
-              <th className="py-0.5 pr-2">id</th>
-              <th className="py-0.5 pr-2">pitch</th>
-              <th className="py-0.5 pr-2">t</th>
-              <th className="py-0.5 pr-2">dur</th>
-              <th className="py-0.5 pr-2">vel</th>
+              <th className="py-0.5 pr-2 font-medium">Nota</th>
+              <th className="py-0.5 pr-2 font-medium">Inicio (tiempo)</th>
+              <th className="py-0.5 pr-2 font-medium">Duración</th>
+              <th className="py-0.5 pr-2 font-medium">Fuerza</th>
             </tr>
           </thead>
           <tbody>
-            {noteRows.map((n, i) => (
-              <tr key={n.id ?? i} className="border-t border-border/30">
-                <td className="py-0.5 pr-2 font-mono">{n.id?.slice(0, 10) ?? '—'}</td>
-                <td className="py-0.5 pr-2">
-                  {n.pitch} {pitchToName(n.pitch)}
-                </td>
-                <td className="py-0.5 pr-2">{n.inicio.toFixed(2)}</td>
-                <td className="py-0.5 pr-2">{n.duracion.toFixed(2)}</td>
+            {filas.visibles.map((n, i) => (
+              <tr key={n.id ?? i} className={`border-t border-border/30${n.mute ? ' opacity-50' : ''}`}>
+                <td className="py-0.5 pr-2">{pitchToName(n.pitch)}</td>
+                <td className="py-0.5 pr-2">{(n.inicio + 1).toFixed(2).replace('.', ',')}</td>
+                <td className="py-0.5 pr-2">{n.duracion.toFixed(2).replace('.', ',')}</td>
                 <td className="py-0.5 pr-2">{n.velocidad}</td>
               </tr>
             ))}
           </tbody>
         </table>
-        {preview.notes.length > noteRows.length ? (
-          <div className="pt-1 text-[10px] text-muted-foreground">
-            … y {preview.notes.length - noteRows.length} más (ver Doc)
-          </div>
-        ) : null}
-        {preview.errors?.length ? (
-          <div className="pt-1 text-[10px] text-amber-600">{preview.errors.join(' · ')}</div>
+        <BotonVerTodo
+          ocultos={filas.ocultos}
+          todo={filas.todo}
+          onClick={filas.alternar}
+          className="pt-1 text-[10px] text-muted-foreground hover:text-foreground"
+        />
+        {avisos.length ? (
+          <ul className="list-disc pl-4 pt-1 text-[10px] text-amber-600">
+            {avisos.map((a, i) => (
+              <li key={i} className="break-words">{a}</li>
+            ))}
+          </ul>
+        ) : preview.errors?.length ? (
+          <div className="pt-1 text-[10px] text-amber-600">Algunas notas no se pudieron leer y se omitieron.</div>
         ) : null}
       </div>
 
@@ -224,14 +231,14 @@ export function MidiClipMdPreview({ preview, status = 'pending', onStatusChange 
           onClick={publishOverlay}
           disabled={localStatus !== 'pending'}
         >
-          Overlay piano roll
+          Ver en el piano roll
         </button>
         <button
           type="button"
           className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[10px] hover:bg-muted/40"
           onClick={openDocs}
         >
-          <ExternalLink className="size-3" /> Docs
+          <ExternalLink className="size-3" /> Abrir documentos
         </button>
         <div className="flex-1" />
         {localStatus === 'pending' ? (

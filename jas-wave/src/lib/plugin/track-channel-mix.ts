@@ -9,6 +9,7 @@ import {
 } from './track-vst-runtime'
 import { setTrackChannelAudible, trackChannelIsAudible } from './vst-voice-router'
 import { getEditorPreviewTrackId } from './editor-preview-focus'
+import { pistasAudibles } from './track-hierarchy'
 import type { PluginInfo } from '../../../../shared/src/types/entidades'
 
 function fireForget(cmd: Record<string, unknown>): void {
@@ -42,16 +43,17 @@ export function syncNativeChannelMix(
     paneo?: number
     silenciada?: boolean
     soloActiva?: boolean
+    tipo?: string
+    padreId?: string
     plugins?: PluginInfo[]
   }>,
   master?: { volumen?: number; paneo?: number; muted?: boolean; plugins?: PluginInfo[] },
   routing?: MixRouting,
 ): void {
-  const anySolo = tracks.some((t) => t.soloActiva)
   const previewId = getEditorPreviewTrackId()
+  const audibles = pistasAudibles(tracks, new Set((routing?.buses ?? []).map((b) => b.id)))
   for (const t of tracks) {
-    const audible =
-      previewId === t.id ? true : anySolo ? Boolean(t.soloActiva) : !t.silenciada
+    const audible = previewId === t.id ? true : audibles.has(t.id)
     const was = trackChannelIsAudible(t.id)
     setTrackChannelAudible(t.id, audible)
     const loaded = getLoadedInstrumentForTrack(t.id)

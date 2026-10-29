@@ -19,7 +19,7 @@ import { initLogger, logLine } from './logger'
 import { writeFileAtomic } from './atomic-write'
 import { defaultVstRoots, isAudioFile, PathAccessError, PathGrants, type AccessKind, type GrantMode } from './path-grants'
 import { buscarArchivosPorNombre, copiarMediaArchivo, moverMediaArchivo, traducirErrorDisco } from './media-service'
-import { checkHostCommand, setAnalysisRoot } from './plugin-host-guard'
+import { checkHostCommand, expandirVariablesDeEntorno, setAnalysisRoot } from './plugin-host-guard'
 import { esRutaProyecto, rutaExtensionDeArgv, rutaProyectoDeArgv, tokenHandoverDeArgv } from './instancia-unica'
 import { initAutoUpdater } from './updater'
 import {
@@ -28,15 +28,35 @@ import {
   installNavigationGuards,
   installPermissionHandlers,
   isSafeExternalUrl,
+  loadAdmin,
   loadRenderer,
 } from './security'
 import { escanearPaquetes } from './plugins/escaner'
 import { crearVigilancia } from './plugins/vigilancia'
-import { desinstalarPaquete, inspeccionarArchivo, instalarArchivo, instalarPaquete, obtenerCatalogo } from './plugins/instalador'
+import { desinstalarPaquete, inspeccionarArchivo, instalarArchivo, instalarPaquete, obtenerCatalogo, validarListado } from './plugins/instalador'
+import { escribirZip, type EntradaZip } from './zip-writer'
+import { AsistenteConfig } from './asistente-config'
 import { CLAVE_PUBLICA_JASWAVE } from './plugins/clave-catalogo'
+import {
+  argsCodificacion,
+  esFormatoCodificado,
+  extensionCoincide,
+  ID_PAQUETE_FFMPEG,
+  instalarFfmpeg,
+  resolverFfmpeg,
+} from './audio-encoder'
 import { crearManejadorModulos, ESQUEMA_MODULOS } from './plugins/protocolo-modulos'
 import { EditoresEmbebidos, panelDesdeComando, type VentanaEditor } from './plugins/editor-embebido'
+import { GestorPins } from './pins'
 import { guardarLicenciaLocal, leerLicenciaLocal, leerTokenDispositivo } from './licencias-locales'
+import { SesionDictadoWindows } from './dictado-windows'
+import {
+  conectarEstadoVentana,
+  medidasQueCaben,
+  normalizarOverlay,
+  opcionesVentanaSinMarco,
+  vigilarBarraVisible,
+} from './window-chrome'
 import * as os from 'node:os'
 
 // ── Diagnóstico: log persistente y minidumps locales (sin envío a servidores) ──
@@ -75,6 +95,9 @@ function readPersistedGrants(): Array<{ root: string; mode: GrantMode }> {
 
 function initPathGrants() {
   pathGrants.grant(app.getPath('userData'), 'readwrite')
+  // La carpeta de proyectos que propone «Nuevo proyecto» (Documentos\JasWave): sin esto, guardar ahí se rechazaba.
+  const proyectos = carpetaDeProyectos()
+  if (proyectos) pathGrants.grant(proyectos, 'readwrite')
   // Renders de análisis (A7b): escritura libre solo bajo userData/analysis/.
   setAnalysisRoot(path.join(app.getPath('userData'), 'analysis'))
   for (const root of defaultVstRoots(process.env)) pathGrants.grant(root, 'read')
@@ -312,6 +335,7 @@ function buildAppMenu() {
       submenu: [
         { label: 'Nueva pista de audio', click: () => sendMenuAction('pista.nueva') },
         { label: 'Nueva pista MIDI', click: () => sendMenuAction('pista.nuevaMidi') },
+        { label: 'Nueva carpeta (bus)', click: () => sendMenuAction('pista.nuevaCarpeta') },
         { type: 'separator' },
         { label: 'Ajustes del proyecto…', click: () => sendMenuAction('ventana.ajustes') },
       ],
@@ -339,12 +363,13 @@ function disablePageZoom(win: InstanceType<typeof BrowserWindow>) {
 
 function createWindow() {
   const icon = resolveAppIconPath()
+  const { screen } = require('electron')
+  // Nunca más grande que el área de trabajo: con escala alta la barra de título (sin marco) quedaba fuera.
+  const medidas = medidasQueCaben(screen.getPrimaryDisplay().workArea, { width: 1400, height: 900, minWidth: 1000, minHeight: 600 })
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1000,
-    minHeight: 600,
-    frame: false,
+    ...medidas,
+    // Sin marco, pero con minimizar / maximizar-restaurar / cerrar nativos siempre visibles (window-chrome.ts)
+    ...opcionesVentanaSinMarco(),
     backgroundColor: '#0b0d10',
     ...(icon ? { icon } : {}),
     webPreferences: {
@@ -358,13 +383,8 @@ function createWindow() {
     },
   })
 
-  const emitMaximized = () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('window-maximized-changed', mainWindow.isMaximized())
-    }
-  }
-  mainWindow.on('maximize', emitMaximized)
-  mainWindow.on('unmaximize', emitMaximized)
+  conectarEstadoVentana(mainWindow)
+  vigilarBarraVisible(mainWindow, screen)
 
   disablePageZoom(mainWindow)
   try {
@@ -643,8 +663,23 @@ ipcMain.handle('known-paths', () => {
     localAppData: process.env.LOCALAPPDATA || '',
     // Solo en la app empaquetada (extraResources vst3/JasWave); en dev queda vacío.
     bundledVst3Dir: resourcesPath ? path.join(resourcesPath, 'vst3', 'JasWave') : '',
+    proyectosDir: carpetaDeProyectos(),
   }
 })
+
+/**
+ * Carpeta por defecto de los proyectos nuevos: Documentos\JasWave (visible para el usuario; antes se proponía la
+ * carpeta oculta de datos de la app). JASWAVE_PROYECTOS_DIR la sustituye (instancias de prueba aisladas).
+ */
+function carpetaDeProyectos(): string {
+  const dir = process.env.JASWAVE_PROYECTOS_DIR || path.join(app.getPath('documents'), 'JasWave')
+  try {
+    fsSync.mkdirSync(dir, { recursive: true })
+    return dir
+  } catch {
+    return ''
+  }
+}
 
 /**
  * Raíces de paquetes de plugins JasWave (P1): la instalación de usuario (D1) y, en desarrollo,
@@ -832,6 +867,50 @@ ipcMain.handle('open-logs-folder', async () => {
   return logsDir()
 })
 
+// Carpeta de configuración del asistente: reglas, habilidades, prompts y planes en Markdown.
+// Solo rutas relativas validadas dentro de `<userData>/asistente/` (ver asistente-config.ts).
+let asistenteConfig: AsistenteConfig | null = null
+const configAsistente = () => (asistenteConfig ??= new AsistenteConfig(path.join(app.getPath('userData'), 'asistente')))
+const errorTexto = (e: unknown) => (e instanceof Error ? e.message : String(e))
+ipcMain.handle('asistente-carpeta-listar', async () => {
+  try {
+    return { ok: true, archivos: await configAsistente().listar(), carpeta: configAsistente().carpeta }
+  } catch (e) {
+    return { ok: false, error: errorTexto(e) }
+  }
+})
+ipcMain.handle('asistente-carpeta-escribir', async (_e: IpcMainInvokeEvent, ruta: unknown, contenido: unknown) => {
+  try {
+    await configAsistente().escribir(String(ruta), String(contenido ?? ''))
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: errorTexto(e) }
+  }
+})
+ipcMain.handle('asistente-carpeta-eliminar', async (_e: IpcMainInvokeEvent, ruta: unknown) => {
+  try {
+    return { ok: true, existia: await configAsistente().eliminar(String(ruta)) }
+  } catch (e) {
+    return { ok: false, error: errorTexto(e) }
+  }
+})
+ipcMain.handle('asistente-carpeta-restaurar', async (_e: IpcMainInvokeEvent, ruta: unknown) => {
+  try {
+    return { ok: true, restaurado: await configAsistente().restaurar(String(ruta)) }
+  } catch (e) {
+    return { ok: false, error: errorTexto(e) }
+  }
+})
+ipcMain.handle('asistente-carpeta-abrir', async () => {
+  try {
+    await configAsistente().asegurar()
+    const err = await shell.openPath(configAsistente().carpeta)
+    return err ? { ok: false, error: err } : { ok: true }
+  } catch (e) {
+    return { ok: false, error: errorTexto(e) }
+  }
+})
+
 ipcMain.handle('agent-bridge-get-enabled', () => !!readMainSettings().agentBridgeEnabled)
 ipcMain.handle('agent-bridge-set-enabled', async (_e: IpcMainInvokeEvent, enabled: unknown) => {
   await writeMainSettings({ agentBridgeEnabled: enabled === true })
@@ -843,23 +922,41 @@ ipcMain.on('agent-bridge-reply', (_event: IpcMainInvokeEvent, id: string, result
   resolveAgentBridgeReply(String(id), result, error ? String(error) : undefined)
 })
 
-ipcMain.handle('window-minimize', () => {
-  if (mainWindow) mainWindow.minimize()
+/** Controles de ventana: actúan sobre la ventana que los pide (principal, flotantes o cualquier otra). */
+function ventanaDelEmisor(e: IpcMainInvokeEvent): import('electron').BrowserWindow | null {
+  const win = BrowserWindow.fromWebContents(e.sender) as import('electron').BrowserWindow | null
+  return win && !win.isDestroyed() ? win : null
+}
+
+ipcMain.handle('window-minimize', (e: IpcMainInvokeEvent) => {
+  ventanaDelEmisor(e)?.minimize()
 })
 
-ipcMain.handle('window-maximize', () => {
-  if (mainWindow) {
-    if (mainWindow.isMaximized()) {
-      mainWindow.unmaximize()
-    } else {
-      mainWindow.maximize()
-    }
+ipcMain.handle('window-maximize', (e: IpcMainInvokeEvent) => {
+  const win = ventanaDelEmisor(e)
+  if (!win) return false
+  if (win.isFullScreen()) win.setFullScreen(false)
+  else if (win.isMaximized()) win.unmaximize()
+  else win.maximize()
+  return win.isMaximized()
+})
+
+ipcMain.handle('window-close', (e: IpcMainInvokeEvent) => {
+  // Pasa por el guard de 'close' (confirmación de cambios sin guardar) en la principal.
+  ventanaDelEmisor(e)?.close()
+})
+
+/** Recolorea los botones nativos para que casen con la barra visible (p. ej. el Portal). */
+ipcMain.handle('window-set-titlebar-overlay', (e: IpcMainInvokeEvent, opciones: unknown) => {
+  const win = ventanaDelEmisor(e)
+  const ok = normalizarOverlay(opciones)
+  if (!win || !ok || process.platform === 'darwin') return false
+  try {
+    win.setTitleBarOverlay(ok)
+    return true
+  } catch {
+    return false // ventana con marco nativo: no tiene overlay
   }
-})
-
-ipcMain.handle('window-close', () => {
-  // Pasa por el guard de 'close' (confirmación de cambios sin guardar).
-  if (mainWindow) mainWindow.close()
 })
 
 ipcMain.on('app-close-ack', (e: IpcMainInvokeEvent) => {
@@ -876,10 +973,7 @@ ipcMain.handle('app-close-canceled', (e: IpcMainInvokeEvent) => {
   return true
 })
 
-ipcMain.handle('window-is-maximized', () => {
-  if (mainWindow) return mainWindow.isMaximized()
-  return false
-})
+ipcMain.handle('window-is-maximized', (e: IpcMainInvokeEvent) => ventanaDelEmisor(e)?.isMaximized() ?? false)
 
 ipcMain.handle('file-save', async (_event: IpcMainInvokeEvent, ruta: string, contenido: string) => {
   try {
@@ -902,62 +996,188 @@ ipcMain.handle('file-save-binary', async (_event: IpcMainInvokeEvent, ruta: stri
   }
 })
 
+// ── Exportación (G2): ffmpeg bajo demanda y codificación de formatos ───────────
+function localAppDataDir(): string {
+  return process.env.LOCALAPPDATA || app.getPath('userData')
+}
+
 ipcMain.handle('ffmpeg-available', async () => {
+  const r = await resolverFfmpeg({ localAppData: localAppDataDir(), env: process.env })
+  return r ? { ok: true, origen: r.origen } : { ok: false, error: 'ffmpeg no está instalado' }
+})
+
+let instalandoFfmpeg = false
+/** Descarga ffmpeg del catálogo firmado (paquete com.jaswave.tool.ffmpeg) a %LOCALAPPDATA%/JasWave/tools. */
+ipcMain.handle('ffmpeg-install', async (e: IpcMainInvokeEvent, apiBase: unknown) => {
+  if (instalandoFfmpeg) return { ok: false, error: 'ya se está descargando el codificador' }
+  instalandoFfmpeg = true
   try {
-    const { spawn } = await import('node:child_process')
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn('ffmpeg', ['-version'], { windowsHide: true })
-      child.on('error', (e) => reject(e))
-      child.on('close', (code) => {
-        if (code === 0) resolve()
-        else reject(new Error(`ffmpeg exit ${code}`))
-      })
+    const catalogo = await obtenerCatalogo(apiBaseValida(apiBase), CLAVE_PUBLICA_JASWAVE)
+    const entrada = catalogo.paquetes.find((p) => p.id === ID_PAQUETE_FFMPEG)
+    if (!entrada) {
+      return {
+        ok: false,
+        error: 'El codificador no está publicado en el catálogo de JasWave. Instala ffmpeg y añádelo al PATH, o exporta en WAV.',
+      }
+    }
+    const ruta = await instalarFfmpeg(entrada, {
+      localAppData: localAppDataDir(),
+      alProgreso: (recibidos, total) => {
+        if (!e.sender.isDestroyed()) e.sender.send('ffmpeg-progreso', { recibidos, total })
+      },
     })
-    return { ok: true }
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    logLine('info', 'export', `ffmpeg ${entrada.version} instalado en ${ruta}`)
+    return { ok: true, version: entrada.version }
+  } catch (err) {
+    logLine('warn', 'export', 'instalación de ffmpeg fallida', err)
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  } finally {
+    instalandoFfmpeg = false
   }
 })
 
-/** Solo opciones de codificación conocidas; el renderer no puede inyectar flags de ffmpeg. */
-const FFMPEG_ARG_RULES: Record<string, RegExp> = {
-  '-b:a': /^\d{2,3}k$/,
-  '-c:a': /^(flac|libmp3lame|pcm_s16le|pcm_s24le|pcm_f32le)$/,
-  '-compression_level': /^\d{1,2}$/,
-  '-ar': /^\d{4,6}$/,
-  '-ac': /^[12]$/,
-}
-const FFMPEG_OUTPUT_EXT = /\.(flac|mp3|wav)$/i
-const FFMPEG_TIMEOUT_MS = 5 * 60_000
-
-function sanitizeFfmpegArgs(extraArgs: unknown): string[] {
-  const args = Array.isArray(extraArgs) ? extraArgs.map(String) : []
-  if (args.length % 2 !== 0) throw new Error('ffmpeg: argumentos incompletos')
-  for (let i = 0; i < args.length; i += 2) {
-    const rule = FFMPEG_ARG_RULES[args[i]!]
-    if (!rule || !rule.test(args[i + 1]!)) throw new Error(`ffmpeg: opción no permitida ${args[i]}`)
+// ── G7: dictado por voz con el reconocedor local de Windows (System.Speech) ──
+// La Web Speech API de Chromium no funciona en Electron (sin claves de Google → «network»).
+const sesionDictado = new SesionDictadoWindows()
+let turnoDictado = 0
+ipcMain.handle('dictado-disponible', () =>
+  sesionDictado.soportado ? { disponible: true, motor: 'windows' } : { disponible: false, motivo: 'El dictado local solo está disponible en Windows' },
+)
+ipcMain.handle('dictado-iniciar', async (e: IpcMainInvokeEvent, cultura: unknown) => {
+  const wc = e.sender
+  const turno = ++turnoDictado
+  const r = await sesionDictado.iniciar(cultura, (ev) => {
+    if (!wc.isDestroyed()) wc.send('dictado-evento', ev)
+  })
+  if (r.ok) {
+    // Ventana cerrada con el micrófono abierto: soltarlo (solo si sigue siendo su sesión).
+    wc.once('destroyed', () => {
+      if (turno === turnoDictado) sesionDictado.detener()
+    })
+  } else {
+    logLine('warn', 'dictado', `reconocedor de Windows no disponible: ${r.codigo} · ${r.error}`)
   }
-  return args
-}
+  return r
+})
+ipcMain.handle('dictado-detener', () => {
+  sesionDictado.detener()
+  return { ok: true }
+})
+app.on('will-quit', () => sesionDictado.detener())
 
+/** Crea la carpeta de destino de un export (stems) si el usuario concedió escritura ahí. */
+ipcMain.handle('export-ensure-dir', async (_e: IpcMainInvokeEvent, dir: unknown) => {
+  try {
+    if (typeof dir !== 'string' || !dir.trim()) throw new Error('carpeta inválida')
+    assertPath(dir, 'write')
+    await fs.mkdir(dir, { recursive: true })
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: traducirErrorDisco(err) }
+  }
+})
+
+/**
+ * Exportar proyecto empaquetado: `<nombre>.jaswave` + `media/…` en un zip. El renderer planifica
+ * (rutas reescritas); aquí se comprueba que cada audio se puede leer y el destino escribir.
+ */
 ipcMain.handle(
-  'ffmpeg-convert',
+  'project-export-bundle',
   async (
-    _event: IpcMainInvokeEvent,
-    input: string,
-    output: string,
-    extraArgs: string[] = [],
+    e: IpcMainInvokeEvent,
+    salida: unknown,
+    json: unknown,
+    nombreProyecto: unknown,
+    archivos: unknown,
   ) => {
     try {
+      if (typeof salida !== 'string' || !/\.zip$/i.test(salida)) throw new Error('el destino debe ser un .zip')
+      if (typeof json !== 'string' || typeof nombreProyecto !== 'string') throw new Error('proyecto inválido')
+      if (!Array.isArray(archivos)) throw new Error('lista de archivos inválida')
+      assertPath(salida, 'write')
+      const entradas: EntradaZip[] = [{ nombre: `${nombreProyecto}.jaswave`, texto: json }]
+      for (const a of archivos as Array<{ origen?: unknown; destino?: unknown }>) {
+        if (typeof a?.origen !== 'string' || typeof a.destino !== 'string' || !a.destino.startsWith('media/')) {
+          throw new Error('entrada de media inválida')
+        }
+        entradas.push({ nombre: a.destino, archivo: assertBinaryRead(a.origen) })
+      }
+      const bytes = await escribirZip(salida, entradas, (hechos, total) => {
+        if (!e.sender.isDestroyed()) e.sender.send('project-bundle-progreso', { hechos, total })
+      })
+      logLine('info', 'export', `proyecto empaquetado ${salida} (${entradas.length} entradas, ${bytes} bytes)`)
+      return { ok: true, bytes }
+    } catch (err) {
+      return { ok: false, error: traducirErrorDisco(err) }
+    }
+  },
+)
+
+/** Abre un `.jaswave.zip`, lo extrae en una carpeta junto al zip y devuelve el `.jaswave` que contiene. */
+ipcMain.handle('project-import-bundle', async () => {
+  if (!mainWindow) return { ok: false, canceled: true }
+  const r = await dialog.showOpenDialog(mainWindow, {
+    title: 'Abrir proyecto empaquetado',
+    filters: [{ name: 'Proyecto JasWave empaquetado', extensions: ['zip'] }],
+    properties: ['openFile'],
+  })
+  if (r.canceled || !r.filePaths[0]) return { ok: false, canceled: true }
+  const zip = r.filePaths[0]
+  try {
+    const base = path.basename(zip).replace(/\.zip$/i, '').replace(/\.jaswave$/i, '')
+    let destino = path.join(path.dirname(zip), base)
+    for (let n = 2; await fs.stat(destino).then(() => true, () => false); n++) destino = path.join(path.dirname(zip), `${base} (${n})`)
+    const tar = process.platform === 'win32' ? 'tar.exe' : 'tar'
+    const { execFile } = await import('node:child_process')
+    const ejecutar = (args: string[]) =>
+      new Promise<string>((resolve, reject) =>
+        execFile(tar, args, { windowsHide: true, timeout: 300_000, maxBuffer: 16 * 1024 * 1024 }, (err, out, errOut) =>
+          err ? reject(new Error(String(errOut || err.message).slice(0, 300))) : resolve(String(out)),
+        ),
+      )
+    // Mismas reglas que los paquetes de plugins: nada absoluto, sin `..`, tope de entradas.
+    const entradas = validarListado(await ejecutar(['-tf', zip]))
+    const proyectos = entradas.filter((x) => !x.includes('/') && /\.jaswave$/i.test(x))
+    if (proyectos.length !== 1) throw new Error('el zip no es un proyecto JasWave empaquetado (falta el .jaswave en la raíz)')
+    await fs.mkdir(destino, { recursive: true })
+    await ejecutar(['-xf', zip, '-C', destino])
+    grantUserPath(destino, 'readwrite')
+    return { ok: true, ruta: path.join(destino, proyectos[0]!) }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+const FFMPEG_TIMEOUT_MS = 10 * 60_000
+
+/**
+ * WAV del motor → formato final. El renderer elige formato y opciones; los argumentos se arman aquí.
+ * `borrarEntrada` solo borra el WAV temporal del render (`*.render.wav`).
+ */
+ipcMain.handle(
+  'audio-encode',
+  async (
+    _event: IpcMainInvokeEvent,
+    input: unknown,
+    output: unknown,
+    formato: unknown,
+    opciones: { bitrate?: number; bitDepth?: number; sampleRate?: number; borrarEntrada?: boolean } = {},
+  ) => {
+    try {
+      if (typeof input !== 'string' || typeof output !== 'string') throw new Error('rutas inválidas')
+      if (!esFormatoCodificado(formato)) throw new Error(`formato no soportado: ${String(formato)}`)
       assertBinaryRead(input)
       assertPath(output, 'write')
-      if (!isAudioFile(input) || !FFMPEG_OUTPUT_EXT.test(output)) throw new Error('ffmpeg: solo conversión de audio')
-      const safeArgs = sanitizeFfmpegArgs(extraArgs)
+      if (!/\.wav$/i.test(input) || !isAudioFile(input)) throw new Error('la entrada debe ser el WAV del render')
+      if (!extensionCoincide(formato, output)) throw new Error(`la extensión de ${path.basename(output)} no es de ${formato}`)
+      const bin = await resolverFfmpeg({ localAppData: localAppDataDir(), env: process.env })
+      if (!bin) throw new Error('FFMPEG_MISSING: el codificador no está instalado')
+      const codec = argsCodificacion(formato, opciones)
       const { spawn } = await import('node:child_process')
       await fs.mkdir(path.dirname(output), { recursive: true })
-      const args = ['-hide_banner', '-nostdin', '-y', '-i', input, ...safeArgs, output]
+      const args = ['-hide_banner', '-nostdin', '-y', '-i', input, ...codec, output]
       await new Promise<void>((resolve, reject) => {
-        const child = spawn('ffmpeg', args, { windowsHide: true })
+        const child = spawn(bin.ruta, args, { windowsHide: true })
         const timer = setTimeout(() => {
           child.kill()
           reject(new Error('ffmpeg: tiempo agotado'))
@@ -976,6 +1196,9 @@ ipcMain.handle(
           else reject(new Error(err.slice(-400) || `ffmpeg exit ${code}`))
         })
       })
+      if (opciones?.borrarEntrada && /\.render\.wav$/i.test(input)) {
+        await fs.rm(input, { force: true }).catch(() => undefined)
+      }
       return { ok: true, output }
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -998,6 +1221,22 @@ ipcMain.handle('recordings-dir', async (_event: IpcMainInvokeEvent, projectPath?
   const dir = path.join(base, 'media', 'grabaciones')
   await fs.mkdir(dir, { recursive: true })
   return dir
+})
+
+/**
+ * Renders de medición de la IA (análisis con el motor real): una carpeta fija que se vacía en cada uso,
+ * así los WAV temporales (mezcla + stems) no se acumulan. Solo se borra dentro de esta carpeta.
+ */
+const dirAnalisisIA = () => path.join(app.getPath('userData'), 'media', 'grabaciones', 'analisis-ia')
+ipcMain.handle('analisis-ia-dir', async () => {
+  const dir = dirAnalisisIA()
+  await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+  await fs.mkdir(dir, { recursive: true })
+  return dir
+})
+ipcMain.handle('analisis-ia-limpiar', async () => {
+  await fs.rm(dirAnalisisIA(), { recursive: true, force: true }).catch(() => {})
+  return true
 })
 
 /** Copia un archivo de audio al media del proyecto (o a media/pending/). */
@@ -1090,7 +1329,12 @@ const SAVE_FILTERS: Record<string, { name: string; extensions: string[] }> = {
   wav: { name: 'WAV', extensions: ['wav'] },
   flac: { name: 'FLAC', extensions: ['flac'] },
   mp3: { name: 'MP3', extensions: ['mp3'] },
+  aiff: { name: 'AIFF', extensions: ['aiff', 'aif'] },
+  ogg: { name: 'OGG Vorbis', extensions: ['ogg'] },
+  m4a: { name: 'AAC (M4A)', extensions: ['m4a'] },
+  opus: { name: 'Opus', extensions: ['opus'] },
   mid: { name: 'MIDI', extensions: ['mid'] },
+  zip: { name: 'Proyecto JasWave empaquetado', extensions: ['zip'] },
   jaswave: { name: 'JasWave Project', extensions: ['jaswave'] },
 }
 
@@ -1245,11 +1489,18 @@ ipcMain.handle('tool-window-open', async (_event: IpcMainInvokeEvent, toolId: st
   }
 
   const icon = resolveAppIconPath()
+  const { screen } = require('electron')
+  const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
+  const { width, height, minWidth, minHeight } = medidasQueCaben(area, { width: 960, height: 640, minWidth: 480, minHeight: 320 })
   const win = new BrowserWindow({
-    width: 960,
-    height: 640,
-    minWidth: 480,
-    minHeight: 320,
+    width,
+    height,
+    minWidth,
+    minHeight,
+    // Marco nativo de Windows: minimizar, maximizar/restaurar y cerrar siempre (explícito, no por defecto)
+    minimizable: true,
+    maximizable: true,
+    closable: true,
     title: `JasWave — ${title}`,
     backgroundColor: '#0b0d10',
     show: false,
@@ -1271,7 +1522,10 @@ ipcMain.handle('tool-window-open', async (_event: IpcMainInvokeEvent, toolId: st
     /* ignore */
   }
 
+  conectarEstadoVentana(win)
+  vigilarBarraVisible(win, screen)
   toolWindows.set(toolId, win)
+  pinsGestor.ventanaAbierta(toolId, win) // pin: si este panel está anclado, nace siempre visible
   win.once('ready-to-show', () => {
     if (!win.isDestroyed()) win.show()
   })
@@ -1300,6 +1554,61 @@ ipcMain.handle('tool-window-close', async (_event: IpcMainInvokeEvent, toolId: s
   const win = toolWindows.get(toolId)
   if (win && !win.isDestroyed()) win.close()
   toolWindows.delete(toolId)
+})
+
+/** JasWave Admin: app aparte del DAW (admin.html) en su propia ventana con marco nativo. Una sola instancia. */
+let adminWindow: typeof BrowserWindow | null = null
+ipcMain.handle('admin-window-open', async () => {
+  if (adminWindow && !adminWindow.isDestroyed()) {
+    if (adminWindow.isMinimized()) adminWindow.restore()
+    adminWindow.focus()
+    return { success: true, focused: true }
+  }
+  const icon = resolveAppIconPath()
+  const { screen } = require('electron')
+  // Estándar de ventanas (window-chrome.ts): cabe en el área de trabajo y con los tres botones nativos.
+  const medidasAdmin = medidasQueCaben(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea, {
+    width: 1280,
+    height: 860,
+    minWidth: 360,
+    minHeight: 520,
+  })
+  const win = new BrowserWindow({
+    width: medidasAdmin.width,
+    height: medidasAdmin.height,
+    minWidth: medidasAdmin.minWidth,
+    minHeight: medidasAdmin.minHeight,
+    minimizable: true,
+    maximizable: true,
+    closable: true,
+    title: 'JasWave Admin',
+    backgroundColor: '#05060F',
+    autoHideMenuBar: true,
+    show: false,
+    ...(icon ? { icon } : {}),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+    },
+  })
+  adminWindow = win
+  conectarEstadoVentana(win)
+  vigilarBarraVisible(win, screen)
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.show()
+  })
+  win.on('closed', () => {
+    if (adminWindow === win) adminWindow = null
+  })
+  // El admin vive mientras viva el DAW (comparten proceso y sesión).
+  mainWindow?.once('closed', () => {
+    if (!win.isDestroyed()) win.destroy()
+  })
+  await loadAdmin(win)
+  return { success: true }
 })
 
 // ── Native C++ audio bridge (ADR-0009) ──────────────────────────────────────
@@ -1352,6 +1661,8 @@ const {
   setPluginHostAudioDevice,
   subscribeNativeMidi,
   resetPluginHost,
+  tomarMotorAudio,
+  cederMotorAudio,
   ponerPluginEnCuarentena,
   suscribirLimpiezaCuarentena,
 } = require('./plugin-host-bridge')
@@ -1370,7 +1681,7 @@ const vigilanciaPlugins = crearVigilancia({
 })
 suscribirLimpiezaCuarentena(() => vigilanciaPlugins.rehabilitar())
 app.on('will-quit', () => vigilanciaPlugins.detener())
-subscribeNativeMidi((msg: { id: string; data: number[] }) => {
+subscribeNativeMidi((msg: { id: string; data: number[]; tNs?: number }) => {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send('native-midi', msg)
   }
@@ -1398,6 +1709,15 @@ ipcMain.handle('plugin-host-reset', async (e: IpcMainInvokeEvent) => {
   }
   return resetPluginHost()
 })
+// Traspaso del motor de audio entre instancias: «Usar audio aquí» y la cesión de la que sonaba.
+ipcMain.handle('audio-engine-take', async (e: IpcMainInvokeEvent) => {
+  if (senderIsSatellite(e.sender)) return { ok: false, message: 'Solo la ventana principal maneja el motor de audio' }
+  return tomarMotorAudio()
+})
+ipcMain.handle('audio-engine-release', async (e: IpcMainInvokeEvent) => {
+  if (senderIsSatellite(e.sender)) return { ok: false }
+  return cederMotorAudio()
+})
 ipcMain.on('plugin-host-midi', (e: IpcMainInvokeEvent, cmd: unknown) => {
   // Piano roll / teclado flotante (undock) también envían noteOn preview.
   const record = (cmd && typeof cmd === 'object' ? cmd : {}) as Record<string, unknown>
@@ -1424,8 +1744,58 @@ function ventanaEditor(win: InstanceType<typeof BrowserWindow>): VentanaEditor {
     aPantalla: (r) => (process.platform === 'win32' ? screen.dipToScreenRect(win, r) : r),
   }
 }
+// ── Pin: editores nativos y paneles flotantes anclados, siempre visibles según su jerarquía (ver pins.ts) ──
+const pinsGestor = new GestorPins({
+  leerArchivo: () => {
+    try {
+      return fsSync.readFileSync(path.join(app.getPath('userData'), 'pins.json'), 'utf8')
+    } catch {
+      return null
+    }
+  },
+  escribirArchivo: (contenido) => {
+    fsSync.writeFileSync(path.join(app.getPath('userData'), 'pins.json'), contenido, 'utf8')
+  },
+  enviarHost: (cmd) => {
+    // sin host vivo no se arranca uno solo para anclar: el pin se re-anuncia al abrir el editor
+    if (!getPluginHostStatus().vst3HostProcessAvailable) return
+    void sendPluginHostCommand(cmd, 5_000).catch(() => undefined)
+  },
+  ventanaPanel: (toolId) => {
+    const w = toolWindows.get(toolId)
+    return w && !w.isDestroyed() ? w : null
+  },
+  difundir: (estado) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('pins-cambio', estado)
+    }
+  },
+})
+function pinTexto(v: unknown, max = 200): string {
+  return typeof v === 'string' ? v.slice(0, max) : ''
+}
+ipcMain.handle('pins-estado', () => pinsGestor.estado())
+ipcMain.handle('pins-proyecto', (e: IpcMainInvokeEvent, clave: unknown) =>
+  senderIsSatellite(e.sender) ? pinsGestor.estado() : pinsGestor.establecerProyecto(pinTexto(clave)),
+)
+ipcMain.handle('pins-alternar', (_e: IpcMainInvokeEvent, tipo: unknown, id: unknown, etiqueta: unknown) =>
+  tipo === 'editor' || tipo === 'panel'
+    ? pinsGestor.alternar(tipo, pinTexto(id, 512), pinTexto(etiqueta, 120) || undefined)
+    : pinsGestor.estado(),
+)
+ipcMain.handle('pins-mover', (_e: IpcMainInvokeEvent, clave: unknown, delta: unknown) =>
+  pinsGestor.mover(pinTexto(clave, 600), Number(delta) || 0),
+)
+ipcMain.handle('pins-mover-a', (_e: IpcMainInvokeEvent, clave: unknown, destino: unknown) =>
+  pinsGestor.moverA(pinTexto(clave, 600), Number(destino) || 0),
+)
+ipcMain.handle('pins-quitar', (_e: IpcMainInvokeEvent, clave: unknown) => pinsGestor.quitar(pinTexto(clave, 600)))
+
 app.on('browser-window-created', (_ev: unknown, win: InstanceType<typeof BrowserWindow>) => {
   const id = win.id
+  // Con la ventana principal minimizada/oculta, los anclados se ocultan; al restaurar vuelven (sin colgarse).
+  for (const evento of ['minimize', 'hide']) win.on(evento as 'hide', () => { if (mainWindow && win.id === mainWindow.id) pinsGestor.appOcultada(true) })
+  for (const evento of ['restore', 'show']) win.on(evento as 'show', () => { if (mainWindow && win.id === mainWindow.id) pinsGestor.appOcultada(false) })
   const seguir = (raise: boolean) => () => editoresEmbebidos.ventanaCambio(id, raise)
   for (const evento of ['move', 'resize', 'minimize', 'maximize', 'unmaximize', 'hide', 'enter-full-screen', 'leave-full-screen'])
     win.on(evento as 'move', seguir(false))
@@ -1438,8 +1808,11 @@ ipcMain.handle('plugin-host-send', async (e: IpcMainInvokeEvent, cmd: unknown) =
   let record = (cmd && typeof cmd === 'object' ? cmd : {}) as Record<string, unknown>
   const type = typeof record.type === 'string' ? record.type : ''
 
+  // Las carpetas de escaneo llegan con variables sin expandir (%LOCALAPPDATA%…): se expanden aquí, antes de los permisos.
+  if (type === 'discover' && typeof record.path === 'string') record = { ...record, path: expandirVariablesDeEntorno(record.path) }
+
   const allowed = checkHostCommand(record, pathGrants)
-  if (!allowed.ok) return { ok: false, error: allowed.error }
+  if (!allowed.ok) return { ok: false, error: allowed.error, message: allowed.error }
 
   if (!isEditorHostCommand(type)) {
     await ensurePluginHostStarted()
@@ -1460,6 +1833,7 @@ ipcMain.handle('plugin-host-send', async (e: IpcMainInvokeEvent, cmd: unknown) =
     // openEditor: ventana top-level centrada (sin parent Electron → sin deadlock).
     if (type === 'openEditor') {
       delete record.parentHwnd
+      pinsGestor.prepararEditor(String(record.slotId ?? '')) // pin: el host crea la ventana ya TOPMOST
       if (record.x == null) record.x = 0
       if (record.y == null) record.y = 0
     } else {
@@ -1478,6 +1852,7 @@ ipcMain.handle('plugin-host-send', async (e: IpcMainInvokeEvent, cmd: unknown) =
   }
 
   if (type === 'setAudioDevice') {
+    console.info('[plugin-host] setAudioDevice pedido por la UI:', record.backend || record.api || 'auto', record.deviceId || record.device || '')
     return setPluginHostAudioDevice({
       backend: String(record.backend || record.api || 'auto'),
       deviceId: String(record.deviceId || record.device || ''),
@@ -1487,6 +1862,7 @@ ipcMain.handle('plugin-host-send', async (e: IpcMainInvokeEvent, cmd: unknown) =
     })
   }
 
+  if (type === 'unload') pinsGestor.slotDescargado(String(record.slotId ?? '')) // el pin desaparece con el slot
   return sendPluginHostCommand(record)
 })
 ipcMain.on('plugin-host-pcm', (e: IpcMainInvokeEvent, data: unknown) => {

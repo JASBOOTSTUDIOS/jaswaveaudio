@@ -27,7 +27,7 @@ export function agentMusicPolicyPrompt(): string {
     '- Pad: cambios de voicing cada 4–8 beats. Piano/Keys ≥0.4 notas/beat.',
     '',
     '### Instrumentos',
-    'Batería GM: Kick=36 Snare=38 Rim=37 CHH=42 OHH=46 Crash=49 Ride=51 Toms 48/47/45/43.',
+    'Batería GM: Kick=36 Snare=38 Rim=37 CHH=42 OHH=46 Crash=49 Ride=51 Toms 47 (alto) / 45 (medio) / 43 (suelo): evita 41, 48 y 50, que en kits de 3 toms (BFD Player) no suenan o disparan un plato.',
     'Bajo pitch 28–55. Piano 36–84. Pads 48–79. Guitarra 40–76. Lead 55–84.',
     'Mezcla sugerida: batería 0.75–0.85; bajo 0.7–0.8; keys 0.55–0.65; pads 0.4–0.55; lead 0.75–0.85.',
     'VST: plugin.probe antes de confiar; library.preset.search/apply antes de setParameter.',

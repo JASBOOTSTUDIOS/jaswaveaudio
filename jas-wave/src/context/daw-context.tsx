@@ -19,6 +19,7 @@ import {
   registrarPluginTools,
   registrarAnalysisTools,
   registrarProveedorAnalisis,
+  registrarSondaPlugins,
 } from '../../../shared/src'
 import { configurarFileService } from '../../../shared/src/commands/project-commands'
 import { FileServiceNavegador } from '../lib/web/file-service-navegador'
@@ -26,7 +27,9 @@ import { permissionManager } from '../../../shared/src/state/permissions'
 import { FileServiceElectron } from '@/src/lib/file-service'
 import { registerAgentCatalogOnRegistry } from '@/src/lib/agent-action-catalog'
 import { crearBackendAnalisisWeb } from '@/src/lib/analysis-render-web'
+import { crearBackendAnalisisNativo } from '@/src/lib/analysis-render-native'
 import { crearServicioAnalisis } from '@/src/lib/analysis-render'
+import { instrumentosInstaladosApp, sondaPluginsApp } from '@/src/lib/sonda-plugins'
 import {
   attachSessionAutosave,
   hydrateSession,
@@ -76,9 +79,12 @@ export function getSharedStore() {
     try {
       const servicio = crearServicioAnalisis({
         obtenerEstado: () => sharedStore!.obtenerEstado(),
-        backend: crearBackendAnalisisWeb(),
+        // Motor real (con VST3) cuando hay host; Web Audio como respaldo.
+        backend: crearBackendAnalisisNativo({ respaldo: crearBackendAnalisisWeb() }),
       })
       registrarProveedorAnalisis(servicio.proveedor)
+      // analysis.trackSound: estado real de carga de los VST en el host.
+      registrarSondaPlugins(sondaPluginsApp, instrumentosInstaladosApp)
     } catch {
       /* HMR */
     }

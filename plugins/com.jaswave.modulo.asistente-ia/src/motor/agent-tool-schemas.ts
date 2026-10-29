@@ -2,16 +2,31 @@
  * JSON Schemas de las herramientas del agente (A2): comandos del registro + catálogo del agente,
  * filtrados por rol y modo (`toolsForRole`, clase de riesgo de la política fail-closed).
  */
-import { A9_TOOL_SCHEMAS, AGENT_ONLY_ACTIONS, KNOWN_AGENT_ACTION_TYPES, agentActionClassOfType, buildToolSchemas, capToolSchemas, modeAllowsToolClass, registroComandos, registroHerramientasPlugins, toolsForRole } from '@jaswave/host-sdk'
+import { A9_TOOL_SCHEMAS, AGENT_ONLY_ACTIONS, KNOWN_AGENT_ACTION_TYPES, agentActionClassOfType, buildToolSchemas, capToolSchemas, getSharedStore, modeAllowsToolClass, registroComandos, registroHerramientasPlugins, toolsForRole } from '@jaswave/host-sdk'
 import type { ToolAgentMode, ToolAgentRole, ToolJsonSchema } from '@jaswave/host-sdk'
 
-let cache: { key: string; tools: ToolJsonSchema[] } | null = null
+type RegistroConEsquemas = { list(): Array<{ type: string; description: string; schema?: Record<string, unknown> }> }
+
+let cache: { key: string; registro: RegistroConEsquemas; tools: ToolJsonSchema[] } | null = null
+
+/**
+ * Registro con los comandos reales y sus esquemas. En la app los comandos viven en el registro de la
+ * tienda de la ventana; el global está vacío y, sin esquemas, el modelo inventaba parámetros y tipos.
+ */
+function registroActivo(): RegistroConEsquemas {
+  if (registroComandos.list().length) return registroComandos
+  try {
+    return getSharedStore().registroComandos
+  } catch {
+    return registroComandos
+  }
+}
 
 /** Todas las herramientas conocidas con schema (cacheado por tamaño del registro). */
-export function allAgentToolSchemas(commandRegistry: { list(): Array<{ type: string; description: string; schema?: Record<string, unknown> }> } = registroComandos): ToolJsonSchema[] {
+export function allAgentToolSchemas(commandRegistry: RegistroConEsquemas = registroActivo()): ToolJsonSchema[] {
   const cmds = commandRegistry.list()
   const key = `${cmds.length}:${KNOWN_AGENT_ACTION_TYPES.length}:${A9_TOOL_SCHEMAS.length}`
-  if (cache?.key === key && commandRegistry === registroComandos) return cache.tools
+  if (cache?.key === key && cache.registro === commandRegistry) return cache.tools
   const byType = new Map(cmds.map((c) => [c.type, c]))
   const meta = new Map(AGENT_ONLY_ACTIONS.map((a) => [a.type, a]))
   const a9 = new Map(A9_TOOL_SCHEMAS.map((s) => [s.name, s]))
@@ -29,7 +44,7 @@ export function allAgentToolSchemas(commandRegistry: { list(): Array<{ type: str
         }
       }),
   )
-  if (commandRegistry === registroComandos) cache = { key, tools }
+  cache = { key, registro: commandRegistry, tools }
   return tools
 }
 

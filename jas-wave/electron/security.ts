@@ -21,6 +21,21 @@ export function rendererIndexPath(): string {
   return path.join(app.getAppPath(), 'dist', 'index.html')
 }
 
+/** admin.html de Vite: JasWave Admin, app aparte del DAW con su propio bundle (mismo origen). */
+export function adminIndexPath(): string {
+  return path.join(app.getAppPath(), 'dist', 'admin.html')
+}
+
+/** Carga JasWave Admin (dev server o dist/admin.html). */
+export async function loadAdmin(win: BrowserWindow): Promise<void> {
+  const dev = devServerUrl()
+  if (dev) {
+    await win.loadURL(`${dev}/admin.html`)
+    return
+  }
+  await win.loadFile(adminIndexPath())
+}
+
 export async function loadRenderer(win: BrowserWindow, query?: Record<string, string>): Promise<void> {
   const dev = devServerUrl()
   if (dev) {
@@ -37,7 +52,7 @@ function samePath(a: string, b: string): boolean {
   return process.platform === 'win32' ? na.toLowerCase() === nb.toLowerCase() : na === nb
 }
 
-/** URL del renderer propio (index.html empaquetado o dev server). */
+/** URL del renderer propio (index.html o admin.html empaquetados, o el dev server). */
 export function isTrustedRendererUrl(raw: string | undefined | null): boolean {
   if (!raw) return false
   let url: URL
@@ -50,7 +65,8 @@ export function isTrustedRendererUrl(raw: string | undefined | null): boolean {
   if (dev && url.origin === new URL(dev).origin) return true
   if (url.protocol !== 'file:') return false
   try {
-    return samePath(fileURLToPath(`file://${url.host}${url.pathname}`), rendererIndexPath())
+    const ruta = fileURLToPath(`file://${url.host}${url.pathname}`)
+    return samePath(ruta, rendererIndexPath()) || samePath(ruta, adminIndexPath())
   } catch {
     return false
   }

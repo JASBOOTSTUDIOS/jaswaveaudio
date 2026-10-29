@@ -3,12 +3,21 @@ import type { ActionDefinition, ActionContext, ShortcutScope } from './types';
 /**
  * Política de alcance: no secuestrar escritura en inputs.
  */
+/** Tipos de <input> en los que el usuario escribe texto o números. */
+const TIPOS_INPUT_DE_TEXTO = new Set(['text', 'search', 'email', 'url', 'tel', 'password', 'number', 'date', 'datetime-local', 'month', 'week', 'time']);
+
 export function isTextInputTarget(target: EventTarget | null): boolean {
   if (!target || typeof target !== 'object') return false;
   const el = target as HTMLElement;
   const tag = el.tagName;
   if (typeof tag !== 'string') return false;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag === 'INPUT') {
+    // Solo los campos donde de verdad se escribe. Un fader (range), una casilla, un botón o un selector de color
+    // conservan el foco tras pulsarlos y NO deben bloquear atajos como la barra espaciadora (play) en todo el DAW.
+    const tipo = String((el as { type?: string }).type ?? 'text').toLowerCase();
+    return TIPOS_INPUT_DE_TEXTO.has(tipo);
+  }
   if (el.isContentEditable) return true;
   if (typeof el.closest === 'function') {
     if (el.closest('[contenteditable="true"]')) return true;

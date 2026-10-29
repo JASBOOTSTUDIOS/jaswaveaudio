@@ -17,6 +17,7 @@ const ALIAS: Array<[RegExp, string]> = [
   [/\b(limitador|limiter)\b/, 'com.jaswave.plugin.truepeak-limiter'],
   [/\bde-?esser\b/, 'com.jaswave.plugin.smart-deesser'],
   [/\butility\b/, 'com.jaswave.plugin.utility-tool'],
+  [/\bpedal\b/, 'com.jaswave.plugin.pedal-fix'],
   [/\bpiano\b/, 'com.jaswave.plugin.piano-synth'],
   [/\broles\b/, 'com.jaswave.plugin.roles-vst'],
 ]

@@ -3,6 +3,7 @@
  * ADR-0011 no-engaño: no marcar VST como «cargado» solo porque el catálogo existe.
  */
 
+import { mejorCopiaJasWave } from './rutas-jaswave'
 import type { PluginInfo } from '../../../../shared/src/types/entidades'
 import type { PluginDescriptor } from './types'
 import { pluginRegistry } from './registry'
@@ -12,7 +13,7 @@ const INSTRUMENT_RE =
   /sampler|synth|piano|keys|organ|drum|drums|kit\b|bfd|bfdplayer|player|bass|guitar|violin|pad|lead|kontakt|sforzando|decent|descent|instrument|vsti|analog|arturia|lab\s*v|omnisphere|serum|vital|keyscape|play\b|workstation|engine|addictive|ezdrummer|superior\s*drum|battery|groove\s*agent|studi\s*drummer|4front|jaswave.*piano|jaswave.*roles/i
 
 const FX_RE =
-  /reverb|delay|compress|eq\b|pro-?q|equaliz|limiter|saturat|gate\b|chorus|flanger|phaser|utility|maximizer|imager|exciter|de-?ess|transient|clipper|valhalla|room\b|plate\b|verb\b|audiolens|filter/i
+  /reverb|delay|compress|eq\b|pro-?q|equaliz|limiter|saturat|gate\b|chorus|flanger|phaser|utility|maximizer|imager|exciter|de-?ess|transient|clipper|valhalla|room\b|plate\b|verb\b|audiolens|filter|tune\b|pitch|auto-?tune|ambience/i
 
 /** Mensaje cuando se detecta un plugin VST2 (.dll). VST2 está descontinuado en favor de VST3. */
 export const VST2_NOT_HOSTED_MSG =
@@ -65,6 +66,7 @@ const FX_LEGADO: ReadonlyArray<[RegExp, string]> = [
   [/limitador/i, 'com.jaswave.plugin.truepeak-limiter'],
   [/utility/i, 'com.jaswave.plugin.utility-tool'],
   [/de-?esser/i, 'com.jaswave.plugin.smart-deesser'],
+  [/pedal\s*fix/i, 'com.jaswave.plugin.pedal-fix'],
 ]
 
 export function rutaSustitutoFxLegado(
@@ -86,7 +88,8 @@ export function resolveHostPluginPath(
     const sustituto = rutaSustitutoFxLegado(plugin.nombre ?? '', list)
     if (sustituto) return sustituto
   }
-  if (direct) return direct
+  // La ruta guardada en el proyecto puede ser de una copia obsoleta de un plugin propio: se usa la mejor conocida.
+  if (direct) return mejorCopiaJasWave(direct, list)
   const name = (plugin.nombre || '').trim().toLowerCase()
   const queries = plugin.nombre
     ? expandPluginNameQueries(plugin.nombre).map((q) => q.toLowerCase())

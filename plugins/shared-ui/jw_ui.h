@@ -209,6 +209,21 @@ public:
     virtual bool isLocked(ParamAccess& p) const { const int id = paramId(); return id >= 0 && p.locked(static_cast<uint32_t>(id)); }
     Rect rect;
     bool visible{true};
+    uint8_t pagina{0};   // 0 = editor base del plugin; >0 = widget de una pagina extra (1 = MIX / FX, jw_fxrack_page.h; 2 = PARÁMETROS)
+    // Modo Básico / Avanzado (cabecera). basico: -1 = según su parámetro (ParamDef::basico; sin parámetro = siempre),
+    // 0 = solo en Avanzado, 1 = siempre. ocultoModo lo fija el núcleo del editor: un widget se pinta si mostrado().
+    int8_t basico{-1};
+    bool ocultoModo{false};
+    bool mostrado() const { return visible && !ocultoModo; }
+    // Recoloca el widget (reflujo del modo Básico): desplaza su rectángulo (y su geometría interna)
+    virtual void mover(float dx, float dy) { rect = { rect.l + dx, rect.t + dy, rect.r + dx, rect.b + dy }; }
+    // Botones de página: página que abren (-1 = no es un botón de página) y si está abierta ahora
+    virtual int paginaDestino() const { return -1; }
+    virtual bool paginaAbierta() const { return false; }
+    // Parámetros a los que el widget se puede reasignar (p. ej. perillas de la banda seleccionada): cuentan como expuestos
+    virtual void parametrosCubiertos(std::vector<uint32_t>&) const {}
+    // JSON adicional (pares `, "clave": valor`) que el volcado de layout anade a este widget (widgets graficos propios)
+    virtual std::string layoutExtra() const { return std::string(); }
     // Texto del valor: se formatea solo cuando cambia (sin cadenas nuevas por frame)
     struct ValueCache { uint32_t id{~0u}; double plain{0.0}; std::wstring s; };
     ValueCache valueCache;
@@ -230,6 +245,7 @@ public:
     const wchar_t* text() const override { return label_.c_str(); }
     KnobSize size() const { return size_; }
     void setParam(uint32_t id, const wchar_t* label = nullptr) { id_ = id; if (label) label_ = label; }
+    void mover(float dx, float dy) override { Widget::mover(dx, dy); cx_ += dx; cy_ += dy; }
 private:
     uint32_t id_;
     KnobSize size_;
@@ -306,6 +322,7 @@ public:
     void setTitle(const wchar_t* t) { title_ = t; }
     void setToggle(int id) { toggle_ = id; }
     void setFeature(int f) { feature_ = f; }
+    int feature() const { return feature_; }
 private:
     std::wstring title_;
     int toggle_;
@@ -349,6 +366,10 @@ public:
     explicit EditorContext(ParamAccess& p) : params(p) {}
     ParamAccess& params;
     std::vector<std::unique_ptr<Widget>> widgets;
+    // Una pagina extra a pantalla completa (MIX / FX) tapa el visualizador del plugin: no se pinta drawPanels ni se enrutan sus eventos
+    bool suppressPanels{false};
+    // Modo de la cabecera [ BÁSICO | AVANZADO ]: en Básico solo se muestran los parámetros esenciales (ParamDef::basico)
+    bool modoBasico{false};
     float dt{1.0f / 60.0f};   // segundos desde el tick anterior (balística por tiempo, V3 §4.3)
     Knob* knob(uint32_t id, float cx, float cy, KnobSize s, const wchar_t* label);
     Fader* fader(uint32_t id, Rect r, const wchar_t* label);
@@ -388,6 +409,10 @@ public:
     // V3: tipo de visualizador ("espectro-dual", "espectro-instrumento", "vectorscopio") y acento del plugin
     virtual const char* visualizer() const { return "espectro-dual"; }
     virtual Color accent() const { return Pal::acentoCian; }
+    // Parámetros que el editor ya expone sin un widget propio por parámetro (p. ej. perillas que se reasignan a la
+    // banda o página seleccionada, o páginas dibujadas a mano). El resto de parámetros editables sin widget aparecen
+    // en la página automática «PARÁMETROS» (modo Avanzado), de forma que el editor exponga el 100 % de la tabla.
+    virtual void parametrosCubiertos(std::vector<uint32_t>&) const {}
 };
 
 // Dibujo compartido del marco, cabecera y overlay de licencia
@@ -401,6 +426,8 @@ void drawPanelBox(Gfx& g, const Rect& r, const wchar_t* title);
 void drawLock(Gfx& g, float x, float y, float s, Color c);
 }
 
+// Solo herramienta de capturas: pagina extra que debe abrirse al construir el editor (0 = ninguna, 1 = MIX / FX, 2 = PARÁMETROS)
+inline int gPaginaInicial = 0;
 // Renderiza un editor completo (sin ventana) en un PNG. Ver jw_snapshot_main.cpp.
 bool renderEditorToPng(JasWaveVst::JwController* controller, const wchar_t* path, UINT pxW, UINT pxH, int warmupFrames);
 // Vuelca el layout del editor (zonas, widgets, parámetros, visualizador y acento) en JSON. Ver ui-layout.json.
