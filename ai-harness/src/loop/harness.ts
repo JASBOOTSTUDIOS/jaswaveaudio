@@ -48,6 +48,7 @@ const READ_ONLY = new Set([
   'plugin.lookup',
   'plugin.probe',
   'library.preset.list',
+  'groove.listar',
   'library.preset.search',
   'library.preset.listGlobal',
   'library.preset.searchGlobal',

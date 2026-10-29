@@ -31,6 +31,8 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'plugin.searchParameters': 'read',
   'plugin.getParameter': 'read',
   'library.preset.list': 'read',
+  // Biblioteca de grooves MIDI (M): listar es lectura; insertar crea un clip MIDI deshacible.
+  'groove.listar': 'read',
   'library.preset.search': 'read',
   'library.preset.listGlobal': 'read',
   'library.preset.searchGlobal': 'read',
@@ -216,6 +218,7 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'mix.eq': 'write',
   'mix.compress': 'write',
   'mix.limit': 'write',
+  'groove.insertar': 'write',
   'library.preset.save': 'write',
   'library.preset.saveGlobal': 'write',
   'library.preset.promote': 'write',

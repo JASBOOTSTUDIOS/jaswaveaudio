@@ -55,6 +55,8 @@ export type ConfigAgente = {
    * consultan antes de cada paso y las nuevas entran en la conversación como mensaje del usuario.
    */
   notas?: () => string[]
+  /** Ahorro de tokens en el historial que ve el modelo (por defecto, activo). */
+  ahorro?: { resultados?: boolean }
   /** Uso interno (subagentes). */
   profundidad?: number
   nombreAgente?: string
@@ -178,6 +180,26 @@ export function resumirDatosEscritura(d: unknown, nivel = 0): unknown {
   return Object.fromEntries(orden.map((k) => [k, resumirDatosEscritura(o[k], nivel + 1)]))
 }
 
+const CLAVES_ACUSE = /^(avisos?|diagnostico|advertencias)$/
+/**
+ * Acuse mínimo de una escritura correcta: solo los ids que el modelo necesita para seguir (pistaId, clipId…) y los
+ * avisos/diagnósticos. El resto (eco de lo que acaba de enviar) no aporta nada y se repite en cada paso del historial.
+ */
+export function acuseEscritura(d: unknown, nivel = 0): unknown {
+  if (Array.isArray(d)) return d.slice(0, 12).map((x) => acuseEscritura(x, nivel + 1)).filter((x) => x !== undefined && !(typeof x === 'object' && Object.keys(x as object).length === 0))
+  if (!d || typeof d !== 'object' || nivel > 3) return typeof d === 'string' && nivel === 0 ? d.slice(0, 200) : undefined
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(d as Record<string, unknown>)) {
+    if (CLAVES_ACUSE.test(k)) out[k] = v
+    else if (ES_ID.test(k) && (typeof v === 'string' || typeof v === 'number')) out[k] = v
+    else if (v && typeof v === 'object') {
+      const x = acuseEscritura(v, nivel + 1)
+      if (x !== undefined && !(typeof x === 'object' && Object.keys(x as object).length === 0)) out[k] = x
+    }
+  }
+  return out
+}
+
 /** Listas más largas se resumen en el historial de llamadas del propio agente. */
 const MAX_LISTA_HISTORIAL = 8
 /**
@@ -206,8 +228,23 @@ export function compactarArgumentosHistorial(v: unknown, nivel = 0): unknown {
  * y las anteriores con las listas largas abreviadas. El historial real conserva siempre los argumentos
  * completos.
  */
-export function vistaHistorial(mensajes: MensajeAgente[], completas = LLAMADAS_COMPLETAS_EN_HISTORIAL): MensajeAgente[] {
+/** Resultados de herramientas más recientes que se conservan completos; los anteriores se recortan. */
+const RESULTADOS_COMPLETOS_EN_HISTORIAL = 6
+const MAX_RESULTADO_ANTIGUO = 400
+/** Resultados que el agente necesita completos mientras dure su turno. */
+const RESULTADOS_SIEMPRE_COMPLETOS = new Set(['hoja_de_ruta', 'buscar_herramientas'])
+
+export function vistaHistorial(mensajes: MensajeAgente[], completas = LLAMADAS_COMPLETAS_EN_HISTORIAL, recortarResultados = false): MensajeAgente[] {
   const out = [...mensajes]
+  if (recortarResultados) {
+    let vistos = 0
+    for (let i = out.length - 1; i >= 0; i--) {
+      const m = out[i]!
+      if (m.role !== 'tool') continue
+      if (++vistos <= RESULTADOS_COMPLETOS_EN_HISTORIAL || m.content.length <= MAX_RESULTADO_ANTIGUO || RESULTADOS_SIEMPRE_COMPLETOS.has(m.name)) continue
+      out[i] = { ...m, content: `${m.content.slice(0, MAX_RESULTADO_ANTIGUO)}…(resultado antiguo recortado; vuelve a consultarlo si lo necesitas)` }
+    }
+  }
   let vistas = 0
   for (let i = out.length - 1; i >= 0; i--) {
     const m = out[i]!
@@ -222,11 +259,11 @@ export function vistaHistorial(mensajes: MensajeAgente[], completas = LLAMADAS_C
 }
 
 /** Serializa un resultado para el modelo, recortando lo que sobra. */
-export function compactarResultado(r: ResultadoHerramienta, max = MAX_RESULTADO, clase?: ClaseHerramienta | 'meta'): string {
+export function compactarResultado(r: ResultadoHerramienta, max = MAX_RESULTADO, clase?: ClaseHerramienta | 'meta', acuse = false): string {
   const cuerpo: Record<string, unknown> = { ok: r.ok }
   if (r.error) cuerpo.error = r.error
   if (r.pendienteConfirmacion) cuerpo.pendiente = 'Requiere confirmación del usuario; no se ha ejecutado todavía.'
-  if (r.datos !== undefined) cuerpo.datos = clase === 'escritura' || clase === 'destructiva' ? resumirDatosEscritura(r.datos) : r.datos
+  if (r.datos !== undefined) cuerpo.datos = clase === 'escritura' || clase === 'destructiva' ? (acuse && r.ok ? acuseEscritura(r.datos) : resumirDatosEscritura(r.datos)) : r.datos
   else if (r.resumen) cuerpo.resumen = r.resumen
   let s: string
   try {
@@ -351,7 +388,7 @@ export async function ejecutarAgente(cfg: ConfigAgente): Promise<ResultadoAgente
       ...[...visibles].map((n) => porNombre.get(n)!).map((h) => ({ name: h.nombre, description: h.descripcion, parameters: h.parametros })),
     ]
     let r
-    const vista = vistaHistorial(mensajes)
+    const vista = vistaHistorial(mensajes, cfg.ahorro?.resultados === true ? 2 : LLAMADAS_COMPLETAS_EN_HISTORIAL, cfg.ahorro?.resultados === true)
     const abreviado = vista.some((m, i) => m !== mensajes[i])
     try {
       r = await cfg.chat({
@@ -564,7 +601,7 @@ export async function ejecutarAgente(cfg: ConfigAgente): Promise<ResultadoAgente
           }
         }
       }
-      responder(l, compactarResultado(res, MAX_RESULTADO, h.clase))
+      responder(l, compactarResultado(res, MAX_RESULTADO, h.clase, cfg.ahorro?.resultados === true))
       if (res.pendienteConfirmacion) detener = { estado: 'confirmar' }
     }
 

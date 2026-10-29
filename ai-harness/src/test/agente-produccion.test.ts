@@ -8,6 +8,7 @@ import {
   H_HOJA,
   H_VEREDICTO,
   hojaComoTexto,
+  MAX_REINTENTOS_COMPLETITUD,
   normalizarHoja,
   resolverMusico,
   type ChatAgente,
@@ -114,6 +115,56 @@ describe('hoja de ruta', () => {
     const r = await ejecutarProduccion({ pedido: 'coro', catalogo: CATALOGO, participantes: EQUIPO, chat, ejecutar: async () => ({ ok: true }) })
     expect(r.plan).toMatch(/HOJA DE RUTA/)
     expect(sistemas.find((s) => s.startsWith('Eres Batería'))).toMatch(/Coro: compases 1–2, beat inicio 0, 8 beats.*G \| A/)
+  })
+})
+
+describe('completitud de la parte de cada músico', () => {
+  const hojaCompleta = { tonalidad: 'Re mayor', numerador: 4, secciones: [{ nombre: 'Verso', compases: 2, acordes: ['D', 'A'] }, { nombre: 'Coro', compases: 2, acordes: ['G', 'A'] }] }
+  const guion = (llamadasPorMusico: string[]) =>
+    modelo((rol, o) => {
+      if (rol === 'Planificador') return { ok: true, texto: '', llamadas: [ll(H_HOJA, hojaCompleta)] }
+      if (rol === 'Director') return { ok: true, texto: '', llamadas: [ll(H_ENCARGOS, { encargos: [{ musico: 'bat', encargo: 'batería en todas las secciones' }] })] }
+      if (rol === 'Batería') {
+        llamadasPorMusico.push(String(o.mensajes[0]?.content ?? ''))
+        return { ok: true, texto: '', llamadas: [ll('midi.addNotes')] }
+      }
+      if (rol === 'QA') return { ok: true, texto: '', llamadas: [ll(H_VEREDICTO, { aprobado: true, resumen: 'Bien.' })] }
+      return hecho('ok')
+    })
+
+  it('si le faltan secciones retoma su parte con lo que falta y se detiene al completarla', async () => {
+    const pedidos: string[] = []
+    let medidas = 0
+    const { chat } = guion(pedidos)
+    await ejecutarProduccion({
+      pedido: 'canción',
+      catalogo: CATALOGO,
+      participantes: EQUIPO,
+      chat,
+      ejecutar: async () => ({ ok: true }),
+      completitud: () => (++medidas <= 2 ? `en «Batería» no hay notas en: Coro (compases 3–4, beat 8, 8 beats)` : null),
+    })
+    expect(pedidos).toHaveLength(3)
+    expect(pedidos[0]).not.toMatch(/INCOMPLETA/)
+    expect(pedidos[1]).toMatch(/INCOMPLETA[\s\S]*Coro \(compases 3–4, beat 8/)
+    expect(pedidos[2]).toMatch(/INCOMPLETA/)
+  })
+
+  it('no insiste más de MAX_REINTENTOS_COMPLETITUD veces', async () => {
+    const pedidos: string[] = []
+    const { chat } = guion(pedidos)
+    await ejecutarProduccion({ pedido: 'canción', catalogo: CATALOGO, participantes: EQUIPO, chat, ejecutar: async () => ({ ok: true }), completitud: () => 'siempre falta algo' })
+    expect(pedidos).toHaveLength(1 + MAX_REINTENTOS_COMPLETITUD)
+  })
+
+  it('sin la medición, o si esta falla, el músico no reintenta', async () => {
+    const pedidos: string[] = []
+    const { chat } = guion(pedidos)
+    await ejecutarProduccion({ pedido: 'canción', catalogo: CATALOGO, participantes: EQUIPO, chat, ejecutar: async () => ({ ok: true }) })
+    expect(pedidos).toHaveLength(1)
+    const otros: string[] = []
+    await ejecutarProduccion({ pedido: 'canción', catalogo: CATALOGO, participantes: EQUIPO, chat: guion(otros).chat, ejecutar: async () => ({ ok: true }), completitud: () => Promise.reject(new Error('fallo')) })
+    expect(otros).toHaveLength(1)
   })
 })
 
@@ -518,6 +569,7 @@ describe('producción por etapas', () => {
 
   it('la medición del host manda sobre el veredicto y las rondas tienen tope', async () => {
     let correccionesMaster = 0
+    let medidasMaster = 0
     const { chat } = modelo((rol, o) => {
       if (rol === 'Máster') {
         if (o.mensajes.some((m) => m.role === 'user' && /Corrige/.test(m.content))) correccionesMaster++
@@ -532,7 +584,8 @@ describe('producción por etapas', () => {
       participantes: EQUIPO.filter((p) => p.rol !== 'musico'),
       chat,
       ejecutar: async () => ({ ok: true }),
-      medir: async (etapa) => (etapa === 'master' ? { ok: false, detalles: ['Pico de −0,2 dBTP (objetivo −1)'] } : { ok: true, detalles: [] }),
+      // Cada medición mejora un poco (hay progreso) pero sigue fuera de objetivo: manda el tope de rondas.
+      medir: async (etapa) => (etapa === 'master' ? { ok: false, detalles: [`Pico de −${(0.2 - 0.05 * medidasMaster++).toFixed(2)} dBTP (objetivo −1)`] } : { ok: true, detalles: [] }),
       maxRondasQA: 2,
     })
     expect(correccionesMaster).toBe(2)

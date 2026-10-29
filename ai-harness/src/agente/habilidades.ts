@@ -95,8 +95,30 @@ export function buscarHabilidad(habilidades: readonly HabilidadAgente[], nombre:
   if (!q) return undefined
   return (
     habilidades.find((h) => normal(h.nombre) === q || h.id === q || slugHabilidad(h.nombre) === slugHabilidad(nombre)) ??
-    habilidades.find((h) => normal(h.nombre).includes(q) || q.includes(normal(h.nombre)))
+    habilidades.find((h) => normal(h.nombre).includes(q) || q.includes(normal(h.nombre))) ??
+    porPalabras(habilidades, q)
   )
+}
+
+/**
+ * Último recurso: el modelo escribe el nombre con un carácter corrupto («Groove de bater໚») o abreviado. Se comparan
+ * las palabras (≥ 4 letras, por sus 5 primeras letras); gana la habilidad que más palabras comparte, si es única.
+ */
+function porPalabras(habilidades: readonly HabilidadAgente[], q: string): HabilidadAgente | undefined {
+  const raiz = (t: string) => t.slice(0, 5)
+  const palabras = (t: string) => t.split(/[^a-z0-9]+/).filter((w) => w.length >= 4).map(raiz)
+  const buscadas = new Set(palabras(q))
+  if (!buscadas.size) return undefined
+  let mejor: HabilidadAgente | undefined
+  let puntos = 0
+  let empate = false
+  for (const h of habilidades) {
+    const propias = new Set([...palabras(normal(h.nombre)), ...palabras(h.id)])
+    const p = [...buscadas].filter((w) => propias.has(w)).length
+    if (p > puntos) [mejor, puntos, empate] = [h, p, false]
+    else if (p === puntos && p > 0) empate = true
+  }
+  return puntos > 0 && !empate ? mejor : undefined
 }
 
 /** Bloque para el sistema del agente: qué sabe hacer y cómo abrirlo. */

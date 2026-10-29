@@ -1,7 +1,9 @@
 import { ejecutarLeerHabilidad, H_LEER_HABILIDAD, herramientaLeerHabilidad, listadoHabilidades, unirHabilidades, type HabilidadAgente } from './habilidades'
 import { Candado, ejecutarAgente, type EjecutorHerramienta } from './runtime'
 import { seleccionarIniciales } from './seleccion'
+import { crearCronometro, formatearDuracion, LIMITE_MS_DEFECTO, PRESUPUESTO_MS_DEFECTO, resumenTiempos, type MotivoOmision, type TiemposProduccion } from './tiempos'
 import type { ChatAgente, EventoAgente, HerramientaAgente, PerfilSubagente, RegistroLlamada, ResultadoAgente } from './tipos'
+import type { EstadoProduccionGuardado } from './diario'
 
 /**
  * Producción por etapas con agentes reales (G8): Planificador → Director → Músicos (en paralelo) → QA
@@ -33,6 +35,8 @@ const RONDAS_COHERENCIA = 2
 const RONDAS_ENSAYO = 1
 /** Ajustes acordados que recibe un mismo músico por ronda de ensayo. */
 const MAX_AJUSTES_POR_MUSICO = 3
+/** Veces que un músico retoma su parte si la medición dice que le faltan secciones. */
+export const MAX_REINTENTOS_COMPLETITUD = 3
 
 /** Etapas revisables y qué mide el host en cada una. */
 export type EtapaMedible = 'musicos' | 'mezcla' | 'master'
@@ -73,6 +77,22 @@ export type EventoProduccion =
   | { tipo: 'qa'; etapa: EtapaProduccion; ronda: number; veredicto: VeredictoQA; medicion?: MedicionQA | null }
   /** Una indicación del usuario llegó al agente en turno (en mitad de su trabajo). */
   | { tipo: 'nota'; etapa: EtapaProduccion; participante: { id: string; nombre: string; rol: RolProduccion }; texto: string }
+  /** Duración de reloj y peticiones de una etapa (o de un tramo de ella) recién terminada. `totalMs` = desde que empezó la producción. */
+  | { tipo: 'tiempo'; etapa: EtapaProduccion; ms: number; peticiones: number; totalMs: number }
+  /** Una medición del host (LUFS, picos, partes…) terminó; `ok` = null si no fue medible. */
+  | { tipo: 'medicion'; etapa: EtapaMedible; ms: number; ok: boolean | null }
+  /** Se omitió un refinamiento (por tiempo o por falta de progreso). */
+  | { tipo: 'omitido'; que: string; motivo: MotivoOmision; texto: string; totalMs: number }
+  /** Al terminar: todos los tiempos de la producción. */
+  | { tipo: 'tiempos'; tiempos: TiemposProduccion }
+  /** Plan y hoja de ruta ya definidos (el diario los guarda para poder reanudar). */
+  | { tipo: 'plan_definido'; plan: string; hoja: HojaDeRuta | null }
+  /** Una etapa terminó con este informe (el diario lo usa para saltarla al reanudar). */
+  | { tipo: 'informe'; informe: InformeEtapa }
+  /** La parte de un músico se dio por terminada (completa o agotados los reintentos). */
+  | { tipo: 'musico'; participante: string; ok: boolean }
+  /** Se aplicó el máster mínimo determinista (sin modelo) tras superar el límite de tiempo. */
+  | { tipo: 'master_minimo'; ok: boolean; resumen: string }
 
 /** Indicación del usuario durante la producción; `para` = id del participante al que va dirigida (si falta, a todos). */
 export type NotaUsuario = { texto: string; para?: string }
@@ -87,6 +107,8 @@ export type ResultadoProduccionAgentes = {
   llamadas: RegistroLlamada[]
   /** Resumen para el usuario. */
   texto: string
+  /** Duración y peticiones por etapa, mediciones y refinamientos omitidos. */
+  tiempos?: TiemposProduccion
 }
 
 export type ConfigProduccion = {
@@ -128,12 +150,51 @@ export type ConfigProduccion = {
    */
   coherencia?: (hoja: HojaDeRuta) => MedicionQA | Promise<MedicionQA>
   /**
+   * Completitud de la parte de un músico frente a la hoja de ruta: devuelve qué secciones le faltan (texto
+   * accionable) o null si está completa. Mientras falte algo, el músico retoma su parte (hasta
+   * `MAX_REINTENTOS_COMPLETITUD` veces) en lugar de dar el trabajo por terminado a medias.
+   */
+  completitud?: (encargo: Encargo, hoja: HojaDeRuta) => string | null | Promise<string | null>
+  /**
    * Ensayo de la banda tras grabar (por defecto, cuando hay dos o más músicos): cada uno escucha a los demás,
    * propone ajustes y el director arbitra; lo acordado se vuelve a tocar. `false` lo desactiva.
    */
   ensayo?: boolean
+  /**
+   * Diagnóstico inmediato de la pista del músico tras una escritura MIDI (qué secciones faltan, variedad de
+   * duraciones y velocidades, defectos de tiempo y armonía de SU pista). Texto corto o null si está todo bien.
+   */
+  diagnostico?: (encargo: Encargo, hoja: HojaDeRuta) => string | null | Promise<string | null>
+  /** Se llama al fijarse la hoja de ruta (el guardia de armonía de las escrituras la necesita). */
+  alDefinirHoja?: (hoja: HojaDeRuta) => void
+  /**
+   * Guía de armonía del músico (acordes de SUS secciones con las notas permitidas ya calculadas): se añade a su
+   * encargo. null = nada que añadir (p. ej. batería).
+   */
+  guiaArmonia?: (encargo: Encargo, hoja: HojaDeRuta) => string | null
+  /** Palancas de ahorro de tokens; `false` = comportamiento anterior. Por defecto, todas activas. */
+  ahorro?: boolean | Partial<AhorroProduccion>
   maxRondasQA?: number
   maxPasos?: number
+  /**
+   * Tiempo de reloj objetivo (ms; por defecto 15 min). Al agotarlo se sacrifican los refinamientos en orden, según la
+   * fracción de la ventana presupuesto→límite que se haya consumido: al 0 % el ensayo y la revisión de partes por el
+   * modelo; al 20 % las rondas extra del arreglista (máx. 1); al 40 % la segunda ronda de corrección de mezcla/máster;
+   * al 60 % la revisión de la mezcla. Infinity lo desactiva.
+   */
+  presupuestoMs?: number
+  /**
+   * Tope duro (ms; por defecto 30 min). Al superarlo se entrega lo que hay: la grabación de los músicos y la
+   * medición final no se saltan. `Infinity` lo desactiva.
+   */
+  limiteMs?: number
+  /** Reloj en ms (por defecto `Date.now`); inyectable para pruebas. */
+  reloj?: () => number
+  /**
+   * Los músicos de la segunda oleada empiezan en cuanto la base termina su primera pasada (los reintentos por
+   * completitud de la base corren a la vez que ellos). Por defecto activo; `false` = esperar a la base entera.
+   */
+  solaparOleadas?: boolean
   instruccionesExtra?: string
   /**
    * Estilo de interpretación del usuario (skill «estilo-<slug>» aprendida de su teclado): resumen en español con
@@ -149,6 +210,46 @@ export type ConfigProduccion = {
   notasUsuario?: () => Array<string | NotaUsuario>
   onEvento?: (e: EventoProduccion) => void
   signal?: AbortSignal
+  /**
+   * Plan Q: continúa una producción interrumpida (estado reconstruido del diario). Salta las etapas terminadas,
+   * restaura plan, hoja y encargos, mide la completitud de cada músico y solo repite a los incompletos.
+   */
+  reanudar?: EstadoProduccionGuardado
+  /**
+   * Plan Q: se llama al terminar cada etapa y cada músico (`que` = «etapa:mezcla», «musico:bat»…) para que la
+   * app guarde un punto de control del proyecto. Un fallo aquí nunca detiene la producción.
+   */
+  alPuntoDeControl?: (que: string) => void | Promise<void>
+  /**
+   * Plan Q: máster mínimo determinista, SIN modelo (limitador true-peak a −1 dBTP + normalización a −14 LUFS con los
+   * comandos de máster existentes). Pasado `limiteMs` se ejecuta siempre en lugar de entregar la canción sin limitador.
+   */
+  masterMinimo?: () => Promise<{ ok: boolean; resumen: string }>
+}
+
+/**
+ * Ahorro de tokens (plan N). Cada palanca se puede apagar por separado; `ahorro: false` restituye el comportamiento
+ * anterior (útil para medir antes/después). Por defecto todas están activas.
+ */
+export type AhorroProduccion = {
+  /** El músico/rol solo ve sus herramientas de oficio (+ consultas base) en vez de ~25 por relevancia del pedido. */
+  herramientasPorRol: boolean
+  /** Historial: resultados de herramientas antiguos recortados y escrituras correctas con acuse mínimo. */
+  resultados: boolean
+  /** Sin ensayo (varios agentes opinando) cuando la medición determinista de coherencia ya aprueba. */
+  ensayoLimpio: boolean
+  /** Mezcla y máster: si la medición del host ya aprueba, no se llama al modelo QA. */
+  qaMedible: boolean
+  /** Revisión de las partes: sin llamada al QA si medición, coherencia y completitud aprueban. */
+  qaPartesLimpias: boolean
+  /** Diagnóstico determinista de la pista en el resultado de cada escritura MIDI del músico. */
+  diagnostico: boolean
+}
+
+export function resolverAhorro(a?: boolean | Partial<AhorroProduccion>): AhorroProduccion {
+  const v = a !== false
+  const base: AhorroProduccion = { herramientasPorRol: v, resultados: v, ensayoLimpio: v, qaMedible: v, qaPartesLimpias: v, diagnostico: v }
+  return a && typeof a === 'object' ? { ...base, ...a } : base
 }
 
 export const H_ENCARGOS = 'asignar_encargos'
@@ -326,7 +427,7 @@ export function hojaComoTexto(h: HojaDeRuta): string {
   return lineas.join('\n')
 }
 
-const MAX_ENCARGOS = 8
+const MAX_ENCARGOS = 16
 
 /**
  * Pasos del modelo por rol. Quien escribe (notas, mezcla, máster) consulta, crea, comprueba y corrige:
@@ -336,11 +437,11 @@ export const PASOS_POR_ROL: Partial<Record<RolProduccion, number>> = {
   planificador: 8,
   director: 12,
   // Una parte de canción completa son ~10 secciones (un clip cada una) más cargar y comprobar el instrumento.
-  musico: 36,
-  coherencia: 40,
-  qa: 14,
-  mezcla: 24,
-  master: 14,
+  musico: 32,
+  coherencia: 24,
+  qa: 10,
+  mezcla: 16,
+  master: 10,
 }
 
 function herramientaEncargos(musicos: ParticipanteProduccion[]): HerramientaAgente {
@@ -402,7 +503,7 @@ const INSTRUCCIONES_ROL: Record<RolProduccion, string> = {
   qa:
     'Eres el control de calidad. Solo consultas: revisa el proyecto con las herramientas de lectura y análisis y entrega `veredicto_calidad`. Marca solo problemas que hayas comprobado y que el responsable pueda corregir; lo que no puedes comprobar no es un problema. Usa `analysis.trackSound` para comprobar que cada pista suena (instrumento cargado, sin mute ni solo que la tape, fader razonable). Nombra pistas por su nombre, nunca por id.',
   mezcla:
-    'Eres el ingeniero de mezcla. Equilibra volúmenes y paneo, aplica ecualización, compresión y envíos donde haga falta. Empieza con `analysis.trackSound` y corrige primero lo que impide oír una pista (mute, solo, fader casi a cero). Usa solo herramientas que existan en tu lista o en `buscar_herramientas`. Volumen con `track.update` (datos.volumen lineal 0–4, 1 = 0 dB) y paneo (datos.paneo −1 a 1); EQ con `mix.eq`, compresión con `mix.compress`; para la reverb crea un bus con `bus.create` y manda los instrumentos con `send.set`. No cambies las notas ni el arreglo. Eres también un filtro: si oyes algo que no es de tu oficio —una parte mal tocada o vacía, notas que chocan con la armonía, una pista que no suena por su parte— no lo tapes con la mezcla: devuélvelo con `devolver_trabajo` (al músico o al arreglista) y sigue con lo tuyo; cuando lo corrijan, retomarás la mezcla.',
+    'Eres el ingeniero de mezcla. Equilibra volúmenes y paneo, aplica ecualización, compresión y envíos donde haga falta. Trabaja en LOTES: las llamadas independientes (volumen, paneo, EQ, compresión y envíos de TODAS las pistas) van juntas en un solo paso (hasta 24 llamadas por paso), no una pista por paso: cada paso cuesta una espera del modelo. Empieza con `analysis.trackSound` y corrige primero lo que impide oír una pista (mute, solo, fader casi a cero). Usa solo herramientas que existan en tu lista o en `buscar_herramientas`. Volumen con `track.update` (datos.volumen lineal 0–4, 1 = 0 dB) y paneo (datos.paneo −1 a 1); EQ con `mix.eq`, compresión con `mix.compress`; para la reverb crea un bus con `bus.create` y manda los instrumentos con `send.set`. No cambies las notas ni el arreglo. Eres también un filtro: si oyes algo que no es de tu oficio —una parte mal tocada o vacía, notas que chocan con la armonía, una pista que no suena por su parte— no lo tapes con la mezcla: devuélvelo con `devolver_trabajo` (al músico o al arreglista) y sigue con lo tuyo; cuando lo corrijan, retomarás la mezcla.',
   master:
     'Eres el ingeniero de máster. Ajusta la cadena del máster para llegar a un volumen de unos −14 LUFS integrados con picos por debajo de −1 dBTP, sin aplastar la dinámica. El máster se direcciona con trackId "master": `mix.limit` (ceiling en dB), `mix.eq` y `master.update` (volumen); mide con `analysis.loudness` o `analysis.mix`. Eres también un filtro: si el problema no es del máster —una mezcla desequilibrada que no se puede masterizar, una parte mal tocada, notas fuera de la armonía— no lo fuerces con el limitador: devuélvelo con `devolver_trabajo` (a la mezcla, al arreglista o al músico) y retoma el máster cuando lo corrijan.',
 }
@@ -492,6 +593,7 @@ function normalizarVeredicto(v: Record<string, unknown>, ids: Set<string>): Vere
 
 export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<ResultadoProduccionAgentes> {
   const candado = new Candado()
+  const ahorro = resolverAhorro(cfg.ahorro)
   const maxRondas = Math.max(0, cfg.maxRondasQA ?? 2)
   const llamadas: RegistroLlamada[] = []
   const etapas: InformeEtapa[] = []
@@ -502,10 +604,78 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
       /* la UI no debe romper la producción */
     }
   }
+  // Tiempo: cronómetro por etapas, presupuesto (objetivo) y límite (tope duro) de reloj.
+  const reloj = cfg.reloj ?? Date.now
+  const presupuestoMs = cfg.presupuestoMs ?? PRESUPUESTO_MS_DEFECTO
+  const limiteMs = Math.max(presupuestoMs, cfg.limiteMs ?? LIMITE_MS_DEFECTO)
+  const cron = crearCronometro(reloj, (e) => emitir({ tipo: 'tiempo', ...e }))
+  /**
+   * Degradación ordenada: entre el presupuesto y el límite hay una ventana; cada refinamiento se sacrifica al pasar
+   * una fracción de ella (0 = al agotar el presupuesto). Sin límite finito la ventana es igual al presupuesto.
+   */
+  const ventanaMs = Number.isFinite(limiteMs) ? limiteMs - presupuestoMs : presupuestoMs
+  const pasado = (fraccion: number) => cron.transcurrido() >= (fraccion === 0 ? presupuestoMs : presupuestoMs + fraccion * ventanaMs)
+  const sobrePresupuesto = () => pasado(0)
+  const sobreLimite = () => cron.transcurrido() >= limiteMs
+  const omitir = (que: string, motivo: MotivoOmision, texto: string) => {
+    if (cron.omitir({ que, motivo, texto })) emitir({ tipo: 'omitido', que, motivo, texto, totalMs: cron.transcurrido() })
+  }
+  const POR = (motivo: MotivoOmision) => (motivo === 'limite' ? 'por superar el límite de tiempo' : 'por tiempo')
+  /** Medición del host cronometrada (la medición nativa es lo más lento fuera del modelo). */
+  let medidoMaster = false
+  const medirHost = cfg.medir
+    ? async (etapa: EtapaMedible): Promise<MedicionQA | null> => {
+        const t0 = reloj()
+        let r: MedicionQA | null = null
+        try {
+          r = await cfg.medir!(etapa)
+        } finally {
+          const ms = reloj() - t0
+          const ok = r ? r.ok : null
+          cron.medicion({ etapa, ms, ok })
+          emitir({ tipo: 'medicion', etapa, ms, ok })
+        }
+        if (etapa === 'master' && r) medidoMaster = true
+        return r
+      }
+    : undefined
+  /** Firma de lo que dice una revisión: si dos seguidas coinciden, la corrección no cambió nada y se corta el bucle. */
+  let firmaMedicion = ''
   const de = (rol: RolProduccion) => cfg.participantes.filter((p) => p.rol === rol)
   const uno = (rol: RolProduccion) => de(rol)[0] ?? null
   const musicos = de('musico')
   const cancelado = () => !!cfg.signal?.aborted
+  const punto = async (que: string) => {
+    try {
+      await cfg.alPuntoDeControl?.(que)
+    } catch {
+      /* un fallo al guardar el punto de control no detiene la producción */
+    }
+  }
+  const registrar = async (i: InformeEtapa) => {
+    etapas.push(i)
+    emitir({ tipo: 'informe', informe: i })
+    await punto(`etapa:${i.etapa}`)
+  }
+  const previo = cfg.reanudar
+  const hecha = (e: EtapaProduccion) => !!previo?.etapasCompletas.includes(e)
+  const informePrevio = (e: EtapaProduccion) => previo?.etapas.find((x) => x.etapa === e)
+  /** Aplica el máster mínimo determinista (una sola vez por producción). */
+  let masterMinimoAplicado = false
+  let resumenMasterMinimo = ''
+  const aplicarMasterMinimo = async () => {
+    if (masterMinimoAplicado || !cfg.masterMinimo || cancelado()) return
+    masterMinimoAplicado = true
+    let r: { ok: boolean; resumen: string }
+    try {
+      r = await cfg.masterMinimo()
+    } catch (err) {
+      r = { ok: false, resumen: `No se pudo aplicar el máster mínimo: ${err instanceof Error ? err.message : String(err)}` }
+    }
+    resumenMasterMinimo = r.resumen
+    emitir({ tipo: 'master_minimo', ok: r.ok, resumen: r.resumen })
+    await registrar({ etapa: 'master', ok: r.ok, resumen: `Máster mínimo (sin modelo): ${r.resumen}`.slice(0, 300) })
+  }
   const contexto = async () => {
     try {
       return (await cfg.contexto?.()) ?? ''
@@ -521,6 +691,8 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
   let capturaVeredicto: VeredictoQA | null = null
   let capturaHoja: HojaDeRuta | null = null
   let capturaDevoluciones: Devolucion[] = []
+  /** Resultado de la última medición de coherencia (undefined = no se midió). */
+  let ultimaCoherenciaOk: boolean | undefined
   let capturaPropuestas: { de: string; conforme: boolean; propuestas: PropuestaEnsayo[] }[] = []
   let capturaAcuerdo: { ajustes: AjusteAcordado[]; nota?: string } | null = null
   /**
@@ -667,8 +839,14 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
         capturaHoja = hoja
         return { ok: true, resumen: `${hoja.secciones.length} secciones`, datos: { hoja: hojaComoTexto(hoja) } }
       }
-      const r = await cfg.ejecutar(l, h, ctx)
+      let r = await cfg.ejecutar(l, h, ctx)
       if (r.ok && o.rol === 'musico' && o.p && h.nombre === 'track.create') anotarPistaCreada(o.p.id, r.datos, l.argumentos)
+      // Como el compilador de un IDE: la escritura devuelve ya qué le falta o le sobra a la pista.
+      if (r.ok && ahorro.diagnostico && cfg.diagnostico && hoja && o.rol === 'musico' && o.p && h.clase !== 'lectura' && /^midi\./.test(h.nombre)) {
+        const enc = encargos.find((e) => e.participante === o.p!.id)
+        const d = enc ? await Promise.resolve(cfg.diagnostico(enc, hoja)).catch(() => null) : null
+        if (d) r = { ...r, datos: { ...(r.datos && typeof r.datos === 'object' && !Array.isArray(r.datos) ? (r.datos as object) : {}), diagnostico: d } }
+      }
       return r
     }
     const base = [...(cfg.base ?? []), ...propio]
@@ -689,10 +867,14 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
       // Con herramientas limitadas, el agente las ve todas desde el principio; si no, las de su oficio más
       // las que se eligen por relevancia.
       iniciales: permitidas
-        ? [...propio, ...deOficio, ...[...permitidas].slice(0, 30)]
+        ? ahorro.herramientasPorRol && deOficio.length
+          ? [...propio, ...deOficio, ...base.filter((n) => permitidas.has(n))]
+          : [...propio, ...deOficio, ...[...permitidas].slice(0, 30)]
         : deOficio.length
-          ? [...propio, ...deOficio, ...seleccionarIniciales(o.pedido, catalogo, { base })]
-          : undefined,
+          ? [...propio, ...deOficio, ...(ahorro.herramientasPorRol ? base : seleccionarIniciales(o.pedido, catalogo, { base }))]
+          : ahorro.herramientasPorRol
+            ? [...propio, ...seleccionarIniciales(o.pedido, catalogo, { base, max: 8 })]
+            : undefined,
       base,
       sistema: sistemaParticipante({
         p: o.p,
@@ -705,11 +887,15 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
         estilo: cfg.estiloMusical,
         notas: paraQuien(quien.id, notasUsuario.slice(0, notasVistas)).slice(-MAX_NOTAS_EN_CONTEXTO),
       }),
-      chat: cfg.chat,
+      chat: (p) => {
+        cron.peticion()
+        return cfg.chat(p)
+      },
       ejecutar,
       soloLectura: o.soloLectura,
       maxPasos: cfg.maxPasos ?? PASOS_POR_ROL[o.rol] ?? 10,
       maxSubagentes: 0,
+      ahorro: { resultados: ahorro.resultados },
       onEvento: (evento) => emitir({ tipo: 'agente', etapa: o.etapa, participante: quien, evento }),
       notas: notasNuevas,
       signal: cfg.signal,
@@ -724,11 +910,26 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
   }
 
   /** Revisión con medición del host + agente QA; devuelve el veredicto combinado. */
-  const revisar = async (etapa: EtapaProduccion, medible: EtapaMedible, ronda: number, responsables: ParticipanteProduccion[]): Promise<VeredictoQA> => {
-    const medicion = cfg.medir ? await cfg.medir(medible).catch(() => null) : null
-    const qa = uno('qa')
+  const revisar = async (etapa: EtapaProduccion, medible: EtapaMedible, ronda: number, responsables: ParticipanteProduccion[], soloMedir = false): Promise<VeredictoQA> => {
+    const medicion = medirHost ? await medirHost(medible).catch(() => null) : null
+    firmaMedicion = medicion ? medicion.detalles.join('|') : ''
+    // Sin tiempo para el juicio del modelo: manda la medición del host.
+    const qa = soloMedir ? null : uno('qa')
     let veredicto: VeredictoQA | null = null
-    if (qa) {
+    // La medición del host ya es el criterio: si aprueba, preguntarle lo mismo al modelo solo cuesta tokens.
+    const omitirQA = async () => {
+      if (!medicion?.ok) return false
+      if (medible !== 'musicos') return ahorro.qaMedible
+      if (!ahorro.qaPartesLimpias || ultimaCoherenciaOk !== true || !cfg.completitud || !hoja) return false
+      for (const e of encargos) {
+        if (!e.pista) continue
+        if (await Promise.resolve(cfg.completitud(e, hoja)).catch(() => null)) return false
+      }
+      return true
+    }
+    if (qa && (await omitirQA())) {
+      veredicto = { aprobado: true, problemas: [], resumen: `Medición del DAW dentro de objetivo${medible === 'musicos' ? ', coherencia y completitud correctas' : ''}: ${medicion!.detalles.join(' · ')}`.slice(0, 600) }
+    } else if (qa) {
       capturaVeredicto = null
       const r = await correr({
         etapa,
@@ -765,7 +966,9 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
 
   const terminar = (estado: ResultadoProduccionAgentes['estado'], texto: string): ResultadoProduccionAgentes => {
     emitir({ tipo: 'etapa', etapa: 'entrega', fase: 'fin', ok: estado === 'completado', resumen: texto })
-    return { estado, plan, etapas, encargos, llamadas, texto }
+    const tiempos = cron.instantanea(presupuestoMs, limiteMs)
+    emitir({ tipo: 'tiempos', tiempos })
+    return { estado, plan, etapas, encargos, llamadas, texto, tiempos }
   }
 
   // Grabación por oleadas (la base rítmica primero; los demás la escuchan). También sirve para regrabar.
@@ -784,10 +987,74 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
     const nombre = (id: string) => musicos.find((m) => m.id === id)?.nombre ?? id
     return `\n\nReparto de la banda (lo que hace cada compañero; deja sitio a lo suyo y complétalo):\n${otros.map((e) => `- ${nombre(e.participante)}${e.pista ? ` (pista ${e.pista})` : ''}: ${e.encargo.slice(0, 220)}`).join('\n')}`
   }
-  const correrMusico = async (e: Encargo) =>
-    correr({ etapa: 'musicos', p: musicos.find((m) => m.id === e.participante) ?? null, rol: 'musico', pedido: `${e.encargo}${reparto(e.participante)}${await escuchar()}` })
-  const grabar = async (lista: Encargo[]) => {
+  const guia = (e: Encargo) => {
+    try {
+      const t = hoja && cfg.guiaArmonia ? cfg.guiaArmonia(e, hoja) : null
+      return t ? `
+
+${t}` : ''
+    } catch {
+      return ''
+    }
+  }
+  const primeraPasada = async (e: Encargo): Promise<ResultadoAgente> => {
+    const p = musicos.find((m) => m.id === e.participante) ?? null
+    return correr({ etapa: 'musicos', p, rol: 'musico', pedido: `${e.encargo}${guia(e)}${reparto(e.participante)}${await escuchar()}` })
+  }
+  const completar = async (e: Encargo, r0: ResultadoAgente): Promise<ResultadoAgente> => {
+    const p = musicos.find((m) => m.id === e.participante) ?? null
+    let r = r0
+    // Los modelos rápidos dan la parte por terminada tras la primera sección: se mide y se le devuelve lo que falta.
+    // Pasado el límite de tiempo solo se concede un reintento (la parte completa manda, pero no a cualquier precio).
+    for (let i = 0; i < MAX_REINTENTOS_COMPLETITUD && cfg.completitud && hoja && !cancelado(); i++) {
+      if (i >= 1 && sobreLimite()) {
+        omitir('reintentos de completitud', 'limite', `se limitaron los reintentos de la parte de ${p?.nombre ?? e.participante} ${POR('limite')}`)
+        break
+      }
+      const falta = await Promise.resolve(cfg.completitud(e, hoja)).catch(() => null)
+      if (!falta) break
+      r = await correr({
+        etapa: 'musicos',
+        p,
+        rol: 'musico',
+        pedido: `Tu parte está INCOMPLETA: ${falta}\nSigue donde lo dejaste: escribe ahora solo lo que falta (un clip por sección, en tu pista), sin duplicar lo que ya está y sin pedir confirmación. No termines hasta cubrirlo todo.\nEncargo original: ${e.encargo}${guia(e)}${reparto(e.participante)}${await escuchar()}`,
+      })
+    }
+    return r
+  }
+  /** Cierra la parte de un músico: queda anotado y se guarda un punto de control del proyecto. */
+  const cerrarMusico = async (e: Encargo, r: ResultadoAgente): Promise<ResultadoAgente> => {
+    const fin = await completar(e, r)
+    if (!cancelado()) {
+      emitir({ tipo: 'musico', participante: e.participante, ok: fin.estado === 'completado' })
+      await punto(`musico:${e.participante}`)
+    }
+    return fin
+  }
+  const correrMusico = async (e: Encargo): Promise<ResultadoAgente> => cerrarMusico(e, await primeraPasada(e))
+  /** Tras una interrupción: se mide primero qué le falta a la parte y solo se repite a quien no la tiene completa. */
+  const RESULTADO_VACIO: ResultadoAgente = { estado: 'completado', texto: '', tareas: [], llamadas: [], pasos: 0 }
+  const retomarMusico = async (e: Encargo): Promise<ResultadoAgente> => {
+    if (cfg.completitud && hoja) return cerrarMusico(e, RESULTADO_VACIO)
+    if (previo?.musicosTerminados.includes(e.participante)) return RESULTADO_VACIO
+    return correrMusico(e)
+  }
+  const grabar = async (lista: Encargo[], retomando = false) => {
     const [base, resto] = oleadas(lista, musicos)
+    const uno1 = retomando ? retomarMusico : correrMusico
+    if (retomando) {
+      const primeros = await Promise.all(base.map(uno1))
+      if (cancelado()) return primeros
+      return [...primeros, ...(await Promise.all(resto.map(uno1)))]
+    }
+    if (resto.length && cfg.solaparOleadas !== false) {
+      // La segunda oleada no espera a los reintentos por completitud de la base: arranca en cuanto la base
+      // termina su primera pasada (ya tiene escrito lo que los demás necesitan oír) y ambos corren a la vez.
+      const primeras = await Promise.all(base.map(async (e) => ({ e, r: await primeraPasada(e) })))
+      if (cancelado()) return primeras.map((x) => x.r)
+      const [a, b] = await Promise.all([Promise.all(primeras.map((x) => cerrarMusico(x.e, x.r))), Promise.all(resto.map(correrMusico))])
+      return [...a, ...b]
+    }
     const primeros = await Promise.all(base.map(correrMusico))
     if (cancelado()) return primeros
     return [...primeros, ...(await Promise.all(resto.map(correrMusico)))]
@@ -801,12 +1068,12 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
       for (const id of ids) porMusico.set(id, [...(porMusico.get(id) ?? []), d.problema])
     }
     if (!porMusico.size) return 0
-    await grabar(
+    await cron.medir('musicos', () => grabar(
       [...porMusico.entries()].map(([participante, lista]) => ({
         participante,
         encargo: `Te devuelven tu parte desde ${NOMBRE_ETAPA[desde].toLowerCase()}: ${lista.join('; ')}.\nCorrige editando o reemplazando tus clips en tu pista: no crees pistas nuevas ni dupliques clips.\nEncargo original: ${encargos.find((e) => e.participante === participante)?.encargo ?? ''}`,
       })),
-    )
+    ))
     return porMusico.size
   }
 
@@ -814,8 +1081,10 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
   const remedirCoherencia = async (h: HojaDeRuta, forzadas?: string[]) => {
     const otra = await cicloCoherencia(h, forzadas)
     const i = etapas.findIndex((e) => e.etapa === 'coherencia')
-    if (i >= 0) etapas[i] = { ...otra, rondas: (etapas[i]!.rondas ?? 0) + (otra.rondas ?? 0) }
-    else etapas.push(otra)
+    if (i >= 0) {
+      etapas[i] = { ...otra, rondas: (etapas[i]!.rondas ?? 0) + (otra.rondas ?? 0) }
+      emitir({ tipo: 'informe', informe: etapas[i]! })
+    } else await registrar(otra)
   }
 
   /**
@@ -824,6 +1093,10 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
    */
   const atenderDevoluciones = async (etapa: EtapaProduccion, devs: Devolucion[]): Promise<string> => {
     if (!devs.length) return ''
+    if (sobreLimite()) {
+      omitir('devoluciones', 'limite', `no se atendieron las devoluciones de ${NOMBRE_ETAPA[etapa].toLowerCase()} ${POR('limite')}`)
+      return ''
+    }
     devolucionesAtendidas.set(etapa, (devolucionesAtendidas.get(etapa) ?? 0) + 1)
     const hechas: string[] = []
     const aMusicos = devs.filter((d) => d.destino === 'musicos')
@@ -859,69 +1132,136 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
   }
 
   // 1. Plan
-  emitir({ tipo: 'etapa', etapa: 'plan', fase: 'inicio' })
-  const planificador = uno('planificador') ?? uno('director')
-  const rPlan = await correr({ etapa: 'plan', p: planificador, rol: 'planificador', soloLectura: true, extras: [herramientaHoja()], pedido: `Planifica esta producción: ${cfg.pedido}` })
-  if (cancelado()) return terminar('cancelado', 'Producción detenida.')
-  // Sin hoja común cada músico inventa su forma y su armonía: se pide una vez más.
-  if (!capturaHoja && rPlan.estado !== 'fallo') {
-    await correr({ etapa: 'plan', p: planificador, rol: 'planificador', soloLectura: true, extras: [herramientaHoja()], pedido: `Entrega ya la hoja de ruta con \`hoja_de_ruta\` para: ${cfg.pedido}` })
+  if (hecha('plan') && previo?.hoja) {
+    // Reanudación: plan y hoja de ruta salen del diario (no se vuelve a llamar al planificador).
+    hoja = previo.hoja
+    plan = previo.plan
+    try {
+      cfg.alDefinirHoja?.(hoja)
+    } catch {
+      /* un fallo del guardia no detiene la producción */
+    }
+    emitir({ tipo: 'plan_definido', plan, hoja })
+    etapas.push(informePrevio('plan') ?? { etapa: 'plan', ok: true, resumen: plan.slice(0, 400) })
+    emitir({ tipo: 'informe', informe: etapas[etapas.length - 1]! })
+  } else {
+    emitir({ tipo: 'etapa', etapa: 'plan', fase: 'inicio' })
+    const planificador = uno('planificador') ?? uno('director')
+    const rPlan = await cron.medir('plan', () => correr({ etapa: 'plan', p: planificador, rol: 'planificador', soloLectura: true, extras: [herramientaHoja()], pedido: `Planifica esta producción: ${cfg.pedido}` }))
     if (cancelado()) return terminar('cancelado', 'Producción detenida.')
+    // Sin hoja común cada músico inventa su forma y su armonía: se pide una vez más.
+    if (!capturaHoja && rPlan.estado !== 'fallo') {
+      await cron.medir('plan', () => correr({ etapa: 'plan', p: planificador, rol: 'planificador', soloLectura: true, extras: [herramientaHoja()], pedido: `Entrega ya la hoja de ruta con \`hoja_de_ruta\` para: ${cfg.pedido}` }))
+      if (cancelado()) return terminar('cancelado', 'Producción detenida.')
+    }
+    hoja = capturaHoja as HojaDeRuta | null
+    if (hoja) {
+      try {
+        cfg.alDefinirHoja?.(hoja)
+      } catch {
+        /* un fallo del guardia no detiene la producción */
+      }
+    }
+    plan = [hoja ? hojaComoTexto(hoja) : '', rPlan.texto || (hoja ? '' : cfg.pedido)].filter(Boolean).join('\n\n')
+    emitir({ tipo: 'plan_definido', plan, hoja })
+    await registrar({ etapa: 'plan', ok: rPlan.estado === 'completado', resumen: plan.slice(0, 400) })
+    emitir({ tipo: 'etapa', etapa: 'plan', fase: 'fin', ok: true, resumen: plan.slice(0, 400) })
+    if (rPlan.estado === 'fallo') return terminar('fallo', `No se pudo planificar: ${(rPlan.error ?? 'el modelo no respondió').replace(/[.\s]+$/, '')}.`)
   }
-  hoja = capturaHoja as HojaDeRuta | null
-  plan = [hoja ? hojaComoTexto(hoja) : '', rPlan.texto || (hoja ? '' : cfg.pedido)].filter(Boolean).join('\n\n')
-  etapas.push({ etapa: 'plan', ok: rPlan.estado === 'completado', resumen: plan.slice(0, 400) })
-  emitir({ tipo: 'etapa', etapa: 'plan', fase: 'fin', ok: true, resumen: plan.slice(0, 400) })
-  if (rPlan.estado === 'fallo') return terminar('fallo', `No se pudo planificar: ${(rPlan.error ?? 'el modelo no respondió').replace(/[.\s]+$/, '')}.`)
 
   // 2. Dirección: preparación común y reparto
+  if (hecha('direccion') && previo) {
+    encargos = previo.encargos
+    const inf = informePrevio('direccion')
+    if (inf) {
+      etapas.push(inf)
+      emitir({ tipo: 'informe', informe: inf })
+    }
+  } else {
   emitir({ tipo: 'etapa', etapa: 'direccion', fase: 'inicio' })
   if (musicos.length) {
     capturaEncargos = null
-    const rDir = await correr({
-      etapa: 'direccion',
-      p: uno('director'),
-      rol: 'director',
-      extras: [herramientaEncargos(musicos)],
-      pedido: [
-        `Prepara la producción y reparte el trabajo. Pedido del usuario: «${cfg.pedido}».`,
-        'Músicos disponibles:',
-        ...musicos.map((m) => `- ${m.id}: ${m.nombre} — ${m.descripcion}`),
-      ].join('\n'),
-    })
+    const rDir = await cron.medir('direccion', () =>
+      correr({
+        etapa: 'direccion',
+        p: uno('director'),
+        rol: 'director',
+        extras: [herramientaEncargos(musicos)],
+        pedido: [
+          `Prepara la producción y reparte el trabajo. Pedido del usuario: «${cfg.pedido}».`,
+          'Músicos disponibles:',
+          ...musicos.map((m) => `- ${m.id}: ${m.nombre} — ${m.descripcion}`),
+        ].join('\n'),
+      }),
+    )
     if (cancelado()) return terminar('cancelado', 'Producción detenida.')
     // Si el director no repartió, cada músico recibe el plan como encargo.
     encargos = (capturaEncargos as Encargo[] | null) ?? musicos.map((m) => ({ participante: m.id, encargo: `Graba tu parte (${m.descripcion}) siguiendo el plan.` }))
     etapas.push({ etapa: 'direccion', ok: rDir.estado !== 'fallo', resumen: rDir.texto.slice(0, 300) })
   }
   emitir({ tipo: 'encargos', encargos })
+  if (etapas.some((x) => x.etapa === 'direccion')) emitir({ tipo: 'informe', informe: etapas.find((x) => x.etapa === 'direccion')! })
+  await punto('etapa:direccion')
   emitir({ tipo: 'etapa', etapa: 'direccion', fase: 'fin', ok: true })
+  }
 
   // 3. Músicos por oleadas (la base rítmica primero; los demás la escuchan) + QA con rondas de corrección
   if (encargos.length) {
-    emitir({ tipo: 'etapa', etapa: 'musicos', fase: 'inicio' })
-    const r = await grabar(encargos)
-    if (cancelado()) return terminar('cancelado', 'Producción detenida.')
-    const okMusicos = r.filter((x) => x.estado === 'completado').length
-    etapas.push({ etapa: 'musicos', ok: okMusicos === r.length, resumen: `${okMusicos} de ${r.length} partes grabadas` })
-    emitir({ tipo: 'etapa', etapa: 'musicos', fase: 'fin', ok: okMusicos > 0, resumen: `${okMusicos} de ${r.length} partes grabadas` })
+    let okMusicos: number
+    if (hecha('musicos')) {
+      okMusicos = Number(/^(\d+) de/.exec(informePrevio('musicos')?.resumen ?? '')?.[1] ?? encargos.length)
+      const inf = informePrevio('musicos')
+      if (inf) {
+        etapas.push(inf)
+        emitir({ tipo: 'informe', informe: inf })
+      }
+    } else {
+      emitir({ tipo: 'etapa', etapa: 'musicos', fase: 'inicio' })
+      // Reanudando: cada músico mide primero su completitud y solo repite el incompleto.
+      const r = await cron.medir('musicos', () => grabar(encargos, !!previo))
+      if (cancelado()) return terminar('cancelado', 'Producción detenida.')
+      okMusicos = r.filter((x) => x.estado === 'completado').length
+      await registrar({ etapa: 'musicos', ok: okMusicos === r.length, resumen: `${okMusicos} de ${r.length} partes grabadas` })
+      emitir({ tipo: 'etapa', etapa: 'musicos', fase: 'fin', ok: okMusicos > 0, resumen: `${okMusicos} de ${r.length} partes grabadas` })
+    }
 
     // 3a. Ensayo: la banda se escucha, se pone de acuerdo y ajusta antes de que nadie revise.
     // Ensayan los que grabaron algo (quien no escribió nada no tiene parte que encajar).
     const grabaron = new Set(encargos.map((e) => e.participante).filter((id) => llamadas.some((l) => l.agente === id && l.ok && l.clase === 'escritura')))
-    if (cfg.ensayo !== false && grabaron.size >= 2) {
-      etapas.push(await ensayar(grabaron))
+    let ensayoInnecesario = false
+    // Primer refinamiento que se sacrifica si ya no hay tiempo.
+    const ensayoPosible = cfg.ensayo !== false && grabaron.size >= 2 && !hecha('ensayo') && !hecha('coherencia') && !hecha('qa_musicos')
+    const ensayoSinTiempo = ensayoPosible && sobrePresupuesto()
+    if (ensayoSinTiempo) omitir('ensayo', sobreLimite() ? 'limite' : 'presupuesto', `se omitió el ensayo ${POR(sobreLimite() ? 'limite' : 'presupuesto')}`)
+    if (ensayoPosible && !ensayoSinTiempo && ahorro.ensayoLimpio && hoja && cfg.coherencia) {
+      const previa = await Promise.resolve(cfg.coherencia(hoja)).catch(() => null)
+      ensayoInnecesario = !!previa?.ok
+      if (ensayoInnecesario) {
+        emitir({ tipo: 'etapa', etapa: 'ensayo', fase: 'inicio', ronda: 0 })
+        emitir({ tipo: 'etapa', etapa: 'ensayo', fase: 'fin', ok: true, ronda: 0, resumen: 'La medición de coherencia ya aprueba todas las partes: no hizo falta ensayo.' })
+      }
+    }
+    if (ensayoPosible && !ensayoSinTiempo && !ensayoInnecesario) {
+      await registrar(await cron.medir('ensayo', () => ensayar(grabaron)))
       if (cancelado()) return terminar('cancelado', 'Producción detenida.')
     }
 
     // 3b. Coherencia: el arreglista mide (determinista) y corrige hasta que todo encaje en tiempo, armonía y ritmo.
-    if (hoja && cfg.coherencia && okMusicos > 0) {
+    if (hecha('qa_musicos')) {
+      const c = informePrevio('coherencia')
+      if (c) {
+        etapas.push(c)
+        emitir({ tipo: 'informe', informe: c })
+      }
+    } else if (hoja && cfg.coherencia && okMusicos > 0) {
+      // Reanudando, la coherencia se vuelve a medir (solo se corrige si la medición falla).
       const informeCoherencia = await cicloCoherencia(hoja)
       if (cancelado()) return terminar('cancelado', 'Producción detenida.')
-      etapas.push(informeCoherencia)
+      await registrar(informeCoherencia)
     }
 
-    const informe = await cicloQA('qa_musicos', 'musicos', musicos, async (problemas) => {
+    const yaQaMusicos = informePrevio('qa_musicos')
+    const informe = hecha('qa_musicos') && yaQaMusicos ? yaQaMusicos : await cicloQA('qa_musicos', 'musicos', musicos, async (problemas) => {
       const porMusico = new Map<string, string[]>()
       for (const pr of problemas) {
         const destino = pr.quien && musicos.some((m) => m.id === pr.quien) ? [pr.quien] : encargos.map((e) => e.participante)
@@ -934,9 +1274,12 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
       await grabar(correcciones)
     })
     if (cancelado()) return terminar('cancelado', 'Producción detenida.')
-    etapas.push(informe)
+    if (informe === yaQaMusicos) {
+      etapas.push(informe)
+      emitir({ tipo: 'informe', informe })
+    } else await registrar(informe)
     // Si el QA hizo regrabar partes, la coherencia se mide otra vez (la última medición es la que cuenta).
-    if (informe.rondas && hoja && cfg.coherencia) {
+    if (informe !== yaQaMusicos && informe.rondas && hoja && cfg.coherencia) {
       await remedirCoherencia(hoja)
       if (cancelado()) return terminar('cancelado', 'Producción detenida.')
     }
@@ -957,43 +1300,85 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
   ] as const) {
     const p = uno(rol)
     if (!p) continue
-    emitir({ tipo: 'etapa', etapa, fase: 'inicio' })
-    const pedido = rol === 'mezcla' ? `Mezcla la canción según el plan. Pedido del usuario: «${cfg.pedido}».` : 'Prepara el máster de la canción.'
     // Filtro: la mezcla puede devolver a músicos o arreglista; el máster, además, a la mezcla.
     const destinos: DestinoDevolucion[] = rol === 'mezcla' ? ['musicos', 'arreglista'] : uno('mezcla') ? ['musicos', 'arreglista', 'mezcla'] : ['musicos', 'arreglista']
     const extras = [herramientaDevolver(destinos, musicos)]
-    let r = await correr({ etapa, p, rol, pedido, extras })
+    // Reanudación: la etapa y su revisión ya estaban hechas.
+    if (hecha(qaEtapa) && informePrevio(etapa) && informePrevio(qaEtapa)) {
+      for (const i of [informePrevio(etapa)!, informePrevio(qaEtapa)!]) {
+        etapas.push(i)
+        emitir({ tipo: 'informe', informe: i })
+      }
+      continue
+    }
+    // Pasado el límite: la mezcla se omite, pero el máster mínimo determinista (limitador + −14 LUFS, sin modelo) SIEMPRE se aplica.
+    if (sobreLimite()) {
+      omitir(qaEtapa, 'limite', `se omitió la ${NOMBRE_ETAPA[qaEtapa].toLowerCase()} ${POR('limite')}`)
+      if (rol === 'master' && cfg.masterMinimo) {
+        omitir(etapa, 'limite', 'el máster hecho por el modelo se sustituyó por un máster mínimo automático por superar el límite de tiempo')
+        await aplicarMasterMinimo()
+        continue
+      }
+      omitir(etapa, 'limite', `se omitió ${rol === 'mezcla' ? 'la mezcla' : 'el máster'} ${POR('limite')}`)
+      await registrar({ etapa, ok: false, resumen: `Omitida ${POR('limite')}.` })
+      continue
+    }
+    if (hecha(etapa) && informePrevio(etapa)) {
+      const i = informePrevio(etapa)!
+      etapas.push(i)
+      emitir({ tipo: 'informe', informe: i })
+    } else {
+    emitir({ tipo: 'etapa', etapa, fase: 'inicio' })
+    const pedido = rol === 'mezcla' ? `Mezcla la canción según el plan. Pedido del usuario: «${cfg.pedido}».` : 'Prepara el máster de la canción.'
+    let r = await cron.medir(etapa, () => correr({ etapa, p, rol, pedido, extras }))
     if (cancelado()) return terminar('cancelado', 'Producción detenida.')
     const devueltas = tomarDevoluciones()
     if (devueltas.length) {
       const atendido = await atenderDevoluciones(etapa, devueltas)
       if (cancelado()) return terminar('cancelado', 'Producción detenida.')
-      r = await correr({
-        etapa,
-        p,
-        rol,
-        extras,
-        pedido: `Lo que devolviste ya se atendió (${atendido || 'sin cambios'}). Termina ${rol === 'mezcla' ? 'la mezcla' : 'el máster'}: comprueba con tus herramientas y ajusta lo que haga falta.`,
-      })
-      if (cancelado()) return terminar('cancelado', 'Producción detenida.')
+      if (sobreLimite()) omitir(`${etapa} (segunda pasada)`, 'limite', `se omitió la segunda pasada de ${rol === 'mezcla' ? 'la mezcla' : 'el máster'} ${POR('limite')}`)
+      else {
+        r = await cron.medir(etapa, () =>
+          correr({
+            etapa,
+            p,
+            rol,
+            extras,
+            pedido: `Lo que devolviste ya se atendió (${atendido || 'sin cambios'}). Termina ${rol === 'mezcla' ? 'la mezcla' : 'el máster'}: comprueba con tus herramientas y ajusta lo que haga falta.`,
+          }),
+        )
+        if (cancelado()) return terminar('cancelado', 'Producción detenida.')
+      }
       tomarDevoluciones()
     }
-    etapas.push({ etapa, ok: r.estado === 'completado', resumen: r.texto.slice(0, 300) })
+    await registrar({ etapa, ok: r.estado === 'completado', resumen: r.texto.slice(0, 300) })
     emitir({ tipo: 'etapa', etapa, fase: 'fin', ok: r.estado === 'completado', resumen: r.texto.slice(0, 300) })
+    }
     const informe = await cicloQA(qaEtapa, medible, [p], async (problemas) => {
       await correr({ etapa, p, rol, extras, pedido: `Corrige solo lo que corresponde a ${rol === 'mezcla' ? 'la mezcla' : 'el máster'}: ${problemas.map((x) => x.problema).join('; ')}` })
       const d = tomarDevoluciones()
       if (d.length && !cancelado()) await atenderDevoluciones(etapa, d)
     })
     if (cancelado()) return terminar('cancelado', 'Producción detenida.')
-    etapas.push(informe)
+    await registrar(informe)
   }
 
+  // La medición final no se salta: si el máster no se midió (se entregó por límite de tiempo), se mide ahora.
+  // Si el límite se superó y no hubo máster (p. ej. sin participante de máster), el mínimo determinista se aplica ahora.
+  if (sobreLimite() && !cancelado()) await aplicarMasterMinimo()
+  if (!medidoMaster && medirHost && cron.omitidos().some((o) => o.motivo === 'limite') && !cancelado()) {
+    const m = await cron.medir('qa_master', () => medirHost('master').catch(() => null))
+    if (m) etapas.push({ etapa: 'qa_master', ok: m.ok, resumen: `Medición final: ${m.detalles.join(' · ')}`.slice(0, 400) })
+  }
   const revisiones = etapas.filter((e) => e.etapa.startsWith('qa_') || e.etapa === 'coherencia' || e.etapa === 'ensayo')
   const todoOk = etapas.every((e) => e.ok)
+  const omitidos = cron.omitidos()
   const texto = [
     todoOk ? 'La producción está lista.' : 'La producción terminó con algunos avisos.',
     ...revisiones.map((e) => `${NOMBRE_ETAPA[e.etapa]}: ${e.ok ? 'aprobada' : 'con avisos'}${e.rondas ? ` (${e.rondas} ${e.rondas === 1 ? 'corrección' : 'correcciones'})` : ''}.${e.ok ? '' : ` ${breve(e.resumen)}`}`),
+    ...(masterMinimoAplicado ? [`Se aplicó un máster mínimo automático (limitador a −1 dBTP y volumen a −14 LUFS, sin modelo): ${resumenMasterMinimo}`] : []),
+    ...(omitidos.length ? [`Para entregar a tiempo (${formatearDuracion(cron.transcurrido())}${omitidos.some((o) => o.motivo === 'limite') ? ', límite superado' : ''}): ${omitidos.map((o) => o.texto).join('; ')}.`] : []),
+    resumenTiempos(cron.instantanea(presupuestoMs, limiteMs)),
   ].join('\n')
   return terminar(todoOk ? 'completado' : 'con_avisos', texto)
 
@@ -1088,48 +1473,63 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
 
   /** `forzadas`: problemas que otro agente devolvió al arreglista (se atienden aunque la medición apruebe). */
   async function cicloCoherencia(h: HojaDeRuta, forzadas: string[] = []): Promise<InformeEtapa> {
-    const medirCoherencia = async (): Promise<MedicionQA | null> => {
-      try {
-        return (await cfg.coherencia?.(h)) ?? null
-      } catch {
-        return null
+    return cron.medir('coherencia', async () => {
+      const medirCoherencia = async (): Promise<MedicionQA | null> => {
+        try {
+          return (await cfg.coherencia?.(h)) ?? null
+        } catch {
+          return null
+        }
       }
-    }
-    const arreglista = uno('coherencia') ?? ARREGLISTA_POR_DEFECTO
-    emitir({ tipo: 'etapa', etapa: 'coherencia', fase: 'inicio', ronda: 0 })
-    let m = await medirCoherencia()
-    let ronda = 0
-    let pendientes = forzadas
-    while ((pendientes.length || (m && !m.ok)) && ronda < RONDAS_COHERENCIA && !cancelado()) {
-      ronda++
-      const problemas = [...pendientes, ...(m && !m.ok ? m.detalles : [])]
-      pendientes = []
-      await correr({
-        etapa: 'coherencia',
-        p: arreglista,
-        rol: 'coherencia',
-        extras: [herramientaDevolver(['musicos'], musicos)],
-        pedido: [
-          'Haz que todas las partes encajen con la hoja de ruta y entre sí. Problemas detectados (medición del DAW y avisos de otros agentes; pista: problema, compases):',
-          ...problemas.map((d) => `- ${d}`),
-          'Corrige solo lo señalado y termina informando qué cambiaste.',
-        ].join('\n'),
-      })
-      if (cancelado()) break
-      // El arreglista puede devolver una parte entera a su músico (rehacerla no es corregir compases).
-      const devs = tomarDevoluciones()
-      if (devs.length) {
-        devolucionesAtendidas.set('coherencia', (devolucionesAtendidas.get('coherencia') ?? 0) + 1)
-        await regrabar('coherencia', devs)
+      const arreglista = uno('coherencia') ?? ARREGLISTA_POR_DEFECTO
+      emitir({ tipo: 'etapa', etapa: 'coherencia', fase: 'inicio', ronda: 0 })
+      let m = await medirCoherencia()
+      let ronda = 0
+      let pendientes = forzadas
+      // Con el presupuesto agotado solo se concede una ronda; pasado el límite, ninguna (la medición sí se hace).
+      const tope = () => (sobreLimite() ? 0 : pasado(0.2) ? 1 : RONDAS_COHERENCIA)
+      const firma = (x: MedicionQA | null) => (x && !x.ok ? x.detalles.join('|') : '')
+      while ((pendientes.length || (m && !m.ok)) && ronda < tope() && !cancelado()) {
+        ronda++
+        const problemas = [...pendientes, ...(m && !m.ok ? m.detalles : [])]
+        const antes = firma(m)
+        pendientes = []
+        await correr({
+          etapa: 'coherencia',
+          p: arreglista,
+          rol: 'coherencia',
+          extras: [herramientaDevolver(['musicos'], musicos)],
+          pedido: [
+            'Haz que todas las partes encajen con la hoja de ruta y entre sí. Problemas detectados (medición del DAW y avisos de otros agentes; pista: problema, compases):',
+            ...problemas.map((d) => '- ' + d),
+            'Corrige solo lo señalado y termina informando qué cambiaste.',
+          ].join('\n'),
+        })
         if (cancelado()) break
+        // El arreglista puede devolver una parte entera a su músico (rehacerla no es corregir compases).
+        const devs = tomarDevoluciones()
+        if (devs.length) {
+          devolucionesAtendidas.set('coherencia', (devolucionesAtendidas.get('coherencia') ?? 0) + 1)
+          await regrabar('coherencia', devs)
+          if (cancelado()) break
+        }
+        m = await medirCoherencia()
+        // Misma medición que antes de corregir: otra ronda no cambiaría nada.
+        if (m && !m.ok && antes && firma(m) === antes) {
+          omitir('rondas del arreglista', 'sin_progreso', 'se cortaron las rondas del arreglista: la medición de coherencia no cambió tras corregir')
+          break
+        }
       }
-      m = await medirCoherencia()
-    }
-    const ok = m?.ok ?? true
-    const resumen = m ? (m.ok ? 'Todas las partes encajan en tiempo, armonía y ritmo.' : m.detalles.join(' · ').slice(0, 400)) : 'Sin medición de coherencia.'
-    emitir({ tipo: 'qa', etapa: 'coherencia', ronda, veredicto: { aprobado: ok, problemas: ok ? [] : (m?.detalles ?? []).map((d) => ({ problema: d })), resumen }, medicion: m })
-    emitir({ tipo: 'etapa', etapa: 'coherencia', fase: 'fin', ok, ronda, resumen })
-    return { etapa: 'coherencia', ok, resumen, rondas: ronda }
+      if (ronda < RONDAS_COHERENCIA && m && !m.ok && !cancelado() && ronda >= tope()) {
+        omitir('rondas del arreglista', sobreLimite() ? 'limite' : 'presupuesto', ronda === 0 ? 'se omitió la corrección del arreglista ' + POR(sobreLimite() ? 'limite' : 'presupuesto') : 'se limitó el arreglista a una ronda ' + POR('presupuesto'))
+      }
+      const ok = m?.ok ?? true
+      ultimaCoherenciaOk = m ? m.ok : undefined
+      const resumen = m ? (m.ok ? 'Todas las partes encajan en tiempo, armonía y ritmo.' : m.detalles.join(' · ').slice(0, 400)) : 'Sin medición de coherencia.'
+      emitir({ tipo: 'qa', etapa: 'coherencia', ronda, veredicto: { aprobado: ok, problemas: ok ? [] : (m?.detalles ?? []).map((d) => ({ problema: d })), resumen }, medicion: m })
+      emitir({ tipo: 'etapa', etapa: 'coherencia', fase: 'fin', ok, ronda, resumen })
+      return { etapa: 'coherencia' as const, ok, resumen, rondas: ronda }
+    })
   }
 
   async function cicloQA(
@@ -1138,19 +1538,42 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
     responsables: ParticipanteProduccion[],
     corregir: (problemas: ProblemaQA[]) => Promise<void>,
   ): Promise<InformeEtapa> {
-    emitir({ tipo: 'etapa', etapa, fase: 'inicio', ronda: 0 })
-    let v = await revisar(etapa, medible, 0, responsables)
-    let ronda = 0
-    // Solo se corrige lo que tiene problemas concretos (si el QA no pudo revisar, no se repite a ciegas).
-    while (!v.aprobado && v.problemas.length && ronda < maxRondas && !cancelado()) {
-      ronda++
-      await corregir(v.problemas)
-      if (cancelado()) break
-      v = await revisar(etapa, medible, ronda, responsables)
-    }
-    const resumen = v.aprobado ? v.resumen : [v.resumen, ...v.problemas.map((p) => p.problema)].filter(Boolean).join(' · ').slice(0, 400)
-    emitir({ tipo: 'etapa', etapa, fase: 'fin', ok: v.aprobado, ronda, resumen })
-    return { etapa, ok: v.aprobado, resumen, rondas: ronda }
+    return cron.medir(etapa, async () => {
+      // Sin tiempo: la revisión de la mezcla se omite (la medición nativa es lenta y el máster se mide después);
+      // la de las partes y la del máster quedan en medición del host, sin juicio del modelo y sin rondas extra.
+      const sinTiempo = etapa === 'qa_musicos' ? sobrePresupuesto() : pasado(0.6)
+      if (sinTiempo && etapa === 'qa_mezcla') {
+        omitir(etapa, sobreLimite() ? 'limite' : 'presupuesto', 'se omitió la revisión de la mezcla ' + POR(sobreLimite() ? 'limite' : 'presupuesto'))
+        return { etapa, ok: true, resumen: 'Omitida por tiempo.', rondas: 0 }
+      }
+      if (sinTiempo && etapa === 'qa_musicos' && uno('qa')) omitir(etapa, sobreLimite() ? 'limite' : 'presupuesto', 'se omitió la revisión de las partes por el modelo ' + POR(sobreLimite() ? 'limite' : 'presupuesto'))
+      emitir({ tipo: 'etapa', etapa, fase: 'inicio', ronda: 0 })
+      let v = await revisar(etapa, medible, 0, responsables, sinTiempo)
+      let ronda = 0
+      // Rondas de corrección permitidas ahora: todas; con el presupuesto agotado, ninguna en las partes y una en
+      // mezcla/máster; pasado el límite, ninguna.
+      const tope = () => (sobreLimite() ? 0 : etapa === 'qa_musicos' ? (sobrePresupuesto() ? 0 : maxRondas) : pasado(0.4) ? 1 : maxRondas)
+      let firmaAntes = ''
+      // Solo se corrige lo que tiene problemas concretos (si el QA no pudo revisar, no se repite a ciegas).
+      while (!v.aprobado && v.problemas.length && ronda < tope() && !cancelado()) {
+        ronda++
+        firmaAntes = firmaMedicion + '#' + v.problemas.map((x) => x.problema).join('|')
+        await corregir(v.problemas)
+        if (cancelado()) break
+        v = await revisar(etapa, medible, ronda, responsables, etapa === 'qa_musicos' ? sobrePresupuesto() : pasado(0.6))
+        // Mismo veredicto y misma medición que antes de corregir: seguir repitiendo solo gasta tiempo.
+        if (!v.aprobado && firmaAntes === firmaMedicion + '#' + v.problemas.map((x) => x.problema).join('|')) {
+          omitir(etapa, 'sin_progreso', 'se cortó la revisión de ' + NOMBRE_ETAPA[etapa].toLowerCase().replace(/^revisión de /, '') + ': la corrección no cambió el veredicto ni la medición')
+          break
+        }
+      }
+      if (!v.aprobado && v.problemas.length && ronda < maxRondas && ronda >= tope() && !cancelado()) {
+        omitir(etapa + ' (rondas)', sobreLimite() ? 'limite' : 'presupuesto', 'se limitaron las correcciones de la ' + NOMBRE_ETAPA[etapa].toLowerCase() + ' ' + POR(sobreLimite() ? 'limite' : 'presupuesto'))
+      }
+      const resumen = v.aprobado ? v.resumen : [v.resumen, ...v.problemas.map((x) => x.problema)].filter(Boolean).join(' · ').slice(0, 400)
+      emitir({ tipo: 'etapa', etapa, fase: 'fin', ok: v.aprobado, ronda, resumen })
+      return { etapa, ok: v.aprobado, resumen, rondas: ronda }
+    })
   }
 }
 

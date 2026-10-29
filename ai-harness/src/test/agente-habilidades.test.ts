@@ -51,6 +51,10 @@ describe('habilidades: documento, unión y búsqueda', () => {
     expect(lista[0]?.contenido).toBe('Mi groove')
     expect(buscarHabilidad(lista, 'groove de bateria')?.id).toBe('bateria-groove')
     expect(buscarHabilidad(lista, 'GROOVE')?.id).toBe('bateria-groove')
+    // El modelo a veces escribe el nombre con un carácter corrupto o abreviado: se encuentra por palabras.
+    expect(buscarHabilidad(lista, 'Groove de baterཚ')?.id).toBe('bateria-groove')
+    expect(buscarHabilidad(lista, 'groove bateria percusion')?.id).toBe('bateria-groove')
+    expect(buscarHabilidad(lista, 'mezcla y masterizado')).toBeUndefined()
     expect(listadoHabilidades(lista)).toMatch(/leer_habilidad[\s\S]*- Groove de batería: Cuando grabes la base rítmica/)
     expect(listadoHabilidades([])).toBe('')
   })

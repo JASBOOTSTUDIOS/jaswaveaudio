@@ -58,3 +58,4 @@ export * from './music/acordes';
 export * from './music/letra';
 export * from './music/compositor-cancion';
 export * from './voice/voice-text-formatter';
+export * from './grooves';
