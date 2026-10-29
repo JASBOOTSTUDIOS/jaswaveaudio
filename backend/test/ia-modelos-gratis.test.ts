@@ -185,6 +185,14 @@ describe('modelos gratuitos: cadenas por nivel', () => {
     expect(construirCadena([fila('a/s1:free'), fila('a/i:free', { estado: 'inestable' })], 'creativo')).toEqual([]);
   });
 
+  it('un modelo inestable que nunca respondió bien no entra en la cadena', () => {
+    const c = construirCadena(
+      [fila('a/s1:free'), fila('a/s2:free'), fila('a/nunca:free', { estado: 'inestable', puntuacion: 0, ultimoOk: null }), fila('a/flojo:free', { estado: 'inestable', puntuacion: 30 })],
+      'creativo',
+    );
+    expect(c.map((e) => e.modelo)).toEqual(['a/s1:free', 'a/s2:free', 'a/flojo:free']);
+  });
+
   it('afinidad de niveles', () => {
     expect(afinidad('rapido', 'rapido')).toBe(100);
     expect(afinidad('rapido', 'creativo')).toBe(55);

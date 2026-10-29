@@ -277,7 +277,8 @@ export function razonamientoPara(f: FilaGratis, pedido: Nivel): EslabonGratis['r
 export function construirCadena(filas: FilaGratis[], pedido: Nivel, opciones: { max?: number; minimo?: number } = {}): EslabonGratis[] {
   const max = opciones.max ?? 7;
   const minimo = opciones.minimo ?? 2;
-  const utiles = filas.filter((f) => (f.estado === 'sano' || f.estado === 'inestable') && !f.excluidoManual);
+  // Un modelo inestable solo entra si alguna vez respondió bien (está flojo ahora); los que nunca lo hicieron se quedan fuera.
+  const utiles = filas.filter((f) => (f.estado === 'sano' || (f.estado === 'inestable' && f.ultimoOk !== null)) && !f.excluidoManual);
   const orden = [...utiles].sort((a, b) => puntajePara(b, pedido) - puntajePara(a, pedido) || a.modelo.localeCompare(b.modelo));
   const elegidos = orden.slice(0, max);
   if (elegidos.filter((f) => f.estado === 'sano').length < minimo) return [];
