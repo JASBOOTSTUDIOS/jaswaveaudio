@@ -79,6 +79,8 @@ export function explicarErrorHerramienta(
   }
   if (/no está en el catálogo|no se encontró el plugin|Plugin no encontrado en catálogo/i.test(mensaje)) {
     const l = instrumentosInstalados()
+    const pedido = args.nombre ?? args.pluginName ?? args.instrumento ?? (typeof args.plugin === 'string' ? args.plugin : (args.plugin as { nombre?: unknown } | undefined)?.nombre)
+    if (pedido != null && !new RegExp(`«${String(pedido).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}»`).test(mensaje)) extra.push(`Pediste «${String(pedido)}».`)
     if (l.length) extra.push(`Instrumentos instalados (usa el nombre exacto): ${l.map((n) => `«${n}»`).join(', ')}.`)
   } else if (/Plugin no encontrado: /i.test(mensaje)) {
     // Instancia de la cadena de una pista: los ids válidos son los de sus plugins.
@@ -105,6 +107,27 @@ export function tonoMidi(v: unknown): number | null {
   if (!m) return null
   const alter = m[2] === '#' || m[2] === '♯' ? 1 : m[2] === 'b' || m[2] === '♭' ? -1 : 0
   return tonoMidi(SEMITONO[m[1]!.toUpperCase()]! + alter + (Number(m[3]) + 1) * 12)
+}
+
+const ALIAS_PITCH = ['pitch', 'nota', 'tono', 'note', 'midi', 'key', 'altura']
+const ALIAS_INICIO = ['inicio', 'start', 'tiempo', 'time', 'beat', 'posicion', 'posición', 'comienzo', 'offset']
+const ALIAS_DURACION = ['duracion', 'duración', 'duration', 'dur', 'length', 'largo']
+const ALIAS_VELOCIDAD = ['velocidad', 'velocity', 'vel', 'dinamica', 'dinámica']
+const CLAVES_NOTA = new Set([...ALIAS_PITCH, ...ALIAS_INICIO, ...ALIAS_DURACION, ...ALIAS_VELOCIDAD])
+
+function primero(o: Record<string, unknown>, claves: readonly string[]): unknown {
+  for (const k of claves) if (o[k] != null) return o[k]
+  return undefined
+}
+
+/**
+ * Campos de una nota con las claves del comando, las escriba el modelo como las escriba («note», «start»,
+ * «duration», «velocity»…). `resto` conserva id y demás campos ajenos a estos cuatro.
+ */
+export function camposNota(o: Record<string, unknown>): { pitchCrudo: unknown; inicio: unknown; duracion: unknown; velocidad: unknown; resto: Record<string, unknown> } {
+  const resto: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(o)) if (!CLAVES_NOTA.has(k)) resto[k] = v
+  return { pitchCrudo: primero(o, ALIAS_PITCH), inicio: primero(o, ALIAS_INICIO), duracion: primero(o, ALIAS_DURACION), velocidad: primero(o, ALIAS_VELOCIDAD), resto }
 }
 
 const NOTAS_EN = (tool: string) => /^midi\.(clip\.create|notes\.set|createNotes|notes\.add)$/.test(tool)
@@ -259,6 +282,7 @@ export function guardiaIA(tool: string, args: Record<string, unknown>, st: Estad
     }
   }
   let reemplazaEn: { id: string; nombre?: string; inicio: number; duracion: number } | undefined
+  let reescribeEn: { id: string; nombre?: string; inicio: number; duracion: number } | undefined
   if (tool === 'midi.clip.create' && pista) {
     // Dos clips en el mismo sitio suenan a la vez (partes duplicadas): se edita el que ya está.
     const ini = Number(args.inicio ?? 0)
@@ -266,7 +290,11 @@ export function guardiaIA(tool: string, args: Record<string, unknown>, st: Estad
     const choca = (pista.clips ?? []).find((c) => ini < c.inicio + c.duracion - 1e-6 && c.inicio < fin - 1e-6)
     if (choca && Number.isFinite(fin) && fin > ini) {
       const cubre = choca.inicio <= ini + 1e-6 && choca.inicio + choca.duracion >= fin - 1e-6
-      if (cubre && Array.isArray(args.notas) && args.notas.length) {
+      const mismoInicio = Math.abs(choca.inicio - ini) <= 1 && Math.abs(choca.duracion - Number(args.duracion ?? 0)) <= Math.max(4, choca.duracion * 0.25)
+      if (!cubre && mismoInicio && Array.isArray(args.notas) && args.notas.length) {
+        // Misma sección con otra duración (16–48 frente a 16–50): se reescribe el clip existente entero.
+        reescribeEn = choca
+      } else if (cubre && Array.isArray(args.notas) && args.notas.length) {
         // El músico reescribe una sección que ya grabó (en la banda se repetía 10 veces el mismo error):
         // se sustituyen las notas de ese tramo del clip existente en vez de fallar.
         reemplazaEn = choca
@@ -298,14 +326,14 @@ export function guardiaIA(tool: string, args: Record<string, unknown>, st: Estad
         return n
       }
       const o = n as Record<string, unknown>
-      const pitch = tonoMidi(o.pitch ?? o.nota ?? o.tono)
-      const inicio = Number(o.inicio)
-      const duracion = Number(o.duracion)
-      if (pitch == null) malas.push(`#${i + 1} pitch ${JSON.stringify(o.pitch ?? o.nota ?? o.tono)}`)
-      else if (!Number.isFinite(inicio) || inicio < 0) malas.push(`#${i + 1} inicio ${JSON.stringify(o.inicio)}`)
-      else if (!Number.isFinite(duracion) || duracion <= 0) malas.push(`#${i + 1} duracion ${JSON.stringify(o.duracion)}`)
-      const { nota: _n, tono: _t, ...resto } = o
-      return pitch == null ? o : { ...resto, pitch, inicio, duracion, ...(o.velocidad != null ? { velocidad: Number(o.velocidad) } : {}) }
+      const c = camposNota(o)
+      const pitch = tonoMidi(c.pitchCrudo)
+      const inicio = Number(c.inicio)
+      const duracion = Number(c.duracion)
+      if (pitch == null) malas.push(`#${i + 1} pitch ${JSON.stringify(c.pitchCrudo)}`)
+      else if (!Number.isFinite(inicio) || inicio < 0) malas.push(`#${i + 1} inicio ${JSON.stringify(c.inicio)}`)
+      else if (!Number.isFinite(duracion) || duracion <= 0) malas.push(`#${i + 1} duracion ${JSON.stringify(c.duracion)}`)
+      return pitch == null ? o : { ...c.resto, pitch, inicio, duracion, ...(c.velocidad != null ? { velocidad: Number(c.velocidad) } : {}) }
     })
     if (malas.length) {
       return {
@@ -320,6 +348,13 @@ export function guardiaIA(tool: string, args: Record<string, unknown>, st: Estad
     const duracionClip = tool === 'midi.clip.create' ? (args.duracion != null ? Number(args.duracion) : undefined) : clipExistente?.duracion
     const relativas = notasRelativasAlClip(notas as Array<{ inicio: number }>, inicioClip, duracionClip)
     if (relativas) out = { ...out, notas: relativas }
+  }
+  if (reescribeEn && pista && Array.isArray(out.notas)) {
+    return {
+      tool: 'midi.notes.set',
+      args: { pistaId: pista.id, clipId: reescribeEn.id, notas: out.notas },
+      aviso: `Ya había un clip en esa sección de «${pista.nombre}» («${reescribeEn.nombre ?? 'clip'}» = "${reescribeEn.id}", beats ${reescribeEn.inicio}–${reescribeEn.inicio + reescribeEn.duracion}): no se creó otro; se reemplazaron sus notas por las nuevas. Para seguir editándolo usa clipId "${reescribeEn.id}".`,
+    }
   }
   if (reemplazaEn && pista && Array.isArray(out.notas)) {
     const ini = Number(args.inicio ?? 0)
@@ -505,7 +540,7 @@ export function normalizarParche(
   args: Record<string, unknown>,
   pista: { nombre?: string; clips?: ReadonlyArray<{ id: string; nombre?: string; inicio: number; duracion: number; notas?: unknown[] }> } | undefined,
 ): { args: Record<string, unknown> } | { error: string } {
-  type NotaExistente = { id: string; inicio: number; duracion: number }
+  type NotaExistente = { id: string; pitch?: number; inicio: number; duracion: number; velocidad?: number }
   const clips = pista?.clips ?? []
   let clip = clips.find((c) => c.id === String(args.clipId ?? ''))
   // Forma por rango (la que enseñan algunas guías): {pistaId, rangeStart, rangeEnd, notas} en beats de la
@@ -550,18 +585,22 @@ export function normalizarParche(
     // Forma del comando ({nota, indice}) o nota suelta.
     const nota = (o.nota && typeof o.nota === 'object' ? o.nota : o) as Record<string, unknown>
     const indice = Number.isFinite(Number(o.indice)) && o.nota ? Number(o.indice) : existentes.length + i
-    const pitch = tonoMidi(nota.pitch ?? nota.nota ?? nota.tono)
-    // Por rango, las notas vienen en beats de la canción: pasan a relativas al clip.
-    const inicioCrudo = Number(nota.inicio)
-    const inicio = porRango && inicioCrudo >= ini - 1e-6 ? Math.max(0, inicioCrudo - desplazar) : inicioCrudo
-    const duracion = Number(nota.duracion)
-    if (pitch == null) malas.push(`#${i + 1} pitch ${JSON.stringify(nota.pitch ?? nota.nota ?? nota.tono)}`)
-    else if (!Number.isFinite(inicio) || inicio < 0) malas.push(`#${i + 1} inicio ${JSON.stringify(nota.inicio)}`)
-    else if (!Number.isFinite(duracion) || duracion <= 0) malas.push(`#${i + 1} duracion ${JSON.stringify(nota.duracion)}`)
-    const { nota: _n, tono: _t, indice: _i, ...resto } = nota
+    const c = camposNota(nota)
     const id = typeof nota.id === 'string' && nota.id.trim() ? nota.id.trim() : idNotaIA()
+    // Nota ya existente mandada a medias ({id, velocidad} para cambiar solo la dinámica): lo que falta se
+    // toma de la nota actual en vez de rechazar «pitch undefined» 19 veces.
+    const previa = existentes.find((n) => n.id === id)
+    const pitch = tonoMidi(c.pitchCrudo ?? previa?.pitch)
+    // Por rango, las notas vienen en beats de la canción: pasan a relativas al clip.
+    const inicioCrudo = c.inicio != null ? Number(c.inicio) : previa ? previa.inicio : NaN
+    const inicio = porRango && c.inicio != null && inicioCrudo >= ini - 1e-6 ? Math.max(0, inicioCrudo - desplazar) : inicioCrudo
+    const duracion = c.duracion != null ? Number(c.duracion) : previa ? previa.duracion : NaN
+    if (pitch == null) malas.push(`#${i + 1} pitch ${JSON.stringify(c.pitchCrudo)}`)
+    else if (!Number.isFinite(inicio) || inicio < 0) malas.push(`#${i + 1} inicio ${JSON.stringify(c.inicio)}`)
+    else if (!Number.isFinite(duracion) || duracion <= 0) malas.push(`#${i + 1} duracion ${JSON.stringify(c.duracion)}`)
+    const { indice: _i, ...resto } = c.resto
     return {
-      nota: { ...resto, id, pitch: pitch ?? 0, inicio, duracion, velocidad: Math.max(1, Math.min(127, Math.round(Number(nota.velocidad ?? 80)) || 80)) },
+      nota: { ...resto, id, pitch: pitch ?? 0, inicio, duracion, velocidad: Math.max(1, Math.min(127, Math.round(Number(c.velocidad ?? previa?.velocidad ?? 80)) || 80)) },
       indice,
     }
   })

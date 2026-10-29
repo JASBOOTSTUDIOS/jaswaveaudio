@@ -136,7 +136,8 @@ export function registrarMidiAiTools(registry: ToolRegistry, getState: GetState)
     'midi.getClipSummary': async (params) => {
       const p = params as { clipId: string; trackId?: string };
       const data = getClipSummary(getState(), p.clipId, p.trackId);
-      return data ? ok(data) : fail('NOT_FOUND', `Clip ${p.clipId}`);
+      // «Clip no encontrado» es lo que el tool runner reconoce para añadir la lista de clips reales.
+      return data ? ok(data) : fail('NOT_FOUND', `Clip no encontrado: ${p.clipId}`);
     },
     'midi.getNotes': async (params) => ok(getNotes(getState(), params as never)),
     'midi.getMusicalSummary': async (params) => {
