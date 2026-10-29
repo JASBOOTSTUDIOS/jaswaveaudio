@@ -8,6 +8,8 @@ import { createPrivateKey } from 'node:crypto';
 import { adjuntarSync } from './sync/servidor.js';
 import { crearServicioIA, sembrarProductoIA } from './ia/proveedores.js';
 import { crearServicioJasWave, sembrarJasWaveIA } from './ia/jaswave/servicio.js';
+import { crearGestorModelosGratis } from './ia/jaswave/modelos-gratis.js';
+import type { RegistroIntento } from './ia/jaswave/enrutador.js';
 import { aiChatDirecto } from './ia/gateway/ai-gateway.js';
 import { claveMaestraDesdeBase64, type ClaveMaestra } from './seguridad/cifrado.js';
 
@@ -53,19 +55,40 @@ const db = crearDb(config.urlBaseDatos);
 // JasWave IA usa los permisos del servicio de proveedores y se entera de los cambios en las conexiones.
 let alCambiarConexiones = () => {};
 const ia = crearServicioIA({ db, claveMaestra: claveMaestraIA, alCambiarConexiones: () => alCambiarConexiones() });
-const jaswave = crearServicioJasWave({ db, claveMaestra: claveMaestraIA, permisos: (id) => ia.permisos(id), chat: aiChatDirecto, zonaHoraria: config.zonaHorariaIA });
+let alIntentos: (r: RegistroIntento[]) => void = () => {};
+const jaswave = crearServicioJasWave({ db, claveMaestra: claveMaestraIA, permisos: (id) => ia.permisos(id), chat: aiChatDirecto, zonaHoraria: config.zonaHorariaIA, alIntentos: (r) => alIntentos(r) });
 alCambiarConexiones = () => jaswave.admin.invalidar();
+// Gestor de modelos gratuitos de OpenRouter: descubre, prueba y reordena las cadenas solo (IA_GESTOR_MODELOS=0 lo apaga).
+const gestorModelos = crearGestorModelosGratis({
+  db,
+  chat: aiChatDirecto,
+  destino: async () => {
+    const p = await db.proveedorIA.findFirst({ where: { tipo: 'openrouter', propietarioId: null, activo: true }, orderBy: { creadoEn: 'asc' } });
+    if (!p || !ia.admin) return null;
+    const r = await ia.admin.resolverPorId(p.id);
+    return { proveedorId: p.id, ...r.destino };
+  },
+  jaswave: {
+    modelos: () => jaswave.admin.modelos(),
+    guardar: (id, d) => jaswave.admin.guardarModelo('gestor-modelos', id, d),
+    invalidar: () => jaswave.admin.invalidar(),
+  },
+  log,
+});
+alIntentos = (r) => gestorModelos.alIntentos(r);
 const app = crearApp({
   verificar,
   origenesCors: config.origenesCors,
   log,
   ia,
   jaswave,
+  gestorModelos,
   datos: { db, clavePrivadaPem: config.clavePrivadaLicencia, reloj: () => new Date() },
 });
 // Producto del asistente y acciones base para que el admin pueda asignarlas desde el primer arranque.
 await sembrarProductoIA(db).catch((err: unknown) => log.error({ err }, 'no se pudo sembrar el producto de IA'));
 await sembrarJasWaveIA(db).catch((err: unknown) => log.error({ err }, 'no se pudieron sembrar los modelos y planes de JasWave IA'));
+if (claveMaestraIA && process.env.IA_GESTOR_MODELOS !== '0') gestorModelos.iniciar();
 const servidor = http.createServer(app);
 adjuntarSync(servidor, { db, verificar });
 servidor.listen(config.puerto, () => log.info({ puerto: config.puerto }, 'backend escuchando'));

@@ -14,6 +14,7 @@ import { conRedRestringida } from '../seguridad/red-restringida.js';
 import { aiChat, aiChatStream, aiHealth, cancelAiChat, type AiChatRequest } from './gateway/ai-gateway.js';
 import type { ProveedorPublico, ProveedorResuelto, ServicioAdminIA, ServicioProveedoresIA } from './proveedores.js';
 import { MODELO_AUTO, NOMBRE_SERVICIO, type CatalogoJasWave, type ServicioJasWave } from './jaswave/servicio.js';
+import type { GestorModelosGratis } from './jaswave/modelos-gratis.js';
 
 const mensaje = z
   .object({
@@ -312,7 +313,7 @@ export function proveedorJasWave(jw: CatalogoJasWave): ProveedorPublico & { nomb
 }
 
 /** Administración de proveedores de IA (solo administradores). Las claves son de solo escritura. */
-export function rutasAdminIA(o: { verificar: VerificadorJwt; admin: ServicioAdminIA; jaswave?: ServicioJasWave | null; salud?: typeof aiHealth }): Router {
+export function rutasAdminIA(o: { verificar: VerificadorJwt; admin: ServicioAdminIA; jaswave?: ServicioJasWave | null; gestor?: GestorModelosGratis | null; salud?: typeof aiHealth }): Router {
   const r = Router();
   const salud = o.salud ?? aiHealth;
   r.use(express.json({ limit: '64kb' }));
@@ -375,6 +376,46 @@ export function rutasAdminIA(o: { verificar: VerificadorJwt; admin: ServicioAdmi
     await jw().eliminarModelo(actor(req), String(req.params.id));
     res.status(204).end();
   });
+  // ---------- Gestor de modelos gratuitos de OpenRouter ----------
+  const gestor = () => {
+    if (!o.gestor) throw new ErrorApi(503, 'gestor_no_configurado', 'el gestor de modelos gratuitos no está activo en este servidor');
+    return o.gestor;
+  };
+  const idModeloGratis = z.string().min(3).max(200).regex(/^[\w.\-/:]+$/);
+  r.get('/modelos-gratis', async (_req, res) => {
+    const g = gestor();
+    res.json({ config: await g.config(), ...g.estado(), modelos: await g.listar() });
+  });
+  r.put('/modelos-gratis/config', async (req, res) => {
+    const d = z.object({ auto: z.boolean().optional(), intervaloMin: z.number().int().min(15).max(1440).optional(), maxPruebasPorCiclo: z.number().int().min(1).max(40).optional() }).parse(req.body);
+    res.json({ config: await gestor().guardarConfig(d) });
+  });
+  /** Ciclo completo (descubrir, probar, reconstruir cadenas): tarda minutos, así que se lanza en segundo plano. */
+  r.post('/modelos-gratis/ciclo', (req, res) => {
+    const { forzar } = z.object({ forzar: z.boolean().default(false) }).parse(req.body ?? {});
+    const g = gestor();
+    if (g.estado().enCurso) {
+      res.status(202).json({ enCurso: true });
+      return;
+    }
+    void g.ciclo({ forzar });
+    res.status(202).json({ enCurso: true });
+  });
+  r.post('/modelos-gratis/probar', async (req, res) => {
+    const { modelo } = z.object({ modelo: idModeloGratis }).parse(req.body);
+    const g = gestor();
+    const resultado = await g.probar(modelo);
+    res.json({ resultado });
+  });
+  r.put('/modelos-gratis/ajustes', async (req, res) => {
+    const d = z.object({ modelo: idModeloGratis, excluido: z.boolean().optional(), nivel: z.enum(['rapido', 'creativo', 'profundo']).nullable().optional() }).parse(req.body);
+    await gestor().ajustar(d.modelo, { ...(d.excluido !== undefined ? { excluido: d.excluido } : {}), ...(d.nivel !== undefined ? { nivel: d.nivel } : {}) });
+    res.json({ ok: true });
+  });
+  r.post('/modelos-gratis/reconstruir', async (_req, res) => {
+    res.json({ cadenas: await gestor().reconstruirCadenas() });
+  });
+
   r.get('/planes', async (_req, res) => {
     res.json({ planes: await jw().planes() });
   });

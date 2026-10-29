@@ -371,3 +371,43 @@ model ConsumoIA {
   @@index([usuarioId, creadoEn])
   @@index([creadoEn])
 }
+
+// ---------- Gestor de modelos gratuitos de OpenRouter ----------
+
+/// Un modelo gratuito detectado en el catálogo de OpenRouter, con el resultado de sus pruebas.
+/// Lo mantiene el gestor: descubrir, probar, clasificar por nivel de razonamiento y reconstruir las cadenas.
+model ModeloGratisIA {
+  /// Id de OpenRouter, p. ej. `google/gemma-4-26b-a4b-it:free`.
+  modelo          String    @id
+  nombre          String    @default("")
+  contexto        Int       @default(0)
+  /// "apagable" | "obligatorio" | "no": si el modelo razona y se puede apagar.
+  razonamiento    String    @default("apagable")
+  /// "rapido" | "creativo" | "profundo"
+  nivel           String    @default("creativo")
+  /// "nuevo" | "sano" | "inestable" | "caido" | "excluido"
+  estado          String    @default("nuevo")
+  puntuacion      Float     @default(0)
+  latenciaMs      Int?
+  fallosSeguidos  Int       @default(0)
+  limitesSeguidos Int       @default(0)
+  motivo          String    @default("")
+  /// El admin fijó el nivel o excluyó el modelo: el gestor no lo cambia.
+  nivelFijado     Boolean   @default(false)
+  excluidoManual  Boolean   @default(false)
+  detectadoEn     DateTime  @default(now())
+  vistoEn         DateTime  @default(now())
+  ultimaPrueba    DateTime?
+  ultimoOk        DateTime?
+  proximaPrueba   DateTime?
+  actualizadoEn   DateTime  @updatedAt
+
+  @@index([estado])
+}
+
+/// Ajustes sueltos de IA (clave → JSON), p. ej. la configuración del gestor de modelos gratuitos.
+model AjusteIA {
+  clave         String   @id
+  valor         Json
+  actualizadoEn DateTime @updatedAt
+}

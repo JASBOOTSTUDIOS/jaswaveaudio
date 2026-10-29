@@ -18,7 +18,7 @@ import { auditar, sincronizarUsuario } from '../../license/servicio.js';
 import { cifrarSecreto, descifrarSecreto, type ClaveMaestra } from '../../seguridad/cifrado.js';
 import type { AiChatResult, AiErrorCode, AiProviderCustom, AiProviderKind } from '../gateway/ai-gateway.js';
 import { aadProveedor, PRODUCTO_IA, type PermisosIA } from '../proveedores.js';
-import { crearEnrutador, type ChatDirecto, type Enrutador, type Intento, type PeticionBase, type Razonamiento } from './enrutador.js';
+import { crearEnrutador, type ChatDirecto, type Enrutador, type Intento, type PeticionBase, type Razonamiento, type RegistroIntento } from './enrutador.js';
 import { periodosDe } from './periodos.js';
 
 export const MODELO_AUTO = 'auto';
@@ -200,6 +200,8 @@ export type OpcionesJasWave = {
   chat: ChatDirecto;
   ahora?: () => Date;
   zonaHoraria?: string;
+  /** Recibe el resultado de cada intento a un modelo real (el gestor de modelos gratuitos lo usa para medir la salud). */
+  alIntentos?: (intentos: RegistroIntento[]) => void;
 };
 
 export type PeticionJasWave = { modelo?: string; proposito?: string; base: PeticionBase };
@@ -409,7 +411,12 @@ export function crearServicioJasWave(o: OpcionesJasWave) {
         maxParalelo: 2,
         timeoutMs: 120_000,
       });
-      const usado = r.ganador ? orden.find((m) => intentosDe(m, c).some((i) => i.conexionId === r.ganador!.conexionId && i.modelo === r.ganador!.modelo)) ?? principal : principal;
+      try {
+        o.alIntentos?.(r.intentos);
+      } catch {
+        /* la medición de salud nunca debe romper una respuesta */
+      }
+      const usado =r.ganador ? orden.find((m) => intentosDe(m, c).some((i) => i.conexionId === r.ganador!.conexionId && i.modelo === r.ganador!.modelo)) ?? principal : principal;
       const tokens = r.usage ?? (r.resultado.success ? estimarTokens(base, r.resultado) : { entrada: 0, salida: 0 });
       const creditos = r.resultado.success ? creditosDe(tokens, usado.creditosPorMil) : 0;
       await registrar({
