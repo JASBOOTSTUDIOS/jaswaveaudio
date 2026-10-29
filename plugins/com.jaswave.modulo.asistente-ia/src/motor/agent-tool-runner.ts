@@ -216,6 +216,9 @@ export function guardiaIA(tool: string, args: Record<string, unknown>, st: Estad
   if (NOTAS_EN(tool) && args.notas != null && !Array.isArray(args.notas)) {
     const lista = comoListaDeNotas(args.notas)
     if (!lista) {
+      if (esResumenDeHistorial(args.notas)) {
+        return { error: `notas trae el resumen del historial («${String(args.notas).trim().slice(0, 60)}»), no las notas: en el historial las listas largas se abrevian, pero a la herramienta hay que mandarle la lista completa de notas reales [{pitch, inicio, duracion, velocidad}]. No se ha cambiado nada.` }
+      }
       return { error: `notas debe ser una lista de notas [{pitch, inicio, duracion, velocidad}], no ${describirTipo(args.notas)}${muestraDe(args.notas)}. No se ha cambiado nada.` }
     }
     out = { ...out, notas: lista }
@@ -325,6 +328,14 @@ function describirTipo(v: unknown): string {
   if (typeof v === 'string') return 'un texto'
   if (v && typeof v === 'object') return 'un objeto'
   return typeof v
+}
+
+/**
+ * El historial del agente abrevia las listas largas («[80 elementos]», «[lista de 80 elementos …]») y el
+ * modelo a veces copia ese texto en la llamada siguiente en vez de las notas.
+ */
+export function esResumenDeHistorial(v: unknown): boolean {
+  return typeof v === 'string' && /^\s*\[\s*(lista de\s+)?\d+\s+elementos\b/i.test(v)
 }
 
 /** Principio de lo que mandó el modelo, para que vea qué envió (y quede en el rastro de la banda). */

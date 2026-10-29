@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { crearEstadoInicial, crearTiendaDAW, getStateRevision, toolRegistry } from '../../../shared/src/index'
 import { registerAgentCatalogOnRegistry } from '@/src/lib/agent-action-catalog'
-import { comoListaDeNotas, explicarErrorHerramienta, instrumentoAproximado, normalizarParche, notasRelativasAlClip, runRegisteredTool, runRegisteredTools, sinComillasEnIds } from '../src/motor/agent-tool-runner'
+import { comoListaDeNotas, esResumenDeHistorial, explicarErrorHerramienta, instrumentoAproximado, normalizarParche, notasRelativasAlClip, runRegisteredTool, runRegisteredTools, sinComillasEnIds } from '../src/motor/agent-tool-runner'
 
 describe('agent-tool-runner (ADR-0017)', () => {
   it('project.setBpm vía Registry/Command actualiza revision', async () => {
@@ -255,6 +255,12 @@ describe('agent-tool-runner (ADR-0017)', () => {
     ])
     // Prosa con algún número suelto sigue sin ser una lista.
     assert.equal(comoListaDeNotas('Intro de 4 compases\nsuave y en Re mayor\ncon el bombo en 1 y 3'), null)
+    // El resumen que el historial hace de las listas largas (la causa real de los rechazos en el e2e 29: el
+    // modelo lo copiaba como si fueran notas) se reconoce para explicarlo.
+    assert.equal(comoListaDeNotas('[80 elementos]'), null)
+    assert.equal(esResumenDeHistorial('[80 elementos]'), true)
+    assert.equal(esResumenDeHistorial('[lista de 40 elementos, abreviada en el historial]'), true)
+    assert.equal(esResumenDeHistorial('[{"pitch":60}]'), false)
     const tienda = crearTiendaDAW({ estadoInicial: crearEstadoInicial() })
     toolRegistry.setContext(tienda.executor, tienda.permisos)
     registerAgentCatalogOnRegistry(toolRegistry, ['midi.clip.create'], tienda.registroComandos)

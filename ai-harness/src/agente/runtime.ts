@@ -180,15 +180,41 @@ export function resumirDatosEscritura(d: unknown, nivel = 0): unknown {
 
 /** Listas más largas se resumen en el historial de llamadas del propio agente. */
 const MAX_LISTA_HISTORIAL = 8
+/**
+ * Cuántas de las últimas llamadas van completas al modelo. El modelo copia su ejemplo más reciente: si lo
+ * que ve es el resumen, manda el resumen («[80 elementos]») como si fueran notas (60+ rechazos en una
+ * producción). Con la última completa, imita datos reales; las anteriores sí se abrevian.
+ */
+const LLAMADAS_COMPLETAS_EN_HISTORIAL = 1
 
 /** Argumentos de una llamada tal y como quedan en el historial: las listas largas, resumidas. */
 export function compactarArgumentosHistorial(v: unknown, nivel = 0): unknown {
   if (Array.isArray(v)) {
-    if (v.length > MAX_LISTA_HISTORIAL) return `[${v.length} elementos]`
+    if (v.length > MAX_LISTA_HISTORIAL) return `[lista de ${v.length} elementos, abreviada en el historial]`
     return v.map((x) => compactarArgumentosHistorial(x, nivel + 1))
   }
   if (!v || typeof v !== 'object' || nivel > 4) return v
   return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, compactarArgumentosHistorial(x, nivel + 1)]))
+}
+
+/**
+ * Historial que ve el modelo: las llamadas más recientes con sus argumentos completos (su ejemplo a imitar)
+ * y las anteriores con las listas largas abreviadas. El historial real conserva siempre los argumentos
+ * completos.
+ */
+export function vistaHistorial(mensajes: MensajeAgente[], completas = LLAMADAS_COMPLETAS_EN_HISTORIAL): MensajeAgente[] {
+  const out = [...mensajes]
+  let vistas = 0
+  for (let i = out.length - 1; i >= 0; i--) {
+    const m = out[i]!
+    if (m.role !== 'assistant' || !m.toolCalls?.length) continue
+    if (vistas < completas) {
+      vistas++
+      continue
+    }
+    out[i] = { ...m, toolCalls: m.toolCalls.map((c) => ({ ...c, arguments: compactarArgumentosHistorial(c.arguments) as Record<string, unknown> })) }
+  }
+  return out
 }
 
 /** Serializa un resultado para el modelo, recortando lo que sobra. */
@@ -324,7 +350,7 @@ export async function ejecutarAgente(cfg: ConfigAgente): Promise<ResultadoAgente
     try {
       r = await cfg.chat({
         sistema: cfg.sistema,
-        mensajes,
+        mensajes: vistaHistorial(mensajes),
         herramientas,
         profundidad,
         onDelta: (d) => emitir({ tipo: 'texto', delta: d, agente }),
@@ -337,12 +363,12 @@ export async function ejecutarAgente(cfg: ConfigAgente): Promise<ResultadoAgente
     if (r.texto.trim()) texto = r.texto
     if (!r.llamadas.length) return fin('completado', {}, paso)
 
-    // En el historial, las listas largas de los argumentos (cien notas de un clip) se resumen: el modelo ya
-    // las escribió y puede releerlas con una herramienta; arrastrarlas en cada llamada agotaba el presupuesto.
+    // El historial guarda los argumentos completos; al modelo se le abrevian las listas largas de las llamadas
+    // anteriores a la última (`vistaHistorial`): arrastrar cien notas por llamada agotaba el presupuesto.
     mensajes.push({
       role: 'assistant',
       content: r.texto,
-      toolCalls: r.llamadas.map((l) => ({ id: l.id, name: l.nombre, arguments: compactarArgumentosHistorial(l.argumentos) as Record<string, unknown> })),
+      toolCalls: r.llamadas.map((l) => ({ id: l.id, name: l.nombre, arguments: l.argumentos })),
     })
 
     let detener: { estado: 'pregunta' | 'confirmar'; pregunta?: ResultadoAgente['pregunta'] } | null = null
