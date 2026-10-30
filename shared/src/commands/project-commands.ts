@@ -19,10 +19,13 @@ import type { CommandDefinition, StateTransition, ValidationResult } from '../ty
 import type { DAWState } from '../types/state';
 import type { ProjectState } from '../types/proyecto';
 import type { FileService } from '../project/persistencia';
-import { NombresEventos } from '../constants/nombres-eventos';
+import type { EventoDominio } from '../events/evento-dominio';
+import { NombresEventos, EventosProyecto } from '../constants/nombres-eventos';
 import { proyectoNuevo, nombreAlGuardar } from '../project/ciclo-vida';
+import type { AudioReference } from '../project/ciclo-vida';
 import { crearValidadorConflictos } from '../state/validacion-conflictos';
-import { guardarProyecto, cargarProyecto } from '../project/persistencia';
+import { guardarProyecto, cargarProyectoConRespaldo, rutaRespaldo } from '../project/persistencia';
+import { entorno } from '../state/entorno-determinista';
 
 export type ProjectNewPayload = {
   nombre?: string;
@@ -57,6 +60,7 @@ export function configurarFileService(fileService: FileService): void {
 export function crearComandoProjectNew(): CommandDefinition<ProjectNewPayload> {
   return {
     type: 'project.new',
+    limpiaHistorialUndo: true,
     description: 'Crea un nuevo proyecto con valores por defecto',
     risk: 'write',
     schema: {
@@ -80,7 +84,7 @@ export function crearComandoProjectNew(): CommandDefinition<ProjectNewPayload> {
           {
             nombre: NombresEventos.creado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'project-commands',
             payload: { projectId: proyecto.id, nombre },
           },
@@ -130,7 +134,7 @@ export function crearComandoProjectSave(): CommandDefinition<ProjectSavePayload>
         ruta: rutaGuardada,
         nombre,
         modificado: false,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       await guardarProyecto(proyecto, rutaGuardada, fileService);
@@ -141,7 +145,7 @@ export function crearComandoProjectSave(): CommandDefinition<ProjectSavePayload>
           {
              nombre: NombresEventos.guardado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'project-commands',
             payload: { projectId: proyecto.id, ruta: rutaGuardada },
           },
@@ -155,6 +159,7 @@ export function crearComandoProjectSave(): CommandDefinition<ProjectSavePayload>
 export function crearComandoProjectLoad(): CommandDefinition<ProjectLoadPayload> {
   return {
     type: 'project.load',
+    limpiaHistorialUndo: true,
     description: 'Carga un proyecto desde disco',
     risk: 'write',
     schema: {
@@ -176,25 +181,83 @@ export function crearComandoProjectLoad(): CommandDefinition<ProjectLoadPayload>
         throw new Error('FileService no configurado. Llama a configurarFileService() antes de ejecutar project.load');
       }
 
-      const proyecto = await cargarProyecto(ruta, fileService);
+      // Si el archivo está dañado y existe `${ruta}.bak`, se recupera la copia.
+      let notasMidiDescartadas = 0;
+      const mediaFaltante: AudioReference[] = [];
+      const { proyecto, usadoRespaldo, errorOriginal } = await cargarProyectoConRespaldo(ruta, fileService, {
+        onNotasMidiDescartadas: (cantidad) => {
+          notasMidiDescartadas += cantidad;
+        },
+        onMediaFaltante: (faltantes) => {
+          mediaFaltante.push(...faltantes);
+        },
+      });
       const proyectoConRuta: ProjectState = {
         ...proyecto,
         ruta,
-        modificado: false,
+        // Recuperado de respaldo: hay que volver a guardar para reparar el archivo principal.
+        modificado: usadoRespaldo,
       };
+
+      const marcaTiempo = entorno.ahora();
+      const events: EventoDominio[] = [
+        {
+          nombre: NombresEventos.cargado,
+          version: 1,
+          marcaTiempo,
+          fuente: 'project-commands',
+          payload: { projectId: proyecto.id, ruta },
+        },
+      ];
+      if (usadoRespaldo) {
+        events.push({
+          nombre: EventosProyecto.recuperadoDeRespaldo,
+          version: 1,
+          marcaTiempo,
+          fuente: 'project-commands',
+          payload: {
+            projectId: proyecto.id,
+            ruta,
+            rutaRespaldo: rutaRespaldo(ruta),
+            motivo: errorOriginal ?? '',
+            mensaje: `El archivo del proyecto estaba dañado; se cargó la copia de seguridad (${rutaRespaldo(ruta)}). Guarda el proyecto para repararlo.`,
+          },
+        });
+      }
+      if (notasMidiDescartadas > 0) {
+        events.push({
+          nombre: 'validacion.advertencia',
+          version: 1,
+          marcaTiempo,
+          fuente: 'project-commands',
+          payload: {
+            code: 'MIDI_NOTES_REPAIRED',
+            message: `Se descartaron ${notasMidiDescartadas} nota(s) MIDI inválidas al abrir el proyecto`,
+          },
+        });
+      }
+      if (mediaFaltante.length > 0) {
+        events.push({
+          nombre: 'validacion.advertencia',
+          version: 1,
+          marcaTiempo,
+          fuente: 'project-commands',
+          payload: {
+            code: 'MEDIA_FALTANTE',
+            message: `Faltan ${mediaFaltante.length} archivo(s) de media del proyecto`,
+            referencias: mediaFaltante.map((r) => ({
+              id: r.id,
+              rutaRelativa: r.rutaRelativa,
+              formato: r.formato,
+            })),
+          },
+        });
+      }
 
       return {
         state: { ...estado, project: proyectoConRuta },
-        events: [
-          {
-             nombre: NombresEventos.cargado,
-            version: 1,
-            marcaTiempo: Date.now(),
-            fuente: 'project-commands',
-            payload: { projectId: proyecto.id, ruta },
-          },
-        ],
-        result: { ruta },
+        events,
+        result: { ruta, usadoRespaldo, mediaFaltante },
       };
     },
   };
@@ -257,7 +320,7 @@ export function crearComandoProjectClose(): CommandDefinition<ProjectClosePayloa
             {
               nombre: NombresEventos.cerrado,
               version: 1,
-              marcaTiempo: Date.now(),
+              marcaTiempo: entorno.ahora(),
               fuente: 'project-commands',
               payload: {},
             },
@@ -299,7 +362,7 @@ export function crearComandoProjectClose(): CommandDefinition<ProjectClosePayloa
           {
             nombre: NombresEventos.cerrado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'project-commands',
             payload: { projectId: proyecto.id },
           },

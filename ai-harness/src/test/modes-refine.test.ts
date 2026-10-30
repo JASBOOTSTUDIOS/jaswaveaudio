@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   detectAgentMode,
   inferBpmFromTempoIntent,
+  isGenreRewriteIntent,
   isProjectAuditIntent,
+  isProjectWipeIntent,
   isSongRefineIntent,
   isStyleGapIntent,
   isStyleApplyIntent,
@@ -11,6 +13,7 @@ import {
   wantsFullProject,
   wantsWebResearch,
 } from '../agent/modes'
+import { estimateReasoningDepth } from '../agent/reasoning-depth'
 
 describe('song refine intents', () => {
   const refine =
@@ -51,7 +54,7 @@ describe('project audit intents', () => {
 
   it('detecta analizame + pista (sin word-boundary estricto)', () => {
     const t =
-      'analizame la pista de la bateria y dime que le falta para que este como worship moderno estilo averly morillo, investiga en internet'
+      'analizame la pista de la bateria y dime que le falta para que este como funk moderno estilo de los 70, investiga en internet'
     expect(isProjectAuditIntent(t)).toBe(true)
     expect(isStyleGapIntent(t)).toBe(true)
     expect(isStyleApplyIntent(t)).toBe(false)
@@ -60,9 +63,9 @@ describe('project audit intents', () => {
     expect(detectAgentMode(t, 'create')).toBe('ask')
   })
 
-  it('aplicar estilo worship → create (no ask)', () => {
+  it('aplicar estilo de referencia → create (no ask)', () => {
     const t =
-      'haz que la bateria tenga esa sensacion y estilo, adecua el proyecto completo para tenga el estilo worship como averly morrillo'
+      'haz que la bateria tenga esa sensacion y estilo, adecua el proyecto completo para tenga el estilo funk como los 70'
     expect(isStyleApplyIntent(t)).toBe(true)
     expect(isStyleGapIntent(t)).toBe(false)
     expect(detectAgentMode(t)).toBe('create')
@@ -78,5 +81,34 @@ describe('project audit intents', () => {
 
   it('no confunde refine con audit', () => {
     expect(isProjectAuditIntent('hazla más lenta')).toBe(false)
+  })
+
+  it('créame pista de batería worship es create, no gap/ask', () => {
+    const t =
+      'creame una pista de bateria worship con crescendo y usando mucho los toms, quiero que el tiempo sea 72 4/4'
+    expect(isStyleGapIntent(t)).toBe(false)
+    expect(detectAgentMode(t)).toBe('create')
+    expect(wantsFullProject(t)).toBe(false)
+    expect(inferBpmFromTempoIntent(t, 120)).toBe(72)
+  })
+
+  it('limpia + arma bachata → full project / genre rewrite, profundidad baja', () => {
+    const t = 'ok, limpia este proyecto y armame una pista de bachata'
+    expect(isGenreRewriteIntent(t)).toBe(true)
+    expect(wantsFullProject(t)).toBe(true)
+    expect(estimateReasoningDepth(t, 'create').depth).toBeLessThanOrEqual(4)
+  })
+
+  it('borra todo → wipe corto, no musicBuild', () => {
+    const t = 'limpia todo el proyecto'
+    expect(isProjectWipeIntent(t)).toBe(true)
+    expect(wantsFullProject(t)).toBe(false)
+    expect(estimateReasoningDepth(t, 'create').depth).toBe(3)
+  })
+
+  it('prince royce bachata → rewrite', () => {
+    const t = 'arreglame este proyecto para que sea una bachata moderna como prince royce'
+    expect(isGenreRewriteIntent(t)).toBe(true)
+    expect(wantsFullProject(t)).toBe(true)
   })
 })

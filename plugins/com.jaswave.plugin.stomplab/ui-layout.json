@@ -1,0 +1,1453 @@
+{
+  "productId": "com.jaswave.plugin.stomplab",
+  "titulo": "STOMPLAB",
+  "subtitulo": "GATE · COMP · DRIVE · AMP · CABINA IR · CHORUS · DELAY · SHIMMER",
+  "instrumento": false,
+  "visualizador": "espectro-dual",
+  "acento": "#E052FF",
+  "base": {
+    "ancho": 1100,
+    "alto": 620
+  },
+  "zonas": {
+    "pantalla": [
+      34,
+      34,
+      1066,
+      586
+    ],
+    "visualizador": [
+      52,
+      92,
+      652,
+      404
+    ],
+    "espectro": [
+      66,
+      124,
+      612,
+      382
+    ],
+    "miniPanel": [
+      52,
+      418,
+      652,
+      556
+    ],
+    "controles": [
+      666,
+      92,
+      1048,
+      404
+    ],
+    "salida": [
+      666,
+      418,
+      1048,
+      556
+    ],
+    "fader": [
+      680,
+      440,
+      724,
+      552
+    ],
+    "medidores": {
+      "x": 976,
+      "arriba": 446,
+      "abajo": 528
+    }
+  },
+  "escalas": {
+    "frecuencia": [
+      20,
+      20000
+    ],
+    "dbfs": [
+      -120,
+      0
+    ],
+    "caidaDbS": 14
+  },
+  "modoParam": null,
+  "modos": {
+    "selector": [
+      358,
+      48,
+      476,
+      68
+    ],
+    "corte": 410,
+    "defecto": "avanzado"
+  },
+  "parametrosCubiertos": [],
+  "widgets": [
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        92,
+        1048,
+        404
+      ],
+      "etiqueta": "PEDALERA",
+      "basico": true
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        704,
+        140,
+        780,
+        234
+      ],
+      "etiqueta": "DRIVE",
+      "tamano": 64,
+      "basico": true,
+      "param": 32,
+      "min": 0,
+      "max": 100,
+      "defecto": 40,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Drive",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        819,
+        140,
+        895,
+        234
+      ],
+      "etiqueta": "AMP GAIN",
+      "tamano": 64,
+      "basico": true,
+      "param": 42,
+      "min": 0,
+      "max": 100,
+      "defecto": 40,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Preamp Gain",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        934,
+        140,
+        1010,
+        234
+      ],
+      "etiqueta": "DELAY",
+      "tamano": 64,
+      "basico": true,
+      "param": 74,
+      "min": 0,
+      "max": 100,
+      "defecto": 25,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Delay Mix",
+      "unidad": "%"
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        690,
+        292,
+        794,
+        316
+      ],
+      "etiqueta": "GATE",
+      "basico": true,
+      "param": 10,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Gate On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        805,
+        292,
+        909,
+        316
+      ],
+      "etiqueta": "COMP",
+      "basico": true,
+      "param": 20,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Comp On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        920,
+        292,
+        1024,
+        316
+      ],
+      "etiqueta": "DRIVE",
+      "basico": true,
+      "param": 30,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Drive On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        418,
+        1048,
+        556
+      ],
+      "etiqueta": "SALIDA · PEDALERA",
+      "basico": true,
+      "param": 0,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": true,
+      "nombre": "Bypass",
+      "unidad": "",
+      "opciones": [
+        "Active",
+        "Bypass"
+      ]
+    },
+    {
+      "tipo": "fader",
+      "rect": [
+        680,
+        440,
+        724,
+        552
+      ],
+      "etiqueta": "SALIDA",
+      "basico": true,
+      "param": 2,
+      "min": -24,
+      "max": 24,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Output Gain",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        743,
+        454,
+        811,
+        478
+      ],
+      "etiqueta": "AMP",
+      "basico": true,
+      "param": 40,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Preamp On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        817,
+        454,
+        885,
+        478
+      ],
+      "etiqueta": "CABINA",
+      "basico": true,
+      "param": 50,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Cabinet On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        891,
+        454,
+        959,
+        478
+      ],
+      "etiqueta": "CHORUS",
+      "basico": true,
+      "param": 60,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Chorus On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        743,
+        510,
+        811,
+        534
+      ],
+      "etiqueta": "DELAY",
+      "basico": true,
+      "param": 70,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Delay On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        817,
+        510,
+        885,
+        534
+      ],
+      "etiqueta": "SHIMMER",
+      "basico": true,
+      "param": 80,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Shimmer On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        891,
+        510,
+        959,
+        534
+      ],
+      "etiqueta": "BRIGHT",
+      "basico": false,
+      "param": 49,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Preamp Bright",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        976,
+        446,
+        985,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        990,
+        446,
+        999,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1020,
+        446,
+        1029,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1034,
+        446,
+        1043,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        52,
+        92,
+        1048,
+        556
+      ],
+      "etiqueta": "PARÁMETROS AVANZADOS · 37",
+      "pagina": 2,
+      "basico": true
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        98.5,
+        131.2,
+        154.5,
+        205.2
+      ],
+      "etiqueta": "INPUT GAIN",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 1,
+      "min": -24,
+      "max": 24,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Input Gain",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        219.5,
+        131.2,
+        275.5,
+        205.2
+      ],
+      "etiqueta": "MIX",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": true,
+      "param": 3,
+      "min": 0,
+      "max": 100,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Mix",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        340.5,
+        131.2,
+        396.5,
+        205.2
+      ],
+      "etiqueta": "GATE THRESHOLD",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 11,
+      "min": -80,
+      "max": -20,
+      "defecto": -55,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Gate Threshold",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        461.5,
+        131.2,
+        517.5,
+        205.2
+      ],
+      "etiqueta": "GATE RELEASE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 12,
+      "min": 10,
+      "max": 500,
+      "defecto": 80,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Gate Release",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        582.5,
+        131.2,
+        638.5,
+        205.2
+      ],
+      "etiqueta": "GATE RANGE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 13,
+      "min": 0,
+      "max": 80,
+      "defecto": 60,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Gate Range",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        703.5,
+        131.2,
+        759.5,
+        205.2
+      ],
+      "etiqueta": "COMP THRESHOLD",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 21,
+      "min": -60,
+      "max": 0,
+      "defecto": -20,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Comp Threshold",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        824.5,
+        131.2,
+        880.5,
+        205.2
+      ],
+      "etiqueta": "COMP RATIO",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 22,
+      "min": 1,
+      "max": 20,
+      "defecto": 4,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Comp Ratio",
+      "unidad": ":1"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        945.5,
+        131.2,
+        1001.5,
+        205.2
+      ],
+      "etiqueta": "COMP ATTACK",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 23,
+      "min": 0.1,
+      "max": 100,
+      "defecto": 10,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Comp Attack",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        98.5,
+        215.6,
+        154.5,
+        289.6
+      ],
+      "etiqueta": "COMP RELEASE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 24,
+      "min": 10,
+      "max": 1000,
+      "defecto": 120,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Comp Release",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        219.5,
+        215.6,
+        275.5,
+        289.6
+      ],
+      "etiqueta": "COMP MAKEUP",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 25,
+      "min": 0,
+      "max": 24,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Comp Makeup",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        340.5,
+        215.6,
+        396.5,
+        289.6
+      ],
+      "etiqueta": "COMP BLEND",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 26,
+      "min": 0,
+      "max": 100,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Comp Blend",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        461.5,
+        215.6,
+        517.5,
+        289.6
+      ],
+      "etiqueta": "COMP KNEE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 27,
+      "min": 0,
+      "max": 12,
+      "defecto": 6,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Comp Knee",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        556,
+        250.6,
+        665,
+        270.6
+      ],
+      "etiqueta": "DRIVE MODEL",
+      "pagina": 2,
+      "basico": true,
+      "etiquetaArriba": true,
+      "param": 31,
+      "min": 0,
+      "max": 4,
+      "defecto": 1,
+      "pasos": 4,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Drive Model",
+      "unidad": "",
+      "opciones": [
+        "Clean Boost",
+        "Overdrive",
+        "Distortion",
+        "Fuzz",
+        "Metal"
+      ]
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        703.5,
+        215.6,
+        759.5,
+        289.6
+      ],
+      "etiqueta": "DRIVE TONE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 33,
+      "min": 500,
+      "max": 8000,
+      "defecto": 3000,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Drive Tone",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        824.5,
+        215.6,
+        880.5,
+        289.6
+      ],
+      "etiqueta": "DRIVE LEVEL",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 34,
+      "min": -24,
+      "max": 12,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Drive Level",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        919,
+        250.6,
+        1028,
+        270.6
+      ],
+      "etiqueta": "PREAMP CHANNEL",
+      "pagina": 2,
+      "basico": false,
+      "etiquetaArriba": true,
+      "param": 41,
+      "min": 0,
+      "max": 2,
+      "defecto": 1,
+      "pasos": 2,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Preamp Channel",
+      "unidad": "",
+      "opciones": [
+        "Clean",
+        "Crunch",
+        "Lead"
+      ]
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        98.5,
+        300,
+        154.5,
+        374
+      ],
+      "etiqueta": "PREAMP BASS",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 43,
+      "min": -12,
+      "max": 12,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Preamp Bass",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        219.5,
+        300,
+        275.5,
+        374
+      ],
+      "etiqueta": "PREAMP MID",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 44,
+      "min": -12,
+      "max": 12,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Preamp Mid",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        340.5,
+        300,
+        396.5,
+        374
+      ],
+      "etiqueta": "PREAMP TREBLE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 45,
+      "min": -12,
+      "max": 12,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Preamp Treble",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        461.5,
+        300,
+        517.5,
+        374
+      ],
+      "etiqueta": "PREAMP PRESENCE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 46,
+      "min": 0,
+      "max": 100,
+      "defecto": 30,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Preamp Presence",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        582.5,
+        300,
+        638.5,
+        374
+      ],
+      "etiqueta": "PREAMP MASTER",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 47,
+      "min": -24,
+      "max": 12,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Preamp Master",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        703.5,
+        300,
+        759.5,
+        374
+      ],
+      "etiqueta": "PREAMP SAG",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 48,
+      "min": 0,
+      "max": 100,
+      "defecto": 30,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Preamp Sag",
+      "unidad": "%"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        798,
+        335,
+        907,
+        355
+      ],
+      "etiqueta": "CABINET MODEL",
+      "pagina": 2,
+      "basico": true,
+      "etiquetaArriba": true,
+      "param": 51,
+      "min": 0,
+      "max": 5,
+      "defecto": 0,
+      "pasos": 5,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Cabinet Model",
+      "unidad": "",
+      "opciones": [
+        "1x12 Open",
+        "2x12 Combo",
+        "4x12 Closed",
+        "Vintage Bright",
+        "British 2x12",
+        "DI (flat)"
+      ]
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        945.5,
+        300,
+        1001.5,
+        374
+      ],
+      "etiqueta": "CABINET LOW CUT",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 52,
+      "min": 20,
+      "max": 400,
+      "defecto": 40,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Cabinet Low Cut",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        98.5,
+        384.4,
+        154.5,
+        458.4
+      ],
+      "etiqueta": "CABINET HIGH CUT",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 53,
+      "min": 2000,
+      "max": 20000,
+      "defecto": 14000,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Cabinet High Cut",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        219.5,
+        384.4,
+        275.5,
+        458.4
+      ],
+      "etiqueta": "CABINET MIX",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 54,
+      "min": 0,
+      "max": 100,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Cabinet Mix",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        340.5,
+        384.4,
+        396.5,
+        458.4
+      ],
+      "etiqueta": "CHORUS RATE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 61,
+      "min": 0.05,
+      "max": 8,
+      "defecto": 0.8,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 2,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Chorus Rate",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        461.5,
+        384.4,
+        517.5,
+        458.4
+      ],
+      "etiqueta": "CHORUS DEPTH",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 62,
+      "min": 0,
+      "max": 100,
+      "defecto": 50,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Chorus Depth",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        582.5,
+        384.4,
+        638.5,
+        458.4
+      ],
+      "etiqueta": "CHORUS MIX",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 63,
+      "min": 0,
+      "max": 100,
+      "defecto": 40,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Chorus Mix",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        703.5,
+        384.4,
+        759.5,
+        458.4
+      ],
+      "etiqueta": "DELAY TIME",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 71,
+      "min": 20,
+      "max": 2000,
+      "defecto": 380,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Delay Time",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        824.5,
+        384.4,
+        880.5,
+        458.4
+      ],
+      "etiqueta": "DELAY FEEDBACK",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 72,
+      "min": 0,
+      "max": 95,
+      "defecto": 35,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Delay Feedback",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        945.5,
+        384.4,
+        1001.5,
+        458.4
+      ],
+      "etiqueta": "DELAY TONE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 73,
+      "min": 1000,
+      "max": 12000,
+      "defecto": 5000,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Delay Tone",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        72,
+        503.8,
+        181,
+        523.8
+      ],
+      "etiqueta": "DELAY MODE",
+      "pagina": 2,
+      "basico": false,
+      "etiquetaArriba": true,
+      "param": 75,
+      "min": 0,
+      "max": 2,
+      "defecto": 0,
+      "pasos": 2,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Delay Mode",
+      "unidad": "",
+      "opciones": [
+        "Stereo",
+        "Ping-Pong",
+        "Tape"
+      ]
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        219.5,
+        468.8,
+        275.5,
+        542.8
+      ],
+      "etiqueta": "SHIMMER MIX",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": true,
+      "param": 81,
+      "min": 0,
+      "max": 100,
+      "defecto": 25,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Shimmer Mix",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        340.5,
+        468.8,
+        396.5,
+        542.8
+      ],
+      "etiqueta": "SHIMMER DECAY",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 82,
+      "min": 0.3,
+      "max": 20,
+      "defecto": 3,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Shimmer Decay",
+      "unidad": "s"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        461.5,
+        468.8,
+        517.5,
+        542.8
+      ],
+      "etiqueta": "SHIMMER OCTAVE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 83,
+      "min": 0,
+      "max": 100,
+      "defecto": 50,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Shimmer Octave",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        582.5,
+        468.8,
+        638.5,
+        542.8
+      ],
+      "etiqueta": "SHIMMER DAMPING",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 84,
+      "min": 1000,
+      "max": 16000,
+      "defecto": 6000,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Shimmer Damping",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "pagina",
+      "rect": [
+        948,
+        98,
+        1034,
+        113
+      ],
+      "etiqueta": "+37 PARÁM.",
+      "basico": false,
+      "paginaDestino": 2,
+      "textoAbierta": "◀ EDITOR"
+    },
+    {
+      "tipo": "modo",
+      "rect": [
+        358,
+        48,
+        476,
+        68
+      ],
+      "etiqueta": "BÁSICO|AVANZADO",
+      "basico": true,
+      "corte": 410
+    },
+    {
+      "tipo": "reset",
+      "rect": [
+        624,
+        48,
+        684,
+        68
+      ],
+      "etiqueta": "RESET",
+      "basico": true
+    }
+  ]
+}

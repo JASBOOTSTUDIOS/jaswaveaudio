@@ -11,14 +11,14 @@ function ev(nombre: string, payload: Record<string, unknown>): EventoDominio {
   return {
     nombre,
     version: 1,
-    marcaTiempo: Date.now(),
+    marcaTiempo: entorno.ahora(),
     fuente: 'builtin',
     payload: payload as EventoDominio['payload'],
   }
 }
 
 function newId(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+  return `${prefix}-${entorno.ahora().toString(36)}-${entorno.aleatorio().toString(36).slice(2, 6)}`
 }
 
 function ensureRouting(estado: DAWState): RoutingMatrix {
@@ -32,7 +32,7 @@ function ensureRouting(estado: DAWState): RoutingMatrix {
     conexionesDirectas: [],
     puentes: [],
     grupos: [],
-    validacion: { errores: [], validado: true, ultimaValidacion: Date.now() },
+    validacion: { errores: [], validado: true, ultimaValidacion: entorno.ahora() },
     estadisticas: {
       busesTotales: 0,
       enviosTotales: 0,
@@ -56,6 +56,7 @@ function ensureRouting(estado: DAWState): RoutingMatrix {
 export function crearComandoBusCreate(): CommandDefinition<any> {
   return {
     type: 'bus.create',
+    historialUndo: 'instantanea',
     description: 'Crea un bus/aux FX en la matriz de routing (+ pista tipo bus)',
     risk: 'write',
     schema: {
@@ -96,7 +97,7 @@ export function crearComandoBusCreate(): CommandDefinition<any> {
         reduccionGanancia: 0,
       }
       const buses = [...routing.buses, bus]
-      const now = Date.now()
+      const now = entorno.ahora()
       const busTrack = {
         id: busId,
         nombre,
@@ -215,6 +216,7 @@ export function crearComandoBusCreate(): CommandDefinition<any> {
 export function crearComandoSendSet(): CommandDefinition<any> {
   return {
     type: 'send.set',
+    historialUndo: 'instantanea',
     description: 'Crea o actualiza un envío pista→bus',
     risk: 'write',
     schema: {
@@ -292,6 +294,7 @@ export function crearComandoSendSet(): CommandDefinition<any> {
 export function crearComandoSidechainConnect(): CommandDefinition<any> {
   return {
     type: 'sidechain.connect',
+    historialUndo: 'instantanea',
     description: 'Conecta sidechain origen→destino (estado; host según plugin)',
     risk: 'write',
     schema: {
@@ -300,6 +303,7 @@ export function crearComandoSidechainConnect(): CommandDefinition<any> {
       properties: {
         origenTrackId: { type: 'string' },
         destinoTrackId: { type: 'string' },
+        destinoSlotId: { type: 'string' },
         cantidad: { type: 'number' },
         activo: { type: 'boolean' },
       },
@@ -315,6 +319,10 @@ export function crearComandoSidechainConnect(): CommandDefinition<any> {
         cantidad: Math.max(0, Math.min(1, Number(payload.cantidad ?? 1))),
         fuente: 'interna',
         tags: [],
+        destinoSlotId:
+          typeof payload.destinoSlotId === 'string' && payload.destinoSlotId
+            ? String(payload.destinoSlotId)
+            : undefined,
         orden: routing.sidechains.length,
       }
       const sidechains = [
@@ -341,3 +349,5 @@ export function crearComandoSidechainConnect(): CommandDefinition<any> {
     },
   }
 }
+
+import { entorno } from '../state/entorno-determinista';

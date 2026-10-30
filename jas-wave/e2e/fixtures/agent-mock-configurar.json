@@ -1,0 +1,79 @@
+{
+  "name": "e2e: /configurar — entrevista con recomendación, crear y eliminar una habilidad en la carpeta de configuración",
+  "responses": [
+    {
+      "when": { "systemIncludes": "Modo configurar asistente", "lastUserIncludes": "Ayúdame a configurar", "afterToolResult": false },
+      "content": "",
+      "toolCalls": [{ "name": "config_listar", "arguments": {} }]
+    },
+    {
+      "when": { "systemIncludes": "Modo configurar asistente", "lastUserIncludes": "Ayúdame a configurar", "afterToolResult": true },
+      "content": "",
+      "toolCalls": [
+        {
+          "name": "preguntar",
+          "arguments": {
+            "pregunta": "Aún no tienes nada guardado. ¿Qué quieres crear primero?",
+            "opciones": ["Una habilidad (recomendado)", "Un prompt", "Un plan", "Tus reglas"]
+          }
+        }
+      ]
+    },
+    {
+      "when": { "systemIncludes": "Modo configurar asistente", "lastUserIncludes": "Una habilidad" },
+      "content": "Perfecto. Cuéntame cuándo debo usarla y qué debo hacer, y la guardo."
+    },
+    {
+      "when": { "systemIncludes": "Modo configurar asistente", "lastUserIncludes": "temas lentos", "afterToolResult": false },
+      "content": "",
+      "toolCalls": [
+        {
+          "name": "config_escribir",
+          "arguments": {
+            "carpeta": "habilidades",
+            "nombre": "Batería lenta",
+            "descripcion": "cuando pida batería para un tema lento",
+            "contenido": "Bombo en 1 y 3, cross-stick en los versos y platos solo en el coro."
+          }
+        }
+      ]
+    },
+    {
+      "when": { "systemIncludes": "Modo configurar asistente", "lastUserIncludes": "temas lentos", "afterToolResult": true },
+      "content": "Listo: guardé tu habilidad «Batería lenta». La usaré cuando me pidas batería para un tema lento."
+    },
+    {
+      "when": { "systemIncludes": "Modo configurar asistente", "lastUserIncludes": "borra", "afterToolResult": false },
+      "content": "",
+      "toolCalls": [{ "name": "config_eliminar", "arguments": { "carpeta": "habilidades", "nombre": "Batería lenta" } }]
+    },
+    {
+      "when": { "systemIncludes": "Modo configurar asistente", "lastUserIncludes": "borra", "afterToolResult": true },
+      "content": "Hecho: la quité. Si la necesitas otra vez, pídeme que la recupere."
+    },
+    {
+      "when": { "systemIncludes": "Modo configurar asistente", "lastUserIncludes": "recupera", "afterToolResult": false },
+      "content": "",
+      "toolCalls": [{ "name": "config_restaurar", "arguments": { "carpeta": "habilidades", "nombre": "Batería lenta" } }]
+    },
+    {
+      "when": { "systemIncludes": "Modo configurar asistente", "lastUserIncludes": "recupera", "afterToolResult": true },
+      "content": "Ya está de vuelta: «Batería lenta»."
+    },
+    {
+      "when": { "lastUserIncludes": "créame un prompt", "afterToolResult": false },
+      "content": "",
+      "toolCalls": [
+        {
+          "name": "config_escribir",
+          "arguments": { "carpeta": "prompts", "nombre": "Intro épica", "descripcion": "empezar un tema", "contenido": "8 compases de pad cálido y piano arpegiado con crescendo." }
+        }
+      ]
+    },
+    {
+      "when": { "lastUserIncludes": "créame un prompt", "afterToolResult": true },
+      "content": "Guardé tu prompt «Intro épica»."
+    }
+  ],
+  "fallback": { "content": "De acuerdo." }
+}

@@ -13,14 +13,14 @@ function ev(nombre: string, payload: Record<string, unknown>): EventoDominio {
   return {
     nombre,
     version: 1,
-    marcaTiempo: Date.now(),
+    marcaTiempo: entorno.ahora(),
     fuente: 'builtin',
     payload: payload as EventoDominio['payload'],
   }
 }
 
 function newId(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+  return `${prefix}-${entorno.ahora().toString(36)}-${entorno.aleatorio().toString(36).slice(2, 6)}`
 }
 
 function toMidiPoints(puntos: PuntoAutomatizacion[]): MidiAutomationPoint[] {
@@ -43,6 +43,7 @@ export function sampleTrackAutomation(
 export function crearComandoAutomationSetCurve(): CommandDefinition<any> {
   return {
     type: 'automation.setCurve',
+    historialUndo: 'instantanea',
     description: 'Define curva de automatización (volumen|paneo|paramId) en una pista',
     risk: 'write',
     schema: {
@@ -117,6 +118,7 @@ export function crearComandoAutomationSetCurve(): CommandDefinition<any> {
 export function crearComandoAutomationClear(): CommandDefinition<any> {
   return {
     type: 'automation.clear',
+    historialUndo: 'instantanea',
     description: 'Elimina automatización de un parámetro (o todas) en una pista',
     risk: 'write',
     schema: {
@@ -152,6 +154,7 @@ export function crearComandoAutomationClear(): CommandDefinition<any> {
 export function crearComandoAutomationWritePoint(): CommandDefinition<any> {
   return {
     type: 'automation.writePoint',
+    historialUndo: 'instantanea',
     description: 'Escribe un punto de automatización (merge en la curva existente)',
     risk: 'write',
     schema: {
@@ -219,3 +222,5 @@ export function crearComandoAutomationWritePoint(): CommandDefinition<any> {
     },
   }
 }
+
+import { entorno } from '../state/entorno-determinista';

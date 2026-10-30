@@ -1,0 +1,15 @@
+# JasWave StompLab – cadena de pedales VST3 independiente (compila solo o desde plugins/CMakeLists.txt)
+cmake_minimum_required(VERSION 3.25)
+project(jaswave_stomplab VERSION 1.0.0 LANGUAGES C CXX)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/JasWavePlugins.cmake")
+jw_setup_shared()
+jaswave_add_vst3(TARGET JasWaveStompLab SOURCES src/stomp_plugin.cpp)
+
+# Autoverificación numérica del DSP (sin SDK, sin UI): tools/<Config>/JasWaveStompLab_selftest.exe
+add_executable(JasWaveStompLab_selftest tools/stomp_selftest.cpp)
+target_include_directories(JasWaveStompLab_selftest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${JW_PLUGINS_ROOT}/shared-dsp")
+if(MSVC)
+  target_compile_options(JasWaveStompLab_selftest PRIVATE /O2 /EHsc /W3 /fp:precise /utf-8)
+  target_compile_definitions(JasWaveStompLab_selftest PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(JasWaveStompLab_selftest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tools/$<CONFIG>")

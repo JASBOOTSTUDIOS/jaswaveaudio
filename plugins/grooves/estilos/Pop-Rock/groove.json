@@ -1,0 +1,92 @@
+{
+  "archivos": {
+    "pop-rock-medio.mid": {
+      "id": "jw-pop-rock-pop-rock-medio",
+      "nombre": "Pop-rock medio",
+      "tempo": 112,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "pop-rock",
+        "medio"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "pop-rock-empuje.mid": {
+      "id": "jw-pop-rock-pop-rock-empuje",
+      "nombre": "Pop-rock empuje",
+      "tempo": 124,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "pop-rock",
+        "empuje",
+        "coro"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "pop-rock-con-pandereta.mid": {
+      "id": "jw-pop-rock-pop-rock-con-pandereta",
+      "nombre": "Pop-rock con pandereta",
+      "tempo": 108,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "pop-rock",
+        "pandereta"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-caja-al-cuarto.mid": {
+      "id": "jw-pop-rock-fill-caja-al-cuarto",
+      "nombre": "Fill caja al cuarto",
+      "tempo": 114,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "caja",
+        "cuarto"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-toms-subiendo.mid": {
+      "id": "jw-pop-rock-fill-toms-subiendo",
+      "nombre": "Fill toms subiendo",
+      "tempo": 114,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "toms",
+        "subiendo"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

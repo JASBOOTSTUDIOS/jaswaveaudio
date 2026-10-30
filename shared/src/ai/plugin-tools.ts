@@ -74,7 +74,7 @@ export function registrarPluginTools(registry: ToolRegistry, getState: GetState)
     (type: string): ToolHandler =>
     async (params, ctx) => {
       try {
-        const r = await ctx.commandExecutor.execute(type, params as Record<string, unknown>)
+        const r = await ctx.commandExecutor.execute(type, params as Record<string, unknown>, ctx.source)
         return {
           success: r.success,
           data: r.result,
@@ -94,6 +94,7 @@ export function registrarPluginTools(registry: ToolRegistry, getState: GetState)
 
   for (const [type, description] of [
     ['plugin.insert', 'Inserta un plugin en la FX Chain'],
+    ['plugin.update', 'Actualiza path/descripcion de un plugin (ADR-0017)'],
     ['plugin.remove', 'Quita un plugin de la FX Chain'],
     ['plugin.move', 'Reordena un plugin en la cadena'],
     ['plugin.bypass', 'Activa/desactiva bypass'],

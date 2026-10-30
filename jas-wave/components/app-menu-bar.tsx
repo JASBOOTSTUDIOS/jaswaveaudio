@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { Check, ChevronRight } from 'lucide-react'
+import { useWorkspace } from '@/src/workspace/workspace-context'
+import { TOOL_CATALOG, requestToggleTool } from '@/src/workspace/types'
+import { herramientasDisponibles } from '@/src/modulos/herramientas'
+import { useVersionModulos } from '@/src/modulos/use-modulos'
 
 export type MenuActionId =
   | 'proyecto.nuevo'
@@ -25,6 +29,7 @@ export type MenuActionId =
   | 'ventana.paletaComandos'
   | 'ventana.atajos'
   | 'ventana.midiMap'
+  | 'ventana.terminal'
   | 'transporte.reproducir'
   | 'transporte.detener'
   | 'transporte.grabar'
@@ -33,14 +38,17 @@ export type MenuActionId =
   | 'transporte.inicio'
   | 'pista.nueva'
   | 'pista.nuevaMidi'
+  | 'pista.nuevaCarpeta'
   | 'ventana.ajustes'
   | 'archivo.exportarBounce'
+  | 'archivo.abrirPaquete'
   | 'archivo.exportarPartituras'
   | 'archivo.exportarProyectoConPartituras'
 
 type MenuItem =
   | { type: 'action'; id: MenuActionId; label: string; shortcut?: string }
   | { type: 'separator' }
+  | { type: 'tools'; label: string }
 
 type MenuGroup = { id: string; label: string; items: MenuItem[] }
 
@@ -51,10 +59,16 @@ const MENUS: MenuGroup[] = [
     items: [
       { type: 'action', id: 'proyecto.nuevo', label: 'Nuevo proyecto', shortcut: 'Ctrl+N' },
       { type: 'action', id: 'proyecto.abrir', label: 'Abrir…', shortcut: 'Ctrl+O' },
+      { type: 'action', id: 'archivo.abrirPaquete', label: 'Abrir proyecto empaquetado (.zip)…' },
       { type: 'separator' },
       { type: 'action', id: 'proyecto.guardar', label: 'Guardar', shortcut: 'Ctrl+S' },
       { type: 'action', id: 'proyecto.guardarComo', label: 'Guardar como…', shortcut: 'Ctrl+Shift+S' },
-      { type: 'action', id: 'archivo.exportarBounce', label: 'Exportar bounce WAV…' },
+      {
+        type: 'action',
+        id: 'archivo.exportarBounce',
+        label: 'Exportar (canción, pistas, MIDI, proyecto)…',
+        shortcut: 'Ctrl+Alt+R',
+      },
       { type: 'action', id: 'archivo.exportarPartituras', label: 'Exportar partituras PDF…' },
       {
         type: 'action',
@@ -94,9 +108,12 @@ const MENUS: MenuGroup[] = [
       { type: 'action', id: 'ventana.panelDerecho', label: 'Panel derecho' },
       { type: 'action', id: 'ventana.panelInferior', label: 'Panel inferior / Mixer' },
       { type: 'separator' },
+      { type: 'tools', label: 'Herramientas' },
+      { type: 'separator' },
       { type: 'action', id: 'ventana.paletaComandos', label: 'Paleta de comandos', shortcut: 'Ctrl+K' },
       { type: 'action', id: 'ventana.atajos', label: 'Atajos de teclado…' },
       { type: 'action', id: 'ventana.midiMap', label: 'Control MIDI / MIDI Learn…' },
+      { type: 'action', id: 'ventana.terminal', label: 'Terminal', shortcut: 'Ctrl+`' },
     ],
   },
   {
@@ -118,6 +135,7 @@ const MENUS: MenuGroup[] = [
     items: [
       { type: 'action', id: 'pista.nueva', label: 'Nueva pista de audio' },
       { type: 'action', id: 'pista.nuevaMidi', label: 'Nueva pista MIDI' },
+      { type: 'action', id: 'pista.nuevaCarpeta', label: 'Nueva carpeta (bus)' },
       { type: 'separator' },
       { type: 'action', id: 'ventana.ajustes', label: 'Ajustes del proyecto…' },
     ],
@@ -130,6 +148,59 @@ function dispatchMenuAction(id: MenuActionId) {
     return
   }
   window.dispatchEvent(new CustomEvent('jaswave-menu-action', { detail: { id } }))
+}
+
+function ToolsSubmenu({ onPicked }: { onPicked: () => void }) {
+  const { isToolOpen } = useWorkspace()
+  const [open, setOpen] = useState(false)
+  useVersionModulos()
+  const ids = herramientasDisponibles()
+
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        className="flex w-full items-center justify-between gap-6 px-3 py-1.5 text-left text-[12px] text-foreground hover:bg-panel-raised"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span>Herramientas</span>
+        <ChevronRight className="size-3 text-muted-foreground" />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          className="absolute left-full top-0 z-[95] ml-0.5 max-h-80 min-w-[200px] overflow-y-auto rounded-md border border-border bg-panel py-1 shadow-xl"
+        >
+          {ids.map((toolId) => {
+            const on = isToolOpen(toolId)
+            return (
+              <button
+                key={toolId}
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={on}
+                onClick={() => {
+                  requestToggleTool(toolId)
+                  onPicked()
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-foreground hover:bg-panel-raised"
+              >
+                <span className="flex size-3.5 items-center justify-center">
+                  {on ? <Check className="size-3 text-accent-amber" /> : null}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{TOOL_CATALOG[toolId].title}</span>
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 export function AppMenuBar() {
@@ -187,6 +258,9 @@ export function AppMenuBar() {
               {menu.items.map((item, idx) => {
                 if (item.type === 'separator') {
                   return <div key={`sep-${idx}`} className="my-1 border-t border-border" />
+                }
+                if (item.type === 'tools') {
+                  return <ToolsSubmenu key="tools" onPicked={() => setOpenId(null)} />
                 }
                 return (
                   <button

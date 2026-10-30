@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="percussion-steel-drum">
+  <!-- Borde circular de barril metálico cóncavo -->
+  <circle cx="32" cy="32" r="22" fill="currentColor" fill-opacity="0.14" stroke-width="2.5" />
+  <!-- Nota central cóncava más profunda -->
+  <circle cx="32" cy="32" r="6" fill="currentColor" fill-opacity="0.3" stroke-width="1.75" />
+  <!-- Campos de notas elípticos martillados en el anillo exterior -->
+  <ellipse cx="32" cy="17" rx="5" ry="3" stroke-width="1.5" />
+  <ellipse cx="43" cy="22" rx="4" ry="4" stroke-width="1.5" />
+  <ellipse cx="46" cy="33" rx="3.5" ry="5" stroke-width="1.5" />
+  <ellipse cx="41" cy="43" rx="4" ry="3.5" stroke-width="1.5" />
+  <ellipse cx="32" cy="46" rx="5" ry="3" stroke-width="1.5" />
+  <ellipse cx="23" cy="43" rx="4" ry="3.5" stroke-width="1.5" />
+  <ellipse cx="18" cy="33" rx="3.5" ry="5" stroke-width="1.5" />
+  <ellipse cx="21" cy="22" rx="4" ry="4" stroke-width="1.5" />
+  <!-- Maza de goma corta de steel pan -->
+  <line x1="44" y1="44" x2="56" y2="56" stroke-width="2.5" />
+  <circle cx="44" cy="44" r="2.5" fill="currentColor" />
+</svg>

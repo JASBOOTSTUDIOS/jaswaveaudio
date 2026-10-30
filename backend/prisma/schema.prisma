@@ -1,0 +1,489 @@
+// Fuente de verdad del modelo de datos del backend de JasWave.
+// Supabase aporta Auth (JWT) y el Postgres local; el acceso a datos va por Prisma.
+// Prisma se conecta con rol de servicio, así que la autorización se aplica en el backend
+// (RBAC en código), no por RLS.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Catálogo de VST (licenciables) ----------
+
+model Producto {
+  id          String   @id // p. ej. com.jaswave.plugin.param-eq
+  nombre      String
+  creadoEn    DateTime @default(now())
+  acciones    Accion[]
+  roles       RolProducto[]
+  licencias   Licencia[]
+  concesiones Concesion[]
+}
+
+/// Acción o funcionalidad concreta de un producto (p. ej. "banda-6.exportar").
+model Accion {
+  id          String   @id @default(uuid())
+  productoId  String
+  clave       String
+  descripcion String   @default("")
+  producto    Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  rolesAccion RolAccion[]
+  concesiones Concesion[]
+
+  @@unique([productoId, clave])
+}
+
+/// Rol definido por el admin para un producto (p. ej. "mezcla" del EQ).
+model RolProducto {
+  id         String   @id @default(uuid())
+  productoId String
+  nombre     String
+  producto   Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  acciones   RolAccion[]
+  asignados  AsignacionRol[]
+
+  @@unique([productoId, nombre])
+}
+
+model RolAccion {
+  rolId    String
+  accionId String
+  rol      RolProducto @relation(fields: [rolId], references: [id], onDelete: Cascade)
+  accion   Accion      @relation(fields: [accionId], references: [id], onDelete: Cascade)
+
+  @@id([rolId, accionId])
+}
+
+// ---------- Usuarios, roles asignados y permisos directos ----------
+
+model Usuario {
+  id           String   @id @default(uuid())
+  /// sub de Supabase Auth; null hasta que el usuario inicia sesión por primera vez.
+  subAuth      String?  @unique
+  email        String   @unique
+  esAdmin      Boolean  @default(false)
+  creadoEn     DateTime @default(now())
+  roles        AsignacionRol[]
+  concesiones  Concesion[]
+  licencias    Licencia[]
+  dispositivos Dispositivo[]
+  membresias   MiembroSala[]
+  proveedoresIA ProveedorIA[]
+}
+
+/// Un usuario puede tener varios roles de distintos (o el mismo) producto.
+model AsignacionRol {
+  usuarioId String
+  rolId     String
+  usuario   Usuario     @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  rol       RolProducto @relation(fields: [rolId], references: [id], onDelete: Cascade)
+
+  @@id([usuarioId, rolId])
+}
+
+/// Permiso directo independiente de los roles: allow o deny sobre una acción.
+model Concesion {
+  id          String    @id @default(uuid())
+  usuarioId   String
+  productoId  String
+  accionId    String
+  efecto      Efecto
+  expiraEn    DateTime?
+  creadoEn    DateTime  @default(now())
+  usuario     Usuario   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  producto    Producto  @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  accion      Accion    @relation(fields: [accionId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, accionId])
+}
+
+enum Efecto {
+  allow
+  deny
+}
+
+// ---------- Licencias y dispositivos ----------
+
+enum EstadoLicencia {
+  activa
+  suspendida
+  revocada
+}
+
+model Licencia {
+  id         String         @id @default(uuid())
+  usuarioId  String
+  productoId String
+  estado     EstadoLicencia @default(activa)
+  actualizadaEn DateTime    @updatedAt
+  /// Solo en la licencia del «Asistente IA»: límites de uso de los modelos JasWave.
+  planIAId   String?
+  usuario    Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  producto   Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  planIA     PlanIA?  @relation(fields: [planIAId], references: [id], onDelete: SetNull)
+
+  @@unique([usuarioId, productoId])
+}
+
+/// Equipo autorizado a renovar licencias sin sesión (VST en cualquier DAW).
+/// Solo se guardan hashes SHA-256 del token; el anterior se acepta una vez (gracia ante respuestas perdidas).
+model Dispositivo {
+  id           String   @id @default(uuid())
+  usuarioId    String
+  nombre       String   @default("")
+  hashToken    String?  @unique
+  hashAnterior String?  @unique
+  revocado     Boolean  @default(false)
+  creadoEn     DateTime @default(now())
+  ultimoUso    DateTime @default(now())
+  usuario      Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+}
+
+enum EstadoCodigoDispositivo {
+  pendiente
+  aprobado
+  caducado
+}
+
+/// Flujo device-code: el VST muestra `codigoUsuario`, el usuario lo aprueba en el navegador.
+model CodigoDispositivo {
+  codigoDispositivo String                  @id
+  codigoUsuario     String                  @unique
+  estado            EstadoCodigoDispositivo @default(pendiente)
+  usuarioId         String?
+  productoId        String
+  caducaEn          DateTime
+  creadoEn          DateTime                @default(now())
+}
+
+// ---------- Auditoría ----------
+
+model RegistroAuditoria {
+  id        String   @id @default(uuid())
+  actorId   String
+  accion    String
+  objetivo  String
+  datos     Json     @default("{}")
+  creadoEn  DateTime @default(now())
+
+  @@index([creadoEn])
+}
+
+// ---------- Sincronización de sesiones (S1) ----------
+
+enum RolSala {
+  owner
+  editor
+  viewer
+}
+
+model Sala {
+  id        String          @id @default(uuid())
+  nombre    String
+  creadaEn  DateTime        @default(now())
+  miembros  MiembroSala[]
+  comandos  ComandoSala[]
+}
+
+model MiembroSala {
+  salaId    String
+  usuarioId String
+  rol       RolSala
+  sala      Sala    @relation(fields: [salaId], references: [id], onDelete: Cascade)
+  usuario   Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@id([salaId, usuarioId])
+}
+
+/// Registro ordenado de comandos de una sala. `seq` lo asigna el servidor (monótono, sin huecos).
+model ComandoSala {
+  id        String   @id @default(uuid())
+  salaId    String
+  seq       Int
+  autorId   String
+  clienteId String
+  tipo      String
+  payload   Json
+  vclock    Json     @default("{}")
+  creadoEn  DateTime @default(now())
+  sala      Sala     @relation(fields: [salaId], references: [id], onDelete: Cascade)
+
+  @@unique([salaId, seq])
+}
+
+// ---------- Catálogo de paquetes de plugins (D1) ----------
+
+/// Versión publicada de un paquete descargable (zip en GitHub Releases).
+model PaquetePlugin {
+  id             String
+  version        String
+  nombre         String
+  url            String
+  sha256         String
+  sizeBytes      Int
+  publicadoEn    DateTime @default(now())
+  /// Categoría del manifiesto (audio-effect, instrument, ui-extension, ai-skill…).
+  categoria      String   @default("audio-effect")
+  /// Plataformas del manifiesto (win-x64, web).
+  plataformas    String[] @default([])
+  descripcion    String   @default("")
+  /// Módulos del DAW (M3): entrypoints.ui y entrypoints.uiEstilos del manifiesto.
+  entradaUi      String?
+  entradaEstilos String?
+  archivos       ArchivoModulo[]
+
+  @@id([id, version])
+}
+
+/// Archivos de un módulo publicados para el cliente web (M3): se sirven en
+/// /modulos/<id>/<versión>/<ruta> con URLs inmutables. El SHA-256 lo calcula el servidor al publicar.
+model ArchivoModulo {
+  paqueteId String
+  version   String
+  ruta      String
+  tipo      String
+  sha256    String
+  contenido Bytes
+  paquete   PaquetePlugin @relation(fields: [paqueteId, version], references: [id, version], onDelete: Cascade)
+
+  @@id([paqueteId, version, ruta])
+}
+
+// ---------- Handover web → escritorio (H1) ----------
+
+/// Token de un solo uso (60 s). `hash` = SHA-256 del token; `cifrado` = datos + sesión con AES-256-GCM
+/// usando una clave derivada del propio token: la base de datos sola no puede leerlos.
+model TokenHandover {
+  hash      String   @id
+  usuarioId String
+  cifrado   Bytes
+  caducaEn  DateTime
+  creadoEn  DateTime @default(now())
+
+  @@index([caducaEn])
+}
+
+// ---------- Proveedores de IA (M2) ----------
+
+/// Dónde se ejecutan las peticiones de un proveedor propio del usuario.
+enum EjecucionIA {
+  servidor
+  local
+}
+
+/// Proveedor de modelos de IA. propietarioId null = del admin (lo usan los roles con la acción
+/// ia.proveedor.<slug>); con valor = proveedor propio del usuario (requiere ia.modelo-propio).
+/// La clave va cifrada con AES-256-GCM (IA_CLAVE_MAESTRA) y nunca sale por la API.
+model ProveedorIA {
+  id                  String      @id @default(uuid())
+  slug                String      @unique
+  nombre              String
+  tipo                String
+  baseUrl             String
+  claveCifrada        Bytes?
+  versionClave        Int         @default(1)
+  custom              Json?
+  modelos             String[]
+  modeloPorDefecto    String
+  maxTokens           Int         @default(4096)
+  peticionesPorMinuto Int         @default(30)
+  herramientas        Boolean?
+  propietarioId       String?
+  ejecucion           EjecucionIA @default(servidor)
+  activo              Boolean     @default(true)
+  creadoEn            DateTime    @default(now())
+  actualizadoEn       DateTime    @updatedAt
+  propietario         Usuario?    @relation(fields: [propietarioId], references: [id], onDelete: Cascade)
+  claves              ClaveProveedorIA[]
+
+  @@index([propietarioId])
+}
+
+/// Claves adicionales de una conexión del admin (grupo con rotación). La clave de `ProveedorIA`
+/// sigue siendo la principal; estas se reparten la carga y se enfrían ante 429/401.
+model ClaveProveedorIA {
+  id           String      @id @default(uuid())
+  proveedorId  String
+  etiqueta     String      @default("")
+  claveCifrada Bytes
+  activa       Boolean     @default(true)
+  creadaEn     DateTime    @default(now())
+  proveedor    ProveedorIA @relation(fields: [proveedorId], references: [id], onDelete: Cascade)
+
+  @@index([proveedorId])
+}
+
+// ---------- JasWave IA: modelos de marca, planes y consumo ----------
+
+/// Modelo que ven los usuarios («JasWave Rápido»…). Por dentro es una cadena ordenada de
+/// conexión + modelo real; el servidor elige, cubre con el siguiente si tarda y nunca expone la cadena.
+model ModeloJasWave {
+  id                String   @id
+  nombre            String
+  descripcion       String   @default("")
+  orden             Int      @default(0)
+  activo            Boolean  @default(true)
+  /// [{ proveedorId, modelo, razonamiento: "off" | "bajo" | "normal" }]
+  cadena            Json     @default("[]")
+  creditosPorMil    Float    @default(1)
+  maxTokens         Int      @default(8192)
+  creadoEn          DateTime @default(now())
+  actualizadoEn     DateTime @updatedAt
+}
+
+/// Plan de uso de IA. Se asigna a la licencia del producto «Asistente IA» de cada usuario;
+/// sin plan asignado se aplica el plan por defecto.
+model PlanIA {
+  id               String     @id @default(uuid())
+  nombre           String     @unique
+  descripcion      String     @default("")
+  /// null = sin límite
+  creditosDia      Int?
+  creditosMes      Int?
+  peticionesMinuto Int        @default(20)
+  /// Ids de ModeloJasWave permitidos; vacío = todos.
+  modelos          String[]   @default([])
+  porDefecto       Boolean    @default(false)
+  creadoEn         DateTime   @default(now())
+  licencias        Licencia[]
+}
+
+/// Una fila por petición a un modelo JasWave (o a una conexión directa).
+model ConsumoIA {
+  id             String   @id @default(uuid())
+  usuarioId      String
+  modelo         String
+  modeloReal     String   @default("")
+  proveedorId    String?
+  proposito      String   @default("")
+  tokensEntrada  Int      @default(0)
+  tokensSalida   Int      @default(0)
+  creditos       Float    @default(0)
+  ms             Int      @default(0)
+  ok             Boolean  @default(true)
+  creadoEn       DateTime @default(now())
+
+  @@index([usuarioId, creadoEn])
+  @@index([creadoEn])
+}
+
+// ---------- Gestor de modelos gratuitos de OpenRouter ----------
+
+/// Un modelo gratuito detectado en el catálogo de OpenRouter, con el resultado de sus pruebas.
+/// Lo mantiene el gestor: descubrir, probar, clasificar por nivel de razonamiento y reconstruir las cadenas.
+model ModeloGratisIA {
+  /// Id de OpenRouter, p. ej. `google/gemma-4-26b-a4b-it:free`.
+  modelo          String    @id
+  nombre          String    @default("")
+  contexto        Int       @default(0)
+  /// "apagable" | "obligatorio" | "no": si el modelo razona y se puede apagar.
+  razonamiento    String    @default("apagable")
+  /// "rapido" | "creativo" | "profundo"
+  nivel           String    @default("creativo")
+  /// "nuevo" | "sano" | "inestable" | "caido" | "excluido"
+  estado          String    @default("nuevo")
+  puntuacion      Float     @default(0)
+  latenciaMs      Int?
+  fallosSeguidos  Int       @default(0)
+  limitesSeguidos Int       @default(0)
+  motivo          String    @default("")
+  /// El admin fijó el nivel o excluyó el modelo: el gestor no lo cambia.
+  nivelFijado     Boolean   @default(false)
+  excluidoManual  Boolean   @default(false)
+  detectadoEn     DateTime  @default(now())
+  vistoEn         DateTime  @default(now())
+  ultimaPrueba    DateTime?
+  ultimoOk        DateTime?
+  proximaPrueba   DateTime?
+  actualizadoEn   DateTime  @updatedAt
+
+  @@index([estado])
+}
+
+/// Ajustes sueltos de IA (clave → JSON), p. ej. la configuración del gestor de modelos gratuitos.
+model AjusteIA {
+  clave         String   @id
+  valor         Json
+  actualizadoEn DateTime @updatedAt
+}
+
+// ---------- Catálogo de grooves MIDI (M) ----------
+
+/// Un groove MIDI del catálogo que el administrador publica y las apps de los usuarios sincronizan.
+/// `contenido` son los bytes del .mid (pocos KB). Cada cambio sube `revision`; borrar lo retira de las apps.
+model GrooveCatalogo {
+  /// Estable (slug), distinto de la ruta: sobrevive a renombrar o mover.
+  id            String   @id
+  /// `Estilo[/Subestilo]/archivo.mid` (única sin distinguir mayúsculas, lo comprueba el servicio).
+  ruta          String   @unique
+  estilo        String
+  nombre        String
+  tipo          String   @default("groove")
+  compas        String   @default("4/4")
+  tempo         Int      @default(100)
+  compases      Int      @default(1)
+  intensidad    Int      @default(3)
+  etiquetas     String[]
+  autor         String   @default("")
+  licencia      String   @default("")
+  revision      Int      @default(1)
+  sha256        String
+  tamano        Int
+  contenido     Bytes
+  activo        Boolean  @default(true)
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@index([estilo])
+}
+
+/// Una sola fila (id 1): revisión global del catálogo de grooves; sube con cada cambio.
+model GrooveCatalogoEstado {
+  id       Int @id
+  revision Int @default(0)
+}
+
+/// Un groove creado por un usuario que este propuso (con su consentimiento) para el catálogo. El admin decide.
+/// `huellaHash` es la huella exacta del contenido MIDI: dos propuestas con el mismo patrón se acumulan en una sola.
+model PropuestaGroove {
+  id                  String    @id @default(uuid())
+  /// Quien la propuso primero; `usuarios` acumula a todos los que propusieron el mismo patrón.
+  usuarioId           String
+  usuarios            String[]
+  nombre              String
+  estilo              String
+  tipo                String    @default("groove")
+  compas              String    @default("4/4")
+  tempo               Int       @default(100)
+  compases            Int       @default(1)
+  intensidad          Int       @default(3)
+  etiquetas           String[]
+  autor               String    @default("")
+  licencia            String    @default("CC0-1.0")
+  contenido           Bytes
+  sha256              String
+  huellaHash          String
+  huella              Json
+  /// "pendiente" | "aprobada" | "rechazada" | "duplicada"
+  estado              String    @default("pendiente")
+  vecesPropuesto      Int       @default(1)
+  /// [{ tipo: "groove"|"propuesta", id, nombre, puntuacion, nivel }]
+  similares           Json      @default("[]")
+  notaAdmin           String    @default("")
+  /// Groove del catálogo en que se convirtió (aprobada) o del que es copia (duplicada).
+  grooveId            String?
+  consentimientoVersion String
+  consentimientoEn    DateTime
+  creadoEn            DateTime  @default(now())
+  actualizadoEn       DateTime  @updatedAt
+  resueltaEn          DateTime?
+
+  @@index([estado])
+  @@index([huellaHash])
+  @@index([usuarioId, creadoEn])
+}

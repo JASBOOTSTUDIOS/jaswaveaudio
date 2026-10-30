@@ -155,6 +155,9 @@ HWND gAsioHwnd{nullptr};
 IASIO* gDriver{nullptr};
 std::atomic<bool> gRunning{false};
 std::atomic<int> gInCallback{0};
+// U6: el driver puede pedir reinicio (reset / cambio de buffer / resync).
+// El reinicio se hace fuera del callback: aquí solo se marca y se avisa.
+std::atomic<bool> gResetPending{false};
 uint32_t gSr{48000};
 uint32_t gBuf{512};
 long gSampleType{ASIOSTInt32LSB};
@@ -345,6 +348,8 @@ long CALLBACK_asioMessage(long selector, long value, void* message, double* opt)
     case kAsioResetRequest:
     case kAsioBufferSizeChange:
     case kAsioResyncRequest:
+      jaswave_asio_notify_reset();
+      return 1;
     case kAsioLatenciesChanged:
       return 1;
     case kAsioSupportsTimeInfo:
@@ -690,6 +695,16 @@ HWND asioSysHandle() {
 }
 
 }  // namespace
+
+void jaswave_asio_notify_reset() {
+  if (gResetPending.exchange(true)) return;
+  std::cerr << "[jaswave-plugin-host] audio-device-reset\n";
+  jaswave_host_wake_main_thread();
+}
+
+bool jaswave_asio_reset_pending() { return gResetPending.load(); }
+
+void jaswave_asio_clear_reset_pending() { gResetPending.store(false); }
 
 void jaswave_com_restore_sta() {
   APTTYPE apt = APTTYPE_STA;

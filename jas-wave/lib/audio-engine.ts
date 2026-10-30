@@ -8,10 +8,15 @@
  */
 
 import { routeMidiToActiveVst } from '@/src/lib/plugin/vst-voice-router'
-import { allNotesOffAllTracks, sendVstCc, sendVstNote, setHostTransportPlaying } from '@/src/lib/plugin/track-vst-runtime'
+import { allNotesOffAllTracks, allNotesOffSlot, sendVstCc, sendVstNote, setHostTransportPlaying } from '@/src/lib/plugin/track-vst-runtime'
+import { MidiLookahead, MIDI_TICK_MS, type VoiceKeys, noteVoiceKey } from './midi-lookahead'
 import {
+  getNativeMasterMetering,
   getNativeMasterPeak,
+  getNativeMaxStemPeak,
   getNativeTrackPeak,
+  getNativeTrackPeakStereo,
+  hasFreshNativeMeters,
   isNativeMeterHostAvailable,
   setMixMeterTrackOrder,
 } from '@/src/lib/plugin/native-mix-meters'
@@ -19,14 +24,16 @@ import {
   getCachedHostTransportClock,
   isHostTransportClockStalled,
   hostClipLoadPath,
-  hostClipLoadPcm,
+  hostClipEnsureBuffer,
   hostClipSchedule,
   hostClipStopAll,
   sendHostMetronomeSet,
   startHostTransportClockPoll,
   stopHostTransportClockPoll,
+  curvaFadeAHost,
 } from '@/src/lib/plugin/host-transport'
 import pcmTapProcessorUrl from './pcm-tap-processor.js?url'
+import { WebSynthPistas, usarWebSynth, type PresetWebSynth } from './web-synth/web-synth'
 import { peakFromByteTimeDomain } from './audio-dsp'
 import { synthDemoSamples } from './demo-synth'
 import { ensureMicPermission, listAudioInputs, refreshAudioInputs } from '@/src/lib/audio-inputs'
@@ -41,6 +48,10 @@ export interface TrackAudioConfig {
   stemIndex?: number
   /** Slot del Plugin Host para el instrumento VST3 de esta pista. */
   vstInstrumentSlotId?: string
+  /** Capas: otros instrumentos VST de la pista que reciben el mismo MIDI. */
+  vstLayerSlotIds?: string[]
+  /** Preset del WebSynth para escuchar la pista en la web (sin plugin host). */
+  instrumentoWeb?: PresetWebSynth
 }
 
 export interface AudioClipPlaybackInfo {
@@ -50,6 +61,19 @@ export interface AudioClipPlaybackInfo {
   duracion: number // en segundos
   sourcePathOrId: string
   clipInicio?: number // offset dentro del clip de audio en segundos
+  name?: string
+  nombre?: string
+  /** Clip silenciado: no se programa. */
+  silenciado?: boolean
+  /** Ganancia del clip (dB). */
+  gananciaDb?: number
+  /** Fundidos en segundos y su curva ('lineal' | 'exponencial' | 'logaritmica'). */
+  fadeInSec?: number
+  fadeOutSec?: number
+  fadeInCurva?: string
+  fadeOutCurva?: string
+  /** Audio al revés (la región del clip se lee de atrás hacia delante). */
+  inverso?: boolean
 }
 
 export interface MidiNotePlaybackInfo {
@@ -90,11 +114,41 @@ type InputCaptureSession = {
   peak: number
   capturing: boolean
   monitors: Set<string>
+  /** Se alcanzó MAX_CAPTURE_SECONDS: el resto de la toma no se guardó. */
+  truncated?: boolean
+}
+
+/** Tope de una toma en memoria (float estéreo 48 kHz ≈ 690 MB a 30 min). */
+const MAX_CAPTURE_SECONDS = 30 * 60
+/** `lastArmError` cuando otra instancia de JasWave tiene el motor de audio. */
+export const ARM_ERROR_MOTOR_OCUPADO = 'audio-engine-busy'
+
+/** dB → factor lineal (sin valor = 0 dB). */
+function dbALineal(db: number | undefined): number {
+  return db == null || !Number.isFinite(db) ? 1 : Math.pow(10, db / 20)
+}
+
+/** Clips que empiezan en esta ventana desde el playhead se suben antes de arrancar el transporte. */
+const PLAY_PRELOAD_WINDOW_SEC = 2
+/** Espera máxima por esa subida previa: después se arranca igual y el resto entra en cuanto llegue. */
+const PLAY_PRELOAD_MAX_WAIT_MS = 4000
+
+type ClipJob = {
+  clip: AudioClipPlaybackInfo
+  cfg: (TrackAudioConfig & { stemIndex: number }) | undefined
+  buffer: AudioBuffer | undefined
+  /** Segundos desde el playhead hasta que empieza a sonar (0 si ya empezó). */
+  delay: number
+  /** Posición de lectura dentro del audio de origen (segundos). */
+  offset: number
+  remainingDuration: number
 }
 
 export class WebAudioEngine {
   private audioCtx: AudioContext | null = null
   private masterGain: GainNode | null = null
+  private monitorGain: GainNode | null = null
+  private monitorLevel = 1
   private masterPanner: StereoPannerNode | null = null
   private masterAnalyser: AnalyserNode | null = null
   private masterMeterData: Uint8Array<ArrayBuffer> | null = null
@@ -125,16 +179,33 @@ export class WebAudioEngine {
   private dawBusSilent: GainNode | null = null
   private stemScratch = new Map<string, Float32Array>()
   private audioBuffers = new Map<string, AudioBuffer>()
+  /** Aviso a la UI cuando un clip no se pudo cargar en el host (antes fallaba en silencio). */
+  public onClipLoadFailed?: (clipId: string) => void
+  /** Se incrementa en cada stop/play: invalida subidas y programaciones de la reproducción anterior. */
+  private playGeneration = 0
   private activeSources = new Map<string, AudioBufferSourceNode>()
   private midiScheduleTimer: ReturnType<typeof setInterval> | null = null
+  /** W2: sintetizador de respaldo en la web (sin plugin host). */
+  private webSynth = new WebSynthPistas(
+    () => this.ensureContext(),
+    (trackId) => this.getTrackNode(trackId).gain,
+  )
   private recSessions = new Map<string, InputCaptureSession>()
   private recTrackDevice = new Map<string, string>()
-  private pendingMidiClips: MidiClipPlaybackInfo[] = []
   private pendingTracksConfig: TrackAudioConfig[] = []
-  private midiScheduledUntilSec = 0
-  private midiHaySolos = false
-  private midiVoiceKeys = new Set<string>()
-  private midiCcKeys = new Set<string>()
+  /** Planificador MIDI por ventanas (lógica pura en ./midi-lookahead, probada con node:test). */
+  private midiLookahead = new MidiLookahead({
+    note: (slot, pitch, vel, whenSec, durSec, now) => this.scheduleVstMidiNote(slot, pitch, vel, whenSec, durSec, now),
+    cc: (slot, cc, value, timeSec, now) => {
+      const sr = this.getSampleRate()
+      sendVstCc(slot, cc, value, Math.max(0, Math.round((timeSec - now + this.nativePathAheadSec()) * sr)))
+    },
+    nonVstClip: (clip, cfg, ws, we, now, voices, start) => {
+      if (usarWebSynth()) this.scheduleWebSynthClip(clip, cfg as TrackAudioConfig, ws, we, now, voices, start)
+    },
+    panicSlot: (slot) => allNotesOffSlot(slot),
+    warn: (msg, err) => console.warn(msg, err),
+  })
   /** Timers de noteOn/noteOff hacia el Plugin Host (playback VST). */
   private vstMidiTimers: ReturnType<typeof setTimeout>[] = []
 
@@ -167,6 +238,29 @@ export class WebAudioEngine {
       return this.playheadStartSec + Math.max(0, (performance.now() - this.playWallEpochMs) / 1000)
     }
     return this.playheadStartSec
+  }
+
+  /**
+   * Fija la posición de timeline (p.ej. W / seek en pause) sin arrancar audio.
+   * Evita que al reanudar play se republicque la posición anterior al undock.
+   */
+  public seekTimeline(sec: number): void {
+    const t = Math.max(0, sec)
+    this.playheadStartSec = t
+    if (this.isPlaying) {
+      this.playWallEpochMs = performance.now()
+    } else {
+      this.playWallEpochMs = 0
+    }
+  }
+
+  /**
+   * Reloj monotónico (pared) para sync a ventanas undock.
+   * No alterna host/wall (eso tambalea el playhead remoto).
+   */
+  public getMonotonicTimelineSeconds(): number {
+    if (!this.isPlaying) return this.playheadStartSec
+    return this.wallClockSec()
   }
 
   /**
@@ -333,7 +427,13 @@ export class WebAudioEngine {
       let raw = (await Promise.race([
         api.pluginHostSend({ type: 'ensureAudio' }),
         new Promise<null>((r) => setTimeout(() => r(null), 4000)),
-      ])) as { ok?: boolean; audio?: { sampleRate?: number; bufferSize?: number } } | null
+      ])) as { ok?: boolean; code?: string; audio?: { sampleRate?: number; bufferSize?: number } } | null
+      // Otra instancia tiene el motor de audio: reintentar aquí no sirve (el puente reintenta solo).
+      if (raw?.code === 'AudioEngineBusy') {
+        this.lastArmError = ARM_ERROR_MOTOR_OCUPADO
+        this.nativeOutput = false
+        return false
+      }
       if (!raw || raw.ok === false) {
         await new Promise((r) => setTimeout(r, 250))
         raw = (await Promise.race([
@@ -420,12 +520,40 @@ export class WebAudioEngine {
   }
 
   /**
-   * Contexto solo para decode/createBuffer (Offline). No conecta a speakers.
-   * El path live es 100% Plugin Host.
+   * En navegador web (sin plugin-host nativo): AudioContext real conectado a altavoces.
+   * En Electron: contexto Offline/auxiliar para decode, el path live va por C++ Plugin Host a ASIO.
    */
   public ensureContext(): AudioContext {
     if (this.audioCtx && (this.audioCtx as AudioContext).state !== 'closed') {
+      if (!this.nativeOutput && this.audioCtx.state === 'suspended') {
+        void this.audioCtx.resume().catch(() => {})
+      }
       return this.audioCtx
+    }
+    const hasElectronHost = typeof window !== 'undefined' && Boolean(window.electron?.pluginHostSend)
+    if (!hasElectronHost) {
+      const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (AudioCtxClass) {
+        const ctx = new AudioCtxClass({ sampleRate: this.preferredSampleRate })
+        this.audioCtx = ctx
+        this.masterGain = ctx.createGain()
+        this.masterPanner = ctx.createStereoPanner()
+        this.masterAnalyser = ctx.createAnalyser()
+        this.masterAnalyser.fftSize = 256
+        this.masterAnalyser.smoothingTimeConstant = 0.8
+        this.masterMeterData = new Uint8Array(this.masterAnalyser.frequencyBinCount)
+
+        this.masterGain.connect(this.masterPanner)
+        this.masterPanner.connect(this.masterAnalyser)
+        // Monitorización: después del medidor del master, solo hacia el dispositivo.
+        this.monitorGain = ctx.createGain()
+        this.monitorGain.gain.value = this.monitorLevel
+        this.masterAnalyser.connect(this.monitorGain)
+        this.monitorGain.connect(ctx.destination)
+
+        this.applyMasterGain()
+        return this.audioCtx
+      }
     }
     const Offline =
       typeof OfflineAudioContext !== 'undefined'
@@ -446,6 +574,7 @@ export class WebAudioEngine {
     const offline = new Offline(2, 128, this.preferredSampleRate) as unknown as AudioContext
     this.audioCtx = offline
     this.masterGain = null
+    this.monitorGain = null
     this.masterPanner = null
     this.masterAnalyser = null
     this.masterMeterData = null
@@ -474,6 +603,14 @@ export class WebAudioEngine {
   public setMasterMuted(muted: boolean): void {
     this.masterMuted = muted
     this.applyMasterGain()
+  }
+
+  /** Volumen hacia los altavoces (0–1). No cambia el master ni lo que se exporta; el medidor del master lo ignora. */
+  public setMonitorGain(level: number): void {
+    this.monitorLevel = Math.max(0, Math.min(1, level))
+    const ctx = this.audioCtx
+    if (ctx && this.monitorGain) this.monitorGain.gain.setTargetAtTime(this.monitorLevel, ctx.currentTime, 0.02)
+    else if (this.monitorGain) this.monitorGain.gain.value = this.monitorLevel
   }
 
   private applyMasterGain(): void {
@@ -655,7 +792,9 @@ export class WebAudioEngine {
   public applyTracksConfig(tracksConfig: TrackAudioConfig[]) {
     const haySolos = tracksConfig.some((t) => t.soloActiva)
     this.pendingTracksConfig = tracksConfig
-    this.midiHaySolos = haySolos
+    // En play: mute/solo/slot cambiados invalidan lo ya encolado en el host (horizonte largo).
+    if (this.isPlaying) this.midiLookahead.retargetTracks(tracksConfig, this.getMidiTimelineSeconds())
+    else this.midiLookahead.setTracks(tracksConfig)
     for (const trk of tracksConfig) {
       this.updateTrackControls(trk.id, trk.volumen, trk.paneo, trk.silenciada, haySolos, trk.soloActiva)
     }
@@ -743,18 +882,48 @@ export class WebAudioEngine {
     /* Soft Pad Web Audio eliminado — JasWave Roles VST. */
   }
 
-  /** Preview MIDI: solo VST de la pista preferida / activa. */
+  /** Preview MIDI: solo VST de la pista preferida / activa (en la web, WebSynth). */
   public noteOn(pitch: number, velocity = 90): void {
+    if (usarWebSynth()) {
+      void this.webSynth.preparar().then(() => this.webSynth.inmediata('__preview__', this.presetPreview, true, pitch, velocity))
+      return
+    }
     routeMidiToActiveVst(true, pitch, velocity)
   }
 
   /** Preview MIDI: nota apagada. */
   public noteOff(pitch: number, _releaseSec = 0.25): void {
+    if (usarWebSynth()) {
+      this.webSynth.inmediata('__preview__', this.presetPreview, false, pitch, 0)
+      return
+    }
     routeMidiToActiveVst(false, pitch, 0)
   }
 
+  private presetPreview: PresetWebSynth = 'piano'
+  /** Preset de la previsualización web (la pista seleccionada). */
+  public setPresetPreviewWeb(preset: PresetWebSynth): void {
+    this.presetPreview = preset
+  }
+
+  /**
+   * Panic MIDI global desde la UI (cierre de panel, blur, audición). Vacía la cola del
+   * host, incluidas las notas de reproducción ya enviadas por adelantado; por eso, si
+   * está sonando, se olvida lo enviado y se reprograma YA desde la posición actual
+   * (sin ello el audio se cortaba hasta el horizonte completo).
+   */
   public allNotesOff(): void {
     allNotesOffAllTracks()
+    if (this.isPlaying) {
+      this.midiLookahead.rewindAll()
+      this.scheduleMidiLookahead()
+    }
+  }
+
+  /** Panic de un slot desde la UI; ver `allNotesOff`. */
+  public allNotesOffSlot(slotId: string): void {
+    allNotesOffSlot(slotId)
+    if (this.isPlaying && this.midiLookahead.rewindSlot(slotId)) this.scheduleMidiLookahead()
   }
 
   /**
@@ -766,8 +935,8 @@ export class WebAudioEngine {
     const sampleRate = this.audioCtx?.sampleRate ?? this.preferredSampleRate
     const { left, right } = synthDemoSamples(type, sampleRate, durationSec)
     const buffer = new AudioBuffer({ numberOfChannels: 2, length: left.length, sampleRate })
-    buffer.copyToChannel(left, 0)
-    buffer.copyToChannel(right, 1)
+    buffer.getChannelData(0).set(left)
+    buffer.getChannelData(1).set(right)
     return buffer
   }
 
@@ -775,28 +944,27 @@ export class WebAudioEngine {
    * Inicia la reproduccion de clips de audio + MIDI en la timeline desde `startSec`.
    * Audio clips → Plugin Host; MIDI → noteOn/Off con delay en samples del host.
    */
-  public playClips(
+  public async playClips(
     startSec: number,
     clips: AudioClipPlaybackInfo[],
     tracksConfig: TrackAudioConfig[],
     midiClips: MidiClipPlaybackInfo[] = [],
     projectBpm?: number,
-  ) {
+  ): Promise<void> {
     this.stopAllSources()
+    // Cada play/seek abre una generación nueva: subidas de una reproducción anterior que terminan
+    // tarde ya no programan audio (era la "ráfaga" al reanudar tras una pausa).
+    const gen = this.playGeneration
 
     this.isPlaying = true
     this.playheadStartSec = Math.max(0, startSec)
-    this.playWallEpochMs = performance.now()
     this.startTime = 0
     this.resetPcmPace()
-    startHostTransportClockPoll()
     const sr = this.getSampleRate()
     const tempo =
       projectBpm != null && projectBpm > 0
         ? projectBpm
         : getCachedHostTransportClock().tempo || 120
-    setHostTransportPlaying(true, tempo, (this.playheadStartSec * tempo) / 60)
-    hostClipStopAll()
 
     const haySolos = tracksConfig.some((t) => t.soloActiva)
     const cfgById = new Map(tracksConfig.map((t, i) => [t.id, { ...t, stemIndex: t.stemIndex ?? i }]))
@@ -804,63 +972,54 @@ export class WebAudioEngine {
       this.updateTrackControls(trk.id, trk.volumen, trk.paneo, trk.silenciada, haySolos, trk.soloActiva)
     }
 
+    const jobs = this.planClipJobs(clips, cfgById, haySolos)
+    const hasHost = typeof window !== 'undefined' && Boolean(window.electron?.pluginHostSend)
+    // Una subida por clip, compartida entre la fase previa y la programación.
+    const uploads = new Map<string, Promise<boolean>>()
+    const upload = (job: ClipJob): Promise<boolean> => {
+      let p = uploads.get(job.clip.id)
+      if (!p) {
+        p = this.uploadClipToHost(job, hasHost).catch(() => false)
+        uploads.set(job.clip.id, p)
+      }
+      return p
+    }
+
+    // Antes de arrancar el transporte se suben los clips que suenan en los primeros segundos: sin esto el
+    // playhead y el metrónomo corrían con el audio mudo hasta que terminaba la subida.
+    const urgent = jobs.filter((j) => j.delay < PLAY_PRELOAD_WINDOW_SEC)
+    if (hasHost && urgent.length) {
+      await Promise.race([
+        Promise.all(urgent.map(upload)),
+        new Promise((r) => setTimeout(r, PLAY_PRELOAD_MAX_WAIT_MS)),
+      ])
+      if (gen !== this.playGeneration) return
+    }
+
+    this.playWallEpochMs = performance.now()
+    startHostTransportClockPoll()
+    setHostTransportPlaying(true, tempo, (this.playheadStartSec * tempo) / 60)
+    hostClipStopAll()
+
     void (async () => {
-      for (const clip of clips) {
+      for (const job of jobs) {
         try {
-          const cfg = cfgById.get(clip.trackId)
-          if (haySolos) {
-            if (!cfg?.soloActiva) continue
-          } else if (cfg?.silenciada) {
+          const loaded = await upload(job)
+          if (gen !== this.playGeneration) return
+          if (!loaded) {
+            this.startClipInWebAudio(job)
             continue
           }
-          const buffer = this.audioBuffers.get(clip.sourcePathOrId) || this.audioBuffers.get(clip.id)
-          const clipStart = clip.inicio
-          const clipDuration = clip.duracion || buffer?.duration || 0
-          const clipEnd = clipStart + clipDuration
-          if (this.playheadStartSec >= clipEnd || clipDuration <= 0) continue
-
-          let offset = 0
-          let delay = 0
-          let consumed = 0
-          if (this.playheadStartSec > clipStart) {
-            consumed = this.playheadStartSec - clipStart
-            offset = consumed + (clip.clipInicio || 0)
-          } else {
-            delay = clipStart - this.playheadStartSec
-          }
-          const remainingDuration = Math.max(0, clipDuration - consumed)
-          if (remainingDuration <= 0.001) continue
-
-          const pathLike =
-            clip.sourcePathOrId.includes('\\') ||
-            clip.sourcePathOrId.includes('/') ||
-            /\.(wav|flac|mp3|ogg|aiff?)$/i.test(clip.sourcePathOrId)
-          let loaded = false
-          if (pathLike) {
-            loaded = await hostClipLoadPath(clip.id, clip.sourcePathOrId)
-          }
-          if (!loaded && buffer) {
-            const ch = Math.min(2, buffer.numberOfChannels)
-            const frames = buffer.length
-            const interleaved = new Float32Array(frames * 2)
-            const L = buffer.getChannelData(0)
-            const R = ch > 1 ? buffer.getChannelData(1) : L
-            for (let i = 0; i < frames; i++) {
-              interleaved[i * 2] = L[i] ?? 0
-              interleaved[i * 2 + 1] = R[i] ?? 0
-            }
-            loaded = await hostClipLoadPcm(clip.id, interleaved, frames, 2, buffer.sampleRate)
-          }
-          if (!loaded) continue
-
+          const { clip, cfg, delay, offset, remainingDuration } = job
           const stem = cfg?.stemIndex ?? 0
+          // El host reproduce desde la posición correcta aunque la programación llegue tarde.
           const startSample = Math.round((this.playheadStartSec + delay) * sr)
           const durationSamples = Math.round(remainingDuration * sr)
           const sourceOffsetSamples = Math.round(offset * sr)
           // En modo stem el gain/pan viven únicamente en el graph del host
           // (applyTrackGainPan). Pasar gain/pan aquí además los duplicaría.
           // Solo en el path legacy (sin stem) el clip lleva su propio fader.
-          const clipGain = this.stemMode ? 1 : cfg?.silenciada && !haySolos ? 0 : cfg?.volumen ?? 1
+          const trackGain = this.stemMode ? 1 : cfg?.silenciada && !haySolos ? 0 : cfg?.volumen ?? 1
           const clipPan = this.stemMode ? 0 : cfg?.paneo ?? 0
           hostClipSchedule({
             clipId: clip.id,
@@ -868,11 +1027,22 @@ export class WebAudioEngine {
             startSample,
             durationSamples,
             sourceOffsetSamples,
-            gain: clipGain,
+            gain: trackGain * dbALineal(clip.gananciaDb),
             pan: clipPan,
+            fades: {
+              clipStartSample: Math.round(clip.inicio * sr),
+              clipEndSample: Math.round((clip.inicio + clip.duracion) * sr),
+              inSamples: Math.round(Math.max(0, clip.fadeInSec ?? 0) * sr),
+              outSamples: Math.round(Math.max(0, clip.fadeOutSec ?? 0) * sr),
+              inCurve: curvaFadeAHost(clip.fadeInCurva),
+              outCurve: curvaFadeAHost(clip.fadeOutCurva),
+              reverse: clip.inverso === true,
+              regionStartSample: Math.round((clip.clipInicio ?? 0) * sr),
+              regionLenSamples: Math.round(clip.duracion * sr),
+            },
           })
         } catch (err) {
-          console.warn('[audio-engine] host clip start failed', clip.id, err)
+          console.warn('[audio-engine] host clip start failed', job.clip.id, err)
         }
       }
     })()
@@ -884,25 +1054,140 @@ export class WebAudioEngine {
     }
   }
 
-  private midiClipNoteCursor = new Map<string, number>()
+  /**
+   * Pico absoluto (0..1) del audio decodificado de un clip en la región [desdeSec, desdeSec+durSec).
+   * null si el audio aún no está decodificado en esta ventana.
+   */
+  public getClipPeak(keys: string[], desdeSec: number, durSec: number): number | null {
+    let buffer: AudioBuffer | undefined
+    for (const k of keys) {
+      if (!k) continue
+      buffer = this.audioBuffers.get(k) ?? this.audioBuffers.get(k.replace(/^.*[\\/]/, ''))
+      if (buffer) break
+    }
+    if (!buffer) return null
+    const sr = buffer.sampleRate
+    const ini = Math.max(0, Math.floor(desdeSec * sr))
+    const fin = Math.min(buffer.length, Math.ceil((desdeSec + durSec) * sr))
+    let pico = 0
+    for (let c = 0; c < buffer.numberOfChannels; c++) {
+      const d = buffer.getChannelData(c)
+      for (let i = ini; i < fin; i++) {
+        const v = Math.abs(d[i]!)
+        if (v > pico) pico = v
+      }
+    }
+    return pico
+  }
+
+  /** Clips que deben sonar desde el playhead, ordenados por cuándo empiezan. */
+  private planClipJobs(
+    clips: AudioClipPlaybackInfo[],
+    cfgById: Map<string, TrackAudioConfig & { stemIndex: number }>,
+    haySolos: boolean,
+  ): ClipJob[] {
+    const jobs: ClipJob[] = []
+    for (const clip of clips) {
+      if (clip.silenciado) continue
+      const cfg = cfgById.get(clip.trackId)
+      if (haySolos) {
+        if (!cfg?.soloActiva) continue
+      } else if (cfg?.silenciada) {
+        continue
+      }
+      let buffer = this.audioBuffers.get(clip.sourcePathOrId) || this.audioBuffers.get(clip.id)
+      const clipNombre = clip.name || clip.nombre
+      if (!buffer && clipNombre) {
+        buffer = this.audioBuffers.get(clipNombre)
+      }
+      if (!buffer && clip.sourcePathOrId) {
+        const baseName = clip.sourcePathOrId.replace(/^.*[\\/]/, '')
+        buffer = this.audioBuffers.get(baseName)
+      }
+      const clipStart = clip.inicio
+      const clipDuration = clip.duracion || buffer?.duration || 0
+      const clipEnd = clipStart + clipDuration
+      if (this.playheadStartSec >= clipEnd || clipDuration <= 0) continue
+
+      let offset = clip.clipInicio || 0
+      let delay = 0
+      let consumed = 0
+      if (this.playheadStartSec > clipStart) {
+        consumed = this.playheadStartSec - clipStart
+        offset = consumed + (clip.clipInicio || 0)
+      } else {
+        delay = clipStart - this.playheadStartSec
+      }
+      const remainingDuration = Math.max(0, clipDuration - consumed)
+      if (remainingDuration <= 0.001) continue
+      jobs.push({ clip, cfg, buffer, delay, offset, remainingDuration })
+    }
+    return jobs.sort((a, b) => a.delay - b.delay)
+  }
+
+  /**
+   * Con el audio ya decodificado se sube por trozos y se reutiliza entre play/seek (sin base64
+   * gigante). Solo se pide al host que lea el archivo si no hay buffer y la ruta es absoluta
+   * (una ruta relativa `media/x.wav` el host no la resuelve).
+   */
+  private async uploadClipToHost(job: ClipJob, hasHost: boolean): Promise<boolean> {
+    if (!hasHost) return false
+    if (job.buffer) return hostClipEnsureBuffer(job.clip.id, job.buffer)
+    if (/^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(job.clip.sourcePathOrId)) {
+      return hostClipLoadPath(job.clip.id, job.clip.sourcePathOrId)
+    }
+    return false
+  }
+
+  /** Modo Web Audio (navegador o host nativo no disponible), alineado con el tiempo ya transcurrido. */
+  private startClipInWebAudio(job: ClipJob): void {
+    const { clip, buffer } = job
+    if (!buffer) {
+      console.warn('[audio-engine] el clip no se pudo cargar en el host ni en Web Audio', clip.id)
+      this.onClipLoadFailed?.(clip.id)
+      return
+    }
+    const elapsed =
+      this.playWallEpochMs > 0 ? Math.max(0, (performance.now() - this.playWallEpochMs) / 1000) : 0
+    const late = Math.max(0, elapsed - job.delay)
+    const remaining = job.remainingDuration - late
+    if (remaining <= 0.001) return
+    const ctx = this.ensureContext()
+    const trackNode = this.getTrackNode(clip.trackId)
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
+    // Ganancia y fundidos del clip (rampas lineales: en Web Audio basta para evitar clics).
+    const clipGain = ctx.createGain()
+    const g = dbALineal(clip.gananciaDb)
+    const t0 = ctx.currentTime + Math.max(0, job.delay - elapsed)
+    // Posición dentro del clip (s) en la que empieza a sonar.
+    const desde = this.playheadStartSec + elapsed + Math.max(0, job.delay - elapsed) - clip.inicio
+    const fin = clip.duracion
+    const fi = Math.max(0, clip.fadeInSec ?? 0)
+    const fo = Math.max(0, clip.fadeOutSec ?? 0)
+    const nivel = (pos: number) =>
+      g * (fi > 0 && pos < fi ? Math.max(0, pos / fi) : 1) * (fo > 0 && pos > fin - fo ? Math.max(0, (fin - pos) / fo) : 1)
+    clipGain.gain.setValueAtTime(nivel(desde), t0)
+    if (fi > 0 && desde < fi) clipGain.gain.linearRampToValueAtTime(nivel(fi), t0 + (fi - desde))
+    if (fo > 0) {
+      const ini = Math.max(desde, fin - fo)
+      clipGain.gain.setValueAtTime(nivel(ini), t0 + (ini - desde))
+      clipGain.gain.linearRampToValueAtTime(0, t0 + (fin - desde))
+    }
+    source.connect(clipGain)
+    clipGain.connect(trackNode.gain)
+    source.start(t0, job.offset + late, remaining)
+    this.activeSources.set(clip.id, source)
+  }
 
   private beginMidiScheduler(
     midiClips: MidiClipPlaybackInfo[],
     tracksConfig: TrackAudioConfig[],
-    haySolos: boolean,
+    _haySolos: boolean,
   ) {
     this.stopMidiScheduler()
-    this.midiVoiceKeys.clear()
-    this.midiCcKeys.clear()
-    this.midiClipNoteCursor.clear()
-    // Ordenar notas una vez para el cursor O(ventana).
-    this.pendingMidiClips = midiClips.map((c) => ({
-      ...c,
-      notes: [...c.notes].sort((a, b) => a.startSec - b.startSec || a.pitch - b.pitch),
-    }))
     this.pendingTracksConfig = tracksConfig
-    this.midiHaySolos = haySolos
-    this.midiScheduledUntilSec = this.playheadStartSec
+    this.midiLookahead.begin(midiClips, tracksConfig, this.playheadStartSec)
 
     this.scheduleMidiLookahead()
     this.midiScheduleTimer = setInterval(() => {
@@ -911,30 +1196,26 @@ export class WebAudioEngine {
         return
       }
       this.scheduleMidiLookahead()
-    }, 80)
+    }, MIDI_TICK_MS)
   }
 
   /** Hot-patch: slot VST confirmado en runtime. No borrar si viene undefined (ensure fallido). */
-  public patchTrackVstInstrument(trackId: string, slotId: string | undefined): void {
+  public patchTrackVstInstrument(trackId: string, slotId: string | undefined, capas?: string[]): void {
     if (!slotId) return
+    const anterior = this.pendingTracksConfig.find((t) => t.id === trackId)?.vstInstrumentSlotId
+    // Una capa nueva entra desde las siguientes notas: rebobinar duplicaría las ya encoladas en el principal.
     this.pendingTracksConfig = this.pendingTracksConfig.map((t) =>
-      t.id === trackId ? { ...t, vstInstrumentSlotId: slotId } : t,
+      t.id === trackId
+        ? { ...t, vstInstrumentSlotId: slotId, ...(capas ? { vstLayerSlotIds: capas.length > 0 ? capas : undefined } : {}) }
+        : t,
     )
-    // Siempre reabrir lookahead en play: tras restart del host el slotId es el mismo
-    // pero las noteOn ya se marcaron en midiVoiceKeys hacia un proceso muerto → silencio.
-    if (this.isPlaying) {
-      for (const clip of this.pendingMidiClips) {
-        if (clip.trackId !== trackId) continue
-        this.midiClipNoteCursor.delete(clip.id)
-        for (const k of [...this.midiVoiceKeys]) {
-          if (k.startsWith(clip.id + ':')) this.midiVoiceKeys.delete(k)
-        }
-        for (const k of [...this.midiCcKeys]) {
-          if (k.startsWith(clip.id + ':')) this.midiCcKeys.delete(k)
-        }
-      }
-      const nowTimeline = this.getMidiTimelineSeconds()
-      this.midiScheduledUntilSec = this.playheadStartSec
+    this.midiLookahead.setTracks(this.pendingTracksConfig)
+    // Solo si el slot CAMBIÓ hay que reenviar: las notas ya encoladas iban a otro slot. Con el mismo slot,
+    // rebobinar reenviaba las notas ya encoladas en el host y la primera nota del play sonaba dos veces
+    // (este aviso llega para todas las pistas al confirmar los slots justo al arrancar). Tras un reinicio
+    // del host (mismo slot, proceso nuevo) el reenvío lo hace rescheduleMidiAfterHostRestart().
+    if (this.isPlaying && anterior !== slotId) {
+      this.midiLookahead.rewindTrack(trackId)
       this.scheduleMidiLookahead()
     }
   }
@@ -942,11 +1223,35 @@ export class WebAudioEngine {
   /** Tras restart del Plugin Host: reenviar MIDI vivo (mismos slotIds, proceso nuevo). */
   public rescheduleMidiAfterHostRestart(): void {
     if (!this.isPlaying) return
-    this.midiVoiceKeys.clear()
-    this.midiCcKeys.clear()
-    this.midiClipNoteCursor.clear()
-    this.midiScheduledUntilSec = this.playheadStartSec
+    this.midiLookahead.rewindAll()
     this.scheduleMidiLookahead()
+  }
+
+  /** W2: programa en el WebSynth las notas del clip que caen en la ventana. */
+  private scheduleWebSynthClip(
+    clip: MidiClipPlaybackInfo,
+    cfg: TrackAudioConfig,
+    windowStart: number,
+    windowEnd: number,
+    nowTimeline: number,
+    voices: VoiceKeys,
+    playheadStartSec: number,
+  ) {
+    if (!this.webSynth.listo) {
+      void this.webSynth.preparar()
+      return
+    }
+    const ctxAhora = this.ensureContext().currentTime
+    const preset = cfg.instrumentoWeb ?? 'piano'
+    clip.notes.forEach((note, ni) => {
+      const inicio = Math.max(note.startSec, playheadStartSec)
+      const fin = note.startSec + Math.max(0.03, note.durationSec)
+      if (inicio < windowStart || inicio >= windowEnd || fin - inicio <= 0.02) return
+      const key = noteVoiceKey(clip.id, ni, note.pitch, note.startSec)
+      if (voices.has(key)) return
+      const cuando = ctxAhora + Math.max(0, inicio - nowTimeline)
+      if (this.webSynth.nota(clip.trackId, preset, note.pitch, note.velocity, cuando, fin - inicio)) voices.add(key)
+    })
   }
 
   private stopMidiScheduler() {
@@ -957,98 +1262,17 @@ export class WebAudioEngine {
     for (const t of this.vstMidiTimers) clearTimeout(t)
     this.vstMidiTimers = []
     allNotesOffAllTracks()
+    this.webSynth.silenciarTodo()
   }
 
-  /** Programa MIDI por ventanas sin AudioContext (reloj host). */
+  /**
+   * Programa MIDI por ventanas sin AudioContext (reloj host). Horizonte largo
+   * (MIDI_HORIZON_SEC): un bloqueo del hilo principal del renderer menor que el
+   * horizonte no deja al host sin notas.
+   */
   private scheduleMidiLookahead() {
     if (!this.isPlaying) return
-    const horizon = 0.85
-    const nowTimeline = this.getMidiTimelineSeconds()
-    // Lookahead inflado o reloj que retrocedió: rebobinar o no habrá más noteOn.
-    if (this.midiScheduledUntilSec > nowTimeline + 0.35) {
-      this.midiScheduledUntilSec = Math.max(0, nowTimeline - 0.02)
-      this.midiClipNoteCursor.clear()
-    }
-    const from = this.midiScheduledUntilSec
-    const windowStart = Math.max(from, nowTimeline - 0.05)
-    const windowEnd = nowTimeline + horizon
-    if (windowEnd <= windowStart) return
-
-    this.scheduleMidiClipsInWindow(windowStart, windowEnd, nowTimeline)
-    this.midiScheduledUntilSec = windowEnd
-  }
-
-  private scheduleMidiClipsInWindow(windowStart: number, windowEnd: number, nowTimeline = this.getMidiTimelineSeconds()) {
-    const sr = this.getSampleRate()
-    const cfgById = new Map(this.pendingTracksConfig.map((t) => [t.id, t]))
-
-    for (const clip of this.pendingMidiClips) {
-      const cfg = cfgById.get(clip.trackId)
-      if (this.midiHaySolos) {
-        if (!cfg?.soloActiva) continue
-      } else if (cfg?.silenciada) {
-        continue
-      }
-
-      const vstSlot = cfg?.vstInstrumentSlotId
-      if (!vstSlot) continue
-
-      let ni = this.midiClipNoteCursor.get(clip.id) ?? 0
-      while (ni < clip.notes.length) {
-        const early = clip.notes[ni]!
-        const earlyEnd = early.startSec + Math.max(0.03, early.durationSec)
-        if (earlyEnd > windowStart) break
-        const earlyKey = clip.id + ':' + ni + ':' + early.pitch + ':' + early.startSec.toFixed(4)
-        // No descartar notas del inicio si el VST aún no estaba listo al primer lookahead.
-        if (!this.midiVoiceKeys.has(earlyKey) && earlyEnd > nowTimeline - 0.03) break
-        ni += 1
-      }
-      this.midiClipNoteCursor.set(clip.id, ni)
-
-      for (; ni < clip.notes.length; ni++) {
-        const note = clip.notes[ni]!
-        const noteStart = note.startSec
-        if (noteStart > windowEnd) {
-          this.midiClipNoteCursor.set(clip.id, ni)
-          break
-        }
-        const durRaw = Math.max(0.03, note.durationSec)
-        const noteEnd = noteStart + durRaw
-        const key = clip.id + ':' + ni + ':' + note.pitch + ':' + noteStart.toFixed(4)
-        if (this.midiVoiceKeys.has(key)) continue
-        if (noteEnd <= windowStart && noteEnd <= nowTimeline - 0.03) continue
-
-        let dur = durRaw
-        let whenSec = noteStart
-        if (noteStart < this.playheadStartSec) {
-          dur = noteEnd - this.playheadStartSec
-          whenSec = this.playheadStartSec
-        }
-        if (dur <= 0.02) continue
-
-        try {
-          this.scheduleVstMidiNote(vstSlot, note.pitch, note.velocity, whenSec, dur, nowTimeline, sr)
-          this.midiVoiceKeys.add(key)
-        } catch (err) {
-          console.warn('[audio-engine] midi voice failed', err)
-        }
-      }
-      if (ni >= clip.notes.length) this.midiClipNoteCursor.set(clip.id, ni)
-
-      const ccs = clip.ccs ?? []
-      for (let ci = 0; ci < ccs.length; ci++) {
-        const ev = ccs[ci]!
-        if (ev.timeSec < windowStart - 0.02 || ev.timeSec > windowEnd) continue
-        const key = clip.id + ':cc:' + ev.cc + ':' + ev.timeSec.toFixed(4)
-        if (this.midiCcKeys.has(key)) continue
-        const delay = Math.max(
-          0,
-          Math.round((ev.timeSec - nowTimeline + this.nativePathAheadSec()) * sr),
-        )
-        sendVstCc(vstSlot, ev.cc, ev.value, delay)
-        this.midiCcKeys.add(key)
-      }
-    }
+    this.midiLookahead.tick(this.getMidiTimelineSeconds())
   }
 
   /** Playback MIDI → Plugin Host (slot ya loaded/prepared). */
@@ -1074,10 +1298,25 @@ export class WebAudioEngine {
   /**
    * Detiene todos los nodos de fuente activos
    */
+  /**
+   * Stop (no pausa): además de parar voces y clips, el host vacía en el acto el DSP de todos los plugins,
+   * incluidas las colas de reverb y delay. En pausa las colas caen solas (solo stopAllSources).
+   */
+  public async hardStop(): Promise<void> {
+    this.stopAllSources()
+    if (typeof window === 'undefined' || !window.electron?.pluginHostSend) return
+    try {
+      await window.electron.pluginHostSend({ type: 'hardStop' })
+    } catch {
+      /* host caído: no hay nada sonando */
+    }
+  }
+
   public stopAllSources() {
+    this.playGeneration += 1
     // Primero panic MIDI (antes de parar transport) para vaciar colas delaySamples.
     try {
-      this.allNotesOff()
+      allNotesOffAllTracks()
     } catch {
       /* ignore */
     }
@@ -1085,15 +1324,13 @@ export class WebAudioEngine {
     setHostTransportPlaying(false)
     // Segundo panic tras setTransport(false): VSTs cortan al ver !kPlaying.
     try {
-      this.allNotesOff()
+      allNotesOffAllTracks()
     } catch {
       /* ignore */
     }
     hostClipStopAll()
     stopHostTransportClockPoll()
-    this.pendingMidiClips = []
-    this.midiVoiceKeys.clear()
-    this.midiCcKeys.clear()
+    this.midiLookahead.clear()
     for (const source of this.activeSources.values()) {
       try {
         source.stop()
@@ -1130,10 +1367,61 @@ export class WebAudioEngine {
     return Math.min(1, Math.pow(peak, 0.6))
   }
 
+  /**
+   * Picos L/R lineales (0..1, sin curva) post-fader de la pista: VU estéreo con escala en dB.
+   * El nodo Web Audio solo da un pico mono, que se reparte a ambos canales.
+   */
+  public getStereoMeterPeaks(trackId: string): { l: number; r: number } {
+    let l = 0
+    let r = 0
+    if (isNativeMeterHostAvailable()) {
+      const p = getNativeTrackPeakStereo(trackId)
+      if (p) {
+        l = p.l
+        r = p.r
+      }
+    }
+    const node = this.trackNodes.get(trackId)
+    if (node) {
+      node.analyser.getByteTimeDomainData(node.dataArray)
+      const web = peakFromByteTimeDomain(node.dataArray)
+      if (web > l) l = web
+      if (web > r) r = web
+    }
+    return { l, r }
+  }
+
+  /** Picos L/R lineales del master (mismo criterio que {@link getMasterMeterLevel}). */
+  public getMasterStereoPeaks(): { l: number; r: number } {
+    let l = 0
+    let r = 0
+    if (isNativeMeterHostAvailable()) {
+      if (hasFreshNativeMeters()) {
+        const m = getNativeMasterMetering()
+        l = m.peakL
+        r = m.peakR
+        if (l === 0 && r === 0) l = r = getNativeMasterPeak()
+      } else if (!hasFreshNativeMeters(Number.POSITIVE_INFINITY)) {
+        // El host aún no ha reportado nunca: el máximo de los stems es la única referencia.
+        l = r = getNativeMaxStemPeak()
+      }
+      // Reporte viejo (host ocupado): no se repite una lectura congelada; manda la parte Web Audio.
+    }
+    if (this.masterAnalyser && this.masterMeterData) {
+      this.masterAnalyser.getByteTimeDomainData(this.masterMeterData)
+      const web = peakFromByteTimeDomain(this.masterMeterData)
+      if (web > l) l = web
+      if (web > r) r = web
+    }
+    return { l, r }
+  }
+
   public getMasterMeterLevel(): number {
     let native = 0
     if (isNativeMeterHostAvailable()) {
-      native = getNativeMasterPeak()
+      // El master mide su propia salida (post-fader y post-mute). Solo si el host aún no reporta se
+      // recurre al máximo de stems; si no, un master silenciado se vería moviéndose.
+      native = hasFreshNativeMeters() ? getNativeMasterPeak() : getNativeMaxStemPeak()
     }
     let web = 0
     if (this.masterAnalyser && this.masterMeterData) {
@@ -1224,8 +1512,16 @@ export class WebAudioEngine {
     }
     session.peak = peak > 1 ? 1 : peak
     if (!session.capturing) return
-    const maxFrames = Math.floor(this.getSampleRate() * 300)
-    if (session.frames + n > maxFrames) return
+    const maxFrames = Math.floor(this.getSampleRate() * MAX_CAPTURE_SECONDS)
+    if (session.frames + n > maxFrames) {
+      if (!session.truncated) {
+        session.truncated = true
+        const msg = `Grabación detenida al llegar a ${MAX_CAPTURE_SECONDS / 60} min por toma (límite de memoria).`
+        console.warn(`[audio-engine] ${msg}`)
+        window.electron?.logError?.('recording', msg)
+      }
+      return
+    }
     session.chunksL.push(Float32Array.from(l))
     session.chunksR.push(Float32Array.from(r))
     session.frames += n

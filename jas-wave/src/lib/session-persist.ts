@@ -5,6 +5,8 @@
 
 import type { DAWState } from '../../../shared/src/types/state'
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
+import { validarProyecto } from '../../../shared/src/schemas/proyecto'
+import { repararNotasMidi } from '../../../shared/src/project/reparar-notas'
 import { audioEngine } from '@/lib/audio-engine'
 import { markProjectBuffersNotNeeded, reportProjectBuffersSettled } from '@/src/lib/project-ready'
 import { migrateSoftPadPluginsInProject } from '@/src/lib/plugin/migrate-softpad-to-roles'
@@ -185,6 +187,35 @@ let pendingForcePluginSnapshot = false
 let lastVstSnapshotAt = 0
 const VST_SNAPSHOT_MIN_MS = 12_000
 
+/**
+ * Cierre de la app confirmado: a partir de aquí los flush de sesión no hacen RPC al plugin
+ * host (puede estar parándose) y solo vuelcan el estado ya conocido a IndexedDB.
+ */
+let cierreApp = false
+export function marcarCierreApp(): void {
+  cierreApp = true
+}
+
+/** Flush final antes de cerrar: espera al guardado en curso y vuelca uno nuevo (sin RPC VST). */
+export async function flushSessionForClose(tienda: TiendaDAW): Promise<void> {
+  // ANTES de marcar el cierre: el host sigue vivo y aún se puede leer el estado de cada VST. Antes se
+  // saltaba este paso y todo lo que el usuario hubiera cambiado en BFD/Kontakt desde el último snapshot
+  // (que solo se tomaba al editar el proyecto) se perdía al cerrar.
+  try {
+    const { capturarEstadoVstAlCerrar } = await import('./plugin/track-vst-runtime')
+    await capturarEstadoVstAlCerrar(tienda)
+  } catch (err) {
+    console.warn('[session-persist] captura VST al cerrar omitida', err)
+  }
+  marcarCierreApp()
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  while (saving) await new Promise((r) => setTimeout(r, 25))
+  await saveSessionNow(tienda)
+}
+
 export async function saveSessionNow(
   tienda: TiendaDAW,
   opts?: { forcePluginSnapshot?: boolean },
@@ -200,7 +231,7 @@ export async function saveSessionNow(
     const force = pendingForcePluginSnapshot
     pendingForcePluginSnapshot = false
     const now = Date.now()
-    if (force || now - lastVstSnapshotAt >= VST_SNAPSHOT_MIN_MS) {
+    if (!cierreApp && (force || now - lastVstSnapshotAt >= VST_SNAPSHOT_MIN_MS)) {
       try {
         const { snapshotLoadedPluginsIntoProject } = await import('./plugin/track-vst-runtime')
         await snapshotLoadedPluginsIntoProject(tienda)
@@ -323,8 +354,38 @@ export async function clearSessionSnapshot(): Promise<void> {
   }
 }
 
-export function applySessionProject(tienda: TiendaDAW, snap: SessionMeta | SessionSnapshot): void {
-  const project = snap.project
+/**
+ * Valida el proyecto del snapshot de IndexedDB con el mismo esquema que la
+ * carga de `.jaswave`. Devuelve el mensaje de error o null si es válido.
+ */
+export function validarProyectoSesion(project: unknown): string | null {
+  const r = validarProyecto(project)
+  return r.ok ? null : r.error
+}
+
+/**
+ * Aplica el proyecto de la sesión guardada. Si el snapshot está corrupto,
+ * lo registra y NO toca la tienda (se arranca con proyecto nuevo).
+ * @returns true si se aplicó la sesión.
+ */
+export function applySessionProject(tienda: TiendaDAW, snap: SessionMeta | SessionSnapshot): boolean {
+  // Notas MIDI corruptas de versiones anteriores (NaN) se descartan antes de validar.
+  const reparado = repararNotasMidi(snap?.project)
+  if (reparado.eliminadas > 0) {
+    window.electron?.logError?.('session', `Sesión reparada: ${reparado.eliminadas} nota(s) MIDI inválidas descartadas`)
+  }
+  const project = reparado.proyecto
+  const error = validarProyectoSesion(project)
+  if (error) {
+    const msg = `Sesión guardada descartada (proyecto corrupto): ${error}`
+    console.warn('[session-persist]', msg)
+    try {
+      window.electron?.logError?.('session', msg)
+    } catch {
+      /* el log nunca debe impedir el arranque */
+    }
+    return false
+  }
   try {
     migrateSoftPadPluginsInProject(project)
   } catch (err) {
@@ -347,13 +408,21 @@ export function applySessionProject(tienda: TiendaDAW, snap: SessionMeta | Sessi
     },
     ui: {
       ...s.ui,
-      zoomHorizontal: snap.ui.zoomHorizontal,
-      zoomVertical: snap.ui.zoomVertical,
-      scrollX: snap.ui.scrollX,
-      herramientaActiva: snap.ui.herramientaActiva,
+      zoomHorizontal: snap.ui?.zoomHorizontal ?? s.ui.zoomHorizontal,
+      zoomVertical: snap.ui?.zoomVertical ?? s.ui.zoomVertical,
+      scrollX: snap.ui?.scrollX ?? s.ui.scrollX,
+      herramientaActiva: snap.ui?.herramientaActiva ?? s.ui.herramientaActiva,
     },
     selection: snap.selection ?? s.selection,
   }))
+  if (reparado.eliminadas > 0) {
+    // Aviso visible (toast): la reparación no debe ser silenciosa.
+    tienda.busEventos.emit('validacion.advertencia', {
+      code: 'MIDI_NOTES_REPAIRED',
+      message: `Se descartaron ${reparado.eliminadas} nota(s) MIDI inválidas al restaurar la sesión`,
+    })
+  }
+  return true
 }
 
 async function restoreAudioChunked(
@@ -387,8 +456,8 @@ async function restoreAudioChunked(
   }
 }
 
-export function applySessionSnapshot(tienda: TiendaDAW, snap: SessionSnapshot): void {
-  applySessionProject(tienda, snap)
+export function applySessionSnapshot(tienda: TiendaDAW, snap: SessionSnapshot): boolean {
+  if (!applySessionProject(tienda, snap)) return false
   if (snap.audio && Object.keys(snap.audio).length > 0) {
     try {
       audioEngine.restoreAudioBuffersFromPersist(snap.audio)
@@ -396,6 +465,7 @@ export function applySessionSnapshot(tienda: TiendaDAW, snap: SessionSnapshot): 
       console.warn('[session-persist] audio restore failed', err)
     }
   }
+  return true
 }
 
 export function attachSessionAutosave(tienda: TiendaDAW): () => void {
@@ -414,7 +484,19 @@ export function attachSessionAutosave(tienda: TiendaDAW): () => void {
   }
   document.addEventListener('visibilitychange', onVis)
 
+  // Autoguardado periódico del estado interno de los VST (no mueve la tienda: nadie más lo dispararía).
+  let detenerVst: (() => void) | null = null
+  let cancelado = false
+  void import('./plugin/track-vst-runtime')
+    .then((m) => {
+      if (cancelado) return
+      detenerVst = m.iniciarAutoguardadoEstadoVst(tienda).detener
+    })
+    .catch((err) => console.warn('[session-persist] autoguardado VST no iniciado', err))
+
   return () => {
+    cancelado = true
+    detenerVst?.()
     unsub()
     window.removeEventListener('beforeunload', flush)
     window.removeEventListener('pagehide', flush)
@@ -462,7 +544,11 @@ export async function hydrateSession(
     `${meta.project?.tracks?.length ?? 0} pistas`,
   )
   await yieldUi()
-  applySessionProject(tienda, meta)
+  if (!applySessionProject(tienda, meta)) {
+    // Snapshot corrupto: arranque con proyecto nuevo (la tienda no se tocó).
+    report(onProgress, 'empty', 'Sesión previa dañada · proyecto nuevo', 1)
+    return false
+  }
 
   if (skipAudio) {
     report(onProgress, 'done', 'Listo', 1)

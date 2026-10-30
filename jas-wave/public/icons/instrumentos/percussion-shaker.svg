@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="percussion-shaker">
+  <!-- Tubo cilíndrico del shaker en ángulo dinámico -->
+  <rect x="20" y="14" width="24" height="36" rx="12" fill="currentColor" fill-opacity="0.15" stroke-width="2.5" transform="rotate(-15 32 32)" />
+  <!-- Tapas de los extremos con relieve -->
+  <ellipse cx="27" cy="13" rx="10" ry="3" fill="currentColor" fill-opacity="0.3" stroke-width="1.75" transform="rotate(-15 27 13)" />
+  <ellipse cx="37" cy="51" rx="10" ry="3" fill="currentColor" fill-opacity="0.3" stroke-width="1.75" transform="rotate(-15 37 51)" />
+  <!-- Maraca acústica secundaria cruzada al fondo -->
+  <path d="M12 48l10-10" stroke-width="2.5" />
+  <ellipse cx="26" cy="34" rx="6" ry="8" fill="currentColor" fill-opacity="0.1" stroke-width="1.5" transform="rotate(45 26 34)" />
+  <!-- Estelas de movimiento de semillas / cuentas interiores -->
+  <path d="M8 26c3 3 3 8 0 11" stroke-width="2" />
+  <path d="M56 26c-3 3-3 8 0 11" stroke-width="2" />
+</svg>

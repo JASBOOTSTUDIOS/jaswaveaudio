@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="accordion">
+  <!-- Caja izquierda (bajos) -->
+  <rect x="6" y="14" width="10" height="36" rx="2" fill="currentColor" fill-opacity="0.2" stroke-width="2" />
+  <circle cx="10" cy="20" r="1.5" fill="currentColor" />
+  <circle cx="12" cy="26" r="1.5" fill="currentColor" />
+  <circle cx="10" cy="32" r="1.5" fill="currentColor" />
+  <circle cx="12" cy="38" r="1.5" fill="currentColor" />
+  <circle cx="10" cy="44" r="1.5" fill="currentColor" />
+  <!-- Fuelle central con pliegues realistas -->
+  <path d="M16 16l4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3" stroke-width="1.75" />
+  <path d="M22 16l4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3" stroke-width="1.75" />
+  <path d="M28 16l4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3" stroke-width="1.75" />
+  <path d="M34 16l4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3" stroke-width="1.75" />
+  <path d="M40 16l4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3 4 3-4 3" stroke-width="1.75" />
+  <line x1="16" y1="16" x2="44" y2="16" stroke-width="2" />
+  <line x1="16" y1="48" x2="44" y2="48" stroke-width="2" />
+  <!-- Caja derecha (teclado melódico) -->
+  <rect x="44" y="14" width="14" height="36" rx="2" fill="currentColor" fill-opacity="0.2" stroke-width="2" />
+  <!-- Teclas de piano del acordeón -->
+  <line x1="44" y1="18" x2="58" y2="18" stroke-width="1.5" />
+  <line x1="44" y1="23" x2="58" y2="23" stroke-width="1.5" />
+  <line x1="44" y1="28" x2="58" y2="28" stroke-width="1.5" />
+  <line x1="44" y1="33" x2="58" y2="33" stroke-width="1.5" />
+  <line x1="44" y1="38" x2="58" y2="38" stroke-width="1.5" />
+  <line x1="44" y1="43" x2="58" y2="43" stroke-width="1.5" />
+  <rect x="51" y="20" width="7" height="3" fill="currentColor" />
+  <rect x="51" y="25" width="7" height="3" fill="currentColor" />
+  <rect x="51" y="35" width="7" height="3" fill="currentColor" />
+  <rect x="51" y="40" width="7" height="3" fill="currentColor" />
+</svg>

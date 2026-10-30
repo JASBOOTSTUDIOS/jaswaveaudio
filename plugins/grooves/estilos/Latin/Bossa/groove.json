@@ -1,0 +1,40 @@
+{
+  "archivos": {
+    "bossa-nova.mid": {
+      "id": "jw-latin-bossa-bossa-nova",
+      "nombre": "Bossa nova",
+      "tempo": 128,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "latin",
+        "bossa",
+        "clave"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "bossa-con-ride.mid": {
+      "id": "jw-latin-bossa-bossa-con-ride",
+      "nombre": "Bossa con ride",
+      "tempo": 120,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "latin",
+        "bossa",
+        "ride"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

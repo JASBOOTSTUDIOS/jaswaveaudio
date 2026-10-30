@@ -1,0 +1,2263 @@
+{
+  "productId": "com.jaswave.plugin.worship-drums",
+  "titulo": "WORSHIP DRUMS",
+  "subtitulo": "BATERÍA ACÚSTICA MODAL · SALA WORSHIP & AIRE DE PLATOS",
+  "instrumento": true,
+  "visualizador": "espectro-instrumento",
+  "acento": "#19D9FF",
+  "base": {
+    "ancho": 1100,
+    "alto": 620
+  },
+  "zonas": {
+    "pantalla": [
+      34,
+      34,
+      1066,
+      586
+    ],
+    "visualizador": [
+      52,
+      92,
+      652,
+      404
+    ],
+    "espectro": [
+      66,
+      124,
+      612,
+      382
+    ],
+    "miniPanel": [
+      52,
+      418,
+      652,
+      556
+    ],
+    "controles": [
+      666,
+      92,
+      1048,
+      404
+    ],
+    "salida": [
+      666,
+      418,
+      1048,
+      556
+    ],
+    "fader": [
+      680,
+      440,
+      724,
+      552
+    ],
+    "medidores": {
+      "x": 976,
+      "arriba": 446,
+      "abajo": 528
+    }
+  },
+  "escalas": {
+    "frecuencia": [
+      20,
+      20000
+    ],
+    "dbfs": [
+      -120,
+      0
+    ],
+    "caidaDbS": 14
+  },
+  "modoParam": null,
+  "modos": {
+    "selector": [
+      358,
+      48,
+      476,
+      68
+    ],
+    "corte": 410,
+    "defecto": "avanzado"
+  },
+  "parametrosCubiertos": [
+    117,
+    118,
+    119,
+    120,
+    121,
+    122,
+    123,
+    124,
+    125,
+    126,
+    127,
+    128,
+    129,
+    130,
+    131,
+    132,
+    133,
+    134
+  ],
+  "widgets": [
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        92,
+        1048,
+        404
+      ],
+      "etiqueta": "AFINACIÓN · PARCHES · SALA",
+      "basico": true
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        704,
+        140,
+        780,
+        234
+      ],
+      "etiqueta": "KICK TUNE",
+      "tamano": 64,
+      "basico": true,
+      "param": 0,
+      "min": 35,
+      "max": 100,
+      "defecto": 76,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Kick Tuning",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        819,
+        140,
+        895,
+        234
+      ],
+      "etiqueta": "SNARE SNAP",
+      "tamano": 64,
+      "basico": true,
+      "param": 1,
+      "min": 0,
+      "max": 100,
+      "defecto": 65,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Snare Snap",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        934,
+        140,
+        1010,
+        234
+      ],
+      "etiqueta": "TOMS DAMP",
+      "tamano": 64,
+      "basico": true,
+      "param": 2,
+      "min": 0,
+      "max": 100,
+      "defecto": 25,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Toms Damping",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        714,
+        278,
+        770,
+        352
+      ],
+      "etiqueta": "OVERHEAD AIR",
+      "tamano": 44,
+      "basico": false,
+      "param": 3,
+      "min": 0,
+      "max": 100,
+      "defecto": 55,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Overhead Air",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        829,
+        278,
+        885,
+        352
+      ],
+      "etiqueta": "ROOM BLEND",
+      "tamano": 44,
+      "basico": true,
+      "param": 4,
+      "min": 0,
+      "max": 100,
+      "defecto": 45,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Room Blend",
+      "unidad": "%",
+      "feature": "drums.worship-room"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        944,
+        278,
+        1000,
+        352
+      ],
+      "etiqueta": "ROOM COMP",
+      "tamano": 44,
+      "basico": false,
+      "param": 7,
+      "min": 0,
+      "max": 100,
+      "defecto": 30,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Room Compression",
+      "unidad": "%"
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        418,
+        1048,
+        556
+      ],
+      "etiqueta": "SALIDA",
+      "basico": true,
+      "param": 5,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": true,
+      "nombre": "Bypass",
+      "unidad": "",
+      "opciones": [
+        "Active",
+        "Bypass"
+      ]
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        704,
+        368,
+        880,
+        392
+      ],
+      "etiqueta": "KIT",
+      "basico": true,
+      "rectBasico": [
+        769,
+        368,
+        945,
+        392
+      ],
+      "param": 23,
+      "min": 0,
+      "max": 15,
+      "defecto": 0,
+      "pasos": 15,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Drum Kit",
+      "unidad": "",
+      "opciones": [
+        "Kit 1",
+        "Kit 2",
+        "Kit 3",
+        "Kit 4",
+        "Kit 5",
+        "Kit 6",
+        "Kit 7",
+        "Kit 8",
+        "Kit 9",
+        "Kit 10",
+        "Kit 11",
+        "Kit 12",
+        "Kit 13",
+        "Kit 14",
+        "Kit 15",
+        "Kit 16"
+      ]
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        893,
+        344,
+        935,
+        404
+      ],
+      "etiqueta": "PERC",
+      "tamano": 30,
+      "basico": false,
+      "param": 24,
+      "min": -24,
+      "max": 6,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Percusion Level",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "fader",
+      "rect": [
+        680,
+        440,
+        724,
+        552
+      ],
+      "etiqueta": "VOLUMEN",
+      "basico": true,
+      "param": 6,
+      "min": -24,
+      "max": 6,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Master Volume",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        749,
+        458,
+        805,
+        532
+      ],
+      "etiqueta": "PARCHES",
+      "tamano": 44,
+      "basico": true,
+      "rectBasico": [
+        786,
+        458,
+        842,
+        532
+      ],
+      "param": 8,
+      "min": -12,
+      "max": 6,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Shells Level",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        823,
+        458,
+        879,
+        532
+      ],
+      "etiqueta": "PLATOS",
+      "tamano": 44,
+      "basico": true,
+      "rectBasico": [
+        860,
+        458,
+        916,
+        532
+      ],
+      "param": 9,
+      "min": -12,
+      "max": 6,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Cymbals Level",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        897,
+        458,
+        953,
+        532
+      ],
+      "etiqueta": "HAT PEDAL",
+      "tamano": 44,
+      "basico": false,
+      "param": 10,
+      "min": 0,
+      "max": 100,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Hi-Hat Pedal (CC4)",
+      "unidad": "%"
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        976,
+        446,
+        985,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        990,
+        446,
+        999,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1020,
+        446,
+        1029,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1034,
+        446,
+        1043,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        52,
+        92,
+        652,
+        404
+      ],
+      "etiqueta": "ECUALIZADOR",
+      "pagina": 1,
+      "basico": true,
+      "param": 116,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · EQ On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        92,
+        1048,
+        250
+      ],
+      "etiqueta": "COMPRESOR",
+      "pagina": 1,
+      "basico": true,
+      "param": 148,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Comp On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        258,
+        1048,
+        404
+      ],
+      "etiqueta": "SATURACIÓN",
+      "pagina": 1,
+      "basico": true,
+      "param": 164,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Sat On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        52,
+        418,
+        262,
+        556
+      ],
+      "etiqueta": "CHORUS",
+      "pagina": 1,
+      "basico": true,
+      "param": 180,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Chorus On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        274,
+        418,
+        606,
+        556
+      ],
+      "etiqueta": "DELAY",
+      "pagina": 1,
+      "basico": true,
+      "param": 196,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Delay On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        618,
+        418,
+        918,
+        556
+      ],
+      "etiqueta": "REVERB",
+      "pagina": 1,
+      "basico": true,
+      "param": 212,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Reverb On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        930,
+        418,
+        1048,
+        556
+      ],
+      "etiqueta": "SALIDA",
+      "pagina": 1,
+      "basico": true,
+      "param": 228,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Out On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "mixfx-eq",
+      "rect": [
+        70,
+        120,
+        612,
+        276
+      ],
+      "etiqueta": "",
+      "pagina": 1,
+      "basico": true,
+      "base": 100,
+      "dbMin": -18,
+      "dbMax": 18,
+      "fMin": 20,
+      "fMax": 20000,
+      "bandas": [
+        {
+          "freq": {
+            "param": 117,
+            "min": 20,
+            "max": 1000,
+            "defecto": 80,
+            "escala": "log",
+            "decimales": 0,
+            "bipolar": false,
+            "unidad": "Hz",
+            "nombre": "FX · EQ Band 1 Freq"
+          },
+          "gain": {
+            "param": 118,
+            "min": -18,
+            "max": 18,
+            "defecto": 0,
+            "escala": "linear",
+            "decimales": 1,
+            "bipolar": true,
+            "unidad": "dB",
+            "nombre": "FX · EQ Band 1 Gain"
+          },
+          "q": {
+            "param": 119,
+            "min": 0.3,
+            "max": 2,
+            "defecto": 0.71,
+            "escala": "log",
+            "decimales": 2,
+            "bipolar": false,
+            "unidad": "",
+            "nombre": "FX · EQ Band 1 Q"
+          }
+        },
+        {
+          "freq": {
+            "param": 120,
+            "min": 20,
+            "max": 20000,
+            "defecto": 200,
+            "escala": "log",
+            "decimales": 0,
+            "bipolar": false,
+            "unidad": "Hz",
+            "nombre": "FX · EQ Band 2 Freq"
+          },
+          "gain": {
+            "param": 121,
+            "min": -18,
+            "max": 18,
+            "defecto": 0,
+            "escala": "linear",
+            "decimales": 1,
+            "bipolar": true,
+            "unidad": "dB",
+            "nombre": "FX · EQ Band 2 Gain"
+          },
+          "q": {
+            "param": 122,
+            "min": 0.1,
+            "max": 10,
+            "defecto": 1,
+            "escala": "log",
+            "decimales": 2,
+            "bipolar": false,
+            "unidad": "",
+            "nombre": "FX · EQ Band 2 Q"
+          }
+        },
+        {
+          "freq": {
+            "param": 123,
+            "min": 20,
+            "max": 20000,
+            "defecto": 800,
+            "escala": "log",
+            "decimales": 0,
+            "bipolar": false,
+            "unidad": "Hz",
+            "nombre": "FX · EQ Band 3 Freq"
+          },
+          "gain": {
+            "param": 124,
+            "min": -18,
+            "max": 18,
+            "defecto": 0,
+            "escala": "linear",
+            "decimales": 1,
+            "bipolar": true,
+            "unidad": "dB",
+            "nombre": "FX · EQ Band 3 Gain"
+          },
+          "q": {
+            "param": 125,
+            "min": 0.1,
+            "max": 10,
+            "defecto": 1,
+            "escala": "log",
+            "decimales": 2,
+            "bipolar": false,
+            "unidad": "",
+            "nombre": "FX · EQ Band 3 Q"
+          }
+        },
+        {
+          "freq": {
+            "param": 126,
+            "min": 20,
+            "max": 20000,
+            "defecto": 2500,
+            "escala": "log",
+            "decimales": 0,
+            "bipolar": false,
+            "unidad": "Hz",
+            "nombre": "FX · EQ Band 4 Freq"
+          },
+          "gain": {
+            "param": 127,
+            "min": -18,
+            "max": 18,
+            "defecto": 0,
+            "escala": "linear",
+            "decimales": 1,
+            "bipolar": true,
+            "unidad": "dB",
+            "nombre": "FX · EQ Band 4 Gain"
+          },
+          "q": {
+            "param": 128,
+            "min": 0.1,
+            "max": 10,
+            "defecto": 1,
+            "escala": "log",
+            "decimales": 2,
+            "bipolar": false,
+            "unidad": "",
+            "nombre": "FX · EQ Band 4 Q"
+          }
+        },
+        {
+          "freq": {
+            "param": 129,
+            "min": 20,
+            "max": 20000,
+            "defecto": 6000,
+            "escala": "log",
+            "decimales": 0,
+            "bipolar": false,
+            "unidad": "Hz",
+            "nombre": "FX · EQ Band 5 Freq"
+          },
+          "gain": {
+            "param": 130,
+            "min": -18,
+            "max": 18,
+            "defecto": 0,
+            "escala": "linear",
+            "decimales": 1,
+            "bipolar": true,
+            "unidad": "dB",
+            "nombre": "FX · EQ Band 5 Gain"
+          },
+          "q": {
+            "param": 131,
+            "min": 0.1,
+            "max": 10,
+            "defecto": 1,
+            "escala": "log",
+            "decimales": 2,
+            "bipolar": false,
+            "unidad": "",
+            "nombre": "FX · EQ Band 5 Q"
+          }
+        },
+        {
+          "freq": {
+            "param": 132,
+            "min": 1000,
+            "max": 20000,
+            "defecto": 10000,
+            "escala": "log",
+            "decimales": 0,
+            "bipolar": false,
+            "unidad": "Hz",
+            "nombre": "FX · EQ Band 6 Freq"
+          },
+          "gain": {
+            "param": 133,
+            "min": -18,
+            "max": 18,
+            "defecto": 0,
+            "escala": "linear",
+            "decimales": 1,
+            "bipolar": true,
+            "unidad": "dB",
+            "nombre": "FX · EQ Band 6 Gain"
+          },
+          "q": {
+            "param": 134,
+            "min": 0.3,
+            "max": 2,
+            "defecto": 0.71,
+            "escala": "log",
+            "decimales": 2,
+            "bipolar": false,
+            "unidad": "",
+            "nombre": "FX · EQ Band 6 Q"
+          }
+        }
+      ]
+    },
+    {
+      "tipo": "button",
+      "rect": [
+        70,
+        296,
+        126,
+        314
+      ],
+      "etiqueta": "1 LS",
+      "pagina": 1,
+      "basico": true,
+      "selBanda": 0
+    },
+    {
+      "tipo": "button",
+      "rect": [
+        130,
+        296,
+        186,
+        314
+      ],
+      "etiqueta": "2 PK",
+      "pagina": 1,
+      "basico": true,
+      "selBanda": 1
+    },
+    {
+      "tipo": "button",
+      "rect": [
+        190,
+        296,
+        246,
+        314
+      ],
+      "etiqueta": "3 PK",
+      "pagina": 1,
+      "basico": true,
+      "selBanda": 2
+    },
+    {
+      "tipo": "button",
+      "rect": [
+        250,
+        296,
+        306,
+        314
+      ],
+      "etiqueta": "4 PK",
+      "pagina": 1,
+      "basico": true,
+      "selBanda": 3
+    },
+    {
+      "tipo": "button",
+      "rect": [
+        310,
+        296,
+        366,
+        314
+      ],
+      "etiqueta": "5 PK",
+      "pagina": 1,
+      "basico": true,
+      "selBanda": 4
+    },
+    {
+      "tipo": "button",
+      "rect": [
+        370,
+        296,
+        426,
+        314
+      ],
+      "etiqueta": "6 HS",
+      "pagina": 1,
+      "basico": true,
+      "selBanda": 5
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        75,
+        327,
+        117,
+        387
+      ],
+      "etiqueta": "FREQ",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "bandaRol": "freq",
+      "param": 123,
+      "min": 20,
+      "max": 20000,
+      "defecto": 800,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · EQ Band 3 Freq",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        127,
+        327,
+        169,
+        387
+      ],
+      "etiqueta": "GAIN",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "bandaRol": "gain",
+      "param": 124,
+      "min": -18,
+      "max": 18,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "FX · EQ Band 3 Gain",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        179,
+        327,
+        221,
+        387
+      ],
+      "etiqueta": "Q",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "bandaRol": "q",
+      "param": 125,
+      "min": 0.1,
+      "max": 10,
+      "defecto": 1,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 2,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · EQ Band 3 Q",
+      "unidad": ""
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        268,
+        328,
+        318,
+        346
+      ],
+      "etiqueta": "HPF",
+      "pagina": 1,
+      "basico": false,
+      "param": 100,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · HPF On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        325,
+        327,
+        367,
+        387
+      ],
+      "etiqueta": "FREQ",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 101,
+      "min": 20,
+      "max": 1000,
+      "defecto": 80,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · HPF Freq",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        268,
+        384,
+        372,
+        400
+      ],
+      "etiqueta": "",
+      "pagina": 1,
+      "basico": false,
+      "param": 102,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · HPF Slope",
+      "unidad": "",
+      "opciones": [
+        "12 dB/oct",
+        "24 dB/oct"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        410,
+        328,
+        460,
+        346
+      ],
+      "etiqueta": "LPF",
+      "pagina": 1,
+      "basico": false,
+      "param": 103,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · LPF On",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        467,
+        327,
+        509,
+        387
+      ],
+      "etiqueta": "FREQ",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 104,
+      "min": 1000,
+      "max": 20000,
+      "defecto": 16000,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · LPF Freq",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        410,
+        384,
+        514,
+        400
+      ],
+      "etiqueta": "",
+      "pagina": 1,
+      "basico": false,
+      "param": 105,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · LPF Slope",
+      "unidad": "",
+      "opciones": [
+        "12 dB/oct",
+        "24 dB/oct"
+      ]
+    },
+    {
+      "tipo": "reset-fx",
+      "rect": [
+        482,
+        96,
+        574,
+        114
+      ],
+      "etiqueta": "RESET FX",
+      "pagina": 1,
+      "basico": true
+    },
+    {
+      "tipo": "mixfx-gr",
+      "rect": [
+        682,
+        128,
+        1034,
+        140
+      ],
+      "etiqueta": "",
+      "pagina": 1,
+      "basico": true,
+      "base": 100,
+      "maxDb": 24
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        671,
+        177,
+        713,
+        237
+      ],
+      "etiqueta": "THRESH",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 149,
+      "min": -60,
+      "max": 0,
+      "defecto": -18,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Comp Threshold",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        723,
+        177,
+        765,
+        237
+      ],
+      "etiqueta": "RATIO",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 150,
+      "min": 1,
+      "max": 20,
+      "defecto": 3,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Comp Ratio",
+      "unidad": ":1"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        775,
+        177,
+        817,
+        237
+      ],
+      "etiqueta": "ATTACK",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 151,
+      "min": 0.1,
+      "max": 200,
+      "defecto": 10,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Comp Attack",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        827,
+        177,
+        869,
+        237
+      ],
+      "etiqueta": "RELEASE",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 152,
+      "min": 10,
+      "max": 2000,
+      "defecto": 120,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Comp Release",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        879,
+        177,
+        921,
+        237
+      ],
+      "etiqueta": "KNEE",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 153,
+      "min": 0,
+      "max": 24,
+      "defecto": 6,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Comp Knee",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        931,
+        177,
+        973,
+        237
+      ],
+      "etiqueta": "MAKEUP",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 154,
+      "min": 0,
+      "max": 24,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Comp Makeup",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        983,
+        177,
+        1025,
+        237
+      ],
+      "etiqueta": "MIX",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 155,
+      "min": 0,
+      "max": 100,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Comp Mix",
+      "unidad": "%"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        682,
+        312,
+        784,
+        330
+      ],
+      "etiqueta": "TIPO",
+      "pagina": 1,
+      "basico": false,
+      "param": 165,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Sat Type",
+      "unidad": "",
+      "opciones": [
+        "Tape",
+        "Tube"
+      ]
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        811,
+        319,
+        853,
+        379
+      ],
+      "etiqueta": "DRIVE",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 166,
+      "min": 0,
+      "max": 100,
+      "defecto": 30,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Sat Drive",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        881,
+        319,
+        923,
+        379
+      ],
+      "etiqueta": "TONE",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 167,
+      "min": 1000,
+      "max": 20000,
+      "defecto": 12000,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Sat Tone",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        951,
+        319,
+        993,
+        379
+      ],
+      "etiqueta": "MIX",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 168,
+      "min": 0,
+      "max": 100,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Sat Mix",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        67,
+        459,
+        109,
+        519
+      ],
+      "etiqueta": "DEPTH",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 181,
+      "min": 0,
+      "max": 100,
+      "defecto": 40,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Chorus Depth",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        129,
+        459,
+        171,
+        519
+      ],
+      "etiqueta": "RATE",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 182,
+      "min": 0.05,
+      "max": 5,
+      "defecto": 0.6,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 2,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Chorus Rate",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        191,
+        459,
+        233,
+        519
+      ],
+      "etiqueta": "MIX",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 183,
+      "min": 0,
+      "max": 100,
+      "defecto": 35,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Chorus Mix",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        299,
+        451,
+        341,
+        511
+      ],
+      "etiqueta": "TIME",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 198,
+      "min": 20,
+      "max": 2000,
+      "defecto": 350,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Delay Time",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        374,
+        451,
+        416,
+        511
+      ],
+      "etiqueta": "FEEDBACK",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 199,
+      "min": 0,
+      "max": 90,
+      "defecto": 35,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Delay Feedback",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        449,
+        451,
+        491,
+        511
+      ],
+      "etiqueta": "TONE",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 200,
+      "min": 500,
+      "max": 16000,
+      "defecto": 5000,
+      "pasos": 0,
+      "escala": "log",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Delay Tone",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        524,
+        451,
+        566,
+        511
+      ],
+      "etiqueta": "MIX",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 201,
+      "min": 0,
+      "max": 100,
+      "defecto": 25,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Delay Mix",
+      "unidad": "%"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        290,
+        520,
+        408,
+        538
+      ],
+      "etiqueta": "SYNC",
+      "pagina": 1,
+      "basico": false,
+      "param": 197,
+      "min": 0,
+      "max": 4,
+      "defecto": 0,
+      "pasos": 4,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Delay Sync",
+      "unidad": "",
+      "opciones": [
+        "Free",
+        "1/4",
+        "1/8",
+        "1/8.",
+        "1/16"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        420,
+        520,
+        520,
+        538
+      ],
+      "etiqueta": "PING-PONG",
+      "pagina": 1,
+      "basico": false,
+      "param": 202,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Delay Ping-Pong",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        639,
+        451,
+        681,
+        511
+      ],
+      "etiqueta": "SIZE",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 214,
+      "min": 0,
+      "max": 100,
+      "defecto": 50,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Reverb Size",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        701,
+        451,
+        743,
+        511
+      ],
+      "etiqueta": "DAMPING",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 215,
+      "min": 0,
+      "max": 100,
+      "defecto": 50,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Reverb Damping",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        763,
+        451,
+        805,
+        511
+      ],
+      "etiqueta": "PRE-DLY",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 216,
+      "min": 0,
+      "max": 200,
+      "defecto": 20,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Reverb Pre-Delay",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        825,
+        451,
+        867,
+        511
+      ],
+      "etiqueta": "MIX",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 217,
+      "min": 0,
+      "max": 100,
+      "defecto": 20,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Reverb Mix",
+      "unidad": "%"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        634,
+        520,
+        752,
+        538
+      ],
+      "etiqueta": "TIPO",
+      "pagina": 1,
+      "basico": false,
+      "param": 213,
+      "min": 0,
+      "max": 2,
+      "defecto": 1,
+      "pasos": 2,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Reverb Type",
+      "unidad": "",
+      "opciones": [
+        "Plate",
+        "Hall",
+        "Room"
+      ]
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        941,
+        451,
+        983,
+        511
+      ],
+      "etiqueta": "WIDTH",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 229,
+      "min": 0,
+      "max": 200,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "FX · Out Width",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        997,
+        451,
+        1039,
+        511
+      ],
+      "etiqueta": "GAIN",
+      "tamano": 30,
+      "pagina": 1,
+      "basico": false,
+      "param": 230,
+      "min": -24,
+      "max": 12,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "FX · Out Gain",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "pagina",
+      "rect": [
+        484,
+        48,
+        568,
+        68
+      ],
+      "etiqueta": "MIX / FX",
+      "basico": false,
+      "paginaDestino": 1
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        52,
+        92,
+        1048,
+        556
+      ],
+      "etiqueta": "PARÁMETROS AVANZADOS · 12",
+      "pagina": 2,
+      "basico": true
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        118.7,
+        252,
+        174.7,
+        326
+      ],
+      "etiqueta": "PARALLEL COMP.",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 11,
+      "min": 0,
+      "max": 100,
+      "defecto": 15,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Parallel Compression",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        280,
+        252,
+        336,
+        326
+      ],
+      "etiqueta": "TAPE SATURATION",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 12,
+      "min": 0,
+      "max": 100,
+      "defecto": 6,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Tape Saturation",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        441.3,
+        252,
+        497.3,
+        326
+      ],
+      "etiqueta": "ROOM WARMTH",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 13,
+      "min": 0,
+      "max": 100,
+      "defecto": 60,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Room Warmth",
+      "unidad": "%",
+      "feature": "drums.worship-room"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        602.7,
+        252,
+        658.7,
+        326
+      ],
+      "etiqueta": "CYMBAL SMOOTHING",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 14,
+      "min": 0,
+      "max": 100,
+      "defecto": 40,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Cymbal Smoothing",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        764,
+        252,
+        820,
+        326
+      ],
+      "etiqueta": "CLOSE MIC LEVEL",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 15,
+      "min": -12,
+      "max": 6,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Close Mic Level",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        925.3,
+        252,
+        981.3,
+        326
+      ],
+      "etiqueta": "OVER. & ROOM MIC …",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 16,
+      "min": -12,
+      "max": 6,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Overhead & Room Mic Level",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        118.7,
+        348,
+        174.7,
+        422
+      ],
+      "etiqueta": "SHELL BODY",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 17,
+      "min": 0,
+      "max": 100,
+      "defecto": 65,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Shell Body",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        280,
+        348,
+        336,
+        422
+      ],
+      "etiqueta": "SHELL PUNCH",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 18,
+      "min": 0,
+      "max": 100,
+      "defecto": 65,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Shell Punch",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        441.3,
+        348,
+        497.3,
+        422
+      ],
+      "etiqueta": "SNARE BODY",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 19,
+      "min": 0,
+      "max": 150,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Snare Body",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        602.7,
+        348,
+        658.7,
+        422
+      ],
+      "etiqueta": "TOMS BODY",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 20,
+      "min": 0,
+      "max": 150,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Toms Body",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        764,
+        348,
+        820,
+        422
+      ],
+      "etiqueta": "SNARE BODY TUNING",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 21,
+      "min": 110,
+      "max": 260,
+      "defecto": 165,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Snare Body Tuning",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        925.3,
+        348,
+        981.3,
+        422
+      ],
+      "etiqueta": "TOMS BODY TUNING",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 22,
+      "min": -300,
+      "max": 300,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Toms Body Tuning",
+      "unidad": "ct"
+    },
+    {
+      "tipo": "pagina",
+      "rect": [
+        916,
+        98,
+        1002,
+        113
+      ],
+      "etiqueta": "+12 PARÁM.",
+      "basico": false,
+      "paginaDestino": 2,
+      "textoAbierta": "◀ EDITOR"
+    },
+    {
+      "tipo": "modo",
+      "rect": [
+        358,
+        48,
+        476,
+        68
+      ],
+      "etiqueta": "BÁSICO|AVANZADO",
+      "basico": true,
+      "corte": 410
+    },
+    {
+      "tipo": "reset",
+      "rect": [
+        624,
+        48,
+        684,
+        68
+      ],
+      "etiqueta": "RESET",
+      "basico": true
+    }
+  ]
+}

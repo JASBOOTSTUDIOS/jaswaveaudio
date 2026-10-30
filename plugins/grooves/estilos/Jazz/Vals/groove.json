@@ -1,0 +1,23 @@
+{
+  "archivos": {
+    "vals-de-jazz.mid": {
+      "id": "jw-jazz-vals-vals-de-jazz",
+      "nombre": "Vals de jazz",
+      "tempo": 150,
+      "compas": "3/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "jazz",
+        "vals",
+        "3-4",
+        "ride"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

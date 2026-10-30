@@ -1,0 +1,638 @@
+{
+  "id": "com.jaswave.plugin.audio-doctor",
+  "name": "JasWave Audio Doctor",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "vendor": "JasWave Audio",
+  "description": "Restauración de audio universal: noise gate/expander con sidechain, denoise espectral (perfil aprendido o continuo), de-hum 50/60 Hz con seguimiento y armónicos, de-click, de-clip, de-reverb, aislador de voz, recuperación de aire, Auto-Fix por diagnóstico, escucha del delta (lo eliminado) y modo Live Mic de latencia mínima.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveAudioDoctor.vst3"
+  },
+  "vst3": {
+    "classId": "{4A617357-4144-4F43-5072-6F6356335431}",
+    "subCategories": "Fx|Restoration"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "productor",
+    "mezcla",
+    "mastering",
+    "qa"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.audio-doctor",
+    "features": []
+  },
+  "ai": {
+    "summary": "Limpia grabaciones: quita ruido de fondo, zumbido de red, clics, recortes y reverberación, aísla la voz y, con Auto-Fix, decide los ajustes a partir de un diagnóstico del audio.",
+    "intents": [
+      "limpiar-ruido",
+      "quitar-zumbido",
+      "quitar-clics",
+      "reparar-recorte",
+      "quitar-reverb",
+      "aislar-voz",
+      "reparar-audio-automatico",
+      "escuchar-lo-eliminado",
+      "silenciar-entre-frases"
+    ],
+    "parameters": [
+      {
+        "id": "bypass",
+        "vstParamId": 0,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "bypass": true,
+        "basico": true
+      },
+      {
+        "id": "doctor.entrada",
+        "vstParamId": 1,
+        "name": "Ganancia de entrada",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "doctor.salida",
+        "vstParamId": 2,
+        "name": "Ganancia de salida",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "doctor.live",
+        "vstParamId": 3,
+        "name": "Modo Live Mic (latencia < 2 ms, calidad espectral reducida)",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "doctor.delta",
+        "vstParamId": 4,
+        "name": "Delta: escuchar solo lo eliminado",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "doctor.autofix",
+        "vstParamId": 5,
+        "name": "Auto-Fix: analiza ~3 s de audio y aplica los ajustes recomendados (se apaga solo)",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "gate.activo",
+        "vstParamId": 10,
+        "name": "Gate/Expander activo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "gate.umbral",
+        "vstParamId": 11,
+        "name": "Gate umbral",
+        "min": -80,
+        "max": 0,
+        "default": -50,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "gate.ratio",
+        "vstParamId": 12,
+        "name": "Gate ratio (1 = off, 20 = gate duro)",
+        "min": 1,
+        "max": 20,
+        "default": 4,
+        "unit": ":1",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "gate.ataque",
+        "vstParamId": 13,
+        "name": "Gate ataque",
+        "min": 0.1,
+        "max": 50,
+        "default": 1,
+        "unit": "ms",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "gate.release",
+        "vstParamId": 14,
+        "name": "Gate release",
+        "min": 5,
+        "max": 2000,
+        "default": 120,
+        "unit": "ms",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "gate.hold",
+        "vstParamId": 15,
+        "name": "Gate hold",
+        "min": 0,
+        "max": 1000,
+        "default": 50,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "gate.histeresis",
+        "vstParamId": 16,
+        "name": "Gate histéresis",
+        "min": 0,
+        "max": 12,
+        "default": 4,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "gate.sc-hpf",
+        "vstParamId": 17,
+        "name": "Gate filtro paso alto del sidechain",
+        "min": 20,
+        "max": 2000,
+        "default": 80,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "denoise.activo",
+        "vstParamId": 20,
+        "name": "Denoise activo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "denoise.reduccion",
+        "vstParamId": 21,
+        "name": "Denoise reducción máxima",
+        "min": 0,
+        "max": 24,
+        "default": 12,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "denoise.aprender",
+        "vstParamId": 22,
+        "name": "Denoise aprender perfil de ruido (activar con solo ruido)",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "denoise.modo",
+        "vstParamId": 23,
+        "name": "Denoise modo del perfil (Auto/Aprendido/Continuo)",
+        "min": 0,
+        "max": 2,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Auto",
+          "Learned",
+          "Continuous"
+        ]
+      },
+      {
+        "id": "denoise.suavizado",
+        "vstParamId": 24,
+        "name": "Denoise suavizado (más = menos ruido musical)",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "hum.activo",
+        "vstParamId": 30,
+        "name": "De-Hum activo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "hum.frecuencia",
+        "vstParamId": 31,
+        "name": "De-Hum frecuencia de red (Auto/50/60)",
+        "min": 0,
+        "max": 2,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Auto",
+          "50 Hz",
+          "60 Hz"
+        ],
+        "basico": true
+      },
+      {
+        "id": "hum.armonicos",
+        "vstParamId": 32,
+        "name": "De-Hum armónicos",
+        "min": 1,
+        "max": 8,
+        "default": 4,
+        "unit": "",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "hum.q",
+        "vstParamId": 33,
+        "name": "De-Hum Q",
+        "min": 5,
+        "max": 100,
+        "default": 30,
+        "unit": "",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "hum.profundidad",
+        "vstParamId": 34,
+        "name": "De-Hum profundidad",
+        "min": 0,
+        "max": 60,
+        "default": 40,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "declick.activo",
+        "vstParamId": 50,
+        "name": "De-Click activo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "declick.sensibilidad",
+        "vstParamId": 51,
+        "name": "De-Click sensibilidad",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "declick.ancho",
+        "vstParamId": 52,
+        "name": "De-Click ancho máximo",
+        "min": 0.1,
+        "max": 5,
+        "default": 1,
+        "unit": "ms",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "declip.activo",
+        "vstParamId": 60,
+        "name": "De-Clip activo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "declip.umbral",
+        "vstParamId": 61,
+        "name": "De-Clip umbral de recorte",
+        "min": -12,
+        "max": 0,
+        "default": -0.3,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "declip.fuerza",
+        "vstParamId": 62,
+        "name": "De-Clip fuerza",
+        "min": 0,
+        "max": 100,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "dereverb.activo",
+        "vstParamId": 70,
+        "name": "De-Reverb activo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "dereverb.cantidad",
+        "vstParamId": 71,
+        "name": "De-Reverb cantidad",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "dereverb.cola",
+        "vstParamId": 72,
+        "name": "De-Reverb cola estimada",
+        "min": 50,
+        "max": 1000,
+        "default": 300,
+        "unit": "ms",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "voz.activo",
+        "vstParamId": 80,
+        "name": "Aislador de voz activo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "voz.grave",
+        "vstParamId": 81,
+        "name": "Aislador de voz frecuencia grave",
+        "min": 60,
+        "max": 400,
+        "default": 100,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "voz.agudo",
+        "vstParamId": 82,
+        "name": "Aislador de voz frecuencia aguda",
+        "min": 3000,
+        "max": 16000,
+        "default": 8000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "voz.profundidad",
+        "vstParamId": 83,
+        "name": "Aislador de voz profundidad",
+        "min": 0,
+        "max": 40,
+        "default": 20,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "escudo.activo",
+        "vstParamId": 90,
+        "name": "Escudo de transitorios activo",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "escudo.cantidad",
+        "vstParamId": 91,
+        "name": "Escudo de transitorios cantidad",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "aire.activo",
+        "vstParamId": 95,
+        "name": "Recuperación de aire activa",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "aire.frecuencia",
+        "vstParamId": 96,
+        "name": "Aire frecuencia",
+        "min": 4000,
+        "max": 16000,
+        "default": 8000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "aire.ganancia",
+        "vstParamId": 97,
+        "name": "Aire ganancia",
+        "min": 0,
+        "max": 6,
+        "default": 2,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "diag.ruido",
+        "vstParamId": 120,
+        "name": "Diagnóstico: ruido de fondo (medidor)",
+        "min": -120,
+        "max": 0,
+        "default": -120,
+        "unit": "dBFS",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      },
+      {
+        "id": "diag.hum",
+        "vstParamId": 121,
+        "name": "Diagnóstico: hum detectado (medidor)",
+        "min": 0,
+        "max": 2,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "None",
+          "50 Hz",
+          "60 Hz"
+        ],
+        "readOnly": true
+      },
+      {
+        "id": "diag.hum-nivel",
+        "vstParamId": 122,
+        "name": "Diagnóstico: nivel del hum (medidor)",
+        "min": -120,
+        "max": 0,
+        "default": -120,
+        "unit": "dBFS",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      },
+      {
+        "id": "diag.clics",
+        "vstParamId": 123,
+        "name": "Diagnóstico: clics por segundo (medidor)",
+        "min": 0,
+        "max": 100,
+        "default": 0,
+        "unit": "",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      },
+      {
+        "id": "diag.recorte",
+        "vstParamId": 124,
+        "name": "Diagnóstico: % de muestras recortadas (medidor)",
+        "min": 0,
+        "max": 100,
+        "default": 0,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      },
+      {
+        "id": "diag.reverberancia",
+        "vstParamId": 125,
+        "name": "Diagnóstico: reverberancia (medidor)",
+        "min": 0,
+        "max": 100,
+        "default": 0,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      },
+      {
+        "id": "diag.reduccion",
+        "vstParamId": 126,
+        "name": "Reducción aplicada (medidor)",
+        "min": 0,
+        "max": 60,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      }
+    ]
+  },
+  "download": {
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.audio-doctor-1.0.0.jwx",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
+}

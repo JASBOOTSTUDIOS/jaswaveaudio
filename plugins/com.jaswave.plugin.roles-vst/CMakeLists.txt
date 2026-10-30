@@ -1,0 +1,7 @@
+﻿# JasWave Roles – VST3 instrumento independiente (compila solo o desde plugins/CMakeLists.txt)
+cmake_minimum_required(VERSION 3.25)
+project(jaswave_roles_vst VERSION 1.0.0 LANGUAGES C CXX)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/JasWavePlugins.cmake")
+jw_setup_shared()
+# Bundle "JasWaveRoles.vst3": mismo nombre de archivo que el previo (el DAW lo busca así)
+jaswave_add_vst3(TARGET JasWaveRoles SOURCES src/roles_plugin.cpp)

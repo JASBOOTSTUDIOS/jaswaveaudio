@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="kick">
+  <!-- Aro de madera exterior del bombo -->
+  <circle cx="32" cy="32" r="22" fill="currentColor" fill-opacity="0.14" stroke-width="2.5" />
+  <!-- Parche frontal del bombo -->
+  <circle cx="32" cy="32" r="19" stroke-width="1.5" />
+  <!-- Orificio para micrófono (sound port) -->
+  <circle cx="41" cy="39" r="4.5" fill="currentColor" fill-opacity="0.4" stroke-width="1.5" />
+  <!-- 8 Garras de afinación alrededor del aro -->
+  <line x1="32" y1="9" x2="32" y2="13" stroke-width="2.5" />
+  <line x1="32" y1="51" x2="32" y2="55" stroke-width="2.5" />
+  <line x1="9" y1="32" x2="13" y2="32" stroke-width="2.5" />
+  <line x1="51" y1="32" x2="55" y2="32" stroke-width="2.5" />
+  <line x1="16" y1="16" x2="19" y2="19" stroke-width="2.5" />
+  <line x1="45" y1="19" x2="48" y2="16" stroke-width="2.5" />
+  <line x1="16" y1="48" x2="19" y2="45" stroke-width="2.5" />
+  <line x1="45" y1="45" x2="48" y2="48" stroke-width="2.5" />
+  <!-- Patas telescópicas (spurs) -->
+  <path d="M14 47l-6 11M50 47l6 11" stroke-width="3" />
+</svg>

@@ -3,10 +3,12 @@ import type { HarnessDawAction } from '../types/actions'
 import {
   parseReadBlockFromText,
   runAbbreviatedReasoning,
+  runCouncilReviewReasoning,
   runReasoningLoop,
   stripReadBlock,
   sanitizeInnerThought,
   REASONING_REPAIR_PHASES,
+  REASONING_POST_APPLY_PHASES,
 } from '../agent/reasoning-loop'
 import {
   estimateReasoningDepth,
@@ -34,13 +36,13 @@ Fin.`
     expect(parseReadBlockFromText('sin bloque')).toEqual([])
   })
 
-  it('limita a 4 acciones por bloque', () => {
+  it('limita a 6 acciones por bloque', () => {
     const many = Array.from({ length: 6 }, (_, i) => ({
       type: 'doc.list',
       payload: { n: i },
     }))
     const text = `<<<READ ${JSON.stringify(many)} READ>>>`
-    expect(parseReadBlockFromText(text)).toHaveLength(4)
+    expect(parseReadBlockFromText(text)).toHaveLength(6)
   })
 
   it('stripReadBlock elimina el bloque', () => {
@@ -120,12 +122,13 @@ INTENT>>>`,
       projectContext: 'Proyecto: 1 pista',
       chat,
       runReadTools: async () => '(ok)',
+      perfil: 'profundo',
       onStep: (s) => phases.push(s.phase),
     })
 
     expect(result.depth).toBe(3)
     expect(result.canonicalPrompt).toMatch(/crea un pad/)
-    expect(result.steps.map((s) => s.phase)).toEqual(['normalize', 'research1', 'commit'])
+    expect(result.steps.map((s) => s.phase)).toEqual(['normalize', 'verify', 'commit'])
     expect(result.steps).toHaveLength(3)
     expect(result.steps[0]!.title).toMatch(/1\/3/)
     expect(result.finalUserMessage).toContain('construye un pad suave')
@@ -146,6 +149,7 @@ INTENT>>>`,
       projectContext: 'Proyecto: 2 pistas',
       chat,
       runReadTools: async () => '(ok)',
+      perfil: 'profundo',
     })
     expect(result.depth).toBe(3)
     expect(result.depthReason).toMatch(/fallback/)
@@ -161,6 +165,7 @@ INTENT>>>`,
       projectContext: 'ctx',
       chat,
       runReadTools: async () => '',
+      perfil: 'profundo',
       phases: [
         'normalize',
         'frame',
@@ -206,6 +211,7 @@ INTENT>>>`,
       projectContext: 'ctx',
       chat,
       runReadTools,
+      perfil: 'profundo',
     })
 
     expect(runReadTools).toHaveBeenCalledTimes(1)
@@ -222,9 +228,81 @@ INTENT>>>`,
       repairContext: 'plugin.insert falló',
       chat: async () => ({ success: true, content: 'brief' }),
       runReadTools: async () => '',
+      perfil: 'profundo',
       onStep: (s) => phases.push(s.phase),
     })
     expect(phases).toEqual(REASONING_REPAIR_PHASES)
+  })
+
+  it('runCouncilReviewReasoning usa capas post-Aplicar (Kael QA)', async () => {
+    const phases: string[] = []
+    await runCouncilReviewReasoning({
+      userText: 'bachata 3 min',
+      mode: 'create',
+      projectContext: 'ctx',
+      applyOutcome: 'Aplicar OK\nmusicBuild aplicado',
+      chat: async () => ({ success: true, content: '**Kael:** OK verificado.' }),
+      runReadTools: async () => '',
+      perfil: 'profundo',
+      onStep: (s) => phases.push(s.phase),
+    })
+    expect(phases).toEqual(REASONING_POST_APPLY_PHASES)
+  })
+})
+
+describe('perfil rápido (por defecto)', () => {
+  it('canción completa: una sola llamada de plan, sin consejo', async () => {
+    const chat = vi.fn(async () => ({ success: true, content: '1. Estrofa y coro en Fa…' }))
+    const r = await runReasoningLoop({
+      userText: 'completa la canción worship con bajo y batería',
+      mode: 'create',
+      projectContext: 'ctx',
+      chat,
+      runReadTools: async () => '',
+    })
+    expect(chat).toHaveBeenCalledTimes(1)
+    expect(r.steps.map((s) => s.phase)).toEqual(['commit'])
+    expect(r.finalUserMessage).toContain('Plan interno')
+    expect(r.finalUserMessage).not.toMatch(/consejo|Kael/)
+  })
+
+  it('confirmaciones y acciones simples van directas (0 llamadas)', async () => {
+    for (const userText of ['sí, hazlo', 'pon el tempo a 90 bpm', 'mute']) {
+      const chat = vi.fn(async () => ({ success: true, content: 'x' }))
+      const r = await runReasoningLoop({ userText, mode: 'create', projectContext: 'ctx', chat, runReadTools: async () => '' })
+      expect(chat).not.toHaveBeenCalled()
+      expect(r.steps).toEqual([])
+      expect(r.finalUserMessage).toContain(userText)
+    }
+  })
+
+  it('investigar en internet: lectura + plan (2 llamadas) con web.search garantizado', async () => {
+    const chat = vi.fn(async () => ({ success: true, content: 'necesito datos' }))
+    const runReadTools = vi.fn(async () => 'resultados')
+    await runReasoningLoop({
+      userText: 'investiga en internet cómo suena el worship moderno y compáralo',
+      mode: 'think',
+      projectContext: 'ctx',
+      chat,
+      runReadTools,
+    })
+    expect(chat).toHaveBeenCalledTimes(2)
+    const acciones = (runReadTools.mock.calls as unknown as Array<[HarnessDawAction[]]>)[0]?.[0] ?? []
+    expect(acciones.some((a) => a.type === 'web.search')).toBe(true)
+  })
+
+  it('tras Aplicar no hay revisión por capas', async () => {
+    const chat = vi.fn(async () => ({ success: true, content: 'x' }))
+    const r = await runCouncilReviewReasoning({
+      userText: 'bachata',
+      mode: 'create',
+      projectContext: 'ctx',
+      applyOutcome: 'Aplicar OK',
+      chat,
+      runReadTools: async () => '',
+    })
+    expect(chat).not.toHaveBeenCalled()
+    expect(r.steps).toEqual([])
   })
 })
 

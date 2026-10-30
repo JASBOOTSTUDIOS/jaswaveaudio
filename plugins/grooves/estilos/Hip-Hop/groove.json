@@ -1,0 +1,75 @@
+{
+  "archivos": {
+    "boom-bap.mid": {
+      "id": "jw-hip-hop-boom-bap",
+      "nombre": "Boom bap",
+      "tempo": 90,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "hip-hop",
+        "boom-bap"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "trap.mid": {
+      "id": "jw-hip-hop-trap",
+      "nombre": "Trap",
+      "tempo": 140,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "hip-hop",
+        "trap",
+        "medio-tiempo"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "lo-fi.mid": {
+      "id": "jw-hip-hop-lo-fi",
+      "nombre": "Lo-fi",
+      "tempo": 80,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "hip-hop",
+        "lo-fi",
+        "suave"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-caja-al-cuarto.mid": {
+      "id": "jw-hip-hop-fill-caja-al-cuarto",
+      "nombre": "Fill caja al cuarto",
+      "tempo": 90,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "caja",
+        "cuarto"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

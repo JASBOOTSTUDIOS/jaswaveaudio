@@ -12,6 +12,7 @@ import type { DAWState } from '../types/state';
 import type { ProjectState } from '../types/proyecto';
 import type { HerramientaActiva, IdPanel } from '../types/ui';
 import { NombresEventos, EventosUIExt, EventosProyecto } from '../constants/nombres-eventos';
+import { entorno } from '../state/entorno-determinista';
 
 // ── master.update ──────────────────────────────────────────────
 
@@ -27,6 +28,7 @@ export type MasterUpdatePayload = {
 export function crearComandoMasterUpdate(): CommandDefinition<MasterUpdatePayload> {
   return {
     type: 'master.update',
+    historialUndo: 'instantanea',
     description: 'Actualiza propiedades del canal master (volumen, paneo, mute, solo)',
     risk: 'write',
     schema: {
@@ -45,7 +47,7 @@ export function crearComandoMasterUpdate(): CommandDefinition<MasterUpdatePayloa
         ...estado.project,
         master: masterActualizado,
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       return {
@@ -54,7 +56,7 @@ export function crearComandoMasterUpdate(): CommandDefinition<MasterUpdatePayloa
           {
             nombre: EventosProyecto.modificado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'auxiliary-commands',
             payload: { canal: 'master' },
           },
@@ -75,13 +77,14 @@ export type SetTimeSignaturePayload = {
 export function crearComandoSetTimeSignature(): CommandDefinition<SetTimeSignaturePayload> {
   return {
     type: 'project.setTimeSignature',
+    historialUndo: 'instantanea',
     description: 'Establece la firma de tiempo del proyecto',
     risk: 'write',
     schema: {
       type: 'object',
       properties: {
-        numerador: { type: 'number', minimum: 1, maximum: 32 },
-        denominador: { type: 'number', minimum: 1, maximum: 32 },
+        numerador: { type: 'number', minimum: 1, maximum: 32, multipleOf: 1 },
+        denominador: { type: 'number', enum: [1, 2, 4, 8, 16, 32] },
       },
       required: ['numerador', 'denominador'],
       additionalProperties: false,
@@ -96,7 +99,7 @@ export function crearComandoSetTimeSignature(): CommandDefinition<SetTimeSignatu
           nombre: `${payload.numerador}/${payload.denominador}`,
         },
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
 
       // Alinear metrónomo con el compás del proyecto (estilo Reaper)
@@ -114,7 +117,7 @@ export function crearComandoSetTimeSignature(): CommandDefinition<SetTimeSignatu
           {
             nombre: EventosProyecto.modificado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'auxiliary-commands',
             payload: { timeSignature: payload },
           },
@@ -134,6 +137,7 @@ export type SetToolPayload = {
 export function crearComandoSetTool(): CommandDefinition<SetToolPayload> {
   return {
     type: 'ui.setTool',
+    replicacion: 'local',
     description: 'Cambia la herramienta activa del editor',
     risk: 'write',
     schema: {
@@ -154,7 +158,7 @@ export function crearComandoSetTool(): CommandDefinition<SetToolPayload> {
           {
             nombre: EventosUIExt.focoCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'auxiliary-commands',
             payload: { herramienta: payload.herramienta },
           },
@@ -174,6 +178,7 @@ export type TogglePanelPayload = {
 export function crearComandoTogglePanel(): CommandDefinition<TogglePanelPayload> {
   return {
     type: 'ui.togglePanel',
+    replicacion: 'local',
     description: 'Alterna la visibilidad de un panel de UI',
     risk: 'write',
     schema: {
@@ -195,7 +200,7 @@ export function crearComandoTogglePanel(): CommandDefinition<TogglePanelPayload>
           {
             nombre: EventosUIExt.focoCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'auxiliary-commands',
             payload: { panel: panelActivo },
           },
@@ -246,7 +251,7 @@ export function crearComandoSetSnap(): CommandDefinition<SetSnapPayload> {
           {
             nombre: NombresEventos.modificado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'auxiliary-commands',
             payload: { snap: payload.snap },
           },
@@ -268,6 +273,7 @@ export type SetZoomPayload = {
 export function crearComandoSetZoom(): CommandDefinition<SetZoomPayload> {
   return {
     type: 'ui.setZoom',
+    replicacion: 'local',
     description: 'Ajusta el zoom de la línea de tiempo',
     risk: 'write',
     schema: {
@@ -309,6 +315,7 @@ export type MarkerCreatePayload = {
 export function crearComandoMarkerCreate(): CommandDefinition<MarkerCreatePayload> {
   return {
     type: 'marker.create',
+    historialUndo: 'instantanea',
     description: 'Crea un marcador en la línea de tiempo',
     risk: 'write',
     schema: {
@@ -323,7 +330,7 @@ export function crearComandoMarkerCreate(): CommandDefinition<MarkerCreatePayloa
     },
     handler: (estado: DAWState, payload: MarkerCreatePayload): StateTransition<MarkerCreatePayload> => {
       const marcador = {
-        id: crypto.randomUUID(),
+        id: entorno.uuid(),
         nombre: payload.nombre?.trim() || `Marcador ${(estado.project.marcadores?.length ?? 0) + 1}`,
         tiempo: payload.tiempo,
         color: payload.color ?? '#f59e0b',
@@ -333,16 +340,106 @@ export function crearComandoMarkerCreate(): CommandDefinition<MarkerCreatePayloa
       const proyecto: ProjectState = {
         ...estado.project,
         marcadores: [...(estado.project.marcadores ?? []), marcador],
+        modificado: true,
+        fechaModificacion: entorno.ahora(),
       };
       return {
         state: { ...estado, project: proyecto },
         events: [{
           nombre: 'marcador.creado',
           version: 1,
-          marcaTiempo: Date.now(),
+          marcaTiempo: entorno.ahora(),
           fuente: 'auxiliary-commands',
           payload: { id: marcador.id, tiempo: marcador.tiempo },
         }],
+        result: payload,
+      };
+    },
+  };
+}
+
+// ── marker.update / marker.remove ──────────────────────────────
+
+export type MarkerUpdatePayload = {
+  id: string;
+  nombre?: string;
+  tiempo?: number;
+  color?: string;
+};
+
+export function crearComandoMarkerUpdate(): CommandDefinition<MarkerUpdatePayload> {
+  return {
+    type: 'marker.update',
+    historialUndo: 'instantanea',
+    description: 'Cambia el nombre, la posición (beat) o el color de un marcador',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        nombre: { type: 'string' },
+        tiempo: { type: 'number', minimum: 0 },
+        color: { type: 'string' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    handler: (estado: DAWState, payload: MarkerUpdatePayload): StateTransition<MarkerUpdatePayload> => {
+      const marcadores = estado.project.marcadores ?? [];
+      if (!marcadores.some((m) => m.id === payload.id)) throw new Error(`No existe el marcador ${payload.id}`);
+      const nombre = payload.nombre?.trim();
+      const proyecto: ProjectState = {
+        ...estado.project,
+        marcadores: marcadores
+          .map((m) =>
+            m.id === payload.id
+              ? {
+                  ...m,
+                  ...(nombre ? { nombre } : {}),
+                  ...(payload.tiempo !== undefined ? { tiempo: payload.tiempo } : {}),
+                  ...(payload.color ? { color: payload.color } : {}),
+                }
+              : m,
+          )
+          .sort((a, b) => a.tiempo - b.tiempo),
+        modificado: true,
+        fechaModificacion: entorno.ahora(),
+      };
+      return {
+        state: { ...estado, project: proyecto },
+        events: [{ nombre: 'marcador.modificado', version: 1, marcaTiempo: entorno.ahora(), fuente: 'auxiliary-commands', payload: { id: payload.id } }],
+        result: payload,
+      };
+    },
+  };
+}
+
+export type MarkerRemovePayload = { id: string };
+
+export function crearComandoMarkerRemove(): CommandDefinition<MarkerRemovePayload> {
+  return {
+    type: 'marker.remove',
+    historialUndo: 'instantanea',
+    description: 'Quita un marcador de la línea de tiempo',
+    risk: 'dangerous',
+    schema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    handler: (estado: DAWState, payload: MarkerRemovePayload): StateTransition<MarkerRemovePayload> => {
+      const marcadores = estado.project.marcadores ?? [];
+      if (!marcadores.some((m) => m.id === payload.id)) throw new Error(`No existe el marcador ${payload.id}`);
+      const proyecto: ProjectState = {
+        ...estado.project,
+        marcadores: marcadores.filter((m) => m.id !== payload.id),
+        modificado: true,
+        fechaModificacion: entorno.ahora(),
+      };
+      return {
+        state: { ...estado, project: proyecto },
+        events: [{ nombre: 'marcador.eliminado', version: 1, marcaTiempo: entorno.ahora(), fuente: 'auxiliary-commands', payload: { id: payload.id } }],
         result: payload,
       };
     },
@@ -368,6 +465,7 @@ export type ProjectUpdatePayload = {
 export function crearComandoProjectUpdate(): CommandDefinition<ProjectUpdatePayload> {
   return {
     type: 'project.update',
+    historialUndo: 'instantanea',
     description: 'Actualiza propiedades del proyecto (nombre, BPM, time signature, configuración)',
     risk: 'write',
     schema: {
@@ -398,7 +496,7 @@ export function crearComandoProjectUpdate(): CommandDefinition<ProjectUpdatePayl
           configuracion: { ...estado.project.configuracion, ...datos.configuracion },
         } : {}),
         modificado: true,
-        fechaModificacion: Date.now(),
+        fechaModificacion: entorno.ahora(),
       };
       const proyecto: ProjectState =
         datos.tonalidad !== undefined || datos.tonalidadRegiones !== undefined
@@ -418,7 +516,7 @@ export function crearComandoProjectUpdate(): CommandDefinition<ProjectUpdatePayl
           {
             nombre: EventosProyecto.modificado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'auxiliary-commands',
             payload: { campos: Object.keys(datos) },
           },

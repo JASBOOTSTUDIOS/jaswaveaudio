@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="guitar-acoustic">
+  <!-- Cuerpo acústico con cintura y lóbulos superior e inferior -->
+  <path d="M22 28c-6 2-10 6-10 12 0 8 7 16 20 16s20-8 20-16c0-6-4-10-10-12 5-3 7-7 7-11 0-6-5-9-17-9s-17 3-17 9c0 4 2 8 7 11z" fill="currentColor" fill-opacity="0.14" stroke-width="2" />
+  <!-- Boca circular con roseta doble concéntrica -->
+  <circle cx="32" cy="38" r="6" stroke-width="2" fill="currentColor" fill-opacity="0.25" />
+  <circle cx="32" cy="38" r="4.5" stroke-width="1" />
+  <!-- Puente de madera con cejuela y 6 pivotes de cuerda -->
+  <rect x="25" y="49" width="14" height="3.5" rx="1" fill="currentColor" stroke-width="1" />
+  <!-- Mástil y diapasón con trastes -->
+  <path d="M30 8v16h4V8z" fill="currentColor" fill-opacity="0.25" stroke-width="1.5" />
+  <!-- Clavijero clásico con 6 clavijas (3 a cada lado) -->
+  <path d="M29 2h6v6h-6z" stroke-width="1.5" />
+  <circle cx="26" cy="3" r="1.5" fill="currentColor" />
+  <circle cx="26" cy="5" r="1.5" fill="currentColor" />
+  <circle cx="26" cy="7" r="1.5" fill="currentColor" />
+  <circle cx="38" cy="3" r="1.5" fill="currentColor" />
+  <circle cx="38" cy="5" r="1.5" fill="currentColor" />
+  <circle cx="38" cy="7" r="1.5" fill="currentColor" />
+</svg>

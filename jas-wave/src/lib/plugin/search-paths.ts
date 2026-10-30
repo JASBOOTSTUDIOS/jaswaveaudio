@@ -10,7 +10,29 @@ export type PluginSearchPath = {
   kind: 'standard' | 'custom'
 }
 
+export const BUNDLED_VST3_SEARCH_PATH_ID = 'win-bundled-jaswave-vst3'
+
+/**
+ * Carpeta resources/vst3/JasWave de la app empaquetada. Solo se fija cuando los
+ * plugins propios no están en la instalación de usuario (%LOCALAPPDATA%), que
+ * tiene prioridad; en dev queda vacía y no cambia nada.
+ */
+let bundledVst3Dir = ''
+
+function bundledSearchPath(): PluginSearchPath | null {
+  if (!bundledVst3Dir) return null
+  return { id: BUNDLED_VST3_SEARCH_PATH_ID, path: bundledVst3Dir, format: 'vst3', enabled: true, kind: 'standard' }
+}
+
 export function defaultVst3SearchPaths(platform: NodeJS.Platform | string = 'win32'): PluginSearchPath[] {
+  if (platform !== 'darwin' && platform !== 'linux') {
+    const bundled = bundledSearchPath()
+    return bundled ? [...windowsVst3SearchPaths(), bundled] : windowsVst3SearchPaths()
+  }
+  return posixVst3SearchPaths(platform)
+}
+
+function posixVst3SearchPaths(platform: string): PluginSearchPath[] {
   if (platform === 'darwin') {
     return [
       {
@@ -47,6 +69,10 @@ export function defaultVst3SearchPaths(platform: NodeJS.Platform | string = 'win
       },
     ]
   }
+  return []
+}
+
+function windowsVst3SearchPaths(): PluginSearchPath[] {
   return [
     {
       id: 'win-common-vst3',
@@ -70,66 +96,12 @@ export function defaultVst3SearchPaths(platform: NodeJS.Platform | string = 'win
       kind: 'standard',
     },
     {
-      id: 'win-vst2-program',
-      path: '%ProgramFiles%/VSTPlugins',
-      format: 'vst2',
+      // Donde el deploy / POST_BUILD deja los instrumentos y FX propios de JasWave. Sin esta carpeta solo entraba
+      // JasWavePiano (registro explícito) y el catálogo acababa con la compilación de desarrollo, obsoleta.
+      id: 'win-local-jaswave-vst3',
+      path: '%LOCALAPPDATA%/Programs/Common/VST3/JasWave',
+      format: 'vst3',
       enabled: true,
-      kind: 'standard',
-    },
-    {
-      id: 'win-vst2-program-x86',
-      path: '%ProgramFiles(x86)%/VSTPlugins',
-      format: 'vst2',
-      enabled: true,
-      kind: 'standard',
-    },
-    {
-      id: 'win-vst2-steinberg',
-      path: '%ProgramFiles%/Steinberg/VstPlugins',
-      format: 'vst2',
-      enabled: true,
-      kind: 'standard',
-    },
-    {
-      id: 'win-vst2-common',
-      path: '%CommonProgramFiles%/VST2',
-      format: 'vst2',
-      enabled: true,
-      kind: 'standard',
-    },
-    {
-      id: 'win-vst2-common-vst',
-      path: '%CommonProgramFiles%/VST',
-      format: 'vst2',
-      enabled: true,
-      kind: 'standard',
-    },
-    {
-      id: 'win-vst2-program-vst',
-      path: '%ProgramFiles%/VST',
-      format: 'vst2',
-      enabled: true,
-      kind: 'standard',
-    },
-    {
-      id: 'win-vst2-user',
-      path: '%USERPROFILE%/Documents/VST',
-      format: 'vst2',
-      enabled: true,
-      kind: 'standard',
-    },
-    {
-      id: 'win-vst2-fl-2025',
-      path: '%ProgramFiles%/Image-Line/FL Studio 2025/Plugins/VST',
-      format: 'vst2',
-      enabled: true,
-      kind: 'standard',
-    },
-    {
-      id: 'win-vst2-fl-shared',
-      path: '%ProgramFiles%/Image-Line/FL Studio 2025/Plugins/Fruity/Generators',
-      format: 'vst2',
-      enabled: false,
       kind: 'standard',
     },
   ]
@@ -201,3 +173,14 @@ export class PluginSearchPathConfig {
 }
 
 export const pluginSearchPaths = new PluginSearchPathConfig()
+
+/**
+ * Activa (dir no vacío) o retira la carpeta de plugins incluidos en el instalador
+ * como ruta de escaneo estándar, también en el singleton ya hidratado.
+ */
+export function setBundledVst3SearchDir(dir: string | null | undefined): void {
+  bundledVst3Dir = String(dir ?? '').trim().replace(/[/\\]+$/, '')
+  const others = pluginSearchPaths.list().filter((p) => p.id !== BUNDLED_VST3_SEARCH_PATH_ID)
+  const bundled = bundledSearchPath()
+  pluginSearchPaths.replaceAll(bundled ? [...others, bundled] : others)
+}

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="percussion-tambora">
+  <!-- Casco curvado de madera de barril -->
+  <path d="M16 18c8-3 20-3 28 0 3 8 3 20 0 28-8 3-20 3-28 0-3-8-3-20 0-28z" fill="currentColor" fill-opacity="0.15" stroke-width="2" />
+  <!-- Parche izquierdo (parche de chivo/chivo con aro) -->
+  <ellipse cx="16" cy="32" rx="4.5" ry="14" fill="currentColor" fill-opacity="0.25" stroke-width="2" />
+  <!-- Parche derecho (parche de golpe) -->
+  <ellipse cx="44" cy="32" rx="4.5" ry="14" fill="currentColor" fill-opacity="0.25" stroke-width="2" />
+  <!-- Lazos de soga en zigzag para la tensión de afinación -->
+  <path d="M16 20l14 12-14 12" stroke-width="1.75" />
+  <path d="M30 20l14 12-14 12" stroke-width="1.75" />
+  <path d="M16 32l14-12 14 12" stroke-width="1.75" />
+  <path d="M16 32l14 12 14-12" stroke-width="1.75" />
+  <!-- Baqueta de madera colocada arriba -->
+  <path d="M42 10L56 4" stroke-width="2.5" />
+  <circle cx="56" cy="4" r="1.5" fill="currentColor" />
+  <!-- Correa de transporte -->
+  <path d="M22 17c0-6 16-6 16 0" stroke-width="1.5" stroke-dasharray="2 2" />
+</svg>

@@ -1,11 +1,15 @@
 /**
  * Puente HTTP local (127.0.0.1) para que la CLI / agentes auditen el DAW en vivo.
- * Solo escucha localhost. El renderer aporta snapshots vía IPC.
+ * Solo escucha localhost, exige token Bearer y rechaza peticiones de navegador.
+ * El renderer aporta snapshots vía IPC.
  */
 
 import type { BrowserWindow } from 'electron'
+import { randomBytes } from 'node:crypto'
+import * as fs from 'node:fs'
 import * as http from 'node:http'
 import { URL } from 'node:url'
+import { checkBridgeRequest, collectActionPaths, MAX_BRIDGE_BODY_BYTES } from './agent-bridge-auth'
 
 export type AgentAuditSnapshot = Record<string, unknown>
 
@@ -19,6 +23,9 @@ type Pending = {
 
 let server: http.Server | null = null
 let port = DEFAULT_PORT
+let token = ''
+let tokenFile: string | null = null
+let onTrustedPaths: (paths: string[]) => void = () => undefined
 let getMainWindow: () => BrowserWindow | null = () => null
 const pending = new Map<string, Pending>()
 let reqSeq = 0
@@ -72,7 +79,6 @@ function json(res: http.ServerResponse, status: number, body: unknown): void {
   const data = JSON.stringify(body)
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
     'Cache-Control': 'no-store',
   })
   res.end(data)
@@ -81,24 +87,29 @@ function json(res: http.ServerResponse, status: number, body: unknown): void {
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
-    req.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)))
+    let size = 0
+    req.on('data', (c) => {
+      const buf = Buffer.isBuffer(c) ? c : Buffer.from(c)
+      size += buf.length
+      if (size > MAX_BRIDGE_BODY_BYTES) {
+        reject(new Error('Body demasiado grande'))
+        req.destroy()
+        return
+      }
+      chunks.push(buf)
+    })
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
     req.on('error', reject)
   })
 }
 
 async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const host = req.headers.host || `127.0.0.1:${port}`
-  const url = new URL(req.url || '/', `http://${host}`)
+  const url = new URL(req.url || '/', `http://127.0.0.1:${port}`)
   const method = (req.method || 'GET').toUpperCase()
 
-  if (method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    })
-    res.end()
+  const auth = checkBridgeRequest({ method, pathname: url.pathname, headers: req.headers, port, token })
+  if (!auth.ok) {
+    json(res, auth.status, { ok: false, error: auth.error })
     return
   }
 
@@ -146,7 +157,6 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       const intervalMs = Math.max(50, Math.min(1000, Number(url.searchParams.get('intervalMs') || 100)))
       res.writeHead(200, {
         'Content-Type': 'application/x-ndjson; charset=utf-8',
-        'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-store',
         Connection: 'keep-alive',
       })
@@ -217,6 +227,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         json(res, 400, { ok: false, error: 'Falta type' })
         return
       }
+      onTrustedPaths(collectActionPaths(body))
       const result = await askRenderer('actions.execute', {
         type: body.type,
         payload: body.payload ?? {},
@@ -238,6 +249,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         json(res, 400, { ok: false, error: 'JSON inválido' })
         return
       }
+      onTrustedPaths(collectActionPaths(body))
       if (Array.isArray(body.actions) && body.actions.length) {
         const result = await askRenderer('actions.execute', { actions: body.actions })
         json(res, 200, result)
@@ -274,13 +286,29 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   }
 }
 
+/**
+ * Arranca el bridge y escribe { port, token, pid } en `tokenFilePath`
+ * (userData/agent-bridge.json) para que la CLI local pueda autenticarse.
+ */
 export function startAgentBridge(opts: {
   getMainWindow: () => BrowserWindow | null
   port?: number
+  tokenFilePath: string
+  /** Rutas de acciones de la CLI autenticada (el main las concede para la sesión). */
+  onTrustedPaths?: (paths: string[]) => void
 }): { port: number } {
   getMainWindow = opts.getMainWindow
+  onTrustedPaths = opts.onTrustedPaths ?? (() => undefined)
   port = opts.port ?? (Number(process.env.JASWAVE_AGENT_PORT) || DEFAULT_PORT)
   if (server) return { port }
+
+  token = process.env.JASWAVE_AGENT_TOKEN || randomBytes(32).toString('hex')
+  tokenFile = opts.tokenFilePath
+  try {
+    fs.writeFileSync(tokenFile, JSON.stringify({ port, token, pid: process.pid }), { mode: 0o600 })
+  } catch (e) {
+    console.warn('[jaswave-agent-bridge] no se pudo escribir el token:', e instanceof Error ? e.message : e)
+  }
 
   server = http.createServer((req, res) => {
     void handleRequest(req, res)
@@ -305,6 +333,15 @@ export function stopAgentBridge(): void {
     p.reject(new Error('bridge stopped'))
   }
   pending.clear()
+  if (tokenFile) {
+    try {
+      fs.rmSync(tokenFile, { force: true })
+    } catch {
+      /* ignore */
+    }
+    tokenFile = null
+  }
+  token = ''
   if (server) {
     try {
       server.close()

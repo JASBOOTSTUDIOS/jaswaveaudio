@@ -1,0 +1,131 @@
+{
+  "archivos": {
+    "soul-lento-12-8.mid": {
+      "id": "jw-12-8-soul-lento-12-8",
+      "nombre": "Soul lento 12-8",
+      "tempo": 58,
+      "compas": "12/8",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "12-8",
+        "soul",
+        "lento"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "blues-12-8.mid": {
+      "id": "jw-12-8-blues-12-8",
+      "nombre": "Blues 12-8",
+      "tempo": 54,
+      "compas": "12/8",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "12-8",
+        "blues",
+        "lento"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "worship-12-8.mid": {
+      "id": "jw-12-8-worship-12-8",
+      "nombre": "Worship 12-8",
+      "tempo": 60,
+      "compas": "12/8",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "12-8",
+        "worship",
+        "coro"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "worship-12-8-campana.mid": {
+      "id": "jw-12-8-worship-12-8-campana",
+      "nombre": "Worship 12-8 campana",
+      "tempo": 56,
+      "compas": "12/8",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "12-8",
+        "worship",
+        "campana-de-ride",
+        "cross-stick"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "gospel-12-8.mid": {
+      "id": "jw-12-8-gospel-12-8",
+      "nombre": "Gospel 12-8",
+      "tempo": 66,
+      "compas": "12/8",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "12-8",
+        "gospel",
+        "power"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-caja-12-8.mid": {
+      "id": "jw-12-8-fill-caja-12-8",
+      "nombre": "Fill caja 12-8",
+      "tempo": 60,
+      "compas": "12/8",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "caja",
+        "12-8"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-toms-12-8.mid": {
+      "id": "jw-12-8-fill-toms-12-8",
+      "nombre": "Fill toms 12-8",
+      "tempo": 60,
+      "compas": "12/8",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "toms",
+        "12-8"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

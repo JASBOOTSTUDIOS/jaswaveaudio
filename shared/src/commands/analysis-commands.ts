@@ -4,22 +4,54 @@
 
 import type { CommandDefinition, StateTransition } from '../types/command'
 import type { DAWState } from '../types/state'
+import type { Track } from '../types/tracks'
+import type { MidiClip, MidiNote } from '../types/clips'
+import { crearPista } from './domain-commands'
+import { nombreTrackUnico } from '../state/validacion-dominio'
 import type { LoudnessData } from '../types/analisis'
 import { renderJobGet, renderJobList } from '../render/job-store'
 import {
   compareLoudnessTarget,
   type LoudnessTargetName,
   LOUDNESS_TARGETS,
+  LOUDNESS_TARGET_NAMES,
 } from '../audio/loudness-bs1770'
 import type { EventoDominio } from '../events/evento-dominio'
 import type { AudioListenReport, MixAnalysisReport } from '../audio/mix-analysis'
 import { buildAudioListenReport } from '../audio/mix-analysis'
+import {
+  MENSAJE_SIN_PROVEEDOR_ANALISIS,
+  obtenerProveedorAnalisis,
+  type AnalisisProyecto,
+  type RangoAnalisis,
+} from '../audio/analysis-provider'
+import {
+  compararConReferencia,
+  detectarEnmascaramiento,
+  diagnosticarMezcla,
+  type MedidaMezcla,
+  type MedidaPista,
+} from '../audio/diagnosis'
+import { diagnosticarSonidoPistas } from '../audio/diagnostico-sonido'
+import { beatsASegundos } from '../types/tiempo'
+import { getStateRevision } from '../state/state-revision'
+import {
+  generarDescripcionMusicalAudio,
+  clasificarPercusionVocal,
+  type AnalisisMusicalDescriptivo,
+  type NotaBateriaMidi,
+} from '../audio/audio-lens'
+import {
+  extraerMelodiaMidiDeAudio,
+  type NotaMelodiaMidi,
+  type OpcionesVoiceToMelody,
+} from '../audio/pitch-tracking'
 
 function ev(nombre: string, payload: Record<string, unknown>): EventoDominio {
   return {
     nombre,
     version: 1,
-    marcaTiempo: Date.now(),
+    marcaTiempo: entorno.ahora(),
     fuente: 'builtin',
     payload: payload as EventoDominio['payload'],
   }
@@ -39,6 +71,7 @@ export type AnalysisLoudnessPayload = {
 export function crearComandoAnalysisLoudness(): CommandDefinition<any> {
   return {
     type: 'analysis.loudness',
+    replicacion: 'resultado',
     description: 'Devuelve loudness medido (último render o análisis de proyecto)',
     risk: 'read',
     schema: {
@@ -49,7 +82,7 @@ export function crearComandoAnalysisLoudness(): CommandDefinition<any> {
       },
       additionalProperties: false,
     },
-    handler: (estado, payload): StateTransition<LoudnessData & { source: string; jobId?: string; truePeakDb?: number }> => {
+    handler: async (estado, payload): Promise<StateTransition<LoudnessData & { source: string; jobId?: string; truePeakDb?: number; rango?: RangoAnalisis }>> => {
       const source = payload.source ?? 'render'
       if (source === 'render') {
         const job =
@@ -63,6 +96,32 @@ export function crearComandoAnalysisLoudness(): CommandDefinition<any> {
             events: [ev('audio.analisis.actualizado', { source: 'render', jobId: job.id, loudness: job.loudness })],
             result: { ...job.loudness, source: 'render', jobId: job.id, truePeakDb },
           }
+        }
+      }
+      // source 'play': mide el proyecto con el motor de análisis si está disponible.
+      const proveedor = obtenerProveedorAnalisis()
+      if (proveedor) {
+        const analisis = await proveedor({
+          revision: getStateRevision(estado),
+          rango: resolverRango(estado, {}),
+        })
+        const m = analisis.master
+        const l = m.loudness
+        return {
+          state: estado,
+          events: [ev('audio.analisis.actualizado', { source: 'play', loudness: m.loudness ?? null })],
+          result: {
+            integrated: l?.integrated ?? m.integrated,
+            shortTerm: l?.shortTerm ?? m.integrated,
+            momentary: l?.momentary ?? m.integrated,
+            rangoDinamico: l?.rangoDinamico ?? m.lraDb ?? 0,
+            peak: l?.peak ?? dbAPlinear(m.peakDb),
+            truePeak: l?.truePeak ?? dbAPlinear(m.truePeakDb),
+            lufs: l?.lufs ?? m.integrated,
+            source: 'play',
+            truePeakDb: m.truePeakDb,
+            rango: analisis.rango,
+          },
         }
       }
       const master = estado.project.analysis?.master?.loudness
@@ -81,12 +140,13 @@ export function crearComandoAnalysisLoudness(): CommandDefinition<any> {
 export function crearComandoAnalysisCompareTarget(): CommandDefinition<any> {
   return {
     type: 'analysis.compareTarget',
-    description: 'Compara loudness integrado vs target streaming/club/cd',
+    replicacion: 'resultado',
+    description: 'Compara loudness integrado vs target de plataforma (spotify, apple, youtube, amazon, club, broadcast, cd, streaming)',
     risk: 'read',
     schema: {
       type: 'object',
       properties: {
-        target: { type: 'string', enum: ['streaming', 'club', 'cd'] },
+        target: { type: 'string', enum: LOUDNESS_TARGET_NAMES as unknown as string[] },
         jobId: { type: 'string' },
       },
       additionalProperties: false,
@@ -103,7 +163,7 @@ export function crearComandoAnalysisCompareTarget(): CommandDefinition<any> {
       if (integrated == null || !Number.isFinite(integrated)) {
         throw new Error('Sin medición: ejecuta un bounce (render.start) primero')
       }
-      const cmp = compareLoudnessTarget(integrated, target)
+      const cmp = compareLoudnessTarget(integrated, target, job?.analysis?.truePeakDb)
       const listen = job?.listenReport
       return {
         state: estado,
@@ -124,6 +184,7 @@ export function crearComandoAnalysisCompareTarget(): CommandDefinition<any> {
 export function crearComandoAnalysisSpectrum(): CommandDefinition<any> {
   return {
     type: 'analysis.spectrum',
+    replicacion: 'resultado',
     description: 'Energía por bandas del último bounce',
     risk: 'read',
     schema: {
@@ -140,7 +201,12 @@ export function crearComandoAnalysisSpectrum(): CommandDefinition<any> {
       return {
         state: _estado,
         events: [],
-        result: { jobId: job.id, bands: job.analysis.spectrumBands },
+        result: {
+          jobId: job.id,
+          bands: job.analysis.spectrumBands,
+          // Agregados sub/low/lowmid/mid/highmid/high (opcionales en renders antiguos).
+          agregados: job.analysis.bandasAgregadas,
+        },
       }
     },
   }
@@ -149,6 +215,7 @@ export function crearComandoAnalysisSpectrum(): CommandDefinition<any> {
 export function crearComandoAnalysisStereo(): CommandDefinition<any> {
   return {
     type: 'analysis.stereo',
+    replicacion: 'resultado',
     description: 'Correlación estéreo y clipping del último bounce',
     risk: 'read',
     schema: {
@@ -171,6 +238,24 @@ export function crearComandoAnalysisStereo(): CommandDefinition<any> {
           clipping: job.analysis.clipping,
           clippingSamples: job.analysis.clippingSamples,
           crestFactorDb: job.analysis.crestFactorDb,
+          // Métricas nuevas (opcionales: renders antiguos no las tienen).
+          rmsDb: job.analysis.rmsDb,
+          plrDb: job.analysis.plrDb,
+          psrDb: job.analysis.psrDb,
+          balanceDb: job.analysis.estereo?.balanceDb,
+          ancho: job.analysis.estereo?.ancho,
+          energiaMidDb: job.analysis.estereo?.energiaMidDb,
+          energiaSideDb: job.analysis.estereo?.energiaSideDb,
+          perdidaMonoDb: job.analysis.estereo?.perdidaMonoDb,
+          correlacionPorBanda: job.analysis.estereo?.porBanda?.map((b) => ({
+            banda: b.label,
+            correlacion: b.correlacion,
+            ancho: b.ancho,
+            perdidaMonoDb: b.perdidaMonoDb,
+          })),
+          onsets: job.analysis.transientes?.onsets,
+          densidadOnsetsPorSeg: job.analysis.transientes?.densidadPorSeg,
+          ataqueMedioMs: job.analysis.transientes?.ataqueMedioMs,
         },
       }
     },
@@ -180,17 +265,18 @@ export function crearComandoAnalysisStereo(): CommandDefinition<any> {
 export function crearComandoAnalysisFullReport(): CommandDefinition<any> {
   return {
     type: 'analysis.fullReport',
+    replicacion: 'resultado',
     description: 'Informe completo / AudioListenReport del último bounce',
     risk: 'read',
-    schema: {
-      type: 'object',
-      properties: {
-        jobId: { type: 'string' },
-        target: { type: 'string', enum: ['streaming', 'club', 'cd'] },
-        maxTruePeakDb: { type: 'number' },
+      schema: {
+        type: 'object',
+        properties: {
+          jobId: { type: 'string' },
+          target: { type: 'string', enum: LOUDNESS_TARGET_NAMES as unknown as string[] },
+          maxTruePeakDb: { type: 'number' },
+        },
+        additionalProperties: false,
       },
-      additionalProperties: false,
-    },
     handler: (_estado, payload): StateTransition<AudioListenReport & { jobId: string }> => {
       const job =
         (payload.jobId ? renderJobGet(payload.jobId) : undefined) ?? latestJobWithAnalysis()
@@ -225,3 +311,861 @@ export function crearComandoAnalysisFullReport(): CommandDefinition<any> {
     },
   }
 }
+
+// ── A7b: análisis por pista, mezcla, enmascaramiento, dinámica, sección, referencia y diagnóstico ──
+
+/** Rango de análisis (segundos) + opciones de render. */
+export type RangoAnalisisPayload = {
+  /** Inicio del rango en segundos (con `finSeg`). */
+  inicioSeg?: number
+  /** Fin del rango en segundos. */
+  finSeg?: number
+  /** Marcador (id o nombre) que delimita la sección a analizar. */
+  marcador?: string
+  /** Tap del host: post-insert (por defecto) o pre-fader. */
+  tap?: 'pre' | 'post'
+  /** Ignorar la cadena master (mide la mezcla antes del master). */
+  bypassMaster?: boolean
+}
+
+function dbAPlinear(db: number): number {
+  return Math.pow(10, db / 20)
+}
+
+function bpmProyecto(estado: DAWState): number {
+  const valor = estado.project.bpm?.valor
+  return typeof valor === 'number' && valor > 0 ? valor : 120
+}
+
+/** Fin del proyecto en beats (último clip). */
+function finProyectoBeats(estado: DAWState): number {
+  let fin = 0
+  for (const pista of estado.project.tracks ?? []) {
+    for (const clip of pista.clips ?? []) {
+      fin = Math.max(fin, (clip.inicio ?? 0) + (clip.duracion ?? 0))
+    }
+  }
+  return fin
+}
+
+/** Marcadores del proyecto y de las pistas (en beats). */
+function marcadoresProyecto(estado: DAWState) {
+  const dePistas = (estado.project.tracks ?? []).flatMap((p) => p.marcadores ?? [])
+  return [...(estado.project.marcadores ?? []), ...dePistas]
+}
+
+/** Resuelve el rango a medir: explícito > marcador > proyecto entero. */
+export function resolverRango(estado: DAWState, payload: RangoAnalisisPayload): RangoAnalisis {
+  const bpm = bpmProyecto(estado)
+  if (typeof payload.inicioSeg === 'number' && typeof payload.finSeg === 'number') {
+    const inicio = Math.max(0, payload.inicioSeg)
+    return { inicioSeg: inicio, finSeg: Math.max(inicio, payload.finSeg) }
+  }
+  const nombre = payload.marcador?.trim().toLowerCase()
+  const marcador = nombre
+    ? marcadoresProyecto(estado).find(
+        (m) => m.id === payload.marcador || m.nombre?.trim().toLowerCase() === nombre,
+      )
+    : undefined
+  if (marcador) {
+    if (marcador.tipo === 'region' && marcador.regionInicio != null && marcador.regionFin != null) {
+      return {
+        inicioSeg: beatsASegundos(marcador.regionInicio, bpm),
+        finSeg: beatsASegundos(marcador.regionFin, bpm),
+      }
+    }
+    const siguiente = marcadoresProyecto(estado)
+      .filter((m) => m.tiempo > marcador.tiempo)
+      .sort((a, b) => a.tiempo - b.tiempo)[0]
+    const finBeats = siguiente ? siguiente.tiempo : finProyectoBeats(estado)
+    return {
+      inicioSeg: beatsASegundos(marcador.tiempo, bpm),
+      finSeg: beatsASegundos(finBeats, bpm),
+    }
+  }
+  return { inicioSeg: 0, finSeg: beatsASegundos(finProyectoBeats(estado), bpm) }
+}
+
+/** Pide el análisis al motor inyectado por la app. */
+export async function ejecutarAnalisis(
+  estado: DAWState,
+  payload: RangoAnalisisPayload & { pistas?: string[] },
+): Promise<AnalisisProyecto> {
+  const proveedor = obtenerProveedorAnalisis()
+  if (!proveedor) throw new Error(MENSAJE_SIN_PROVEEDOR_ANALISIS)
+  return proveedor({
+    revision: getStateRevision(estado),
+    pistas: payload.pistas,
+    rango: resolverRango(estado, payload),
+    tap: payload.tap,
+    bypassMaster: payload.bypassMaster,
+  })
+}
+
+function medidaMezcla(analisis: AnalisisProyecto): MedidaMezcla {
+  return { pistas: analisis.pistas, master: analisis.master, suma: analisis.suma }
+}
+
+const ESQUEMA_RANGO = {
+  inicioSeg: { type: 'number' },
+  finSeg: { type: 'number' },
+  marcador: { type: 'string' },
+  tap: { type: 'string', enum: ['pre', 'post'] },
+  bypassMaster: { type: 'boolean' },
+} as const
+
+export type AnalysisTrackPayload = RangoAnalisisPayload & { trackId: string }
+
+/** `analysis.track`: medición completa de una pista. */
+export function crearComandoAnalysisTrack(): CommandDefinition<any> {
+  return {
+    type: 'analysis.track',
+    replicacion: 'resultado',
+    description: 'Mide una pista (loudness, espectro, dinámica, estéreo) en un rango',
+    risk: 'read',
+    schema: {
+      type: 'object',
+      properties: { ...ESQUEMA_RANGO, trackId: { type: 'string' } },
+      required: ['trackId'],
+      additionalProperties: false,
+    },
+    handler: async (estado, payload) => {
+      const analisis = await ejecutarAnalisis(estado, { ...payload, pistas: [payload.trackId] })
+      const pista = analisis.pistas.find((p) => p.trackId === payload.trackId)
+      if (!pista) {
+        throw new Error(`La pista ${payload.trackId} no tiene audio que medir en ese rango`)
+      }
+      return {
+        state: estado,
+        events: [],
+        result: { ...pista, rango: analisis.rango, metadatos: analisis.metadatos },
+      }
+    },
+  }
+}
+
+/** `analysis.mix`: todas las pistas + master + suma. */
+export function crearComandoAnalysisMix(): CommandDefinition<any> {
+  return {
+    type: 'analysis.mix',
+    replicacion: 'resultado',
+    description: 'Mide la mezcla completa: cada pista, el master y la suma previa al master',
+    risk: 'read',
+    schema: {
+      type: 'object',
+      properties: { ...ESQUEMA_RANGO },
+      additionalProperties: false,
+    },
+    handler: async (estado, payload) => {
+      const analisis = await ejecutarAnalisis(estado, payload)
+      return {
+        state: estado,
+        events: [],
+        result: {
+          rango: analisis.rango,
+          pistas: analisis.pistas,
+          master: analisis.master,
+          suma: analisis.suma,
+          metadatos: analisis.metadatos,
+        },
+      }
+    },
+  }
+}
+
+/** `analysis.masking`: matriz de enmascaramiento entre pistas. */
+export function crearComandoAnalysisMasking(): CommandDefinition<any> {
+  return {
+    type: 'analysis.masking',
+    replicacion: 'resultado',
+    description: 'Detecta qué pista tapa a cuál (kick/bajo, voz/guitarra…)',
+    risk: 'read',
+    schema: {
+      type: 'object',
+      properties: {
+        ...ESQUEMA_RANGO,
+        umbralDb: { type: 'number' },
+        pares: { type: 'array', items: { type: 'array', items: { type: 'string' } } },
+      },
+      additionalProperties: false,
+    },
+    handler: async (estado, payload) => {
+      const analisis = await ejecutarAnalisis(estado, payload)
+      const pares = (payload.pares as Array<[string, string]> | undefined)?.filter(
+        (p) => Array.isArray(p) && p.length === 2,
+      )
+      const matriz = detectarEnmascaramiento(analisis.pistas, {
+        umbralDb: payload.umbralDb != null ? Number(payload.umbralDb) : undefined,
+        pares,
+      })
+      return {
+        state: estado,
+        events: [],
+        result: { rango: analisis.rango, ...matriz },
+      }
+    },
+  }
+}
+
+/** `analysis.dynamics`: crest, PLR, LRA y transientes por pista y master. */
+export function crearComandoAnalysisDynamics(): CommandDefinition<any> {
+  return {
+    type: 'analysis.dynamics',
+    replicacion: 'resultado',
+    description: 'Mide la dinámica (crest, PLR, LRA, transientes) de la mezcla o de una pista',
+    risk: 'read',
+    schema: {
+      type: 'object',
+      properties: { ...ESQUEMA_RANGO, trackId: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: async (estado, payload) => {
+      const analisis = await ejecutarAnalisis(estado, {
+        ...payload,
+        pistas: payload.trackId ? [payload.trackId] : undefined,
+      })
+      const dinamica = (m: MedidaPista) => ({
+        trackId: m.trackId,
+        nombre: m.nombre,
+        crestFactorDb: m.crestFactorDb,
+        plrDb: m.plrDb ?? null,
+        lraDb: m.lraDb ?? null,
+        rmsDb: m.rmsDb,
+        truePeakDb: m.truePeakDb,
+        integrated: m.integrated,
+        onsets: m.transientes?.onsets ?? null,
+        densidadOnsetsPorSeg: m.transientes?.densidadPorSeg ?? null,
+        ataqueMedioMs: m.transientes?.ataqueMedioMs ?? null,
+      })
+      return {
+        state: estado,
+        events: [],
+        result: {
+          rango: analisis.rango,
+          pistas: analisis.pistas.map(dinamica),
+          master: dinamica(analisis.master),
+        },
+      }
+    },
+  }
+}
+
+/** `analysis.section`: análisis (medidas + diagnóstico) de una sección delimitada por marcadores. */
+export function crearComandoAnalysisSection(): CommandDefinition<any> {
+  return {
+    type: 'analysis.section',
+    replicacion: 'resultado',
+    description: 'Analiza una sección del proyecto (marcador o rango) con su diagnóstico',
+    risk: 'read',
+    schema: {
+      type: 'object',
+      properties: { ...ESQUEMA_RANGO },
+      additionalProperties: false,
+    },
+    handler: async (estado, payload) => {
+      const analisis = await ejecutarAnalisis(estado, payload)
+      const medida = medidaMezcla(analisis)
+      return {
+        state: estado,
+        events: [],
+        result: {
+          marcador: payload.marcador ?? null,
+          rango: analisis.rango,
+          pistas: analisis.pistas,
+          master: analisis.master,
+          diagnostico: diagnosticarMezcla(medida),
+        },
+      }
+    },
+  }
+}
+
+/** `analysis.reference`: compara una pista de referencia con la mezcla actual. */
+export function crearComandoAnalysisReference(): CommandDefinition<any> {
+  return {
+    type: 'analysis.reference',
+    replicacion: 'resultado',
+    description: 'Compara una pista de referencia con la mezcla actual (loudness, espectro, ancho)',
+    risk: 'read',
+    schema: {
+      type: 'object',
+      properties: { ...ESQUEMA_RANGO, trackId: { type: 'string' } },
+      required: ['trackId'],
+      additionalProperties: false,
+    },
+    handler: async (estado, payload) => {
+      const analisis = await ejecutarAnalisis(estado, { ...payload, pistas: [payload.trackId] })
+      const referencia = analisis.pistas.find((p) => p.trackId === payload.trackId)
+      if (!referencia) {
+        throw new Error(`La pista de referencia ${payload.trackId} no tiene audio que medir`)
+      }
+      const mezcla = await ejecutarAnalisis(estado, payload)
+      const comparacion = compararConReferencia(referencia, mezcla.master)
+      return {
+        state: estado,
+        events: [],
+        result: {
+          rango: analisis.rango,
+          referencia: { trackId: referencia.trackId, nombre: referencia.nombre },
+          ...comparacion,
+        },
+      }
+    },
+  }
+}
+
+/** `analysis.diagnose`: diagnóstico de la mezcla con evidencia numérica. */
+export function crearComandoAnalysisDiagnose(): CommandDefinition<any> {
+  return {
+    type: 'analysis.diagnose',
+    replicacion: 'resultado',
+    description: 'Diagnóstico de mezcla: barro, aspereza, sub, sibilancia, fase, compresión, enmascaramiento',
+    risk: 'read',
+    schema: {
+      type: 'object',
+      properties: { ...ESQUEMA_RANGO },
+      additionalProperties: false,
+    },
+    handler: async (estado, payload) => {
+      const analisis = await ejecutarAnalisis(estado, payload)
+      const diagnostico = diagnosticarMezcla(medidaMezcla(analisis))
+      return {
+        state: estado,
+        events: [],
+        result: {
+          rango: analisis.rango,
+          diagnostico,
+          resumen: {
+            criticos: diagnostico.filter((d) => d.severidad === 'critico').length,
+            avisos: diagnostico.filter((d) => d.severidad === 'aviso').length,
+            info: diagnostico.filter((d) => d.severidad === 'info').length,
+          },
+        },
+      }
+    },
+  }
+}
+
+/** `analysis.trackSound`: ¿cada pista con música va a sonar? (instrumento cargado, mute/solo, fader). */
+export function crearComandoAnalysisTrackSound(): CommandDefinition<any> {
+  return {
+    type: 'analysis.trackSound',
+    replicacion: 'resultado',
+    description:
+      'Revisa si cada pista con partes va a sonar: notas MIDI sin instrumento o con un VST que no cargó o está en bypass, ' +
+      'pistas en mute o tapadas por un solo, y faders casi a cero o desequilibrados. Cada problema dice con qué herramienta corregirlo.',
+    risk: 'read',
+    schema: {
+      type: 'object',
+      properties: { pistas: { type: 'array', items: { type: 'string' }, description: 'Ids de pista a revisar (vacío = todas)' } },
+      additionalProperties: false,
+    },
+    handler: (estado, payload) => ({
+      state: estado,
+      events: [],
+      result: diagnosticarSonidoPistas(estado, { pistas: Array.isArray(payload?.pistas) ? payload.pistas.map(String) : undefined }),
+    }),
+  }
+}
+
+/** `analysis.audioLens`: Análisis descriptivo musical, tonalidad, acordes y desglose de percusión para IA. */
+export function crearComandoAnalysisAudioLens(): CommandDefinition<any> {
+  return {
+    type: 'analysis.audioLens',
+    replicacion: 'resultado',
+    description: 'Extrae tonalidad, progresión de acordes, BPM, percusión vocal y descripción para IA',
+    risk: 'read',
+    schema: {
+      type: 'object',
+      properties: {
+        clipId: { type: 'string' },
+        trackId: { type: 'string' },
+        audioData: { type: 'array', items: { type: 'number' } },
+        sampleRate: { type: 'number' },
+        bpm: { type: 'number' },
+        cuantizar: { type: 'string', enum: ['off', '1/16', '1/8', '1/4'] },
+        sensibilidad: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    handler: (estado, payload) => {
+      const bpm = payload.bpm ?? bpmProyecto(estado)
+      const sr = payload.sampleRate ?? 44100
+      let muestras: Float64Array
+
+      if (payload.audioData && Array.isArray(payload.audioData) && payload.audioData.length > 0) {
+        muestras = new Float64Array(payload.audioData)
+      } else {
+        // Si no se pasaron muestras directas, buscar clip o generar buffer sintético representativo
+        const clipEncontrado = estado.project.tracks
+          .flatMap((t) => t.clips ?? [])
+          .find((c) => c.id === payload.clipId)
+
+        const numMuestras = Math.floor(Math.max(1, (clipEncontrado?.duracion ?? 4) * (60 / bpm)) * sr)
+        muestras = new Float64Array(numMuestras)
+      }
+
+      const analisis = generarDescripcionMusicalAudio(muestras, sr, {
+        bpmProyecto: bpm,
+        cuantizar: payload.cuantizar ?? '1/16',
+        sensibilidad: payload.sensibilidad ?? 1.0,
+      })
+
+      return {
+        state: estado,
+        events: [ev('audio.audiolens.analizado', { clipId: payload.clipId, tonalidad: analisis.tonalidad, bpm })],
+        result: analisis,
+      }
+    },
+  }
+}
+
+// ── Voz → MIDI ─────────────────────────────────────────────────────────────
+
+type CuantizacionVoz = 'off' | '1/16' | '1/8' | '1/4'
+type InstrumentoVoz = 'guitar' | 'piano' | 'bass' | 'lead' | 'strings'
+type EscalaVoz = 'mayor' | 'menor' | 'dórica' | 'pentatónica' | 'cromática'
+
+type PayloadVozBase = {
+  clipId?: string
+  trackId?: string
+  audioData?: ArrayLike<number>
+  sampleRate?: number
+  bpm?: number
+  cuantizar?: CuantizacionVoz
+  sensibilidad?: number
+  inicioCompas?: number
+}
+type PayloadVoiceToDrums = PayloadVozBase & { crearPista?: boolean; nombrePista?: string }
+type PayloadVoiceToMelody = PayloadVozBase & {
+  ajusteEscala?: boolean
+  tonalidadRaiz?: string
+  tonalidadEscala?: EscalaVoz
+  instrumento?: InstrumentoVoz
+  crearPista?: boolean
+  nombrePista?: string
+}
+type PayloadExtractMidi = PayloadVozBase & {
+  tipo?: 'melody' | 'drums' | 'both' | 'all'
+  instrumento?: InstrumentoVoz
+  crearPistas?: boolean
+}
+
+type ResultadoVoiceToDrums = {
+  bpm: number
+  totalNotas: number
+  conteo: { kicks: number; snares: number; hihats: number; otros: number }
+  notas: NotaBateriaMidi[]
+  metricas: ReturnType<typeof clasificarPercusionVocal>['metricas']
+  trackId?: string
+  clipId?: string
+}
+type ResultadoVoiceToMelody = {
+  bpm: number
+  totalNotas: number
+  notas: ReturnType<typeof extraerMelodiaMidiDeAudio>['notas']
+  metricas: ReturnType<typeof extraerMelodiaMidiDeAudio>['metricas']
+  trackId?: string
+  clipId?: string
+}
+type ResultadoExtractMidi = {
+  bpm: number
+  tonalidad: AnalisisMusicalDescriptivo['tonalidad']
+  progresionAcordes: AnalisisMusicalDescriptivo['progresionAcordes']
+  pistasCreadas: { tipo: 'melodia' | 'bateria'; trackId: string; clipId: string }[]
+  melodia: {
+    totalNotas: number
+    notas: ReturnType<typeof extraerMelodiaMidiDeAudio>['notas']
+    metricas: ReturnType<typeof extraerMelodiaMidiDeAudio>['metricas']
+  }
+  bateria: { totalGolpes: number; kicks: number; snares: number; hihats: number; notas: NotaBateriaMidi[] }
+  resumenParaIA: string
+}
+
+const MENSAJE_SIN_AUDIO =
+  'Falta audioData: el estado del proyecto no guarda el audio de los clips, así que la app debe decodificar ' +
+  'el clip (o la nota de voz) y pasar sus muestras PCM mono junto con su sampleRate.'
+
+/** Valida y normaliza las muestras: nunca se analiza silencio inventado. */
+function muestrasDeVoz(payload: PayloadVozBase): { muestras: Float64Array; sr: number } {
+  const sr = payload.sampleRate ?? 44100
+  if (!Number.isFinite(sr) || sr < 8000 || sr > 384000) {
+    throw new Error(`sampleRate inválido (${String(payload.sampleRate)}): debe estar entre 8000 y 384000 Hz`)
+  }
+  const datos = payload.audioData
+  if (!datos || typeof datos.length !== 'number' || datos.length === 0) throw new Error(MENSAJE_SIN_AUDIO)
+  const muestras = Float64Array.from(datos as ArrayLike<number>)
+  for (let i = 0; i < muestras.length; i++) {
+    if (!Number.isFinite(muestras[i])) throw new Error(`audioData contiene un valor no numérico en la muestra ${i}`)
+  }
+  return { muestras, sr }
+}
+
+function bpmDeVoz(estado: DAWState, payload: PayloadVozBase): number {
+  const bpm = payload.bpm ?? bpmProyecto(estado)
+  if (!Number.isFinite(bpm) || bpm < 20 || bpm > 400) throw new Error(`bpm inválido (${String(payload.bpm)}): debe estar entre 20 y 400`)
+  return bpm
+}
+
+function sensibilidadDeVoz(payload: PayloadVozBase): number {
+  const v = payload.sensibilidad ?? 1
+  return Number.isFinite(v) ? Math.min(2, Math.max(0.5, v)) : 1
+}
+
+type NotaCruda = { pitch: number; beat: number; duracionBeats: number; velocidad: number }
+
+function notasMidiDeVoz(notas: NotaCruda[]): MidiNote[] {
+  return notas.map((n) => ({
+    id: entorno.uuid(),
+    pitch: Math.max(0, Math.min(127, Math.round(n.pitch))),
+    velocidad: Math.max(1, Math.min(127, Math.round(n.velocidad))),
+    inicio: Math.max(0, n.beat),
+    duracion: Math.max(0.0625, n.duracionBeats),
+    canal: 0,
+    presion: 0,
+    seleccionada: false,
+    source: 'generated',
+  }))
+}
+
+function clipMidiDeVoz(trackId: string, nombre: string, color: string, inicioBeats: number, notas: MidiNote[]): MidiClip {
+  const fin = notas.reduce((max, n) => Math.max(max, n.inicio + n.duracion), 4)
+  const duracion = Math.max(4, Math.ceil(fin))
+  return {
+    id: entorno.uuid(),
+    trackId,
+    nombre,
+    inicio: inicioBeats,
+    duracion,
+    color,
+    seleccionado: false,
+    tipo: 'midi',
+    notas,
+    velocidadGlobal: 1,
+    cuantizacion: 0.25,
+    loop: { activo: false, inicio: 0, fin: duracion },
+  }
+}
+
+/** Añade un clip MIDI a una pista existente (que debe admitirlo) o a una pista de instrumento nueva. */
+function insertarClipDeVoz(
+  estado: DAWState,
+  destino: { trackId?: string; nombrePista: string; color: string },
+  nombreClip: string,
+  inicioBeats: number,
+  notas: MidiNote[],
+  events: EventoDominio[],
+): { estado: DAWState; trackId: string; clipId: string } {
+  const proyecto = estado.project
+  let pista: Track
+  let existentes: Track[]
+  if (destino.trackId) {
+    const existente = proyecto.tracks.find((t) => t.id === destino.trackId)
+    if (!existente) throw new Error(`Pista no encontrada: ${destino.trackId}`)
+    if (existente.tipo !== 'midi' && existente.tipo !== 'instrumento') {
+      throw new Error(`La pista «${existente.nombre}» (${existente.tipo}) no admite clips MIDI`)
+    }
+    pista = existente
+    existentes = proyecto.tracks
+  } else {
+    pista = crearPista(nombreTrackUnico(destino.nombrePista, proyecto.tracks), 'instrumento', destino.color, entorno.uuid())
+    existentes = [...proyecto.tracks, pista]
+    events.push(ev('track.creada', { trackId: pista.id, nombre: pista.nombre, tipo: 'instrumento' }))
+  }
+  const clip = clipMidiDeVoz(pista.id, nombreClip, pista.color || destino.color, inicioBeats, notas)
+  const actualizada = { ...pista, clips: [...((pista.clips as MidiClip[] | undefined) ?? []), clip] } as Track
+  events.push(ev('clip.creado', { trackId: pista.id, clipId: clip.id, tipo: 'midi', notas: notas.length }))
+  return {
+    estado: {
+      ...estado,
+      project: {
+        ...proyecto,
+        tracks: existentes.map((t) => (t.id === actualizada.id ? actualizada : t)),
+        modificado: true,
+        fechaModificacion: entorno.ahora(),
+      },
+    },
+    trackId: pista.id,
+    clipId: clip.id,
+  }
+}
+
+function inicioEnBeats(payload: PayloadVozBase): number {
+  const c = payload.inicioCompas
+  return typeof c === 'number' && Number.isFinite(c) ? Math.max(0, c * 4) : 0
+}
+
+function conteoBateria(notas: NotaBateriaMidi[]): { kicks: number; snares: number; hihats: number; otros: number } {
+  const conteo = { kicks: 0, snares: 0, hihats: 0, otros: 0 }
+  for (const n of notas) {
+    if (n.instrumento === 'kick') conteo.kicks++
+    else if (n.instrumento === 'snare') conteo.snares++
+    else if (n.instrumento === 'hihat_closed' || n.instrumento === 'hihat_open') conteo.hihats++
+    else conteo.otros++
+  }
+  return conteo
+}
+
+const SCHEMA_VOZ_BASE = {
+  clipId: { type: 'string' },
+  trackId: { type: 'string' },
+  audioData: { type: 'array', items: { type: 'number' } },
+  sampleRate: { type: 'number' },
+  bpm: { type: 'number' },
+  cuantizar: { type: 'string', enum: ['off', '1/16', '1/8', '1/4'] },
+  sensibilidad: { type: 'number' },
+  inicioCompas: { type: 'number' },
+} as const
+
+/** `analysis.voiceToDrums`: Convierte percusión vocal / beatbox a eventos MIDI de batería y opcionalmente crea la pista. */
+export function crearComandoAnalysisVoiceToDrums(): CommandDefinition<PayloadVoiceToDrums, ResultadoVoiceToDrums> {
+  return {
+    type: 'analysis.voiceToDrums',
+    replicacion: 'operacion',
+    description: 'Transforma audio de beatbox o percusión vocal en notas MIDI de batería alineadas al tempo',
+    risk: 'write',
+    historialUndo: 'instantanea',
+    schema: {
+      type: 'object',
+      properties: { ...SCHEMA_VOZ_BASE, crearPista: { type: 'boolean' }, nombrePista: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (estado, payload) => {
+      const bpm = bpmDeVoz(estado, payload)
+      const { muestras, sr } = muestrasDeVoz(payload)
+      const cuantizar = payload.cuantizar ?? '1/16'
+      const clasificacion = clasificarPercusionVocal(muestras, sr, {
+        bpmProyecto: bpm,
+        cuantizar,
+        sensibilidad: sensibilidadDeVoz(payload),
+      })
+
+      let nuevoEstado = estado
+      const events: EventoDominio[] = [
+        ev('audio.voicetodrums.convertido', { totalNotas: clasificacion.notas.length, bpm, cuantizar }),
+      ]
+      let trackId: string | undefined
+      let clipId: string | undefined
+      if ((payload.crearPista || payload.trackId) && clasificacion.notas.length > 0) {
+        const notas = notasMidiDeVoz(clasificacion.notas.map((n) => ({ ...n, pitch: n.notaMidi })))
+        const r = insertarClipDeVoz(
+          estado,
+          { trackId: payload.trackId, nombrePista: payload.nombrePista || 'Batería Beatbox (IA)', color: '#e74c3c' },
+          'Patrón Beatbox',
+          inicioEnBeats(payload),
+          notas,
+          events,
+        )
+        nuevoEstado = r.estado
+        trackId = r.trackId
+        clipId = r.clipId
+      }
+
+      return {
+        state: nuevoEstado,
+        events,
+        result: {
+          bpm,
+          totalNotas: clasificacion.notas.length,
+          conteo: conteoBateria(clasificacion.notas),
+          notas: clasificacion.notas,
+          metricas: clasificacion.metricas,
+          trackId,
+          clipId,
+        },
+      }
+    },
+  }
+}
+
+/** Nombres y colores sugeridos según instrumento (la app asigna después el VST correspondiente). */
+const CONFIG_INSTRUMENTOS: Record<InstrumentoVoz, { nombre: string; color: string }> = {
+  guitar: { nombre: 'JasWave Electric Guitar (IA)', color: '#f59e0b' },
+  piano: { nombre: 'JasWave Grand Piano (IA)', color: '#3b82f6' },
+  bass: { nombre: 'JasWave Electric Bass (IA)', color: '#8b5cf6' },
+  lead: { nombre: 'JasWave Shimmer Pad (IA)', color: '#ec4899' },
+  strings: { nombre: 'JasWave Strings Section (IA)', color: '#10b981' },
+}
+
+/** `analysis.voiceToMelody`: Convierte tarareo / voz / solo en notas MIDI melódicas y opcionalmente crea la pista. */
+export function crearComandoAnalysisVoiceToMelody(): CommandDefinition<PayloadVoiceToMelody, ResultadoVoiceToMelody> {
+  return {
+    type: 'analysis.voiceToMelody',
+    replicacion: 'operacion',
+    description: 'Transforma audio vocal o tarareo en notas MIDI melódicas afinadas y cuantizadas',
+    risk: 'write',
+    historialUndo: 'instantanea',
+    schema: {
+      type: 'object',
+      properties: {
+        ...SCHEMA_VOZ_BASE,
+        ajusteEscala: { type: 'boolean' },
+        tonalidadRaiz: { type: 'string' },
+        tonalidadEscala: { type: 'string', enum: ['mayor', 'menor', 'dórica', 'pentatónica', 'cromática'] },
+        instrumento: { type: 'string', enum: ['guitar', 'piano', 'bass', 'lead', 'strings'] },
+        crearPista: { type: 'boolean' },
+        nombrePista: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (estado, payload) => {
+      const bpm = bpmDeVoz(estado, payload)
+      const { muestras, sr } = muestrasDeVoz(payload)
+      const cuantizar = payload.cuantizar ?? '1/16'
+      const instrumento = payload.instrumento ?? 'guitar'
+      const cfg = CONFIG_INSTRUMENTOS[instrumento] ?? CONFIG_INSTRUMENTOS.guitar
+
+      const resMelodia = extraerMelodiaMidiDeAudio(muestras, {
+        sampleRate: sr,
+        bpmProyecto: bpm,
+        cuantizar,
+        sensibilidad: sensibilidadDeVoz(payload),
+        ajusteEscala: payload.ajusteEscala ?? true,
+        tonalidadRaiz: payload.tonalidadRaiz ?? 'C',
+        tonalidadEscala: payload.tonalidadEscala ?? 'menor',
+      })
+
+      let nuevoEstado = estado
+      const events: EventoDominio[] = [
+        ev('audio.voicetomelody.convertido', { totalNotas: resMelodia.notas.length, bpm, cuantizar, instrumento }),
+      ]
+      let trackId: string | undefined
+      let clipId: string | undefined
+      if ((payload.crearPista || payload.trackId) && resMelodia.notas.length > 0) {
+        const notas = notasMidiDeVoz(resMelodia.notas)
+        const r = insertarClipDeVoz(
+          estado,
+          { trackId: payload.trackId, nombrePista: payload.nombrePista || cfg.nombre, color: cfg.color },
+          'Melodía Voz-a-MIDI',
+          inicioEnBeats(payload),
+          notas,
+          events,
+        )
+        nuevoEstado = r.estado
+        trackId = r.trackId
+        clipId = r.clipId
+      }
+
+      return {
+        state: nuevoEstado,
+        events,
+        result: {
+          bpm,
+          totalNotas: resMelodia.notas.length,
+          notas: resMelodia.notas,
+          metricas: resMelodia.metricas,
+          trackId,
+          clipId,
+        },
+      }
+    },
+  }
+}
+
+/** `analysis.extractMidi`: Herramienta analítica unificada completa (Melodía f0 + Batería + AudioLens). */
+export function crearComandoAnalysisExtractMidi(): CommandDefinition<PayloadExtractMidi, ResultadoExtractMidi> {
+  return {
+    type: 'analysis.extractMidi',
+    replicacion: 'operacion',
+    description: 'Extracción completa unificada de parámetros musicales por Audio Lens: melodía f0, ritmo beatbox, acordes y tonalidad',
+    risk: 'write',
+    historialUndo: 'instantanea',
+    schema: {
+      type: 'object',
+      properties: {
+        ...SCHEMA_VOZ_BASE,
+        tipo: { type: 'string', enum: ['melody', 'drums', 'both', 'all'] },
+        instrumento: { type: 'string', enum: ['guitar', 'piano', 'bass', 'lead', 'strings'] },
+        crearPistas: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (estado, payload) => {
+      const bpm = bpmDeVoz(estado, payload)
+      const { muestras, sr } = muestrasDeVoz(payload)
+      const cuantizar = payload.cuantizar ?? '1/16'
+      const sensibilidad = sensibilidadDeVoz(payload)
+
+      // 1. Análisis armónico y rítmico general
+      const audioLensRes = generarDescripcionMusicalAudio(muestras, sr, { bpmProyecto: bpm, cuantizar, sensibilidad })
+
+      // 2. Extracción melódica ajustada a la tonalidad detectada
+      const melodiaRes = extraerMelodiaMidiDeAudio(muestras, {
+        sampleRate: sr,
+        bpmProyecto: bpm,
+        cuantizar,
+        sensibilidad,
+        ajusteEscala: true,
+        tonalidadRaiz: audioLensRes.tonalidad.raiz,
+        tonalidadEscala: audioLensRes.tonalidad.escala,
+      })
+
+      let nuevoEstado = estado
+      const events: EventoDominio[] = [
+        ev('audio.extractmidi.completado', {
+          notasMelodia: melodiaRes.notas.length,
+          notasBateria: audioLensRes.bateriaDetectada.totalGolpes,
+          tonalidad: audioLensRes.tonalidad,
+          bpm,
+        }),
+      ]
+      const pistasCreadas: { tipo: 'melodia' | 'bateria'; trackId: string; clipId: string }[] = []
+
+      if (payload.crearPistas) {
+        const inicioBeats = inicioEnBeats(payload)
+        const tipo = payload.tipo ?? 'melody'
+        if ((tipo === 'melody' || tipo === 'both' || tipo === 'all') && melodiaRes.notas.length > 0) {
+          const cfg = CONFIG_INSTRUMENTOS[payload.instrumento ?? 'guitar'] ?? CONFIG_INSTRUMENTOS.guitar
+          const r = insertarClipDeVoz(
+            nuevoEstado,
+            { nombrePista: cfg.nombre, color: cfg.color },
+            'Melodía Extraída',
+            inicioBeats,
+            notasMidiDeVoz(melodiaRes.notas),
+            events,
+          )
+          nuevoEstado = r.estado
+          pistasCreadas.push({ tipo: 'melodia', trackId: r.trackId, clipId: r.clipId })
+        }
+        if ((tipo === 'drums' || tipo === 'both' || tipo === 'all') && audioLensRes.bateriaDetectada.totalGolpes > 0) {
+          const r = insertarClipDeVoz(
+            nuevoEstado,
+            { nombrePista: 'JasWave Worship Drums (IA)', color: '#ef4444' },
+            'Patrón Batería Extraído',
+            inicioBeats,
+            notasMidiDeVoz(audioLensRes.bateriaDetectada.notas.map((n) => ({ ...n, pitch: n.notaMidi }))),
+            events,
+          )
+          nuevoEstado = r.estado
+          pistasCreadas.push({ tipo: 'bateria', trackId: r.trackId, clipId: r.clipId })
+        }
+      }
+
+      return {
+        state: nuevoEstado,
+        events,
+        result: {
+          bpm,
+          tonalidad: audioLensRes.tonalidad,
+          progresionAcordes: audioLensRes.progresionAcordes,
+          pistasCreadas,
+          melodia: {
+            totalNotas: melodiaRes.notas.length,
+            notas: melodiaRes.notas,
+            metricas: melodiaRes.metricas,
+          },
+          bateria: {
+            totalGolpes: audioLensRes.bateriaDetectada.totalGolpes,
+            kicks: audioLensRes.bateriaDetectada.kicks,
+            snares: audioLensRes.bateriaDetectada.snares,
+            hihats: audioLensRes.bateriaDetectada.hihats,
+            notas: audioLensRes.bateriaDetectada.notas,
+          },
+          resumenParaIA: `${audioLensRes.resumenParaIA}\n- Melodía f0 detectada: ${melodiaRes.notas.length} notas extraídas en rango ${melodiaRes.metricas.rangoPitches.min}..${melodiaRes.metricas.rangoPitches.max}.`,
+        },
+      }
+    },
+  }
+}
+
+import { entorno } from '../state/entorno-determinista';

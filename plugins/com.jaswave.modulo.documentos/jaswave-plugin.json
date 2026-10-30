@@ -1,0 +1,20 @@
+{
+  "id": "com.jaswave.modulo.documentos",
+  "name": "Documentos del proyecto",
+  "version": "1.0.0",
+  "vendor": "JasWave",
+  "category": "ui-extension",
+  "description": "Editor y explorador de los documentos Markdown del proyecto (docs/, plan.md) con vista previa y diagramas.",
+  "targetPlatforms": ["win-x64", "web"],
+  "entrypoints": {
+    "ui": "dist/modulo.js",
+    "uiEstilos": "dist/modulo.css"
+  },
+  "permissions": {
+    "realtimeAudio": false,
+    "fileSystem": "read-write-project",
+    "network": false,
+    "commands": []
+  },
+  "rolesAllowed": ["director", "productor", "mezcla", "mastering"]
+}

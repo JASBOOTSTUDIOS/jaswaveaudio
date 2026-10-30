@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            shared/package-lock.json
+            ai-harness/package-lock.json
+            jas-wave/package-lock.json
+            plugins/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm run install:all
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Módulos instalables (SDK, typecheck, tests de contrato, independencia, build)
+        run: |
+          npm run verify:modulos
+          npm run build:modulos
+
+      - name: Build (renderer + main)
+        run: npm run build
+
+      - name: Empaquetar (dir) y E2E
+        working-directory: jas-wave
+        run: |
+          npm run stage:host
+          npx electron-builder --win dir
+          npm run e2e
+
+      - name: Artefactos E2E
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: |
+            jas-wave/test-results/e2e
+            jas-wave/playwright-report

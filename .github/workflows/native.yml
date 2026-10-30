@@ -1,0 +1,45 @@
+name: Native
+
+# Compila el núcleo nativo del instalador (plugin host) y los plugins VST3 independientes de plugins/.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'native/**'
+      - 'plugins/**'
+      - '.github/workflows/native.yml'
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: VST3 SDK (fijado)
+        run: npm run native:sdk
+
+      - name: Build nativo (Release x64, VS 2022)
+        run: npm run native:build
+
+      - name: Plugins VST3 independientes (plugins/) + selftest DSP y licencias
+        run: node native/scripts/build-plugins.mjs --test
+
+      - name: Subir binarios
+        uses: actions/upload-artifact@v4
+        with:
+          name: jaswave-native-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            native/plugin-host/build-release/Release/jaswave-plugin-host.exe
+            plugins/build/VST3/Release/

@@ -6,10 +6,13 @@ import {
   ensureHostMidiAudible,
   findTrackPlaybackInstrument,
   getLoadedInstrumentForTrack,
+  getLoadedInstrumentsForTrack,
   rememberLoadedInstrument,
   slotIdForTrackPlugin,
 } from './track-vst-runtime'
 import type { PluginInfo } from '../../../../shared/src/types/entidades'
+import type { ZonaMidi } from '../../../../shared/src/types/directo'
+import { SeguimientoNotasZona, notasDeSalidaParaPista, zonasDePista } from '../midi-zones'
 
 export type ActiveVstVoiceTarget = {
   slotId: string
@@ -119,6 +122,17 @@ function resolveTrackSlotId(trackId: string, plugins?: PluginInfo[]): string | n
   return slotId
 }
 
+/** Slot principal y capas (otros instrumentos cargados) de la pista, sin repetir. */
+export function resolveAllTrackSlotIds(trackId: string, plugins?: PluginInfo[]): string[] {
+  const principal = resolveTrackSlotId(trackId, plugins)
+  if (!principal) return []
+  const out = [principal]
+  for (const p of getLoadedInstrumentsForTrack(trackId)) {
+    if (!out.includes(p.slotId)) out.push(p.slotId)
+  }
+  return out
+}
+
 export function routeMidiToActiveVst(
   on: boolean,
   pitch: number,
@@ -134,21 +148,62 @@ export function routeMidiToActiveVst(
   const trackId = active?.trackId ?? preferredTrackId
   if (on && trackId && !opts?.ignoreMute && !trackChannelIsAudible(trackId)) return false
   sendMidi(slotId, on, pitch, velocity)
+  // Capas: el resto de instrumentos de la misma pista tocan la misma nota.
+  if (trackId) {
+    for (const p of getLoadedInstrumentsForTrack(trackId)) {
+      if (p.slotId !== slotId) sendMidi(p.slotId, on, pitch, velocity)
+    }
+  }
   return true
 }
 
-/** MIDI en vivo hacia el VST de una pista concreta (controlador / armado / piano roll). */
+/** Zonas MIDI del proyecto (K3) para el thru web; las publica midi-controller-host al cambiar el proyecto. */
+let zonasLive: readonly ZonaMidi[] = []
+const seguimientoZonas = new SeguimientoNotasZona()
+
+export function setLiveMidiZones(zonas: readonly ZonaMidi[] | undefined): void {
+  zonasLive = zonas ?? []
+}
+
+/** Solo tests. */
+export function _reiniciarZonasLive(): void {
+  zonasLive = []
+  seguimientoZonas.reiniciar()
+}
+
+/**
+ * MIDI en vivo hacia el VST de una pista concreta (controlador / armado / piano roll). Si la pista tiene
+ * zonas activas, la nota pasa por ellas (rango, transposición, curva de velocidad); el note-off se envía al
+ * tono que sonó aunque la zona haya cambiado mientras la tecla seguía pisada. `ignorarZonas`: piano roll y
+ * previsualizaciones, que ya mandan el tono final.
+ */
 export function routeMidiToTrack(
   trackId: string,
   on: boolean,
   pitch: number,
   velocity = 90,
-  opts?: { ignoreMute?: boolean; plugins?: PluginInfo[] },
+  opts?: { ignoreMute?: boolean; plugins?: PluginInfo[]; ignorarZonas?: boolean; canal?: number },
 ): boolean {
   if (forceBuiltin) return false
-  const slotId = resolveTrackSlotId(trackId, opts?.plugins)
-  if (!slotId) return false
+  const slots = resolveAllTrackSlotIds(trackId, opts?.plugins)
+  if (slots.length === 0) return false
   if (on && !opts?.ignoreMute && !trackChannelIsAudible(trackId)) return false
-  sendMidi(slotId, on, pitch, velocity)
+  const conZonas = !opts?.ignorarZonas && zonasDePista(zonasLive, trackId).length > 0
+  if (!conZonas) {
+    for (const slotId of slots) sendMidi(slotId, on, pitch, velocity)
+    return true
+  }
+  if (on) {
+    const salidas = notasDeSalidaParaPista(zonasLive, trackId, pitch, velocity, opts?.canal ?? 1)
+    const previas = seguimientoZonas.noteOn(trackId, pitch, salidas.map((n) => n.pitch))
+    for (const slotId of slots) {
+      for (const p of previas) sendMidi(slotId, false, p, 0)
+      for (const n of salidas) sendMidi(slotId, true, n.pitch, n.velocidad)
+    }
+    return salidas.length > 0
+  }
+  const previas = seguimientoZonas.noteOff(trackId, pitch)
+  const tonos = previas ?? notasDeSalidaParaPista(zonasLive, trackId, pitch, 0, opts?.canal ?? 1).map((n) => n.pitch)
+  for (const slotId of slots) for (const p of tonos) sendMidi(slotId, false, p, 0)
   return true
 }

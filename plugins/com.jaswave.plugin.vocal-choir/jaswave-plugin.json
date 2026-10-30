@@ -1,0 +1,295 @@
+{
+  "id": "com.jaswave.plugin.vocal-choir",
+  "name": "JasWave Vocal Choir",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "vendor": "JasWave Audio",
+  "description": "Coro controlado por MIDI de hasta 4 voces: cada nota toca una voz PSOLA que conserva los formantes de la fuente (la entrada de audio o una vocal formántica interna A/E/I/O/U), con spread estéreo, vibrato, humanización, desafinación por voz y portamento al robar voces. Latencia fija de 10 ms.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveVocalChoir.vst3"
+  },
+  "vst3": {
+    "classId": "{4A617357-5643-4852-5072-6F6356335431}",
+    "subCategories": "Fx|Pitch Shift"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "director",
+    "productor",
+    "qa"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.vocal-choir",
+    "features": []
+  },
+  "ai": {
+    "summary": "Convierte una voz (o una vocal interna) en un coro armónico tocable por MIDI de hasta 4 voces, sin voz de ardilla porque los formantes no se mueven con el tono.",
+    "intents": [
+      "coro-armonico",
+      "armonizar-voz",
+      "coros-worship",
+      "voz-sintetica",
+      "cantar-letra"
+    ],
+    "parameters": [
+      {
+        "id": "bypass",
+        "vstParamId": 0,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "bypass": true,
+        "basico": true
+      },
+      {
+        "id": "vc.voces",
+        "vstParamId": 1,
+        "name": "Número de voces (1–4)",
+        "min": 0,
+        "max": 3,
+        "default": 3,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "1",
+          "2",
+          "3",
+          "4"
+        ],
+        "basico": true
+      },
+      {
+        "id": "vc.spread",
+        "vstParamId": 2,
+        "name": "Spread estéreo",
+        "min": 0,
+        "max": 100,
+        "default": 70,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "vc.formantes",
+        "vstParamId": 3,
+        "name": "Desplazamiento de formantes",
+        "min": -12,
+        "max": 12,
+        "default": 0,
+        "unit": "st",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vc.garganta",
+        "vstParamId": 4,
+        "name": "Longitud de garganta",
+        "min": 50,
+        "max": 200,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vc.fuente",
+        "vstParamId": 5,
+        "name": "Fuente (Entrada de audio / Vocal interna)",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Input",
+          "Internal"
+        ],
+        "basico": true
+      },
+      {
+        "id": "vc.vocal",
+        "vstParamId": 6,
+        "name": "Vocal de la fuente interna",
+        "min": 0,
+        "max": 4,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "A",
+          "E",
+          "I",
+          "O",
+          "U"
+        ],
+        "basico": true
+      },
+      {
+        "id": "vc.tesitura",
+        "vstParamId": 7,
+        "name": "Tesitura de la fuente interna",
+        "min": 0,
+        "max": 3,
+        "default": 1,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Bass",
+          "Tenor",
+          "Alto",
+          "Soprano"
+        ]
+      },
+      {
+        "id": "vc.ataque",
+        "vstParamId": 8,
+        "name": "Ataque",
+        "min": 1,
+        "max": 1000,
+        "default": 60,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "vc.release",
+        "vstParamId": 9,
+        "name": "Release",
+        "min": 20,
+        "max": 3000,
+        "default": 400,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vc.vibrato-prof",
+        "vstParamId": 10,
+        "name": "Profundidad del vibrato",
+        "min": 0,
+        "max": 100,
+        "default": 25,
+        "unit": "cents",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vc.vibrato-vel",
+        "vstParamId": 11,
+        "name": "Velocidad del vibrato",
+        "min": 2,
+        "max": 8,
+        "default": 5.2,
+        "unit": "Hz",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vc.humanizar",
+        "vstParamId": 12,
+        "name": "Humanización (deriva de tono)",
+        "min": 0,
+        "max": 100,
+        "default": 30,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vc.desafinacion",
+        "vstParamId": 13,
+        "name": "Desafinación entre voces",
+        "min": 0,
+        "max": 50,
+        "default": 8,
+        "unit": "cents",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vc.glide",
+        "vstParamId": 14,
+        "name": "Portamento al robar voz",
+        "min": 0,
+        "max": 500,
+        "default": 40,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vc.nivel",
+        "vstParamId": 15,
+        "name": "Nivel de salida",
+        "min": -24,
+        "max": 12,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "vc.original",
+        "vstParamId": 16,
+        "name": "Voz original (mezcla seca)",
+        "min": 0,
+        "max": 100,
+        "default": 0,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "vc.tono-fuente",
+        "vstParamId": 40,
+        "name": "Tono de la fuente (medidor)",
+        "min": 0,
+        "max": 2000,
+        "default": 0,
+        "unit": "Hz",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      },
+      {
+        "id": "vc.voces-activas",
+        "vstParamId": 41,
+        "name": "Voces activas (medidor)",
+        "min": 0,
+        "max": 4,
+        "default": 0,
+        "unit": "",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      }
+    ]
+  },
+  "download": {
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.vocal-choir-1.0.0.jwx",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
+}

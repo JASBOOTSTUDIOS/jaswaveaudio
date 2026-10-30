@@ -1,0 +1,109 @@
+{
+  "archivos": {
+    "funk-clasico.mid": {
+      "id": "jw-funk-funk-clasico",
+      "nombre": "Funk clásico",
+      "tempo": 100,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "funk",
+        "fantasmas"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "funk-sincopado.mid": {
+      "id": "jw-funk-funk-sincopado",
+      "nombre": "Funk sincopado",
+      "tempo": 96,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "funk",
+        "sincopado"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "funk-con-hi-hat-abierto.mid": {
+      "id": "jw-funk-funk-con-hi-hat-abierto",
+      "nombre": "Funk con hi-hat abierto",
+      "tempo": 106,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "funk",
+        "hi-hat-abierto"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "funk-lento.mid": {
+      "id": "jw-funk-funk-lento",
+      "nombre": "Funk lento",
+      "tempo": 84,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "funk",
+        "lento",
+        "ride"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-caja-al-cuarto.mid": {
+      "id": "jw-funk-fill-caja-al-cuarto",
+      "nombre": "Fill caja al cuarto",
+      "tempo": 100,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "caja",
+        "cuarto"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-redoble-de-caja.mid": {
+      "id": "jw-funk-fill-redoble-de-caja",
+      "nombre": "Fill redoble de caja",
+      "tempo": 100,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "redoble",
+        "caja"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

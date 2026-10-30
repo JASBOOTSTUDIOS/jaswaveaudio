@@ -1,0 +1,20 @@
+{
+  "id": "com.jaswave.modulo.editores-vst",
+  "name": "Editores de VST",
+  "version": "1.0.0",
+  "vendor": "JasWave",
+  "category": "ui-extension",
+  "description": "Los editores de los VST de JasWave en la web, con el mismo diseño que en escritorio: perillas, fader, espectro IN/OUT, responsivos y táctiles. Los cambios quedan en el proyecto (con deshacer) y se aplican al abrirlo en escritorio.",
+  "targetPlatforms": ["web"],
+  "entrypoints": {
+    "ui": "dist/modulo.js",
+    "uiEstilos": "dist/modulo.css"
+  },
+  "permissions": {
+    "realtimeAudio": false,
+    "fileSystem": "none",
+    "network": false,
+    "commands": ["plugin.setParameter"]
+  },
+  "rolesAllowed": ["productor", "mezcla", "mastering"]
+}

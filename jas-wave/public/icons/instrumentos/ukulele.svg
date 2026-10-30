@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="ukulele">
+  <!-- Cuerpo pequeño redondeado de ukelele -->
+  <path d="M24 30c-5 2-8 5-8 10 0 6 5 14 16 14s16-8 16-14c0-5-3-8-8-10 4-2 5-5 5-8 0-4-3-7-13-7s-13 3-13 7c0 3 1 6 5 8z" fill="currentColor" fill-opacity="0.14" stroke-width="2" />
+  <!-- Boca circular proporcionada -->
+  <circle cx="32" cy="38" r="4.5" stroke-width="1.75" fill="currentColor" fill-opacity="0.25" />
+  <!-- Puente de madera compacto con 4 amarres -->
+  <rect x="27" y="46" width="10" height="2.5" rx="0.5" fill="currentColor" />
+  <!-- Mástil corto -->
+  <path d="M30 10v12h4V10z" fill="currentColor" fill-opacity="0.25" stroke-width="1.5" />
+  <!-- Clavijero con 4 clavijas laterales (2 a cada lado) -->
+  <path d="M29 3h6v7h-6z" stroke-width="1.5" />
+  <circle cx="26" cy="5" r="1.5" fill="currentColor" />
+  <circle cx="26" cy="8" r="1.5" fill="currentColor" />
+  <circle cx="38" cy="5" r="1.5" fill="currentColor" />
+  <circle cx="38" cy="8" r="1.5" fill="currentColor" />
+</svg>

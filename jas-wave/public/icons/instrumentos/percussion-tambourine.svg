@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="percussion-tambourine">
+  <!-- Marco circular exterior e interior -->
+  <circle cx="32" cy="32" r="22" fill="currentColor" fill-opacity="0.12" stroke-width="2.5" />
+  <circle cx="32" cy="32" r="16" stroke-width="2" />
+  <!-- Pares de sonajas (jingles) en cortes del marco -->
+  <ellipse cx="32" cy="10" rx="3.5" ry="1.5" fill="currentColor" />
+  <ellipse cx="32" cy="54" rx="3.5" ry="1.5" fill="currentColor" />
+  <ellipse cx="10" cy="32" rx="1.5" ry="3.5" fill="currentColor" />
+  <ellipse cx="54" cy="32" rx="1.5" ry="3.5" fill="currentColor" />
+  <ellipse cx="16" cy="16" rx="3" ry="1.5" fill="currentColor" transform="rotate(45 16 16)" />
+  <ellipse cx="48" cy="16" rx="3" ry="1.5" fill="currentColor" transform="rotate(-45 48 16)" />
+  <ellipse cx="16" cy="48" rx="3" ry="1.5" fill="currentColor" transform="rotate(-45 16 48)" />
+  <ellipse cx="48" cy="48" rx="3" ry="1.5" fill="currentColor" transform="rotate(45 48 48)" />
+  <!-- Agujero de agarre para el pulgar -->
+  <ellipse cx="28" cy="32" rx="2.5" ry="1.5" fill="currentColor" fill-opacity="0.4" />
+</svg>

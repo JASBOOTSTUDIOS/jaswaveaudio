@@ -1,9 +1,12 @@
+import type { ComponentType } from 'react'
+
 export type DockZone = 'left' | 'center' | 'right' | 'bottom'
 
-export type ToolId =
-  | 'coproducer'
-  | 'docs'
-  | 'docs-explorer'
+/**
+ * Herramientas del núcleo del DAW. Los módulos instalables (asistente IA, partitura…) añaden las suyas en
+ * tiempo de ejecución con `registrarHerramienta`, así que un ToolId puede ser cualquier cadena.
+ */
+export type HerramientaNucleo =
   | 'arrange'
   | 'mixer'
   | 'library'
@@ -12,11 +15,20 @@ export type ToolId =
   | 'routing'
   | 'instruments'
   | 'fx-chain'
+  | 'automation'
   | 'plugin-editor'
   | 'midi-map'
+  | 'midi-zones'
+  | 'grooves'
   | 'piano-roll'
-  | 'score-editor'
+  | 'terminal'
   | 'settings'
+  | 'project-files'
+  | 'cuenta'
+  | 'admin'
+  | 'modulos'
+
+export type ToolId = HerramientaNucleo | (string & {})
 
 export interface ToolDefinitionUI {
   id: ToolId
@@ -25,30 +37,57 @@ export interface ToolDefinitionUI {
   defaultZone: DockZone
   /** Si true, solo puede haber una instancia dockeada o undocked */
   singleton: boolean
+  /** No se coloca sola en el layout: solo aparece cuando se pide (p. ej. el panel admin). */
+  bajoDemanda?: boolean
+  /** Icono de la pestaña (lo aportan los módulos). */
+  icono?: ComponentType<{ className?: string }>
+  /** Módulo que aporta la herramienta (undefined = núcleo). */
+  moduloId?: string
+  /** Al colocarse por primera vez queda como pestaña activa de su zona. */
+  destacada?: boolean
+  /** Tamaño mínimo (px) con el que el panel se ve y se usa bien; por debajo aparece scroll en vez de deformarse. */
+  minW?: number
+  minH?: number
 }
 
+/**
+ * Tamaño mínimo utilizable por herramienta. Si la zona donde está acoplada se hace más pequeña, el panel
+ * conserva este tamaño y se desplaza (scroll) en vez de aplastar controles, faders o teclados.
+ */
+const TAMANO_MINIMO: Record<string, { w: number; h: number }> = {
+  arrange: { w: 420, h: 220 },
+  // Barra (36) + tira mínima estrecha (nombre, M/S y volumen fijo de 160 px): por debajo, scroll, nunca deformar.
+  mixer: { w: 160, h: 320 },
+  'piano-roll': { w: 380, h: 240 },
+  library: { w: 220, h: 200 },
+  'track-detail': { w: 250, h: 260 },
+  meters: { w: 270, h: 340 },
+  routing: { w: 240, h: 180 },
+  instruments: { w: 240, h: 240 },
+  'fx-chain': { w: 250, h: 240 },
+  automation: { w: 320, h: 170 },
+  'plugin-editor': { w: 420, h: 300 },
+  'midi-map': { w: 280, h: 200 },
+  'midi-zones': { w: 420, h: 260 },
+  grooves: { w: 420, h: 300 },
+  terminal: { w: 260, h: 140 },
+  settings: { w: 300, h: 260 },
+  'project-files': { w: 200, h: 160 },
+  cuenta: { w: 260, h: 240 },
+  admin: { w: 320, h: 260 },
+  modulos: { w: 280, h: 240 },
+}
+const TAMANO_MINIMO_DEFECTO = { w: 240, h: 160 }
+
+/** Tamaño mínimo de una herramienta (núcleo o módulo; los módulos pueden declarar minW/minH). */
+export function tamanoMinimoHerramienta(id: ToolId): { w: number; h: number } {
+  const def = (TOOL_CATALOG as Record<string, ToolDefinitionUI | undefined>)[id]
+  const base = TAMANO_MINIMO[id] ?? TAMANO_MINIMO_DEFECTO
+  return { w: def?.minW ?? base.w, h: def?.minH ?? base.h }
+}
+
+/** Herramientas disponibles: las del núcleo + las de los módulos activos (mutable en tiempo de ejecución). */
 export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
-  coproducer: {
-    id: 'coproducer',
-    title: 'Asistente Jas',
-    description: 'Asistente JasWave',
-    defaultZone: 'left',
-    singleton: true,
-  },
-  docs: {
-    id: 'docs',
-    title: 'Docs',
-    description: 'Tabs de edición y vista de Markdown del proyecto',
-    defaultZone: 'left',
-    singleton: true,
-  },
-  'docs-explorer': {
-    id: 'docs-explorer',
-    title: 'Explorador',
-    description: 'Árbol de docs/ del proyecto (plan.md y contextos)',
-    defaultZone: 'left',
-    singleton: true,
-  },
   arrange: {
     id: 'arrange',
     title: 'Arrange',
@@ -105,6 +144,13 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     defaultZone: 'right',
     singleton: true,
   },
+  automation: {
+    id: 'automation',
+    title: 'Automatización',
+    description: 'Curvas vol/pan y write-on-play de la pista activa',
+    defaultZone: 'right',
+    singleton: true,
+  },
   'plugin-editor': {
     id: 'plugin-editor',
     title: 'Editor de plugin',
@@ -119,6 +165,20 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     defaultZone: 'right',
     singleton: true,
   },
+  'midi-zones': {
+    id: 'midi-zones',
+    title: 'Zonas MIDI',
+    description: 'Splits, capas y transposición del teclado para tocar en directo',
+    defaultZone: 'bottom',
+    singleton: true,
+  },
+  grooves: {
+    id: 'grooves',
+    title: 'Grooves',
+    description: 'Biblioteca de ritmos MIDI de batería por estilos',
+    defaultZone: 'left',
+    singleton: true,
+  },
   'piano-roll': {
     id: 'piano-roll',
     title: 'Piano roll',
@@ -126,19 +186,49 @@ export const TOOL_CATALOG: Record<ToolId, ToolDefinitionUI> = {
     defaultZone: 'bottom',
     singleton: true,
   },
-  'score-editor': {
-    id: 'score-editor',
-    title: 'Partitura',
-    description: 'Editor de partitura sincronizado con el clip MIDI',
+  terminal: {
+    id: 'terminal',
+    title: 'Terminal',
+    description: 'CLI del DAW y log de lo que ejecuta la IA',
     defaultZone: 'bottom',
     singleton: true,
   },
   settings: {
     id: 'settings',
     title: 'Configuración',
-    description: 'Proyecto, audio, IA, rutas y permisos',
+    description: 'Ajustes del DAW',
     defaultZone: 'right',
     singleton: true,
+  },
+  'project-files': {
+    id: 'project-files',
+    title: 'Archivos',
+    description: 'Explorador del proyecto por carpetas estilo IDE con vista contextual',
+    defaultZone: 'left',
+    singleton: true,
+  },
+  cuenta: {
+    id: 'cuenta',
+    title: 'Cuenta',
+    description: 'Sesión, licencia de este equipo para los plugins JasWave y colaboración',
+    defaultZone: 'right',
+    singleton: true,
+  },
+  admin: {
+    id: 'admin',
+    title: 'Administración',
+    description: 'Abre JasWave Admin, la app de administración aparte del DAW (solo administradores)',
+    defaultZone: 'center',
+    singleton: true,
+    bajoDemanda: true,
+  },
+  modulos: {
+    id: 'modulos',
+    title: 'Módulos',
+    description: 'Activa, desactiva y descarga módulos opcionales del DAW (asistente IA, partitura…)',
+    defaultZone: 'right',
+    singleton: true,
+    bajoDemanda: true,
   },
 }
 
@@ -147,17 +237,19 @@ export type WorkspaceLayout = {
   activeTab: Record<DockZone, ToolId | null>
   undocked: ToolId[]
   zoneVisible: Record<DockZone, boolean>
+  /** Herramientas cerradas (no aparecen como tabs hasta reabrirlas). */
+  closed: ToolId[]
 }
 
 export const DEFAULT_WORKSPACE: WorkspaceLayout = {
   zones: {
-    left: ['coproducer', 'docs-explorer', 'docs', 'library', 'instruments'],
+    left: ['project-files', 'instruments'],
     center: ['arrange'],
-    right: ['track-detail', 'fx-chain', 'plugin-editor', 'midi-map', 'meters', 'routing', 'settings'],
-    bottom: ['mixer', 'piano-roll', 'score-editor'],
+    right: ['track-detail', 'plugin-editor', 'settings'],
+    bottom: ['mixer', 'piano-roll'],
   },
   activeTab: {
-    left: 'coproducer',
+    left: 'project-files',
     center: 'arrange',
     right: 'track-detail',
     bottom: 'mixer',
@@ -169,19 +261,25 @@ export const DEFAULT_WORKSPACE: WorkspaceLayout = {
     right: true,
     bottom: true,
   },
+  closed: [
+    'library',
+    'fx-chain',
+    'automation',
+    'midi-map',
+    'midi-zones',
+    'grooves',
+    'meters',
+    'routing',
+    'terminal',
+  ],
 }
 
 const STORAGE_KEY = 'jaswave.workspace.v1'
 
-/** Garantiza que todas las herramientas del catálogo estén en alguna zona. */
+/** Garantiza catálogo coherente: closed no se reinyecta; el resto se coloca. */
 function ensureCatalogTools(layout: WorkspaceLayout): WorkspaceLayout {
-  const placed = new Set<ToolId>([
-    ...layout.zones.left,
-    ...layout.zones.center,
-    ...layout.zones.right,
-    ...layout.zones.bottom,
-    ...layout.undocked,
-  ])
+  const closed = [...(layout.closed ?? [])]
+  const closedSet = new Set(closed)
   const next: WorkspaceLayout = {
     ...layout,
     zones: {
@@ -193,22 +291,72 @@ function ensureCatalogTools(layout: WorkspaceLayout): WorkspaceLayout {
     undocked: [...layout.undocked],
     activeTab: { ...layout.activeTab },
     zoneVisible: { ...layout.zoneVisible },
+    closed,
   }
+  // Quitar de zonas/undocked lo que esté cerrado. Las de módulos aún no cargados se conservan: aparecen al
+  // registrarse el módulo (toolsInZone solo devuelve las del catálogo).
+  for (const zone of ['left', 'center', 'right', 'bottom'] as DockZone[]) {
+    next.zones[zone] = next.zones[zone].filter((id) => !closedSet.has(id))
+  }
+  next.undocked = next.undocked.filter((id) => !closedSet.has(id))
+
   for (const id of Object.keys(TOOL_CATALOG) as ToolId[]) {
-    if (placed.has(id)) continue
+    if (closedSet.has(id) || TOOL_CATALOG[id].bajoDemanda) continue
+    if (
+      next.zones.left.includes(id) ||
+      next.zones.center.includes(id) ||
+      next.zones.right.includes(id) ||
+      next.zones.bottom.includes(id) ||
+      next.undocked.includes(id)
+    ) {
+      continue
+    }
+    // No estaba colocado ni cerrado → zona por defecto (herramientas nuevas)
     const zone = TOOL_CATALOG[id].defaultZone
     next.zones[zone] = [...next.zones[zone], id]
+    if (TOOL_CATALOG[id].destacada) next.activeTab[zone] = id
   }
-  // Filtrar ids obsoletos que ya no están en el catálogo
+
   for (const zone of ['left', 'center', 'right', 'bottom'] as DockZone[]) {
-    next.zones[zone] = next.zones[zone].filter((id) => id in TOOL_CATALOG)
     const active = next.activeTab[zone]
-    if (active && !(active in TOOL_CATALOG)) {
+    if (active && !next.zones[zone].includes(active)) {
       next.activeTab[zone] = next.zones[zone][0] ?? null
     }
   }
-  next.undocked = next.undocked.filter((id) => id in TOOL_CATALOG)
   return next
+}
+
+/** Recoloca herramientas tras registrar o quitar las de un módulo. */
+export function reconciliarLayout(layout: WorkspaceLayout): WorkspaceLayout {
+  return ensureCatalogTools(layout)
+}
+
+export const EVENTO_HERRAMIENTAS = 'jaswave-herramientas-cambiadas'
+
+function avisarHerramientas(): void {
+  if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') window.dispatchEvent(new CustomEvent(EVENTO_HERRAMIENTAS))
+}
+
+/** Añade una herramienta de un módulo al catálogo (no puede reemplazar una del núcleo ni de otro módulo). */
+export function registrarHerramienta(def: ToolDefinitionUI & { moduloId: string }): void {
+  const previa = TOOL_CATALOG[def.id]
+  if (previa && previa.moduloId !== def.moduloId) {
+    throw new Error(`la herramienta ${def.id} ya existe${previa.moduloId ? ` (módulo ${previa.moduloId})` : ' en el núcleo'}`)
+  }
+  TOOL_CATALOG[def.id] = def
+  avisarHerramientas()
+}
+
+/** Quita las herramientas de un módulo (al desactivarlo o desinstalarlo). */
+export function quitarHerramientasDeModulo(moduloId: string): void {
+  let cambio = false
+  for (const [id, def] of Object.entries(TOOL_CATALOG)) {
+    if (def.moduloId === moduloId) {
+      delete TOOL_CATALOG[id]
+      cambio = true
+    }
+  }
+  if (cambio) avisarHerramientas()
 }
 
 export function loadWorkspace(): WorkspaceLayout {
@@ -223,6 +371,7 @@ export function loadWorkspace(): WorkspaceLayout {
       activeTab: { ...DEFAULT_WORKSPACE.activeTab, ...parsed.activeTab },
       zoneVisible: { ...DEFAULT_WORKSPACE.zoneVisible, ...parsed.zoneVisible },
       undocked: parsed.undocked ?? [],
+      closed: parsed.closed ?? [],
     })
   } catch {
     return structuredClone(DEFAULT_WORKSPACE)
@@ -242,6 +391,15 @@ export function requestOpenTool(toolId: ToolId, options?: { zone?: DockZone }): 
   window.dispatchEvent(
     new CustomEvent('jaswave-open-tool', {
       detail: { toolId, zone: options?.zone },
+    }),
+  )
+}
+
+/** Alterna mostrar/ocultar una herramienta (tab). */
+export function requestToggleTool(toolId: ToolId): void {
+  window.dispatchEvent(
+    new CustomEvent('jaswave-toggle-tool', {
+      detail: { toolId },
     }),
   )
 }

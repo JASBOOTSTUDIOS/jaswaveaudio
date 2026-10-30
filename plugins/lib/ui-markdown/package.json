@@ -1,0 +1,19 @@
+{
+  "name": "@jaswave/ui-markdown",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Renderizado de Markdown y diagramas Mermaid para módulos de JasWave.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "react": "^19"
+  },
+  "dependencies": {
+    "lucide-react": "^1.16.0",
+    "mermaid": "^11.0.0"
+  }
+}

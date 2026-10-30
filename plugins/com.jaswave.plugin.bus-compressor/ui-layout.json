@@ -1,0 +1,431 @@
+{
+  "productId": "com.jaswave.plugin.bus-compressor",
+  "titulo": "BUS COMPRESSOR",
+  "subtitulo": "VCA FEED-FORWARD · SOFT-KNEE · ENLACE ESTÉREO",
+  "instrumento": false,
+  "visualizador": "espectro-dual",
+  "acento": "#9560FF",
+  "base": {
+    "ancho": 1100,
+    "alto": 620
+  },
+  "zonas": {
+    "pantalla": [
+      34,
+      34,
+      1066,
+      586
+    ],
+    "visualizador": [
+      52,
+      92,
+      652,
+      404
+    ],
+    "espectro": [
+      66,
+      124,
+      612,
+      382
+    ],
+    "miniPanel": [
+      52,
+      418,
+      652,
+      556
+    ],
+    "controles": [
+      666,
+      92,
+      1048,
+      404
+    ],
+    "salida": [
+      666,
+      418,
+      1048,
+      556
+    ],
+    "fader": [
+      680,
+      440,
+      724,
+      552
+    ],
+    "medidores": {
+      "x": 976,
+      "arriba": 446,
+      "abajo": 528
+    }
+  },
+  "escalas": {
+    "frecuencia": [
+      20,
+      20000
+    ],
+    "dbfs": [
+      -120,
+      0
+    ],
+    "caidaDbS": 14
+  },
+  "modoParam": null,
+  "modos": {
+    "selector": [
+      358,
+      48,
+      476,
+      68
+    ],
+    "corte": 410,
+    "defecto": "avanzado"
+  },
+  "parametrosCubiertos": [],
+  "widgets": [
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        92,
+        1048,
+        404
+      ],
+      "etiqueta": "COMPRESOR",
+      "basico": true
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        704,
+        140,
+        780,
+        234
+      ],
+      "etiqueta": "UMBRAL",
+      "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        761.5,
+        140,
+        837.5,
+        234
+      ],
+      "param": 1,
+      "min": -60,
+      "max": 0,
+      "defecto": -20,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Threshold",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        819,
+        140,
+        895,
+        234
+      ],
+      "etiqueta": "RATIO",
+      "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        876.5,
+        140,
+        952.5,
+        234
+      ],
+      "param": 2,
+      "min": 1,
+      "max": 20,
+      "defecto": 4,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Ratio",
+      "unidad": ":1"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        934,
+        140,
+        1010,
+        234
+      ],
+      "etiqueta": "RODILLA",
+      "tamano": 64,
+      "basico": false,
+      "param": 5,
+      "min": 0,
+      "max": 24,
+      "defecto": 6,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Knee",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        714,
+        278,
+        770,
+        352
+      ],
+      "etiqueta": "ATAQUE",
+      "tamano": 44,
+      "basico": true,
+      "rectBasico": [
+        777.5,
+        278,
+        833.5,
+        352
+      ],
+      "param": 3,
+      "min": 0.1,
+      "max": 200,
+      "defecto": 10,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Attack",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        829,
+        278,
+        885,
+        352
+      ],
+      "etiqueta": "RELEASE",
+      "tamano": 44,
+      "basico": true,
+      "rectBasico": [
+        880.5,
+        278,
+        936.5,
+        352
+      ],
+      "param": 4,
+      "min": 5,
+      "max": 2000,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Release",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        920,
+        294,
+        1024,
+        314
+      ],
+      "etiqueta": "DET",
+      "basico": false,
+      "param": 9,
+      "min": 0,
+      "max": 1,
+      "defecto": 1,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Detector",
+      "unidad": "",
+      "opciones": [
+        "Peak",
+        "RMS"
+      ]
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        418,
+        1048,
+        556
+      ],
+      "etiqueta": "SALIDA",
+      "basico": true,
+      "param": 0,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": true,
+      "nombre": "Bypass",
+      "unidad": "",
+      "opciones": [
+        "Active",
+        "Bypass"
+      ]
+    },
+    {
+      "tipo": "fader",
+      "rect": [
+        680,
+        440,
+        724,
+        552
+      ],
+      "etiqueta": "MAKEUP",
+      "basico": true,
+      "param": 6,
+      "min": -24,
+      "max": 24,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Makeup",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        749,
+        458,
+        805,
+        532
+      ],
+      "etiqueta": "MEZCLA",
+      "tamano": 44,
+      "basico": true,
+      "rectBasico": [
+        823,
+        458,
+        879,
+        532
+      ],
+      "param": 7,
+      "min": 0,
+      "max": 100,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Mix",
+      "unidad": "%",
+      "feature": "comp.mezcla-paralela"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        823,
+        458,
+        879,
+        532
+      ],
+      "etiqueta": "SC HPF",
+      "tamano": 44,
+      "basico": false,
+      "param": 8,
+      "min": 0,
+      "max": 500,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Sidechain HP",
+      "unidad": "Hz",
+      "feature": "comp.filtro-sidechain"
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        976,
+        446,
+        985,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        990,
+        446,
+        999,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1020,
+        446,
+        1029,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1034,
+        446,
+        1043,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "modo",
+      "rect": [
+        358,
+        48,
+        476,
+        68
+      ],
+      "etiqueta": "BÁSICO|AVANZADO",
+      "basico": true,
+      "corte": 410
+    },
+    {
+      "tipo": "reset",
+      "rect": [
+        624,
+        48,
+        684,
+        68
+      ],
+      "etiqueta": "RESET",
+      "basico": true
+    }
+  ]
+}

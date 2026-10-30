@@ -13,8 +13,14 @@ import { EventosPlugin, EventosTrack } from '../constants/nombres-eventos'
 /** Id canónico para FX Chain del master (mismo API que trackId). */
 export const MASTER_FX_TRACK_ID = 'master'
 
+/**
+ * Máximo de plugins por cadena: el host nativo procesa como mucho 24 slots por pista
+ * (`kMaxChainSlots` en native/plugin-host/src/main.cpp); los que pasaran de ahí no sonarían.
+ */
+export const MAX_PLUGINS_POR_CADENA = 24
+
 function generarId(): string {
-  return `plugin-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+  return `plugin-${entorno.ahora().toString(36)}-${entorno.aleatorio().toString(36).slice(2, 7)}`
 }
 
 function isMasterFxId(trackId: string): boolean {
@@ -37,7 +43,7 @@ function resolveChainHost(estado: DAWState, trackId: string): ChainHost {
 }
 
 function applyChain(estado: DAWState, trackId: string, plugins: PluginInfo[]): ProjectState {
-  const now = Date.now()
+  const now = entorno.ahora()
   if (isMasterFxId(trackId)) {
     return {
       ...estado.project,
@@ -79,6 +85,17 @@ export type PluginInsertPayload = {
   plugin: PluginInfo
   /** Índice de inserción; default = final */
   position?: number
+  /** Alias de position (compat agente) */
+  index?: number
+  /** Ruta VST/host a persistir en plugin.descripcion */
+  path?: string
+}
+
+export type PluginUpdatePayload = {
+  trackId: string
+  pluginInstanceId: string
+  /** Parches permitidos sobre PluginInfo (p.ej. descripcion = path host) */
+  patch: Partial<Pick<PluginInfo, 'descripcion' | 'nombre' | 'bypass' | 'estadoPluginBase64'>>
 }
 
 export type PluginRemovePayload = {
@@ -101,6 +118,8 @@ export type PluginBypassPayload = {
 export type PluginDuplicatePayload = {
   trackId: string
   pluginInstanceId: string
+  /** Id de la copia (redo determinista / cliente que fija el id). */
+  newInstanceId?: string
 }
 
 export function crearComandoPluginInsert(): CommandDefinition<PluginInsertPayload> {
@@ -115,6 +134,8 @@ export function crearComandoPluginInsert(): CommandDefinition<PluginInsertPayloa
         trackId: { type: 'string' },
         plugin: { type: 'object' },
         position: { type: 'number' },
+        index: { type: 'number' },
+        path: { type: 'string' },
       },
       required: ['trackId', 'plugin'],
       additionalProperties: false,
@@ -122,17 +143,27 @@ export function crearComandoPluginInsert(): CommandDefinition<PluginInsertPayloa
     handler: (estado, payload): StateTransition<PluginInsertPayload> => {
       const pista = findTrack(estado, payload.trackId)
       const chain = [...(pista.plugins ?? [])]
+      const path = typeof payload.path === 'string' && payload.path.length > 0 ? payload.path : undefined
       const plugin: PluginInfo = {
         ...payload.plugin,
         id: payload.plugin.id || generarId(),
+        ...(path ? { descripcion: path } : {}),
       }
       if (chain.some((p) => p.id === plugin.id)) {
         throw new Error(`Ya existe plugin instanceId: ${plugin.id}`)
       }
+      if (chain.length >= MAX_PLUGINS_POR_CADENA) {
+        throw new Error(
+          `La cadena de «${pista.nombre}» ya tiene ${MAX_PLUGINS_POR_CADENA} plugins, el máximo que procesa el motor. ` +
+            'Quita alguno o usa una pista o bus adicional.',
+        )
+      }
+      const rawPos = payload.position ?? payload.index
+      const posNumerica = Number(rawPos)
       const pos =
-        payload.position === undefined
+        rawPos === undefined || !Number.isFinite(posNumerica)
           ? chain.length
-          : Math.max(0, Math.min(payload.position, chain.length))
+          : Math.max(0, Math.min(Math.trunc(posNumerica), chain.length))
       chain.splice(pos, 0, plugin)
 
       return {
@@ -141,7 +172,7 @@ export function crearComandoPluginInsert(): CommandDefinition<PluginInsertPayloa
           {
             nombre: EventosPlugin.cargado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -154,7 +185,7 @@ export function crearComandoPluginInsert(): CommandDefinition<PluginInsertPayloa
           {
             nombre: EventosTrack.actualizada,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: { trackId: payload.trackId, cambios: { plugins: chain } as any },
           },
@@ -164,6 +195,61 @@ export function crearComandoPluginInsert(): CommandDefinition<PluginInsertPayloa
           trackId: payload.trackId,
           pluginInstanceId: plugin.id,
         } satisfies PluginRemovePayload,
+        // Redo determinista: reinserta con el mismo instanceId.
+        redoPayload: { ...payload, plugin: { ...payload.plugin, id: plugin.id } } satisfies PluginInsertPayload,
+      }
+    },
+  }
+}
+
+export function crearComandoPluginUpdate(): CommandDefinition<PluginUpdatePayload> {
+  return {
+    type: 'plugin.update',
+    inverseType: 'plugin.update',
+    description: 'Actualiza metadatos de un plugin en la FX Chain (p.ej. descripcion/path)',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        trackId: { type: 'string' },
+        pluginInstanceId: { type: 'string' },
+        patch: { type: 'object' },
+      },
+      required: ['trackId', 'pluginInstanceId', 'patch'],
+      additionalProperties: false,
+    },
+    handler: (estado, payload): StateTransition<PluginUpdatePayload> => {
+      const pista = findTrack(estado, payload.trackId)
+      const chain = [...(pista.plugins ?? [])]
+      const idx = chain.findIndex((p) => p.id === payload.pluginInstanceId)
+      if (idx < 0) throw new Error(`Plugin no encontrado: ${payload.pluginInstanceId}`)
+      const prev = chain[idx]!
+      const inversePatch: PluginUpdatePayload['patch'] = {}
+      if (payload.patch.descripcion !== undefined) inversePatch.descripcion = prev.descripcion
+      if (payload.patch.nombre !== undefined) inversePatch.nombre = prev.nombre
+      if (payload.patch.bypass !== undefined) inversePatch.bypass = prev.bypass
+      if (payload.patch.estadoPluginBase64 !== undefined) {
+        inversePatch.estadoPluginBase64 = prev.estadoPluginBase64
+      }
+      const next: PluginInfo = { ...prev, ...payload.patch }
+      chain[idx] = next
+      return {
+        state: { ...estado, project: withPlugins(estado, payload.trackId, chain) },
+        events: [
+          {
+            nombre: EventosTrack.actualizada,
+            version: 1,
+            marcaTiempo: entorno.ahora(),
+            fuente: 'plugin-commands',
+            payload: { trackId: payload.trackId, cambios: { plugins: chain } as never },
+          },
+        ],
+        result: { ...payload, plugin: next } as PluginUpdatePayload & { plugin: PluginInfo },
+        inversePayload: {
+          trackId: payload.trackId,
+          pluginInstanceId: payload.pluginInstanceId,
+          patch: inversePatch,
+        } satisfies PluginUpdatePayload,
       }
     },
   }
@@ -197,7 +283,7 @@ export function crearComandoPluginRemove(): CommandDefinition<PluginRemovePayloa
           {
             nombre: EventosPlugin.descargado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -208,7 +294,7 @@ export function crearComandoPluginRemove(): CommandDefinition<PluginRemovePayloa
           {
             nombre: EventosTrack.actualizada,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: { trackId: payload.trackId, cambios: { plugins: chain } as any },
           },
@@ -263,7 +349,7 @@ export function crearComandoPluginMove(): CommandDefinition<PluginMovePayload> {
           {
             nombre: EventosPlugin.movido,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -275,7 +361,7 @@ export function crearComandoPluginMove(): CommandDefinition<PluginMovePayload> {
           {
             nombre: EventosTrack.actualizada,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: { trackId: payload.trackId, cambios: { plugins: chain } as any },
           },
@@ -323,7 +409,7 @@ export function crearComandoPluginBypass(): CommandDefinition<PluginBypassPayloa
           {
             nombre: EventosPlugin.bypassCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -354,6 +440,7 @@ export function crearComandoPluginDuplicate(): CommandDefinition<PluginDuplicate
       properties: {
         trackId: { type: 'string' },
         pluginInstanceId: { type: 'string' },
+        newInstanceId: { type: 'string' },
       },
       required: ['trackId', 'pluginInstanceId'],
       additionalProperties: false,
@@ -366,8 +453,16 @@ export function crearComandoPluginDuplicate(): CommandDefinition<PluginDuplicate
       const src = chain[idx]!
       const copy: PluginInfo = {
         ...structuredClone(src),
-        id: generarId(),
+        id: payload.newInstanceId || generarId(),
         nombre: `${src.nombre} (copia)`,
+      }
+      if (chain.some((p) => p.id === copy.id)) {
+        throw new Error(`Ya existe plugin instanceId: ${copy.id}`)
+      }
+      if (chain.length >= MAX_PLUGINS_POR_CADENA) {
+        throw new Error(
+          `La cadena de «${pista.nombre}» ya tiene ${MAX_PLUGINS_POR_CADENA} plugins, el máximo que procesa el motor.`,
+        )
       }
       chain.splice(idx + 1, 0, copy)
 
@@ -377,7 +472,7 @@ export function crearComandoPluginDuplicate(): CommandDefinition<PluginDuplicate
           {
             nombre: EventosPlugin.cargado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -392,6 +487,7 @@ export function crearComandoPluginDuplicate(): CommandDefinition<PluginDuplicate
           trackId: payload.trackId,
           pluginInstanceId: copy.id,
         } satisfies PluginRemovePayload,
+        redoPayload: { ...payload, newInstanceId: copy.id } satisfies PluginDuplicatePayload,
       }
     },
   }
@@ -438,7 +534,7 @@ export function crearComandoPluginReplace(): CommandDefinition<PluginReplacePayl
           {
             nombre: EventosPlugin.cargado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -450,7 +546,7 @@ export function crearComandoPluginReplace(): CommandDefinition<PluginReplacePayl
           {
             nombre: EventosPlugin.descargado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: { trackId: payload.trackId, pluginInstanceId: payload.pluginInstanceId },
           },
@@ -461,6 +557,7 @@ export function crearComandoPluginReplace(): CommandDefinition<PluginReplacePayl
           pluginInstanceId: next.id,
           plugin: prev,
         },
+        redoPayload: { ...payload, plugin: { ...payload.plugin, id: next.id } } satisfies PluginReplacePayload,
       }
     },
   }
@@ -470,16 +567,19 @@ export type PluginSetParameterPayload = {
   trackId: string
   pluginInstanceId: string
   parameterId: string
+  /** 0..1. Se acota al rango; un valor no finito es un error. */
   normalizedValue: number
   plainValue?: number
   name?: string
+  /** Quita la entrada del parámetro (es el inverso exacto de crear una entrada nueva). */
+  quitar?: boolean
 }
 
 export function crearComandoPluginSetParameter(): CommandDefinition<PluginSetParameterPayload> {
   return {
     type: 'plugin.setParameter',
     inverseType: 'plugin.setParameter',
-    description: 'Actualiza un parámetro lógico del plugin (dominio; host sync aparte)',
+    description: 'Actualiza un parámetro lógico del plugin (dominio; host sync aparte). normalizedValue 0..1',
     risk: 'write',
     schema: {
       type: 'object',
@@ -490,37 +590,49 @@ export function crearComandoPluginSetParameter(): CommandDefinition<PluginSetPar
         normalizedValue: { type: 'number' },
         plainValue: { type: 'number' },
         name: { type: 'string' },
+        quitar: { type: 'boolean' },
       },
       required: ['trackId', 'pluginInstanceId', 'parameterId', 'normalizedValue'],
       additionalProperties: false,
     },
     handler: (estado, payload): StateTransition<PluginSetParameterPayload> => {
+      const parameterId = String(payload.parameterId ?? '').trim()
+      if (!parameterId) throw new Error('parameterId vacío')
+      const crudo = Number(payload.normalizedValue)
+      if (!Number.isFinite(crudo)) throw new Error('normalizedValue debe ser un número finito entre 0 y 1')
+      const valor = Math.min(1, Math.max(0, crudo))
+
       const host = resolveChainHost(estado, payload.trackId)
+      const prev = host.plugins.find((p) => p.id === payload.pluginInstanceId)
+      if (!prev) throw new Error(`Plugin no encontrado: ${payload.pluginInstanceId}`)
+      const coincide = (x: ParametroPluginOpciones) => x.id === parameterId || x.nombre === parameterId
+      const prevParam = (prev.parametros ?? []).find(coincide)
+
       const chain = host.plugins.map((p) => {
         if (p.id !== payload.pluginInstanceId) return p
         const params = [...(p.parametros ?? [])]
-        const i = params.findIndex((x) => x.id === payload.parameterId || x.nombre === payload.parameterId)
-        const entry: ParametroPluginOpciones = {
-          id: payload.parameterId,
-          nombre: payload.name ?? (i >= 0 ? params[i]!.nombre : payload.parameterId),
-          valor: payload.normalizedValue,
-          minimo: i >= 0 ? params[i]!.minimo : 0,
-          maximo: i >= 0 ? params[i]!.maximo : 1,
-          paso: i >= 0 ? params[i]!.paso : 0.01,
-          unidad: i >= 0 ? params[i]!.unidad : '',
-          etiqueta: payload.name ?? (i >= 0 ? params[i]!.etiqueta : payload.parameterId),
+        const i = params.findIndex(coincide)
+        if (payload.quitar) {
+          if (i >= 0) params.splice(i, 1)
+          return { ...p, parametros: params }
         }
-        if (i >= 0) params[i] = { ...params[i]!, ...entry }
+        const existente = i >= 0 ? params[i]! : undefined
+        const entry: ParametroPluginOpciones = {
+          // al encontrarlo por nombre se conserva su id real (no se sobrescribe con el nombre)
+          id: existente?.id ?? parameterId,
+          nombre: payload.name ?? existente?.nombre ?? parameterId,
+          valor,
+          minimo: existente?.minimo ?? 0,
+          maximo: existente?.maximo ?? 1,
+          paso: existente?.paso ?? 0.01,
+          unidad: existente?.unidad ?? '',
+          etiqueta: payload.name ?? existente?.etiqueta ?? parameterId,
+          ...(existente?.opciones ? { opciones: existente.opciones } : {}),
+        }
+        if (i >= 0) params[i] = entry
         else params.push(entry)
         return { ...p, parametros: params }
       })
-      if (!host.plugins.some((p) => p.id === payload.pluginInstanceId)) {
-        throw new Error(`Plugin no encontrado: ${payload.pluginInstanceId}`)
-      }
-      const prev = host.plugins.find((p) => p.id === payload.pluginInstanceId)!
-      const prevParam = (prev.parametros ?? []).find(
-        (x) => x.id === payload.parameterId || x.nombre === payload.parameterId,
-      )
 
       return {
         state: { ...estado, project: applyChain(estado, payload.trackId, chain) },
@@ -528,24 +640,33 @@ export function crearComandoPluginSetParameter(): CommandDefinition<PluginSetPar
           {
             nombre: EventosPlugin.parametroCambiado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
               pluginInstanceId: payload.pluginInstanceId,
-              parameterId: payload.parameterId,
-              normalizedValue: payload.normalizedValue,
+              parameterId: prevParam?.id ?? parameterId,
+              normalizedValue: valor,
             },
           },
         ],
-        result: payload,
-        inversePayload: {
-          trackId: payload.trackId,
-          pluginInstanceId: payload.pluginInstanceId,
-          parameterId: payload.parameterId,
-          normalizedValue: prevParam?.valor ?? 0,
-          name: prevParam?.nombre,
-        },
+        result: { ...payload, parameterId, normalizedValue: valor },
+        // Inverso exacto: restaura la entrada previa (con su id y nombre) o, si no existía, la quita
+        inversePayload: prevParam
+          ? {
+              trackId: payload.trackId,
+              pluginInstanceId: payload.pluginInstanceId,
+              parameterId: prevParam.id,
+              normalizedValue: prevParam.valor,
+              name: prevParam.nombre,
+            }
+          : {
+              trackId: payload.trackId,
+              pluginInstanceId: payload.pluginInstanceId,
+              parameterId,
+              normalizedValue: 0,
+              quitar: true,
+            },
       }
     },
   }
@@ -561,6 +682,8 @@ export type FxChainPastePayload = {
   trackId: string
   plugins: PluginInfo[]
   position?: number
+  /** Ids de las copias pegadas, en orden (redo determinista). */
+  ids?: string[]
 }
 
 export type FxChainPresetPayload = {
@@ -619,6 +742,7 @@ export function crearComandoFxChainPaste(): CommandDefinition<FxChainPastePayloa
         trackId: { type: 'string' },
         plugins: { type: 'array' },
         position: { type: 'number' },
+        ids: { type: 'array', items: { type: 'string' } },
       },
       required: ['trackId', 'plugins'],
       additionalProperties: false,
@@ -626,10 +750,13 @@ export function crearComandoFxChainPaste(): CommandDefinition<FxChainPastePayloa
     handler: (estado, payload): StateTransition<FxChainPastePayload> => {
       const host = resolveChainHost(estado, payload.trackId)
       const chain = [...host.plugins]
-      const copies = payload.plugins.map((p) => ({
+      const copies = payload.plugins.map((p, i) => ({
         ...structuredClone(p),
-        id: generarId(),
+        id: payload.ids?.[i] || generarId(),
       }))
+      for (const c of copies) {
+        if (chain.some((p) => p.id === c.id)) throw new Error(`Ya existe plugin instanceId: ${c.id}`)
+      }
       const pos =
         payload.position === undefined
           ? chain.length
@@ -642,7 +769,7 @@ export function crearComandoFxChainPaste(): CommandDefinition<FxChainPastePayloa
           {
             nombre: EventosTrack.actualizada,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: { trackId: payload.trackId, fxChainPasted: newIds },
           },
@@ -652,6 +779,7 @@ export function crearComandoFxChainPaste(): CommandDefinition<FxChainPastePayloa
           trackId: payload.trackId,
           removeIds: newIds,
         },
+        redoPayload: { ...payload, ids: newIds } satisfies FxChainPastePayload,
       }
     },
   }
@@ -724,7 +852,7 @@ export function crearComandoFxChainLoadPreset(): CommandDefinition<FxChainPreset
           {
             nombre: EventosPlugin.presetCargado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -740,6 +868,11 @@ export function crearComandoFxChainLoadPreset(): CommandDefinition<FxChainPreset
           nombre: 'undo',
           plugins: prev,
         },
+        // Redo determinista: fija los ids asignados a plugins sin id.
+        redoPayload: {
+          ...payload,
+          plugins: payload.plugins.map((p, i) => ({ ...p, id: next[i]!.id })),
+        } satisfies FxChainPresetPayload,
       }
     },
   }
@@ -769,7 +902,7 @@ export function crearComandoFxChainSavePreset(): CommandDefinition<FxChainCopyPa
           {
             nombre: EventosPlugin.presetGuardado,
             version: 1,
-            marcaTiempo: Date.now(),
+            marcaTiempo: entorno.ahora(),
             fuente: 'plugin-commands',
             payload: {
               trackId: payload.trackId,
@@ -799,3 +932,114 @@ export function parseAutomationParamKey(
   if (i <= 0) return null
   return { pluginInstanceId: rest.slice(0, i), parameterId: rest.slice(i + 1) }
 }
+
+// ── Snapshot de estado de plugins (autosave) ───────────────────
+
+/** Campos que el autosave lee del host y escribe en el proyecto. */
+export type PluginSnapshotEstado = {
+  parametros?: ParametroPluginOpciones[]
+  estadoPluginBase64?: string
+  estado?: PluginInfo['estado']
+}
+
+export type TrackSnapshotPluginStatePayload = PluginSnapshotEstado & {
+  trackId: string
+  pluginInstanceId: string
+}
+
+export type MasterSnapshotPluginStatePayload = PluginSnapshotEstado & {
+  pluginInstanceId: string
+}
+
+function mismosParametros(a: ParametroPluginOpciones[] | undefined, b: ParametroPluginOpciones[] | undefined): boolean {
+  const pa = a ?? []
+  const pb = b ?? []
+  if (pa.length !== pb.length) return false
+  for (let i = 0; i < pa.length; i++) {
+    if (pa[i]!.id !== pb[i]!.id || pa[i]!.valor !== pb[i]!.valor) return false
+  }
+  return true
+}
+
+/**
+ * true si el snapshot no cambia nada del plugin (mismo blob, mismos valores de
+ * parámetros y mismo estado). El autosave lo usa para no ejecutar comandos vacíos.
+ */
+export function snapshotPluginSinCambios(previo: PluginInfo, snap: PluginSnapshotEstado): boolean {
+  if (snap.estadoPluginBase64 !== undefined && snap.estadoPluginBase64 !== previo.estadoPluginBase64) return false
+  if (snap.estado !== undefined && snap.estado !== previo.estado) return false
+  if (snap.parametros !== undefined && !mismosParametros(previo.parametros, snap.parametros)) return false
+  return true
+}
+
+/**
+ * Escribe el estado capturado del host en el plugin sin tocar `modificado`
+ * (el estado del plugin no es una edición del usuario: el usuario ya editó
+ * el plugin en su ventana y ese cambio no es deshacible desde el DAW).
+ */
+function aplicarSnapshotPlugin(estado: DAWState, trackId: string, payload: TrackSnapshotPluginStatePayload): StateTransition<TrackSnapshotPluginStatePayload> {
+  const host = resolveChainHost(estado, trackId)
+  const idx = host.plugins.findIndex((p) => p.id === payload.pluginInstanceId)
+  if (idx < 0) throw new Error(`Plugin no encontrado: ${payload.pluginInstanceId}`)
+  const previo = host.plugins[idx]!
+  if (snapshotPluginSinCambios(previo, payload)) {
+    return { state: estado, events: [], result: { ...payload, cambiado: false } as never }
+  }
+  const siguiente: PluginInfo = {
+    ...previo,
+    ...(payload.parametros !== undefined ? { parametros: payload.parametros } : {}),
+    ...(payload.estadoPluginBase64 !== undefined ? { estadoPluginBase64: payload.estadoPluginBase64 } : {}),
+    ...(payload.estado !== undefined ? { estado: payload.estado } : {}),
+  }
+  const plugins = host.plugins.map((p, i) => (i === idx ? siguiente : p))
+  const project: ProjectState = isMasterFxId(trackId)
+    ? { ...estado.project, master: { ...estado.project.master, plugins } }
+    : {
+        ...estado.project,
+        tracks: estado.project.tracks.map((t) => (t.id === trackId ? ({ ...t, plugins } as Track) : t)),
+      }
+  return { state: { ...estado, project }, events: [], result: { ...payload, cambiado: true } as never }
+}
+
+const SCHEMA_SNAPSHOT_PROPS = {
+  pluginInstanceId: { type: 'string' },
+  parametros: { type: 'array' },
+  estadoPluginBase64: { type: 'string' },
+  estado: { type: 'string', enum: ['cargado', 'error', 'pendiente'] },
+}
+
+export function crearComandoTrackSnapshotPluginState(): CommandDefinition<TrackSnapshotPluginStatePayload> {
+  return {
+    type: 'track.snapshotPluginState',
+    replicacion: 'resultado',
+    historialUndo: 'ninguno',
+    description: 'Guarda en el proyecto el estado de un plugin leído del host (autosave; sin undo ni "modificado")',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: { trackId: { type: 'string' }, ...SCHEMA_SNAPSHOT_PROPS },
+      required: ['trackId', 'pluginInstanceId'],
+      additionalProperties: false,
+    },
+    handler: (estado, payload) => aplicarSnapshotPlugin(estado, payload.trackId, payload),
+  }
+}
+
+export function crearComandoMasterSnapshotPluginState(): CommandDefinition<MasterSnapshotPluginStatePayload> {
+  return {
+    type: 'master.snapshotPluginState',
+    historialUndo: 'ninguno',
+    description: 'Guarda en el proyecto el estado de un plugin del master leído del host (autosave; sin undo ni "modificado")',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: SCHEMA_SNAPSHOT_PROPS,
+      required: ['pluginInstanceId'],
+      additionalProperties: false,
+    },
+    handler: (estado, payload) =>
+      aplicarSnapshotPlugin(estado, MASTER_FX_TRACK_ID, { ...payload, trackId: MASTER_FX_TRACK_ID }) as never,
+  }
+}
+
+import { entorno } from '../state/entorno-determinista';

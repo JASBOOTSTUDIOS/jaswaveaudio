@@ -47,13 +47,13 @@ export function syncPlanAfterDawChange(
   if (!doc) return null
   if (
     doc.content.trim() === DEFAULT_PLAN_MD.trim() &&
-    parsePlanTasks(doc.content).every((t) => t.text.includes('añade tareas'))
+    parsePlanTasks(doc.content).every((t) => /añade tareas|tareas concretas/i.test(t.text))
   ) {
     return null
   }
-  const ev = evaluatePlanAgainstDaw(doc.content, state, ctx)
-  writeAgentDoc(projectId, PLAN_SLUG, ev.markdown, { origin: 'ai', preserveUserNotes: true })
-  return ev
+  // A4: la evaluación es solo QA — no reescribe plan.md; el estado del plan
+  // lo deciden los agentes con evidencia (y la vista de pasos del editor).
+  return evaluatePlanAgainstDaw(doc.content, state, ctx)
 }
 
 export function ensurePlanFromCompose(
@@ -65,7 +65,7 @@ export function ensurePlanFromCompose(
   const emptyish =
     !existing ||
     existing.content.trim() === DEFAULT_PLAN_MD.trim() ||
-    parsePlanTasks(existing.content).every((t) => /añade tareas/i.test(t.text))
+    parsePlanTasks(existing.content).every((t) => /añade tareas|tareas concretas/i.test(t.text))
   if (opts?.force || emptyish) {
     writeAgentDoc(projectId, PLAN_SLUG, planMarkdownFromProjectPlan(plan), {
       origin: 'ai',

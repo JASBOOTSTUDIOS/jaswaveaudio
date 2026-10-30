@@ -3,11 +3,71 @@
  * Sin dependencias de Electron/React; el cliente (jas-wave) aporta persistencia y executor.
  *
  * Estructura:
- *   plan/  — evaluación plan.md ↔ DAW
- *   loop/  — harness de reparación + cola de jobs
- *   agent/ — modos y política de acciones
- *   ask/   — contexto de solo lectura (consultas)
+ *   context/ prompting/ recovery/ planning/ quality/ execution/ compatibility/
  */
+
+export type { AgentTurnContext, AgentTrackSummary } from './context/agent-context'
+export { composeAgentTurnContext, formatAgentContextForPrompt } from './context/compose-agent-context'
+export { composeAgentPrompt, type ComposeAgentPromptInput } from './prompting/compose-agent-prompt'
+export { agentBasePrompt } from './prompting/base-prompt'
+export { agentMusicPolicyPrompt } from './prompting/music-policy'
+
+export { parseActionsFromText, stripActionsBlock } from './recovery/legacy-actions-parser'
+export {
+  deterministicFallbacksFromUserIntent,
+  isCreativeGenerationRequest,
+} from './recovery/deterministic-fallbacks'
+export {
+  legacyActionsToToolCalls,
+  toolCallsToLegacyActions,
+  filterUnknownTools,
+  normalizeToolArgs,
+  type AgentToolCall,
+} from './compatibility/legacy-actions-adapter'
+
+export {
+  shouldUseWorkPlan,
+  buildWorkPlanFromActions,
+  projectStateFingerprint,
+  type AgentWorkPlan,
+  type AgentWorkPhase,
+  type PlannedAction,
+} from './planning/agent-work-plan'
+export { runAgentWorkPlan, type AgentWorkPlanRunResult, type AgentWorkPlanEventName } from './execution/plan-runner'
+
+export {
+  AGENT_LOOP_LIMITS,
+  AGENT_LOOP_MAX_TOOLS_PER_ITERATION,
+  type AgentRunStatus,
+  type AgentDecision,
+  type AgentObservation,
+  type AgentLoopToolCall,
+  type AgentLoopToolResult,
+  type AgentRunResult,
+  type AgentExecutionLimits,
+} from './loop/agent-run-types'
+export { runAgentLoop, type AgentLoopDeps, type AgentLoopChatReply } from './loop/agent-loop'
+export {
+  parseAgentDecisionFromText,
+  agentDecisionFromToolCalls,
+  agentDecisionFromChatResponse,
+  AGENT_CONTROL_TOOLS,
+  AGENT_CONTROL_TOOL_NAMES,
+  AGENT_CONTROL_TOOL_SCHEMAS,
+  type NativeToolCallLike,
+} from './recovery/parse-agent-decision'
+export {
+  observeAgentContext,
+  inferObserveIntent,
+  syntheticReadResult,
+  type ObservationRequest,
+} from './context/agent-observer'
+export { validateAgentToolCalls, isLoopReadTool, isSyntheticReadTool } from './loop/validate-tool-calls'
+
+export type { QualityGate, QualityGateResult, QualityVerdict, QualityFinding } from './quality/types'
+export { evaluateMidiQuality } from './quality/midi-quality-gate'
+export { evaluateArrangementQuality } from './quality/arrangement-quality-gate'
+export { evaluateRenderQuality } from './quality/render-quality-gate'
 
 export type { HarnessActionResult, HarnessDawAction } from './types/actions'
 export type {
@@ -37,6 +97,34 @@ export {
   planMarkdownFromProjectPlan,
 } from './plan/eval'
 
+export {
+  aprobarPlan,
+  diffPlans,
+  hayPasosPendientes,
+  isStructuredPlan,
+  marcarPaso,
+  parsePlan,
+  planHash,
+  serializePlan,
+  siguientePasoPendiente,
+  PLAN_NOTAS_HEADING,
+  PLAN_PASOS_HEADING,
+  type PlanDiff,
+  type PlanEstructurado,
+  type PlanPaso,
+  type PlanStepEstado,
+} from './plan/structured-plan'
+
+export {
+  clipCoversSection,
+  formatSectionGapLine,
+  listSectionGaps,
+  listSectionSpans,
+  parseBeatsRangeFromTask,
+  type SectionGap,
+  type SectionSpan,
+} from './plan/section-coverage'
+
 export { planHasOpenTasks } from './plan/tasks'
 
 export {
@@ -45,6 +133,10 @@ export {
   HARNESS_MIN_AUDIBLE_PEAK,
   HARNESS_STALE_LIMIT,
   actionFingerprint,
+  HARNESS_ACTIONS_SUMMARY_MAX_CHARS,
+  HARNESS_AGENT_NOTES_MAX_CHARS,
+  compactActionsSummary,
+  formatAgentNotesBlock,
   buildHarnessRepairMessage,
   buildHarnessReviewMessage,
   filterRedundantRepairActions,
@@ -90,6 +182,7 @@ export {
 export {
   type HarnessJobContext,
   type HarnessUntilPlanDeps,
+  HARNESS_MAX_OUTER_LOOPS,
   createHarnessJobContextStore,
   peekHarnessJobContext,
   runHarnessUntilPlanComplete,
@@ -97,28 +190,50 @@ export {
 } from './loop/until-plan'
 
 export {
+  inspectProduction,
+  formatNextGapInstruction,
+  type ProductionAuditContext,
+  type ProductionAuditReport,
+  type ProductionIssue,
+  type ProductionListenEvidence,
+  type ProductionPluginGuide,
+} from './loop/production-audit'
+
+export {
   AGENT_MODE_META,
+  agentModeLabel,
   detectAgentMode,
   modeBlocksMutation,
   modePromptBlock,
+  resolveMode,
+  workingMode,
   wantsFullProject,
   isSongRefineIntent,
   isTempoOnlyRefine,
+  isProjectWipeIntent,
+  isGenreRewriteIntent,
   inferBpmFromTempoIntent,
+  parseExplicitBpm,
+  parseExplicitTimeSignature,
   isProjectAuditIntent,
   isStyleGapIntent,
   isStyleApplyIntent,
   isMidiClipEditIntent,
   isClipSectionSplitIntent,
   hasStyleReference,
+  extractStyleReference,
   wantsWebResearch,
   type AgentMode,
+  type ModeResolution,
 } from './agent/modes'
 
 export {
   estimateReasoningDepth,
   parseModelIntentBrief,
+  planFastReasoning,
   planReasoningPhases,
+  DEFAULT_REASONING_PROFILE,
+  type ReasoningProfile,
   phasesForDepth,
   remainingPhasesAfterNormalize,
   stripIntentBlock,
@@ -131,6 +246,7 @@ export {
 export {
   REASONING_PHASE_META,
   APP_VOCAB_GLOSSARY,
+  COUNCIL_VOICES,
   buildFinalTurnUserMessage,
   formatPhaseTitle,
   reasoningSeedUserMessage,
@@ -140,23 +256,47 @@ export {
 export {
   parseReadBlockFromText,
   runAbbreviatedReasoning,
+  runCouncilReviewReasoning,
   runReasoningLoop,
   stripReadBlock,
   sanitizeInnerThought,
   REASONING_REPAIR_PHASES,
+  REASONING_POST_APPLY_PHASES,
+  REASONING_THREAD_KEEP_RECENT,
+  REASONING_THREAD_MAX_CHARS,
+  REASONING_TOOL_RESULT_MAX_CHARS,
+  compactReasoningThread,
+  deriveWebSearchQuery,
+  threadChars,
+  type ReasoningBudgetStop,
   type ReasoningChatTurn,
   type ReasoningStep,
   type RunReasoningLoopOpts,
 } from './agent/reasoning-loop'
 
 export {
+  AGENT_ACTION_CLASSES,
   AGENT_DOCS_WRITE_ACTIONS,
   AGENT_READ_ONLY_ACTIONS,
+  actionAlwaysNeedsConfirm,
+  agentActionClass,
+  agentActionClassOfType,
+  gateAgentActionExecution,
+  isClassifiedAction,
+  isSystemAction,
+  unclassifiedActionTypes,
+  type AgentActionClass,
+  type AgentActionGateDecision,
   actionRiskLevel,
   batchNeedsDestructiveConfirm,
   ensureMusicBuildForFullProject,
+  musicBuildHintsFromUserText,
+  isSoloMusicBuildPending,
   forcePreviewAplicar,
   isDestructiveAction,
+  isDestructiveToolName,
+  limitToOneDestructiveAction,
+  limitToOneMutatingAction,
   isDocsWriteAction,
   isMutatingAction,
   isPreviewOnlyAction,
@@ -164,9 +304,20 @@ export {
   partitionActions,
   payloadOfAction,
   withAplicarTrue,
+  registroHerramientasPlugins,
   type ActionPartition,
   type AgentAction,
 } from './agent/action-policy'
+
+export {
+  AgentToolRegistry,
+  ErrorRegistroHerramientas,
+  claseMinimaPorPermisos,
+  type HerramientaPlugin,
+  type HerramientaRegistrada,
+  type PermisosPlugin,
+  type RegistroPlugin,
+} from './agents/registro-herramientas-dinamico'
 
 export {
   answerLocalReadQuery,
@@ -180,7 +331,47 @@ export {
   isOffTopicCreatePlanReply,
 } from './ask/read-context'
 
-export { buildStyleGapReport, buildWorshipDrumEnhanceActions, worshipModernDrumExpectations, expectationsFromStyleProfileSummaries } from './ask/style-gap-report'
+export {
+  buildStyleGapReport,
+  buildStyleEnhanceActions,
+  styleEnhanceProfileFromText,
+  genericDrumStyleExpectations,
+  DEFAULT_STYLE_ENHANCE_PROFILE,
+  expectationsFromStyleProfileSummaries,
+  /** @deprecated usar buildStyleEnhanceActions */
+  buildWorshipDrumEnhanceActions,
+  /** @deprecated usar genericDrumStyleExpectations */
+  worshipModernDrumExpectations,
+  type StyleEnhanceAction,
+  type StyleEnhanceProfile,
+} from './ask/style-gap-report'
+
+export {
+  DEFAULT_AGENT_BUDGET,
+  AgentBudgetExceededError,
+  createAgentBudgetTracker,
+  createBudgetGuard,
+  formatAgentBudgetStop,
+  formatAgentBudgetStopFor,
+  isAgentBudgetExceededError,
+  resolveAgentBudget,
+  resolveAgentBudgetTracker,
+  type AgentBudget,
+  type AgentBudgetStopReason,
+  type AgentBudgetTracker,
+  type AgentBudgetUsage,
+  type AgentBudgetInitialUsage,
+} from './agent/budget'
+
+export {
+  UNTRUSTED_TOOL_DATA_RULE,
+  UNTRUSTED_TOOL_RESULT_MAX_CHARS,
+  capUntrustedText,
+  compactUntrustedBlocks,
+  hasUntrustedBlock,
+  sanitizeUntrustedText,
+  wrapUntrustedToolResult,
+} from './agent/untrusted'
 
 export {
   buildMidiClipEditActions,
@@ -195,3 +386,11 @@ export {
   resolvePianoRollClip,
   selectTrackPayload,
 } from './ask/selection'
+
+export * from './engine'
+export * from './audit'
+export * from './plan/criteria'
+export * from './agents'
+export * from './skills'
+export * from './agente'
+export * from './ayuda'

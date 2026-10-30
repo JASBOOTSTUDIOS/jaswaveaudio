@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="percussion-cowbell">
+  <!-- Cuerpo trapezoidal de acero soldado del cencerro -->
+  <path d="M22 12h20l4 34H18L22 12z" fill="currentColor" fill-opacity="0.16" stroke-width="2.5" />
+  <!-- Boca abierta del cencerro -->
+  <ellipse cx="32" cy="46" rx="14" ry="4" fill="currentColor" fill-opacity="0.3" stroke-width="2" />
+  <!-- Soporte o agarre superior -->
+  <path d="M28 12V8h8v4" stroke-width="2" />
+  <!-- Baqueta de golpeo percutiendo la boca -->
+  <line x1="46" y1="20" x2="56" y2="34" stroke-width="3" />
+  <!-- Ondas de choque metálicas -->
+  <path d="M12 40c-3 2-3 8 0 10" stroke-width="1.75" />
+  <path d="M52 40c3 2 3 8 0 10" stroke-width="1.75" />
+</svg>

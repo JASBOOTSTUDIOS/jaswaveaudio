@@ -1,0 +1,16 @@
+{
+  "name": "@jaswave/modulo-asistente-ia",
+  "version": "1.0.1",
+  "private": true,
+  "description": "Módulo de JasWave: asistente coproductor con IA (chat, agente, plan y progreso).",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --tsconfig ../sdk/host-sdk/pruebas/tsconfig.pruebas.json --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@jaswave/ui-markdown": "1.0.0",
+    "lucide-react": "^1.16.0"
+  }
+}

@@ -75,6 +75,15 @@ describe('encodeStemPacket', () => {
 })
 
 describe('encodeTrackGraph', () => {
+  it('último track sin slots (pista de audio) no se funde con el separador del master', () => {
+    const enc = encodeTrackGraph({
+      tracks: [{ stemIndex: 0, gain: 1, pan: 0, muted: false, slots: [] }],
+      master: [],
+    })
+    assert.equal(enc, '0~1~0~0|;||')
+    assert.equal(enc.slice(0, enc.indexOf('||')), '0~1~0~0|;')
+  })
+
   it('serializa idx~gain~pan~muted y roles i/e', () => {
     const enc = encodeTrackGraph({
       tracks: [
@@ -89,5 +98,21 @@ describe('encodeTrackGraph', () => {
       master: [{ slotId: 'master:eq', instrument: false, bypass: true }],
     })
     assert.equal(enc, '0~0.8~-0.5~0|t1:p1:i:0||master:eq:e:1')
+  })
+  it('sidechain con destSlotId', () => {
+    const enc = encodeTrackGraph({
+      tracks: [
+        {
+          stemIndex: 1,
+          gain: 1,
+          pan: 0,
+          muted: false,
+          slots: [{ slotId: 't2:comp', instrument: false, bypass: false }],
+          sidechains: [{ srcStem: 0, amount: 0.8, destSlotId: 't2:comp' }],
+        },
+      ],
+      master: [],
+    })
+    assert.match(enc, /\$0:0\.8@t2:comp/)
   })
 })

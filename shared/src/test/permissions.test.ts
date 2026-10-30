@@ -123,6 +123,53 @@ describe('PermissionManager', () => {
     expect(manager.getUserConfig().level).toBe('CONFIRM');
   });
 
+  it('IA nunca escala autonomía, ni desde READ_ONLY', () => {
+    const manager = crearPermissionManager();
+    manager.setUserConfig({ level: 'READ_ONLY', overrides: [], allowUnsafeTools: false }, 'user');
+
+    expect(manager.requestLevelChange('FULL_AUTONOMY')).toBe(false);
+    expect(manager.requestLevelChange('CONFIRM', 'script')).toBe(false);
+    expect(manager.getUserConfig().level).toBe('READ_ONLY');
+  });
+
+  it('IA puede reducir su autonomía', () => {
+    const manager = crearPermissionManager();
+    manager.setUserConfig({ level: 'AUTO_EXECUTE_SAFE', overrides: [], allowUnsafeTools: false }, 'user');
+
+    expect(manager.requestLevelChange('CONFIRM', 'ai')).toBe(true);
+    expect(manager.getUserConfig().level).toBe('CONFIRM');
+  });
+
+  it('emergency stop no se revierte desde la IA, sí desde el usuario', () => {
+    const manager = crearPermissionManager();
+    manager.setUserConfig({ level: 'FULL_AUTONOMY', overrides: [], allowUnsafeTools: false }, 'user');
+    manager.createEmergencyStop().trigger();
+
+    expect(manager.requestLevelChange('FULL_AUTONOMY', 'ai')).toBe(false);
+    expect(manager.check(tool('write'), 'ai').allowed).toBe(false);
+
+    expect(manager.requestLevelChange('CONFIRM', 'user')).toBe(true);
+    expect(manager.check(tool('write'), 'ai').allowed).toBe(true);
+  });
+
+  it('getUserConfig devuelve copia (no muta estado interno)', () => {
+    const manager = crearPermissionManager();
+    manager.getUserConfig().level = 'FULL_AUTONOMY';
+    expect(manager.getUserConfig().level).toBe('CONFIRM');
+  });
+
+  it('confirm resuelve confirmaciones pendientes', () => {
+    const eventos: string[] = [];
+    const manager = crearPermissionManager({ busEventos: { emit: (n) => eventos.push(n) } });
+    manager.setUserConfig({ level: 'CONFIRM', overrides: [], allowUnsafeTools: false }, 'user');
+    const r = manager.check(tool('write'), 'ai');
+    expect(r.requiresConfirmation).toBe(true);
+    manager.confirm(r.toolName, true);
+    expect(eventos).toContain('permissions.confirmation.resolved');
+    const log = manager.getLog();
+    expect(log[log.length - 1]?.userConfirmed).toBe(true);
+  });
+
   it('scope aplica nivel temporalmente', () => {
     const manager = crearPermissionManager();
     manager.setUserConfig({ level: 'READ_ONLY', overrides: [], allowUnsafeTools: false }, 'user');

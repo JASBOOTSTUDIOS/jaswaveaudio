@@ -49,6 +49,8 @@ export interface ToolContext {
   query: DAWQuery;
   userPermissionLevel: PermissionLevel;
   projectId: string;
+  /** Quién pidió la herramienta: los comandos que lance deben auditarse con el mismo origen. */
+  source?: 'user' | 'ai' | 'script';
 }
 
 export interface ToolError {
@@ -107,12 +109,24 @@ export interface ToolRegistry {
 
 const DEFAULT_VERSION = '1.0.0';
 const MAX_BROKEN_HANDLERS = 100;
+/** Fallos consecutivos antes de marcar un handler como roto (un error puntual no lo oculta). */
+const FALLOS_PARA_ROTO = 3;
+
+const NIVEL_POR_ORIGEN: Record<'user' | 'ai' | 'script', PermissionLevel> = {
+  user: 'user',
+  ai: 'ai',
+  script: 'guest',
+};
 
 export function crearToolRegistry(): ToolRegistry {
   const tools = new Map<string, ToolDefinitionExtended>();
   const handlers = new Map<string, ToolHandler>();
   const listeners = new Set<() => void>();
   const brokenHandlers = new Set<string>();
+  const fallosConsecutivos = new Map<string, number>();
+  // Contexto por instancia (antes era global y compartido entre registries).
+  let executorRef: CommandExecutor | null = null;
+  let permissionManagerRef: PermissionManager | null = null;
   let lastUpdated = Date.now();
 
   const emitChange = () => {
@@ -198,15 +212,21 @@ export function crearToolRegistry(): ToolRegistry {
       const lines: string[] = [];
       const sorted = Array.from(tools.values())
         .filter(tool => !brokenHandlers.has(tool.name))
-        .sort((a, b) => a.name.localeCompare(b.name));
+        .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
+      let lastCat = '';
       for (const tool of sorted) {
+        if (tool.category !== lastCat) {
+          lastCat = tool.category;
+          lines.push(`### ${tool.category}`);
+        }
         const deprecated = tool.deprecated ? ' (deprecated' + (tool.deprecationMessage ? `, ${tool.deprecationMessage}` : '') + ')' : '';
         lines.push(`- ${tool.name}: ${tool.description} (${tool.risk})${deprecated}`);
         if (tool.parameters && tool.parameters.length > 0) {
           const params = tool.parameters
-            .map(p => `${p.name} (${p.type}${p.required ? ', required' : ''}${p.min !== undefined ? `, min: ${p.min}` : ''}${p.max !== undefined ? `, max: ${p.max}` : ''})`)
+            .slice(0, 8)
+            .map(p => `${p.name}${p.required ? '*' : ''}:${p.type}`)
             .join(', ');
-          lines.push(`  Parámetros: ${params}`);
+          lines.push(`  params: ${params}`);
         }
       }
       return lines.join('\n');
@@ -262,7 +282,15 @@ export function crearToolRegistry(): ToolRegistry {
         };
       }
 
-      if (permissionManagerRef) {
+      if (!permissionManagerRef) {
+        // Fail-closed: sin gestor de permisos no se ejecuta nada.
+        return {
+          success: false,
+          error: { code: 'PERMISSION_DENIED', message: 'ToolRegistry sin PermissionManager: llama a setContext() primero.' },
+          events: [],
+        };
+      }
+      {
         const permResult = permissionManagerRef.check(definition, source);
         if (!permResult.allowed) {
           return {
@@ -288,14 +316,19 @@ export function crearToolRegistry(): ToolRegistry {
         const ctx: ToolContext = {
           commandExecutor: executorRef,
           query: { type: 'tool_execute', toolName: name, params } as any,
-          userPermissionLevel: 'admin',
+          userPermissionLevel: NIVEL_POR_ORIGEN[source] ?? 'guest',
           projectId: executorRef.obtenerEstado()?.project?.id ?? '',
+          source,
         };
 
         try {
-          return await handler(params, ctx);
+          const result = await handler(params, ctx);
+          fallosConsecutivos.delete(name);
+          return result;
         } catch (e) {
-          markBroken(name);
+          const fallos = (fallosConsecutivos.get(name) ?? 0) + 1;
+          fallosConsecutivos.set(name, fallos);
+          if (fallos >= FALLOS_PARA_ROTO) markBroken(name);
           return {
             success: false,
             error: { code: 'HANDLER_ERROR', message: e instanceof Error ? e.message : String(e), details: e },
@@ -315,7 +348,5 @@ export function crearToolRegistry(): ToolRegistry {
   };
 }
 
-let executorRef: CommandExecutor | null = null;
-let permissionManagerRef: PermissionManager | null = null;
 
 export const toolRegistry = crearToolRegistry();

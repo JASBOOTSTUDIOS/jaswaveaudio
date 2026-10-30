@@ -1,0 +1,6 @@
+# JasWave Sampler – VST3 independiente de muestras reales (compila solo o desde plugins/CMakeLists.txt)
+cmake_minimum_required(VERSION 3.25)
+project(jaswave_sampler VERSION 1.0.0 LANGUAGES C CXX)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/JasWavePlugins.cmake")
+jw_setup_shared()
+jaswave_add_vst3(TARGET JasWaveSampler SOURCES src/sampler_plugin.cpp)

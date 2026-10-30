@@ -26,6 +26,40 @@ describe('render commands', () => {
     expect(renderJobGet(id)?.status).toBe('cancelled')
   })
 
+  it('sin endSec detecta el final del último clip', () => {
+    const base = crearEstadoInicial()
+    const estado = {
+      ...base,
+      project: {
+        ...base.project,
+        bpm: { ...base.project.bpm, valor: 120 },
+        tracks: [{ id: 't1', nombre: 'Bajo', clips: [{ id: 'c', inicio: 4, duracion: 60 }] }],
+      },
+    } as unknown as typeof base
+    const r = crearComandoRenderStart().handler(estado, { format: 'mp3', bitrate: 320 }) as {
+      result: { id: string; end: { segundos: number }; autoEnd: boolean; contentEndSec: number; bitDepth: number }
+    }
+    expect(r.result.end.segundos).toBeCloseTo(32)
+    expect(r.result.autoEnd).toBe(true)
+    expect(r.result.contentEndSec).toBeCloseTo(32)
+    expect(r.result.bitDepth).toBe(24)
+    crearComandoRenderCancel().handler(estado, { renderJobId: r.result.id })
+  })
+
+  it('proyecto vacío: mensaje claro en vez de exportar silencio', () => {
+    const estado = crearEstadoInicial()
+    expect(() => crearComandoRenderStart().handler({ ...estado, project: { ...estado.project, tracks: [] } }, {})).toThrow(
+      /No hay contenido/,
+    )
+  })
+
+  it('rechaza profundidades, frecuencias y formatos no soportados', () => {
+    const estado = crearEstadoInicial()
+    expect(() => crearComandoRenderStart().handler(estado, { endSec: 2, bitDepth: 20 })).toThrow(/16, 24 o 32/)
+    expect(() => crearComandoRenderStart().handler(estado, { endSec: 2, sampleRate: 22050 })).toThrow(/Hz/)
+    expect(() => crearComandoRenderStart().handler(estado, { endSec: 2, format: 'wma' as never })).toThrow(/Formato/)
+  })
+
   it('reject end <= start', () => {
     const estado = crearEstadoInicial()
     expect(() =>

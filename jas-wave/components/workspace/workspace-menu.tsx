@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { LayoutGrid, PanelLeft, PanelRight, PanelBottom, Monitor, RotateCcw } from 'lucide-react'
 import { useWorkspace } from '@/src/workspace/workspace-context'
 import { TOOL_CATALOG, type DockZone, type ToolId } from '@/src/workspace/types'
+import { herramientasDisponibles } from '@/src/modulos/herramientas'
+import { useVersionModulos } from '@/src/modulos/use-modulos'
 
 const ZONES: { id: DockZone; label: string; icon: typeof PanelLeft }[] = [
   { id: 'left', label: 'Izquierda', icon: PanelLeft },
@@ -11,6 +13,7 @@ const ZONES: { id: DockZone; label: string; icon: typeof PanelLeft }[] = [
 ]
 
 export function WorkspaceMenu() {
+  useVersionModulos()
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const { layout, dockTool, moveTool, undockTool, isUndocked, toolsInZone, toggleZone, resetLayout, setActiveTab } =
@@ -77,7 +80,7 @@ export function WorkspaceMenu() {
           </div>
 
           <ul className="max-h-64 overflow-y-auto py-1">
-            {(Object.keys(TOOL_CATALOG) as ToolId[]).map((toolId) => {
+            {herramientasDisponibles().map((toolId) => {
               const meta = TOOL_CATALOG[toolId]
               const where = findZone(toolId)
               return (

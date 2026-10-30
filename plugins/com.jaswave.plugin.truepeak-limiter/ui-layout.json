@@ -1,0 +1,343 @@
+{
+  "productId": "com.jaswave.plugin.truepeak-limiter",
+  "titulo": "TRUE-PEAK LIMITER",
+  "subtitulo": "DETECCIÓN TRUE-PEAK · MEDICIÓN BS.1770-4 · LOOKAHEAD",
+  "instrumento": false,
+  "visualizador": "espectro-dual",
+  "acento": "#E052FF",
+  "base": {
+    "ancho": 1100,
+    "alto": 620
+  },
+  "zonas": {
+    "pantalla": [
+      34,
+      34,
+      1066,
+      586
+    ],
+    "visualizador": [
+      52,
+      92,
+      652,
+      404
+    ],
+    "espectro": [
+      66,
+      124,
+      612,
+      382
+    ],
+    "miniPanel": [
+      52,
+      418,
+      652,
+      556
+    ],
+    "controles": [
+      666,
+      92,
+      1048,
+      404
+    ],
+    "salida": [
+      666,
+      418,
+      1048,
+      556
+    ],
+    "fader": [
+      680,
+      440,
+      724,
+      552
+    ],
+    "medidores": {
+      "x": 976,
+      "arriba": 446,
+      "abajo": 528
+    }
+  },
+  "escalas": {
+    "frecuencia": [
+      20,
+      20000
+    ],
+    "dbfs": [
+      -120,
+      0
+    ],
+    "caidaDbS": 14
+  },
+  "modoParam": null,
+  "modos": {
+    "selector": [
+      358,
+      48,
+      476,
+      68
+    ],
+    "corte": 410,
+    "defecto": "avanzado"
+  },
+  "parametrosCubiertos": [],
+  "widgets": [
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        92,
+        1048,
+        404
+      ],
+      "etiqueta": "LIMITADOR",
+      "basico": true
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        704,
+        140,
+        780,
+        234
+      ],
+      "etiqueta": "GANANCIA",
+      "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        761.5,
+        213,
+        837.5,
+        307
+      ],
+      "param": 2,
+      "min": 0,
+      "max": 24,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Input Gain",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        819,
+        140,
+        895,
+        234
+      ],
+      "etiqueta": "RELEASE",
+      "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        876.5,
+        213,
+        952.5,
+        307
+      ],
+      "param": 3,
+      "min": 1,
+      "max": 1000,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Release",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        934,
+        140,
+        1010,
+        234
+      ],
+      "etiqueta": "LOOKAHEAD",
+      "tamano": 64,
+      "basico": false,
+      "param": 4,
+      "min": 0,
+      "max": 10,
+      "defecto": 2,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Lookahead",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        690,
+        294,
+        1024,
+        314
+      ],
+      "etiqueta": "DITHER",
+      "basico": false,
+      "param": 5,
+      "min": 0,
+      "max": 2,
+      "defecto": 0,
+      "pasos": 2,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Dither",
+      "unidad": "",
+      "feature": "limitador.dither",
+      "opciones": [
+        "Off",
+        "24 bit",
+        "16 bit"
+      ]
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        418,
+        1048,
+        556
+      ],
+      "etiqueta": "SALIDA",
+      "basico": true,
+      "param": 0,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": true,
+      "nombre": "Bypass",
+      "unidad": "",
+      "opciones": [
+        "Active",
+        "Bypass"
+      ]
+    },
+    {
+      "tipo": "fader",
+      "rect": [
+        680,
+        440,
+        724,
+        552
+      ],
+      "etiqueta": "TECHO",
+      "basico": true,
+      "param": 1,
+      "min": -12,
+      "max": 0,
+      "defecto": -1,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Ceiling",
+      "unidad": "dBTP"
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        771,
+        446,
+        783,
+        544
+      ],
+      "etiqueta": "GR",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        845,
+        446,
+        857,
+        544
+      ],
+      "etiqueta": "TP",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        976,
+        446,
+        985,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        990,
+        446,
+        999,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1020,
+        446,
+        1029,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1034,
+        446,
+        1043,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "modo",
+      "rect": [
+        358,
+        48,
+        476,
+        68
+      ],
+      "etiqueta": "BÁSICO|AVANZADO",
+      "basico": true,
+      "corte": 410
+    },
+    {
+      "tipo": "reset",
+      "rect": [
+        624,
+        48,
+        684,
+        68
+      ],
+      "etiqueta": "RESET",
+      "basico": true
+    }
+  ]
+}

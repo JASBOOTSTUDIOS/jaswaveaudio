@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="vocal-fx">
+  <!-- Micrófono de estudio -->
+  <rect x="12" y="16" width="10" height="18" rx="5" fill="currentColor" fill-opacity="0.2" stroke-width="2" />
+  <path d="M12 25h10" stroke-width="1.5" />
+  <path d="M8 24a9 9 0 0 0 18 0" stroke-width="1.75" />
+  <path d="M17 33v15M11 48h12" stroke-width="2" />
+  <!-- Escalera de cuantización tonal dura (Auto-tune pitch snap) -->
+  <path d="M32 40h6v-8h6v12h6v-16h8" stroke-width="2.5" />
+  <!-- Destellos digitales de pitch bend -->
+  <path d="M42 12l1 3 3 1-3 1-1 3-1-3-3-1 3-1z" fill="currentColor" />
+  <path d="M54 22l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" fill="currentColor" />
+</svg>

@@ -11,6 +11,7 @@ import type {
 } from '../types/state';
 import { crearEstadoInicial } from './estado-inicial';
 import { deserializarEstado, fusionarConEstadoInicial, serializarEstado } from './serializar-estado';
+import { entorno } from './entorno-determinista';
 
 export interface ResultadoExportacionEstado {
   formato: DAWStateExport['formato'];
@@ -52,7 +53,7 @@ function recortarSegunExport(estado: DAWState, opts: DAWStateExport): Partial<DA
   if (opts.incluirContexto) out.contexto = estado.contexto;
   out.version = estado.version;
   out.esquemaVersion = estado.esquemaVersion;
-  out.marcaTiempo = Date.now();
+  out.marcaTiempo = entorno.ahora();
   return out;
 }
 
@@ -89,7 +90,7 @@ export function exportarEstadoDAW(estado: DAWState, opciones?: Partial<DAWStateE
     formato: opts.formato,
     json: serializarEstado(recortado as DAWState),
     estado: recortado,
-    marcaTiempo: Date.now(),
+    marcaTiempo: entorno.ahora(),
   };
 }
 
@@ -118,7 +119,7 @@ export function importarEstadoDAW(
     estado = estadoActual ?? fusionarConEstadoInicial(parcial);
   }
 
-  return { estado, estrategia, marcaTiempo: Date.now() };
+  return { estado, estrategia, marcaTiempo: entorno.ahora() };
 }
 
 export function clonarEstadoDAW(estado: DAWState, opciones?: Partial<DAWStateClone>): DAWState {
@@ -127,9 +128,9 @@ export function clonarEstadoDAW(estado: DAWState, opciones?: Partial<DAWStateClo
     clon.project = { ...clon.project, nombre: opciones.nombre };
   }
   if (opciones?.limpiarIdentificadores) {
-    clon.sesionId = crypto.randomUUID();
-    clon.dispositivoId = crypto.randomUUID();
-    clon.project = { ...clon.project, id: crypto.randomUUID() };
+    clon.sesionId = entorno.uuid();
+    clon.dispositivoId = entorno.uuid();
+    clon.project = { ...clon.project, id: entorno.uuid() };
   }
   if (opciones?.reiniciarContadores) {
     clon.estadisticasUso = crearEstadoInicial().estadisticasUso;
@@ -143,7 +144,7 @@ export function clonarEstadoDAW(estado: DAWState, opciones?: Partial<DAWStateClo
   if (opciones?.incluirHistorial === false) {
     clon.historial = crearEstadoInicial().historial;
   }
-  clon.marcaTiempo = Date.now();
+  clon.marcaTiempo = entorno.ahora();
   return clon;
 }
 

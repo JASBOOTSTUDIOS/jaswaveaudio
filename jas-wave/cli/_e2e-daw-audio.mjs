@@ -3,6 +3,7 @@
  * node cli/_e2e-daw-audio.mjs
  */
 import http from 'http'
+import './lib/bridge-auth.mjs'
 
 function req(method, path, body, timeoutMs = 180000) {
   return new Promise((resolve, reject) => {

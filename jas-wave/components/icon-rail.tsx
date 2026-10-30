@@ -1,5 +1,6 @@
+import type { ComponentType } from 'react'
 import {
-  FileText,
+  Boxes,
   Library,
   Piano,
   Gauge,
@@ -11,29 +12,39 @@ import {
   PanelRight,
   PanelBottom,
   Radio,
-  FolderOpen,
-  Music,
+  KeyboardMusic,
+  Drum,
+  Terminal,
+  Activity,
+  Sparkles,
+  Wand2,
+  Cable,
+  ListTree,
   type LucideIcon,
 } from 'lucide-react'
-import type { DockZone, ToolId } from '@/src/workspace/types'
-import { JasWaveAppIcon, JasWaveLogo } from '@/components/brand'
+import { TOOL_CATALOG, type DockZone, type ToolId } from '@/src/workspace/types'
+import { useVersionModulos } from '@/src/modulos/use-modulos'
+import { JasWaveAppIcon } from '@/components/brand'
 
-const ITEMS: { id: ToolId; icon?: LucideIcon; label: string; brand?: 'logo' }[] = [
-  { id: 'coproducer', brand: 'logo', label: 'Asistente Jas' },
-  { id: 'docs-explorer', icon: FolderOpen, label: 'Explorador' },
-  { id: 'docs', icon: FileText, label: 'Docs' },
+type ItemRail = { id: ToolId; icon?: LucideIcon | ComponentType<{ className?: string }>; label: string }
+
+/** Herramientas del núcleo; las de los módulos activos se añaden con su icono. */
+const ITEMS: ItemRail[] = [
   { id: 'library', icon: Library, label: 'Biblioteca' },
-  { id: 'instruments', icon: Piano, label: 'Instrumentos' },
-  { id: 'fx-chain', icon: SlidersHorizontal, label: 'FX Chain' },
-  { id: 'plugin-editor', icon: SlidersHorizontal, label: 'Editor de plugin' },
+  { id: 'instruments', icon: Sparkles, label: 'Instrumentos' },
+  { id: 'fx-chain', icon: Wand2, label: 'FX Chain' },
+  { id: 'automation', icon: Activity, label: 'Automatización' },
+  { id: 'plugin-editor', icon: Cable, label: 'Editor de plugin' },
   { id: 'midi-map', icon: Radio, label: 'MIDI Learn' },
+  { id: 'midi-zones', icon: KeyboardMusic, label: 'Zonas MIDI' },
+  { id: 'grooves', icon: Drum, label: 'Grooves' },
   { id: 'arrange', icon: LayoutTemplate, label: 'Arrange' },
   { id: 'mixer', icon: SlidersHorizontal, label: 'Mixer' },
+  { id: 'terminal', icon: Terminal, label: 'Terminal' },
   { id: 'piano-roll', icon: Piano, label: 'Piano roll' },
-  { id: 'score-editor', icon: Music, label: 'Partitura' },
   { id: 'meters', icon: Gauge, label: 'Medidores' },
   { id: 'routing', icon: GitBranch, label: 'Enrutamiento' },
-  { id: 'track-detail', icon: SlidersHorizontal, label: 'Inspector' },
+  { id: 'track-detail', icon: ListTree, label: 'Inspector' },
   { id: 'settings', icon: Settings, label: 'Configuración' },
 ]
 
@@ -50,6 +61,10 @@ export function IconRail({
   onToggleZone: (zone: DockZone) => void
   zoneVisible: Record<DockZone, boolean>
 }) {
+  useVersionModulos()
+  const deModulos: ItemRail[] = Object.values(TOOL_CATALOG)
+    .filter((t) => t.moduloId)
+    .map((t) => ({ id: t.id, icon: t.icono ?? Boxes, label: t.title }))
   return (
     <nav
       className="flex w-14 flex-col items-center gap-1 bg-rail py-1.5"
@@ -59,7 +74,7 @@ export function IconRail({
         <JasWaveAppIcon className="size-12" />
       </div>
 
-      {ITEMS.map(({ id, icon: Icon, label, brand }) => {
+      {[...deModulos, ...ITEMS].map(({ id, icon: Icon, label }) => {
         const isActive = activeTool === id
         const floating = undockedTools.includes(id)
         return (
@@ -78,11 +93,7 @@ export function IconRail({
                   : 'text-muted-foreground hover:bg-panel-raised/60 hover:text-foreground'
             }`}
           >
-            {brand === 'logo' ? (
-              <JasWaveLogo className="size-8" alt={label} />
-            ) : Icon ? (
-              <Icon className="size-[18px]" strokeWidth={1.75} />
-            ) : null}
+            {Icon ? <Icon className="size-[18px]" /> : null}
             {floating && (
               <span className="absolute right-1 top-1 size-1.5 rounded-full bg-accent-amber" />
             )}

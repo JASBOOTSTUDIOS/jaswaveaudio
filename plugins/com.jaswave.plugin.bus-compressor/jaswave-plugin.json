@@ -1,0 +1,195 @@
+{
+  "id": "com.jaswave.plugin.bus-compressor",
+  "name": "JasWave Bus Compressor",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "vendor": "JasWave Audio",
+  "description": "Compresor VCA feed-forward de bus con rodilla suave, detector Peak/RMS enlazado, filtro de sidechain y mezcla paralela.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveBusCompressor.vst3"
+  },
+  "vst3": {
+    "classId": "{4A617357-434F-4D50-5072-6F6356335431}",
+    "subCategories": "Fx|Dynamics"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "productor",
+    "mezcla",
+    "mastering"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.bus-compressor",
+    "features": [
+      {
+        "key": "comp.filtro-sidechain",
+        "description": "Filtro paso alto del sidechain"
+      },
+      {
+        "key": "comp.mezcla-paralela",
+        "description": "Compresión paralela (mezcla dry/wet)"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Compresor de bus para cohesionar mezclas y controlar dinámica (umbral, ratio, rodilla, ataque, release).",
+    "intents": [
+      "pegar-mezcla",
+      "controlar-picos",
+      "compresion-paralela",
+      "controlar-dinamica"
+    ],
+    "parameters": [
+      {
+        "id": "bypass",
+        "vstParamId": 0,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "bypass": true,
+        "basico": true
+      },
+      {
+        "id": "comp.umbral",
+        "vstParamId": 1,
+        "name": "Umbral",
+        "min": -60,
+        "max": 0,
+        "default": -20,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "comp.ratio",
+        "vstParamId": 2,
+        "name": "Ratio",
+        "min": 1,
+        "max": 20,
+        "default": 4,
+        "unit": ":1",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "comp.ataque",
+        "vstParamId": 3,
+        "name": "Ataque",
+        "min": 0.1,
+        "max": 200,
+        "default": 10,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "comp.release",
+        "vstParamId": 4,
+        "name": "Release",
+        "min": 5,
+        "max": 2000,
+        "default": 100,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "comp.rodilla",
+        "vstParamId": 5,
+        "name": "Rodilla",
+        "min": 0,
+        "max": 24,
+        "default": 6,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "comp.makeup",
+        "vstParamId": 6,
+        "name": "Ganancia de compensación",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "comp.mezcla",
+        "vstParamId": 7,
+        "name": "Mezcla paralela",
+        "min": 0,
+        "max": 100,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "comp.mezcla-paralela",
+        "basico": true
+      },
+      {
+        "id": "comp.sc-hpf",
+        "vstParamId": 8,
+        "name": "Filtro paso alto del sidechain (0 = off)",
+        "min": 0,
+        "max": 500,
+        "default": 0,
+        "unit": "Hz",
+        "scale": "linear",
+        "feature": "comp.filtro-sidechain"
+      },
+      {
+        "id": "comp.detector",
+        "vstParamId": 9,
+        "name": "Detector",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Peak",
+          "RMS"
+        ]
+      },
+      {
+        "id": "comp.gr",
+        "vstParamId": 40,
+        "name": "Reducción de ganancia (medidor)",
+        "min": -60,
+        "max": 0,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      }
+    ]
+  },
+  "download": {
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.bus-compressor-1.0.0.jwx",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
+}

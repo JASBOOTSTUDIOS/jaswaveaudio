@@ -54,6 +54,48 @@ describe('ai-action-policy', () => {
     assert.equal(out.some((a) => a.type === 'daw.generateMidiSong'), false)
   })
 
+  it('musicBuild con aplicar:false sigue siendo mutación (tarjeta Aplicar)', () => {
+    assert.equal(
+      isMutatingAction({ type: 'daw.musicBuild', payload: { aplicar: false, prompt: 'bachata' } }),
+      true,
+    )
+  })
+
+  it('ensureMusicBuild inyecta bpm/minutos/género bachata y midi procedural', () => {
+    const prompt = 'creame una cancion de bachata de 3 minutos'
+    const out = ensureMusicBuildForFullProject([], prompt, { aplicar: false })
+    const mb = out.find((a) => a.type === 'daw.musicBuild')
+    assert.ok(mb)
+    assert.equal(mb!.payload!.genero, 'bachata')
+    assert.equal(mb!.payload!.bpm, 125)
+    assert.equal(mb!.payload!.minutos, 3)
+    assert.equal(mb!.payload!.midiSource, 'procedural')
+  })
+
+  it('hints de bachata pisan BPM 70 alucinado por el modelo', () => {
+    const prompt = 'creame una cancion de bachata de 3 minutos'
+    const out = ensureMusicBuildForFullProject(
+      [
+        {
+          type: 'daw.musicBuild',
+          payload: {
+            aplicar: false,
+            midiSource: 'ai',
+            bpm: 70,
+            genero: 'bachata',
+            prompt: 'bachata tradicional',
+          },
+        },
+      ],
+      prompt,
+      { aplicar: true },
+    )
+    const mb = out.find((a) => a.type === 'daw.musicBuild')!
+    assert.equal(mb.payload!.bpm, 125)
+    assert.equal(mb.payload!.midiSource, 'procedural')
+    assert.equal(mb.payload!.aplicar, true)
+  })
+
   it('doc.write no cuenta como mutación DAW', () => {
     assert.equal(isMutatingAction({ type: 'doc.write', payload: { slug: 'plan.md', content: '# x' } }), false)
   })
@@ -71,15 +113,16 @@ describe('ai-action-policy', () => {
     assert.ok(part.destructive.length >= 2)
   })
 
-  it('FULL_AUTONOMY no pide confirmación en destructivas', () => {
+  it('FULL_AUTONOMY no pide confirmación en writes, pero SÍ en destructivas/sistema/sin clase', () => {
     permissionManager.setUserConfig(
       { level: 'FULL_AUTONOMY', overrides: [], allowUnsafeTools: false },
       'user',
     )
-    assert.equal(
-      needsPermissionConfirm({ type: 'track.delete', payload: { trackId: 'a' } }),
-      false,
-    )
+    assert.equal(needsPermissionConfirm({ type: 'track.toggleMute', payload: { trackId: 'a' } }), false)
+    assert.equal(needsPermissionConfirm({ type: 'track.delete', payload: { trackId: 'a' } }), true)
+    assert.equal(needsPermissionConfirm({ type: 'project.new', payload: {} }), true)
+    assert.equal(needsPermissionConfirm({ type: 'render.start', payload: {} }), true)
+    assert.equal(needsPermissionConfirm({ type: 'nope.unknown', payload: {} }), true)
     permissionManager.setUserConfig(
       { level: 'CONFIRM', overrides: [], allowUnsafeTools: false },
       'user',
@@ -105,6 +148,16 @@ describe('BPM en brief y fallback', () => {
     assert.equal(b.bpm, 72)
   })
 
+  it('parseMidiBriefFromText entiende «tiempo sea 72 4/4»', () => {
+    const b = parseMidiBriefFromText(
+      'creame una pista de bateria worship, tiempo sea 72 4/4',
+      120,
+    )
+    assert.equal(b.bpm, 72)
+    assert.equal(b.articulation, 'drums')
+    assert.equal(b.clipName, 'Batería')
+  })
+
   it('fallback emite project.setBpm para 72 bpm', () => {
     const actions = fallbackActionsFromUserIntent('crea un pad a 72 bpm', undefined, 'create')
     const bpm = actions.find((a) => a.type === 'project.setBpm')
@@ -112,22 +165,32 @@ describe('BPM en brief y fallback', () => {
     assert.equal(bpm!.payload!.bpm, 72)
   })
 
-  it('fallback en think no aplica midi automáticamente', () => {
+  it('fallback en think no inventa musicBuild creativo', () => {
     const actions = fallbackActionsFromUserIntent('crea una canción worship', undefined, 'think')
-    const midi = actions.find((a) => a.type === 'daw.generateMidiSong' || a.type === 'daw.musicBuild')
-    assert.ok(midi)
-    assert.equal(midi!.type, 'daw.musicBuild')
-    if (midi) {
-      assert.notEqual(midi.payload?.aplicar, true)
-    }
+    assert.equal(actions.some((a) => a.type === 'daw.generateMidiSong' || a.type === 'daw.musicBuild'), false)
     assert.equal(detectAgentMode('piensa el arreglo', 'auto'), 'think')
   })
 
-  it('fallback multi-pista adoración usa musicBuild (no un solo clip)', () => {
+  it('fallback multi-pista no sustituye al planner con musicBuild heurístico', () => {
     const prompt =
       'quiero que me crees una cancion de adoracion moderna en D mayor con bateria BFD, piano Descent, 3 guitarras, bajo 4Front y 4 pads'
     const actions = fallbackActionsFromUserIntent(prompt, undefined, 'create')
-    assert.equal(actions.some((a) => a.type === 'daw.musicBuild'), true)
+    assert.equal(actions.some((a) => a.type === 'daw.musicBuild'), false)
     assert.equal(actions.some((a) => a.type === 'daw.generateMidiSong'), false)
+  })
+
+  it('fallback de UNA pista de batería no lanza musicBuild ni generateMidiSong', () => {
+    const prompt =
+      'creame una pista de bateria worship con crescendo y toms, tiempo sea 72 4/4'
+    const actions = fallbackActionsFromUserIntent(prompt, undefined, 'create')
+    assert.equal(actions.some((a) => a.type === 'daw.musicBuild'), false)
+    assert.equal(actions.some((a) => a.type === 'daw.generateMidiSong'), false)
+    const bpm = actions.find((a) => a.type === 'project.setBpm')
+    assert.equal(bpm?.payload?.bpm, 72)
+  })
+
+  it('«hazlo» solo no reconstruye la canción', () => {
+    const actions = fallbackActionsFromUserIntent('hazlo', undefined, 'create')
+    assert.equal(actions.some((a) => a.type === 'daw.musicBuild'), false)
   })
 })

@@ -1,0 +1,93 @@
+{
+  "archivos": {
+    "indie-seco.mid": {
+      "id": "jw-indie-indie-seco",
+      "nombre": "Indie seco",
+      "tempo": 118,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "indie",
+        "seco"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "indie-ride-flojo.mid": {
+      "id": "jw-indie-indie-ride-flojo",
+      "nombre": "Indie ride flojo",
+      "tempo": 104,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "indie",
+        "ride",
+        "suave"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "indie-bailable.mid": {
+      "id": "jw-indie-indie-bailable",
+      "nombre": "Indie bailable",
+      "tempo": 128,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "indie",
+        "bailable",
+        "toms"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-caja-al-cuarto.mid": {
+      "id": "jw-indie-fill-caja-al-cuarto",
+      "nombre": "Fill caja al cuarto",
+      "tempo": 116,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "caja",
+        "cuarto"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-toms-subiendo.mid": {
+      "id": "jw-indie-fill-toms-subiendo",
+      "nombre": "Fill toms subiendo",
+      "tempo": 116,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "toms",
+        "subiendo"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "id": "com.jaswave.modulo.partitura",
+  "name": "Partitura",
+  "version": "1.0.0",
+  "vendor": "JasWave",
+  "category": "ui-extension",
+  "description": "Editor de partitura sincronizado con el clip MIDI, vista previa y exportación a PDF (clip o proyecto completo).",
+  "targetPlatforms": ["win-x64", "web"],
+  "entrypoints": {
+    "ui": "dist/modulo.js",
+    "uiEstilos": "dist/modulo.css"
+  },
+  "permissions": {
+    "realtimeAudio": false,
+    "fileSystem": "read-write-project",
+    "network": false,
+    "commands": []
+  },
+  "rolesAllowed": ["productor", "mezcla"]
+}

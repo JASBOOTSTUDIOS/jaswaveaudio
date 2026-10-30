@@ -53,13 +53,14 @@ describe('agent-plan-eval estructurado', () => {
     assert.equal(check.ok, true)
   })
 
-  it('sidechain requiere routing.sidechains', () => {
+  it('sidechain con routing sigue no-audible en 1.0', () => {
     const st = stateWithTrack({ nombre: 'X', notes: 0 }) as DAWState
     const fail = evaluatePlanTask('Sidechain kick → bass', st)
     assert.equal(fail.ok, false)
     ;(st.project as { routing: { sidechains: unknown[] } }).routing.sidechains = [{ id: 'sc1' }]
-    const ok = evaluatePlanTask('Sidechain kick → bass', st)
-    assert.equal(ok.ok, true)
+    const still = evaluatePlanTask('Sidechain kick → bass', st)
+    assert.equal(still.ok, false)
+    assert.match(still.reason, /sidechain-unverified|I\/O audible/)
   })
 
   it('evaluatePlanAgainstDaw incluye checks', () => {

@@ -1,5 +1,5 @@
 import { useMemo, useCallback, useEffect, useRef, useState } from 'react'
-import { Minus, SlidersHorizontal, Wand2, Shuffle, Headphones, GripVertical } from 'lucide-react'
+import { Minus, SlidersHorizontal, Wand2, Shuffle, Headphones, GripVertical, ChartColumn } from 'lucide-react'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { Track as SharedTrack, AudioTrack } from '../../shared/src/types/tracks'
 import type { DAWState } from '../../shared/src/types/state'
@@ -9,15 +9,30 @@ import {
   DB_INFERIOR,
   linealADb,
   dbALineal,
-  formatearDb,
+  formatearPan,
   panADisplay,
 } from '@/lib/audio-conversions'
-import { FaderControl, KnobControl, LevelMeterBarHorizontal } from './ui/controls'
+import { KnobControl, LevelMeterBarHorizontal } from './ui/controls'
+import { CAMPOS_IA, ResaltoIA } from './ui/resalto-ia'
+import { ChannelFaderBlock } from './ui/channel-fader-block'
+import { MiniSpectrum } from './mini-spectrum'
+import { useElementSize, useTierConHisteresis } from '@/hooks/use-element-size'
 import { ChannelFxBank } from '@/components/channel-fx-bank'
 import { TrackMidiInput } from '@/components/track-midi-input'
 import { TrackAudioInput } from '@/components/track-audio-input'
-import { getSelectedTrackId } from '@/src/lib/selection-helpers'
+import { getSelectedTrackId, selectTrackPayload } from '@/src/lib/selection-helpers'
+import { revelarEnScroller } from '@/src/lib/scroll-reveal'
 import { midiInputOf } from '@/src/lib/midi-track-io'
+import {
+  ANCHO_ESTRECHO,
+  ANCHO_TIRA,
+  anchoConRueda,
+  guardarAnchoTira,
+  leerAnchoTira,
+  seccionesMixer,
+  umbralesMixer,
+  type PaneoMixer,
+} from '@/src/lib/mixer-layout'
 import { audioInputOf } from '@/src/lib/audio-track-io'
 import { audioEngine } from '@/lib/audio-engine'
 import {
@@ -27,7 +42,13 @@ import {
 } from '@/src/lib/plugin/native-mix-meters'
 import { extractHostPluginPath } from '@/src/lib/plugin/plugin-info-adapter'
 import { isBuiltinInstrument } from '@/src/lib/plugin/track-vst-runtime'
-import { AutomationLanesPanel, maybeWriteAutomationPoint } from '@/components/automation-lanes-panel'
+import { maybeWriteAutomationPoint } from '@/components/automation-lanes-panel'
+import { crearVentanaGesto, opcionesGesto } from '@/src/lib/gesture-id'
+import { batchOrNotify } from '@/src/lib/execute-or-toast'
+
+
+type StereoPeaks = { l: number; r: number }
+const SILENCIO: StereoPeaks = { l: 0, r: 0 }
 
 type MixerRow = {
   id: string
@@ -104,15 +125,132 @@ function TrackButton({
   )
 }
 
+/**
+ * Paneo de la tira: perilla si hay alto, barra fina si no (así el hueco que deja la perilla no queda vacío).
+ * Doble clic o clic central: centro.
+ */
+function PanControl({
+  modo,
+  value,
+  color,
+  onChange,
+}: {
+  modo: PaneoMixer
+  value: number
+  color: string
+  onChange: (pan: number, gestureId?: string) => void
+}) {
+  const gesto = useMemo(() => crearVentanaGesto(600), [])
+  if (modo === 'oculto') return null
+  if (modo === 'perilla') {
+    return (
+      <div className="mt-1 flex shrink-0 justify-center">
+        <KnobControl value={value} color={color} onChange={onChange} size="size-8" />
+      </div>
+    )
+  }
+  const centrar = () => {
+    if (value !== 0) onChange(0)
+  }
+  return (
+    <label className="mt-1 flex h-4 shrink-0 items-center gap-1" title={`Paneo ${formatearPan(value / 100)} · doble clic: centro`}>
+      <span className="w-3 shrink-0 font-mono text-[8px] text-muted-foreground">L</span>
+      <input
+        type="range"
+        min={-100}
+        max={100}
+        value={value}
+        aria-label="Paneo"
+        className="h-1 min-w-0 flex-1"
+        style={{ accentColor: color.startsWith('var(') ? undefined : color }}
+        onChange={(e) => onChange(Number(e.target.value), gesto())}
+        onDoubleClick={centrar}
+        onMouseDown={(e) => {
+          if (e.button === 1) {
+            e.preventDefault()
+            centrar()
+          }
+        }}
+        onAuxClick={(e) => {
+          if (e.button === 1) e.preventDefault()
+        }}
+      />
+      <span className="w-3 shrink-0 text-right font-mono text-[8px] text-muted-foreground">R</span>
+    </label>
+  )
+}
+
+/** Botón de la cabecera de la tira que abre/cierra su mini espectro. */
+function SpectrumToggle({ abierto, nombre, onToggle }: { abierto: boolean; nombre: string; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={`Espectro de ${nombre}`}
+      aria-pressed={abierto}
+      title={abierto ? 'Ocultar espectro' : 'Mostrar espectro'}
+      onClick={(e) => {
+        e.stopPropagation()
+        onToggle()
+      }}
+      className={`flex size-4 shrink-0 items-center justify-center rounded ${
+        abierto ? 'bg-accent-cyan text-background' : 'text-muted-foreground hover:text-foreground'
+      }`}
+    >
+      <ChartColumn className="size-3" />
+    </button>
+  )
+}
+
 export function Mixer() {
   const tienda = useDAW()
   const tracks = useDAWState((s: DAWState) => s.project?.tracks ?? [])
   const master = useDAWState((s: DAWState) => s.project?.master)
   const routing = useDAWState((s: DAWState) => s.project?.routing)
-  const collapsed = useDAWState((s: DAWState) => s.ui?.estadoMezcladorUI?.colapsado ?? false)
+  const collapsedUser = useDAWState((s: DAWState) => s.ui?.estadoMezcladorUI?.colapsado ?? false)
+  // Ancho de las tiras: solo lo decide el usuario (Ctrl + rueda o el botón de colapsar), nunca el alto.
+  const [anchoTira, setAnchoTira] = useState(leerAnchoTira)
+  const ancho = collapsedUser ? ANCHO_TIRA.min : anchoTira
+  const estrecho = ancho < ANCHO_ESTRECHO
+  // El alto decide qué se ve (primero se quitan FX/envíos, luego el paneo; M/S + volumen siempre). Se mide el
+  // contenedor EXTERIOR (no cambia con la barra de scroll horizontal) y con histéresis para no parpadear.
+  const stripsRef = useRef<HTMLDivElement>(null)
+  /** Scroller horizontal de las tiras. */
+  const scrollTirasRef = useRef<HTMLDivElement>(null)
+  const { height: stripsH } = useElementSize(stripsRef)
+  const umbrales = useMemo(() => umbralesMixer(estrecho), [estrecho])
+  const { paneo: modoPaneo, extras: verExtras } = seccionesMixer(useTierConHisteresis(stripsH, umbrales))
+
+  useEffect(() => {
+    const el = stripsRef.current
+    if (!el) return
+    // Listener nativo no pasivo: con Ctrl la rueda cambia el ancho y no llega a faders, scroll ni zoom global.
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      e.stopPropagation()
+      setAnchoTira((a) => {
+        const n = anchoConRueda(a, e.deltaY)
+        if (n !== a) guardarAnchoTira(n)
+        return n
+      })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => el.removeEventListener('wheel', onWheel, { capture: true })
+  }, [])
   const selectedTrackId = useDAWState((s: DAWState) => getSelectedTrackId(s))
   const stripRefs = useRef(new Map<string, HTMLDivElement | null>())
   const [meters, setMeters] = useState<Record<string, number>>({})
+  const [stereo, setStereo] = useState<Record<string, StereoPeaks>>({})
+  /** Tiras con el mini espectro abierto: cada una es independiente (el host tiene un tap por pista). */
+  const [espectros, setEspectros] = useState<ReadonlySet<string>>(() => new Set())
+  const alternarEspectro = useCallback((id: string) => {
+    setEspectros((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
   const [dragTrackId, setDragTrackId] = useState<string | null>(null)
   const [dragOverTrackId, setDragOverTrackId] = useState<string | null>(null)
   const trackIdsKey = tracks.map((t) => t.id).join('|')
@@ -138,11 +276,14 @@ export function Mixer() {
         const apply = () => {
           if (cancelled) return
           const next: Record<string, number> = { master: audioEngine.getMasterMeterLevel() }
+          const nextStereo: Record<string, StereoPeaks> = { master: audioEngine.getMasterStereoPeaks() }
           for (const id of ids) {
             next[id] = audioEngine.getMeterLevel(id)
             next[`in:${id}`] = audioEngine.getInputMeterLevel(id)
+            nextStereo[id] = audioEngine.getStereoMeterPeaks(id)
           }
           setMeters(next)
+          setStereo(nextStereo)
         }
         if (isNativeMeterHostAvailable()) {
           void refreshNativeMixMeters().then(apply)
@@ -159,9 +300,11 @@ export function Mixer() {
     }
   }, [trackIdsKey])
 
+  // Pista seleccionada (aquí o en el Arrange): su tira se desplaza a la vista, solo en horizontal y solo
+  // dentro del mixer (scrollIntoView movía también el layout del workspace).
   useEffect(() => {
     if (!selectedTrackId) return
-    stripRefs.current.get(selectedTrackId)?.scrollIntoView({ inline: 'nearest', block: 'nearest' })
+    revelarEnScroller(scrollTirasRef.current, stripRefs.current.get(selectedTrackId), 'x')
   }, [selectedTrackId])
 
   const handleToggleMute = (id: string) => {
@@ -182,16 +325,23 @@ export function Mixer() {
 
   const playing = useDAWState((s: DAWState) => Boolean(s.transport?.reproduciendo))
 
-  const handleChangeDb = (id: string, db: number) => {
+  /** Arrastre del slider de envío: los cambios seguidos (≤600 ms) son un solo undo. */
+  const gestoEnvio = useMemo(() => crearVentanaGesto(600), [])
+
+  // Un arrastre de fader/knob = una entrada de undo (también los puntos de
+  // automatización escritos durante el gesto: misma clave de coalescencia).
+  const handleChangeDb = (id: string, db: number, gestureId?: string) => {
     const volumen = db > DB_INFERIOR ? dbALineal(db) : 0
-    void tienda.executor.execute('track.update', { trackId: id, datos: { volumen } })
-    maybeWriteAutomationPoint(tienda, id, 'volumen', volumen, playing)
+    const opciones = opcionesGesto(`mixer.volumen:${id}`, gestureId)
+    void tienda.executor.execute('track.update', { trackId: id, datos: { volumen } }, 'user', undefined, opciones)
+    maybeWriteAutomationPoint(tienda, id, 'volumen', volumen, playing, opciones)
   }
 
-  const handleChangePan = (id: string, pan: number) => {
+  const handleChangePan = (id: string, pan: number, gestureId?: string) => {
     const paneo = pan / 100
-    void tienda.executor.execute('track.update', { trackId: id, datos: { paneo } })
-    maybeWriteAutomationPoint(tienda, id, 'paneo', paneo, playing)
+    const opciones = opcionesGesto(`mixer.paneo:${id}`, gestureId)
+    void tienda.executor.execute('track.update', { trackId: id, datos: { paneo } }, 'user', undefined, opciones)
+    maybeWriteAutomationPoint(tienda, id, 'paneo', paneo, playing, opciones)
   }
 
   const trackList = useMemo(() => tracks.map(toMixerRow) as MixerRow[], [tracks])
@@ -216,23 +366,23 @@ export function Mixer() {
     const count = trackList.length
     if (count === 0) return
     const perTrackDb = -Math.max(3, Math.log2(count) * 3) // -3dB per doubling of tracks
-    for (const track of trackList) {
-      const volumen = dbALineal(Math.max(DB_INFERIOR, perTrackDb))
-      void tienda.executor.execute('track.update', { trackId: track.id, datos: { volumen } })
-    }
-    // Center all panning
-    for (const track of trackList) {
-      void tienda.executor.execute('track.update', { trackId: track.id, datos: { paneo: 0 } })
-    }
+    const volumen = dbALineal(Math.max(DB_INFERIOR, perTrackDb))
+    // Volumen repartido y paneo centrado: un solo lote = un undo.
+    void batchOrNotify(
+      tienda,
+      trackList.map((track) => ({ type: 'track.update', payload: { trackId: track.id, datos: { volumen, paneo: 0 } } })),
+      'mixer.autoMix',
+    )
   }, [trackList, tienda])
 
   const handleRandomize = useCallback(() => {
-    for (const track of trackList) {
+    const comandos = trackList.map((track) => {
       const randomDb = DB_INFERIOR + Math.random() * (DB_SUPERIOR - DB_INFERIOR)
       const volumen = randomDb > DB_INFERIOR ? dbALineal(randomDb) : 0
       const paneo = (Math.random() * 2 - 1) // -1 to 1
-      void tienda.executor.execute('track.update', { trackId: track.id, datos: { volumen, paneo } })
-    }
+      return { type: 'track.update', payload: { trackId: track.id, datos: { volumen, paneo } } }
+    })
+    void batchOrNotify(tienda, comandos, 'mixer.randomize')
   }, [trackList, tienda])
 
   return (
@@ -242,8 +392,8 @@ export function Mixer() {
         <button
           type="button"
           aria-label="Colapsar mixer"
-          onClick={() => tienda.establecerEstado((s) => ({ ...s, ui: { ...s.ui, estadoMezcladorUI: { ...s.ui?.estadoMezcladorUI, canalesVisibles: s.ui?.estadoMezcladorUI?.canalesVisibles ?? [], nivelMaster: s.ui?.estadoMezcladorUI?.nivelMaster ?? 0, seleccionando: s.ui?.estadoMezcladorUI?.seleccionando ?? false, seleccionInicio: s.ui?.estadoMezcladorUI?.seleccionInicio ?? 0, seleccionFin: s.ui?.estadoMezcladorUI?.seleccionFin ?? 0, colapsado: !collapsed } } }))}
-          className={`flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-panel-raised hover:text-foreground ${collapsed ? 'bg-panel-raised text-foreground' : ''}`}
+          onClick={() => tienda.establecerEstado((s) => ({ ...s, ui: { ...s.ui, estadoMezcladorUI: { ...s.ui?.estadoMezcladorUI, canalesVisibles: s.ui?.estadoMezcladorUI?.canalesVisibles ?? [], nivelMaster: s.ui?.estadoMezcladorUI?.nivelMaster ?? 0, seleccionando: s.ui?.estadoMezcladorUI?.seleccionando ?? false, seleccionInicio: s.ui?.estadoMezcladorUI?.seleccionInicio ?? 0, seleccionFin: s.ui?.estadoMezcladorUI?.seleccionFin ?? 0, colapsado: !collapsedUser } } }))}
+          className={`flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-panel-raised hover:text-foreground ${collapsedUser ? 'bg-panel-raised text-foreground' : ''}`}
         >
           <Minus className="size-4" />
         </button>
@@ -275,7 +425,8 @@ export function Mixer() {
       </div>
 
       {/* Tiras de canal */}
-      <div className="flex min-h-0 flex-1 overflow-auto">
+      <div ref={stripsRef} className="relative min-h-0 flex-1 bg-panel">
+      <div ref={scrollTirasRef} className="jw-scrollbar absolute inset-0 flex overflow-x-auto overflow-y-hidden">
         {trackList.map((track, trackIndex) => (
           <div
             key={track.id}
@@ -299,11 +450,19 @@ export function Mixer() {
               if (!id || id === track.id) return
               moveTrackToIndex(id, trackIndex)
             }}
-            className={`flex shrink-0 flex-col border-r border-border px-2 py-2 ${collapsed ? 'w-[52px]' : 'w-[124px]'} ${
-              selectedTrackId === track.id ? 'bg-accent-amber/10' : ''
+            data-testid={`mixer-strip-${track.id}`}
+            style={{ width: ancho }}
+            title="Ctrl + rueda: ancho de las tiras"
+            className={`flex h-full min-h-0 shrink-0 cursor-pointer flex-col border-r border-border px-2 py-2 ${
+              selectedTrackId === track.id
+                ? 'bg-accent-amber/20 ring-1 ring-inset ring-accent-amber/50'
+                : 'hover:bg-panel-raised/40'
             } ${dragOverTrackId === track.id && dragTrackId !== track.id ? 'ring-1 ring-inset ring-accent-amber' : ''} ${
               dragTrackId === track.id ? 'opacity-60' : ''
             }`}
+            onClick={() => {
+              void tienda.executor.execute('selection.set', selectTrackPayload(track.id))
+            }}
           >
             {/* Nombre */}
             <div className="mb-1.5 flex items-center justify-center gap-0.5">
@@ -331,39 +490,35 @@ export function Mixer() {
               >
                 {track.name}
               </p>
+              {!estrecho && verExtras ? (
+                <SpectrumToggle
+                  abierto={espectros.has(track.id)}
+                  nombre={track.name}
+                  onToggle={() => alternarEspectro(track.id)}
+                />
+              ) : null}
             </div>
-            {(track.tipo === 'midi' || track.tipo === 'instrumento') && (
-              <p className="mb-1 text-center text-[8px] font-semibold uppercase tracking-wider text-accent-amber">
-                MIDI
-              </p>
-            )}
-            {track.tipo === 'audio' && (
-              <p className="mb-1 text-center text-[8px] font-semibold uppercase tracking-wider text-muted-foreground">
-                AUDIO+MIDI
-              </p>
-            )}
-
-            {/* M / S */}
-            <div className="mb-1 flex items-center justify-center gap-1">
-              <TrackButton
-                label={`Silenciar ${track.name}`}
-                active={track.muted}
-                onClick={() => handleToggleMute(track.id)}
-              >
-                M
-              </TrackButton>
-              <TrackButton
-                label={`Solo ${track.name}`}
-                active={track.solo}
-                activeClass="bg-track-vocals text-background"
-                onClick={() => handleToggleSolo(track.id)}
-              >
-                S
-              </TrackButton>
-            </div>
-
-            {/* IN / rec */}
-            <div className="mb-1 flex items-center justify-center gap-1">
+            {/* Botones de la pista (M, S, monitor, grabación): siempre fuera del scroll. */}
+            <div className="mb-1 flex shrink-0 flex-wrap items-center justify-center gap-1" data-testid={`mixer-botones-${track.id}`}>
+              <ResaltoIA trackId={track.id} campos={CAMPOS_IA.mute}>
+                <TrackButton
+                  label={`Silenciar ${track.name}`}
+                  active={track.muted}
+                  onClick={() => handleToggleMute(track.id)}
+                >
+                  M
+                </TrackButton>
+              </ResaltoIA>
+              <ResaltoIA trackId={track.id} campos={CAMPOS_IA.solo}>
+                <TrackButton
+                  label={`Solo ${track.name}`}
+                  active={track.solo}
+                  activeClass="bg-track-vocals text-background"
+                  onClick={() => handleToggleSolo(track.id)}
+                >
+                  S
+                </TrackButton>
+              </ResaltoIA>
               <TrackButton
                 label={`Monitor de entrada ${track.name}`}
                 active={track.input}
@@ -382,14 +537,28 @@ export function Mixer() {
                 />
               </TrackButton>
             </div>
-            {(track.tipo === 'midi' || track.tipo === 'instrumento' || track.tipo === 'audio') && !collapsed ? (
+
+            {/*
+              Entradas (MIDI/audio), tipo, espectro y medidores quedan fijos; SOLO los FX tienen scroll propio y
+              ocupan el alto sobrante. Sin sitio para ellos, el sobrante queda como separación hasta el paneo.
+            */}
+            {!verExtras ? (
+              <div className="min-h-0 flex-1" />
+            ) : (
+            <>
+            <div className="shrink-0">
+            {espectros.has(track.id) && !estrecho ? (
+              <div className="mb-1">
+                <MiniSpectrum trackId={track.id} color={track.color} />
+              </div>
+            ) : null}
+            {(track.tipo === 'midi' || track.tipo === 'instrumento' || track.tipo === 'audio') ? (
               <div className="mb-1">
                 <TrackMidiInput trackId={track.id} assignedId={track.entrada} compact />
               </div>
             ) : null}
             {(track.tipo === 'midi' || track.tipo === 'instrumento') &&
-            trackHasHostVst(track.plugins) &&
-            !collapsed ? (
+            trackHasHostVst(track.plugins) ? (
               <div
                 className="mb-1 h-1 overflow-hidden rounded-full bg-panel-raised"
                 title="Nivel VST (post-fader)"
@@ -397,7 +566,7 @@ export function Mixer() {
                 <LevelMeterBarHorizontal level={meters[track.id] ?? 0} />
               </div>
             ) : null}
-            {track.tipo === 'audio' && !collapsed ? (
+            {track.tipo === 'audio' ? (
               <div className="mb-1">
                 <TrackAudioInput trackId={track.id} assignedId={track.dispositivoEntrada} compact />
                 {(track.input || track.armed) ? (
@@ -410,23 +579,21 @@ export function Mixer() {
                 ) : null}
               </div>
             ) : null}
-            {!collapsed ? (
-              <div className="mb-2">
+            </div>
+            <div className="jw-scrollbar -mx-1 mb-1 min-h-0 flex-1 overflow-y-auto px-1 py-0.5" data-testid={`mixer-inserts-${track.id}`}>
+              <ResaltoIA trackId={track.id} campos={CAMPOS_IA.fx}>
                 <ChannelFxBank
                   trackId={track.id}
                   trackName={track.name}
                   plugins={track.plugins}
                 />
-              </div>
-            ) : null}
+              </ResaltoIA>
+            </div>
 
-            {/* Knob de balance */}
-            <KnobControl value={track.pan} color={track.color} onChange={(pan) => handleChangePan(track.id, pan)} size="size-9" />
-
-            {/* Sends post-fader (MVP) */}
-            {!collapsed && (routing?.buses?.length ?? 0) > 0 ? (
-              <div className="mt-1 space-y-0.5">
-                {(routing?.buses ?? []).slice(0, 2).map((bus) => {
+            {/* Sends post-fader (MVP): fijos, debajo de los FX */}
+            {(routing?.buses?.length ?? 0) > 0 ? (
+              <ResaltoIA trackId={track.id} campos={CAMPOS_IA.envios} className="mb-1 shrink-0 space-y-0.5">
+                {(routing?.buses ?? []).map((bus) => {
                   const send = routing?.sends?.find(
                     (e) => e.origenTrackId === track.id && e.destinoBusId === bus.id && e.activo,
                   )
@@ -444,34 +611,68 @@ export function Mixer() {
                         max={100}
                         value={amount}
                         className="h-1 w-full accent-accent-amber"
+                        onDoubleClick={() => {
+                          if (amount === 0) return
+                          void tienda.executor.execute(
+                            'send.set',
+                            { trackId: track.id, busId: bus.id, amount: 0 },
+                            'user',
+                          )
+                        }}
+                        onMouseDown={(e) => {
+                          if (e.button === 1) {
+                            e.preventDefault()
+                            if (amount === 0) return
+                            void tienda.executor.execute(
+                              'send.set',
+                              { trackId: track.id, busId: bus.id, amount: 0 },
+                              'user',
+                            )
+                          }
+                        }}
+                        onAuxClick={(e) => {
+                          // el reset ya lo hizo mousedown: solo evita el autoscroll
+                          if (e.button === 1) e.preventDefault()
+                        }}
                         onChange={(e) => {
                           const v = Number(e.target.value) / 100
-                          void tienda.executor.execute('send.set', {
-                            trackId: track.id,
-                            busId: bus.id,
-                            amount: v,
-                          })
+                          void tienda.executor.execute(
+                            'send.set',
+                            { trackId: track.id, busId: bus.id, amount: v },
+                            'user',
+                            undefined,
+                            opcionesGesto(`mixer.send:${track.id}:${bus.id}`, gestoEnvio()),
+                          )
                         }}
                       />
                     </label>
                   )
                 })}
-              </div>
+              </ResaltoIA>
             ) : null}
+            </>
+            )}
 
-            {/* Fader */}
-            <div className="mt-2 flex-1">
-              <FaderControl db={track.db} color={track.color} meter={meters[track.id] ?? 0} onChange={(db) => handleChangeDb(track.id, db)} showScale />
-            </div>
+            {/* Paneo (perilla centrada o barra fina según el alto) */}
+            <ResaltoIA trackId={track.id} campos={CAMPOS_IA.paneo} className="shrink-0">
+              <PanControl modo={modoPaneo} value={track.pan} color={track.color} onChange={(pan, gestureId) => handleChangePan(track.id, pan, gestureId)} />
+            </ResaltoIA>
 
-            {/* Valor en dB */}
-            <p className="mt-1 text-center font-mono text-[10px] tabular-nums text-muted-foreground">
-              {formatearDb(track.db)}
-            </p>
+            {/* Bloque de volumen de alto fijo: fader 160 px, VU L/R, dB y pico */}
+            <ResaltoIA trackId={track.id} campos={CAMPOS_IA.volumen} className="mt-1">
+              <ChannelFaderBlock
+                db={track.db}
+                color={track.color}
+                stereo={stereo[track.id] ?? SILENCIO}
+                onChange={(db, gestureId) => handleChangeDb(track.id, db, gestureId)}
+                testId={`mixer-fader-${track.id}`}
+                estrecho={estrecho}
+              />
+            </ResaltoIA>
 
             {/* Medidor de color */}
             <div
-              className="mt-1 h-1 w-full rounded-full transition-opacity"
+              className="mt-1 h-1 w-full shrink-0 rounded-full transition-opacity"
               style={{
                 backgroundColor: track.color,
                 opacity: track.muted ? 0.25 : 1,
@@ -479,56 +680,99 @@ export function Mixer() {
             />
           </div>
         ))}
-        <div key={masterTrack.id} className="flex w-[124px] shrink-0 flex-col border-r border-border px-2 py-2">
-          <p className="mb-1.5 truncate text-center text-[11px] font-medium text-foreground" title={masterTrack.name}>
-            {masterTrack.name}
-          </p>
-          <div className="mb-1">
-            <ChannelFxBank
-              trackId="master"
-              trackName="Master"
-              plugins={master?.plugins ?? []}
-            />
+        <div
+          key={masterTrack.id}
+          data-testid="mixer-strip-master"
+          style={{ width: ancho }}
+          className="flex h-full min-h-0 shrink-0 flex-col border-r border-border px-2 py-2"
+        >
+          <div className="mb-1.5 flex items-center justify-center gap-0.5">
+            <p className="min-w-0 truncate text-center text-[11px] font-medium text-foreground" title={masterTrack.name}>
+              {masterTrack.name}
+            </p>
+            {!estrecho && verExtras ? (
+              <SpectrumToggle
+                abierto={espectros.has('master')}
+                nombre="Master"
+                onToggle={() => alternarEspectro('master')}
+              />
+            ) : null}
           </div>
 
-          <div className="mb-1 flex items-center justify-center gap-1">
-            <TrackButton label={`Silenciar Master`} active={master.muted} onClick={() => {
-              void tienda.executor.execute('master.update', { datos: { muted: !master.muted } })
-            }}>
-              M
-            </TrackButton>
-            <TrackButton label={`Solo Master`} active={master.solo} onClick={() => {
-              void tienda.executor.execute('master.update', { datos: { solo: !master.solo } })
-            }}>
-              S
-            </TrackButton>
+          <div className="mb-1 flex shrink-0 items-center justify-center gap-1">
+            <ResaltoIA trackId="master" campos={CAMPOS_IA.mute}>
+              <TrackButton label={`Silenciar Master`} active={Boolean(master?.muted)} onClick={() => {
+                void tienda.executor.execute('master.update', { datos: { muted: !master?.muted } })
+              }}>
+                M
+              </TrackButton>
+            </ResaltoIA>
           </div>
 
-          <KnobControl value={masterTrack.pan} color={masterTrack.color} onChange={(pan) => {
-            void tienda.executor.execute('master.update', { datos: { paneo: pan / 100 } })
-          }} />
+          {!verExtras ? (
+            <div className="min-h-0 flex-1" />
+          ) : (
+            <>
+              {espectros.has('master') && !estrecho ? (
+                <div className="mb-1 shrink-0">
+                  <MiniSpectrum trackId="master" color={masterTrack.color} />
+                </div>
+              ) : null}
+              <div className="jw-scrollbar -mx-1 mb-1 min-h-0 flex-1 overflow-y-auto px-1" data-testid="mixer-inserts-master">
+                <ResaltoIA trackId="master" campos={CAMPOS_IA.fx}>
+                  <ChannelFxBank
+                    trackId="master"
+                    trackName="Master"
+                    plugins={master?.plugins ?? []}
+                  />
+                </ResaltoIA>
+              </div>
+            </>
+          )}
 
-          <div className="mt-2 flex-1">
-            <FaderControl db={masterTrack.db} color={masterTrack.color} meter={meters.master ?? 0} onChange={(db) => {
-              const volumen = db > DB_INFERIOR ? dbALineal(db) : 0
-              void tienda.executor.execute('master.update', { datos: { volumen } })
+          <ResaltoIA trackId="master" campos={CAMPOS_IA.paneo} className="shrink-0">
+            <PanControl modo={modoPaneo} value={masterTrack.pan} color={masterTrack.color} onChange={(pan, gestureId) => {
+              void tienda.executor.execute('master.update', { datos: { paneo: pan / 100 } }, 'user', undefined, opcionesGesto('mixer.paneo:master', gestureId))
             }} />
-          </div>
+          </ResaltoIA>
 
-          <p className="mt-1 text-center font-mono text-[10px] tabular-nums text-muted-foreground">
-            {formatearDb(masterTrack.db)}
-          </p>
+          <ResaltoIA trackId="master" campos={CAMPOS_IA.volumen} className="mt-1">
+            <ChannelFaderBlock
+              db={masterTrack.db}
+              color={masterTrack.color}
+              stereo={stereo.master ?? SILENCIO}
+              testId="mixer-fader-master"
+              estrecho={estrecho}
+              onChange={(db, gestureId) => {
+                const volumen = db > DB_INFERIOR ? dbALineal(db) : 0
+                void tienda.executor.execute('master.update', { datos: { volumen } }, 'user', undefined, opcionesGesto('mixer.volumen:master', gestureId))
+              }}
+            />
+          </ResaltoIA>
 
           <div
             className="mt-1 h-1 w-full rounded-full transition-opacity"
             style={{
               backgroundColor: masterTrack.color,
-              opacity: master.muted ? 0.25 : 1,
+              opacity: master?.muted ? 0.25 : 1,
             }}
           />
         </div>
+
+        {/* Espacio en blanco: doble clic → nueva pista */}
+        <div
+          className="min-w-[96px] flex-1 cursor-pointer self-stretch"
+          title="Doble clic: nueva pista"
+          onDoubleClick={() => {
+            const count = tracks.length + 1
+            void tienda.executor.execute('track.create', {
+              nombre: `MIDI ${count}`,
+              tipo: 'midi',
+            })
+          }}
+        />
       </div>
-      {!collapsed ? <AutomationLanesPanel /> : null}
+      </div>
     </section>
   )
 }

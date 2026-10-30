@@ -1,0 +1,431 @@
+{
+  "productId": "com.jaswave.plugin.utility-tool",
+  "titulo": "CHANNEL UTILITY",
+  "subtitulo": "GANANCIA · FASE · ANCHO M/S · MONO-GRAVES",
+  "instrumento": false,
+  "visualizador": "vectorscopio",
+  "acento": "#19D9FF",
+  "base": {
+    "ancho": 1100,
+    "alto": 620
+  },
+  "zonas": {
+    "pantalla": [
+      34,
+      34,
+      1066,
+      586
+    ],
+    "visualizador": [
+      52,
+      92,
+      652,
+      404
+    ],
+    "espectro": [
+      66,
+      124,
+      612,
+      382
+    ],
+    "miniPanel": [
+      52,
+      418,
+      652,
+      556
+    ],
+    "controles": [
+      666,
+      92,
+      1048,
+      404
+    ],
+    "salida": [
+      666,
+      418,
+      1048,
+      556
+    ],
+    "fader": [
+      680,
+      440,
+      724,
+      552
+    ],
+    "medidores": {
+      "x": 976,
+      "arriba": 446,
+      "abajo": 528
+    }
+  },
+  "escalas": {
+    "frecuencia": [
+      20,
+      20000
+    ],
+    "dbfs": [
+      -120,
+      0
+    ],
+    "caidaDbS": 14
+  },
+  "modoParam": null,
+  "modos": {
+    "selector": [
+      358,
+      48,
+      476,
+      68
+    ],
+    "corte": 410,
+    "defecto": "avanzado"
+  },
+  "parametrosCubiertos": [],
+  "widgets": [
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        92,
+        1048,
+        404
+      ],
+      "etiqueta": "IMAGEN ESTÉREO",
+      "basico": true
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        704,
+        140,
+        780,
+        234
+      ],
+      "etiqueta": "BALANCE",
+      "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        761.5,
+        140,
+        837.5,
+        234
+      ],
+      "param": 6,
+      "min": -1,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 2,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Balance",
+      "unidad": ""
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        819,
+        140,
+        895,
+        234
+      ],
+      "etiqueta": "ANCHO",
+      "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        876.5,
+        140,
+        952.5,
+        234
+      ],
+      "param": 2,
+      "min": 0,
+      "max": 200,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Width",
+      "unidad": "%",
+      "feature": "utilidad.ancho-estereo"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        934,
+        140,
+        1010,
+        234
+      ],
+      "etiqueta": "MONO <",
+      "tamano": 64,
+      "basico": false,
+      "param": 3,
+      "min": 0,
+      "max": 200,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Mono Below",
+      "unidad": "Hz",
+      "feature": "utilidad.mono-graves"
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        690,
+        292,
+        794,
+        316
+      ],
+      "etiqueta": "MONO",
+      "basico": true,
+      "rectBasico": [
+        805,
+        292,
+        909,
+        316
+      ],
+      "param": 9,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Mono",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        805,
+        292,
+        909,
+        316
+      ],
+      "etiqueta": "Ø L",
+      "basico": false,
+      "param": 4,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Invert L",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        920,
+        292,
+        1024,
+        316
+      ],
+      "etiqueta": "Ø R",
+      "basico": false,
+      "param": 5,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Invert R",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        418,
+        1048,
+        556
+      ],
+      "etiqueta": "SALIDA",
+      "basico": true,
+      "param": 0,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": true,
+      "nombre": "Bypass",
+      "unidad": "",
+      "opciones": [
+        "Active",
+        "Bypass"
+      ]
+    },
+    {
+      "tipo": "fader",
+      "rect": [
+        680,
+        440,
+        724,
+        552
+      ],
+      "etiqueta": "GANANCIA",
+      "basico": true,
+      "param": 1,
+      "min": -24,
+      "max": 24,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Gain",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        743,
+        454,
+        811,
+        478
+      ],
+      "etiqueta": "L ⇄ R",
+      "basico": false,
+      "param": 8,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Swap L/R",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        817,
+        454,
+        885,
+        478
+      ],
+      "etiqueta": "DC",
+      "basico": false,
+      "param": 7,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "DC Filter",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        976,
+        446,
+        985,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        990,
+        446,
+        999,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1020,
+        446,
+        1029,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1034,
+        446,
+        1043,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "modo",
+      "rect": [
+        358,
+        48,
+        476,
+        68
+      ],
+      "etiqueta": "BÁSICO|AVANZADO",
+      "basico": true,
+      "corte": 410
+    },
+    {
+      "tipo": "reset",
+      "rect": [
+        624,
+        48,
+        684,
+        68
+      ],
+      "etiqueta": "RESET",
+      "basico": true
+    }
+  ]
+}

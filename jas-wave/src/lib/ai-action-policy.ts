@@ -4,11 +4,23 @@
  */
 
 import {
+  actionAlwaysNeedsConfirm,
+  agentActionClass,
+  agentActionClassOfType,
+  gateAgentActionExecution,
+  isClassifiedAction,
+  isSystemAction,
+  unclassifiedActionTypes,
+  type AgentActionClass,
   actionRiskLevel as coreActionRiskLevel,
   batchNeedsDestructiveConfirm,
   ensureMusicBuildForFullProject,
   forcePreviewAplicar,
   isDestructiveAction,
+  isDestructiveToolName,
+  isSoloMusicBuildPending,
+  limitToOneDestructiveAction,
+  limitToOneMutatingAction,
   isDocsWriteAction,
   isMutatingAction,
   isPreviewOnlyAction,
@@ -19,16 +31,26 @@ import {
   wantsFullProject,
   withAplicarTrue,
   type AgentAction,
-  type AgentMode,
 } from '@jaswave/ai-harness'
 import type { DawAction } from './ai-daw-agent'
 import { permissionManager, type AutonomyLevel } from '../../../shared/src/state/permissions'
 
 export {
+  actionAlwaysNeedsConfirm,
+  agentActionClass,
+  agentActionClassOfType,
+  gateAgentActionExecution,
+  isClassifiedAction,
+  isSystemAction,
+  unclassifiedActionTypes,
   batchNeedsDestructiveConfirm,
   ensureMusicBuildForFullProject,
   forcePreviewAplicar,
   isDestructiveAction,
+  isDestructiveToolName,
+  isSoloMusicBuildPending,
+  limitToOneDestructiveAction,
+  limitToOneMutatingAction,
   isDocsWriteAction,
   isMutatingAction,
   isPreviewOnlyAction,
@@ -40,6 +62,7 @@ export {
 }
 
 export type { AgentMode } from '@jaswave/ai-harness'
+export type { AgentActionClass }
 
 export function autonomyBlocksMutation(level?: AutonomyLevel): boolean {
   const l = level ?? permissionManager.getUserConfig().level
@@ -50,7 +73,13 @@ export function actionRiskLevel(action: DawAction): 'read' | 'write' | 'dangerou
   return coreActionRiskLevel(action as AgentAction)
 }
 
+/**
+ * ¿Hay que pedir confirmación al usuario?
+ * Destructivas, de sistema y sin clasificar: SIEMPRE (también con FULL_AUTONOMY).
+ * El resto depende del nivel de autonomía.
+ */
 export function needsPermissionConfirm(action: DawAction, level?: AutonomyLevel): boolean {
+  if (actionAlwaysNeedsConfirm(action as AgentAction)) return true
   const l = level ?? permissionManager.getUserConfig().level
   if (l === 'FULL_AUTONOMY') return false
   if (l === 'AUTO_EXECUTE_SAFE') return actionRiskLevel(action) === 'dangerous'
@@ -75,6 +104,8 @@ export type ActionPartition = {
   readonly: DawAction[]
   mutating: DawAction[]
   destructive: DawAction[]
+  /** Sin clase de riesgo: nunca se ejecutan (fail closed). */
+  blocked: DawAction[]
 }
 
 export function partitionActions(actions: DawAction[], userText = ''): ActionPartition {

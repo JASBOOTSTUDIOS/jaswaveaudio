@@ -1,5 +1,9 @@
 /**
  * Helpers de expresión MIDI (CC / pitch bend) sobre MidiClip.expression.
+ *
+ * Contrato de `valor` en los lanes de CC: SIEMPRE normalizado 0..1 (CC MIDI = round(valor * 127)). Se recorta a
+ * 0..1 al escribir; no se admite 0..127 crudo. `tiempo` en beats relativos al inicio del clip. Los pedales
+ * (CC64/66/67/69) usan curva 'step'.
  */
 
 import type {
@@ -55,7 +59,7 @@ export function upsertCcPoint(
 export function setCcLane(
   expression: MidiClipExpression,
   cc: number,
-  puntos: { id?: string; tiempo: number; valor: number }[],
+  puntos: { id?: string; tiempo: number; valor: number; curva?: MidiAutomationPoint['curva'] }[],
   nombre?: string,
 ): MidiClipExpression {
   const lanes = (expression.cc ?? []).filter((l) => l.cc !== cc);
@@ -66,7 +70,7 @@ export function setCcLane(
       id: p.id ?? genId(),
       tiempo: p.tiempo,
       valor: Math.max(0, Math.min(1, p.valor)),
-      curva: 'linear' as const,
+      curva: p.curva ?? ('linear' as const),
     })),
   });
   return { ...expression, cc: lanes };

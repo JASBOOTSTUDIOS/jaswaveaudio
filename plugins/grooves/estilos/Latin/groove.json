@@ -1,0 +1,76 @@
+{
+  "archivos": {
+    "cascara.mid": {
+      "id": "jw-latin-cascara",
+      "nombre": "Cascara",
+      "tempo": 116,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "latin",
+        "cascara",
+        "campana-de-ride"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "cumbia.mid": {
+      "id": "jw-latin-cumbia",
+      "nombre": "Cumbia",
+      "tempo": 92,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "latin",
+        "cumbia",
+        "pandereta"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "reggaeton-dembow.mid": {
+      "id": "jw-latin-reggaeton-dembow",
+      "nombre": "Reggaetón dembow",
+      "tempo": 94,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "latin",
+        "reggaeton",
+        "dembow"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-caja-al-cuarto.mid": {
+      "id": "jw-latin-fill-caja-al-cuarto",
+      "nombre": "Fill caja al cuarto",
+      "tempo": 110,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "caja",
+        "cuarto"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

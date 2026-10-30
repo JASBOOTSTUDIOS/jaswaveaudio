@@ -20,6 +20,7 @@
 #include <cstring>
 #include <mutex>
 #include <sstream>
+#include <thread>
 
 #ifdef _WIN32
 #include <objbase.h>
@@ -183,6 +184,21 @@ void dataCallback(ma_device* /*device*/, void* output, const void* /*input*/, ma
   jaswave_audio_mix_test_tone(out, frameCount, sr ? sr : 48000);
 }
 
+// U6: miniaudio avisa cuando el dispositivo se para por fuerza (desconectado).
+void deviceNotificationCallback(const ma_device_notification* n) {
+  if (!n) return;
+  if (n->type == ma_device_notification_type_stopped ||
+      n->type == ma_device_notification_type_interruption_began) {
+    std::fprintf(stderr, "[jaswave-plugin-host] device-lost\n");
+    std::fflush(stderr);
+    gStatus.running = false;
+    gStatus.lastError = "El dispositivo de audio se ha desconectado";
+#ifdef _WIN32
+    jaswave_host_wake_main_thread();
+#endif
+  }
+}
+
 bool tryListBackend(ma_backend backend, std::vector<JaswaveAudioDevice>& devices) {
   ma_context ctx{};
   ma_backend backends[] = {backend};
@@ -276,6 +292,7 @@ bool openDeviceLocked(JaswaveAudioConfig cfg, std::string& err) {
   dcfg.sampleRate = cfg.sampleRate;
   dcfg.periodSizeInFrames = cfg.bufferSize;
   dcfg.dataCallback = dataCallback;
+  dcfg.notificationCallback = deviceNotificationCallback;
 #if defined(_WIN32)
   dcfg.wasapi.noAutoConvertSRC = MA_FALSE;
   dcfg.wasapi.usage = ma_wasapi_usage_pro_audio;
@@ -443,6 +460,114 @@ bool jaswave_audio_list(std::vector<JaswaveAudioBackendInfo>& backends,
   return true;
 }
 
+// ── Reserva del motor de audio en la máquina ────────────────────────────────
+// Dos instancias de JasWave (instalada + desarrollo, perfiles distintos…) abrían a la vez el mismo
+// driver: con ASIO (un solo cliente) el driver tumbaba el host de la primera (salida code=1), que
+// entraba en bucle de reinicios y ponía en cuarentena plugins inocentes. Solo un host de la sesión
+// abre dispositivo. La reserva es un objeto con nombre: su existencia es el cerrojo y Windows lo
+// libera al morir el proceso (un mutex no sirve: su dueño es el hilo, no el proceso).
+//
+// Traspaso entre instancias ("Usar audio aquí"): la que no tiene el motor activa el evento con nombre
+// `…Ceder`; solo el dueño lo espera (un hilo que nace al reservar y muere al soltar), avisa por el
+// callback y la app decide cuándo soltar (antes para el transporte y cierra una grabación en curso).
+namespace {
+#ifdef _WIN32
+HANDLE gEngineHandle = nullptr;
+HANDLE gStopEspera = nullptr;  // evento privado que despierta al hilo de espera para que termine
+constexpr const wchar_t* kEventoCeder = L"Local\\JasWave.MotorAudio.Ceder";
+#endif
+JaswaveEngineReleaseRequestProc gOnReleaseRequest = nullptr;
+
+#ifdef _WIN32
+void arrancarEsperaCeder() {
+  HANDLE ceder = CreateEventW(nullptr, FALSE, FALSE, kEventoCeder);
+  if (!ceder) return;
+  // Una petición vieja (su dueño murió antes de atenderla) no debe hacer soltar al dueño nuevo.
+  ResetEvent(ceder);
+  HANDLE stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (!stop) {
+    CloseHandle(ceder);
+    return;
+  }
+  gStopEspera = stop;
+  // El hilo es dueño de sus dos handles y los cierra al salir (desacoplado: no bloquea el cierre del proceso).
+  std::thread([ceder, stop] {
+    HANDLE hs[2] = {stop, ceder};
+    for (;;) {
+      const DWORD r = WaitForMultipleObjects(2, hs, FALSE, INFINITE);
+      if (r != WAIT_OBJECT_0 + 1) break;
+      if (gOnReleaseRequest) gOnReleaseRequest();
+    }
+    CloseHandle(ceder);
+    CloseHandle(stop);
+  }).detach();
+}
+#endif
+}  // namespace
+
+void jaswave_audio_engine_on_release_request(JaswaveEngineReleaseRequestProc proc) { gOnReleaseRequest = proc; }
+
+void jaswave_audio_engine_release() {
+  jaswave_audio_stop();
+#ifdef _WIN32
+  if (gStopEspera) {
+    SetEvent(gStopEspera);
+    gStopEspera = nullptr;
+  }
+  if (gEngineHandle) {
+    CloseHandle(gEngineHandle);
+    gEngineHandle = nullptr;
+  }
+#endif
+}
+
+bool jaswave_audio_engine_request_release() {
+#ifdef _WIN32
+  HANDLE ceder = CreateEventW(nullptr, FALSE, FALSE, kEventoCeder);
+  if (!ceder) return false;
+  SetEvent(ceder);
+  CloseHandle(ceder);
+  return true;
+#else
+  return false;
+#endif
+}
+
+bool jaswave_audio_engine_acquire(std::string& err) {
+#ifdef _WIN32
+  if (gEngineHandle) return true;
+  // Margen para el relevo de un host recién terminado (respawn ASIO): su handle tarda en cerrarse.
+  // Solo en el primer intento del proceso; después un "ocupado" responde al instante.
+  static bool primerIntento = true;
+  const int intentos = primerIntento ? 15 : 1;
+  primerIntento = false;
+  for (int i = 0; i < intentos; ++i) {
+    if (i) Sleep(100);
+    HANDLE h = CreateEventW(nullptr, TRUE, FALSE, L"Local\\JasWave.MotorAudio");
+    if (!h) return true;  // sin objeto con nombre no se bloquea el audio
+    if (GetLastError() != ERROR_ALREADY_EXISTS) {
+      gEngineHandle = h;
+      arrancarEsperaCeder();
+      return true;
+    }
+    CloseHandle(h);
+  }
+  err = "AudioEngineBusy: otra instancia de JasWave está usando el motor de audio";
+  return false;
+#else
+  (void)err;
+  return true;
+#endif
+}
+
+bool jaswave_audio_engine_owned() {
+#ifdef _WIN32
+  return gEngineHandle != nullptr;
+#else
+  return true;
+#endif
+}
+
 void jaswave_audio_stop() {
   std::lock_guard<std::mutex> lock(gMu);
 #ifdef _WIN32
@@ -459,6 +584,11 @@ void jaswave_audio_stop() {
 }
 
 bool jaswave_audio_start(const JaswaveAudioConfig& want, std::string& err) {
+  if (!jaswave_audio_engine_acquire(err)) {
+    std::lock_guard<std::mutex> lock(gMu);
+    gStatus.lastError = err;
+    return false;
+  }
   JaswaveAudioConfig previous{};
   bool had = false;
   {

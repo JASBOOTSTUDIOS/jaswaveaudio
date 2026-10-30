@@ -1,0 +1,198 @@
+/*
+ * JasWave Admin: estilo «cyber» de los VST JasWave (plugins/lib/ui-cyber/src/dibujo.ts).
+ * Paneles oscuros con borde sutil y brillo cian, títulos finos en mayúsculas espaciadas y cifras en mono.
+ */
+@import 'tailwindcss';
+
+@theme {
+  --color-cy-negro: #05060f;
+  --color-cy-panel: #0b0d27;
+  --color-cy-panel2: #0d0f2c;
+  --color-cy-borde: #2d3375;
+  --color-cy-cian: #19d9ff;
+  --color-cy-violeta: #8a4dff;
+  --color-cy-azul: #3d5bff;
+  --color-cy-texto: #dce0fa;
+  --color-cy-tenue: #9aa3da;
+  --color-cy-apagado: #5c6399;
+  --color-cy-alerta: #ff4fc3;
+  --color-cy-ok: #3dffb5;
+  --color-cy-ambar: #ffc24d;
+  --font-cy: Bahnschrift, 'DIN Alternate', 'Barlow Semi Condensed', 'Inter Variable', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', Consolas, 'Cascadia Mono', monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: #05060f;
+  color: #dce0fa;
+  font-family: var(--font-cy);
+  -webkit-tap-highlight-color: transparent;
+  overflow-x: hidden;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+}
+
+::selection {
+  background: rgb(25 217 255 / 0.3);
+  color: #fff;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2d3375 transparent;
+}
+
+@layer components {
+  /* Panel tipo carcasa de VST: degradado oscuro, borde sutil y brillo interior. */
+  .cy-panel {
+    position: relative;
+    border-radius: 12px;
+    border: 1px solid rgb(45 51 117 / 0.7);
+    background: linear-gradient(180deg, rgb(13 15 44 / 0.92), rgb(8 9 30 / 0.92));
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.03),
+      0 0 0 1px rgb(5 6 15 / 0.6),
+      0 10px 30px -18px rgb(25 217 255 / 0.25);
+  }
+  .cy-panel-activo {
+    border-color: rgb(25 217 255 / 0.55);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.04),
+      0 0 0 1px rgb(25 217 255 / 0.15),
+      0 0 22px -6px rgb(25 217 255 / 0.35);
+  }
+  /* Título fino en mayúsculas espaciadas (rótulos de sección de los VST). */
+  .cy-rotulo {
+    font-size: 10.5px;
+    font-weight: 400;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: #9aa3da;
+  }
+  .cy-marca {
+    background: linear-gradient(90deg, #8a4dff, #3d5bff 55%, #19d9ff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .cy-linea-marca {
+    background: linear-gradient(90deg, #8a4dff, #3d5bff 55%, #19d9ff);
+  }
+  .cy-entrada {
+    width: 100%;
+    min-width: 0;
+    border-radius: 8px;
+    border: 1px solid rgb(45 51 117 / 0.9);
+    background: #05060f;
+    padding: 0.5rem 0.7rem;
+    font-size: 13px;
+    color: #dce0fa;
+    outline: none;
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s;
+  }
+  .cy-entrada::placeholder {
+    color: #5c6399;
+  }
+  .cy-entrada:focus {
+    border-color: rgb(25 217 255 / 0.7);
+    box-shadow: 0 0 0 3px rgb(25 217 255 / 0.12);
+  }
+  .cy-entrada:disabled {
+    opacity: 0.55;
+  }
+  select.cy-entrada {
+    appearance: none;
+    padding-right: 2rem;
+    background-image:
+      linear-gradient(45deg, transparent 50%, #9aa3da 50%), linear-gradient(135deg, #9aa3da 50%, transparent 50%);
+    background-position:
+      calc(100% - 15px) 52%,
+      calc(100% - 10px) 52%;
+    background-size:
+      5px 5px,
+      5px 5px;
+    background-repeat: no-repeat;
+  }
+  .cy-check {
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    flex: none;
+    border-radius: 5px;
+    border: 1px solid #2d3375;
+    background: #05060f;
+    display: inline-grid;
+    place-content: center;
+    cursor: pointer;
+  }
+  .cy-check:checked {
+    border-color: #19d9ff;
+    background: rgb(25 217 255 / 0.15);
+    box-shadow: 0 0 10px -2px rgb(25 217 255 / 0.6);
+  }
+  .cy-check:checked::after {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    background: #19d9ff;
+  }
+  .cy-check:focus-visible {
+    outline: 2px solid rgb(25 217 255 / 0.6);
+    outline-offset: 2px;
+  }
+}
+
+@keyframes cy-entrar {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes cy-hoja-abajo {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes cy-hoja-derecha {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+.cy-entrar {
+  animation: cy-entrar 0.2s ease-out;
+}
+.cy-hoja {
+  animation: cy-hoja-abajo 0.22s ease-out;
+}
+@media (min-width: 768px) {
+  .cy-hoja {
+    animation: cy-hoja-derecha 0.22s ease-out;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cy-entrar,
+  .cy-hoja {
+    animation: none;
+  }
+}

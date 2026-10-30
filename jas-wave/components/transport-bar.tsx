@@ -1,12 +1,22 @@
 import { useState, useRef, useEffect } from 'react'
-import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Piano, Crosshair, Timer } from 'lucide-react'
+import { Play, Pause, Square, Circle, Repeat, ChevronDown, Triangle, Piano, Crosshair, Timer, Magnet, ArrowRightToLine, Headphones, HeadphoneOff, Eye, EyeOff, Volume2, VolumeX, Lock, LockOpen, OctagonAlert } from 'lucide-react'
+import { useStereoMeter } from '@/hooks/use-stereo-meter'
+import { fijarMonitor, useMonitorSalida } from '@/src/lib/monitor-salida'
+import { setDetenerAlFinal, usePreferenciasTransporte } from '@/src/lib/preferencias-transporte'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { DAWState } from '../../shared/src'
+import { safeProjectBpm } from '../../shared/src'
 import { TransportPositionReadout } from './transport-position-readout'
 import { midiController } from '@/src/lib/midi-controller'
 import { useLiveBufferMeter } from '@/hooks/use-live-buffer-meter'
 import { useProjectReady } from '@/src/context/project-ready-context'
 import { waitUntilProjectReady } from '@/src/lib/project-ready'
+import { NumericField } from '@/components/ui/numeric-field'
+import { TimeSignatureField } from '@/components/ui/time-signature-field'
+import { crearVentanaGesto, opcionesGesto } from '@/src/lib/gesture-id'
+import { useRenderLock } from '@/src/lib/render-lock'
+import { fijarPreferenciaIA, usePreferenciasIA } from '@/src/lib/preferencias-ia'
+import { EVENTO_ATAJO_BLOQUEADO, instalarBloqueoDirecto, panicDirecto } from '@/src/lib/modo-directo'
 
 /** Blanco=vacío → amarillo=medio → rojo=lleno (fill / highFill). */
 function bufferFillColor(level: number): string {
@@ -93,7 +103,16 @@ function BufferFillMeter({ playing }: { playing: boolean }) {
   )
 }
 
+/** Toast de entrada rechazada (el editor se cierra y el valor se revierte). */
+function useAvisoEntradaInvalida(): (mensaje: string) => void {
+  const tienda = useDAW()
+  return (mensaje: string) => {
+    tienda.busEventos.emit('validacion.advertencia', { code: 'INVALID_INPUT', message: mensaje })
+  }
+}
+
 function EditableStat({
+
   value,
   label,
   onCommit,
@@ -103,69 +122,72 @@ function EditableStat({
 }: {
   value: number
   label: string
-  onCommit: (v: number) => void
+  /** `gestureId`: los giros de rueda seguidos (≤600 ms) comparten gesto → un solo undo. */
+  onCommit: (v: number, gestureId?: string) => void
   min: number
   max: number
   step?: number
 }) {
   const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(String(value))
-  const inputRef = useRef<HTMLInputElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
+  const gestoRueda = useRef(crearVentanaGesto(600)).current
+  const avisarInvalido = useAvisoEntradaInvalida()
   const valueRef = useRef(value)
   const stepRef = useRef(step)
   const onCommitRef = useRef(onCommit)
+  const editingRef = useRef(editing)
   valueRef.current = value
   stepRef.current = step
   onCommitRef.current = onCommit
-
-  useEffect(() => {
-    if (editing) {
-      inputRef.current?.focus()
-      inputRef.current?.select()
-    }
-  }, [editing])
+  editingRef.current = editing
 
   // Listener nativo: React onWheel es passive y no permite preventDefault.
   useEffect(() => {
     const el = rootRef.current
     if (!el) return
     const handler = (e: WheelEvent) => {
+      // Solo la rueda con el control enfocado o con Alt altera el valor;
+      // si no, la rueda debe hacer scroll normal de la interfaz.
+      if (editingRef.current) return
+      const ae = document.activeElement
+      const enfocado = ae === el || (ae instanceof Node && el.contains(ae))
+      if (!e.altKey && !enfocado) return
       e.preventDefault()
       const fine = e.shiftKey ? 0.1 : 1
       const delta = e.deltaY < 0 ? stepRef.current * fine : -stepRef.current * fine
       const next = Math.round((valueRef.current + delta) * 100) / 100
-      onCommitRef.current(Math.max(min, Math.min(max, next)))
+      const clamped = Math.max(min, Math.min(max, next))
+      if (clamped !== valueRef.current) onCommitRef.current(clamped, gestoRueda())
     }
     el.addEventListener('wheel', handler, { passive: false })
     return () => el.removeEventListener('wheel', handler)
-  }, [min, max])
-
-  const commit = () => {
-    const num = Number(draft)
-    if (!isNaN(num)) {
-      onCommit(Math.max(min, Math.min(max, num)))
-    }
-    setEditing(false)
-  }
+  }, [min, max, gestoRueda])
 
   return (
     <div
       ref={rootRef}
-      className="flex flex-col items-center leading-none cursor-pointer select-none"
-      onDoubleClick={() => { setDraft(String(value)); setEditing(true) }}
+      tabIndex={0}
+      data-testid={`stat-${label.toLowerCase()}`}
+      className="flex flex-col items-center leading-none cursor-pointer select-none rounded outline-none focus-visible:ring-1 focus-visible:ring-accent-amber/60"
+      onDoubleClick={() => setEditing(true)}
     >
       {editing ? (
-        <input
-          ref={inputRef}
-          type="number"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
-          className="w-14 bg-background text-center font-mono text-[15px] font-semibold text-foreground ring-1 ring-accent-amber rounded px-1 outline-none"
+        // Vacío, NaN o fuera de rango (p. ej. 0) revierte con aviso; Esc cancela.
+        <NumericField
+          value={value}
           min={min}
           max={max}
+          recortar={false}
+          step={step}
+          autoFocus
+          aria-label={label}
+          data-testid={`stat-${label.toLowerCase()}-input`}
+          onCommit={(v) => onCommit(v)}
+          onEnter={() => setEditing(false)}
+          onCancel={() => setEditing(false)}
+          onInvalid={(m) => avisarInvalido(`${label}: ${m}. Se mantiene ${value}.`)}
+          commitOnBlur
+          className="w-14 bg-background text-center font-mono text-[15px] font-semibold text-foreground ring-1 ring-accent-amber rounded px-1 outline-none"
         />
       ) : (
         <span className="font-mono text-[15px] font-semibold text-foreground hover:text-accent-amber transition-colors">
@@ -191,14 +213,14 @@ function TimeSigEditor({
 }: {
   numerador: number
   denominador: number
-  onCommit: (n: number, d: number) => void
+  /** `gestureId`: giros de rueda seguidos comparten gesto → un solo undo. */
+  onCommit: (n: number, d: number, gestureId?: string) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
-  const [numDraft, setNumDraft] = useState(String(numerador))
-  const [denDraft, setDenDraft] = useState(String(denominador))
-  const numRef = useRef<HTMLInputElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
+  const gestoRueda = useRef(crearVentanaGesto(600)).current
+  const avisarInvalido = useAvisoEntradaInvalida()
   const wheelTargetRef = useRef<HTMLDivElement>(null)
   const numeradorRef = useRef(numerador)
   const denominadorRef = useRef(denominador)
@@ -206,13 +228,6 @@ function TimeSigEditor({
   numeradorRef.current = numerador
   denominadorRef.current = denominador
   onCommitRef.current = onCommit
-
-  useEffect(() => {
-    if (editing) {
-      numRef.current?.focus()
-      numRef.current?.select()
-    }
-  }, [editing])
 
   useEffect(() => {
     if (!showPicker) return
@@ -230,6 +245,11 @@ function TimeSigEditor({
     const el = wheelTargetRef.current
     if (!el) return
     const handler = (e: WheelEvent) => {
+      // Solo la rueda con el control enfocado o con Alt altera el compás;
+      // si no, la rueda debe hacer scroll normal de la interfaz.
+      const ae = document.activeElement
+      const enfocado = ae === el || (ae instanceof Node && el.contains(ae))
+      if (!e.altKey && !enfocado) return
       e.preventDefault()
       const idx = COMPASES_COMUNES.findIndex(
         ([n, d]) => n === numeradorRef.current && d === denominadorRef.current,
@@ -238,56 +258,39 @@ function TimeSigEditor({
         ? (idx + 1) % COMPASES_COMUNES.length
         : (idx - 1 + COMPASES_COMUNES.length) % COMPASES_COMUNES.length
       const [n, d] = COMPASES_COMUNES[next]
-      onCommitRef.current(n, d)
+      onCommitRef.current(n, d, gestoRueda())
     }
     el.addEventListener('wheel', handler, { passive: false })
     return () => el.removeEventListener('wheel', handler)
-  }, [editing])
+  }, [editing, gestoRueda])
 
-  const commit = () => {
-    const n = Number(numDraft)
-    const d = Number(denDraft)
-    if (!isNaN(n) && !isNaN(d) && n > 0 && d > 0) {
-      onCommit(n, d)
-    }
-    setEditing(false)
+  const empezarEdicion = () => {
+    setShowPicker(false)
+    setEditing(true)
   }
 
   return (
     <div className="relative flex flex-col items-center leading-none cursor-pointer select-none" ref={pickerRef}>
       {editing ? (
-        <div className="flex items-center gap-0.5"
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          <input
-            ref={numRef}
-            type="number"
-            value={numDraft}
-            onChange={(e) => setNumDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
-            className="w-7 bg-background text-center font-mono text-[15px] font-semibold text-foreground ring-1 ring-accent-amber rounded px-1 outline-none"
-            min={1}
-            max={12}
-          />
-          <span className="font-mono text-[15px] font-semibold text-muted-foreground">/</span>
-          <input
-            type="number"
-            value={denDraft}
-            onChange={(e) => setDenDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
-            className="w-7 bg-background text-center font-mono text-[15px] font-semibold text-foreground ring-1 ring-accent-amber rounded px-1 outline-none"
-            min={1}
-            max={32}
-          />
-        </div>
+        <TimeSignatureField
+          numerador={numerador}
+          denominador={denominador}
+          autoFocus
+          onCommit={(n, d) => onCommit(n, d)}
+          onDone={() => setEditing(false)}
+          onInvalid={avisarInvalido}
+          className="flex items-center gap-0.5"
+          separatorClassName="font-mono text-[15px] font-semibold text-muted-foreground"
+          inputClassName="w-7 bg-background text-center font-mono text-[15px] font-semibold text-foreground ring-1 ring-accent-amber rounded px-1 outline-none"
+        />
       ) : (
         <div
           ref={wheelTargetRef}
-          className="flex flex-col items-center"
+          tabIndex={0}
+          data-testid="timesig"
+          className="flex flex-col items-center rounded outline-none focus-visible:ring-1 focus-visible:ring-accent-amber/60"
           onClick={() => setShowPicker(!showPicker)}
-          onDoubleClick={() => { setNumDraft(String(numerador)); setDenDraft(String(denominador)); setEditing(true) }}
+          onDoubleClick={empezarEdicion}
         >
           <div className="flex items-baseline gap-0.5">
             <span className="font-mono text-[15px] font-semibold text-foreground hover:text-accent-amber transition-colors">
@@ -332,7 +335,7 @@ function TimeSigEditor({
           <div className="mt-2 flex items-center gap-1 border-t border-border pt-1.5 px-1">
             <button
               type="button"
-              onClick={() => { setShowPicker(false); setNumDraft(String(numerador)); setDenDraft(String(denominador)); setEditing(true) }}
+              onClick={empezarEdicion}
               className="flex-1 rounded bg-panel-raised px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
             >
               Personalizar...
@@ -379,6 +382,7 @@ export function TransportBar() {
   const transport = useDAWState((s: DAWState) => s.transport)
   const project = useDAWState((s: DAWState) => s.project)
   const projectReady = useProjectReady()
+  const renderLock = useRenderLock()
 
   const isPlaying = Boolean(transport.reproduciendo)
   const isRecording = transport.grabacion === 'grabando'
@@ -386,6 +390,9 @@ export function TransportBar() {
   const isMetronome = Boolean(transport.metronomo?.activo)
   const isPunch = Boolean(transport.punch?.activo)
   const isCountIn = Boolean(transport.countIn?.activo)
+  const { detenerAlFinal } = usePreferenciasTransporte()
+  const isComping = transport.modoGrabacion === 'comping'
+  const playheadSnap = useDAWState((s: DAWState) => s.ui?.playheadSnap !== false)
   // Solo bloquear Play si falta host/audio. La carga de VSTs muestra progreso pero no congela la UI.
   const blocked =
     !isPlaying &&
@@ -396,9 +403,16 @@ export function TransportBar() {
       !projectReady.hostOk ||
       !projectReady.deviceArmed)
 
-  const bpm = project.bpm?.valor ?? 120
+  const bpm = safeProjectBpm({ project } as DAWState)
   const numerador = project.timeSignature?.numerador ?? 4
   const denominador = project.timeSignature?.denominador ?? 4
+
+  // Recovery: si el estado quedó con NaN (bug histórico), restaurar BPM finito.
+  useEffect(() => {
+    const raw = project.bpm?.valor
+    if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 20 && raw <= 300) return
+    void tienda.executor.execute('project.setBpm', { bpm: 120 }).catch(() => {})
+  }, [project.bpm?.valor, tienda])
 
   const projectName = project.nombre || 'Proyecto sin nombre'
 
@@ -417,6 +431,12 @@ export function TransportBar() {
     await tienda.executor.execute('transport.toggleRecord', {})
   }
 
+  const toggleCompMode = async () => {
+    await tienda.executor.execute('transport.setRecordMode', {
+      modo: isComping ? 'normal' : 'comping',
+    })
+  }
+
   const toggleLooping = async () => {
     await tienda.executor.execute('transport.toggleLoop', {})
   }
@@ -433,8 +453,15 @@ export function TransportBar() {
     await tienda.executor.execute('transport.toggleCountIn', {})
   }
 
-  const setBpm = async (bpm: number) => {
-    await tienda.executor.execute('project.setBpm', { bpm })
+  const togglePlayheadSnap = () => {
+    tienda.establecerEstado((s) => ({
+      ...s,
+      ui: { ...s.ui, playheadSnap: !(s.ui?.playheadSnap !== false) },
+    }))
+  }
+
+  const setBpm = async (bpm: number, gestureId?: string) => {
+    await tienda.executor.execute('project.setBpm', { bpm }, 'user', undefined, opcionesGesto('project.bpm', gestureId))
   }
 
   return (
@@ -451,12 +478,12 @@ export function TransportBar() {
         <button
           type="button"
           onClick={togglePlay}
-          disabled={blocked}
-          title={blocked ? projectReady.label : undefined}
+          disabled={blocked || renderLock}
+          title={renderLock ? 'Render en curso' : blocked ? projectReady.label : undefined}
           aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
           aria-pressed={isPlaying}
           className={`flex size-9 items-center justify-center rounded-md transition-colors ${
-            blocked
+            blocked || renderLock
               ? 'cursor-wait opacity-50 text-muted-foreground'
               : isPlaying
                 ? 'bg-track-fx/20 text-track-fx'
@@ -472,51 +499,100 @@ export function TransportBar() {
         <button
           type="button"
           onClick={stop}
+          disabled={renderLock}
+          title={renderLock ? 'Render en curso' : undefined}
           aria-label="Detener"
-          className="flex size-9 items-center justify-center rounded-md text-foreground hover:bg-panel-raised"
+          className={`flex size-9 items-center justify-center rounded-md text-foreground hover:bg-panel-raised ${
+            renderLock ? 'cursor-wait opacity-50 text-muted-foreground' : ''
+          }`}
         >
           <Square className="size-4" fill="currentColor" />
         </button>
         <button
           type="button"
           onClick={toggleRecording}
+          disabled={renderLock}
+          title={renderLock ? 'Render en curso' : undefined}
           aria-label="Grabar"
           aria-pressed={isRecording}
           className={`flex size-9 items-center justify-center rounded-md transition-colors ${
-            isRecording
-              ? 'bg-destructive/20 text-destructive animate-pulse'
-              : 'text-destructive hover:bg-panel-raised'
+            renderLock
+              ? 'cursor-wait opacity-50 text-muted-foreground'
+              : isRecording
+                ? 'bg-destructive/20 text-destructive animate-pulse'
+                : 'text-destructive hover:bg-panel-raised'
           }`}
         >
           <Circle className="size-4" fill="currentColor" />
         </button>
         <button
           type="button"
+          onClick={toggleCompMode}
+          disabled={renderLock}
+          aria-label="Modo comping"
+          aria-pressed={isComping}
+          title="Comping: cada pasada añade una toma"
+          className={`flex h-9 items-center justify-center rounded-md px-2 text-[10px] font-semibold transition-colors ${
+            renderLock
+              ? 'cursor-wait opacity-50 text-muted-foreground'
+              : isComping
+                ? 'bg-accent-amber/25 text-accent-amber'
+                : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+          }`}
+        >
+          COMP
+        </button>
+        <button
+          type="button"
           onClick={toggleLooping}
+          disabled={renderLock}
           aria-label="Repetir"
           aria-pressed={isLooping}
           className={`flex size-9 items-center justify-center rounded-md transition-colors ${
-            isLooping
-              ? 'bg-accent-amber/20 text-accent-amber'
-              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+            renderLock
+              ? 'cursor-wait opacity-50 text-muted-foreground'
+              : isLooping
+                ? 'bg-accent-amber/20 text-accent-amber'
+                : 'text-foreground hover:bg-panel-raised'
           }`}
         >
           <Repeat className="size-4" />
         </button>
         <button
           type="button"
+          onClick={() => setDetenerAlFinal(!detenerAlFinal)}
+          aria-label="Detener al final de la canción"
+          aria-pressed={detenerAlFinal}
+          title={
+            detenerAlFinal
+              ? 'Al terminar la canción se detiene y vuelve al inicio (clic para reproducir sin fin)'
+              : 'Reproducción sin fin: no se detiene al terminar la canción (clic para detener al final)'
+          }
+          className={`flex size-9 items-center justify-center rounded-md transition-colors ${
+            detenerAlFinal ? 'bg-accent-amber/20 text-accent-amber' : 'text-foreground hover:bg-panel-raised'
+          }`}
+        >
+          <ArrowRightToLine className="size-4" />
+        </button>
+        <button
+          type="button"
           onClick={togglePunch}
+          disabled={renderLock}
           aria-label="Punch in/out"
           aria-pressed={isPunch}
           title={
-            isPunch
-              ? `Punch ${transport.punch?.inicio?.beats?.toFixed?.(1) ?? 0}–${transport.punch?.fin?.beats?.toFixed?.(1) ?? 0} beats`
-              : 'Punch in/out (ventana de grabación)'
+            renderLock
+              ? 'Render en curso'
+              : isPunch
+                ? `Punch ${transport.punch?.inicio?.beats?.toFixed?.(1) ?? 0}–${transport.punch?.fin?.beats?.toFixed?.(1) ?? 0} beats`
+                : 'Punch in/out (ventana de grabación)'
           }
           className={`flex size-9 items-center justify-center rounded-md transition-colors ${
-            isPunch
-              ? 'bg-destructive/20 text-destructive'
-              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+            renderLock
+              ? 'cursor-wait opacity-50 text-muted-foreground'
+              : isPunch
+                ? 'bg-destructive/20 text-destructive'
+                : 'text-muted-foreground hover:bg-panel-raised'
           }`}
         >
           <Crosshair className="size-4" />
@@ -524,20 +600,43 @@ export function TransportBar() {
         <button
           type="button"
           onClick={toggleCountIn}
+          disabled={renderLock}
           aria-label="Count-in"
           aria-pressed={isCountIn}
           title={
-            isCountIn
-              ? `Count-in ${transport.countIn?.compases ?? 1} compás(es)`
-              : 'Count-in (pre-roll antes de grabar)'
+            renderLock
+              ? 'Render en curso'
+              : isCountIn
+                ? `Count-in ${transport.countIn?.compases ?? 1} compás(es)`
+                : 'Count-in (pre-roll antes de grabar)'
           }
           className={`flex size-9 items-center justify-center rounded-md transition-colors ${
-            isCountIn
-              ? 'bg-accent-cyan/20 text-accent-cyan'
-              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+            renderLock
+              ? 'cursor-wait opacity-50 text-muted-foreground'
+              : isCountIn
+                ? 'bg-accent-cyan/20 text-accent-cyan'
+                : 'text-muted-foreground hover:bg-panel-raised'
           }`}
         >
           <Timer className="size-4" />
+        </button>
+        <button
+          type="button"
+          onClick={togglePlayheadSnap}
+          aria-label="Precisión del playhead"
+          aria-pressed={playheadSnap}
+          title={
+            playheadSnap
+              ? 'Imán ON: playhead y clips anclados a la profundidad del selector de encaje'
+              : 'Imán OFF: seek y clips libres (sin anclar a la rejilla)'
+          }
+          className={`flex size-9 items-center justify-center rounded-md transition-colors ${
+            playheadSnap
+              ? 'bg-accent-amber/20 text-accent-amber'
+              : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+          }`}
+        >
+          <Magnet className="size-4" />
         </button>
       </div>
 
@@ -550,9 +649,22 @@ export function TransportBar() {
       <div className="ml-auto flex items-center gap-5">
         <MidiActivityBadge />
         <EditableStat value={bpm} label="BPM" onCommit={setBpm} min={20} max={300} />
-        <TimeSigEditor numerador={numerador} denominador={denominador} onCommit={(n, d) => {
-          void tienda.executor.execute('project.setTimeSignature', { numerador: n, denominador: d })
+        <TimeSigEditor numerador={numerador} denominador={denominador} onCommit={(n, d, gestureId) => {
+          void tienda.executor.execute(
+            'project.setTimeSignature',
+            { numerador: n, denominador: d },
+            'user',
+            undefined,
+            opcionesGesto('project.timeSignature', gestureId),
+          )
         }} />
+
+        <MonitorSalida />
+
+        <ControlesDirecto />
+
+        <BotonesIA />
+
         <button
           type="button"
           onClick={toggleMetronome}
@@ -573,5 +685,217 @@ export function TransportBar() {
         </button>
       </div>
     </header>
+  )
+}
+
+/**
+ * Señal estéreo del master y volumen hacia los altavoces. El volumen NO cambia el master ni lo que se
+ * exporta: con él a cero (o con la IA trabajando en silencio) el medidor sigue mostrando la señal.
+ */
+function MonitorSalida() {
+  const m = useMonitorSalida()
+  const picos = useStereoMeter('master')
+  // Retención de pico: la marca cae despacio (≈0,6/s) para que un golpe breve se vea aunque dure 20 ms.
+  // La caída va con su propio reloj: si dependiera solo de que cambie la lectura, con señal constante o en
+  // silencio la marca se quedaba congelada a media barra.
+  const [pico, setPico] = useState({ l: 0, r: 0 })
+  const ultimo = useRef(picos)
+  ultimo.current = picos
+  useEffect(() => {
+    const paso = () =>
+      setPico((prev) => {
+        const p = ultimo.current
+        const l = p.l >= prev.l ? p.l : Math.max(p.l, prev.l - 0.03)
+        const r = p.r >= prev.r ? p.r : Math.max(p.r, prev.r - 0.03)
+        return l === prev.l && r === prev.r ? prev : { l, r }
+      })
+    const t = setInterval(paso, 50)
+    return () => clearInterval(t)
+  }, [])
+  const silencio = m.silenciado || m.silencioIA
+  // Por debajo de −70 dB (ruido del analizador en reposo) la barra marca 0: con el transporte parado se ve silencio.
+  const escala = (p: number) => (p < 3e-4 ? 0 : Math.round(Math.min(1, Math.sqrt(Math.max(0, p))) * 100))
+  const ancho = (p: number) => `${escala(p)}%`
+  const color = (p: number) => (p > 0.98 ? 'bg-rose-500' : silencio ? 'bg-muted-foreground/70' : p > 0.7 ? 'bg-accent-amber' : 'bg-accent-cyan')
+  const titulo = m.silencioIA
+    ? 'La IA está trabajando sin sacar audio: hay señal en el master pero no sale por los altavoces. Enciende «Escuchar a la IA» para oírla.'
+    : m.silenciado
+      ? 'Salida silenciada: el master sigue sonando por dentro (y se exporta igual), pero nada sale por los altavoces.'
+      : 'Señal del master y volumen hacia los altavoces. No cambia el master ni lo que se exporta.'
+  return (
+    <div className="flex items-center gap-1.5" role="group" aria-label="Monitorización" data-testid="monitor-salida" title={titulo}>
+      <div className="flex w-20 flex-col gap-0.5" aria-label="Señal estéreo del master" data-testid="monitor-medidor">
+        {([
+          ['L', picos.l, pico.l],
+          ['R', picos.r, pico.r],
+        ] as const).map(([canal, p, retenido]) => (
+          <div key={canal} className="relative h-2 overflow-hidden rounded-sm bg-panel-base/80" aria-label={`Canal ${canal}`}>
+            <div className={`h-full transition-[width] duration-75 ${color(p)}`} style={{ width: ancho(p) }} data-nivel={escala(p)} />
+            {retenido > 0.01 ? (
+              <div
+                className={`absolute inset-y-0 w-px ${retenido > 0.98 ? 'bg-rose-300' : 'bg-foreground/80'}`}
+                style={{ left: `calc(${ancho(retenido)} - 1px)` }}
+                aria-hidden
+              />
+            ) : null}
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        aria-pressed={m.silenciado}
+        aria-label={m.silenciado ? 'Activar la salida a los altavoces' : 'Silenciar la salida a los altavoces'}
+        onClick={() => fijarMonitor({ silenciado: !m.silenciado })}
+        className={`relative flex size-8 items-center justify-center rounded-md transition-colors ${
+          silencio ? 'bg-rose-500/20 text-rose-300' : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+        }`}
+      >
+        {silencio ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
+        {m.silencioIA ? (
+          <span className="absolute -right-0.5 -top-0.5 rounded bg-accent-amber px-0.5 text-[8px] font-bold leading-3 text-black" data-testid="monitor-silencio-ia">
+            IA
+          </span>
+        ) : null}
+      </button>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        value={Math.round(m.volumen * 100)}
+        aria-label="Volumen de los altavoces"
+        onChange={(e) => fijarMonitor({ volumen: Number(e.target.value) / 100 })}
+        className="h-1 w-16 cursor-pointer accent-accent-cyan"
+        data-testid="monitor-volumen"
+      />
+    </div>
+  )
+}
+
+/**
+ * Modo Directo (K3): PANIC apaga todas las notas de todos los instrumentos y descarta el MIDI pendiente; el
+ * candado bloquea los atajos destructivos (borrar, deshacer, cortar, pegar, duplicar) mientras se toca en vivo
+ * y muestra un aviso. La seguridad del máster (limitador true-peak) se activa desde «Zonas MIDI».
+ */
+function ControlesDirecto() {
+  const tienda = useDAW()
+  const bloqueo = useDAWState((s: DAWState) => s.project?.directo?.bloqueo === true)
+  const seguridad = useDAWState((s: DAWState) => s.project?.directo?.seguridad?.activa === true)
+  const [aviso, setAviso] = useState<string | null>(null)
+  const [panicActivo, setPanicActivo] = useState(false)
+
+  useEffect(() => {
+    const quitar = instalarBloqueoDirecto(() => tienda.obtenerEstado().project?.directo?.bloqueo === true)
+    const onBloqueado = (e: Event) => {
+      const key = String((e as CustomEvent<{ key?: string }>).detail?.key ?? '')
+      setAviso(key ? `Atajo «${key}» bloqueado por el modo Directo` : 'Atajo bloqueado por el modo Directo')
+    }
+    window.addEventListener(EVENTO_ATAJO_BLOQUEADO, onBloqueado)
+    return () => {
+      quitar()
+      window.removeEventListener(EVENTO_ATAJO_BLOQUEADO, onBloqueado)
+    }
+  }, [tienda])
+
+  useEffect(() => {
+    if (!aviso) return
+    const t = setTimeout(() => setAviso(null), 2500)
+    return () => clearTimeout(t)
+  }, [aviso])
+
+  const panic = () => {
+    panicDirecto()
+    setPanicActivo(true)
+    setTimeout(() => setPanicActivo(false), 400)
+  }
+
+  const alternarBloqueo = () => {
+    void tienda.executor.execute('directo.setLock', { bloqueo: !bloqueo })
+  }
+
+  return (
+    <div className="flex items-center gap-1" role="group" aria-label="Modo Directo" data-testid="controles-directo">
+      <button
+        type="button"
+        onClick={panic}
+        aria-label="PANIC: apagar todas las notas"
+        title="PANIC: apaga todas las notas de todos los instrumentos y descarta el MIDI pendiente (notas colgadas)."
+        className={`flex h-8 items-center gap-1 rounded-md px-2 text-[11px] font-bold tracking-wide transition-colors ${
+          panicActivo ? 'bg-rose-500 text-white' : 'bg-rose-500/15 text-rose-300 hover:bg-rose-500/30'
+        }`}
+        data-testid="boton-panic"
+      >
+        <OctagonAlert className="size-4" />
+        PANIC
+      </button>
+      <button
+        type="button"
+        onClick={alternarBloqueo}
+        aria-pressed={bloqueo}
+        aria-label={bloqueo ? 'Salir del modo Directo' : 'Entrar en modo Directo'}
+        title={
+          bloqueo
+            ? 'Modo Directo activo: borrar, deshacer, cortar, pegar y duplicar están bloqueados. El transporte y el teclado siguen funcionando. Clic para salir.'
+            : 'Modo Directo: bloquea los atajos destructivos para tocar en vivo sin romper el proyecto.'
+        }
+        className={`flex h-8 items-center gap-1 rounded-md px-2 text-[11px] transition-colors ${
+          bloqueo ? 'bg-accent-amber/25 text-accent-amber' : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+        }`}
+        data-testid="modo-directo"
+      >
+        {bloqueo ? <Lock className="size-4" /> : <LockOpen className="size-4" />}
+        Directo
+        {seguridad ? (
+          <span className="rounded bg-accent-cyan/20 px-1 text-[9px] font-semibold text-accent-cyan" title="Limitador true-peak del máster activo" data-testid="directo-seguridad">
+            TP
+          </span>
+        ) : null}
+      </button>
+      {bloqueo ? (
+        <div
+          role="status"
+          className="fixed left-1/2 top-16 z-50 -translate-x-1/2 rounded-md border border-accent-amber/50 bg-panel px-3 py-1.5 text-[11px] text-accent-amber shadow-lg"
+          data-testid="banner-directo"
+        >
+          <Lock className="mr-1 inline size-3" />
+          Modo Directo: edición bloqueada{aviso ? ` · ${aviso}` : ''}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * Qué percibe el usuario del trabajo de la IA: escucharlo (suena cada parte que graba y la mezcla mientras
+ * se hace) y verlo (se ilumina lo que toca). Independientes: se puede ver sin escuchar.
+ */
+function BotonesIA() {
+  const { escuchar, ver } = usePreferenciasIA()
+  const base = 'flex h-8 items-center gap-1 rounded-md px-1.5 text-[11px] transition-colors'
+  const on = 'bg-accent-amber/20 text-accent-amber'
+  const off = 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+  return (
+    <div className="flex items-center gap-0.5" role="group" aria-label="Seguir el trabajo de la IA" data-testid="transporte-ia">
+      <span className="mr-0.5 text-[10px] font-semibold text-muted-foreground">IA</span>
+      <button
+        type="button"
+        aria-pressed={escuchar}
+        aria-label="Escuchar lo que hace la IA"
+        title={escuchar ? 'Escuchando a la IA: suena cada parte que graba y la mezcla mientras la hace. Clic para no escuchar.' : 'Sin escuchar a la IA (trabaja en silencio). Clic para oír lo que va haciendo.'}
+        onClick={() => fijarPreferenciaIA({ escuchar: !escuchar })}
+        className={`${base} ${escuchar ? on : off}`}
+      >
+        {escuchar ? <Headphones className="size-4" /> : <HeadphoneOff className="size-4" />}
+      </button>
+      <button
+        type="button"
+        aria-pressed={ver}
+        aria-label="Ver lo que toca la IA"
+        title={ver ? 'Viendo a la IA: se ilumina cada fader, perilla o FX que toca. Clic para no resaltarlo.' : 'Sin resaltar lo que toca la IA. Clic para verlo iluminado.'}
+        onClick={() => fijarPreferenciaIA({ ver: !ver })}
+        className={`${base} ${ver ? on : off}`}
+      >
+        {ver ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
+      </button>
+    </div>
   )
 }

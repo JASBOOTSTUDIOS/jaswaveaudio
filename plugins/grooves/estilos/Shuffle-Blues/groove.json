@@ -1,0 +1,110 @@
+{
+  "archivos": {
+    "shuffle-basico.mid": {
+      "id": "jw-shuffle-blues-shuffle-basico",
+      "nombre": "Shuffle básico",
+      "tempo": 100,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "shuffle",
+        "blues"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "blues-lento.mid": {
+      "id": "jw-shuffle-blues-blues-lento",
+      "nombre": "Blues lento",
+      "tempo": 62,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "blues",
+        "lento"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "shuffle-texas.mid": {
+      "id": "jw-shuffle-blues-shuffle-texas",
+      "nombre": "Shuffle Texas",
+      "tempo": 112,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "shuffle",
+        "texas",
+        "bombo-al-pulso"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "shuffle-chicago-fantasmas.mid": {
+      "id": "jw-shuffle-blues-shuffle-chicago-fantasmas",
+      "nombre": "Shuffle Chicago fantasmas",
+      "tempo": 96,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "shuffle",
+        "chicago",
+        "fantasmas"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-caja-en-tresillos.mid": {
+      "id": "jw-shuffle-blues-fill-caja-en-tresillos",
+      "nombre": "Fill caja en tresillos",
+      "tempo": 100,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "caja",
+        "tresillos"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-toms-en-tresillos.mid": {
+      "id": "jw-shuffle-blues-fill-toms-en-tresillos",
+      "nombre": "Fill toms en tresillos",
+      "tempo": 100,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "toms",
+        "tresillos"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

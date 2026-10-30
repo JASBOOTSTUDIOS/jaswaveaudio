@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JasWave · ui-cyber</title>
+    <style>
+      html, body { margin: 0; background: #06080a; color: #8fb4bf; font: 13px Bahnschrift, system-ui, sans-serif; }
+      #barra { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; }
+      #barra button { min-height: 32px; background: #0b1823; color: #7fe3f5; border: 1px solid #1e4656; border-radius: 4px; padding: 0 10px; cursor: pointer; }
+      #barra button[aria-pressed='true'] { border-color: #2fd6f2; }
+      #pestanas { display: flex; }
+      #pestanas button { flex: 1; min-height: 44px; background: none; border: 0; border-bottom: 2px solid transparent; color: #4f6b75; font-weight: 600; letter-spacing: 0.1em; }
+      #pestanas button[aria-selected='true'] { color: #2fd6f2; border-color: #2fd6f2; }
+      #lienzo { display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="barra"></div>
+    <div id="pestanas" role="tablist"></div>
+    <div id="contenedor"><canvas id="lienzo"></canvas></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -7,7 +7,7 @@ import { AGENT_MODE_META, type AgentMode } from './ai-modes'
 import { listAgentDocs } from './agent-docs'
 import { pluginRegistry } from './plugin/registry'
 
-export type MentionKind = 'mode' | 'action' | 'track' | 'clip' | 'plugin' | 'vst' | 'doc' | 'message'
+export type MentionKind = 'mode' | 'action' | 'track' | 'clip' | 'plugin' | 'vst' | 'doc' | 'message' | 'agent'
 
 export type MentionableMessage = {
   id: string
@@ -29,6 +29,20 @@ export type Mentionable = {
   label: string
   hint: string
   insertText?: string
+  /** Otros nombres con los que también se encuentra (p. ej. `/learn` para `/aprender`). */
+  alias?: string[]
+}
+
+/** Disparador del autocompletado: `/` abre comandos, `@` abre referencias del proyecto. */
+export type MentionTrigger = '@' | '/'
+
+const KINDS_BY_TRIGGER: Record<MentionTrigger, readonly MentionKind[]> = {
+  '/': ['action', 'mode'],
+  '@': ['message', 'agent', 'doc', 'track', 'clip', 'plugin', 'vst'],
+}
+
+export function mentionKindsFor(trigger: MentionTrigger): readonly MentionKind[] {
+  return KINDS_BY_TRIGGER[trigger]
 }
 
 export const MENTION_KIND_LABEL: Record<MentionKind, string> = {
@@ -40,6 +54,7 @@ export const MENTION_KIND_LABEL: Record<MentionKind, string> = {
   plugin: 'Plugins en el proyecto',
   vst: 'Catálogo VST',
   doc: 'Documentos',
+  agent: 'Agentes y Músicos Virtuales',
 }
 
 export const MAX_CITED_MESSAGES = 5
@@ -70,13 +85,26 @@ function staticMentions(): Mentionable[] {
     }),
   )
   const actions: Mentionable[] = [
-    { kind: 'action', id: 'action:clip', label: 'crear clip MIDI', hint: 'clip en pista seleccionada', insertText: 'crea un clip MIDI en la pista seleccionada' },
-    { kind: 'action', id: 'action:project', label: 'proyecto desde cero', hint: 'Music Build: pistas + MIDI + mix', insertText: 'créame una canción completa desde cero' },
-    { kind: 'action', id: 'action:bpm', label: 'cambiar BPM', hint: 'tempo', insertText: 'pon el BPM a ' },
-    { kind: 'action', id: 'action:insert-vst', label: 'insertar VST', hint: 'catálogo en pista', insertText: 'inserta el VST ' },
-    { kind: 'action', id: 'action:lookup', label: 'consultar VST', hint: 'mapa MIDI / manual', insertText: 'consulta cómo se usa el VST ' },
-    { kind: 'action', id: 'action:plan-md', label: 'editar plan.md', hint: 'documento de plan', insertText: 'actualiza plan.md con lo que vamos a hacer y evalúa después' },
-    { kind: 'action', id: 'action:eval-plan', label: 'evaluar plan.md', hint: 'planeado vs DAW', insertText: 'evalúa plan.md: intención vs por implementar vs lo que hay en el DAW' },
+    { kind: 'action', id: 'action:aprender', label: '/aprender', alias: ['/learn'], hint: 'recuerdo una preferencia tuya para este proyecto', insertText: '/aprender ' },
+    { kind: 'action', id: 'action:meta', label: '/meta', alias: ['/goal'], hint: 'trabajo varios pasos seguidos hasta cumplir un objetivo', insertText: '/meta ' },
+    { kind: 'action', id: 'action:plan', label: '/plan', hint: 'preparo un plan paso a paso sin tocar tu proyecto', insertText: '/plan ' },
+    { kind: 'action', id: 'action:entrevista', label: '/entrevista', alias: ['/grill-me'], hint: 'te hago preguntas hasta tener claro lo que quieres', insertText: '/entrevista ' },
+    { kind: 'action', id: 'action:programar', label: '/programar', alias: ['/schedule'], hint: 'hago una tarea más tarde o cada cierto tiempo', insertText: '/programar ' },
+    {
+      kind: 'action',
+      id: 'action:configurar',
+      label: '/configurar',
+      alias: ['/config', '/personalizar'],
+      hint: 'te ayudo a crear, editar o quitar tus habilidades, prompts, planes y reglas',
+      insertText: '/configurar ',
+    },
+    { kind: 'action', id: 'action:clip', label: 'crear un clip', hint: 'en la pista seleccionada', insertText: 'crea un clip MIDI en la pista seleccionada' },
+    { kind: 'action', id: 'action:project', label: 'canción desde cero', hint: 'pistas, notas y mezcla', insertText: 'créame una canción completa desde cero' },
+    { kind: 'action', id: 'action:bpm', label: 'cambiar el tempo', hint: 'velocidad de la canción', insertText: 'pon el tempo a ' },
+    { kind: 'action', id: 'action:insert-vst', label: 'añadir un instrumento o efecto', hint: 'en la pista seleccionada', insertText: 'añade el instrumento ' },
+    { kind: 'action', id: 'action:lookup', label: 'cómo se usa un plugin', hint: 'te lo explico', insertText: 'explícame cómo se usa el plugin ' },
+    { kind: 'action', id: 'action:plan-md', label: 'actualizar el plan', hint: 'lo que vamos a hacer', insertText: 'actualiza el plan con lo que vamos a hacer y revisa después cómo vamos' },
+    { kind: 'action', id: 'action:eval-plan', label: 'revisar el plan', hint: 'qué falta por hacer', insertText: 'revisa el plan: qué ya está hecho y qué falta' },
   ]
   return [...modes, ...actions]
 }
@@ -163,6 +191,43 @@ export function listMentionables(state: DAWState, messages: MentionableMessage[]
       insertText: d.slug === 'plan.md' ? 'lee y actualiza @plan.md' : `abre @${d.slug}`,
     })
   }
+
+  // Agentes y Músicos Virtuales (editables y creables por el usuario)
+  try {
+    const raw =
+      typeof window !== 'undefined' && window.localStorage
+        ? window.localStorage.getItem('jaswave-especialistas-custom-v2')
+        : null
+    const lista = raw ? JSON.parse(raw) : null
+    const agentes =
+      Array.isArray(lista) && lista.length > 0
+        ? lista
+        : [
+            { id: 'director', nombre: 'Director de Banda', role: 'director' },
+            { id: 'pianista', nombre: 'Pianista / Teclista', role: 'musico', instrumento: 'Piano' },
+            { id: 'guitarrista', nombre: 'Guitarrista', role: 'musico', instrumento: 'Guitarra eléctrica' },
+            { id: 'baterista', nombre: 'Baterista / Percusión', role: 'musico', instrumento: 'Drums' },
+            { id: 'bajista', nombre: 'Bajista', role: 'musico', instrumento: 'Bajo' },
+            { id: 'sintetizador', nombre: 'Diseñador de Sintes / Leads', role: 'musico', instrumento: 'Synthesizer' },
+            { id: 'qa', nombre: 'QA / Auditor de Calidad Musical', role: 'qa' },
+            { id: 'mezcla', nombre: 'Ingeniero de Mezcla', role: 'mezcla' },
+            { id: 'mastering', nombre: 'Ingeniero de Mastering', role: 'mastering' },
+          ]
+    for (const ag of agentes) {
+      if (ag.activo === false) continue
+      const label = ag.nombre || ag.id
+      out.push({
+        kind: 'agent',
+        id: `agent:${ag.id}`,
+        label,
+        hint: `${ag.role}${ag.instrumento ? ` · ${ag.instrumento}` : ''} · especialista`,
+        insertText: label.includes(' ') ? `@"${label}"` : `@${label}`,
+      })
+    }
+  } catch {
+    /* ignore */
+  }
+
   return out
 }
 
@@ -172,7 +237,13 @@ function matchItem(query: string, item: Mentionable): boolean {
   const label = norm(item.label)
   const hint = norm(item.hint)
   const excerpt = norm(item.messageExcerpt ?? '')
-  return label === q || label.startsWith(q) || label.includes(q) || hint.includes(q) || (excerpt.length > 0 && excerpt.includes(q))
+  const alias = (item.alias ?? []).map(norm)
+  return (
+    label.includes(q) ||
+    hint.includes(q) ||
+    alias.some((a) => a.includes(q)) ||
+    (excerpt.length > 0 && excerpt.includes(q))
+  )
 }
 
 /** Resuelve @Nombre / @"Nombre con espacios" contra el proyecto. */
@@ -251,34 +322,57 @@ export function resolveAtMentions(
 export type MentionDraft = {
   start: number
   query: string
+  trigger: MentionTrigger
 }
 
-/** Fragmento incompleto tras el último @ (para autocompletado). */
+/** Fragmento incompleto tras el último @ o / (para autocompletado). */
 export function mentionDraftAtCaret(text: string, caret: number): MentionDraft | null {
   const before = text.slice(0, caret)
   const at = before.lastIndexOf('@')
-  if (at < 0) return null
-  const frag = before.slice(at + 1)
-  if (/\n/.test(frag)) return null
-  if (frag.startsWith('"') && frag.includes('"', 1)) return null
-  return { start: at, query: frag.replace(/^"/, '') }
+  const slash = before.lastIndexOf('/')
+  const triggerIdx = Math.max(at, slash)
+  if (triggerIdx < 0) return null
+
+  const draftAt = (): MentionDraft | null => {
+    if (at < 0) return null
+    const fragAt = before.slice(at + 1)
+    if (/\n/.test(fragAt)) return null
+    if (fragAt.startsWith('"') && fragAt.includes('"', 1)) return null
+    return { start: at, query: fragAt.replace(/^"/, ''), trigger: '@' }
+  }
+
+  if (triggerIdx === at) return draftAt()
+
+  // '/' solo abre comandos al inicio o tras un espacio (no en rutas como a/b), y se cierra al escribir
+  // los argumentos del comando.
+  if (triggerIdx > 0 && !/\s/.test(before[triggerIdx - 1] ?? '')) return draftAt()
+  const frag = before.slice(triggerIdx + 1)
+  if (/\s/.test(frag)) return null
+  return { start: triggerIdx, query: frag, trigger: '/' }
 }
 
-export function filterMentionables(items: Mentionable[], query: string): Mentionable[] {
+/** Filtra por texto y, si se indica el disparador, solo por los tipos que le corresponden. */
+export function filterMentionables(items: Mentionable[], query: string, trigger?: MentionTrigger): Mentionable[] {
   const q = norm(query)
-  const hits = q ? items.filter((it) => matchItem(q, it)) : items
+  const kinds = trigger ? mentionKindsFor(trigger) : null
+  const scoped = kinds ? items.filter((it) => kinds.includes(it.kind)) : items
+  const hits = q ? scoped.filter((it) => matchItem(q, it)) : scoped
   return hits.slice(0, 200)
 }
 
+const GROUP_ORDER: readonly MentionKind[] = ['message', 'mode', 'action', 'agent', 'doc', 'track', 'clip', 'plugin', 'vst']
+
 export function groupMentionables(items: Mentionable[]): Array<{ kind: MentionKind; label: string; items: Mentionable[] }> {
-  const order: MentionKind[] = ['message', 'mode', 'action', 'doc', 'track', 'clip', 'plugin', 'vst']
-  return order
-    .map((kind) => ({
-      kind,
-      label: MENTION_KIND_LABEL[kind],
-      items: items.filter((i) => i.kind === kind),
-    }))
-    .filter((g) => g.items.length > 0)
+  return GROUP_ORDER.map((kind) => ({
+    kind,
+    label: MENTION_KIND_LABEL[kind],
+    items: items.filter((i) => i.kind === kind),
+  })).filter((g) => g.items.length > 0)
+}
+
+/** Lista plana en el mismo orden en que se pintan los grupos: la que recorre el teclado. */
+export function orderedMentionables(items: Mentionable[]): Mentionable[] {
+  return groupMentionables(items).flatMap((g) => g.items)
 }
 
 export function formatMentionsForPrompt(mentions: Mentionable[]): string {
@@ -290,6 +384,7 @@ export function formatMentionsForPrompt(mentions: Mentionable[]): string {
       if (m.kind === 'plugin') return `- plugin id=${m.pluginInstanceId} pista=${m.trackId} «${m.label}» (${m.hint})`
       if (m.kind === 'vst') return `- VST catálogo id=${m.pluginId} «${m.label}» (${m.hint})`
       if (m.kind === 'mode') return `- modo ${m.label}`
+      if (m.kind === 'agent') return `- agente «${m.label}» (${m.hint}): la consulta va dirigida a este miembro de la banda; responde desde su especialidad`
       if (m.kind === 'doc') return `- documento ${m.label} (markdown editable)`
       if (m.kind === 'message') {
         const excerpt = (m.messageExcerpt || m.label).replace(/\n/g, ' ').slice(0, 240)

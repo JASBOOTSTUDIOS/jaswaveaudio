@@ -1,0 +1,824 @@
+{
+  "version": 1,
+  "generador": "generar_grooves.mjs",
+  "licencia": "CC0-1.0",
+  "total": 136,
+  "grooves": [
+    {
+      "id": "jw-12-8-blues-12-8",
+      "ruta": "12-8/blues-12-8.mid",
+      "sha256": "424f9891a775ed484e8c52dc5b4b6d4074a10cdd2a678e97dc6ea4499938a8e8",
+      "revision": 1
+    },
+    {
+      "id": "jw-12-8-fill-caja-12-8",
+      "ruta": "12-8/fill-caja-12-8.mid",
+      "sha256": "ba2122cc25833e3fd24d4f20f3073ee329e91392bb5b600b407116687b1e5aab",
+      "revision": 1
+    },
+    {
+      "id": "jw-12-8-fill-toms-12-8",
+      "ruta": "12-8/fill-toms-12-8.mid",
+      "sha256": "b2630b36d31239b9ec2d732d4fe8cdfda1e9ab31500445bcb016bc522c004059",
+      "revision": 1
+    },
+    {
+      "id": "jw-12-8-gospel-12-8",
+      "ruta": "12-8/gospel-12-8.mid",
+      "sha256": "ede03e7202a18e6d027d55ff834fdf2fb8a1bdf43114ecbf7b0d219dbff71ceb",
+      "revision": 1
+    },
+    {
+      "id": "jw-12-8-soul-lento-12-8",
+      "ruta": "12-8/soul-lento-12-8.mid",
+      "sha256": "6b54bc227d9244073b2dcff62cd292e52cef79b6797d0ed73d908beff8949865",
+      "revision": 1
+    },
+    {
+      "id": "jw-12-8-worship-12-8-campana",
+      "ruta": "12-8/worship-12-8-campana.mid",
+      "sha256": "ca6fc99256b37dc5cc9db45590347ca2583d8680ae6bcef6655dee230509933c",
+      "revision": 1
+    },
+    {
+      "id": "jw-12-8-worship-12-8",
+      "ruta": "12-8/worship-12-8.mid",
+      "sha256": "6a59888c666dc9b95adcfd8d4681c77562f9246452d6c305ae9f22f546eec049",
+      "revision": 1
+    },
+    {
+      "id": "jw-afrobeat-afrobeat-clasico",
+      "ruta": "Afrobeat/afrobeat-clasico.mid",
+      "sha256": "c35881dc6e3182b01403729e76e7f3a60d19d81276653503680a3fad9e3004ff",
+      "revision": 1
+    },
+    {
+      "id": "jw-afrobeat-afrobeat-ligero",
+      "ruta": "Afrobeat/afrobeat-ligero.mid",
+      "sha256": "25b746e0daf64f67df90bf0af7e5bd81f7c3eb85b60cc26e47fb660e1b87a927",
+      "revision": 1
+    },
+    {
+      "id": "jw-afrobeat-afrobeats-moderno",
+      "ruta": "Afrobeat/afrobeats-moderno.mid",
+      "sha256": "c367bb9b041002399b42b35d7537c1f9a38092676fc6579c1a8e31b1ef31eee8",
+      "revision": 1
+    },
+    {
+      "id": "jw-afrobeat-fill-redoble-de-caja",
+      "ruta": "Afrobeat/fill-redoble-de-caja.mid",
+      "sha256": "2a7ee9c40f9fbe4043ed0a83834705f82c7415ed44e61dd15b605d843cdb125f",
+      "revision": 1
+    },
+    {
+      "id": "jw-balada-balada-con-ride",
+      "ruta": "Balada/balada-con-ride.mid",
+      "sha256": "0dbeaad343a7e204aea1889ae2119911918d8ed4ef37862835d25162b8416455",
+      "revision": 1
+    },
+    {
+      "id": "jw-balada-balada-con-rimshot",
+      "ruta": "Balada/balada-con-rimshot.mid",
+      "sha256": "cf7761f2b4e48c67f7e09cd29efd81c9654ee56c03b7be13d74055605e1ca886",
+      "revision": 1
+    },
+    {
+      "id": "jw-balada-balada-de-corcheas",
+      "ruta": "Balada/balada-de-corcheas.mid",
+      "sha256": "ab81026e26b8aef2aa842e58a191c3343f4baf4e9c63fdb70f2d2e5a5a1a3917",
+      "revision": 1
+    },
+    {
+      "id": "jw-balada-balada-en-3-tiempos",
+      "ruta": "Balada/balada-en-3-tiempos.mid",
+      "sha256": "ef848365ef0a49c73eda58456033389f9a8ccbd919c69ad44e1c0b3f5a2e448a",
+      "revision": 1
+    },
+    {
+      "id": "jw-balada-fill-caja-al-cuarto",
+      "ruta": "Balada/fill-caja-al-cuarto.mid",
+      "sha256": "9510c7667067470c93247272945342b1557210127ae1a2b3a71ea40a8c2a8fd0",
+      "revision": 1
+    },
+    {
+      "id": "jw-country-dos-tiempos",
+      "ruta": "Country/dos-tiempos.mid",
+      "sha256": "73f6754a320fb4742860ee146b6785a45813c700361c85467a319e090c87445f",
+      "revision": 1
+    },
+    {
+      "id": "jw-country-fill-caja-al-cuarto",
+      "ruta": "Country/fill-caja-al-cuarto.mid",
+      "sha256": "eba00fb083998b0c933ae2ade749572d10a99dd3c95628d8acdadd8aaa8550b0",
+      "revision": 1
+    },
+    {
+      "id": "jw-country-shuffle-country",
+      "ruta": "Country/shuffle-country.mid",
+      "sha256": "561558e92bb504430abf2c0ba01ef11cc98b03349c130c5003a96bde32cba8d9",
+      "revision": 1
+    },
+    {
+      "id": "jw-country-tren",
+      "ruta": "Country/tren.mid",
+      "sha256": "5ce27a8a018ff58d5a96a66de5cf5e40d3ff1598b013cb74cc00a00b56f888bd",
+      "revision": 1
+    },
+    {
+      "id": "jw-electronica-cuatro-por-cuatro",
+      "ruta": "Electronica/cuatro-por-cuatro.mid",
+      "sha256": "d6a7ebd877915920be9a6206084a8b49970497c82076577c9813bf2e237432f6",
+      "revision": 1
+    },
+    {
+      "id": "jw-electronica-drum-and-bass",
+      "ruta": "Electronica/drum-and-bass.mid",
+      "sha256": "8431e5e7d382398f8f2432522a1fa8f28123b0dee212006bcfb2695ca9e72062",
+      "revision": 1
+    },
+    {
+      "id": "jw-electronica-fill-redoble-de-caja",
+      "ruta": "Electronica/fill-redoble-de-caja.mid",
+      "sha256": "e7606630a655528074e11cd094d7c48a6d029e15a2808656249c5502433da00b",
+      "revision": 1
+    },
+    {
+      "id": "jw-electronica-medio-tiempo-electronico",
+      "ruta": "Electronica/medio-tiempo-electronico.mid",
+      "sha256": "82f06ca3b6489a4146202a33a6fd7654cbd1c2b3e506a9f6abed52e19460ea2f",
+      "revision": 1
+    },
+    {
+      "id": "jw-electronica-techno",
+      "ruta": "Electronica/techno.mid",
+      "sha256": "3cee003393698d46b05911c478f364faeef4b116aa9aad5687f00709d803ccee",
+      "revision": 1
+    },
+    {
+      "id": "jw-funk-fill-caja-al-cuarto",
+      "ruta": "Funk/fill-caja-al-cuarto.mid",
+      "sha256": "df285f83966fe086868823e5f98fe9a9e9ef398a2e102edf830544357e38240b",
+      "revision": 1
+    },
+    {
+      "id": "jw-funk-fill-redoble-de-caja",
+      "ruta": "Funk/fill-redoble-de-caja.mid",
+      "sha256": "f03215130417b1fe0179e2d99dc53692e315f011cc7fce948a4b5b1105277202",
+      "revision": 1
+    },
+    {
+      "id": "jw-funk-funk-clasico",
+      "ruta": "Funk/funk-clasico.mid",
+      "sha256": "5bf87537af888daed6a6915f99e1d5670a524a2ee862436d070d776cf055f163",
+      "revision": 1
+    },
+    {
+      "id": "jw-funk-funk-con-hi-hat-abierto",
+      "ruta": "Funk/funk-con-hi-hat-abierto.mid",
+      "sha256": "c2ce60add785672d5fbbcab9011faafaead000273361d4476aece96ef7a5289e",
+      "revision": 1
+    },
+    {
+      "id": "jw-funk-funk-lento",
+      "ruta": "Funk/funk-lento.mid",
+      "sha256": "71b6e5de92e5c90404ed7c59de8bd8880db4186a9034180b47b69780b36de3fc",
+      "revision": 1
+    },
+    {
+      "id": "jw-funk-funk-sincopado",
+      "ruta": "Funk/funk-sincopado.mid",
+      "sha256": "d4b534f9543beab650289b51d3834cb980fa8937d1c5260e0ec54732ded66858",
+      "revision": 1
+    },
+    {
+      "id": "jw-gospel-fill-redoble-de-caja",
+      "ruta": "Gospel/fill-redoble-de-caja.mid",
+      "sha256": "b3c19e47bc7067752e0904f0c8e5b5b87cb3a56150d3ca27d0e855232c525b7c",
+      "revision": 1
+    },
+    {
+      "id": "jw-gospel-fill-redoble-largo",
+      "ruta": "Gospel/fill-redoble-largo.mid",
+      "sha256": "c1ce950b69c97910c7bda504fc9c35459520d4aed8c4b5e9957a7052fa5edbe5",
+      "revision": 1
+    },
+    {
+      "id": "jw-gospel-gospel-medio-tiempo",
+      "ruta": "Gospel/gospel-medio-tiempo.mid",
+      "sha256": "1f2a2c8f9e3a74005ba303a02e37691a8920ad7e7934262881a3d2f75264f30f",
+      "revision": 1
+    },
+    {
+      "id": "jw-gospel-gospel-shout",
+      "ruta": "Gospel/gospel-shout.mid",
+      "sha256": "f811c84ea4da9dff111480027054c2a1bed46db9eb83d2013e1176b83019fc49",
+      "revision": 1
+    },
+    {
+      "id": "jw-gospel-gospel-shuffle",
+      "ruta": "Gospel/gospel-shuffle.mid",
+      "sha256": "691096e48fd7e842fbd97150861aecd7c6cb8f7020b55819e2b944de7415be2e",
+      "revision": 1
+    },
+    {
+      "id": "jw-hip-hop-boom-bap",
+      "ruta": "Hip-Hop/boom-bap.mid",
+      "sha256": "25a335df5477d713990bea1f4fe7258ade6af18d2c9a9a3e6f9326fc2349e693",
+      "revision": 1
+    },
+    {
+      "id": "jw-hip-hop-fill-caja-al-cuarto",
+      "ruta": "Hip-Hop/fill-caja-al-cuarto.mid",
+      "sha256": "b3c4c06ef0c4fad45af0ab06153bae2b5daa6d6b7647f7610df3c63cc1edb558",
+      "revision": 1
+    },
+    {
+      "id": "jw-hip-hop-lo-fi",
+      "ruta": "Hip-Hop/lo-fi.mid",
+      "sha256": "8319d5543fe1e98b2bfc9ea499045c61b33c1fad364f29b0b095360fe3600ed7",
+      "revision": 1
+    },
+    {
+      "id": "jw-hip-hop-trap",
+      "ruta": "Hip-Hop/trap.mid",
+      "sha256": "4cb5934bf76db48b5e744f68c90908ae54681d9d2e413394508e859dd1c04cda",
+      "revision": 1
+    },
+    {
+      "id": "jw-indie-fill-caja-al-cuarto",
+      "ruta": "Indie/fill-caja-al-cuarto.mid",
+      "sha256": "034d71050307f2359d97a655f478736f592a2c0f13c61f9982c73c8c3df1e656",
+      "revision": 1
+    },
+    {
+      "id": "jw-indie-fill-toms-subiendo",
+      "ruta": "Indie/fill-toms-subiendo.mid",
+      "sha256": "3fc3581cef695ebf28c6cf629a30d77ca35a83e808487c7309573ae8efebb8bc",
+      "revision": 1
+    },
+    {
+      "id": "jw-indie-indie-bailable",
+      "ruta": "Indie/indie-bailable.mid",
+      "sha256": "b1802646aba15fc1881f701ba010d00f6b0f9b05291e537299289da736889df7",
+      "revision": 1
+    },
+    {
+      "id": "jw-indie-indie-ride-flojo",
+      "ruta": "Indie/indie-ride-flojo.mid",
+      "sha256": "bd1c81256c082642adb713b19d3f0fa661282033253ba11bb0b55261bbf95e2d",
+      "revision": 1
+    },
+    {
+      "id": "jw-indie-indie-seco",
+      "ruta": "Indie/indie-seco.mid",
+      "sha256": "7ff66e964a662ca056ef74896085264b9ccffd171febc636dddba4d752d7ad4e",
+      "revision": 1
+    },
+    {
+      "id": "jw-jazz-swing-balada-de-escobillas",
+      "ruta": "Jazz/Swing/balada-de-escobillas.mid",
+      "sha256": "12a695b98528d045bd9dfd05f9ec5c9784b96474a1b76ce5bd0accb7da70e3c5",
+      "revision": 1
+    },
+    {
+      "id": "jw-jazz-swing-escobillas-medio-swing",
+      "ruta": "Jazz/Swing/escobillas-medio-swing.mid",
+      "sha256": "4481ab0e1ca5ab5d959127f05a0afb8ce9d66612fa4263318b09e32e8704b36a",
+      "revision": 1
+    },
+    {
+      "id": "jw-jazz-swing-fill-caja-en-tresillos",
+      "ruta": "Jazz/Swing/fill-caja-en-tresillos.mid",
+      "sha256": "31ef9b6f69b93f477cc24f4380135374610bdbd7e026e73f2f8aa121b1359cd6",
+      "revision": 1
+    },
+    {
+      "id": "jw-jazz-swing-swing-medio-con-ride",
+      "ruta": "Jazz/Swing/swing-medio-con-ride.mid",
+      "sha256": "e4026802e9ca7536730602b70c76d15dbca52329dedd517a4f8d849712a43496",
+      "revision": 1
+    },
+    {
+      "id": "jw-jazz-swing-swing-rapido",
+      "ruta": "Jazz/Swing/swing-rapido.mid",
+      "sha256": "d7336f8d5a2f0b1c1bff67baa72410a58cc09c31af767be7724a5820d1ef24d0",
+      "revision": 1
+    },
+    {
+      "id": "jw-jazz-vals-vals-de-jazz",
+      "ruta": "Jazz/Vals/vals-de-jazz.mid",
+      "sha256": "f8f3f40d42bd3e6aa5769b235aa811cf0ad3e5bce9d77a35c34541f3edc68ddf",
+      "revision": 1
+    },
+    {
+      "id": "jw-latin-bossa-bossa-con-ride",
+      "ruta": "Latin/Bossa/bossa-con-ride.mid",
+      "sha256": "d61da94dea7950d32de1452a8750c7edc2033bf1a72e6bbb6aca8a8dff0a35e8",
+      "revision": 1
+    },
+    {
+      "id": "jw-latin-bossa-bossa-nova",
+      "ruta": "Latin/Bossa/bossa-nova.mid",
+      "sha256": "3c5fd84a999430b930ed1365d2f49fc7347388d1781a65b9a581ef2716bd3e3a",
+      "revision": 1
+    },
+    {
+      "id": "jw-latin-cascara",
+      "ruta": "Latin/cascara.mid",
+      "sha256": "b6b92ef6e6335ed0e088428d8c03987ad6a1de3fe332a540002da8aa2b6d9046",
+      "revision": 1
+    },
+    {
+      "id": "jw-latin-cumbia",
+      "ruta": "Latin/cumbia.mid",
+      "sha256": "283db69bf879a2384b082f70086cb42c14f958599bf6d9c3fc0f2632d89bc179",
+      "revision": 1
+    },
+    {
+      "id": "jw-latin-fill-caja-al-cuarto",
+      "ruta": "Latin/fill-caja-al-cuarto.mid",
+      "sha256": "a31b0d58b25e9b974a21e684274717ee1347c8bf6708e3dc77a69f5396072606",
+      "revision": 1
+    },
+    {
+      "id": "jw-latin-reggaeton-dembow",
+      "ruta": "Latin/reggaeton-dembow.mid",
+      "sha256": "5f7b5f076062a4ba632e8725f6f041ca831c6d2810a8977f2dd00ff8e73ba34d",
+      "revision": 1
+    },
+    {
+      "id": "jw-latin-samba-samba",
+      "ruta": "Latin/Samba/samba.mid",
+      "sha256": "1c5f226cdd3098f59d17ac2ef0a6a84752f18fe395b189e12298a48d055c3264",
+      "revision": 1
+    },
+    {
+      "id": "jw-metal-blast-beat",
+      "ruta": "Metal/blast-beat.mid",
+      "sha256": "15fa964e69d2c489dc61789da3b18312f65a8e61edce0f4d268e44f507d48446",
+      "revision": 1
+    },
+    {
+      "id": "jw-metal-doble-bombo",
+      "ruta": "Metal/doble-bombo.mid",
+      "sha256": "32a11d1d1b0f38ec1ba137bf29914200f08da391650a7358af5a8e7ac583472b",
+      "revision": 1
+    },
+    {
+      "id": "jw-metal-fill-redoble-largo",
+      "ruta": "Metal/fill-redoble-largo.mid",
+      "sha256": "da229cef503d7855af208e25afaedfebe3d78b23dbeda36c8613572c579f78b7",
+      "revision": 1
+    },
+    {
+      "id": "jw-metal-fill-toms-bajando",
+      "ruta": "Metal/fill-toms-bajando.mid",
+      "sha256": "228a88e8b4b67b80719ffec8a01e3605aa21ef29fdfbe271645a237f584b4316",
+      "revision": 1
+    },
+    {
+      "id": "jw-metal-galope",
+      "ruta": "Metal/galope.mid",
+      "sha256": "4a61657801380b41d1d505736d7846f4a9e992164bb6effc739431e4a40d50ef",
+      "revision": 1
+    },
+    {
+      "id": "jw-metal-metal-pesado-lento",
+      "ruta": "Metal/metal-pesado-lento.mid",
+      "sha256": "dc9cc3ba91f63da7920160de2fbab8326f09b66be2dbcdde4ea6fbecd2cef348",
+      "revision": 1
+    },
+    {
+      "id": "jw-pop-rock-fill-caja-al-cuarto",
+      "ruta": "Pop-Rock/fill-caja-al-cuarto.mid",
+      "sha256": "7c2f1cadc3da3b46d35ab786618e508f34918f71b1bf33173594bc2b391a6691",
+      "revision": 1
+    },
+    {
+      "id": "jw-pop-rock-fill-toms-subiendo",
+      "ruta": "Pop-Rock/fill-toms-subiendo.mid",
+      "sha256": "699721d5e43a2500c81a5123446d19af58d458537782397f8307f263361e4896",
+      "revision": 1
+    },
+    {
+      "id": "jw-pop-rock-pop-rock-con-pandereta",
+      "ruta": "Pop-Rock/pop-rock-con-pandereta.mid",
+      "sha256": "8da01561c71d2481c63188aa196834e15e61c400ef3bf4c8f44b249a0f687339",
+      "revision": 1
+    },
+    {
+      "id": "jw-pop-rock-pop-rock-empuje",
+      "ruta": "Pop-Rock/pop-rock-empuje.mid",
+      "sha256": "cb50b00fe52283aa7ae5f721d4519842d0f815a2598974d3adcffeda5b2b66ca",
+      "revision": 1
+    },
+    {
+      "id": "jw-pop-rock-pop-rock-medio",
+      "ruta": "Pop-Rock/pop-rock-medio.mid",
+      "sha256": "63bbf55113f4c92b84d0970edd220a7d9ba55bcf56fb206bd6439e6375f3750e",
+      "revision": 1
+    },
+    {
+      "id": "jw-pop-fill-caja-al-cuarto",
+      "ruta": "Pop/fill-caja-al-cuarto.mid",
+      "sha256": "26e3faa38dee0a95057bbe22300a883722c5ce36b6d7baf8ade9a6b97be9759e",
+      "revision": 1
+    },
+    {
+      "id": "jw-pop-fill-redoble-de-caja",
+      "ruta": "Pop/fill-redoble-de-caja.mid",
+      "sha256": "20bfc484ac0cd2daf9c53c607b7bdf724181c65e164d5dc4500312ebd3cbb328",
+      "revision": 1
+    },
+    {
+      "id": "jw-pop-final-pop",
+      "ruta": "Pop/final-pop.mid",
+      "sha256": "dfecca1b121179369b3ff39295ce82fda4a6c8dbf6639663132d586f4fd3c1f1",
+      "revision": 1
+    },
+    {
+      "id": "jw-pop-intro-pop",
+      "ruta": "Pop/intro-pop.mid",
+      "sha256": "a36e58d570969cfda021f93c923057841b674d24afcd83d435fa1419266eacb9",
+      "revision": 1
+    },
+    {
+      "id": "jw-pop-pop-bailable",
+      "ruta": "Pop/pop-bailable.mid",
+      "sha256": "2bbd99ce6d0a8c33feed62c081970478ef8e663180c787727cb80374e6d217c4",
+      "revision": 1
+    },
+    {
+      "id": "jw-pop-pop-clasico",
+      "ruta": "Pop/pop-clasico.mid",
+      "sha256": "e43097eb2978ed1bda531a8ded66367f2339fe76b768b59c38628db8e4f1da3f",
+      "revision": 1
+    },
+    {
+      "id": "jw-pop-pop-con-semicorcheas",
+      "ruta": "Pop/pop-con-semicorcheas.mid",
+      "sha256": "8ba556c957cf98287ab2c10192362578c584af91ea981f7e83975392cff23536",
+      "revision": 1
+    },
+    {
+      "id": "jw-pop-pop-sintetico",
+      "ruta": "Pop/pop-sintetico.mid",
+      "sha256": "581481e164d040b2be0eef014be60e9cc4ebaba7f32611a133d8d7677674bf8f",
+      "revision": 1
+    },
+    {
+      "id": "jw-pop-pop-verso-ligero",
+      "ruta": "Pop/pop-verso-ligero.mid",
+      "sha256": "5e9a3c999bf8fc523116e5cd7ab363e64cb62b2b1e3ce82b5309a8b86bdc8e98",
+      "revision": 1
+    },
+    {
+      "id": "jw-reggae-one-drop",
+      "ruta": "Reggae/one-drop.mid",
+      "sha256": "b47232ad8ad000f2a2ebe3cffc9a84dd54827dec0f9c3fc703b1396f4d9bc05a",
+      "revision": 1
+    },
+    {
+      "id": "jw-reggae-rockers",
+      "ruta": "Reggae/rockers.mid",
+      "sha256": "19f0a86f034b718ca7a2bd04ff989fb83bb6f7cb784a2b6eb5b2fa96424be94c",
+      "revision": 1
+    },
+    {
+      "id": "jw-reggae-steppers",
+      "ruta": "Reggae/steppers.mid",
+      "sha256": "19cbc6c992947b8e49c50f687f71e31e44f70d33e017b3c10bb165a61f07093a",
+      "revision": 1
+    },
+    {
+      "id": "jw-rock-fill-redoble-de-caja",
+      "ruta": "Rock/fill-redoble-de-caja.mid",
+      "sha256": "979bc49c4d9613497612b690ff64f37e40e9191a16a4f57d7b8be23d3c33c290",
+      "revision": 1
+    },
+    {
+      "id": "jw-rock-fill-redoble-largo",
+      "ruta": "Rock/fill-redoble-largo.mid",
+      "sha256": "6eb4c7e1f6f2db5f313e081074bf8e8721b4457b39b40be98624af668ff2a2fe",
+      "revision": 1
+    },
+    {
+      "id": "jw-rock-fill-toms-bajando",
+      "ruta": "Rock/fill-toms-bajando.mid",
+      "sha256": "b44bba08d1fc7d1cda6cbd95d5c02c3bf2ea76ecdec3ce2f87d63a81f570ebf2",
+      "revision": 1
+    },
+    {
+      "id": "jw-rock-final-rock",
+      "ruta": "Rock/final-rock.mid",
+      "sha256": "c49284fc4188f19bf6593a8a4e1605fee7351f6a86c6667e651aeb92c760a89d",
+      "revision": 1
+    },
+    {
+      "id": "jw-rock-intro-rock",
+      "ruta": "Rock/intro-rock.mid",
+      "sha256": "702f957617a977a7af9b9fc1358de8ac4f488eac689462afe06771960a144363",
+      "revision": 1
+    },
+    {
+      "id": "jw-rock-punk-veloz",
+      "ruta": "Rock/punk-veloz.mid",
+      "sha256": "b701af0a154d6f640e6c24f6aae3ece1aa0d4777e76143405654775bb2238920",
+      "revision": 1
+    },
+    {
+      "id": "jw-rock-rock-con-ride",
+      "ruta": "Rock/rock-con-ride.mid",
+      "sha256": "188db891552b7931f27e4b4ef68e16d6ff5eb406c1d6dce9ee5a104ef60d9f1b",
+      "revision": 1
+    },
+    {
+      "id": "jw-rock-rock-de-corcheas",
+      "ruta": "Rock/rock-de-corcheas.mid",
+      "sha256": "0bd4d9b57bc4b4c47586dbefad4094f03913c3f212e6d85393bbe27d6f031b02",
+      "revision": 1
+    },
+    {
+      "id": "jw-rock-rock-duro",
+      "ruta": "Rock/rock-duro.mid",
+      "sha256": "81f662d938c27862c7d72c7f0ce742974b817e948e5535ab1b8237e1ad44f52b",
+      "revision": 1
+    },
+    {
+      "id": "jw-rock-rock-lento-y-pesado",
+      "ruta": "Rock/rock-lento-y-pesado.mid",
+      "sha256": "1d41cbf0fa56296c25da0feb8f18739e75374498aea1602b7c3b990e0deb059a",
+      "revision": 1
+    },
+    {
+      "id": "jw-shuffle-blues-blues-lento",
+      "ruta": "Shuffle-Blues/blues-lento.mid",
+      "sha256": "65ebda77ecc43c3efcf97be0a0a8f40bc3a7dc883ce2264f55f4133f3bcf9620",
+      "revision": 1
+    },
+    {
+      "id": "jw-shuffle-blues-fill-caja-en-tresillos",
+      "ruta": "Shuffle-Blues/fill-caja-en-tresillos.mid",
+      "sha256": "ed99042984a5c3000759a5f0f0f0053e7554463025d98b3f4c915b34fbd33892",
+      "revision": 1
+    },
+    {
+      "id": "jw-shuffle-blues-fill-toms-en-tresillos",
+      "ruta": "Shuffle-Blues/fill-toms-en-tresillos.mid",
+      "sha256": "0658feb767b1689212dc95c10e9e7d691a793c37b521a08612ae7fbf3b9c73ae",
+      "revision": 1
+    },
+    {
+      "id": "jw-shuffle-blues-shuffle-basico",
+      "ruta": "Shuffle-Blues/shuffle-basico.mid",
+      "sha256": "13fc2b38489ed0a42d27d5030b8f72d45b8d0c9a53f20dcd198c5c295e790150",
+      "revision": 1
+    },
+    {
+      "id": "jw-shuffle-blues-shuffle-chicago-fantasmas",
+      "ruta": "Shuffle-Blues/shuffle-chicago-fantasmas.mid",
+      "sha256": "59902eaa5dbe3a32587bdd643883f771da28d75ed24766ee711c80fc89f442fd",
+      "revision": 1
+    },
+    {
+      "id": "jw-shuffle-blues-shuffle-texas",
+      "ruta": "Shuffle-Blues/shuffle-texas.mid",
+      "sha256": "89e11c6192ebb35fc25ec19e9f4a30e25ef85aec35c4f72b0f39dce03e6649cf",
+      "revision": 1
+    },
+    {
+      "id": "jw-soul-fill-caja-al-cuarto",
+      "ruta": "Soul/fill-caja-al-cuarto.mid",
+      "sha256": "2395c659d0d900f5c9cfbcc2fadb55eebf4267e3a04cb3cb7cf159d9abba9c35",
+      "revision": 1
+    },
+    {
+      "id": "jw-soul-soul-con-palmas",
+      "ruta": "Soul/soul-con-palmas.mid",
+      "sha256": "1836de0ff600e9241f05533416dc74d028ddf2b81545c7a475d6d757b03140f4",
+      "revision": 1
+    },
+    {
+      "id": "jw-soul-soul-lento",
+      "ruta": "Soul/soul-lento.mid",
+      "sha256": "f512e07688380162a011cca8f59521708d4e468ea330baab37f592c46a4cb8ea",
+      "revision": 1
+    },
+    {
+      "id": "jw-soul-soul-motown",
+      "ruta": "Soul/soul-motown.mid",
+      "sha256": "d0295069da1586202f2b0d892117aeb84c329b84a9622a46d3f3bc59bd1ed404",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-adoracion-con-pandereta",
+      "ruta": "Worship/4-4/adoracion-con-pandereta.mid",
+      "sha256": "9b876a158834263fb124a4dd0720f72b7904e9760550d5cb3e4b16753213bf55",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-coro-abierto-en-ride",
+      "ruta": "Worship/4-4/coro-abierto-en-ride.mid",
+      "sha256": "8378dc889812cf983cd434ab1ed2669929d3dc7e376cc0921f66d978386e6056",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-coro-con-palmas",
+      "ruta": "Worship/4-4/coro-con-palmas.mid",
+      "sha256": "61dc84e229bc6c94af47097f97b495ef96bab3b29f2985117422022a25ceaee8",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-coro-epico",
+      "ruta": "Worship/4-4/coro-epico.mid",
+      "sha256": "ceaa974cb8cee724fbbc0719c820b95d8b657e62878c071f129156cca2e4fcdb",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-coro-pleno",
+      "ruta": "Worship/4-4/coro-pleno.mid",
+      "sha256": "8b9736af78cc78b7447581427078646faeac151722a4d6b2c62944f2c3642b21",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-fill-caja-al-cuarto",
+      "ruta": "Worship/4-4/fill-caja-al-cuarto.mid",
+      "sha256": "7cdfa8e498021188f5a84af2ebd59a7adff492e20d4ce336200e506d0b387698",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-fill-redoble-de-caja",
+      "ruta": "Worship/4-4/fill-redoble-de-caja.mid",
+      "sha256": "f5218a7cb5d4ffe8efe8d77c20e665addbe6980ca565354c452d6c8213b35456",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-fill-toms-bajando",
+      "ruta": "Worship/4-4/fill-toms-bajando.mid",
+      "sha256": "55ae728251c90cdeb2874d42eb10e0d98307dddbc1cd80d3ba26d89b8b450908",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-fill-toms-subiendo",
+      "ruta": "Worship/4-4/fill-toms-subiendo.mid",
+      "sha256": "403ff90a777b72354086cf5544e2530fd7a75e0b5e78525621fdbb659fe28c3b",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-final-con-crash",
+      "ruta": "Worship/4-4/final-con-crash.mid",
+      "sha256": "426b57219b1b9a50c41a5b6edfab992f5a3017c01fcfc880850714a67a315e8c",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-final-suave",
+      "ruta": "Worship/4-4/final-suave.mid",
+      "sha256": "d0ac43c6e5ffb9f6fca7c4412ce9d65cd5443b993f70443a12bdcb0daa3d1fcf",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-intro-con-hi-hat",
+      "ruta": "Worship/4-4/intro-con-hi-hat.mid",
+      "sha256": "aa91338034abd72906a3907da106dbef861fee99c456f7a85cb080dae82ce54d",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-intro-con-toms",
+      "ruta": "Worship/4-4/intro-con-toms.mid",
+      "sha256": "2d6d6b0fbae1f8b0982e9cee3fd5240d603cf7baaed462ecb037077575d40bb9",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-intro-de-ride-y-campana",
+      "ruta": "Worship/4-4/intro-de-ride-y-campana.mid",
+      "sha256": "08c2643b6ae989d2568d5db6685165a6bcbd1f2846b5a900573468a554229c62",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-medio-tiempo-de-oracion",
+      "ruta": "Worship/4-4/medio-tiempo-de-oracion.mid",
+      "sha256": "776e394dd631ee2ecd83b6e53472d153939f459ae9d843893cb4f30886240bab",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-pre-coro-en-crecimiento",
+      "ruta": "Worship/4-4/pre-coro-en-crecimiento.mid",
+      "sha256": "ac2957429f7cc07cf1ed3b52e8d311a27ff8b427e1ef9ed76807ea68775042c3",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-puente-con-crescendo",
+      "ruta": "Worship/4-4/puente-con-crescendo.mid",
+      "sha256": "ac1e970a1acb6dbdc2414c368d9ec9bfcd4b17ae9702f6add5c8a3b744fe0047",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-puente-marcha-de-caja",
+      "ruta": "Worship/4-4/puente-marcha-de-caja.mid",
+      "sha256": "dfc71ef96704ec6e86e77720ad7ced00a6f041720a271ee139b53365a433fb46",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-puente-tenso-con-campana",
+      "ruta": "Worship/4-4/puente-tenso-con-campana.mid",
+      "sha256": "50052043e502a0f664edc886d57598bf026b43427bb89275516d3259b91dd74b",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-transicion-al-puente",
+      "ruta": "Worship/4-4/transicion-al-puente.mid",
+      "sha256": "c06363682463348dc96d7646881d779250cfd00643a6146e630380aff4f4de42",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-transicion-crescendo-al-coro",
+      "ruta": "Worship/4-4/transicion-crescendo-al-coro.mid",
+      "sha256": "5ecf13237781c5004c423de686e223ed3f28ed2e95874806c65c2c46f9a0cd7f",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-verso-hi-hat-en-semicorcheas",
+      "ruta": "Worship/4-4/verso-hi-hat-en-semicorcheas.mid",
+      "sha256": "2537d4f5dd10292f115dcb1c0a6dc62904a89a992f91e1f6a44f5ed7d0d25a8e",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-verso-ride-y-campana",
+      "ruta": "Worship/4-4/verso-ride-y-campana.mid",
+      "sha256": "4f33b0c6107b6de729be9f5d2d3dd4dc0cb174ae0d0d8725d5a2ca5d93f35871",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-4-4-verso-suave-cross-stick",
+      "ruta": "Worship/4-4/verso-suave-cross-stick.mid",
+      "sha256": "9fc5867d6600f296df21f625147a1f7f70fd593b2a5ce9c97215f7c9ebf21db4",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-6-8-coro-6-8-ride-y-campana",
+      "ruta": "Worship/6-8/coro-6-8-ride-y-campana.mid",
+      "sha256": "54e988870b9aadf959827b4563475fbc4f66a9683f072f7bb413e31861034c2f",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-6-8-coro-6-8",
+      "ruta": "Worship/6-8/coro-6-8.mid",
+      "sha256": "3daf4ff9f25257a2aa24b203e4d17639d3de7f2f014b7e7d878de7d18057676b",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-6-8-fill-caja-6-8",
+      "ruta": "Worship/6-8/fill-caja-6-8.mid",
+      "sha256": "396f893cdf1c4adc80364c429f80e224ae6d4523265ac1c9478e08b3b3ae758c",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-6-8-fill-toms-6-8",
+      "ruta": "Worship/6-8/fill-toms-6-8.mid",
+      "sha256": "af5619305a89a23b4efa0694e62e230a3fd942ecffd92e65e3cb6b05ea0dd114",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-6-8-final-6-8",
+      "ruta": "Worship/6-8/final-6-8.mid",
+      "sha256": "946b0551e5dc92059867c7a3832ee31b494d5c417372be412c8083829526a2b4",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-6-8-intro-6-8",
+      "ruta": "Worship/6-8/intro-6-8.mid",
+      "sha256": "3a84fabbdadf31e37bffd4ce9f0f652494481fedbb9fbc1393db7bf7d8c12cb0",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-6-8-oracion-6-8",
+      "ruta": "Worship/6-8/oracion-6-8.mid",
+      "sha256": "fa53f872296a01bdfc61d100f2dcd79cdc72e3fe23d1d32fc14aa04183deef14",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-6-8-puente-6-8-crescendo",
+      "ruta": "Worship/6-8/puente-6-8-crescendo.mid",
+      "sha256": "2cd0ddfe7155e6fdeb7b95f921c4dfca54648154ce661d32de45ea9d2721cbf7",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-6-8-verso-6-8-campana",
+      "ruta": "Worship/6-8/verso-6-8-campana.mid",
+      "sha256": "7221efd364f7a5b206b03e9c3f962eba744063448bfe85dbbee5cddf8ab70474",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-6-8-verso-6-8-con-ride",
+      "ruta": "Worship/6-8/verso-6-8-con-ride.mid",
+      "sha256": "a7decc50d5b6bb7e124606a457dbfd2b1c8003b5cf3e5536b52719ff1040f7fe",
+      "revision": 1
+    },
+    {
+      "id": "jw-worship-6-8-verso-6-8-suave",
+      "ruta": "Worship/6-8/verso-6-8-suave.mid",
+      "sha256": "5090260001eaaf6a4047de5c618f3bb9d2630bbf14a8242a65bd7c3c0bad9e42",
+      "revision": 1
+    }
+  ]
+}

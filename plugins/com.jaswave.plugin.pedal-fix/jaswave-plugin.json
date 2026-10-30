@@ -1,0 +1,199 @@
+{
+  "id": "com.jaswave.plugin.pedal-fix",
+  "name": "JasWave Pedal Fix",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "vendor": "JasWave Audio",
+  "description": "Efecto MIDI (entrada y salida de eventos, audio de paso): unifica el pedal de sustain/sostenuto/suave que los teclados con voz dual/split (Yamaha PSR-E373 y familia) mandan por varios canales a la vez, corrige la polaridad, fuerza el sustain reteniendo los note-off para instrumentos que ignoran CC64, fija el canal de salida, transpone y escala la velocidad.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWavePedalFix.vst3"
+  },
+  "vst3": {
+    "classId": "{4A617357-5045-444C-5072-6F6356335431}",
+    "subCategories": "Fx|Tools"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "director",
+    "productor",
+    "qa"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.pedal-fix",
+    "features": []
+  },
+  "ai": {
+    "summary": "Arregla el pedal de sustain de teclados que lo mandan por varios canales y hace que cualquier instrumento sostenga aunque ignore CC64.",
+    "intents": [
+      "arreglar-sustain",
+      "unificar-pedal",
+      "invertir-pedal",
+      "fijar-canal-midi",
+      "transponer-midi"
+    ],
+    "parameters": [
+      {
+        "id": "bypass",
+        "vstParamId": 0,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "bypass": true,
+        "basico": true
+      },
+      {
+        "id": "pedal.umbral",
+        "vstParamId": 1,
+        "name": "Umbral del pedal (valor desde el que cuenta como pisado)",
+        "min": 1,
+        "max": 127,
+        "default": 64,
+        "unit": "",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "pedal.transponer",
+        "vstParamId": 2,
+        "name": "Transposición",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "st",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "pedal.velocidad",
+        "vstParamId": 3,
+        "name": "Escala de velocidad",
+        "min": 0,
+        "max": 200,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "pedal.fuente",
+        "vstParamId": 4,
+        "name": "Pedal que gobierna el sustain",
+        "min": 0,
+        "max": 3,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "CC64 Sustain",
+          "CC66 Sostenuto",
+          "CC67 Soft",
+          "CC69 Hold 2"
+        ],
+        "basico": true
+      },
+      {
+        "id": "pedal.canal",
+        "vstParamId": 5,
+        "name": "Canal de salida",
+        "min": 0,
+        "max": 16,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Original",
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10",
+          "11",
+          "12",
+          "13",
+          "14",
+          "15",
+          "16"
+        ],
+        "basico": true
+      },
+      {
+        "id": "pedal.polaridad",
+        "vstParamId": 6,
+        "name": "Polaridad del pedal",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Normal",
+          "Inverted"
+        ],
+        "basico": true
+      },
+      {
+        "id": "pedal.forzar",
+        "vstParamId": 7,
+        "name": "Forzar sustain (retener note-off con el pedal pisado)",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "pedal.unificar",
+        "vstParamId": 8,
+        "name": "Unificar canales (máximo entre los 16 canales)",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "pedal.redisparo",
+        "vstParamId": 9,
+        "name": "Redisparar notas retenidas",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      }
+    ]
+  },
+  "download": {
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.pedal-fix-1.0.0.jwx",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
+}

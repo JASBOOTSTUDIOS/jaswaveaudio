@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 export type ImportProgress = {
   active: boolean
   fileName: string
-  phase: 'reading' | 'decoding' | 'peaks' | 'creating' | 'done' | 'error'
+  phase: 'reading' | 'decoding' | 'peaks' | 'copying' | 'creating' | 'done' | 'error'
   progress: number // 0..1
   error?: string
 }
@@ -74,6 +74,7 @@ const PHASE_LABEL: Record<ImportProgress['phase'], string> = {
   reading: 'Leyendo archivo…',
   decoding: 'Decodificando audio…',
   peaks: 'Calculando waveform…',
+  copying: 'Copiando al proyecto…',
   creating: 'Creando clip…',
   done: 'Listo',
   error: 'Error',

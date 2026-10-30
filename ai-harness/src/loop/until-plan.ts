@@ -5,6 +5,12 @@
 import type { PlanEvaluation } from '../plan/types'
 import type { HarnessHealthContext } from './harness'
 import { runHarnessFollowups, type ActionResult, type DawAction } from './harness'
+import {
+  formatAgentBudgetStopFor,
+  resolveAgentBudgetTracker,
+  type AgentBudget,
+  type AgentBudgetTracker,
+} from '../agent/budget'
 
 export type HarnessJobContext = {
   userText: string
@@ -30,9 +36,13 @@ export type HarnessUntilPlanDeps = {
   afterHarnessTurn?: (results: ActionResult[], raw?: string) => PlanEvaluation | null
   planHasPending?: () => boolean
   shouldContinue?: (evaluation: PlanEvaluation | null) => boolean
+  /** Presupuesto compartido (llamadas/caracteres/tiempo). Sin valor → defaults. */
+  budget?: AgentBudgetTracker | Partial<AgentBudget>
 }
 
-const MAX_OUTER_LOOPS = 4
+const MAX_OUTER_LOOPS = 8
+
+export const HARNESS_MAX_OUTER_LOOPS = MAX_OUTER_LOOPS
 
 export function createHarnessJobContextStore(): { current: HarnessJobContext | null } {
   return { current: null }
@@ -62,13 +72,21 @@ export async function runHarnessUntilPlanComplete(
       return false
     })
 
-  let userText = jobCtx?.userText ?? 'Completar plan.md pendiente'
+  // El pedido del usuario NO se mezcla con texto del modelo: las notas del agente van aparte.
+  const userText = jobCtx?.userText ?? 'Completar plan.md pendiente'
+  let agentNotes = ''
+  const tracker = resolveAgentBudgetTracker(deps.budget)
   let lastResults = jobCtx?.initialResults ?? []
   let evaluation = jobCtx?.evaluation ?? deps.syncPlanEvaluation()
   let actionsSummary = jobCtx?.actionsSummary ?? ''
 
   for (let outer = 0; outer < MAX_OUTER_LOOPS; outer++) {
     if (signal.aborted) return
+    const over = tracker.exceeded()
+    if (over) {
+      deps.onProgress?.(formatAgentBudgetStopFor(tracker, over))
+      return
+    }
     if (!pending()) {
       const certify = await deps.certifyTurn(lastResults)
       if (!shouldContinue(certify.planEval)) break
@@ -84,6 +102,8 @@ export async function runHarnessUntilPlanComplete(
       actionsSummary,
       projectId: deps.projectId,
       abort: signal,
+      budget: tracker,
+      agentNotes,
       chat: deps.chat,
       parseActions: deps.parseActions,
       execute: deps.execute,
@@ -99,7 +119,11 @@ export async function runHarnessUntilPlanComplete(
     lastResults = follow.results
     evaluation = follow.evaluation
     actionsSummary = follow.actionsSummary
-    userText = [userText, follow.text].filter(Boolean).join('\n')
+    agentNotes = [agentNotes, follow.text].filter(Boolean).join('\n\n').slice(-8_000)
+    if (follow.stoppedReason === 'budget') {
+      deps.onProgress?.(follow.budgetMessage ?? formatAgentBudgetStopFor(tracker))
+      return
+    }
 
     const certify = await deps.certifyTurn(lastResults)
     evaluation = certify.planEval ?? evaluation

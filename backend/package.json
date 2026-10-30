@@ -1,0 +1,59 @@
+{
+  "name": "@jaswave/backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backend independiente de JasWave: auth, licencias, admin y sincronización (Express + TypeScript).",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "dist/src/server.js",
+  "scripts": {
+    "dev": "tsx watch --env-file=.env src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node --env-file=.env dist/src/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "db:reset": "supabase db reset",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:generate": "prisma generate",
+    "db:studio": "prisma studio",
+    "licencias:generar-claves": "tsx scripts/generar-claves-licencia.ts",
+    "ia:generar-clave": "tsx scripts/generar-clave-ia.ts",
+    "ia:importar-entorno": "tsx --env-file=.env scripts/importar-ia-entorno.ts",
+    "admin:seed": "tsx --env-file=.env scripts/seed-admin.ts",
+    "ia:proveedor-pruebas": "tsx --env-file=.env scripts/alta-proveedor-pruebas.ts",
+    "grooves:sembrar": "tsx --env-file=.env scripts/sembrar-grooves.ts"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "cors": "^2.8.6",
+    "express": "^5.3.0",
+    "helmet": "^8.3.0",
+    "jose": "^5.10.0",
+    "pg": "^8.23.1",
+    "pino": "^9.14.0",
+    "undici": "^7.30.1",
+    "ws": "^8.22.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "@types/supertest": "^6.0.3",
+    "@types/ws": "^8.18.2",
+    "eslint": "^9.39.5",
+    "prisma": "^7.10.1",
+    "supertest": "^7.3.1",
+    "tsx": "^4.23.15",
+    "typescript": "~5.7.2",
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^2.1.9"
+  }
+}
