@@ -1,5 +1,5 @@
 import { ejecutarLeerHabilidad, H_LEER_HABILIDAD, herramientaLeerHabilidad, listadoHabilidades, unirHabilidades, type HabilidadAgente } from './habilidades'
-import { asignarPistasHuerfanas } from './duenos'
+import { asignarPistasHuerfanas, separarPistasExtra } from './duenos'
 import { Candado, ejecutarAgente, type EjecutorHerramienta } from './runtime'
 import { seleccionarIniciales } from './seleccion'
 import { crearCronometro, formatearDuracion, LIMITE_MS_DEFECTO, PRESUPUESTO_MS_DEFECTO, resumenTiempos, type MotivoOmision, type TiemposProduccion } from './tiempos'
@@ -56,6 +56,10 @@ export type Encargo = {
   pista?: string
   /** Otras pistas que también lleva este músico (plan S: pistas huérfanas repartidas tras la dirección). */
   pistasExtra?: string[]
+  /** Texto original del encargo antes de ampliarlo con las pistas extra (para repartirlas en turnos propios). */
+  encargoBase?: string
+  /** Texto del encargo de cada pista extra, por id de pista. */
+  textosExtra?: Record<string, string>
 }
 
 /** A quién se devuelve un trabajo que no es del oficio de quien lo detecta. */
@@ -1260,7 +1264,10 @@ Encargo original: ${e.encargo}${guia(e)}${reparto(e.participante)}${await escuch
     if (previo?.musicosTerminados.includes(e.participante)) return RESULTADO_VACIO
     return correrMusico(e)
   }
-  const grabar = async (lista: Encargo[], retomando = false) => {
+  const grabar = async (listaCompleta: Encargo[], retomando = false) => {
+    // Un músico con dos pistas las graba en turnos paralelos propios (cada uno con su tope y sus pasos): en una pasada real
+    // el piano agotó los 6 minutos y las cuerdas, que llevaba de extra, quedaron vacías.
+    const lista = separarPistasExtra(listaCompleta)
     const [base, resto] = oleadas(lista, musicos)
     const uno1 = retomando ? retomarMusico : correrMusico
     if (retomando) {

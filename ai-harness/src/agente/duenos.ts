@@ -101,6 +101,8 @@ export function asignarPistasHuerfanas(
     const texto = encargoDeRol(p, pedido)
     const previo = salida.find((e) => e.participante === m.id)
     if (previo) {
+      previo.encargoBase ??= previo.encargo
+      previo.textosExtra = { ...(previo.textosExtra ?? {}), [p.id]: texto }
       previo.encargo = `${previo.encargo}\n\nAdemás llevas otra pista: ${texto}`
       if (previo.pista) previo.pistasExtra = [...(previo.pistasExtra ?? []), p.id]
       else previo.pista = p.id
@@ -109,4 +111,28 @@ export function asignarPistasHuerfanas(
     asignaciones.push({ pista: p.id, nombre: p.nombre, participante: m.id, nuevo: !previo })
   }
   return { encargos: salida, asignaciones }
+}
+
+/**
+ * Un encargo con pistas extra se reparte en un turno por pista: el principal conserva su texto original y cada extra
+ * es un encargo propio del mismo músico con su pista. Así ninguna pista depende de que la anterior termine a tiempo.
+ */
+export function separarPistasExtra(encargos: Encargo[]): Encargo[] {
+  const salida: Encargo[] = []
+  for (const e of encargos) {
+    if (!e.pistasExtra?.length) {
+      salida.push(e)
+      continue
+    }
+    const { pistasExtra, encargoBase, textosExtra, ...resto } = e
+    salida.push({ ...resto, encargo: encargoBase ?? e.encargo })
+    for (const p of pistasExtra) {
+      salida.push({
+        participante: e.participante,
+        encargo: textosExtra?.[p] ?? `Graba también la pista ${p}: toca la parte que le corresponde a este instrumento en toda la canción.`,
+        pista: p,
+      })
+    }
+  }
+  return salida
 }

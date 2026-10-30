@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { asignarPistasHuerfanas, ejecutarProduccion, familiaDePista, H_ENCARGOS, H_HOJA, H_VEREDICTO, pistasHuerfanas, type ChatAgente, type EventoProduccion, type HerramientaAgente, type ParticipanteProduccion, type RespuestaModelo } from '../agente'
+import { asignarPistasHuerfanas, separarPistasExtra, ejecutarProduccion, familiaDePista, H_ENCARGOS, H_HOJA, H_VEREDICTO, pistasHuerfanas, type ChatAgente, type EventoProduccion, type HerramientaAgente, type ParticipanteProduccion, type RespuestaModelo } from '../agente'
 
 const musicos: ParticipanteProduccion[] = [
   { id: 'bateria', nombre: 'Baterista', descripcion: 'batería y percusión', instrucciones: '', rol: 'musico' },
@@ -48,6 +48,28 @@ describe('dueño de cada pista (plan S)', () => {
     expect(piano.pista).toBe('trk4')
     expect(piano.pistasExtra).toEqual(['trk3'])
     expect(piano.encargo).toMatch(/Toca en TODA la canción/)
+  })
+
+  it('las pistas extra se reparten en un turno propio por pista, con su texto y sin perder el encargo original', () => {
+    const r = asignarPistasHuerfanas(
+      [
+        { participante: 'bateria', encargo: 'x', pista: 'trk1' },
+        { participante: 'pianista', encargo: 'piano', pista: 'trk4' },
+      ],
+      musicos,
+      [{ id: 'trk1', nombre: 'Batería' }, { id: 'trk3', nombre: 'Cuerdas' }, { id: 'trk4', nombre: 'Piano' }],
+      'canción worship',
+    )
+    const turnos = separarPistasExtra(r.encargos)
+    expect(turnos).toHaveLength(3)
+    const piano = turnos.find((e) => e.participante === 'pianista' && e.pista === 'trk4')!
+    expect(piano.encargo).toBe('piano')
+    expect(piano.pistasExtra).toBeUndefined()
+    const cuerdas = turnos.find((e) => e.participante === 'pianista' && e.pista === 'trk3')!
+    expect(cuerdas.encargo).toMatch(/Cuerdas/)
+    expect(cuerdas.encargo).not.toMatch(/Además llevas otra pista/)
+    // Sin pistas extra, los encargos pasan tal cual.
+    expect(separarPistasExtra([{ participante: 'bateria', encargo: 'x', pista: 'trk1' }])).toEqual([{ participante: 'bateria', encargo: 'x', pista: 'trk1' }])
   })
 
   it('un músico sin encargo recibe uno nuevo; sin afinidad gana quien tiene menos pistas', () => {

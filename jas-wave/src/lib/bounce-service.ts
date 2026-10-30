@@ -49,6 +49,7 @@ import {
 import {
   hayAutomatizacion,
   publicarAutomatizacionBounce,
+  toqueRepublicarGrafoBounce,
   type ContextoAutomatizacionBounce,
 } from './automation-runtime'
 import { syncReaperTrackGraph } from '@/src/lib/plugin/track-vst-runtime'
@@ -366,7 +367,7 @@ async function runNativeBounceUnsafe(
       }
       const frames = Math.min(BLOCK, totalFrames - done)
       if (ctxAuto) {
-        publicarAutomatizacionBounce(ctxAuto, startSec + done / sr)
+        publicarAutomatizacionBounce(ctxAuto, startSec + done / sr, { grafo: toqueRepublicarGrafoBounce(Math.floor(done / BLOCK)) })
         autoPublicada = true
       }
       await hostSend({ type: 'renderOfflineStep', frames })

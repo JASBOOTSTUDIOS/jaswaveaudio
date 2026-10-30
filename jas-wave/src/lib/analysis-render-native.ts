@@ -71,6 +71,11 @@ function estereo(bin: Uint8Array | undefined | null): SegmentoPcm | null {
 
 /** Cuánto espera una medición a que acabe el render anterior antes de caer al respaldo. */
 export const ESPERA_RENDER_LIBRE_MS = 120_000
+/**
+ * Tope del render de una medición. Pasado, el job se cancela (el bucle del bounce lo respeta): quien midió ya dejó
+ * de esperar (tope de la mezcla automática) y un render zombi mantenía bloqueado el proyecto y la cola durante minutos.
+ */
+export const LIMITE_RENDER_MEDICION_MS = 75_000
 
 const dormir = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
@@ -136,10 +141,15 @@ async function medirConMotorReal(
       }
       renderJobPut(job)
       let hecho: RenderJob
+      const vigilante = setTimeout(() => {
+        const s = renderJobGet(job.id)?.status
+        if (s === 'pending' || s === 'rendering') renderJobUpdate(job.id, { status: 'cancelled' })
+      }, LIMITE_RENDER_MEDICION_MS)
       try {
         const content = buildRuntimeBounceContent(estado, { startSec: inicio, endSec: fin })
         hecho = await runNativeBounce(job, content, undefined, estado)
       } finally {
+        clearTimeout(vigilante)
         // Un job que quedara en «pending» bloquearía todos los renders siguientes («Ya hay un render en curso»).
         if (renderJobGet(job.id)?.status === 'pending' || renderJobGet(job.id)?.status === 'rendering') renderJobUpdate(job.id, { status: 'failed' })
       }

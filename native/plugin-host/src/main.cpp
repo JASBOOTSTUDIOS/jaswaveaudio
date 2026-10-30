@@ -2632,8 +2632,10 @@ static void handleLineImpl(const std::string& line) {
     return;
   }
   if (type == "setTrackGraph") {
-    // Durante un bounce el grafo no se toca: el render usa el grafo ya cargado.
-    if (gOfflineActive.load()) {
+    // Durante la preparación del bounce el grafo no se toca. Con el render ya en marcha sí se acepta: la automatización
+    // de volumen y paneo lo republica y `renderOfflineStep` y este mensaje se procesan en el mismo hilo, uno tras otro.
+    // Rechazarlo hacía una ida y vuelta inútil por bloque (8–11 veces más lento) y dejaba la automatización sin aplicar.
+    if (gOfflineActive.load() && gOfflineSetup.load()) {
       replyFail("RenderBusy", "Hay un bounce en curso: no se puede cambiar el grafo");
       return;
     }

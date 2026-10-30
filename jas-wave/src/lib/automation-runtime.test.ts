@@ -8,9 +8,11 @@ import { describe, it } from 'node:test'
 import type { AutomatizacionInfo } from '../../../shared/src/types/entidades'
 import type { Track } from '../../../shared/src/types/tracks'
 import {
+  BLOQUES_POR_GRAFO_BOUNCE,
   grafoConAutomatizacionBounce,
   hayAutomatizacion,
   publicarAutomatizacionBounce,
+  toqueRepublicarGrafoBounce,
   type ContextoAutomatizacionBounce,
 } from './automation-runtime'
 
@@ -130,5 +132,12 @@ describe('publicarAutomatizacionBounce', () => {
       ],
     })
     assert.doesNotThrow(() => publicarAutomatizacionBounce(ctx([t]), 1))
+    assert.doesNotThrow(() => publicarAutomatizacionBounce(ctx([t]), 1, { grafo: false }))
+  })
+
+  it('el grafo se republica solo cada BLOQUES_POR_GRAFO_BOUNCE bloques', () => {
+    const toques = Array.from({ length: 64 }, (_, i) => i).filter(toqueRepublicarGrafoBounce)
+    assert.deepEqual(toques, [0, 16, 32, 48])
+    assert.equal(BLOQUES_POR_GRAFO_BOUNCE, 16)
   })
 })
