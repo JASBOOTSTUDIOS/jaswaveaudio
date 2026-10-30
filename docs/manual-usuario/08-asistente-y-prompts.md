@@ -147,6 +147,53 @@ cualquier escritura de un músico en una pista que no sea la suya (puede crear o
 demás siempre está permitido). Las escrituras de todos pasan por un turno común, así que dos agentes nunca cambian el
 proyecto al mismo tiempo.
 
+### El panel de la banda virtual
+
+Mientras la banda produce, en el chat ves **una sola línea** «Banda · etapa · porcentaje · lo último que pasó». Pasa el
+ratón por encima (o dale foco con el teclado) y aparece un globo con el detalle de lo que hace cada agente.
+
+Para verla completa y sin quitar espacio al chat, pulsa el botón **Abrir la banda en un panel aparte** (icono de panel a
+la derecha de esa línea). Se abre la herramienta **Banda virtual** en el panel derecho. Dentro hay, de arriba abajo:
+
+1. **Mi estilo** (ver la siguiente sección).
+2. La tarjeta de la **banda en vivo**: estado («Trabajando», «Terminada» o «Detenida»), la idea que pediste, y las **etapas**
+   (planificar, repartir el trabajo, grabar, ensayar, encajar, revisar, mezclar, masterizar, revisión final), el avance y
+   lo que hace cada agente. Botones: plegar/desplegar, **Mostrar en el chat** (devuelve la tarjeta al chat), **Detener**
+   y **Ver el historial completo**.
+3. **Escuchar en vivo** (icono de auriculares): si lo activas, oyes cada parte según se graba y la mezcla mientras se
+   hace; en silencio, trabaja sin sonar.
+4. Una caja para **escribirle a la banda** mientras trabaja («Dile a la banda lo que ves y ellos no…»). Con el
+   desplegable «A quién le escribes» eliges **Toda la banda** o a un participante; el agente en turno lo recibe entre dos pasos.
+
+Si no hay ninguna producción en curso, el panel dice «No hay ninguna producción en curso» y te invita a pedir una
+canción con el modo **Banda** en el chat.
+
+### Mi estilo: que la banda toque como tú
+
+**Qué es:** un panel (dentro de **Banda virtual**) que **escucha cómo tocas tu teclado** y lo guarda como un «estilo»
+para que, al terminar su parte, cada músico de la banda aplique tus giros (duraciones, velocidades, adornos) en lugar
+de sonar genérico. Según el propio panel, el estilo se aplica a los músicos **menos a la batería**.
+
+**Antes de empezar:** graba una toma tocando con naturalidad en tu teclado MIDI (ver
+[14 · Conceptos para principiantes](./14-conceptos-para-principiantes.md), «Flujo básico: grabar una toma»). Cuanto más
+natural, mejor retrato de tu toque.
+
+**Pasos:**
+
+1. Abre **Banda virtual** (botón de la línea de la banda o **Ver → Herramientas**; si el panel te dice que no hay
+   producción, igual verás **Mi estilo** arriba, por verificar).
+2. Pulsa **Analizar mi toque**: el DAW analiza la toma (o, si no hay toma, los últimos segundos que tocaste) y
+   escribe un **informe con números** de tu forma de tocar. No cambia nada del proyecto.
+3. Si el informe se parece a cómo tocas, escribe un **nombre** (por defecto «Mi estilo») y pulsa **Guardar como skill de
+   estilo**. Se guarda en tu carpeta del asistente como una habilidad `estilo-<nombre>`.
+4. En la **lista de estilos guardados** puedes marcar cada uno como **Activo** o **Desactivado** (el activo es el que
+   usa la banda en su próxima producción) o **Quitar** el que no quieras.
+
+Si algo falla, el panel muestra el motivo en rojo (por ejemplo, que no hay notas que analizar).
+
+**Por verificar:** si varias tomas de secciones distintas (verso, coro…) se combinan en un solo perfil o se analiza
+solo la última; mientras tanto, graba una toma representativa y repite el proceso con otro nombre para otro carácter.
+
 ### Habilidades de cada agente
 
 Cada agente de la banda tiene **habilidades**: conocimiento de oficio escrito paso a paso, como las fichas que un
@@ -229,9 +276,19 @@ pedírselo en un mensaje normal («créame un prompt para intros») sin entrar e
 En **Especialistas** configuras los ayudantes a los que Jas reparte trabajo: sus instrucciones, especialidades y
 **qué puede cambiar cada uno** (notas, pistas, mezcla, tempo, plan o exportar). Sin marcar nada, puede usarlo todo.
 
-## Mentions `@`
+## Menciones `@` y comandos `/` (pastillas)
 
-En el chat puedes `@` pista, plugin o mensaje previo para anclar contexto.
+Al escribir en la caja del chat:
+
+- **`@`** abre una lista para **anclar contexto**: un **agente** de la banda (por ejemplo, el pianista), una pista, un
+  clip, un plugin, un instrumento del catálogo, un documento o un mensaje anterior. Al elegir uno aparece como una
+  **pastilla** (chip) delante del texto, no como texto «@algo». Si mencionas a un agente, tu indicación va dirigida a
+  él y responde desde su especialidad. Para quitar una pastilla, usa su botón **Quitar** o la tecla Retroceso al inicio de la caja.
+- **`/`** (al inicio o tras un espacio) abre la lista de **comandos y modos**. Al elegir uno queda como una pastilla de
+  modo (por ejemplo **Plan**, **Meta**, **Banda**). Los comandos están en la tabla «Comandos del chat» de arriba, más los
+  modos Consulta, Plan, Crear y Pensar.
+- Al enviar, la mención viaja como `@"Nombre"`; en el historial se vuelve a ver como pastilla.
+- **Ctrl+Shift+M** (con el foco en el chat) cambia el modo del asistente (Auto → Consulta → Pensar → Plan → Crear).
 
 ## Docs y plan.md
 

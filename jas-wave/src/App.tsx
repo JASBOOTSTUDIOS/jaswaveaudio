@@ -70,6 +70,7 @@ import { AgentAuditHost, AGENT_BRIDGE_REV } from '@/src/lib/agent-audit-bridge'
 import { PanelLeft, PanelRight, PanelBottom, Plus, X, Home } from 'lucide-react'
 import { JasWaveAppIcon } from '@/components/brand'
 import { ComponentesDeModulos } from '@/components/modulos/componentes-de-modulos'
+import { CapaGuia } from '@/components/capa-guia'
 import { InstaladorExtensiones } from '@/components/modulos/instalador-extensiones'
 import { PortalCatalogoPWA } from '@/components/portal/portal-pwa'
 
@@ -391,6 +392,7 @@ function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) 
       <OpenProjectRequest />
       <NuevoProyectoDialog />
       <ComponentesDeModulos />
+      <CapaGuia />
       <LayoutLab />
       <InstaladorExtensiones />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} dispatcher={dispatcher} />

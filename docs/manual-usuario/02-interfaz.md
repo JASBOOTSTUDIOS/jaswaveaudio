@@ -33,6 +33,11 @@
 | **Enrutamiento** | Buses / routing |
 | **Inspector** | Detalle de la pista seleccionada |
 | **Configuración** | Ajustes del proyecto |
+| **Zonas MIDI** | Repartir el teclado entre pistas (split, capas) para tocar en directo |
+| **Grooves** | Biblioteca de ritmos de batería para insertar |
+| **Banda virtual** | Los agentes de la banda trabajando y el panel «Mi estilo» |
+
+Cualquier herramienta de la lista (incluidas Automatización, MIDI Learn, Zonas MIDI, Grooves y Terminal) se puede abrir también desde el menú **Ver → Herramientas**.
 
 Puedes mostrar/ocultar **panel izquierdo**, **derecho** e **inferior** desde el rail o el menú **Ver**.
 
@@ -46,7 +51,9 @@ Puedes mostrar/ocultar **panel izquierdo**, **derecho** e **inferior** desde el 
 
 ## Paleta de comandos
 
-`Ctrl+Shift+P` — busca cualquier acción por nombre (pista, transporte, UI…).
+`Ctrl+Shift+P` — busca cualquier acción por nombre (pista, transporte, UI…). También está en el menú **Ver → Paleta de comandos**.
+
+> Este es el atajo real (catálogo de acciones y menú nativo de la aplicación). Si ves la etiqueta «Ctrl+K» junto a esa opción del menú Ver, es un rótulo desactualizado: en el código no hay ningún atajo `Ctrl+K` que abra la paleta (por verificar al pulsarlo en la aplicación).
 
 ## Tip de productividad
 

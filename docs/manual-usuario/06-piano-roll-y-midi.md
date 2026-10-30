@@ -100,6 +100,42 @@ siempre suenan (sostienen hasta el siguiente acorde y se mezclan con él) y la *
   controla con el ajuste local `jaswave-banda-legato` (`worship` por defecto, `siempre` o `nunca`).
 - Los silencios largos entre frases o secciones (más de 8 tiempos) se respetan: son intencionales.
 
+## Biblioteca de Grooves (ritmos de batería)
+
+Un **groove** es un patrón de batería ya escrito en MIDI (por ejemplo, un «pop 4/4» o un «6/8 worship»). Sirve para
+tener un ritmo base en segundos, sin escribirlo nota a nota, y luego editarlo en el Piano roll como cualquier clip.
+
+**Dónde se abre:** menú **Ver → Herramientas → Grooves** (se coloca a la izquierda). Si el panel muestra «no disponible»,
+la biblioteca no está accesible en ese entorno (por verificar los casos exactos).
+
+**Qué hay en la pantalla:**
+
+- **Barra superior:** cuántos ritmos y estilos hay; **Añadir groove…** (importa tus propios archivos `.mid`; también
+  puedes soltarlos en la lista con un estilo elegido), **Nuevo estilo** (una carpeta propia) y un botón de carpeta
+  que abre la carpeta de grooves en el disco.
+- **Buscador y filtros:** texto libre (estilo, nombre, etiqueta) y desplegables **Compás**, **Tipo**, **Intensidad**
+  (mínima) y **Etiqueta**.
+- **Columna izquierda de estilos:** «Todos» y cada estilo con su número de ritmos; al elegir uno aparecen sus
+  subestilos. Con un estilo elegido puedes **renombrarlo** o **borrarlo** (va a la papelera).
+- **Lista de ritmos:** cada fila tiene una estrella (**favorito**), un botón de **escuchar** la vista previa, y
+  **Insertar**. En tus propios grooves hay además **Proponer al catálogo** y borrar (a la papelera).
+- **Barra inferior (cómo se inserta):**
+  - **Pista:** la pista MIDI de batería donde se pondrá. Si no hay ninguna, créala antes.
+  - **Compases:** cuántos compases insertar (0 = los que tenga el groove).
+  - **Variación humana:** pequeñas variaciones para que no suene idéntico cada vez.
+  - **Fill al final:** cambia el último compás por un *fill* (redoble o adorno de cierre) del mismo estilo.
+  - **Escalar al tempo:** mantiene la duración real del groove al tempo del proyecto (por defecto las notas siguen los pulsos).
+  - **Adaptar compás:** ajusta el groove al compás del proyecto (por verificar el detalle exacto de la adaptación).
+  - **Insertar en el playhead:** coloca el groove elegido donde está el cursor de reproducción.
+
+**Pasos:** 1) crea una pista MIDI con una batería cargada (por ejemplo **Worship Drums**); 2) abre **Grooves**;
+3) busca un estilo y pulsa el botón de escuchar; 4) elige la pista en la barra inferior y pulsa **Insertar**.
+
+**Sincronización y compartir** (barra bajo el título): **Actualizar grooves automáticamente** baja ritmos nuevos del
+catálogo de JasWave y retira los que se quiten (tus grooves nunca se tocan); **Sincronizar ahora** lo hace al momento.
+**Compartir mis grooves con JasWave para mejorar el catálogo** viene **apagado**; al activarlo se pide permiso y,
+si aceptas, autorizas incluirlos en el catálogo bajo licencia CC0. Solo se envían los que tú creaste.
+
 ## Expresión
 
 Lanes de CC (p. ej. sustain CC64, mod wheel) y pitch bend según el editor.  

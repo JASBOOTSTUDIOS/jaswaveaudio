@@ -208,7 +208,7 @@ Para tocar en vivo con un solo teclado (p. ej. el PSR-E373) repartiendo el tecla
 capas o transponiendo sin latencia añadida. Las zonas las aplica el **host nativo en el hilo de audio**: el MIDI
 no pasa por la interfaz, así que un split suena con la misma latencia que una pista sola (0 ms añadidos).
 
-**Abrir el panel:** icono «Zonas MIDI» (teclado) en la barra lateral o la herramienta `midi-zones`. Arriba se
+**Abrir el panel:** menú **Ver → Herramientas → Zonas MIDI** (se coloca en el panel inferior), o su icono (teclado) si aparece en la barra lateral. Arriba se
 dibuja un teclado de 88 teclas con una banda de color por zona; **arrastra los bordes** de la banda para mover sus
 límites, o escribe las notas (0–127, C4 = 60) en la lista.
 
@@ -235,6 +235,129 @@ mientras tocas: **no entra en un bounce ni en la exportación**. Con la segurida
 
 **Para la IA**: `midi.zones.get`, `midi.zones.set` («divide el teclado: bajo hasta B3 una octava abajo, piano desde
 C4»), `midi.zones.add/update/remove`, `directo.panic`, `directo.setSafety` y `directo.setLock`.
+
+## Worship Drums: elegir el kit (para principiantes)
+
+Un **kit** es el «juego de batería» que suena: cada kit se grabó con una batería real distinta. En **Worship Drums**
+el selector **Drum Kit** (en la sección de controles del editor) elige cuál suena; al lado, **Percussion Level**
+sube o baja la percusión auxiliar (palmas, pandereta, shaker, congas…). Según el manifiesto del plugin los kits de
+serie son:
+
+| Kit | Estilo |
+|-----|--------|
+| 1 · muldjord | worship / rock moderno (el de siempre y el predeterminado) |
+| 2 · bigrusty | rock y metal vintage |
+| 3 · drskit | jazz-rock |
+| 4 · naked | rock y pop limpio |
+| 5 · swirly | indie, con escobillas |
+| 6 · virtuosity | jazz de club |
+
+El selector admite hasta 16 posiciones; las etiquetas muestran el kit realmente instalado (si la lista del editor
+dice solo «Kit 7…16», es que esa posición está libre; por verificar en la aplicación). Cambiar de kit con la música
+sonando no corta nada. Otros mandos básicos: **Kick Tuning** (afinación del bombo), **Snare Snap** (pegada de la
+caja), **Toms Damping** (amortiguación de toms), **Room Blend** (cuánto micrófono de sala se mezcla) y **Room
+Compression**.
+
+## Más plugins de JasWave (efectos)
+
+Todos se cargan igual: selecciona la pista, abre **FX Chain** (o **Instrumentos**) y añade el plugin; se edita en
+**Editor de plugin**. El conmutador **[ BÁSICO | AVANZADO ]** de la cabecera muestra solo lo esencial o todo (ver más
+abajo «Editores: modo Básico / Avanzado»). Los rangos que se citan salen del manifiesto de cada plugin.
+
+### JasWave StompLab · pedalera universal
+
+**Qué es:** una pedalera como las de guitarra, pero válida también para bajo, teclados y voz. Cada «pedal» se activa
+o apaga por separado y la señal pasa por ellos en este orden: **Gate → Comp → Drive → Preamp → Cabina → Chorus →
+Delay → Shimmer** (el orden exacto interno: por verificar). Sirve para dar carácter (limpio, crunch, distorsión,
+ambiental) a un instrumento.
+
+| Bloque | Qué hace | Controles principales |
+|--------|----------|-----------------------|
+| **Gate** | Silencia el ruido cuando no tocas | Umbral (−80…−20 dB), Release, Rango |
+| **Comp** | Compresor: iguala el volumen | Umbral, Ratio (1…20:1), Ataque, Release, Makeup, Blend (mezcla paralela), Rodilla |
+| **Drive** | Distorsión de 5 modelos: Clean Boost, Overdrive, Distortion, Fuzz, Metal | Modelo, Cantidad, Tono (corte de agudos), Nivel |
+| **Preamp** | Amplificador de válvulas con 3 canales: Clean, Crunch, Lead | Ganancia, Graves, Medios, Agudos, Presencia, Master, Sag (compresión de la fuente), Bright |
+| **Cabina** | Simula la caja de altavoces (respuesta de impulso): 1x12 Open, 2x12 Combo, 4x12 Closed, Vintage Bright, British 2x12, DI (señal plana) | Modelo, Corte de graves, Corte de agudos, Mezcla |
+| **Chorus** | Engrosa el sonido con una copia que «tiembla» | Velocidad, Profundidad, Mezcla |
+| **Delay** | Eco; modos Stereo, Ping-Pong (rebota izq./der.) y Tape (cinta) | Tiempo (20…2000 ms), Realimentación, Tono, Mezcla |
+| **Shimmer** | Reverb con una octava arriba (sonido «celestial») | Mezcla, Cola (duración), Octava, Amortiguación de agudos |
+
+Además: **Input Gain / Output Gain** (±24 dB), **Mix** global (seco/procesado) y **Bypass**. Hay medidores de
+reducción del Gate y del Comp. En la ventana, la zona **PEDALERA** tiene los mandos principales (Drive, Preamp Gain,
+Delay Mix y los interruptores On de cada bloque) y **PARÁMETROS AVANZADOS** el resto.
+
+**Receta rápida (guitarra crunch):** Drive On con modelo Overdrive y Cantidad media → Preamp On en canal Crunch →
+Cabina On con 2x12 Combo → un poco de Delay Mix. Si suena opaco, sube el Tono del Drive o el Corte de agudos de la cabina.
+
+### JasWave Ambience · rack worship de espacio
+
+**Qué es:** un efecto de «ambiente» pensado para música de adoración: reverb grande, delay sincronizado al tempo,
+shimmer y un *swell*, todo en un solo plugin con **21 presets**. Se coloca en una pista (o mejor en un **bus** al que
+mandas varias pistas por envío; ver [14 · Conceptos para principiantes](./14-conceptos-para-principiantes.md)).
+
+| Mando | Qué hace |
+|-------|----------|
+| **REVERB** | Cantidad de reverb (mezcla, 0…100 %) |
+| **DECAY** | Cuánto dura la cola de la reverb (0,4…12 s) |
+| **DELAY** | Cantidad de delay (mezcla) |
+| **SINCRO** | Valor rítmico del delay respecto al tempo del DAW (Libre, 1/2, 1/4, 1/4., 1/8., 1/8, 1/8T, 1/16) |
+| **SHIMMER** | Cantidad de shimmer (reverb con octava; el intervalo por defecto, una octava arriba, es por verificar) |
+| **SWELL** | Profundidad del *swell*: envolvente dinámica automática que suaviza los ataques, útil en guitarras |
+| **FREEZE** | Congela la reverb: el sonido se sostiene «infinito» |
+| **ANCHO** | Anchura estéreo |
+| **VOLUMEN** | Nivel de salida (fader), con medidores de entrada y salida |
+| **Preset** | Room, Worship Hall, Hillsong Swell, G12 Pad, Grace Galactic, Averly Ambient, Ambient Pad, Barrack Lead, Delay + Verb, Large Hall, Slap Delay, Real Lead, Vintage Clean, Hillsong Modern, Hillsong Ambient, Hillsong Dual A, Hillsong Dual B, Piano · Sala cálida, Pad · Infinito (freeze), Plate brillante, Guitarra · Delay punteado |
+
+El plugin incluye además chorus, saturación, compresión, trémolo, EQ y graves en mono que no tienen mando en la
+ventana principal (por verificar cuáles se pueden tocar desde el editor). Un buen primer paso: elige un preset y
+ajusta solo REVERB y DECAY hasta que el instrumento «respire» sin tapar a los demás.
+
+### JasWave Audio Doctor · restauración de audio
+
+**Qué es:** un «médico» para grabaciones con problemas. Se usa en pistas de **audio** (voz, guitarra grabada, etc.).
+Cada herramienta se activa por separado.
+
+| Herramienta | Para qué sirve | Controles principales |
+|-------------|----------------|-----------------------|
+| **Gate / Expander** | Baja el volumen cuando no hay señal útil (respiraciones, ruido entre frases). Su detección usa un filtro de **sidechain** (escucha una versión filtrada de la señal) | Umbral, Ratio, Ataque, Release, Hold, Histéresis |
+| **De-Noise** | Quita el ruido de fondo constante (soplido, ventilador); puede **aprender** el ruido | Reducción (0…24 dB), Aprender ruido, Modo (Auto, Learned, Continuous), Suavizado |
+| **De-Hum** | Quita el zumbido eléctrico de 50 o 60 Hz y sus armónicos | Frecuencia (Auto/50/60 Hz), Armónicos, Q, Profundidad |
+| **De-Click** | Quita chasquidos y clics | Sensibilidad, Ancho máximo |
+| **De-Clip** | Repara recortes (cuando la grabación «saturó» por ir demasiado fuerte) | Umbral, Fuerza |
+| **De-Reverb** | Reduce el eco de la sala en que se grabó | Cantidad, Cola |
+| **Aislador de voz** | Resalta la banda de frecuencias de la voz | Frecuencia grave y aguda, Profundidad |
+| **Escudo de transitorios** | Protege los golpes (ataques) del procesado | Cantidad |
+| **Recuperación de aire** | Devuelve brillo en agudos | Frecuencia, Ganancia (0…6 dB) |
+
+Controles de ayuda:
+
+- **Auto-Fix:** analiza unos 3 segundos de audio y aplica los ajustes recomendados; luego se apaga solo.
+- **Learn Noise:** actívalo mientras suena **solo el ruido** (sin voz) para que De-Noise lo aprenda.
+- **Delta:** te hace oír **solo lo que se está quitando**. Si oyes voz o música en el Delta, estás quitando demasiado.
+- **Live Mic:** modo de latencia mínima (menos de 2 ms) con algo menos de calidad; para monitorizar en vivo.
+- **Medidores de diagnóstico:** ruido de fondo, hum detectado, clics por segundo, % de recorte, reverberancia y reducción aplicada.
+
+**Receta:** pon Audio Doctor primero en la cadena de la voz → activa **Auto-Fix** con la voz sonando → escucha con
+**Delta** para comprobar que no quita voz → ajusta la **Reducción** de De-Noise al mínimo que limpie.
+
+### Otros efectos de JasWave (resumen)
+
+| Plugin | Para qué sirve |
+|--------|----------------|
+| **Param EQ** | Ecualizador paramétrico dinámico de hasta 24 bandas (tipo, frecuencia, ganancia, Q) |
+| **Bus Compressor** | Compresor de bus: Umbral, Ratio, Ataque, Release, Rodilla, Makeup, Mezcla paralela, filtro de sidechain, detector Peak/RMS |
+| **TruePeak Limiter** | Limitador final con lookahead y dither para no pasar un techo true-peak |
+| **Smart De-esser** | Suaviza las «eses» ásperas de una voz (banda dividida o completa) |
+| **Utility Tool** | Ganancia, fase, canales L/R, ancho M/S, mono en graves |
+| **Vocal Tune** | Afinador automático de voz (sección propia, más arriba) |
+| **Vocal Choir** | Coro de hasta 4 voces controlado por MIDI |
+| **Pedal Fix** | Unifica los mensajes de pedal sustain/sostenuto/soft (sección propia) |
+| **Audio Lens** | Análisis descriptivo del audio y conversión de ritmos hechos con la boca (beatbox) a batería MIDI |
+
+Instrumentos propios: **Worship Drums** (batería), **Grand Piano** (piano de cola), **Piano Synth**, **Electric Bass**,
+**Electric Guitar**, **Shimmer Pad**, **Ambient Atmos** (atmósferas), **Strings Section** (cuerdas) y **Roles**
+(instrumento por rol: batería, bajo, guitarra, piano, pad, cuerdas…). El **Sampler** no tiene manifiesto: por verificar
+su descripción.
 
 ## Editores: modo Básico / Avanzado
 

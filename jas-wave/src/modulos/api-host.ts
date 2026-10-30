@@ -17,6 +17,12 @@ export { midiClipDocSlug, parseMidiClipMd, serializeMidiClipMd } from '../lib/mi
 // Workspace
 export { requestOpenTool } from '../workspace/types'
 
+// Guía de interfaz (U-maestra F4): solo cambian la interfaz, nunca el proyecto. El resaltado solo acepta ids de ayuda registrados.
+export { abrirPantalla, listarPantallasAbribles, resolverPantalla } from '../lib/abrir-pantalla'
+export type { ResultadoAbrir, ViaApertura } from '../lib/abrir-pantalla'
+export { descartarGuia, iniciarGuia, limpiarResaltado, listarIdsAyuda, obtenerEstadoGuia, pausarGuia, registrarIdsAyuda, registrarPredicadoEstado, resaltarElemento, siguientePaso, suscribirGuia } from '../lib/guia-ui'
+export type { EstadoGuia, HastaQue, PasoGuia, ResultadoGuia } from '../lib/guia-ui'
+
 // Consultas puras sobre el estado (sin efectos)
 export { findMidiClip } from '../../../shared/src/midi/query'
 

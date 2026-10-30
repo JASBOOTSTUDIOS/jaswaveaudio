@@ -60,9 +60,9 @@ Los atajos **no** se disparan con el foco en un campo de texto (salvo combinacio
 
 | Acción | Default |
 |--------|---------|
-| Paleta de comandos | `Ctrl+Shift+P` |
+| Paleta de comandos | `Ctrl+Shift+P` (también menú **Ver → Paleta de comandos**) |
 | Atajos | `Ctrl+Shift+,` |
-| MIDI Learn | `Ctrl+Shift+M` |
+| MIDI Learn | `Ctrl+Shift+M` (con el foco en el chat del Asistente, el mismo atajo cambia el **modo** del asistente) |
 | Toggle paneles | `Ctrl+B` / `Ctrl+J` (según catálogo) |
 
 ## Piano roll (resumen)

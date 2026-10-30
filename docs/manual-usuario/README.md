@@ -7,7 +7,7 @@ Guía práctica para producir música en JasWave: interfaz, transporte, arrange,
 
 ## Cómo usar este manual
 
-1. Si es tu primera vez → empieza por [01 · Primeros pasos](./01-primeros-pasos.md).
+1. Si es tu primera vez → empieza por [01 · Primeros pasos](./01-primeros-pasos.md) y [14 · Conceptos para principiantes](./14-conceptos-para-principiantes.md).
 2. Si quieres una canción rápido con IA → [08 · Asistente y prompts](./08-asistente-y-prompts.md) + [11 · Flujos prácticos](./11-flujos-practicos.md).
 3. Si ya sabes DAWs → [07 · VST e instrumentos](./07-vst-e-instrumentos.md) y [09 · Mezcla y exportar](./09-mezcla-y-exportar.md).
 
@@ -28,6 +28,7 @@ Guía práctica para producir música en JasWave: interfaz, transporte, arrange,
 | 11 | [Flujos prácticos](./11-flujos-practicos.md) | Recetas de punta a punta |
 | 12 | [Solución de problemas](./12-solucion-problemas.md) | Silencio, ASIO, cuarentena, ffmpeg |
 | 13 | [Terminal](./13-terminal.md) | CLI en español, sesiones, split |
+| 14 | [Conceptos para principiantes](./14-conceptos-para-principiantes.md) | Qué es un DAW, bus, envío, compresor, EQ, velocity, cuantizar, dónde está cada panel |
 
 ## Qué puedes esperar (y qué no)
 
@@ -48,3 +49,7 @@ Guía práctica para producir música en JasWave: interfaz, transporte, arrange,
 | **Freeze** | Consolida la pista a audio y bypass de plugins |
 | **Armar** | Preparar pista para grabar |
 | **Bucle / Repetir** | Loop de transporte |
+| **Banda virtual** | Panel con los agentes de la banda y «Mi estilo» |
+| **Mi estilo** | Tu forma de tocar, analizada y guardada para que la banda la aplique |
+| **Grooves** | Biblioteca de ritmos de batería |
+| **StompLab / Ambience / Audio Doctor** | Pedalera, rack de ambiente worship y restauración de audio (ver [07](./07-vst-e-instrumentos.md)) |
