@@ -23,6 +23,7 @@
 import { clasificarFamiliaBanda, humanizarBanda } from '@jaswave/host-sdk'
 import { camposNota, comoListaDeNotas, tonoMidi } from '../agent-tool-runner'
 import type { HojaCoherencia } from './coherencia-banda'
+import { bpmDeProyecto } from './bpm-proyecto'
 
 export type ModoHumanizarBandaAjuste = 'siempre' | 'suave' | 'nunca'
 export const CLAVE_HUMANIZAR = 'jaswave-banda-humanizar'
@@ -165,7 +166,7 @@ export function guardarEscrituraHumanizar(
   memoria.set(pista.id, vistos)
   return guardiaHumanizar(llamada.nombre, args, {
     familia: clasificarFamiliaBanda(pista.nombre, pista.plugins ?? []),
-    bpm: Number(st.project?.bpm),
+    bpm: bpmDeProyecto(st.project),
     numerador: Math.max(1, Math.round(hoja?.numerador || Number(st.project?.timeSignature?.numerador ?? 4) || 4)),
     semilla: pista.id,
     inicioClip,

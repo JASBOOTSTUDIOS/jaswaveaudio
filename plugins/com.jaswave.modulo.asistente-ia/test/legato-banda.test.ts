@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { esPedidoWorship, guardarEscrituraLegato, guardiaLegato, legatoActivo } from '../src/motor/turno/legato-banda'
 import { analizarCoherencia, diagnosticoEscritura, type HojaCoherencia } from '../src/motor/turno/coherencia-banda'
+import { bpmDeProyecto } from '../src/motor/turno/bpm-proyecto'
 
 const staccato = [0, 1, 2, 3].map((i) => ({ pitch: 60 + i, inicio: i, duracion: 0.25, velocidad: 80 }))
 
@@ -69,5 +70,24 @@ describe('legato worship al escribir', () => {
     assert.ok(!despues.some((x) => /robótica/.test(x)) || antes.some((x) => /robótica/.test(x)))
     const diag = diagnosticoEscritura(estado(r.args.notas as unknown[]), hoja, { pista: 'Piano', encargo: 'Intro' }) ?? ''
     assert.ok(!/cuadrada/.test(diag), diag)
+  })
+
+  it('con el estado REAL (project.bpm es un objeto {valor}) el legato se aplica: antes el tempo daba NaN y nunca actuaba', () => {
+    // Forma real del proyecto: `bpm: { valor: 74 }`, no un número.
+    const st = { project: { bpm: { valor: 74 }, tracks: [{ id: 'p1', nombre: 'Piano', plugins: [], clips: [] }] } } as never
+    const notas = [0, 2, 4, 6].map((t) => ({ pitch: 60, inicio: t, duracion: 0.5, velocidad: 80 }))
+    const notasDiferentes = [60, 64, 67, 72].map((pitch, i) => ({ pitch, inicio: i * 2, duracion: 0.5, velocidad: 80 }))
+    void notas
+    const r = guardarEscrituraLegato(st, 'canción de adoración', { nombre: 'midi.clip.create', argumentos: { pistaId: 'p1', inicio: 0, duracion: 16, notas: notasDiferentes } })
+    assert.ok(r.avisos.length > 0, 'debe informar de las notas sostenidas')
+    const d = (r.args.notas as Array<{ duracion: number }>).map((n) => n.duracion)
+    assert.ok(d[0]! > 2, `la primera nota se sostiene hasta la siguiente (+500 ms): ${d.join(', ')}`)
+  })
+
+  it('bpmDeProyecto lee número, objeto {valor} y valores inválidos', () => {
+    assert.equal(bpmDeProyecto({ bpm: 74 }), 74)
+    assert.equal(bpmDeProyecto({ bpm: { valor: 90 } }), 90)
+    assert.equal(bpmDeProyecto({ bpm: { valor: 'x' } }), 0)
+    assert.equal(bpmDeProyecto(undefined), 0)
   })
 })

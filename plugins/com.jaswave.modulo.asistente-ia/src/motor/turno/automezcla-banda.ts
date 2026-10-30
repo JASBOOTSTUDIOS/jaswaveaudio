@@ -12,6 +12,7 @@
  */
 import { PERFIL_MEZCLA_DEFECTO, clasificarRolMezcla, describirPerfilMezcla, planificarAutomezcla } from '@jaswave/host-sdk'
 import type { PerfilMezcla, PistaAutomezcla, PlanMezcla, SeccionMezcla, TiendaDAW } from '@jaswave/host-sdk'
+import { bpmDeProyecto } from './bpm-proyecto'
 
 export const MAX_MS_MEDICION_AUTOMEZCLA = 60_000
 export const NOMBRE_BUS_REVERB = 'Reverb corta'
@@ -183,7 +184,7 @@ export async function aplicarAutomezcla(o: OpcionesAplicarAutomezcla): Promise<R
       ...(o.perfil ? { perfil: o.perfil } : {}),
       ...(medicion?.suma?.crestDb != null && medicion.suma.crestDb > 3 ? { crestaSumaDb: medicion.suma.crestDb } : {}),
       ...(medicion?.suma?.bandasDb ? { sumaBandasDb: medicion.suma.bandasDb } : {}),
-      ...(o.hoja?.secciones?.length ? { secciones: o.hoja.secciones, bpm: o.hoja.bpm ?? Number(tienda.obtenerEstado().project?.bpm ?? 0), numerador: o.hoja.numerador ?? 4 } : {}),
+      ...(o.hoja?.secciones?.length ? { secciones: o.hoja.secciones, bpm: o.hoja.bpm ?? bpmDeProyecto(tienda.obtenerEstado().project), numerador: o.hoja.numerador ?? 4 } : {}),
     })
     notas.push(...plan.notas)
 

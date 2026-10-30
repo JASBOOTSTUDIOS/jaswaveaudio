@@ -572,7 +572,20 @@ export async function ejecutarAgente(cfg: ConfigAgente): Promise<ResultadoAgente
       emitir({ tipo: 'herramienta', agente, nombre: h.nombre, titulo, fase: 'inicio' })
       let res: ResultadoHerramienta
       try {
-        const correr = () => cfg.ejecutar(l, h, { agente, profundidad })
+        // Una herramienta colgada (p. ej. una medición nativa que no responde) no retiene al agente más allá de su
+        // corte: la señal gana la carrera y el candado se libera.
+        const correr = () => {
+          const ejecucion = Promise.resolve(cfg.ejecutar(l, h, { agente, profundidad }))
+          const senal = cfg.signal
+          if (!senal) return ejecucion
+          ejecucion.catch(() => undefined)
+          return new Promise<ResultadoHerramienta>((resolve, reject) => {
+            const alCortar = () => resolve({ ok: false, error: 'cortado por tiempo' })
+            if (senal.aborted) return alCortar()
+            senal.addEventListener('abort', alCortar, { once: true })
+            ejecucion.then(resolve, reject).finally(() => senal.removeEventListener('abort', alCortar))
+          })
+        }
         res = h.clase === 'lectura' ? await correr() : await candado.con(correr)
       } catch (e) {
         res = { ok: false, error: e instanceof Error ? e.message : String(e) }

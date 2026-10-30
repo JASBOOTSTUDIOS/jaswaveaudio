@@ -192,7 +192,7 @@ export function huecosPorCompas(notas: ReadonlyArray<{ inicio: number; duracion:
 }
 
 const textoHueco = (h: Hueco, num: number) => `${h.seccion} (${h.hasta - h.desde === 1 ? `compás ${h.desde + 1}` : `compases ${h.desde + 1}–${h.hasta}`}, beat ${h.desde * num}, ${(h.hasta - h.desde) * num} beats)`
-const COLA_FALTANTES = '. Cada tramo es un clip que empieza en su beat con la duración indicada (o amplía el clip de su sección hasta cubrirlo).'
+const COLA_FALTANTES = '. Si el tramo está libre, crea un clip que empiece en su beat con la duración indicada; si cae DENTRO de un clip que ya existe (otro clip ahí se rechaza), añade las notas a ese clip con midi.notes.patch o amplíalo, sin crear uno nuevo.'
 
 /**
  * Cobertura de la parte de un músico frente a la hoja de ruta, o null si está completa (mensaje accionable con

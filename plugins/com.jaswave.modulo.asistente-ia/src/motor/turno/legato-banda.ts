@@ -12,6 +12,7 @@
  */
 import { aplicarLegatoWorship, clasificarPistaLegato } from '@jaswave/host-sdk'
 import { camposNota, comoListaDeNotas, tonoMidi } from '../agent-tool-runner'
+import { bpmDeProyecto } from './bpm-proyecto'
 
 export type ModoLegatoBanda = 'siempre' | 'worship' | 'nunca'
 export const CLAVE_LEGATO = 'jaswave-banda-legato'
@@ -104,5 +105,5 @@ export function guardarEscrituraLegato(
   const clip = pista.clips?.find((c) => c.id === String(args.clipId ?? ''))
   const durCreate = Number(args.duracion ?? args.duration ?? args.length)
   const finClip = llamada.nombre === 'midi.clip.create' ? (Number.isFinite(durCreate) && durCreate > 0 ? durCreate : undefined) : clip?.duracion
-  return guardiaLegato(llamada.nombre, args, { tipo: clasificarPistaLegato(pista.nombre, pista.plugins ?? []), bpm: Number(st.project?.bpm), finClip })
+  return guardiaLegato(llamada.nombre, args, { tipo: clasificarPistaLegato(pista.nombre, pista.plugins ?? []), bpm: bpmDeProyecto(st.project), finClip })
 }

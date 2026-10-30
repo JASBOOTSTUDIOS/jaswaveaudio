@@ -272,6 +272,17 @@ export function guardiaIA(tool: string, args: Record<string, unknown>, st: Estad
       pista = duena
     }
   }
+  // El modelo a veces llama a la lista de notas de otra forma («notes», «eventos»…): se acepta como `notas` (sin esto la
+  // llamada se rechazaba por «Ya hay un clip» o «Campo requerido faltante: notas» aunque traía las notas).
+  if (NOTAS_EN(tool) && args.notas == null) {
+    const alias = ['notes', 'noteList', 'events', 'eventos', 'midiNotes', 'notasMidi', 'contenido'].find((k) => args[k] != null && typeof args[k] === 'object')
+    if (alias) {
+      const { [alias]: valor, ...resto } = args
+      out = { ...out, ...resto, notas: valor }
+      delete (out as Record<string, unknown>)[alias]
+      args = out
+    }
+  }
   // `notas` como texto JSON, como objeto suelto o como mapa: se convierte a lista antes de validar.
   if (NOTAS_EN(tool) && args.notas != null && !Array.isArray(args.notas)) {
     const lista = comoListaDeNotas(args.notas)
@@ -301,7 +312,10 @@ export function guardiaIA(tool: string, args: Record<string, unknown>, st: Estad
     // Dos clips en el mismo sitio suenan a la vez (partes duplicadas): se edita el que ya está.
     const ini = Number(args.inicio ?? 0)
     const fin = ini + Number(args.duracion ?? 0)
-    const choca = (pista.clips ?? []).find((c) => ini < c.inicio + c.duracion - 1e-6 && c.inicio < fin - 1e-6)
+    // Un clip que se pasa un poco de su sección (la cola de una nota larga, ≤ 1 beat) no bloquea al siguiente: antes
+    // «Intro» hasta el beat 16,6 rechazaba «Verso 1» desde el 16 y el músico perdía pasos reescribiendo.
+    const COLA_TOLERADA = 1
+    const choca = (pista.clips ?? []).find((c) => ini < c.inicio + c.duracion - COLA_TOLERADA && c.inicio < fin - 1e-6)
     if (choca && Number.isFinite(fin) && fin > ini) {
       const cubre = choca.inicio <= ini + 1e-6 && choca.inicio + choca.duracion >= fin - 1e-6
       const mismoInicio = Math.abs(choca.inicio - ini) <= 1 && Math.abs(choca.duracion - Number(args.duracion ?? 0)) <= Math.max(4, choca.duracion * 0.25)

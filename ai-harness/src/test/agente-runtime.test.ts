@@ -335,4 +335,14 @@ describe('indicaciones del usuario en mitad del trabajo', () => {
     expect(usuarios).toHaveLength(1)
     expect(String(usuarios[0]!.content)).toMatch(/^graba[\s\S]*- más lento/)
   })
+  it('una herramienta colgada no retiene al agente: al cortarse por señal el turno termina', async () => {
+    const ctl = new AbortController()
+    const { chat } = guion([{ ok: true, texto: '', llamadas: [llamada('project.getSummary')] }, { ok: true, texto: 'fin', llamadas: [] }])
+    setTimeout(() => ctl.abort(), 30)
+    const r = await Promise.race([
+      ejecutarAgente({ pedido: 'mide', catalogo: CATALOGO, sistema: 'sys', chat, ejecutar: () => new Promise(() => undefined), signal: ctl.signal }),
+      new Promise<'colgado'>((res) => setTimeout(() => res('colgado'), 2000)),
+    ])
+    expect(r).not.toBe('colgado')
+  })
 })

@@ -12,6 +12,7 @@
 import { clasificarFamiliaBanda, coordinarVoces } from '@jaswave/host-sdk'
 import type { NotaVertical, ResumenCoordinarVoces } from '@jaswave/host-sdk'
 import { MAYOR, MENOR, parsearAcorde, parsearTonalidad, type HojaCoherencia } from './coherencia-banda'
+import { bpmDeProyecto } from './bpm-proyecto'
 
 type NotaEstado = { pitch: number; inicio: number; duracion: number; velocidad?: number } & Record<string, unknown>
 type EstadoCoordinar = {
@@ -32,7 +33,7 @@ export type EscrituraCoordinada = { pistaId: string; clipId: string; notas: Nota
 type Marcada = NotaVertical & { clipId: string; orig: NotaEstado; relInicio: number }
 
 export function planCoordinacion(st: EstadoCoordinar, hoja: HojaCoherencia): { escrituras: EscrituraCoordinada[]; resumen: ResumenCoordinarVoces | null } {
-  const bpm = Number(st.project?.bpm)
+  const bpm = bpmDeProyecto(st.project)
   const num = Math.max(1, Math.round(hoja.numerador || Number(st.project?.timeSignature?.numerador ?? 4) || 4))
   const acordes = hoja.secciones.flatMap((s) =>
     Array.from({ length: s.compases }, (_, i) => {

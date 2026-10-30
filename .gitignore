@@ -66,3 +66,4 @@ native/*/build*/
 
 # Tipos del host generados para @jaswave/host-sdk (jas-wave: npm run sdk:generar)
 plugins/sdk/host-sdk/tipos-host/
+docs/ia/claves.md

@@ -250,6 +250,36 @@ describe('agent-tool-runner (ADR-0017)', () => {
     assert.equal(ok.status, 'success', ok.error?.message)
   })
 
+  it('la lista de notas con otro nombre de campo (notes, eventos…) se acepta como notas', async () => {
+    const tienda = crearTiendaDAW({ estadoInicial: crearEstadoInicial() })
+    toolRegistry.setContext(tienda.executor, tienda.permisos)
+    registerAgentCatalogOnRegistry(toolRegistry, ['midi.clip.create'], tienda.registroComandos)
+    const opts = { forceApply: true, agentMode: 'create' as const }
+    await tienda.executor.execute('track.create', { nombre: 'Pad', tipo: 'midi' }, 'user')
+    const id = tienda.obtenerEstado().project.tracks[0]!.id
+    const r = await runRegisteredTool(tienda, { id: 'a1', tool: 'midi.clip.create', arguments: { pistaId: id, nombre: 'Intro', inicio: 0, duracion: 16, notes: [{ pitch: 62, inicio: 0, duracion: 4, velocidad: 70 }] } }, opts)
+    assert.equal(r.status, 'success', r.error?.message)
+    assert.equal((tienda.obtenerEstado().project.tracks[0]!.clips[0] as { notas: unknown[] }).notas.length, 1)
+    const e = await runRegisteredTool(tienda, { id: 'a2', tool: 'midi.clip.create', arguments: { pistaId: id, nombre: 'Intro', inicio: 0, duracion: 16, eventos: [{ pitch: 64, inicio: 0, duracion: 4, velocidad: 70 }] } }, opts)
+    assert.equal(e.status, 'success', e.error?.message)
+    assert.equal(tienda.obtenerEstado().project.tracks[0]!.clips.length, 1)
+  })
+
+  it('un clip que se pasa hasta 1 beat de su sección no bloquea al siguiente; un solape mayor sigue rechazándose', async () => {
+    const tienda = crearTiendaDAW({ estadoInicial: crearEstadoInicial() })
+    toolRegistry.setContext(tienda.executor, tienda.permisos)
+    registerAgentCatalogOnRegistry(toolRegistry, ['midi.clip.create'], tienda.registroComandos)
+    const opts = { forceApply: true, agentMode: 'create' as const }
+    await tienda.executor.execute('track.create', { nombre: 'Piano', tipo: 'midi' }, 'user')
+    const id = tienda.obtenerEstado().project.tracks[0]!.id
+    // «Intro» de 16 beats con una nota que llega al beat 16,6 (el clip se alarga solo).
+    await tienda.executor.execute('midi.clip.create', { pistaId: id, nombre: 'Intro', inicio: 0, duracion: 16, notas: [{ pitch: 60, inicio: 15.5, duracion: 1.1, velocidad: 80 }] }, 'user')
+    const sig = await runRegisteredTool(tienda, { id: 'c1', tool: 'midi.clip.create', arguments: { pistaId: id, nombre: 'Verso 1', inicio: 16, duracion: 32, notas: [{ pitch: 62, inicio: 0, duracion: 2, velocidad: 80 }] } }, opts)
+    assert.equal(sig.status, 'success', sig.error?.message)
+    const mucho = await runRegisteredTool(tienda, { id: 'c2', tool: 'midi.clip.create', arguments: { pistaId: id, nombre: 'Otro', inicio: 14, duracion: 8, notas: [{ pitch: 62, inicio: 0, duracion: 2, velocidad: 80 }] } }, opts)
+    assert.match(mucho.error?.message ?? '', /Ya hay un clip en ese lugar/)
+  })
+
   it('midi.notes.set: si el modelo insiste con lo mismo tras el aviso, se acepta (no hay bucle de rechazos)', async () => {
     _olvidarRechazosNotesSet()
     const tienda = crearTiendaDAW({ estadoInicial: crearEstadoInicial() })
