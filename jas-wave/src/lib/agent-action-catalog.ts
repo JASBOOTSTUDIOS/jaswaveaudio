@@ -950,6 +950,7 @@ export const KNOWN_AGENT_ACTION_TYPES: string[] = [
   'midi.clip.md.apply',
   'midi.makeStaccato',
   'midi.makeLegato',
+  'midi.notes.legatoWorship',
   'midi.repeatPattern',
   'midi.reverse',
   'midi.invert',

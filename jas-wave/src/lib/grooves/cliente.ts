@@ -20,6 +20,7 @@ import {
   type NotaGroove,
   type OpcionesInsercion,
 } from '../../../../shared/src/grooves'
+import { groovesParecidos } from './parecidos'
 
 export type ResultadoSyncUi = {
   ok: boolean
@@ -193,8 +194,18 @@ export async function insertarGroove(tienda: TiendaDAW, p: PeticionInsertarGroov
   if (pista.tipo !== 'midi' && pista.tipo !== 'instrumento') {
     return { ok: false, mensaje: `La pista «${pista.nombre}» no es MIDI/instrumento: elige la pista de batería.` }
   }
-  const g = elegirGroove(lista, { grooveId: p.grooveId, ...(p.criterios ?? {}) }, p.semilla)
-  if (!g) return { ok: false, mensaje: p.grooveId ? `Groove no encontrado: ${p.grooveId}` : 'Ningún groove cumple los criterios' }
+  let g = elegirGroove(lista, { grooveId: p.grooveId, ...(p.criterios ?? {}) }, p.semilla)
+  if (!g && p.grooveId) {
+    // El modelo a veces inventa un id casi correcto («jw-worship-4-4-puente-crescendo-por-capas»): se resuelve al más
+    // parecido si es único y, si no, el error propone los candidatos reales.
+    const { mejor, candidatos } = groovesParecidos(lista, p.grooveId)
+    if (mejor) g = mejor
+    else {
+      const sugerencias = candidatos.map((c) => `«${c.nombre}» = "${c.id}"`).join(', ')
+      return { ok: false, mensaje: `Groove no encontrado: ${p.grooveId}.${sugerencias ? ` Parecidos: ${sugerencias}.` : ''} Los ids salen de groove.listar.` }
+    }
+  }
+  if (!g) return { ok: false, mensaje: 'Ningún groove cumple los criterios' }
   const inicio = Number.isFinite(p.inicioBeat) ? Math.max(0, p.inicioBeat) : 0
 
   let fillFinal: OpcionesInsercion['fillFinal']

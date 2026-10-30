@@ -10,9 +10,11 @@
 import { expect, test, type Locator } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { setupJasWave } from './fixtures/harness'
 import { newProject } from './fixtures/project'
 import { crearPasos } from './fixtures/pasos'
+import type { BridgeClient } from './fixtures/app'
 
 const EMAIL = process.env.JASWAVE_E2E_EMAIL ?? ''
 const PASSWORD = process.env.JASWAVE_E2E_PASSWORD ?? ''
@@ -125,6 +127,18 @@ test('canción completa con la IA real: arreglo, mezcla, máster y exportación'
   const conMusica = pistas.filter((t) => t.clips.length > 0)
   expect(conMusica.length, 'pistas con música').toBeGreaterThanOrEqual(5)
 
+  // Calidad musical medida nota por nota (plan S): nada vacío, cobertura por compás, sin copias exactas ni todo en la rejilla,
+  // sin choques entre pistas. El mismo análisis sirve para cualquier proyecto: scripts/analizar-proyecto-musical.mjs.
+  const musical = await analisisMusical(bridge!, pistas, st.bpm ?? 74, salida)
+  console.log(musical.tabla)
+  const vacias = pistas.filter((t) => t.tipo !== 'bus' && t.clips.reduce((n, c) => n + (c.notas ?? 0), 0) === 0).map((t) => t.nombre)
+  expect(vacias, `pistas de instrumento vacías: ${vacias.join(', ')}`).toEqual([])
+  for (const f of musical.fallos) console.log(`[musica] FALLO: ${f}`)
+  expect(musical.fallos.filter((f) => /compases sin notas/.test(f)), 'cobertura por compás').toEqual([])
+  expect(musical.fallos.filter((f) => /copia exacta/.test(f)), 'copias exactas por pista (< 50 %)').toEqual([])
+  expect(musical.fallos.filter((f) => /rejilla exacta/.test(f)), 'notas en rejilla exacta (batería < 90 %, resto < 60 %)').toEqual([])
+  expect(musical.fallos.filter((f) => /choques entre pistas/.test(f)), 'choques de segunda menor entre pistas (< 8 % de los tiempos)').toEqual([])
+
   // Exportación: mezcla con stems por pista, MIDI y proyecto empaquetado.
   await page.waitForTimeout(10_000)
   const wav = path.join(salida, 'Tu Gracia Me Alcanzo.wav')
@@ -170,6 +184,45 @@ test('canción completa con la IA real: arreglo, mezcla, máster y exportación'
   expect(mudos, `stems en silencio: ${mudos.join(', ')}`).toEqual([])
   expect(notasMidi, 'notas que suenan (dentro de su clip)').toBeGreaterThanOrEqual(notasProyecto * 0.9)
 })
+
+/** Forma pedida en PEDIDO (nombre, compases): el e2e la usa como marcadores de sección del análisis. */
+const FORMA: Array<[string, number]> = [['Intro', 4], ['Verso 1', 8], ['Pre-coro 1', 4], ['Coro 1', 8], ['Verso 2', 8], ['Pre-coro 2', 4], ['Coro 2', 8], ['Puente', 8], ['Coro final', 8], ['Outro', 4]]
+
+type PistaResumen = { id: string; nombre: string; tipo: string; clips: Array<{ id?: string; nombre?: string; inicio: number; duracion: number; notas?: number }> }
+
+/** Lee todas las notas del proyecto vivo (por ventanas de 8 beats: `midi.notes.get` devuelve como mucho 128 por llamada) y ejecuta el análisis. */
+async function analisisMusical(bridge: BridgeClient, pistas: PistaResumen[], bpm: number, salida: string): Promise<{ tabla: string; fallos: string[] }> {
+  let compas = 0
+  const marcadores = FORMA.map(([nombre, n]) => {
+    const m = { nombre, tiempo: compas * 4 }
+    compas += n
+    return m
+  })
+  const tracks = []
+  for (const t of pistas) {
+    const clips = []
+    for (const c of t.clips) {
+      const notas: Array<{ pitch: number; inicio: number; duracion: number; velocidad: number }> = []
+      if ((c.notas ?? 0) > 0 && c.id) {
+        for (let ini = 0; ini < c.duracion + 1e-9; ini += 8) {
+          const r = await bridge.run('midi.notes.get', { pistaId: t.id, clipId: c.id, start: ini, end: ini + 8, limit: 128 })
+          for (const n of (r.data?.notes ?? []) as Array<{ pitch: number; inicio: number; duracion: number; velocidad: number }>) {
+            if (n.inicio >= ini - 1e-9 && n.inicio < ini + 8 - 1e-9) notas.push({ pitch: n.pitch, inicio: n.inicio, duracion: n.duracion, velocidad: n.velocidad })
+          }
+        }
+      }
+      clips.push({ nombre: c.nombre, inicio: c.inicio, duracion: c.duracion, notas })
+    }
+    tracks.push({ nombre: t.nombre, tipo: t.tipo, clips })
+  }
+  const json = path.join(salida, 'proyecto-musical.json')
+  fs.writeFileSync(json, JSON.stringify({ nombre: 'e2e 29', bpm: { valor: bpm }, timeSignature: { numerador: 4 }, marcadores, tracks }))
+  const script = path.join(__dirname, '..', 'scripts', 'analizar-proyecto-musical.mjs')
+  const tabla = spawnSync(process.execPath, [script, json], { encoding: 'utf8' }).stdout
+  const salidaJson = spawnSync(process.execPath, [script, json, '--json'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  const fallos = (JSON.parse(salidaJson.stdout || '{"fallos":["el análisis no produjo salida"]}') as { fallos: string[] }).fallos
+  return { tabla: tabla.split('\n').filter((l) => l.startsWith('[musica]')).join('\n'), fallos }
+}
 
 /** Pico, RMS y duración de un WAV PCM 16/24 bits o float 32 (sin dependencias). */
 function nivelWav(file: string): { pico: number; rms: number; segundos: number } {

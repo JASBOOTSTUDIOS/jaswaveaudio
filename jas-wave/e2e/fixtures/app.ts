@@ -167,6 +167,9 @@ export async function launchJasWave(opts: LaunchOptions = {}): Promise<JasWaveAp
   delete env.JASWAVE_AI_MOCK
   // Los proyectos nuevos de la instancia van a su carpeta temporal, nunca a los Documentos del usuario.
   env.JASWAVE_PROYECTOS_DIR = path.join(workDir, 'proyectos')
+  // El diario de producción y los puntos de control de la IA tampoco se mezclan con los del usuario real.
+  env.JASWAVE_PRODUCCIONES_DIR = path.join(workDir, 'producciones')
+  env.JASWAVE_RECUPERACION_DIR = path.join(workDir, 'recuperacion')
   Object.assign(env, opts.env ?? {})
 
   let output = ''

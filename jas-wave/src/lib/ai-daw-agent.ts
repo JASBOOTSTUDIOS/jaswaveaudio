@@ -3336,6 +3336,25 @@ export async function executeDawActions(
           })
           break
         }
+        case 'midi.notes.legatoWorship': {
+          // Sin clipId se aplica a cada clip MIDI de la pista (un comando con undo por clip).
+          const pid = String(p.pistaId ?? p.trackId ?? '')
+          const pista = tienda.obtenerEstado().project.tracks.find((t) => t.id === pid)
+          const ids = p.clipId ? [String(p.clipId)] : (pista?.clips ?? []).filter((c) => c.tipo === 'midi').map((c) => c.id)
+          if (!pista || !ids.length) {
+            results.push({ type: action.type, success: false, message: pista ? 'La pista no tiene clips MIDI' : 'Pista no encontrada' })
+            break
+          }
+          let hechos = 0
+          let fallo = ''
+          for (const clipId of ids) {
+            const r = await tienda.executor.execute(action.type, { ...p, pistaId: pid, clipId })
+            if (r.success) hechos++
+            else fallo = r.error?.message ?? 'Error'
+          }
+          results.push({ type: action.type, success: hechos > 0, message: hechos > 0 ? `OK legato worship en ${hechos} clip(s)${fallo ? ` · ${fallo}` : ''}` : fallo, data: { clips: hechos } })
+          break
+        }
         case 'midi.transpose':
         case 'midi.quantize':
         case 'midi.humanize':
