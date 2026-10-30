@@ -345,4 +345,17 @@ describe('indicaciones del usuario en mitad del trabajo', () => {
     ])
     expect(r).not.toBe('colgado')
   })
+  it('en el último paso permitido el modelo recibe el aviso de cierre y sus llamadas siguen ejecutándose', async () => {
+    const ejecutadas: string[] = []
+    const { chat, vistos } = guion([
+      { ok: true, texto: '', llamadas: [llamada('project.getSummary', {}, 'a')] },
+      { ok: true, texto: 'Hice A; falta B.', llamadas: [llamada('track.create', { nombre: 'X' }, 'b')] },
+    ])
+    const r = await ejecutarAgente({ pedido: 'trabaja', catalogo: CATALOGO, sistema: 'sys', chat, maxPasos: 2, ejecutar: async (l) => { ejecutadas.push(l.nombre); return { ok: true } } })
+    expect(String(vistos[0]!.mensajes[vistos[0]!.mensajes.length - 1]!.content)).not.toMatch(/ÚLTIMO paso/)
+    expect(String(vistos[1]!.mensajes[vistos[1]!.mensajes.length - 1]!.content)).toMatch(/ÚLTIMO paso/)
+    expect(ejecutadas).toEqual(['project.getSummary', 'track.create'])
+    expect(r.estado).toBe('limite')
+    expect(r.texto).toMatch(/falta B/)
+  })
 })

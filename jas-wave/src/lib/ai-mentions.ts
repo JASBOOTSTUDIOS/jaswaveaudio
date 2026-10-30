@@ -204,12 +204,12 @@ export function listMentionables(state: DAWState, messages: MentionableMessage[]
         ? lista
         : [
             { id: 'director', nombre: 'Director de Banda', role: 'director' },
-            { id: 'pianista', nombre: 'Pianista', role: 'musico', instrumento: 'Piano' },
+            { id: 'pianista', nombre: 'Pianista / Teclista', role: 'musico', instrumento: 'Piano' },
             { id: 'guitarrista', nombre: 'Guitarrista', role: 'musico', instrumento: 'Guitarra eléctrica' },
-            { id: 'baterista', nombre: 'Baterista', role: 'musico', instrumento: 'Drums' },
+            { id: 'baterista', nombre: 'Baterista / Percusión', role: 'musico', instrumento: 'Drums' },
             { id: 'bajista', nombre: 'Bajista', role: 'musico', instrumento: 'Bajo' },
-            { id: 'sintetizador', nombre: 'Diseñador de Sintes', role: 'musico', instrumento: 'Synthesizer' },
-            { id: 'qa', nombre: 'Auditor QA', role: 'qa' },
+            { id: 'sintetizador', nombre: 'Diseñador de Sintes / Leads', role: 'musico', instrumento: 'Synthesizer' },
+            { id: 'qa', nombre: 'QA / Auditor de Calidad Musical', role: 'qa' },
             { id: 'mezcla', nombre: 'Ingeniero de Mezcla', role: 'mezcla' },
             { id: 'mastering', nombre: 'Ingeniero de Mastering', role: 'mastering' },
           ]
@@ -384,6 +384,7 @@ export function formatMentionsForPrompt(mentions: Mentionable[]): string {
       if (m.kind === 'plugin') return `- plugin id=${m.pluginInstanceId} pista=${m.trackId} «${m.label}» (${m.hint})`
       if (m.kind === 'vst') return `- VST catálogo id=${m.pluginId} «${m.label}» (${m.hint})`
       if (m.kind === 'mode') return `- modo ${m.label}`
+      if (m.kind === 'agent') return `- agente «${m.label}» (${m.hint}): la consulta va dirigida a este miembro de la banda; responde desde su especialidad`
       if (m.kind === 'doc') return `- documento ${m.label} (markdown editable)`
       if (m.kind === 'message') {
         const excerpt = (m.messageExcerpt || m.label).replace(/\n/g, ' ').slice(0, 240)

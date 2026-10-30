@@ -8,14 +8,9 @@ import {
 import {
   Users,
   CheckCircle2,
-  AlertCircle,
   Clock,
   Play,
   Square,
-  Sparkles,
-  Sliders,
-  Disc,
-  Music,
   ShieldCheck,
   ChevronRight,
   ChevronDown,
@@ -28,6 +23,8 @@ import {
 import { requestOpenTool } from '@jaswave/host-sdk'
 import { abrirPanelBanda, cambiarVistaBanda, useVistaBanda } from './banda-vista-store'
 import { TarjetaReanudar } from './tarjeta-reanudar'
+import { agruparActividad, estadosEtapas, itemsDeEventos, numeroEtapa } from './actividad-agrupada'
+import { FilasActividad } from './actividad-por-agente'
 
 /** Interruptor «Escuchar en vivo»: oír cada parte que se graba y la mezcla mientras se hace. */
 export function BotonEscucha({ conTexto = false }: { conTexto?: boolean }) {
@@ -121,13 +118,7 @@ export function BandaLineaCompacta() {
       {/* Globo con el detalle: solo al pasar el ratón o con el foco; flota sobre el chat. */}
       <div className="invisible absolute inset-x-0 top-full z-40 mt-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-panel-raised p-2 text-[11px] opacity-0 shadow-xl transition-opacity group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100">
         <div className="mb-1 font-medium text-foreground">{faseLarga(s.faseActual)}</div>
-        <ul className="space-y-0.5">
-          {s.eventos.slice(-8).map((ev) => (
-            <li key={ev.id} className="break-words leading-snug text-muted-foreground">
-              <span className="font-semibold" style={{ color: ev.color }}>{ev.agenteNombre}:</span> {ev.mensaje}
-            </li>
-          ))}
-        </ul>
+        <FilasActividad filas={agruparActividad(itemsDeEventos(s.eventos, { activo: s.activo, agenteActivoId: s.agenteActivoId }))} />
         {s.qaReporte.detalles.length ? (
           <div className="mt-1 border-t border-border/50 pt-1 text-muted-foreground">
             Revisión: {s.qaReporte.musicosAprobados} de {s.qaReporte.musicosTotal} músicos aprobados
@@ -242,31 +233,7 @@ export function BandaLiveOrchestrator({ enPanel = false }: { enPanel?: boolean }
     error: 'La producción se detuvo',
   }
 
-  const faseIndex = (fase: FaseBanda): number => {
-    switch (fase) {
-      case 'planificacion':
-        return 1
-      case 'direccion':
-        return 2
-      case 'grabacion_musicos':
-      case 'ensayo':
-      case 'coherencia':
-      case 'qa_musicos':
-        return 3
-      case 'mezcla':
-      case 'qa_mezcla':
-        return 4
-      case 'mastering':
-      case 'qa_final':
-        return 5
-      case 'completado':
-        return 6
-      default:
-        return 0
-    }
-  }
-
-  const currentStep = faseIndex(liveState.faseActual)
+  const currentStep = numeroEtapa(liveState.faseActual)
   const porcentaje = liveState.faseActual === 'completado' ? 100 : Math.round((Math.max(0, currentStep - 1) / 5) * 100)
 
   if (!liveState.activo && liveState.eventos.length === 0) {
@@ -354,37 +321,25 @@ export function BandaLiveOrchestrator({ enPanel = false }: { enPanel?: boolean }
 
       {plegada ? null : (
         <>
-      {/* Flujo de fases visual estilo Pipeline */}
-      {/* Seis etapas en una fila si caben enteras; si no, en dos filas de tres (sin nombres cortados). */}
-      <div className="grid grid-cols-3 gap-1 pt-1 text-center text-[10px] font-medium @[400px]:grid-cols-6">
-        {[
-          { num: 1, label: 'Plan', icon: Sparkles },
-          { num: 2, label: 'Director', icon: Users },
-          { num: 3, label: 'Músicos', icon: Music },
-          { num: 4, label: 'Mezcla', icon: Sliders },
-          { num: 5, label: 'Máster', icon: Disc },
-          { num: 6, label: 'Revisión', icon: ShieldCheck },
-        ].map((step) => {
-          const isDone = currentStep > step.num || liveState.faseActual === 'completado'
-          const isCurrent = currentStep === step.num && liveState.activo
-          const Icon = step.icon
-          return (
-            <div
-              key={step.num}
-              className={`flex flex-col items-center gap-1 p-1 rounded-md transition-all ${
-                isDone
-                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                  : isCurrent
-                    ? 'bg-accent-amber/20 text-accent-amber border border-accent-amber/50 animate-pulse'
-                    : 'bg-panel-base/40 text-muted-foreground/60 border border-border/40'
-              }`}
-            >
-              <Icon className="size-3.5" />
-              <span className="w-full text-[9px]">{step.label}</span>
-            </div>
-          )
-        })}
-      </div>
+      {/* Etapas en una barra compacta: una sola fila que se parte si no cabe, sin cajas apiladas. */}
+      <ol data-testid="banda-etapas" aria-label="Etapas de la producción" className="flex flex-wrap items-center gap-1 pt-1 text-[10px] font-medium">
+        {estadosEtapas(liveState.faseActual, liveState.activo).map((et, i) => (
+          <li
+            key={et.etiqueta}
+            aria-current={et.estado === 'actual' ? 'step' : undefined}
+            className={`flex items-center gap-1 rounded-full border px-2 py-0.5 transition-colors ${
+              et.estado === 'hecha'
+                ? 'border-emerald-500/30 bg-emerald-500/15 text-emerald-400'
+                : et.estado === 'actual'
+                  ? 'animate-pulse border-accent-amber/50 bg-accent-amber/20 text-accent-amber'
+                  : 'border-border/40 bg-panel-base/40 text-muted-foreground/60'
+            }`}
+          >
+            {et.estado === 'hecha' ? <CheckCircle2 className="size-3" aria-hidden /> : <span className="tabular-nums" aria-hidden>{i + 1}</span>}
+            {et.etiqueta}
+          </li>
+        ))}
+      </ol>
 
       {/* Barra de progreso interactiva */}
       {liveState.activo && (
@@ -393,54 +348,34 @@ export function BandaLiveOrchestrator({ enPanel = false }: { enPanel?: boolean }
         </div>
       )}
 
-      {/* Consola de eventos y auditoría en tiempo real */}
-      <div className="flex flex-col gap-1.5 rounded-lg border border-border/60 bg-panel-base/80 p-2">
+      {/* Consola: una fila por agente con su estado actual; el historial completo, cerrado y con scroll. */}
+      <div className="flex flex-col gap-1.5 rounded-lg border border-border/60 bg-panel-base/80 p-2 text-[11px] leading-tight">
+        <FilasActividad
+          filas={agruparActividad(itemsDeEventos(liveState.eventos, { activo: liveState.activo, agenteActivoId: liveState.agenteActivoId }))}
+          onElegir={liveState.activo ? (id) => ((liveState.participantes ?? []).some((p) => p.id === id) ? setPara(id) : undefined) : undefined}
+        />
         {liveState.eventos.length > 6 ? (
-          <button
-            type="button"
-            onClick={() => setVerTodo((v) => !v)}
-            className="self-start text-[10px] text-muted-foreground hover:text-foreground"
-          >
-            {verTodo ? 'Ver solo lo último' : `Ver todo (${liveState.eventos.length - 6} más)`}
-          </button>
+          <>
+            <button
+              type="button"
+              aria-expanded={verTodo}
+              onClick={() => setVerTodo((v) => !v)}
+              className="self-start text-[10px] text-muted-foreground hover:text-foreground"
+            >
+              {verTodo ? 'Ocultar el historial' : `Ver el historial completo (${liveState.eventos.length})`}
+            </button>
+            {verTodo ? (
+              <ol className="max-h-56 space-y-0.5 overflow-y-auto overscroll-contain rounded border border-border/40 bg-panel-raised/50 px-1.5 py-1 text-[10px]">
+                {liveState.eventos.map((ev) => (
+                  <li key={ev.id} className="break-words text-muted-foreground">
+                    <span className="font-semibold" style={{ color: ev.color }}>{ev.agenteNombre}:</span> {ev.mensaje}
+                    {ev.accionDetalle ? <span className="block whitespace-pre-line pl-2 text-muted-foreground/70">{ev.accionDetalle}</span> : null}
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+          </>
         ) : null}
-        {(verTodo ? liveState.eventos : liveState.eventos.slice(-6)).map((ev) => (
-          <div key={ev.id} className="flex items-start gap-1.5 text-[11px] leading-tight">
-            {ev.estadoQA === 'aprobado' ? (
-              <CheckCircle2 className="size-3.5 shrink-0 text-emerald-400 mt-0.5" />
-            ) : ev.estadoQA === 'corrigiendo' ? (
-              <AlertCircle className="size-3.5 shrink-0 text-amber-400 mt-0.5" />
-            ) : ev.fase === 'completado' ? (
-              <CheckCircle2 className="size-3.5 shrink-0 text-emerald-400 mt-0.5" />
-            ) : (
-              <ChevronRight className="size-3.5 shrink-0 text-accent-amber mt-0.5" />
-            )}
-
-            <div className="flex-1 min-w-0">
-              {liveState.activo && (liveState.participantes ?? []).some((p) => p.id === ev.agenteId) ? (
-                <button
-                  type="button"
-                  onClick={() => setPara(ev.agenteId)}
-                  title={`Escribirle a ${ev.agenteNombre}`}
-                  className="mr-1 font-semibold text-foreground hover:underline"
-                  style={{ color: ev.color }}
-                >
-                  {ev.agenteNombre}:
-                </button>
-              ) : (
-                <span className="font-semibold text-foreground mr-1" style={{ color: ev.color }}>
-                  {ev.agenteNombre}:
-                </span>
-              )}
-              <span className="break-words text-foreground/90">{ev.mensaje}</span>
-              {ev.accionDetalle && (
-                <div className="mt-0.5 whitespace-pre-line rounded border border-border/40 bg-panel-raised/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                  {ev.accionDetalle}
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
       </div>
 
       {/* Escribirle a la banda (o a un participante) mientras trabaja */}

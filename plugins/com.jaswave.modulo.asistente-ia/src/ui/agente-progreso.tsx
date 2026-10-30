@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Check, ChevronRight, Circle, Loader2, Users, X } from 'lucide-react'
 import { cn } from '@jaswave/host-sdk'
 
 import type { ProgresoAgente } from '../motor/ai-chat-store'
+import { agruparActividad, type ItemActividad } from './actividad-agrupada'
+import { FilasActividad } from './actividad-por-agente'
 
 type Props = {
   progreso: ProgresoAgente
@@ -33,15 +35,16 @@ function etiquetaCabecera(p: ProgresoAgente, vivo: boolean): string {
  * Progreso de la banda: una línea (etapa actual o resumen) y el detalle en un globo al pasar el ratón o con
  * el foco, flotando sobre el chat sin ocupar sitio.
  */
-function ProgresoCompacto({ p, vivo, pasos }: { p: ProgresoAgente; vivo: boolean; pasos: ProgresoAgente['actividad'] }) {
+function ProgresoCompacto({ p, vivo, pasos }: { p: ProgresoAgente; vivo: boolean; pasos: ItemActividad[] }) {
   const trabajando = vivo || p.estado === 'trabajando'
   const ultimo = [...pasos].reverse().find((a) => a.estado === 'en_curso') ?? pasos.at(-1)
+  const ultimoQuien = ultimo?.nombre ?? ultimo?.agente
   return (
     <div data-agente-progreso={p.estado} data-compacto="si" className="group relative mb-2 w-full min-w-0" tabIndex={0}>
       <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
         {trabajando ? <Loader2 className="size-3 shrink-0 animate-spin text-accent-amber" /> : <Users className="size-3 shrink-0 text-accent-amber" />}
         <span className="shrink-0">{etiquetaCabecera(p, vivo)}</span>
-        {trabajando && ultimo ? <span className="min-w-0 flex-1 truncate">· {ultimo.quien ? `${ultimo.quien}: ` : ''}{ultimo.texto}</span> : null}
+        {trabajando && ultimo ? <span className="min-w-0 flex-1 truncate">· {ultimoQuien ? `${ultimoQuien}: ` : ''}{ultimo.texto}</span> : null}
       </div>
       <div className="invisible absolute inset-x-0 top-full z-40 mt-1 max-h-72 space-y-1.5 overflow-y-auto rounded-lg border border-border bg-panel-raised p-2 text-[11px] opacity-0 shadow-xl transition-opacity group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100">
         {p.tareas.length ? (
@@ -65,24 +68,26 @@ function ProgresoCompacto({ p, vivo, pasos }: { p: ProgresoAgente; vivo: boolean
           </ul>
         ) : null}
         {pasos.length ? (
-          <ul className="space-y-0.5 border-t border-border/40 pt-1 text-muted-foreground">
-            {pasos.map((a) => (
-              <li key={a.id} className="flex min-w-0 items-center gap-1.5">
-                <Icono estado={a.estado} />
-                <span className="min-w-0 break-words">{a.quien ? `${a.quien}: ` : ''}{a.texto}</span>
-              </li>
-            ))}
-          </ul>
+          <div className="border-t border-border/40 pt-1 text-muted-foreground">
+            <FilasActividad filas={agruparActividad(pasos)} />
+          </div>
         ) : null}
       </div>
     </div>
   )
 }
 
+/** Pasos del progreso como actividad por agente (la fila no tiene agente si el paso no indica quién). */
+export function itemsDeActividad(actividad: ProgresoAgente['actividad']): ItemActividad[] {
+  return actividad.slice(-400).map((a) => ({ id: a.id, agente: a.quien ?? '', nombre: a.quien ?? 'Agente', texto: a.texto, estado: a.estado }))
+}
+
 /** Progreso del agente en el chat: tareas planificadas, pasos y ayudantes en paralelo. */
 export function AgenteProgreso({ progreso: p, vivo = false }: Props) {
   const [abierto, setAbierto] = useState(vivo)
   useEffect(() => setAbierto(vivo), [vivo])
+  // Una fila por agente (con su contador) en lugar de una línea por llamada.
+  const pasos = useMemo(() => itemsDeActividad(p.actividad), [p.actividad])
   if (!p.tareas.length && !p.actividad.length && !p.subagentes.length) {
     return vivo ? (
       <div className="mb-2 flex items-center gap-1.5 text-[12px] text-muted-foreground/80">
@@ -90,7 +95,6 @@ export function AgenteProgreso({ progreso: p, vivo = false }: Props) {
       </div>
     ) : null
   }
-  const pasos = p.actividad.slice(-8)
   if (p.tipo === 'banda') return <ProgresoCompacto p={p} vivo={vivo} pasos={pasos} />
   return (
     <div data-agente-progreso={p.estado} className="mb-2 w-full min-w-0 rounded-md border border-border/50 bg-panel-raised/40">
@@ -139,14 +143,9 @@ export function AgenteProgreso({ progreso: p, vivo = false }: Props) {
             </div>
           ) : null}
           {pasos.length ? (
-            <ul className="space-y-0.5 text-[11px] text-muted-foreground">
-              {pasos.map((a) => (
-                <li key={a.id} className="flex min-w-0 items-center gap-1.5">
-                  <Icono estado={a.estado} />
-                  <span className="min-w-0 truncate">{a.texto}</span>
-                </li>
-              ))}
-            </ul>
+            <div className="text-[11px] text-muted-foreground">
+              <FilasActividad filas={agruparActividad(pasos)} />
+            </div>
           ) : null}
         </div>
       ) : null}

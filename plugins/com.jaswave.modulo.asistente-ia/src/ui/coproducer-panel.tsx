@@ -76,7 +76,9 @@ import {
   type StoredChatMessage,
 } from '../motor/ai-chat-store'
 import { AgentModePicker } from './agent-mode-picker'
-import { CHIPS_COMANDO, ChipComando, MensajeConComando, separarComando, type TipoChip } from './chip-comando'
+import { CHIPS_COMANDO, ChipComando, MensajeConComando, PildoraMencion, separarComando, type TipoChip } from './chip-comando'
+import { agentesParaMenu, componerMensaje, descripcionAgente, destinosDeMenciones, listaNatural, nombreCorto, tokenMencion, type AgenteMencionable, type ChipMencion } from './menciones-chat'
+import { cargarEspecialistas } from '../motor/especialistas-storage'
 import { ReasoningStepsPanel } from './reasoning-steps-panel'
 import { TarjetasFuente } from './tarjeta-fuente'
 import { AgenteProgreso } from './agente-progreso'
@@ -145,6 +147,8 @@ export function CoProducerPanel() {
   const [inputMessage, setInputMessage] = useState('')
   /** Modo elegido («/configurar», «/plan»…): se ve como etiqueta y se antepone al enviar. */
   const [comandoChip, setComandoChip] = useState<{ tipo: TipoChip; token: string } | null>(null)
+  /** Menciones «@» elegidas en el menú: pastillas borrables del compositor (se serializan al enviar). */
+  const [chipsMencion, setChipsMencion] = useState<ChipMencion[]>([])
   const [conversation, setConversation] = useState<ChatConversation>(() =>
     ensureActiveConversation('default'),
   )
@@ -345,13 +349,33 @@ export function CoProducerPanel() {
   const citedMessages = citedIds
     .map((id) => messages.find((m) => m.id === id))
     .filter((m): m is StoredChatMessage => Boolean(m))
+  // Agentes de la banda con nombre legible y color: los de la producción en curso, o los activos.
+  const agentesMenu: AgenteMencionable[] =
+    mentionQuery != null && mentionTrigger === '@'
+      ? agentesParaMenu(cargarEspecialistas(), orquestadorBandaSingleton.getState().participantes ?? [])
+      : []
   const mentionFiltered =
     mentionQuery != null
-      ? filterMentionables(listMentionables(dawStore.obtenerEstado(), messages), mentionQuery, mentionTrigger)
+      ? filterMentionables(
+          [
+            ...listMentionables(dawStore.obtenerEstado(), messages).filter((m) => m.kind !== 'agent'),
+            ...agentesMenu.map<Mentionable>((a) => ({
+              kind: 'agent',
+              id: `agent:${a.id}`,
+              label: a.nombre,
+              hint: descripcionAgente(a),
+              alias: [nombreCorto(a.nombre), a.id],
+              insertText: tokenMencion(a.nombre),
+            })),
+          ],
+          mentionQuery,
+          mentionTrigger,
+        )
       : []
-  const mentionGroups = groupMentionables(mentionFiltered)
+  // Los agentes primero en «@»: es lo que más se busca; el resto de referencias, debajo.
+  const mentionGroups = groupMentionables(mentionFiltered).sort((a, b) => Number(b.kind === 'agent') - Number(a.kind === 'agent'))
   // Lista plana en el orden en que se pintan los grupos: es la que recorren las flechas.
-  const mentionHits = orderedMentionables(mentionFiltered)
+  const mentionHits = mentionGroups.flatMap((g) => g.items)
   const mentionActive = mentionHits[Math.min(mentionIndex, Math.max(0, mentionHits.length - 1))]
 
   useEffect(() => {
@@ -393,16 +417,34 @@ export function CoProducerPanel() {
     const start = draft?.start ?? mentionStart
     const before = inputMessage.slice(0, start)
     const after = inputMessage.slice(caret)
+    // Agentes, pistas, clips, plugins y documentos: pastilla borrable, no texto «@algo».
+    if (mentionTrigger === '@' && item.kind !== 'mode' && item.kind !== 'action') {
+      const agente = item.kind === 'agent' ? agentesMenu.find((a) => `agent:${a.id}` === item.id) : undefined
+      setChipsMencion((prev) =>
+        prev.some((c) => c.id === item.id)
+          ? prev
+          : [...prev, { id: item.id, kind: item.kind, etiqueta: item.label, ...(agente ? { agenteId: agente.id, color: agente.color } : {}) }],
+      )
+      const next = `${before}${after.replace(/^[ \t]+/, '')}`
+      setMentionQuery(null)
+      setInputMessage(next)
+      requestAnimationFrame(() => {
+        el?.focus()
+        el?.setSelectionRange(before.length, before.length)
+      })
+      return
+    }
     const token =
       item.insertText ??
       (item.label.includes(' ') ? `@"${item.label}"` : `@${item.label}`)
     const next = `${before}${token} ${after}`
     setMentionQuery(null)
-    if (!comandoChip && !before.trim()) {
-      const chip = separarComando(next.replace(/^\s+/, ''), true)
-      if (chip) {
+    if (!comandoChip) {
+      // «/plan» elegido en el menú: queda como etiqueta del modo (en cualquier posición), no como texto crudo.
+      const chip = separarComando(token.trim() + ' ', true)
+      if (chip && !chip.resto) {
         setComandoChip({ tipo: chip.tipo, token: chip.token })
-        setInputMessage(chip.resto)
+        setInputMessage(`${before}${after.replace(/^[ \t]+/, '')}`.replace(/^\s+/, ''))
         requestAnimationFrame(() => el?.focus())
         return
       }
@@ -758,16 +800,19 @@ export function CoProducerPanel() {
   }
 
   /** El texto tal como lo recibe el motor: la etiqueta de modo vuelve a ser «/comando …». */
-  const componerEntrada = (texto: string) => (comandoChip ? `${comandoChip.token} ${texto}` : texto)
+  const componerEntrada = (texto: string) => componerMensaje(comandoChip?.token, chipsMencion, texto)
 
   const limpiarEntrada = () => {
     setInputMessage('')
     setComandoChip(null)
+    setChipsMencion([])
   }
 
   const handleSendMessage = async (overrideText?: string) => {
     const textoUsuario = (overrideText ?? componerEntrada(inputMessage)).trim()
     const cmd = parsearComandoChat(textoUsuario)
+    // Solo pastillas de mención y nada que decirles: no hay mensaje que enviar.
+    if (overrideText === undefined && chipsMencion.length > 0 && !inputMessage.trim() && !attachedSample && !comandoChip) return
 
     // Comandos locales (no llaman al modelo): se resuelven aunque haya un turno en curso
     if (cmd && (cmd.tipo === 'aprender' || cmd.tipo === 'aprender-deshacer' || cmd.tipo === 'programar')) {
@@ -803,6 +848,22 @@ export function CoProducerPanel() {
     // Mientras la banda trabaja, el chat habla con el agente en turno: lo que el usuario ve y oye y los
     // agentes no. «@Bajista …» o «Bajista: …» se lo dice a uno en particular.
     if (!cmd && textoUsuario && orquestadorBandaSingleton.getState().activo) {
+      // Menciones (pastillas): la indicación va a cada agente mencionado, reutilizando las notas dirigidas de la banda.
+      const estadoBanda = orquestadorBandaSingleton.getState()
+      const menc = destinosDeMenciones(textoUsuario, agentesParaMenu(cargarEspecialistas(), estadoBanda.participantes ?? []), estadoBanda.participantes ?? [])
+      if (menc.para.length || menc.ausentes.length) {
+        if (!menc.texto) return
+        const entregados = menc.para.filter((p) => orquestadorBandaSingleton.enviarNota(menc.texto, p.id)).map((p) => nombreCorto(p.nombre))
+        const ausentes = menc.ausentes.length ? ` ${listaNatural(menc.ausentes)} no ${menc.ausentes.length > 1 ? 'están' : 'está'} en esta producción.` : ''
+        responderLocal(
+          textoUsuario,
+          entregados.length
+            ? `Se lo paso a ${listaNatural(entregados)}; en la banda verás cuándo lo tiene en cuenta.${ausentes}`
+            : `No pude entregarlo.${ausentes || ' La producción ya no está en curso.'}`,
+        )
+        if (entregados.length) limpiarEntrada()
+        return
+      }
       const d = orquestadorBandaSingleton.destinatarioDeTexto(textoUsuario)
       if (orquestadorBandaSingleton.enviarNota(d.texto, d.para)) {
         const nombre = d.para ? orquestadorBandaSingleton.getState().participantes.find((p) => p.id === d.para)?.nombre : undefined
@@ -1533,13 +1594,14 @@ export function CoProducerPanel() {
           <div
             id="jw-mention-list"
             role="listbox"
-            aria-label={mentionTrigger === '/' ? 'Comandos' : 'Referencias'}
+            aria-label={mentionTrigger === '/' ? 'Comandos' : 'Agentes y referencias'}
             className="absolute inset-x-3 bottom-full z-20 mb-1 max-h-64 overflow-y-auto overscroll-contain rounded-md border border-border bg-panel-raised shadow-lg"
           >
             <div className="border-b border-border px-3 py-1 text-[10px] text-muted-foreground">
               {mentionTrigger === '/'
                 ? '¿Qué quieres hacer?'
-                : 'Menciona algo de tu proyecto'}
+                : 'Habla con un agente o menciona algo de tu proyecto'}
+              <span className="float-right opacity-70">↑↓ elegir · Enter insertar · Esc cerrar</span>
             </div>
             {mentionHits.length === 0 ? (
               <div className="px-3 py-2 text-[11px] text-muted-foreground">Sin coincidencias</div>
@@ -1574,10 +1636,19 @@ export function CoProducerPanel() {
                           active ? 'bg-accent-amber/20' : 'hover:bg-accent-amber/15'
                         }`}
                       >
-                        <span className="truncate text-foreground">
-                          {item.kind === 'action' || item.kind === 'mode' || item.kind === 'message'
-                            ? item.label
-                            : `@${item.label}`}
+                        <span className="flex min-w-0 items-center gap-2 text-foreground">
+                          {item.kind === 'agent' ? (
+                            <span
+                              aria-hidden
+                              style={{ backgroundColor: agentesMenu.find((a) => `agent:${a.id}` === item.id)?.color ?? undefined }}
+                              className="flex size-5 shrink-0 items-center justify-center rounded-full bg-accent-amber text-[10px] font-bold text-white"
+                            >
+                              {nombreCorto(item.label).charAt(0).toUpperCase()}
+                            </span>
+                          ) : null}
+                          <span className={`truncate ${mentionTrigger === '/' && item.label.startsWith('/') ? 'font-medium text-accent-amber' : ''}`}>
+                            {item.label}
+                          </span>
                         </span>
                         <span className="max-w-[45%] shrink-0 truncate text-[10px] text-muted-foreground">
                           {item.hint}
@@ -1648,19 +1719,34 @@ export function CoProducerPanel() {
             }}
             disabled={isGenerating}
           />
-          {comandoChip ? (
-            <div className="flex items-center gap-1.5 px-0.5">
-              <ChipComando
-                tipo={comandoChip.tipo}
-                onQuitar={() => {
-                  setComandoChip(null)
-                  inputRef.current?.focus()
-                }}
-              />
-            </div>
-          ) : null}
           {/* Texto a todo el ancho y, debajo, la barra (modo, dictado, enviar): en paneles estrechos nada se aprieta. */}
           <div className="flex min-w-0 flex-col gap-1.5 rounded-lg bg-panel-raised px-2 py-2 ring-1 ring-border focus-within:ring-2 focus-within:ring-ring">
+          {comandoChip || chipsMencion.length ? (
+            <div data-testid="compositor-chips" className="flex flex-wrap items-center gap-1 px-0.5">
+              {comandoChip ? (
+                <ChipComando
+                  tipo={comandoChip.tipo}
+                  onQuitar={() => {
+                    setComandoChip(null)
+                    inputRef.current?.focus()
+                  }}
+                />
+              ) : null}
+              {chipsMencion.map((c) => (
+                <PildoraMencion
+                  key={c.id}
+                  etiqueta={c.kind === 'agent' ? nombreCorto(c.etiqueta) : c.etiqueta}
+                  nombreCompleto={c.etiqueta}
+                  agente={c.kind === 'agent'}
+                  color={c.color}
+                  onQuitar={() => {
+                    setChipsMencion((prev) => prev.filter((x) => x.id !== c.id))
+                    inputRef.current?.focus()
+                  }}
+                />
+              ))}
+            </div>
+          ) : null}
           <textarea
             ref={inputRef}
             rows={1}
@@ -1674,12 +1760,14 @@ export function CoProducerPanel() {
             onKeyDown={(e) => {
               if (
                 e.key === 'Backspace' &&
-                comandoChip &&
+                (chipsMencion.length > 0 || comandoChip) &&
                 e.currentTarget.selectionStart === 0 &&
                 e.currentTarget.selectionEnd === 0
               ) {
+                // Retroceso al comienzo borra la última pastilla (primero las menciones, luego el modo).
                 e.preventDefault()
-                setComandoChip(null)
+                if (chipsMencion.length > 0) setChipsMencion((prev) => prev.slice(0, -1))
+                else setComandoChip(null)
                 return
               }
               if (e.key === 'Escape') {
@@ -1717,8 +1805,8 @@ export function CoProducerPanel() {
               comandoChip
                 ? CHIPS_COMANDO[comandoChip.tipo].pista
                 : bandaActiva
-                  ? 'Dile a la banda lo que ves y ellos no («@Bajista …» para uno en concreto)'
-                  : 'Pide lo que quieras o escribe /'
+                  ? 'Dile a la banda lo que ves y ellos no (escribe @ para hablarle a un agente en concreto)'
+                  : 'Pide lo que quieras · @ para hablar con un agente · / para comandos'
             }
             // field-sizing: crece con el texto y con la pista (placeholder) al estrecharse, sin scroll interno.
             className="max-h-40 min-h-8 w-full [field-sizing:content] min-w-0 resize-none bg-transparent px-1 py-1 text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"

@@ -209,6 +209,10 @@ const MAX_LISTA_HISTORIAL = 8
  */
 const LLAMADAS_COMPLETAS_EN_HISTORIAL = 3
 
+/** Aviso del último paso permitido: lo que falte debe quedar dicho, no perdido. */
+export const AVISO_ULTIMO_PASO =
+  'Este es tu ÚLTIMO paso: no habrá otro. Haz ahora lo esencial que falte y, en el texto de esta misma respuesta, resume en una o dos frases qué dejaste hecho y qué quedó pendiente.'
+
 /** Se añade al sistema cuando el historial que ve el modelo lleva alguna lista abreviada. */
 export const AVISO_HISTORIAL_ABREVIADO =
   'Nota sobre tu historial: en llamadas antiguas las listas largas aparecen abreviadas como «[lista de N elementos, abreviada en el historial]». Es solo un resumen de lo que ya enviaste; nunca copies ese texto en una llamada nueva: escribe siempre los datos reales y completos.'
@@ -388,7 +392,11 @@ export async function ejecutarAgente(cfg: ConfigAgente): Promise<ResultadoAgente
       ...[...visibles].map((n) => porNombre.get(n)!).map((h) => ({ name: h.nombre, description: h.descripcion, parameters: h.parametros })),
     ]
     let r
-    const vista = vistaHistorial(mensajes, cfg.ahorro?.resultados === true ? 2 : LLAMADAS_COMPLETAS_EN_HISTORIAL, cfg.ahorro?.resultados === true)
+    const vistaBase = vistaHistorial(mensajes, cfg.ahorro?.resultados === true ? 2 : LLAMADAS_COMPLETAS_EN_HISTORIAL, cfg.ahorro?.resultados === true)
+    // Último paso: se avisa para que termine lo esencial y deje dicho qué falta, en vez de cortar en seco. Las herramientas
+    // siguen en la petición (prefijo de caché intacto) y sus llamadas se ejecutan.
+    const ultimoPaso = paso === maxPasos && maxPasos > 1
+    const vista = ultimoPaso ? [...vistaBase, { role: 'user' as const, content: AVISO_ULTIMO_PASO }] : vistaBase
     const abreviado = vista.some((m, i) => m !== mensajes[i])
     try {
       r = await cfg.chat({
