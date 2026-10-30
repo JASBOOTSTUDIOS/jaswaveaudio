@@ -377,23 +377,10 @@ struct Vst3Slot::Impl {
   // Pedal de sustain del lado del host (bajo midiMutex). Muchos VST3 ignoran kLegacyMIDICCOutEvent y no todos
   // mapean CC64 por IMidiMapping: mientras el pedal esté pisado los note-off se retienen y se entregan al soltar.
   // Vive en el slot para que valga en todas las rutas (WinMM en el audio thread, comandos del renderer, clips).
-  bool sustainDown{false};
-  uint64_t keyDown[2]{0, 0};
-  uint64_t latched[2]{0, 0};
-  /** Canal del último note-on por tono: el note-off retenido por el pedal sale por el mismo canal. */
-  uint8_t noteChannel[128]{};
-  static bool bit(const uint64_t* w, int p) { return (w[p >> 6] >> (p & 63)) & 1ull; }
-  static void setBit(uint64_t* w, int p, bool on) {
-    if (on) w[p >> 6] |= (1ull << (p & 63));
-    else w[p >> 6] &= ~(1ull << (p & 63));
-  }
-  void resetSustain() {
-    sustainDown = false;
-    keyDown[0] = keyDown[1] = 0;
-    latched[0] = latched[1] = 0;
-  }
+  SustainState sustain;
+  void resetSustain() { sustain.reset(); }
   std::mutex paramMutex;
-  std::vector<std::pair<ParamID, ParamValue>> paramQueue;
+  std::vector<ParamAtOffset> paramQueue;
 
   struct Handler : public IComponentHandler {
     Impl* owner{nullptr};
@@ -401,7 +388,7 @@ struct Vst3Slot::Impl {
     tresult PLUGIN_API performEdit(ParamID id, ParamValue valueNormalized) override {
       if (!owner) return kResultFalse;
       std::lock_guard<std::mutex> lock(owner->paramMutex);
-      owner->paramQueue.push_back({id, valueNormalized});
+      owner->paramQueue.push_back({static_cast<uint32_t>(id), valueNormalized, 0});
       return kResultOk;
     }
     tresult PLUGIN_API endEdit(ParamID) override { return kResultOk; }
@@ -651,40 +638,28 @@ void Vst3Slot::unload() {
   path_.clear();
 }
 
+// noteOn/noteOff/midiCc solo ENCOLAN en bruto: la emulación de sustain (pedal → note-off retenido) y el cambio
+// de parámetro mapeado se evalúan al sonar, en Vst3Slot::process(), en el orden de delaySamples (ver midi_sustain.h).
 void Vst3Slot::noteOn(int pitch, float velocity, int delaySamples, int32_t lengthSamples, int channel) {
   std::lock_guard<std::mutex> lock(impl_->midiMutex);
   if (impl_->midiQueue.size() > 8192) return;
   const int delay = std::max(0, delaySamples);
   const int16_t ch = static_cast<int16_t>(std::clamp(channel, 0, 15));
-  if (pitch >= 0 && pitch < 128) {
-    // Nota retenida solo por el pedal que se vuelve a tocar: se apaga antes para que el plugin la redispare.
-    if (Impl::bit(impl_->latched, pitch)) {
-      Impl::setBit(impl_->latched, pitch, false);
-      impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(pitch), 0.f, 0, 0, delay, 0,
-                                  static_cast<int16_t>(impl_->noteChannel[pitch])});
-    }
-    Impl::setBit(impl_->keyDown, pitch, true);
-    impl_->noteChannel[pitch] = static_cast<uint8_t>(ch);
-  }
-  impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOn, static_cast<int16_t>(pitch),
-                              std::clamp(velocity, 0.f, 1.f), 0, 0, delay, std::max(0, lengthSamples), ch});
+  Vst3MidiEvent ev{Vst3MidiEvent::Kind::NoteOn, static_cast<int16_t>(pitch), std::clamp(velocity, 0.f, 1.f), 0, 0, delay,
+                   std::max(0, lengthSamples), ch};
+  ev.scheduled = delay > 0;
+  impl_->midiQueue.push_back(ev);
 }
 
 void Vst3Slot::noteOff(int pitch, int delaySamples, int channel) {
   std::lock_guard<std::mutex> lock(impl_->midiMutex);
   if (impl_->midiQueue.size() > 16384) return;
-  int16_t ch = static_cast<int16_t>(std::clamp(channel, 0, 15));
-  if (pitch >= 0 && pitch < 128) {
-    Impl::setBit(impl_->keyDown, pitch, false);
-    // El note-off sale por el canal del note-on que sonó (una zona puede cambiar de canal mientras suena).
-    ch = static_cast<int16_t>(impl_->noteChannel[pitch]);
-    if (impl_->sustainDown) {
-      Impl::setBit(impl_->latched, pitch, true);
-      return;
-    }
-  }
-  impl_->midiQueue.push_back(
-      {Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(pitch), 0.f, 0, 0, std::max(0, delaySamples), 0, ch});
+  const int delay = std::max(0, delaySamples);
+  // El canal real del note-off (el del note-on que sonó) se decide al sonar.
+  Vst3MidiEvent ev{Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(pitch), 0.f, 0, 0, delay, 0,
+                   static_cast<int16_t>(std::clamp(channel, 0, 15))};
+  ev.scheduled = delay > 0;
+  impl_->midiQueue.push_back(ev);
 }
 
 void Vst3Slot::midiCc(int cc, int value, int delaySamples, int channel) {
@@ -692,42 +667,29 @@ void Vst3Slot::midiCc(int cc, int value, int delaySamples, int channel) {
   const int v = std::clamp(value, 0, 127);
   const int delay = std::max(0, delaySamples);
   const int16_t ch = static_cast<int16_t>(std::clamp(channel, 0, 15));
-  {
-    std::lock_guard<std::mutex> lock(impl_->midiMutex);
-    if (impl_->midiQueue.size() > 16384) return;
-    impl_->midiQueue.push_back({Vst3MidiEvent::Kind::ControlChange, 0, 0.f, static_cast<int16_t>(c),
-                                static_cast<int16_t>(v), delay, 0, ch});
-    if (c == 64) {
-      const bool down = v >= 64;
-      if (down != impl_->sustainDown) {
-        impl_->sustainDown = down;
-        if (!down) {
-          // Al soltar: las notas que solo retenía el pedal se apagan en el mismo instante del CC.
-          for (int p = 0; p < 128; ++p) {
-            if (!Impl::bit(impl_->latched, p)) continue;
-            Impl::setBit(impl_->latched, p, false);
-            if (!Impl::bit(impl_->keyDown, p))
-              impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(p), 0.f, 0, 0, delay, 0,
-                                          static_cast<int16_t>(impl_->noteChannel[p])});
-          }
+  Vst3MidiEvent ev{Vst3MidiEvent::Kind::ControlChange, 0, 0.f, static_cast<int16_t>(c), static_cast<int16_t>(v), delay, 0, ch};
+  ev.scheduled = delay > 0;
+  // Parámetro mapeado por IMidiMapping: se resuelve aquí (hilo de comandos) y se aplica al sonar el evento.
+  if (impl_->controller) {
+    FUnknownPtr<IMidiMapping> mapping(impl_->controller);
+    if (mapping) {
+      ParamID pid = 0;
+      const ParamValue nv = v >= 127 ? 1.0 : (v <= 0 ? 0.0 : static_cast<ParamValue>(v) / 127.0);
+      for (int16_t mch = 0; mch < 16; ++mch) {
+        if (mapping->getMidiControllerAssignment(0, mch, static_cast<CtrlNumber>(c), pid) == kResultOk) {
+          ev.hasParam = true;
+          ev.paramId = static_cast<uint32_t>(pid);
+          ev.paramValue = nv;
+          // Espejo en el controller (UI) solo en vivo: con retardo se reflejaría hasta 3,5 s antes de sonar.
+          if (delay == 0) impl_->controller->setParamNormalized(pid, nv);
+          break;
         }
       }
     }
   }
-  if (!impl_->controller) return;
-  FUnknownPtr<IMidiMapping> mapping(impl_->controller);
-  if (!mapping) return;
-  ParamID pid = 0;
-  const ParamValue nv = v >= 127 ? 1.0 : (v <= 0 ? 0.0 : static_cast<ParamValue>(v) / 127.0);
-  bool mapped = false;
-  for (int16_t ch = 0; ch < 16 && !mapped; ++ch) {
-    if (mapping->getMidiControllerAssignment(0, ch, static_cast<CtrlNumber>(c), pid) == kResultOk) {
-      impl_->controller->setParamNormalized(pid, nv);
-      std::lock_guard<std::mutex> lock(impl_->paramMutex);
-      impl_->paramQueue.push_back({pid, nv});
-      mapped = true;
-    }
-  }
+  std::lock_guard<std::mutex> lock(impl_->midiMutex);
+  if (impl_->midiQueue.size() > 16384) return;
+  impl_->midiQueue.push_back(ev);
 }
 
 void Vst3Slot::allNotesOff() {
@@ -742,7 +704,7 @@ void Vst3Slot::allNotesOff() {
   std::lock_guard<std::mutex> lock(impl_->midiMutex);
   for (int p = 0; p < 128; ++p) {
     impl_->midiQueue.push_back({Vst3MidiEvent::Kind::NoteOff, static_cast<int16_t>(p), 0.f, 0, 0, 0, 0,
-                                static_cast<int16_t>(impl_->noteChannel[p])});
+                                static_cast<int16_t>(impl_->sustain.noteChannel[p])});
   }
   // No tocar kPlaying aquí: el panic se usa también en play (mute/rearm) y
   // setPlaying(false) dejaba el instrumento en silencio permanente.
@@ -771,7 +733,7 @@ void Vst3Slot::setParameterNormalized(uint32_t paramId, double normalized) {
     impl_->controller->setParamNormalized(id, v);
   }
   std::lock_guard<std::mutex> lock(impl_->paramMutex);
-  impl_->paramQueue.push_back({id, v});
+  impl_->paramQueue.push_back({static_cast<uint32_t>(id), v, 0});
 }
 
 void Vst3Slot::setPlaying(bool playing) {
@@ -900,10 +862,19 @@ void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* o
     }
     impl_->midiQueue.swap(keepMidi);
   }
-  std::vector<std::pair<ParamID, ParamValue>> pendingParams;
+  std::vector<ParamAtOffset> pendingParams;
   {
     std::lock_guard<std::mutex> lock(impl_->paramMutex);
     pendingParams.swap(impl_->paramQueue);
+  }
+  {
+    // Sustain y parámetros mapeados se evalúan AHORA (al sonar), en orden de delaySamples; NoteOff antes que
+    // NoteOn en empates programados. Bajo midiMutex: allNotesOff() reinicia este estado desde otro hilo.
+    std::vector<Vst3MidiEvent> due;
+    due.swap(pendingMidi);
+    pendingMidi.reserve(due.size() + 8);
+    std::lock_guard<std::mutex> lock(impl_->midiMutex);
+    midi_sustain::resolveDue(impl_->sustain, due, pendingMidi, pendingParams);
   }
 
   // Eventos que no cupieron en el EventList de un sub-bloque: se reencolan al principio del siguiente
@@ -967,15 +938,15 @@ void Vst3Slot::process(const float* inL, const float* inR, float* outL, float* o
     }
 
     impl_->inputParameterChanges.clearQueue();
-    if (!pendingParams.empty()) {
-      for (const auto& p : pendingParams) {
-        int32 qIndex = 0;
-        if (auto* q = impl_->inputParameterChanges.addParameterData(p.first, qIndex)) {
-          int32 pt = 0;
-          q->addPoint(0, p.second, pt);
-        }
+    // Cada cambio entra en el sub-bloque que contiene su muestra, con su desplazamiento (puntos ascendentes por
+    // parámetro: pendingParams ya viene en orden de tiempo).
+    for (const auto& p : pendingParams) {
+      if (p.sampleOffset < offset || p.sampleOffset >= offset + n) continue;
+      int32 qIndex = 0;
+      if (auto* q = impl_->inputParameterChanges.addParameterData(static_cast<ParamID>(p.id), qIndex)) {
+        int32 pt = 0;
+        q->addPoint(p.sampleOffset - offset, p.value, pt);
       }
-      pendingParams.clear();
     }
 
     if (impl_->processData.numInputs > 0 && impl_->processData.inputs) {

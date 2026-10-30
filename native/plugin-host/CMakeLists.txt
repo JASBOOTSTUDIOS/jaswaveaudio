@@ -72,3 +72,8 @@ target_include_directories(jaswave-host-selftest PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src"
   "${CMAKE_CURRENT_SOURCE_DIR}/../../plugins/shared-dsp"
 )
+
+# Selftest del orden de eventos MIDI y la emulación de sustain del host (midi_sustain.h). Sin SDK:
+#   cmake --build <build> --config Release --target jaswave-host-midi-selftest && <build>/Release/jaswave-host-midi-selftest
+add_executable(jaswave-host-midi-selftest EXCLUDE_FROM_ALL tests/midi_sustain_test.cpp)
+target_include_directories(jaswave-host-midi-selftest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

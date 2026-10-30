@@ -10,25 +10,14 @@
 #include <string>
 #include <vector>
 
+#include "midi_sustain.h"
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 #endif
-
-struct Vst3MidiEvent {
-  enum class Kind { NoteOn, NoteOff, ControlChange };
-  Kind kind{};
-  int16_t pitch{0};
-  float velocity{0};
-  int16_t cc{0};
-  int16_t ccValue{0};
-  int32_t delaySamples{0};
-  int32_t lengthSamples{0};
-  /** Canal MIDI 0-15 (zonas con canal de salida; por defecto 0). */
-  int16_t channel{0};
-};
 
 struct Vst3ParamDesc {
   uint32_t id{0};

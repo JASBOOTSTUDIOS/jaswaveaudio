@@ -44,7 +44,7 @@ import {
 import { constrainNotesToScale, type ScaleType } from '../midi/scale';
 import { generateMidiPattern, type GeneratePatternKind } from '../midi/generators';
 import { applyGroove } from '../midi/groove';
-import { ensureExpression, setCcLane, setPitchBendPoints } from '../midi/expression';
+import { emptyExpression, ensureExpression, setCcLane, setPitchBendPoints } from '../midi/expression';
 import type { MidiClipExpression } from '../types/clips';
 import { aplicarLegatoWorship, clasificarPistaLegato } from '../music/legato-worship';
 import { nombreTrackUnico } from '../state/validacion-dominio';
@@ -162,6 +162,11 @@ export type MidiClipCreatePayload = {
   duracion?: number;
   color?: string;
   notas: MidiNotePayload[];
+  /**
+   * Lanes de CC del clip (p. ej. el pedal grabado). `valor` NORMALIZADO 0..1, `tiempo` en beats relativos al clip.
+   * Solo se leen `expression.cc`; se normalizan con setCcLane (recorte 0..1, curva conservada).
+   */
+  expression?: MidiClipExpression;
   /** Id a usar para el clip (redo determinista). */
   id?: string;
   /** Ids fijados para las notas creadas, en orden (redo determinista). */
@@ -325,7 +330,8 @@ export type MidiSetCcPayload = {
   pistaId: string;
   clipId: string;
   cc: number;
-  puntos: { tiempo: number; valor: number }[];
+  /** valor NORMALIZADO 0..1 (CC 0..127 = valor*127); curva 'step' para pedales. Tiempo en beats relativos al clip. */
+  puntos: { id?: string; tiempo: number; valor: number; curva?: 'step' | 'linear' | 'smooth' }[];
   nombre?: string;
 };
 
@@ -1335,7 +1341,7 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
     type: 'midi.clip.create',
     inverseType: 'clip.delete',
     description:
-      'Crea un clip MIDI con notas en una pista MIDI. `notas` es un array JSON de objetos {pitch, inicio, duracion, velocidad} (pitch 0–127, inicio y duracion en beats contados desde el principio del clip, velocidad 1–127), nunca un texto ni una descripción.',
+      'Crea un clip MIDI con notas en una pista MIDI. OBLIGATORIO: pistaId (id de la pista), inicio y duracion del clip en beats desde el principio de la canción y notas. Ejemplo: {pistaId:"<id>", inicio:0, duracion:16, notas:[{pitch:60,inicio:0,duracion:1,velocidad:90}]}. Si ya hay un clip en ese tramo no crees otro: añade o cambia notas con midi.notes.patch. `notas` es un array JSON de objetos {pitch, inicio, duracion, velocidad} (pitch 0–127, inicio y duracion en beats contados desde el principio del clip, velocidad 1–127), nunca un texto ni una descripción.',
     risk: 'write',
     schema: {
       type: 'object',
@@ -1348,6 +1354,7 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
         color: { type: 'string' },
         id: { type: 'string' },
         idsGenerados: SCHEMA_IDS_GENERADOS,
+        expression: {},
         notas: {
           type: 'array',
           items: {
@@ -1416,6 +1423,12 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
         cuantizacion: 0.25,
         loop: { activo: false, inicio: 0, fin: duracion },
       };
+      const lanesCc = payload.expression?.cc ?? [];
+      if (lanesCc.length > 0) {
+        let expresion = emptyExpression();
+        for (const l of lanesCc) expresion = setCcLane(expresion, l.cc, l.puntos, l.nombre);
+        clip.expression = expresion;
+      }
 
       const pistaActualizada = {
         ...pista,
@@ -1454,7 +1467,7 @@ export function crearComandoMidiClipCreate(): CommandDefinition<MidiClipCreatePa
 export function crearComandoMidiNotesPatch(): CommandDefinition<MidiNotesPatchPayload> {
   return {
     type: 'midi.notes.patch',
-    description: 'Aplica cambios puntuales a notas de un clip MIDI (sin tocar las demás)',
+    description: 'Aplica cambios puntuales a notas de un clip MIDI (sin tocar las demás): upsert = notas nuevas o cambiadas [{pitch,inicio,duracion,velocidad}] (con id para cambiar una existente) y removeIds = ids a quitar (lista vacía si no quitas ninguna). Úsalo para completar compases vacíos dentro de un clip que ya existe.',
     risk: 'write',
     inverseType: 'midi.notes.patch',
     schema: {
@@ -1462,7 +1475,13 @@ export function crearComandoMidiNotesPatch(): CommandDefinition<MidiNotesPatchPa
       properties: {
         pistaId: { type: 'string' },
         clipId: { type: 'string' },
-        upsert: { type: 'array' },
+        upsert: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { id: { type: 'string' }, pitch: { type: 'number' }, inicio: { type: 'number' }, duracion: { type: 'number' }, velocidad: { type: 'number' } },
+          },
+        },
         removeIds: { type: 'array', items: { type: 'string' } },
         duracion: { type: 'number' },
         expression: {},
@@ -1481,7 +1500,7 @@ export function crearComandoMidiNotesPatch(): CommandDefinition<MidiNotesPatchPa
 export function crearComandoMidiNotesSet(): CommandDefinition<MidiNotesSetPayload> {
   return {
     type: 'midi.notes.set',
-    description: 'Reemplaza las notas de un clip MIDI (piano roll)',
+    description: 'Reemplaza TODAS las notas de un clip MIDI (piano roll). Requiere pistaId, clipId y notas [{pitch,inicio,duracion,velocidad}] con la parte completa; una lista vacía no se acepta (para borrar usa midi.notes.patch con removeIds). Para añadir o cambiar unas pocas notas usa midi.notes.patch.',
     risk: 'write',
     schema: {
       type: 'object',

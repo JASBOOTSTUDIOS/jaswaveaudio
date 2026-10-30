@@ -21,6 +21,7 @@ import { detectarFinProyecto } from '../../shared/src/render/fin-proyecto'
 import { puntoInicioDe } from '../../shared/src/commands/domain-commands'
 import { decidirFinReproduccion, umbralSilencioLineal } from '@/src/lib/fin-reproduccion'
 import { getPreferenciasTransporte } from '@/src/lib/preferencias-transporte'
+import { valorCcAMidi } from '@/src/lib/midi-cc-recorder'
 import { useImportProgress } from '@/src/context/import-progress-context'
 import { extractStereoPeaks, packStereoPeaks } from '@/lib/stereo-peaks'
 import { nativeAudioBridge } from '@/src/lib/native-audio-bridge'
@@ -780,11 +781,11 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         const ccs: Array<{ cc: number; timeSec: number; value: number }> = []
         for (const lane of raw.expression?.cc ?? []) {
           for (const pt of lane.puntos ?? []) {
-            const nrm = pt.valor <= 1 ? pt.valor : pt.valor / 127
+            // Contrato: valor normalizado 0..1 (ver midi-cc-recorder.ts); un valor 1 es el máximo, no «CC = 1».
             ccs.push({
               cc: lane.cc,
               timeSec: inicioSeconds + beatsASegundos(pt.tiempo, BPM),
-              value: Math.max(0, Math.min(127, Math.round(nrm * 127))),
+              value: valorCcAMidi(pt.valor),
             })
           }
         }

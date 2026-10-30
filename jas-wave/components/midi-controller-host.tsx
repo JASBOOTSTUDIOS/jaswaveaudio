@@ -16,6 +16,13 @@ import { segundosABeats } from '@/lib/audio-conversions'
 import { midiController, type MidiParsed, type MidiSource } from '@/src/lib/midi-controller'
 import { AgregadorPedales, unificarPedal } from '@/src/lib/midi-pedal'
 import {
+  ccGrabadosALanes,
+  ccRecorderOn,
+  createCcRecorder,
+  esCcGrabable,
+  type CcRecorderState,
+} from '@/src/lib/midi-cc-recorder'
+import {
   clipSpanBeats,
   createMidiRecorder,
   flushRecorder,
@@ -155,6 +162,10 @@ export function MidiControllerHost() {
   )
 
   const recMapRef = useRef<Map<string, MidiRecorderState>>(new Map())
+  // CC de pedal / expresión de la toma, por pista armada (van a `clip.expression.cc`, no solo al VST en vivo).
+  const ccRecMapRef = useRef<Map<string, CcRecorderState>>(new Map())
+  // Último valor de CC1/CC11 visto (los pedales salen de pedalesRef): estado inicial de la toma.
+  const ccUltimoRef = useRef<Map<number, number>>(new Map())
   const recStartSecRef = useRef(0)
   const recStartPerfRef = useRef(0)
   const wasRecRef = useRef(false)
@@ -250,8 +261,9 @@ export function MidiControllerHost() {
       if (!msg) return
       if (dispatchMidiMapMessage(msg)) return
       playLive(midiLiveTargetIds(list, id), selectedRef.current, msg, source, id, list)
+      if (msg.kind === 'cc' && esCcGrabable(msg.cc)) ccUltimoRef.current.set(msg.cc, msg.value)
       if (recMapRef.current.size === 0) return
-      if (msg.kind !== 'noteOn' && msg.kind !== 'noteOff') return
+      if (msg.kind !== 'noteOn' && msg.kind !== 'noteOff' && !(msg.kind === 'cc' && esCcGrabable(msg.cc))) return
       const recIds = midiRecordTargetIds(list, id)
       if (recIds.length === 0) return
       // El evento se tocó `retraso` s antes de llegar aquí (sello del host / Web MIDI): se graba en su sitio.
@@ -260,6 +272,13 @@ export function MidiControllerHost() {
         (playingRef.current
           ? audioEngine.getTimelineSeconds()
           : recStartSecRef.current + (performance.now() - recStartPerfRef.current) / 1000) - retraso
+      if (msg.kind === 'cc') {
+        for (const trackId of recIds) {
+          const cr = ccRecMapRef.current.get(trackId)
+          if (cr) ccRecMapRef.current.set(trackId, ccRecorderOn(cr, msg.cc, msg.value, now))
+        }
+        return
+      }
       for (const trackId of recIds) {
         const rec = recMapRef.current.get(trackId)
         if (!rec) continue
@@ -282,6 +301,7 @@ export function MidiControllerHost() {
         (t) => t.armada && isMidiLikeTrack(t.tipo) && assignedMidiDevice(t).length > 0,
       )
       recMapRef.current = new Map()
+      ccRecMapRef.current = new Map()
       if (armedMidi.length === 0) return
       const transport = st.transport
       const useCountIn = Boolean(transport.countIn?.activo)
@@ -304,8 +324,19 @@ export function MidiControllerHost() {
           punchOn && punchEndSec > punchStartSec
             ? { startSec: punchStartSec, endSec: punchEndSec }
             : null
+        // Estado de los CC al empezar (p. ej. pedal ya pisado): punto inicial del lane.
+        const inicial = new Map<number, number>()
+        for (const cc of [64, 66, 67, 69]) {
+          const v = pedalesRef.current.valor(cc)
+          if (v > 0) inicial.set(cc, v)
+        }
+        for (const cc of [1, 11]) {
+          const v = ccUltimoRef.current.get(cc)
+          if (v !== undefined && v > 0) inicial.set(cc, v)
+        }
         for (const t of armedMidi) {
           recMapRef.current.set(t.id, createMidiRecorder(startSec))
+          ccRecMapRef.current.set(t.id, createCcRecorder(startSec, inicial))
         }
       }
       if (delayMs > 0) {
@@ -321,7 +352,11 @@ export function MidiControllerHost() {
     if (!recording && wasRecRef.current) {
       wasRecRef.current = false
       const recs = recMapRef.current
+      const ccRecs = ccRecMapRef.current
       recMapRef.current = new Map()
+      ccRecMapRef.current = new Map()
+      // La ventana de punch se lee ANTES de limpiarla (antes se borraba y el recorte nunca se aplicaba).
+      const win = punchWindowRef.current
       punchWindowRef.current = null
       if (recs.size === 0) return
       const endSec = playingRef.current
@@ -331,7 +366,6 @@ export function MidiControllerHost() {
       void (async () => {
         for (const [trackId, rec] of recs) {
           let raw = flushRecorder(rec, endSec)
-          const win = punchWindowRef.current
           if (win) {
             raw = raw
               .map((n) => ({
@@ -345,12 +379,29 @@ export function MidiControllerHost() {
           if (drafts.length === 0) continue
           const span = clipSpanBeats(drafts, 1)
           const startBeats = segundosABeats(rec.startSec, bpmRef.current)
+          const finToma = win ? Math.min(endSec, win.endSec) : endSec
+          const cr = ccRecs.get(trackId)
+          const lanes = cr
+            ? ccGrabadosALanes(cr, {
+                clipStartSec: rec.startSec,
+                bpm: bpmRef.current,
+                endSec,
+                // El pedal puede seguir sonando tras la última nota: el clip se alarga hasta su última marca.
+                duracionBeats: Math.max(span.duracion, (finToma - rec.startSec) / (60 / Math.max(1, bpmRef.current))),
+                punch: win,
+              })
+            : []
+          const duracionClip = lanes.reduce(
+            (m, l) => Math.max(m, ...l.puntos.map((p) => p.tiempo)),
+            span.duracion,
+          )
           await tienda.executor.execute('midi.clip.create', {
             pistaId: trackId,
             nombre: 'Grabación MIDI',
             inicio: startBeats,
-            duracion: span.duracion,
+            duracion: duracionClip,
             notas: drafts,
+            ...(lanes.length > 0 ? { expression: { cc: lanes, pitchBend: [], channelPressure: [] } } : {}),
           })
         }
       })()
