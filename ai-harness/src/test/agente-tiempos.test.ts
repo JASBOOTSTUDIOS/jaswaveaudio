@@ -43,9 +43,10 @@ const hecho = (t: string): RespuestaModelo => ({ ok: true, texto: t, llamadas: [
  * Producción con reloj falso: cada petición al modelo cuesta `costeMs` de reloj. El «modelo» es un guion:
  * planifica, reparte, escribe, y en el ensayo opina; registra quién pidió qué.
  */
-async function producir(extra: Partial<ConfigProduccion> & { costeMs?: number } = {}) {
+type Guion = (rol: string, o: Parameters<ChatAgente>[0], avanzar: (ms: number) => void) => Promise<RespuestaModelo> | RespuestaModelo | undefined
+async function producir(extra: Partial<ConfigProduccion> & { costeMs?: number; guion?: Guion } = {}) {
   let t = 0
-  const { costeMs = MIN, ...resto } = extra
+  const { costeMs = MIN, guion, ...resto } = extra
   const peticiones: string[] = []
   const eventos: EventoProduccion[] = []
   const chat: ChatAgente = async (o) => {
@@ -54,6 +55,8 @@ async function producir(extra: Partial<ConfigProduccion> & { costeMs?: number } 
     const herr = o.herramientas.map((h) => h.name)
     const ultimo = o.mensajes[o.mensajes.length - 1]
     peticiones.push(herr.includes(H_PROPONER) ? `${rol}:ensayo` : rol)
+    const propia = guion?.(rol, o, (ms) => (t += ms))
+    if (propia) return propia
     if (ultimo?.role === 'tool') return hecho(`${rol} terminó`)
     if (rol === 'Planificador') return { ok: true, texto: '', llamadas: [ll(H_HOJA, HOJA)] }
     if (rol === 'Director') return { ok: true, texto: '', llamadas: [ll(H_ENCARGOS, { encargos: [{ musico: 'bat', pista: 'p1', encargo: 'batería' }, { musico: 'pia', pista: 'p2', encargo: 'piano' }] })] }
@@ -292,5 +295,95 @@ describe('segunda oleada', () => {
   it('con solaparOleadas: false espera a la base entera (comportamiento anterior)', async () => {
     const r = await conReintentoDeBase(false)
     expect(r.bloqueada).toBe(true)
+  })
+})
+
+describe('tope de reloj por agente', () => {
+  const colgado = () => new Promise<RespuestaModelo>(() => undefined)
+  const vigila = { vigilanciaMs: 5 }
+
+  it('corta al QA que no responde: cae a la medición del host y lo cuenta en el resumen', async () => {
+    const { r, peticiones } = await producir({
+      ...vigila,
+      presupuestoMs: Infinity,
+      limiteMs: Infinity,
+      ensayo: false,
+      ahorro: { qaMedible: false, qaPartesLimpias: false },
+      medir: async () => ({ ok: true, detalles: ['Volumen general −14,0 LUFS.'] }),
+      guion: (rol, _o, avanzar) => {
+        if (rol !== 'QA') return undefined
+        avanzar(4 * MIN) // más que su tope de 3 min
+        return colgado()
+      },
+    })
+    expect(peticiones.filter((p) => p === 'QA').length).toBeGreaterThan(0)
+    expect(r.tiempos!.omitidos.some((o) => o.motivo === 'tope_agente' && /QA/.test(o.texto))).toBe(true)
+    expect(r.texto).toMatch(/QA .*cortado por tiempo/)
+    // Siguió con mezcla y máster y la medición del host manda.
+    expect(r.etapas.find((e) => e.etapa === 'qa_master')?.ok).toBe(true)
+    expect(r.estado).not.toBe('fallo')
+  })
+
+  it('el límite global corta al agente en curso y pasa a la entrega', async () => {
+    const medidas: string[] = []
+    const { r, peticiones } = await producir({
+      ...vigila,
+      presupuestoMs: 10 * MIN,
+      limiteMs: 20 * MIN,
+      topesAgenteMs: { mezcla: Infinity },
+      medir: async (e) => (medidas.push(e), { ok: true, detalles: ['bien'] }),
+      guion: (rol, _o, avanzar) => {
+        if (rol !== 'Mezcla') return undefined
+        avanzar(30 * MIN)
+        return colgado()
+      },
+    })
+    expect(peticiones.filter((p) => p === 'Mezcla').length).toBe(1)
+    expect(r.tiempos!.omitidos).toContainEqual(expect.objectContaining({ motivo: 'limite', que: expect.stringContaining('mezcla/mix') }))
+    // El máster ya no corre (pasado el límite) pero se mide al final.
+    expect(peticiones.includes('Máster')).toBe(false)
+    expect(medidas).toContain('master')
+    expect(r.estado).toBe('con_avisos')
+  })
+
+  it('un músico no se corta por el límite global, solo por su propio tope', async () => {
+    const { r, peticiones } = await producir({
+      ...vigila,
+      presupuestoMs: Infinity,
+      limiteMs: 1 * MIN,
+      costeMs: 2 * MIN,
+    })
+    expect(cuenta(peticiones, 'Piano')).toBeGreaterThanOrEqual(2)
+    expect(r.tiempos!.omitidos.some((o) => /^musico/.test(o.que))).toBe(false)
+  })
+})
+
+describe('tope de análisis seguidos del QA', () => {
+  it('tras 4 mediciones sin escribir, la herramienta responde con la última y pide el veredicto', async () => {
+    let paso = 0
+    let reales = 0
+    const avisos: string[] = []
+    const { r } = await producir({
+      presupuestoMs: Infinity,
+      limiteMs: Infinity,
+      ensayo: false,
+      ahorro: { qaMedible: false, qaPartesLimpias: false },
+      medir: async () => ({ ok: true, detalles: [] }),
+      catalogo: [...CATALOGO, { nombre: 'analysis.mix', descripcion: 'Mide la mezcla', parametros: par, clase: 'lectura' }],
+      herramientasPorRol: { qa: ['analysis.mix'] },
+      ejecutar: async (l) => (l.nombre === 'analysis.mix' ? (reales++, { ok: true, datos: { lufs: -14 - reales } }) : { ok: true }),
+      guion: (rol, o) => {
+        if (rol !== 'QA') return undefined
+        for (const m of o.mensajes) if (m.role === 'tool' && /Ya mediste/.test(m.content) && !avisos.includes(m.content)) avisos.push(m.content)
+        paso++
+        return paso <= 6
+          ? { ok: true, texto: '', llamadas: [ll('analysis.mix', { vuelta: paso })] }
+          : { ok: true, texto: '', llamadas: [ll(H_VEREDICTO, { aprobado: true, resumen: 'bien' })] }
+      },
+    })
+    expect(reales).toBe(4)
+    expect(avisos.length).toBeGreaterThan(0)
+    expect(avisos[0]).toMatch(/lufs/)
+    expect(r.etapas.some((e) => e.etapa === 'qa_musicos')).toBe(true)
   })
 })

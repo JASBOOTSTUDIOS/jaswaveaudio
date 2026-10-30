@@ -689,6 +689,35 @@ describe('producción por etapas', () => {
     expect(vetadas[0]!.error).toMatch(/es de Batería/)
   })
 
+  it('si el músico olvida la pista en una escritura, se completa con la de su encargo', async () => {
+    const catalogo: HerramientaAgente[] = [
+      { nombre: 'midi.clip.create', descripcion: 'Crea un clip', parametros: { type: 'object', properties: { pistaId: { type: 'string' }, notas: { type: 'array' } } }, clase: 'escritura' },
+      { nombre: 'project.setBpm', descripcion: 'Tempo', parametros: { type: 'object', properties: { bpm: { type: 'number' } } }, clase: 'escritura' },
+    ]
+    const { chat } = modelo((rol) => {
+      if (rol === 'Director') return { ok: true, texto: '', llamadas: [ll(H_ENCARGOS, { encargos: [{ musico: 'bat', encargo: 'batería', pista: 't-bat' }] })] }
+      if (rol === 'Batería') return { ok: true, texto: '', llamadas: [ll('midi.clip.create', { notas: [] }), ll('project.setBpm', { bpm: 90 })] }
+      if (rol === 'QA') return { ok: true, texto: '', llamadas: [ll(H_VEREDICTO, { aprobado: true, resumen: 'Bien.' })] }
+      return hecho('ok')
+    })
+    const vistas: Array<{ nombre: string; args: Record<string, unknown> }> = []
+    await ejecutarProduccion({
+      pedido: 'tema',
+      catalogo,
+      participantes: EQUIPO.filter((p) => p.rol !== 'mezcla' && p.rol !== 'master' && p.id !== 'baj').map((p) => (p.id === 'bat' ? { ...p, herramientas: ['midi.clip.create', 'project.setBpm'] } : p)),
+      chat,
+      ensayo: false,
+      resolverPista: (ref) => (ref === 't-bat' ? { id: 't-bat', nombre: 'Batería' } : null),
+      ejecutar: async (l) => {
+        vistas.push({ nombre: l.nombre, args: l.argumentos })
+        return { ok: true }
+      },
+    })
+    expect(vistas.find((v) => v.nombre === 'midi.clip.create')?.args.pistaId).toBe('t-bat')
+    // Una herramienta que no pide pista no recibe ninguna.
+    expect(vistas.find((v) => v.nombre === 'project.setBpm')?.args).toEqual({ bpm: 90 })
+  })
+
   it('si el director no reparte, cada músico recibe un encargo; y se puede cancelar', async () => {
     const ac = new AbortController()
     const { chat, veces } = modelo((rol) => {

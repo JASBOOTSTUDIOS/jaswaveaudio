@@ -130,7 +130,7 @@ muestras la cobertura salta al **p90 observado de ese modelo**, acotada entre 3 
 Efecto: DeepSeek (p90 5,6 s) y Haiku (6,4 s) cubren a ~6 s en vez de 10 s; los modelos lentos conservan el tope. Pruebas en
 `test/ia-enrutador.test.ts`. Nemotron Ultra: `agent` no lo usa de primero (ver §1.4); no se tocó el enrutado por propósito.
 
-(e) **Pasos por agente** — hecho, con riesgo (ver §6): `PASOS_POR_ROL` musico 36→32, coherencia 40→24, qa 14→10, mezcla 24→16, master
+(e) **Pasos por agente** (ver también §4.1) — hecho, con riesgo (ver §6): `PASOS_POR_ROL` musico 36→32, coherencia 40→24, qa 14→10, mezcla 24→16, master
 14→10. Un arreglista de 40 pasos × 10 s era 6–7 min por ronda. La guardia de repeticiones del runtime (idénticas lecturas ≤ 2, escrituras
 idénticas 1, 5 fallos seguidos de una herramienta) ya existía y se mantiene.
 
@@ -138,6 +138,29 @@ idénticas 1, 5 fallos seguidos de una herramienta) ya existía y se mantiene.
 de la banda sumaban ≈ 7 min por petición (`ESPERAS_REINTENTO_BANDA` 4+12+30+60+120+180 s) → ahora 3+8+20+45+90 s ≈ 2 min 46 s;
 (2) pausar/reanudar la escucha en vivo alrededor de **cada** medición, incluso las de caché o las que no renderizan → ahora solo en el
 render real; (3) la espera de 500 ms/200 ms de la escucha en vivo es de su propio hilo y no bloquea a los agentes.
+
+### 4.1 Topes por agente (pasada real 18)
+
+La pasada 18 mostró que el límite de 30 min solo se evaluaba **entre** etapas: el agente QA de la mezcla encadenó mediciones
+("Consultando una habilidad / Analizando el proyecto") durante más de 10 min sin dar veredicto y nadie lo cortó. Ahora:
+
+1. **Tope de reloj por intento de agente** (`ConfigProduccion.topesAgenteMs`, por defecto `TOPE_AGENTE_MS_DEFECTO`): músico 6 min, arreglista
+   4, QA 3, mezcla 5, máster 4 (planificador y director sin tope). El orquestador vigila cada agente con su propio `AbortController`
+   (`vigilanciaMs`, 1 s) y el reloj inyectable; al vencer, aborta la espera del chat (un modelo que nunca responde ya no retiene
+   al agente: `Promise.race`) y el bucle del agente, y devuelve lo que ya hizo con estado `limite`. No es una cancelación del
+   usuario: la producción sigue. El QA cortado cae al veredicto de la medición determinista del host; mezcla y máster siguen con lo
+   hecho. Se informa en el resumen («QA (revisión de la mezcla) cortado por tiempo tras 3 min») y como evento `omitido` con motivo
+   `tope_agente`.
+2. **Tope de análisis seguidos del QA** (`maxAnalisisSeguidos`, 4): tras 4 llamadas `analysis.*` sin escribir, la herramienta no
+   mide: responde con la última medición y «Ya mediste: da tu veredicto con estos datos». (El QA es de solo lectura, así que cuenta todas.)
+3. **El límite global también corta al agente en curso**: los agentes de refinamiento (arreglista, QA, mezcla, máster y los del ensayo)
+   se abortan al superar `limiteMs`, no solo entre etapas, y la producción pasa a la entrega (medición final incluida). Los músicos
+   de la grabación no se cortan por el límite global, solo por su propio tope de 6 min por intento.
+4. Pruebas (`agente-tiempos.test.ts`): chat que nunca responde con reloj falso (QA cortado, cae a la medición; mezcla cortada por el límite
+   y entrega con medición final; músico no cortado por el límite) y tope de 4 análisis.
+
+Límites conocidos: abortar no cancela la herramienta nativa que ya está ejecutándose (un render en curso termina o expira por su
+propio tiempo máximo de 3 min); el vigilante usa un temporizador real de 1 s, así que el corte llega con ≤ 1 s de retraso.
 
 ## 5. Antes / después (estimado; hay que validarlo con una pasada real)
 

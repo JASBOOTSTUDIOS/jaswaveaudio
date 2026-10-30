@@ -94,6 +94,8 @@ export function explicarErrorHerramienta(
   return extra.length ? `${mensaje} ${extra.join(' ')}` : mensaje
 }
 
+const sinAcentosMin = (t: string) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase()
+
 const NOMBRE_NOTA = /^([A-Ga-g])([#b♯♭]?)(-?\d)$/
 const SEMITONO: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }
 
@@ -248,7 +250,19 @@ export function guardiaIA(tool: string, args: Record<string, unknown>, st: Estad
   let pista = pistas.find((t) => t.id === idPista)
   // El clip existe pero en otra pista (el modelo mezcla ids al pasar de una pista a otra, o manda la
   // pista nueva con el clip de la anterior): se corrige la pista en vez de fallar con «Clip no encontrado».
-  const clipId = typeof args.clipId === 'string' ? args.clipId : ''
+  let clipId = typeof args.clipId === 'string' ? args.clipId : ''
+  // El modelo a veces manda el NOMBRE del clip («Lead - Puente») en vez de su id: si un solo clip se llama así, es ese.
+  if (clipId && !pistas.some((t) => (t.clips ?? []).some((c) => c.id === clipId))) {
+    const q = sinAcentosMin(clipId)
+    const porNombre = pistas.flatMap((t) => (t.clips ?? []).filter((c) => sinAcentosMin(c.nombre ?? '') === q).map((c) => ({ c, t })))
+    const enSuPista = porNombre.filter((x) => x.t.id === idPista)
+    const unico = enSuPista.length === 1 ? enSuPista[0] : porNombre.length === 1 ? porNombre[0] : undefined
+    if (unico) {
+      out = { ...out, clipId: unico.c.id }
+      args = out
+      clipId = unico.c.id
+    }
+  }
   if (clipId && !(pista?.clips ?? []).some((c) => c.id === clipId)) {
     const duena = pistas.find((t) => (t.clips ?? []).some((c) => c.id === clipId))
     if (duena && duena.id !== idPista) {
@@ -312,7 +326,14 @@ export function guardiaIA(tool: string, args: Record<string, unknown>, st: Estad
     const clip = (pista.clips ?? []).find((c) => c.id === String(args.clipId ?? '')) as { notas?: unknown[] } | undefined
     const antes = clip?.notas?.length ?? 0
     const despues = Array.isArray(args.notas) ? args.notas.length : 0
-    if (antes >= 4 && despues < antes * 0.5 && reemplazarTodas !== true) {
+    const clipClave = String(args.clipId ?? '')
+    const rechazado = rechazosNotesSet.get(clipClave)
+    const insiste = rechazado !== undefined && Math.abs(rechazado - despues) <= Math.max(2, despues * 0.1)
+    if (insiste) rechazosNotesSet.delete(clipClave)
+    if (antes >= 4 && despues < antes * 0.5 && reemplazarTodas !== true && !insiste) {
+      // Se avisa una vez; si el modelo repite lo mismo (mismo clip, casi las mismas notas) es que de verdad quiere
+      // reemplazarlo: se acepta en lugar de dejarlo en un bucle de rechazos (el baterista llegó a repetirlo 6 veces).
+      rechazosNotesSet.set(clipClave, despues)
       return {
         error: `midi.notes.set reemplaza todas las notas: el clip tiene ${antes} y quedarían ${despues}. Para cambiar solo algunas usa midi.notes.patch. Si de verdad quieres reemplazarlas todas, repite la llamada con reemplazarTodas: true.`,
       }
@@ -382,6 +403,13 @@ export function guardiaIA(tool: string, args: Record<string, unknown>, st: Estad
     }
   }
   return { args: out }
+}
+
+/** Último `midi.notes.set` rechazado por borrar la mayoría de las notas, por clip (cuántas notas traía). */
+const rechazosNotesSet = new Map<string, number>()
+/** Solo tests: olvida los rechazos anteriores. */
+export function _olvidarRechazosNotesSet(): void {
+  rechazosNotesSet.clear()
 }
 
 /** Hueco máximo (beats) entre el final de lo grabado y un clip nuevo antes de pedir confirmación al modelo. */

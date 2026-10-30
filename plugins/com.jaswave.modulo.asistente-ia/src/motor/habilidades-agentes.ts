@@ -63,6 +63,11 @@ const MUSICO: HabilidadAgente[] = [
     'Humanizar: velocidad distinta en cada nota (±10 alrededor de la dinámica de la sección; apoyos +8, pasos −12, adornos −20). Micro-tiempo en instrumentos melódicos y armónicos: desplaza cada nota entre −0,04 y +0,04 beats (las de apoyo ligeramente tarde, las anticipaciones ligeramente antes); nunca más de 0,05 y nunca en la batería (ella humaniza con velocidades y ghost notes). Duraciones también humanas: una negra puede durar 0,9 o 1,05 beats.',
     'Antes de informar, lee el clip con midi.notes.get y mira tres cosas: ¿hay al menos 3 duraciones distintas? ¿hay notas que no son de la triada (extensiones, paso, adornos)? ¿las velocidades varían al menos 20 entre la más suave y la más fuerte? Si falla alguna, retoca con midi.notes.patch antes de dar la parte por hecha.',
   ]),
+  h('sostener-como-en-worship', 'Sostener como en worship', 'En canciones de adoración, alabanza o balada: cómo sostener las notas sin huecos.', [
+    'Regla: ninguna nota se suelta hasta que el sonido cae. Piano, guitarra, cuerdas, sintes, lead y bajo no dejan caer el sonido: cada nota o acorde queda pisado, como con el pedal, y se suelta 500 ms DESPUÉS de que empieza la siguiente. Así no hay huecos en las melodías.',
+    'Los pads siempre suenan: sostienen hasta el siguiente acorde y se solapan con él, sin cortar. La batería y la percusión no se sostienen.',
+    'El DAW lo aplica solo al escribir en pedidos de adoración. Para una pista ya escrita usa midi.notes.legatoWorship {pistaId, clipId?, solapeMs?, modo?} (se deshace); no acortes las notas a mano ni dejes silencios entre notas seguidas. Un silencio largo entre frases o secciones sí es intencional y se respeta.',
+  ]),
   h('grabar-por-secciones', 'Grabar la parte por secciones', 'Cuando grabes una parte nueva siguiendo la hoja de ruta.', [
     'Método (una sección = un clip, del largo exacto de la sección):',
     '1. Lee la HOJA DE RUTA: beat de inicio y beats de cada sección, acorde por compás, tonalidad, carácter. Lee «Tocar con vida» si aún no lo hiciste.',

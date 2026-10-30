@@ -46,6 +46,7 @@ import { generateMidiPattern, type GeneratePatternKind } from '../midi/generator
 import { applyGroove } from '../midi/groove';
 import { ensureExpression, setCcLane, setPitchBendPoints } from '../midi/expression';
 import type { MidiClipExpression } from '../types/clips';
+import { aplicarLegatoWorship, clasificarPistaLegato } from '../music/legato-worship';
 import { nombreTrackUnico } from '../state/validacion-dominio';
 import { entorno } from '../state/entorno-determinista';
 
@@ -1790,6 +1791,54 @@ export function crearComandoMidiMakeLegato(): CommandDefinition<MidiArticulation
       applyMidiNotesToClip(estado, payload.pistaId, payload.clipId, (notas) =>
         makeLegato(notas, payload.noteIds),
       ) as StateTransition<MidiArticulationPayload>,
+  };
+}
+
+export type MidiLegatoWorshipPayload = {
+  pistaId: string;
+  clipId?: string;
+  solapeMs?: number;
+  modo?: 'legato' | 'pad' | 'auto';
+};
+
+/**
+ * Legato worship (ver docs/plans/R-legato-worship.md): cada nota o acorde se sostiene hasta solapeMs (500) después
+ * del inicio de la siguiente. Reutiliza applyMidiNotesToClip (undo por parche). Sin clipId vale si la pista tiene
+ * un único clip MIDI; con varios, quien llama lanza el comando por clip.
+ */
+export function crearComandoMidiLegatoWorship(): CommandDefinition<MidiLegatoWorshipPayload> {
+  return {
+    type: 'midi.notes.legatoWorship',
+    inverseType: 'midi.notes.patch',
+    description: 'Sostiene las notas hasta 500 ms después de la siguiente (legato worship; pads siempre suenan)',
+    risk: 'write',
+    schema: {
+      type: 'object',
+      properties: {
+        pistaId: { type: 'string' },
+        clipId: { type: 'string' },
+        solapeMs: { type: 'number' },
+        modo: { type: 'string', enum: ['legato', 'pad', 'auto'] },
+      },
+      required: ['pistaId'],
+      additionalProperties: false,
+    },
+    handler: (estado, payload) => {
+      const pista = estado.project.tracks.find((t) => t.id === payload.pistaId);
+      if (!pista) throw new Error(`Pista no encontrada: ${payload.pistaId}`);
+      const tipo = clasificarPistaLegato(pista.nombre, (pista as { plugins?: Array<{ nombre?: string }> }).plugins ?? []);
+      if (tipo === 'bateria') throw new Error('El legato worship no se aplica a la bateria ni a la percusion');
+      let clipId = payload.clipId;
+      if (!clipId) {
+        const midis = pista.clips.filter((c) => c.tipo === 'midi');
+        if (midis.length !== 1) throw new Error(`Indica clipId: la pista tiene ${midis.length} clips MIDI`);
+        clipId = midis[0]!.id;
+      }
+      const modo = payload.modo && payload.modo !== 'auto' ? payload.modo : tipo === 'pad' ? 'pad' : 'legato';
+      return applyMidiNotesToClip(estado, payload.pistaId, clipId, (notas, clip) =>
+        aplicarLegatoWorship(notas, { bpm: Number(estado.project.bpm), modo, solapeMs: payload.solapeMs, finClip: clip.duracion }).notas,
+      ) as StateTransition<MidiLegatoWorshipPayload>;
+    },
   };
 }
 

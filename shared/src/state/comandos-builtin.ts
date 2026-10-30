@@ -36,6 +36,7 @@ import {
   crearComandoMidiCreateNotes,
   crearComandoMidiMakeStaccato,
   crearComandoMidiMakeLegato,
+  crearComandoMidiLegatoWorship,
   crearComandoMidiRepeat,
   crearComandoMidiReverse,
   crearComandoMidiInvert,
@@ -252,6 +253,7 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoMidiCreateNotes(), registry);
   registrar(crearComandoMidiMakeStaccato(), registry);
   registrar(crearComandoMidiMakeLegato(), registry);
+  registrar(crearComandoMidiLegatoWorship(), registry);
   registrar(crearComandoMidiRepeat(), registry);
   registrar(crearComandoMidiReverse(), registry);
   registrar(crearComandoMidiInvert(), registry);

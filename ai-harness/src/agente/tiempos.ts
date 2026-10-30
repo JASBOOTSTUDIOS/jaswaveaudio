@@ -13,7 +13,7 @@ export const LIMITE_MS_DEFECTO = 30 * 60_000
 
 export type TiempoEtapa = { ms: number; peticiones: number }
 export type TiempoMedicion = { etapa: EtapaMedible; ms: number; ok: boolean | null }
-export type MotivoOmision = 'presupuesto' | 'limite' | 'sin_progreso'
+export type MotivoOmision = 'presupuesto' | 'limite' | 'sin_progreso' | 'tope_agente'
 export type Omision = { que: string; motivo: MotivoOmision; texto: string }
 
 export type TiemposProduccion = {

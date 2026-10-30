@@ -39,10 +39,15 @@ import { instruccionesHabilidadesEspecialista } from '../especialistas-habilidad
 import { cargarEspecialistas, type EspecialistaConfig } from '../especialistas-storage'
 import { estiloActivoDelUsuario, habilidadesDelEspecialista, type EstiloUsuario } from '../habilidades-agentes'
 import { catalogoAgente, HERRAMIENTAS_BASE, herramientasDeGrupos } from './catalogo-agente'
+import { guardarEscrituraLegato } from './legato-banda'
+import { coordinarBanda } from './coordinar-banda'
+import { crearMemoriaHumanizado, guardarEscrituraHumanizar, nombrarClipGenerico } from './humanizar-banda'
 import { ARMONIA_POR_DEFECTO, guardarEscrituraArmonia, tablaArmoniaMusico, tipoDePista, type OpcionesArmonia } from './armonia-banda'
 import { analizarCoherencia, diagnosticoEscritura, seccionesFaltantes, type HojaCoherencia } from './coherencia-banda'
 import { chatDelMotor, ESPERAS_REINTENTO_BANDA, redDelNavegador, type UltimoErrorIA } from './chat-agente'
 import { masterMinimoDeterminista } from './master-minimo'
+import { aplicarAutomezcla, medidorAutomezcla, nuevaMemoriaAutomezcla } from './automezcla-banda'
+import { elegirPerfilDeProduccion } from './perfiles-mezcla-usuario'
 import { mensajeErrorIA, CHAT_UPDATED } from './turno-agente'
 
 export const KIND_BANDA = 'banda'
@@ -368,6 +373,7 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
   let cambios = 0
   /** Hoja de ruta vigente: el guardia de armonía comprueba cada escritura de notas contra ella. */
   let hojaVigente: HojaCoherencia | null = null
+  const memoriaHumanizado = crearMemoriaHumanizado()
   const ejecutar = async (l0: LlamadaAgente, h: HerramientaAgente): Promise<ResultadoHerramienta> => {
     let l = l0
     let avisosArmonia: string[] = []
@@ -376,6 +382,16 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
       if ('error' in g) return { ok: false, error: g.error }
       l = { ...l, argumentos: g.args }
       avisosArmonia = g.avisos
+      // Nombre de clip con la sección («Guitarra - Verso 1») en lugar de «Clip MIDI», y humanización (micro-timing, dinámica y
+      // variación de copias exactas): el tiempo se mueve ANTES del legato para que las notas largas sigan sin huecos.
+      l = { ...l, argumentos: nombrarClipGenerico(tienda.obtenerEstado(), hojaVigente, l) }
+      const hu = guardarEscrituraHumanizar(tienda.obtenerEstado(), hojaVigente, l, memoriaHumanizado)
+      l = { ...l, argumentos: hu.args }
+      avisosArmonia = [...avisosArmonia, ...hu.avisos]
+      // Legato worship: tras validar la armonía y antes de escribir (solo pedidos de adoración/alabanza/balada).
+      const lg = guardarEscrituraLegato(tienda.obtenerEstado(), pedido, l)
+      l = { ...l, argumentos: lg.args }
+      avisosArmonia = [...avisosArmonia, ...lg.avisos]
     }
     const r = await ejecutarBase(l, h)
     return r.ok && avisosArmonia.length ? { ...r, datos: { ...(r.datos && typeof r.datos === 'object' && !Array.isArray(r.datos) ? (r.datos as object) : {}), avisos: avisosArmonia } } : r
@@ -478,6 +494,8 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
         // Rastro en vivo de cada fallo de herramienta (la línea final `[banda]` solo llega si la producción termina).
         if (!ev.ok) console.info(`[banda] ✗ ${quien}:${ev.nombre} ${String(ev.resumen ?? '').replace(/\s+/g, ' ').slice(0, 300)}`)
       }
+    } else if (e.tipo === 'mezcla_inicial') {
+      progreso.actividad = [...progreso.actividad, { id: `mezcla-inicial:${progreso.actividad.length}`, texto: `Mezcla inicial automática: ${e.resumen.slice(0, 160)}`, estado: e.ok ? ('ok' as const) : ('error' as const), quien: 'Mezcla' }].slice(-40)
     } else if (e.tipo === 'qa' && e.etapa === 'qa_musicos') {
       progreso.subagentes = progreso.subagentes.map((s) => ({ ...s, estado: e.veredicto.aprobado ? 'ok' : 'en_curso' }))
     } else return
@@ -497,6 +515,9 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
       escuchaEnVivo.reanudar()
     }
   })
+  // Plan T: mezcla inicial determinista. Una sola medición (stems + suma) con tope de 60 s; sin ella, valores por rol.
+  const memoriaMezcla = nuevaMemoriaAutomezcla()
+  const medirParaMezcla = medidorAutomezcla(tienda, { huella: huellaMezcla, pausar: () => escuchaEnVivo.pausar(), reanudar: () => escuchaEnVivo.reanudar() })
   escuchaEnVivo.comenzar(tienda)
   let r: ResultadoProduccionAgentes | undefined
   try {
@@ -540,7 +561,29 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
         return t ? { id: t.id, nombre: t.nombre } : null
       },
       // Al terminar cada músico se mide si su pista cubre las secciones que le tocan; si no, retoma lo que falta.
-      completitud: (encargo, hoja) => (encargo.pista ? seccionesFaltantes(tienda.obtenerEstado(), hoja, { pista: encargo.pista, encargo: encargo.encargo }) : null),
+      // Plan S: coordinación vertical al terminar los músicos (choques entre pistas, pad con el acorde, bajo de la barra).
+      afinarConjunto: async () => {
+        if (!hojaVigente) return null
+        return coordinarBanda(tienda.obtenerEstado(), hojaVigente, async (nombre, args) => {
+          const [x] = await ctx.executeTools([{ id: `coordinar:${nombre}`, name: nombre, arguments: args }])
+          if (x?.status === 'success') cambios++
+          return x?.status === 'success'
+        })
+      },
+      // Plan S: pistas de instrumento del proyecto (sin máster ni buses) y cuántas notas tienen, para dar dueño a las huérfanas
+      // y rescatar las que sigan vacías.
+      pistas: () =>
+        (tienda.obtenerEstado().project?.tracks ?? [])
+          .filter((t) => t.tipo === 'audio' || t.tipo === 'midi' || t.tipo === 'instrumento')
+          .map((t) => ({ id: t.id, nombre: t.nombre, tipo: t.tipo, notas: ((t.clips ?? []) as unknown as Array<{ notas?: unknown[] }>).reduce((a, c) => a + (c.notas?.length ?? 0), 0) })),
+      // Al terminar cada músico se mide, compás a compás, si su pista (y las extra que lleva) cubre lo que le toca; si no, retoma lo que falta.
+      completitud: (encargo, hoja) => {
+        const mensajes = [encargo.pista, ...(encargo.pistasExtra ?? [])]
+          .filter((x): x is string => !!x)
+          .map((pista, i) => seccionesFaltantes(tienda.obtenerEstado(), hoja, { pista, encargo: i === 0 ? encargo.encargo : '' }))
+          .filter((m): m is string => !!m)
+        return mensajes.length ? mensajes.join(' ') : null
+      },
       coherencia: async (hoja) => {
         // La hoja de ruta (acorde por compás y secciones) se vuelca al carril de acordes del arreglo: es la
         // única salida del harness que trae la hoja completa; chords.set reemplaza, así que repetirla es inocuo.
@@ -565,6 +608,25 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
         if (g) await diario?.control(que, g.huella, g.archivo)
       },
       // Pasado el límite de tiempo: máster mínimo sin modelo (normalizar a −14 LUFS + limitador a −1 dBTP).
+      mezclaInicial: async (hoja, c) => {
+        // El estilo lo manda el productor (ajuste); si no, el que emitió el planificador en la hoja; último recurso: el pedido.
+        const elegido = elegirPerfilDeProduccion({ estilo: c.estilo, estiloHoja: hoja?.estilo, pedido: c.pedido })
+        const r = await aplicarAutomezcla({
+          tienda,
+          perfil: elegido.perfil,
+          memoria: memoriaMezcla,
+          medir: medirParaMezcla,
+          hoja: hoja ? { secciones: hoja.secciones.map((x) => ({ nombre: x.nombre, compases: x.compases })), bpm: hoja.bpm, numerador: hoja.numerador } : undefined,
+          signal: control.signal,
+          ejecutar: async (nombre, args) => {
+            const [x] = await ctx.executeTools([{ id: `automezcla:${nombre}`, name: nombre, arguments: args }])
+            if (x?.status === 'success') cambios++
+            return { ok: x?.status === 'success', mensaje: x?.error?.message, datos: x?.data }
+          },
+        })
+        const origen = `Perfil «${elegido.perfil.nombre}»: ${elegido.motivo}.${elegido.avisos.length ? ` Perfiles propios con errores: ${elegido.avisos.join(' ')}` : ''}`
+        return { ok: r.ok, aplicada: r.aplicada, resumen: `${origen} ${r.resumen}`, perfil: elegido.perfil.nombre, guion: `${origen} ${r.guion ?? ''}` }
+      },
       masterMinimo: () =>
         masterMinimoDeterminista(
           async (nombre, args) => {
@@ -573,6 +635,7 @@ export async function runTurnoBanda(ctx: TurnContext, tienda: TiendaDAW): Promis
             return { ok: x?.status === 'success', mensaje: x?.error?.message }
           },
           () => medir('master'),
+          memoriaMezcla.perfil?.master,
         ),
     })
   } finally {

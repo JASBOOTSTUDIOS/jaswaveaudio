@@ -55,6 +55,14 @@ describe('habilidades: documento, unión y búsqueda', () => {
     expect(buscarHabilidad(lista, 'Groove de baterཚ')?.id).toBe('bateria-groove')
     expect(buscarHabilidad(lista, 'groove bateria percusion')?.id).toBe('bateria-groove')
     expect(buscarHabilidad(lista, 'mezcla y masterizado')).toBeUndefined()
+    // Caso real: el id de otra habilidad («bateria-biblioteca-de-grooves») contiene las mismas palabras y no debe empatar.
+    const real = [
+      { id: 'bateria-groove', nombre: 'Groove de batería', descripcion: '', contenido: 'a' },
+      { id: 'bateria-fills', nombre: 'Fills y transiciones', descripcion: '', contenido: 'b' },
+      { id: 'bateria-biblioteca-de-grooves', nombre: 'Biblioteca de grooves (cuándo usarla)', descripcion: '', contenido: 'c' },
+    ]
+    expect(buscarHabilidad(real, 'Groove de bater໚')?.id).toBe('bateria-groove')
+    expect(buscarHabilidad(real, 'biblioteca grooves')?.id).toBe('bateria-biblioteca-de-grooves')
     expect(listadoHabilidades(lista)).toMatch(/leer_habilidad[\s\S]*- Groove de batería: Cuando grabes la base rítmica/)
     expect(listadoHabilidades([])).toBe('')
   })

@@ -85,6 +85,21 @@ toque a la melodía nueva»* (`style.touch.apply`, se deshace con Ctrl+Z). Guard
 pocas notas el perfil se marca de confianza baja. Al producir un tema de worship puedes pedir que cada rol use tu
 toque (`perfilToque`).
 
+## Sostener las notas como en worship (legato worship)
+
+En una canción de adoración, alabanza o balada las notas no se cortan: cada nota o acorde sigue sonando, como con el
+pedal pisado, hasta **500 ms después** de que empiece la siguiente. Así no quedan huecos en las melodías. Los **pads**
+siempre suenan (sostienen hasta el siguiente acorde y se mezclan con él) y la **batería y la percusión no se tocan**.
+
+- **Cuándo usarlo:** una melodía, un piano o una guitarra que suenan «picados» o con silencios entre notas, sobre todo
+  si los escribiste o tocaste de forma corta. No lo uses en música que debe sonar seca (funk, staccato, pop rítmico).
+- **Cómo:** pídeselo al asistente («sostén las notas del piano como en worship») o ejecuta la acción
+  `midi.notes.legatoWorship` con la pista y, si quieres, un clip, `solapeMs` (500 por defecto; 1000 en pads) y
+  `modo` (`legato`, `pad` o `auto`, que reconoce los pads por el nombre). Se puede deshacer con Ctrl+Z.
+- **La banda virtual** lo aplica sola al escribir cuando tu pedido habla de adoración, alabanza, worship o balada. Se
+  controla con el ajuste local `jaswave-banda-legato` (`worship` por defecto, `siempre` o `nunca`).
+- Los silencios largos entre frases o secciones (más de 8 tiempos) se respetan: son intencionales.
+
 ## Expresión
 
 Lanes de CC (p. ej. sustain CC64, mod wheel) y pitch bend según el editor.  

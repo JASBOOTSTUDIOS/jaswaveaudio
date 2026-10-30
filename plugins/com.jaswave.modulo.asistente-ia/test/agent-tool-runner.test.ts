@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { crearEstadoInicial, crearTiendaDAW, getStateRevision, toolRegistry } from '../../../shared/src/index'
 import { registerAgentCatalogOnRegistry } from '@/src/lib/agent-action-catalog'
-import { comoListaDeNotas, esResumenDeHistorial, explicarErrorHerramienta, instrumentoAproximado, normalizarParche, notasRelativasAlClip, runRegisteredTool, runRegisteredTools, sinComillasEnIds } from '../src/motor/agent-tool-runner'
+import { _olvidarRechazosNotesSet, comoListaDeNotas, esResumenDeHistorial, explicarErrorHerramienta, instrumentoAproximado, normalizarParche, notasRelativasAlClip, runRegisteredTool, runRegisteredTools, sinComillasEnIds } from '../src/motor/agent-tool-runner'
 
 describe('agent-tool-runner (ADR-0017)', () => {
   it('project.setBpm vía Registry/Command actualiza revision', async () => {
@@ -140,6 +140,21 @@ describe('agent-tool-runner (ADR-0017)', () => {
     assert.equal(tienda.obtenerEstado().project.tracks[1]!.clips.length, 0)
   })
 
+  it('un clipId que en realidad es el NOMBRE del clip se resuelve a su id (si es único)', async () => {
+    const tienda = crearTiendaDAW({ estadoInicial: crearEstadoInicial() })
+    toolRegistry.setContext(tienda.executor, tienda.permisos)
+    registerAgentCatalogOnRegistry(toolRegistry, ['midi.notes.patch'], tienda.registroComandos)
+    const opts = { forceApply: true, agentMode: 'create' as const }
+    await tienda.executor.execute('track.create', { nombre: 'Lead', tipo: 'midi' }, 'user')
+    const lead = tienda.obtenerEstado().project.tracks[0]!
+    await tienda.executor.execute('midi.clip.create', { pistaId: lead.id, nombre: 'Lead - Puente', inicio: 0, duracion: 8, notas: [{ pitch: 62, inicio: 0, duracion: 2 }] }, 'user')
+    const clip = tienda.obtenerEstado().project.tracks[0]!.clips[0]!
+    const r = await runRegisteredTool(tienda, { id: 'n1', tool: 'midi.notes.patch', arguments: { pistaId: lead.id, clipId: 'lead - puente', upsert: [{ pitch: 64, inicio: 2, duracion: 2 }] } }, opts)
+    assert.equal(r.status, 'success', r.error?.message)
+    assert.equal((tienda.obtenerEstado().project.tracks[0]!.clips[0] as { notas: unknown[] }).notas.length, 2)
+    assert.equal(tienda.obtenerEstado().project.tracks[0]!.clips[0]!.id, clip.id)
+  })
+
   it('normalizarParche: el tartamudeo `{"{"id"` del modelo y el resumen del historial', () => {
     const pista = { nombre: 'Pad', clips: [{ id: 'c1', inicio: 0, duracion: 8, notas: [] }] }
     const roto = normalizarParche({ clipId: 'c1', upsert: '[{"id": "a", "pitch": 67, "inicio": 0, "duracion": 4, "velocidad": 88}, {"{"id": "b", "pitch": 71, "inicio": 2, "duracion": 2}]' }, pista)
@@ -233,6 +248,29 @@ describe('agent-tool-runner (ADR-0017)', () => {
     assert.match(r.error?.message ?? '', /midi\.notes\.patch/)
     const ok = await runRegisteredTool(tienda, { id: 's2', tool: 'midi.notes.set', arguments: { pistaId: id, clipId, notas: pocas, reemplazarTodas: true } }, opts)
     assert.equal(ok.status, 'success', ok.error?.message)
+  })
+
+  it('midi.notes.set: si el modelo insiste con lo mismo tras el aviso, se acepta (no hay bucle de rechazos)', async () => {
+    _olvidarRechazosNotesSet()
+    const tienda = crearTiendaDAW({ estadoInicial: crearEstadoInicial() })
+    toolRegistry.setContext(tienda.executor, tienda.permisos)
+    registerAgentCatalogOnRegistry(toolRegistry, ['midi.notes.set'], tienda.registroComandos)
+    await tienda.executor.execute('track.create', { nombre: 'Bateria', tipo: 'midi' }, 'user')
+    const id = tienda.obtenerEstado().project.tracks[0]!.id
+    const notas = Array.from({ length: 16 }, (_, i) => ({ pitch: 36 + (i % 4), inicio: i * 0.25, duracion: 0.25, velocidad: 90 }))
+    await tienda.executor.execute('midi.clip.create', { pistaId: id, nombre: 'A', inicio: 0, duracion: 4, notas }, 'user')
+    const clipId = tienda.obtenerEstado().project.tracks[0]!.clips[0]!.id
+    const opts = { forceApply: true, agentMode: 'create' as const }
+    const menos = Array.from({ length: 6 }, (_, i) => ({ pitch: 38, inicio: i * 0.5, duracion: 0.25, velocidad: 80 }))
+    const primero = await runRegisteredTool(tienda, { id: 'i1', tool: 'midi.notes.set', arguments: { pistaId: id, clipId, notas: menos } }, opts)
+    assert.match(primero.error?.message ?? '', /midi\.notes\.patch/)
+    const segundo = await runRegisteredTool(tienda, { id: 'i2', tool: 'midi.notes.set', arguments: { pistaId: id, clipId, notas: menos } }, opts)
+    assert.equal(segundo.status, 'success', segundo.error?.message)
+    assert.equal((tienda.obtenerEstado().project.tracks[0]!.clips[0] as { notas: unknown[] }).notas.length, 6)
+    // Una escritura distinta que vuelve a borrar casi todo avisa otra vez (la insistencia ya se consumió).
+    const una = [{ pitch: 38, inicio: 0, duracion: 0.25, velocidad: 80 }]
+    const tercero = await runRegisteredTool(tienda, { id: 'i3', tool: 'midi.notes.set', arguments: { pistaId: id, clipId, notas: una } }, opts)
+    assert.match(tercero.error?.message ?? '', /midi\.notes\.patch/)
   })
 
   it('track.addVstLayer registrado como comando inexistente cae al ejecutor heredado (caso real de la app)', async () => {

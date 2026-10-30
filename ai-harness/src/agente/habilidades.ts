@@ -109,16 +109,23 @@ function porPalabras(habilidades: readonly HabilidadAgente[], q: string): Habili
   const palabras = (t: string) => t.split(/[^a-z0-9]+/).filter((w) => w.length >= 4).map(raiz)
   const buscadas = new Set(palabras(q))
   if (!buscadas.size) return undefined
-  let mejor: HabilidadAgente | undefined
-  let puntos = 0
-  let empate = false
-  for (const h of habilidades) {
-    const propias = new Set([...palabras(normal(h.nombre)), ...palabras(h.id)])
-    const p = [...buscadas].filter((w) => propias.has(w)).length
-    if (p > puntos) [mejor, puntos, empate] = [h, p, false]
-    else if (p === puntos && p > 0) empate = true
+  // Parecido (Jaccard) con el NOMBRE de la habilidad; el id solo desempata cuando el nombre no comparte nada. Antes
+  // «Groove de bater?» empataba con «Biblioteca de grooves» porque su id («bateria-biblioteca-de-grooves») también
+  // contiene esas palabras.
+  const mejorPor = (propias: (h: HabilidadAgente) => Set<string>): HabilidadAgente | undefined => {
+    let mejor: HabilidadAgente | undefined
+    let puntos = 0
+    let empate = false
+    for (const h of habilidades) {
+      const p = propias(h)
+      const comunes = [...buscadas].filter((w) => p.has(w)).length
+      const jaccard = comunes / (buscadas.size + p.size - comunes)
+      if (jaccard > puntos) [mejor, puntos, empate] = [h, jaccard, false]
+      else if (jaccard === puntos && jaccard > 0) empate = true
+    }
+    return puntos > 0 && !empate ? mejor : undefined
   }
-  return puntos > 0 && !empate ? mejor : undefined
+  return mejorPor((h) => new Set(palabras(normal(h.nombre)))) ?? mejorPor((h) => new Set(palabras(h.id)))
 }
 
 /** Bloque para el sistema del agente: qué sabe hacer y cómo abrirlo. */

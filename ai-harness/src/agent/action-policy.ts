@@ -162,6 +162,7 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   'midi.clip.md.apply': 'write',
   'midi.makeStaccato': 'write',
   'midi.makeLegato': 'write',
+  'midi.notes.legatoWorship': 'write',
   'midi.repeatPattern': 'write',
   'midi.reverse': 'write',
   'midi.invert': 'write',

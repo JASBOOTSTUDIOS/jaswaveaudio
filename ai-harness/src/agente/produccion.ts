@@ -1,8 +1,9 @@
 import { ejecutarLeerHabilidad, H_LEER_HABILIDAD, herramientaLeerHabilidad, listadoHabilidades, unirHabilidades, type HabilidadAgente } from './habilidades'
+import { asignarPistasHuerfanas } from './duenos'
 import { Candado, ejecutarAgente, type EjecutorHerramienta } from './runtime'
 import { seleccionarIniciales } from './seleccion'
 import { crearCronometro, formatearDuracion, LIMITE_MS_DEFECTO, PRESUPUESTO_MS_DEFECTO, resumenTiempos, type MotivoOmision, type TiemposProduccion } from './tiempos'
-import type { ChatAgente, EventoAgente, HerramientaAgente, PerfilSubagente, RegistroLlamada, ResultadoAgente } from './tipos'
+import type { ChatAgente, EventoAgente, HerramientaAgente, PerfilSubagente, RegistroLlamada, ResultadoAgente, ResultadoHerramienta } from './tipos'
 import type { EstadoProduccionGuardado } from './diario'
 
 /**
@@ -53,6 +54,8 @@ export type Encargo = {
    * un músico no puede pisar la parte de otro (se vio al bajista creando clips en «Cuerdas»).
    */
   pista?: string
+  /** Otras pistas que también lleva este músico (plan S: pistas huérfanas repartidas tras la dirección). */
+  pistasExtra?: string[]
 }
 
 /** A quién se devuelve un trabajo que no es del oficio de quien lo detecta. */
@@ -73,6 +76,10 @@ export type EventoProduccion =
   | { tipo: 'etapa'; etapa: EtapaProduccion; fase: 'inicio' | 'fin'; ronda?: number; ok?: boolean; resumen?: string }
   | { tipo: 'agente'; etapa: EtapaProduccion; participante: { id: string; nombre: string; rol: RolProduccion }; evento: EventoAgente }
   | { tipo: 'encargos'; encargos: Encargo[] }
+  /** Plan S: pistas sin encargo que se asignaron a un músico (`rescate` = estaba vacía tras la grabación y se le pidió tocarla). */
+  /** Plan S: resultado de la coordinación vertical de las voces. */
+  | { tipo: 'coordinacion'; resumen: string }
+  | { tipo: 'pistas_asignadas'; asignaciones: Array<{ pista: string; nombre: string; participante: string; rescate?: boolean }> }
   | { tipo: 'participante'; etapa: EtapaProduccion; participante: { id: string; nombre: string; rol: RolProduccion }; estado: ResultadoAgente['estado']; error?: string }
   | { tipo: 'qa'; etapa: EtapaProduccion; ronda: number; veredicto: VeredictoQA; medicion?: MedicionQA | null }
   /** Una indicación del usuario llegó al agente en turno (en mitad de su trabajo). */
@@ -93,6 +100,8 @@ export type EventoProduccion =
   | { tipo: 'musico'; participante: string; ok: boolean }
   /** Se aplicó el máster mínimo determinista (sin modelo) tras superar el límite de tiempo. */
   | { tipo: 'master_minimo'; ok: boolean; resumen: string }
+  /** Plan T: mezcla inicial determinista (sin modelo) aplicada justo antes de la etapa de mezcla del modelo. */
+  | { tipo: 'mezcla_inicial'; ok: boolean; aplicada: boolean; resumen: string; perfil?: string }
 
 /** Indicación del usuario durante la producción; `para` = id del participante al que va dirigida (si falta, a todos). */
 export type NotaUsuario = { texto: string; para?: string }
@@ -127,6 +136,18 @@ export type ConfigProduccion = {
    * solo en la suya. Sin él, se compara el texto tal cual.
    */
   resolverPista?: (ref: string) => { id: string; nombre: string } | null
+  /**
+   * Plan S: pistas de instrumento del proyecto (no máster ni bus) con cuántas notas tienen. Tras la dirección, las
+   * que no tienen encargo se asignan al músico más afín; si tras la grabación una sigue con 0 notas, su dueño
+   * recibe un rescate (una vez).
+   */
+  pistas?: () => Array<{ id: string; nombre: string; tipo?: string; notas?: number }>
+  /**
+   * Plan S: coordinación vertical determinista al terminar los músicos (choques de segunda menor entre pistas, pad que
+   * sigue al acorde, bajo en el bajo de la barra). Devuelve una línea de resumen para el usuario o null. Un fallo no
+   * detiene la producción.
+   */
+  afinarConjunto?: () => string | null | Promise<string | null>
   /**
    * Herramientas de oficio que cada rol ve desde el principio (p. ej. el músico, crear clips y notas). Sin
    * ellas la selección por relevancia del encargo puede dejarle solo consultas.
@@ -176,6 +197,12 @@ export type ConfigProduccion = {
   ahorro?: boolean | Partial<AhorroProduccion>
   maxRondasQA?: number
   maxPasos?: number
+  /** Tope de reloj por intento de cada rol (ms). Pasado, se aborta al agente y se sigue con lo que hizo. Por defecto: ver `TOPE_AGENTE_MS_DEFECTO`. */
+  topesAgenteMs?: Partial<Record<RolProduccion, number>>
+  /** Mediciones `analysis.*` seguidas que puede hacer el QA antes de que se le pida el veredicto (por defecto 4). */
+  maxAnalisisSeguidos?: number
+  /** Cada cuántos ms (reloj real) se vigilan los topes de los agentes (por defecto 1000). */
+  vigilanciaMs?: number
   /**
    * Tiempo de reloj objetivo (ms; por defecto 15 min). Al agotarlo se sacrifican los refinamientos en orden, según la
    * fracción de la ventana presupuesto→límite que se haya consumido: al 0 % el ensayo y la revisión de partes por el
@@ -225,6 +252,16 @@ export type ConfigProduccion = {
    * comandos de máster existentes). Pasado `limiteMs` se ejecuta siempre en lugar de entregar la canción sin limitador.
    */
   masterMinimo?: () => Promise<{ ok: boolean; resumen: string }>
+  /**
+   * Plan T: mezcla inicial determinista (ganancias por rol, filtros, paneo, reverb, balance espectral y dinámica por
+   * sección), SIN modelo. Se llama una vez justo antes de la etapa de mezcla; el modelo de mezcla pasa a solo afinar con
+   * pocos pasos. Debe acotar su propia medición y no lanzar.
+   */
+  mezclaInicial?: (hoja: HojaDeRuta | null, ctx: { estilo?: string; pedido: string }) => Promise<{ ok: boolean; aplicada: boolean; resumen: string; perfil?: string; guion?: string }>
+  /** Plan T: estilo/género que fijó el productor (ajuste); manda sobre el que emita el planificador en la hoja de ruta. */
+  estilo?: string
+  /** Plan T: peticiones al modelo por ronda de la revisión de partes (revisión + correcciones). Por defecto 40. */
+  maxPeticionesRondaQA?: number
 }
 
 /**
@@ -244,11 +281,17 @@ export type AhorroProduccion = {
   qaPartesLimpias: boolean
   /** Diagnóstico determinista de la pista en el resultado de cada escritura MIDI del músico. */
   diagnostico: boolean
+  /** Plan T, revisión de partes: si la medición determinista ya da problemas concretos, el modelo no vuelve a juzgar: se corrige con ellos. */
+  qaSoloMedicion: boolean
+  /** Plan T, revisión de partes: tope de peticiones por ronda (`maxPeticionesRondaQA`) y pasos acotados en las correcciones. */
+  topeRondaQA: boolean
+  /** Plan T, QA: una lectura ya hecha (misma herramienta y argumentos) no se repite mientras no se haya escrito nada. */
+  lecturasUnicas: boolean
 }
 
 export function resolverAhorro(a?: boolean | Partial<AhorroProduccion>): AhorroProduccion {
   const v = a !== false
-  const base: AhorroProduccion = { herramientasPorRol: v, resultados: v, ensayoLimpio: v, qaMedible: v, qaPartesLimpias: v, diagnostico: v }
+  const base: AhorroProduccion = { herramientasPorRol: v, resultados: v, ensayoLimpio: v, qaMedible: v, qaPartesLimpias: v, diagnostico: v, qaSoloMedicion: v, topeRondaQA: v, lecturasUnicas: v }
   return a && typeof a === 'object' ? { ...base, ...a } : base
 }
 
@@ -357,7 +400,8 @@ export function normalizarAjustes(v: unknown, musicos: ParticipanteProduccion[])
 
 /** Hoja de ruta común (lead sheet): la misma forma y armonía para todos los músicos. */
 export type SeccionHoja = { nombre: string; compases: number; acordes: string[]; caracter?: string }
-export type HojaDeRuta = { tonalidad: string; bpm?: number; numerador: number; secciones: SeccionHoja[] }
+/** `estilo`: género/estilo que declara el planificador a partir del pedido (worship moderno, pop, rock, balada, jazz, electrónica…); la mezcla elige su perfil con él. */
+export type HojaDeRuta = { tonalidad: string; bpm?: number; numerador: number; secciones: SeccionHoja[]; estilo?: string }
 
 function herramientaHoja(): HerramientaAgente {
   return {
@@ -369,6 +413,7 @@ function herramientaHoja(): HerramientaAgente {
       properties: {
         tonalidad: { type: 'string', description: 'p. ej. «Re mayor»' },
         bpm: { type: 'number' },
+        estilo: { type: 'string', description: 'Género/estilo de la canción según el pedido, en pocas palabras: worship moderno, pop, rock, balada, jazz, electrónica…' },
         numerador: { type: 'number', description: 'Tiempos por compás (4 en 4/4).' },
         secciones: {
           type: 'array',
@@ -406,7 +451,8 @@ export function normalizarHoja(v: Record<string, unknown>): HojaDeRuta | null {
     .filter((s): s is SeccionHoja => s !== null)
   if (!secciones.length || !(numerador >= 2 && numerador <= 12)) return null
   const bpm = Number(v.bpm)
-  return { tonalidad: String(v.tonalidad ?? '').trim(), ...(bpm > 20 && bpm < 300 ? { bpm } : {}), numerador, secciones }
+  const estilo = String(v.estilo ?? '').trim().slice(0, 60)
+  return { tonalidad: String(v.tonalidad ?? '').trim(), ...(bpm > 20 && bpm < 300 ? { bpm } : {}), ...(estilo ? { estilo } : {}), numerador, secciones }
 }
 
 /** Texto de la hoja con el beat exacto donde empieza cada sección (lo que necesita cada músico para su clip). */
@@ -428,6 +474,20 @@ export function hojaComoTexto(h: HojaDeRuta): string {
 }
 
 const MAX_ENCARGOS = 16
+/** Mediciones seguidas del QA sin escribir nada. */
+const MAX_ANALISIS_SEGUIDOS = 4
+/** Plan T: peticiones al modelo por ronda de la revisión de partes (revisión + corrección). */
+export const MAX_PETICIONES_RONDA_QA = 40
+/** Plan T: pasos del modelo de mezcla cuando solo afina una mezcla inicial ya aplicada. */
+export const PASOS_AFINAR_MEZCLA = 6
+/** Tope de reloj por intento de agente. Sin tope para el planificador y el director. */
+export const TOPE_AGENTE_MS_DEFECTO: Partial<Record<RolProduccion, number>> = {
+  musico: 6 * 60_000,
+  coherencia: 4 * 60_000,
+  qa: 3 * 60_000,
+  mezcla: 5 * 60_000,
+  master: 4 * 60_000,
+}
 
 /**
  * Pasos del modelo por rol. Quien escribe (notas, mezcla, máster) consulta, crea, comprueba y corrige:
@@ -497,7 +557,7 @@ const INSTRUCCIONES_ROL: Record<RolProduccion, string> = {
   director:
     'Eres el director musical. Con el plan, prepara lo común (tempo, tonalidad, compás y una pista por instrumento con su instrumento VST3 cargado con `track.addVstLayer`; los nombres instalados te los da `analysis.trackSound`) y reparte el trabajo con `asignar_encargos`: un encargo por músico con `pista` (el id de su pista) y un texto autosuficiente que diga en qué pista (nombre e id) trabaja. Crea solo las pistas que vayas a repartir: cada pista debe tener un músico encargado (si un músico lleva dos instrumentos, dilo en su encargo con los ids de ambas); una pista sin encargo se queda vacía. Ningún músico podrá escribir en la pista de otro. No toques las partes de los músicos.',
   musico:
-    'Eres un músico de sesión y tocas en una banda: sabes qué hace cada compañero (reparto más abajo) y tu parte debe encajar con las suyas, no lucirse sola. Toca como una persona, no como una máquina: el cifrado es un punto de partida, no una jaula. Usa toda la escala de la tonalidad (notas de paso, bordaduras, apoyaturas, anticipaciones) y colorea los acordes con extensiones (add9, sus2/sus4, 6, maj7, m7, 11) e inversiones; en el tiempo fuerte de cada compás que suene el acorde de ese compás y el resto del compás tiene libertad. Varía las duraciones (largas en los apoyos, cortas de paso, alguna síncopa y anticipación en la «y» de 4, silencios), arpegia y adorna en vez de repetir el mismo bloque en cada compás; ninguna frase igual dos compases seguidos. Humaniza: velocidades distintas en cada nota (±10, acentos en los apoyos, más suaves las de paso) y micro-tiempo de hasta ±0,04 beats en instrumentos melódicos y armónicos (la batería, en la rejilla, humanizada con velocidades y ghost notes). Sigue la HOJA DE RUTA: cada compás con su acorde, cada sección en su beat de inicio y con su largo; notas de la tonalidad (las cromáticas, breves y de paso). Así todas las partes encajan entre sí y suenan vivas. Trabaja solo en la pista de tu encargo; si no existe, créala una sola vez. Nunca dupliques pistas. Tiempos en beats: el `inicio` del clip cuenta desde el principio de la canción (compás N = beat (N−1)×4 en 4/4) y el `inicio` de cada nota cuenta desde el principio de SU clip (la primera nota de un clip suele estar en 0). Un clip por sección, del largo de la sección. Al terminar, comprueba con `analysis.trackSound` que tu pista suena: si no tiene instrumento o el VST no cargó, cárgalo como te indique.',
+    'Eres un músico de sesión y tocas en una banda: sabes qué hace cada compañero (reparto más abajo) y tu parte debe encajar con las suyas, no lucirse sola. Toca como una persona, no como una máquina: el cifrado es un punto de partida, no una jaula. Usa toda la escala de la tonalidad (notas de paso, bordaduras, apoyaturas, anticipaciones) y colorea los acordes con extensiones (add9, sus2/sus4, 6, maj7, m7, 11) e inversiones; en el tiempo fuerte de cada compás que suene el acorde de ese compás y el resto del compás tiene libertad. Varía las duraciones (largas en los apoyos, cortas de paso, alguna síncopa y anticipación en la «y» de 4, silencios), arpegia y adorna en vez de repetir el mismo bloque en cada compás; ninguna frase igual dos compases seguidos. Humaniza: velocidades distintas en cada nota (±10, acentos en los apoyos, más suaves las de paso) y micro-tiempo de hasta ±0,04 beats en instrumentos melódicos y armónicos (la batería, en la rejilla, humanizada con velocidades y ghost notes). Sigue la HOJA DE RUTA: cada compás con su acorde, cada sección en su beat de inicio y con su largo; notas de la tonalidad (las cromáticas, breves y de paso). Así todas las partes encajan entre sí y suenan vivas. Trabaja solo en la pista de tu encargo; si no existe, créala una sola vez. Nunca dupliques pistas. Tiempos en beats: el `inicio` del clip cuenta desde el principio de la canción (compás N = beat (N−1)×4 en 4/4) y el `inicio` de cada nota cuenta desde el principio de SU clip (la primera nota de un clip suele estar en 0). Un clip por sección, del largo de la sección. Al terminar, comprueba con `analysis.trackSound` que tu pista suena: si no tiene instrumento o el VST no cargó, cárgalo como te indique. En worship, ninguna nota se suelta hasta que el sonido cae: en piano, guitarra, cuerdas, sintes y bajo deja cada nota o acorde pisado como con el pedal y suéltalo unos 500 ms DESPUÉS de que empiece la siguiente, sin huecos en las melodías; los pads siempre suenan hasta el siguiente acorde; la batería y la percusión no (el DAW ya lo aplica al escribir, así que no lo deshagas con notas cortas).',
   coherencia:
     'Eres el arreglista: te encargas de que TODAS las partes sean congruentes entre sí y con el proyecto, en tiempo, en armonía y en ritmo. Recibes la hoja de ruta y la medición del DAW con los compases exactos donde algo no encaja (y el acorde que toca en cada uno). Trabaja con método: por cada pista señalada, lee UNA vez el clip de esa sección con `midi.notes.get` y corrige todos sus compases en un solo `midi.notes.patch` (rango en beats de la canción; o `midi.notes.set` con reemplazarTodas si hay que rehacer el clip). Nunca cambies tonalidad, tempo ni forma, ni toques pistas que no estén señaladas. Si una parte está tan fuera de lugar que habría que rehacerla entera, devuélvela a su músico con `devolver_trabajo` en vez de reescribirla tú. Reglas: cada clip empieza en el beat de su sección; las notas caen cerca de la rejilla (semicorcheas o tresillos; un desvío humano de hasta ±0,05 beats es bueno, NO lo cuantices); en el tiempo fuerte de cada compás suenan notas del acorde de ese compás (las extensiones add9, 6, maj7, sus cuentan como del acorde); el bajo toca la fundamental (o la nota tras «/») en el primer tiempo y se apoya en el bombo; nada suena después del final. Conserva la intención musical de cada músico: corrige lo mínimo y nunca «aplanes» una parte (no igualar duraciones ni velocidades, no quitar notas de paso, adornos ni síncopas). Si la medición dice que una parte suena robótica (todas las notas iguales), no la arregles tú: devuélvela a su músico con `devolver_trabajo`.',
   qa:
@@ -641,6 +701,11 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
     : undefined
   /** Firma de lo que dice una revisión: si dos seguidas coinciden, la corrección no cambió nada y se corta el bucle. */
   let firmaMedicion = ''
+  /** Plan T: peticiones usadas en la ronda de revisión de partes en curso (null = sin tope) y pasos de los músicos al corregir. */
+  let presupuestoRondaQA: { usadas: number; max: number } | null = null
+  let pasosMusicoCorreccion = 0
+  /** Plan T: lecturas del QA ya hechas (se invalidan al escribir cualquier agente). */
+  const lecturasHechas = new Map<string, ResultadoHerramienta>()
   const de = (rol: RolProduccion) => cfg.participantes.filter((p) => p.rol === rol)
   const uno = (rol: RolProduccion) => de(rol)[0] ?? null
   const musicos = de('musico')
@@ -676,6 +741,28 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
     emitir({ tipo: 'master_minimo', ok: r.ok, resumen: r.resumen })
     await registrar({ etapa: 'master', ok: r.ok, resumen: `Máster mínimo (sin modelo): ${r.resumen}`.slice(0, 300) })
   }
+  /** Plan T: mezcla inicial determinista (una sola vez por producción), antes de la etapa de mezcla del modelo. */
+  let mezclaInicialHecha = false
+  let mezclaInicialAplicada = false
+  let resumenMezclaInicial = ''
+  let guionMezclaInicial = ''
+  let perfilMezclaInicial = ''
+  const aplicarMezclaInicial = async () => {
+    if (mezclaInicialHecha || !cfg.mezclaInicial || cancelado()) return
+    mezclaInicialHecha = true
+    let r: { ok: boolean; aplicada: boolean; resumen: string; perfil?: string; guion?: string }
+    try {
+      r = await cron.medir('mezcla', () => cfg.mezclaInicial!(hoja, { estilo: cfg.estilo, pedido: cfg.pedido }))
+    } catch (err) {
+      r = { ok: false, aplicada: false, resumen: `No se pudo aplicar la mezcla inicial: ${err instanceof Error ? err.message : String(err)}` }
+    }
+    mezclaInicialAplicada = r.aplicada || r.ok
+    resumenMezclaInicial = r.resumen
+    guionMezclaInicial = r.guion ?? ''
+    perfilMezclaInicial = r.perfil ?? ''
+    emitir({ tipo: 'mezcla_inicial', ok: r.ok, aplicada: r.aplicada, resumen: r.resumen, ...(r.perfil ? { perfil: r.perfil } : {}) })
+    await punto('mezcla_inicial')
+  }
   const contexto = async () => {
     try {
       return (await cfg.contexto?.()) ?? ''
@@ -688,6 +775,22 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
   let hoja: HojaDeRuta | null = null
   let encargos: Encargo[] = []
   let capturaEncargos: Encargo[] | null = null
+  /** Plan S: pistas repartidas por el harness (no por el director) y rescates de pistas vacías, para el resumen. */
+  let resumenCoordinacion = ''
+  let asignacionesPistas: Array<{ pista: string; nombre: string; participante: string; rescate?: boolean }> = []
+  const asignarHuerfanas = () => {
+    if (!cfg.pistas || !musicos.length) return []
+    let pistas: ReturnType<NonNullable<ConfigProduccion['pistas']>> = []
+    try {
+      pistas = cfg.pistas()
+    } catch {
+      return []
+    }
+    const r = asignarPistasHuerfanas(encargos, musicos, pistas, cfg.pedido, cfg.resolverPista)
+    encargos = r.encargos
+    if (r.asignaciones.length) emitir({ tipo: 'pistas_asignadas', asignaciones: r.asignaciones })
+    return [...r.asignaciones]
+  }
   let capturaVeredicto: VeredictoQA | null = null
   let capturaHoja: HojaDeRuta | null = null
   let capturaDevoluciones: Devolucion[] = []
@@ -750,6 +853,11 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
     const suya = resuelta ?? { id: ref, nombre: ref }
     const creadas = pistasCreadas.get(musico)
     if (igual(ref, asignada) || suya.id === mia.id || igual(suya.nombre, mia.nombre)) return null
+    // Pistas extra (plan S): un músico con dos pistas escribe en ambas.
+    for (const x of encargos.find((e) => e.participante === musico)?.pistasExtra ?? []) {
+      const px = cfg.resolverPista?.(x) ?? { id: x, nombre: x }
+      if (igual(ref, x) || suya.id === px.id || igual(suya.nombre, px.nombre)) return null
+    }
     if (creadas && (creadas.has(suya.id.toLowerCase()) || creadas.has(suya.nombre.toLowerCase()) || creadas.has(ref.toLowerCase()))) return null
     // El máster y los buses no son pistas de músico: eso es de la mezcla.
     if (cfg.resolverPista && !resuelta) {
@@ -757,8 +865,11 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
     }
     const esDe = (e: Encargo) => {
       if (!e.pista) return false
-      const p = cfg.resolverPista?.(e.pista) ?? { id: e.pista, nombre: e.pista }
-      return igual(ref, e.pista) || suya.id === p.id || igual(suya.nombre, p.nombre) || (pistasCreadas.get(e.participante)?.has(suya.id.toLowerCase()) ?? false)
+      for (const x of [e.pista, ...(e.pistasExtra ?? [])]) {
+        const p = cfg.resolverPista?.(x) ?? { id: x, nombre: x }
+        if (igual(ref, x) || suya.id === p.id || igual(suya.nombre, p.nombre)) return true
+      }
+      return pistasCreadas.get(e.participante)?.has(suya.id.toLowerCase()) ?? false
     }
     const dueno = encargos.find((e) => e.participante !== musico && esDe(e))
     if (!dueno) return null
@@ -775,6 +886,8 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
     soloLectura?: boolean
     extras?: HerramientaAgente[]
     encargo?: string
+    /** Plan T: tope de pasos de esta ejecución (sustituye al del rol). */
+    maxPasos?: number
   }): Promise<ResultadoAgente> => {
     const permitidas = o.p?.herramientas?.length ? new Set(o.p.herramientas) : null
     // Habilidades: las de serie del rol más las propias del participante (las suyas mandan si repiten id).
@@ -784,10 +897,21 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
     const catalogo = [...extras, ...(permitidas ? cfg.catalogo.filter((h) => permitidas.has(h.nombre)) : cfg.catalogo)]
     const ids = new Set(cfg.participantes.map((p) => p.id))
     const quien = { id: o.p?.id ?? o.rol, nombre: o.p?.nombre ?? o.rol, rol: o.rol }
+    // Revisión: tras unas cuantas mediciones seguidas sin escribir nada, el agente debe dar su veredicto con lo medido.
+    let analisisSeguidos = 0
+    let ultimoAnalisis: ResultadoHerramienta | null = null
     const ejecutar: EjecutorHerramienta = async (l, h, ctx) => {
       if (h.nombre === H_LEER_HABILIDAD) return ejecutarLeerHabilidad(l, habilidades)
       // Propiedad de pista: un músico escribe solo en la pista de su encargo (o en una que creó él).
       if (o.rol === 'musico' && o.p && h.clase !== 'lectura' && !propio.includes(h.nombre)) {
+        // Si la herramienta pide pista y el modelo no la mandó («Falta pistaId/trackId», 7 veces seguidas en una pasada
+        // real), se completa con la pista de su encargo en vez de obligarle a repetir la llamada.
+        const asignada = encargos.find((e) => e.participante === o.p!.id)?.pista
+        const props = (h.parametros as { properties?: Record<string, unknown> } | undefined)?.properties ?? {}
+        const clave = 'pistaId' in props ? 'pistaId' : 'trackId' in props ? 'trackId' : null
+        if (asignada && clave && !String(l.argumentos.pistaId ?? l.argumentos.trackId ?? '').trim()) {
+          l = { ...l, argumentos: { ...l.argumentos, [clave]: cfg.resolverPista?.(asignada)?.id ?? asignada } }
+        }
         const veto = fueraDeSuPista(o.p.id, l.argumentos)
         if (veto) return { ok: false, error: veto }
       }
@@ -839,7 +963,31 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
         capturaHoja = hoja
         return { ok: true, resumen: `${hoja.secciones.length} secciones`, datos: { hoja: hojaComoTexto(hoja) } }
       }
+      if (o.rol === 'qa' && /^analysis./.test(h.nombre)) {
+        if (analisisSeguidos >= (cfg.maxAnalisisSeguidos ?? MAX_ANALISIS_SEGUIDOS) && ultimoAnalisis) {
+          return {
+            ok: true,
+            resumen: 'ya mediste',
+            datos: { nota: 'Ya mediste: da tu veredicto con estos datos (llama a veredicto_calidad), sin más análisis.', ultimaMedicion: ultimoAnalisis.datos ?? ultimoAnalisis.resumen ?? null },
+          }
+        }
+        analisisSeguidos++
+        const medido = await cfg.ejecutar(l, h, ctx)
+        if (medido.ok) ultimoAnalisis = medido
+        return medido
+      }
+      if (h.clase !== 'lectura') analisisSeguidos = 0
+      // Plan T: una lectura que el QA ya hizo (y nada se ha escrito desde entonces) no se repite: se devuelve la anterior.
+      if (o.rol === 'qa' && ahorro.lecturasUnicas && h.clase === 'lectura' && !/^analysis\./.test(h.nombre)) {
+        const clave = `${h.nombre}:${JSON.stringify(l.argumentos)}`
+        const previa = lecturasHechas.get(clave)
+        if (previa) return previa
+        const nueva = await cfg.ejecutar(l, h, ctx)
+        if (nueva.ok) lecturasHechas.set(clave, nueva)
+        return nueva
+      }
       let r = await cfg.ejecutar(l, h, ctx)
+      if (r.ok && h.clase !== 'lectura') lecturasHechas.clear()
       if (r.ok && o.rol === 'musico' && o.p && h.nombre === 'track.create') anotarPistaCreada(o.p.id, r.datos, l.argumentos)
       // Como el compilador de un IDE: la escritura devuelve ya qué le falta o le sobra a la pista.
       if (r.ok && ahorro.diagnostico && cfg.diagnostico && hoja && o.rol === 'musico' && o.p && h.clase !== 'lectura' && /^midi\./.test(h.nombre)) {
@@ -861,7 +1009,29 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
       for (const texto of nuevas) emitir({ tipo: 'nota', etapa: o.etapa, participante: quien, texto })
       return nuevas
     }
-    const r = await ejecutarAgente({
+    // Tope de reloj por agente (y límite global para los agentes de refinamiento): se aborta con su propia señal y se
+    // devuelve lo que tenga. Un agente atascado en consultas ya no retiene la producción hasta el final de su etapa.
+    const topeMs = (cfg.topesAgenteMs ?? TOPE_AGENTE_MS_DEFECTO)[o.rol] ?? Infinity
+    const refinamiento = o.rol === 'qa' || o.rol === 'coherencia' || o.rol === 'mezcla' || o.rol === 'master' || o.etapa === 'ensayo'
+    const ctlAgente = new AbortController()
+    const alAbortar = () => ctlAgente.abort()
+    if (cfg.signal?.aborted) ctlAgente.abort()
+    else cfg.signal?.addEventListener('abort', alAbortar, { once: true })
+    let cortado: 'tope' | 'limite' | null = null
+    const inicioAgente = reloj()
+    const vigilante =
+      Number.isFinite(topeMs) || (refinamiento && Number.isFinite(limiteMs))
+        ? setInterval(() => {
+            if (cortado || ctlAgente.signal.aborted) return
+            if (reloj() - inicioAgente >= topeMs) cortado = 'tope'
+            else if (refinamiento && sobreLimite()) cortado = 'limite'
+            if (cortado) ctlAgente.abort()
+          }, Math.max(1, cfg.vigilanciaMs ?? 1000))
+        : null
+    const corteAgente = new Promise<{ ok: false; texto: string; llamadas: []; error: string }>((resolve) => {
+      ctlAgente.signal.addEventListener('abort', () => resolve({ ok: false, texto: '', llamadas: [], error: 'cortado por tiempo' }), { once: true })
+    })
+    const r0 = await ejecutarAgente({
       pedido: o.pedido,
       catalogo,
       // Con herramientas limitadas, el agente las ve todas desde el principio; si no, las de su oficio más
@@ -888,22 +1058,40 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
         notas: paraQuien(quien.id, notasUsuario.slice(0, notasVistas)).slice(-MAX_NOTAS_EN_CONTEXTO),
       }),
       chat: (p) => {
+        // Plan T: tope de peticiones por ronda de la revisión de partes. Agotado, el agente se corta sin llamar al modelo.
+        if (presupuestoRondaQA && presupuestoRondaQA.usadas >= presupuestoRondaQA.max) {
+          omitir('peticiones de la revisión de partes', 'presupuesto', `se cortó una ronda de la revisión de las partes al llegar a ${presupuestoRondaQA.max} peticiones al modelo`)
+          return Promise.resolve({ ok: false, texto: '', llamadas: [], error: 'tope de peticiones de la ronda' })
+        }
+        if (presupuestoRondaQA) presupuestoRondaQA.usadas++
         cron.peticion()
-        return cfg.chat(p)
+        // Un modelo que no responde nunca no retiene al agente más allá de su tope.
+        const pendiente = Promise.resolve(cfg.chat(p))
+        pendiente.catch(() => undefined)
+        return Promise.race([pendiente, corteAgente])
       },
       ejecutar,
       soloLectura: o.soloLectura,
-      maxPasos: cfg.maxPasos ?? PASOS_POR_ROL[o.rol] ?? 10,
+      maxPasos: Math.min(o.maxPasos ?? Infinity, (o.rol === 'musico' && pasosMusicoCorreccion ? pasosMusicoCorreccion : Infinity), cfg.maxPasos ?? PASOS_POR_ROL[o.rol] ?? 10),
       maxSubagentes: 0,
       ahorro: { resultados: ahorro.resultados },
       onEvento: (evento) => emitir({ tipo: 'agente', etapa: o.etapa, participante: quien, evento }),
       notas: notasNuevas,
-      signal: cfg.signal,
+      signal: ctlAgente.signal,
       // Profundidad 1: sin delegar ni preguntar al usuario (el orquestador coordina).
       profundidad: 1,
       nombreAgente: quien.id,
       candado,
     })
+    if (vigilante) clearInterval(vigilante)
+    cfg.signal?.removeEventListener('abort', alAbortar)
+    let r = r0
+    if (cortado && !cfg.signal?.aborted) {
+      // No es una cancelación del usuario: el agente se cortó por tiempo y la producción sigue con lo que hay.
+      const por = cortado as 'tope' | 'limite'
+      r = { ...r0, estado: 'limite', error: 'cortado por tiempo' }
+      omitir(`${o.rol}/${quien.id} ${o.etapa}`, por === 'limite' ? 'limite' : 'tope_agente', `${quien.nombre} (${NOMBRE_ETAPA[o.etapa].toLowerCase()}) cortado por tiempo${por === 'tope' ? ` tras ${formatearDuracion(topeMs)}` : ' al superar el límite'}`)
+    }
     llamadas.push(...r.llamadas)
     emitir({ tipo: 'participante', etapa: o.etapa, participante: quien, estado: r.estado, ...(r.error ? { error: r.error } : {}) })
     return r
@@ -914,7 +1102,9 @@ export async function ejecutarProduccion(cfg: ConfigProduccion): Promise<Resulta
     const medicion = medirHost ? await medirHost(medible).catch(() => null) : null
     firmaMedicion = medicion ? medicion.detalles.join('|') : ''
     // Sin tiempo para el juicio del modelo: manda la medición del host.
-    const qa = soloMedir ? null : uno('qa')
+    // Plan T: con problemas concretos ya medidos en las partes (vacías, sin instrumento…), el modelo no re-juzga: se corrige con ellos.
+    const medicionConcreta = ahorro.qaSoloMedicion && medible === 'musicos' && !!medicion && !medicion.ok && medicion.detalles.length > 0
+    const qa = soloMedir || medicionConcreta ? null : uno('qa')
     let veredicto: VeredictoQA | null = null
     // La medición del host ya es el criterio: si aprueba, preguntarle lo mismo al modelo solo cuesta tokens.
     const omitirQA = async () => {
@@ -1021,6 +1211,37 @@ ${t}` : ''
       })
     }
     return r
+  }
+  /**
+   * Plan S: una pista que sigue con 0 notas tras la grabación (nadie la tocó) se encarga, una vez, a su dueño.
+   * Una pasada real dejó «Cuerdas» vacía hasta la entrega.
+   */
+  const rescatarPistasVacias = async () => {
+    if (!cfg.pistas || cancelado() || sobreLimite()) return
+    let pistas: ReturnType<NonNullable<ConfigProduccion['pistas']>>
+    try {
+      pistas = cfg.pistas()
+    } catch {
+      return
+    }
+    for (const e of encargos) {
+      const p = musicos.find((m) => m.id === e.participante) ?? null
+      for (const ref of [e.pista, ...(e.pistasExtra ?? [])]) {
+        if (!ref || cancelado() || sobreLimite()) continue
+        const pr = pistas.find((x) => x.id === ref || igual(x.nombre, ref))
+        if (!pr || (pr.notas ?? 1) > 0) continue
+        const a = { pista: pr.id, nombre: pr.nombre, participante: e.participante, rescate: true }
+        asignacionesPistas.push(a)
+        emitir({ tipo: 'pistas_asignadas', asignaciones: [a] })
+        await correr({
+          etapa: 'musicos',
+          p,
+          rol: 'musico',
+          pedido: `Tu pista «${pr.nombre}» (id ${pr.id}) sigue VACÍA: no tiene ninguna nota. Tócala ahora en TODA la canción (un clip por sección, cada compás con su acorde de la hoja de ruta, sin compases vacíos), en esa pista y sin pedir confirmación.
+Encargo original: ${e.encargo}${guia(e)}${reparto(e.participante)}${await escuchar()}`,
+        })
+      }
+    }
   }
   /** Cierra la parte de un músico: queda anotado y se guarda un punto de control del proyecto. */
   const cerrarMusico = async (e: Encargo, r: ResultadoAgente): Promise<ResultadoAgente> => {
@@ -1197,6 +1418,8 @@ ${t}` : ''
     if (cancelado()) return terminar('cancelado', 'Producción detenida.')
     // Si el director no repartió, cada músico recibe el plan como encargo.
     encargos = (capturaEncargos as Encargo[] | null) ?? musicos.map((m) => ({ participante: m.id, encargo: `Graba tu parte (${m.descripcion}) siguiendo el plan.` }))
+    // Plan S: toda pista de instrumento sin encargo recibe dueño (antes se quedaban vacías, p. ej. «Cuerdas»).
+    asignacionesPistas = asignarHuerfanas()
     etapas.push({ etapa: 'direccion', ok: rDir.estado !== 'fallo', resumen: rDir.texto.slice(0, 300) })
   }
   emitir({ tipo: 'encargos', encargos })
@@ -1223,6 +1446,19 @@ ${t}` : ''
       okMusicos = r.filter((x) => x.estado === 'completado').length
       await registrar({ etapa: 'musicos', ok: okMusicos === r.length, resumen: `${okMusicos} de ${r.length} partes grabadas` })
       emitir({ tipo: 'etapa', etapa: 'musicos', fase: 'fin', ok: okMusicos > 0, resumen: `${okMusicos} de ${r.length} partes grabadas` })
+      await rescatarPistasVacias()
+      if (cfg.afinarConjunto && !cancelado()) {
+        try {
+          const t = await cfg.afinarConjunto()
+          if (t) {
+            resumenCoordinacion = t
+            emitir({ tipo: 'coordinacion', resumen: t })
+          }
+        } catch {
+          /* la coordinación es un refinamiento: un fallo no detiene la producción */
+        }
+      }
+      if (cancelado()) return terminar('cancelado', 'Producción detenida.')
     }
 
     // 3a. Ensayo: la banda se escucha, se pone de acuerdo y ajusta antes de que nadie revise.
@@ -1299,6 +1535,9 @@ ${t}` : ''
     ['master', 'master', 'qa_master', 'master'],
   ] as const) {
     const p = uno(rol)
+    // Plan T: la mezcla inicial determinista va ANTES del modelo de mezcla (y aunque no haya uno): si el modelo se corta o no
+    // responde, la canción ya está equilibrada.
+    if (rol === 'mezcla' && !hecha('mezcla') && !cancelado()) await aplicarMezclaInicial()
     if (!p) continue
     // Filtro: la mezcla puede devolver a músicos o arreglista; el máster, además, a la mezcla.
     const destinos: DestinoDevolucion[] = rol === 'mezcla' ? ['musicos', 'arreglista'] : uno('mezcla') ? ['musicos', 'arreglista', 'mezcla'] : ['musicos', 'arreglista']
@@ -1329,8 +1568,17 @@ ${t}` : ''
       emitir({ tipo: 'informe', informe: i })
     } else {
     emitir({ tipo: 'etapa', etapa, fase: 'inicio' })
-    const pedido = rol === 'mezcla' ? `Mezcla la canción según el plan. Pedido del usuario: «${cfg.pedido}».` : 'Prepara el máster de la canción.'
-    let r = await cron.medir(etapa, () => correr({ etapa, p, rol, pedido, extras }))
+    // Con la mezcla inicial hecha, el modelo solo afina: revisa lo medido, retoca lo que falte y termina en pocos pasos.
+    const afinar = rol === 'mezcla' && mezclaInicialAplicada
+    const pedido = afinar
+      ? `La mezcla inicial YA está aplicada por el sistema como punto de partida SEGURO (no como dogma)${perfilMezclaInicial ? `, con el perfil de estilo «${perfilMezclaInicial}»` : ''}: ganancias por rol, pasa-altos, paneo, reverb, balance espectral y volumen por sección.
+${guionMezclaInicial ? `${guionMezclaInicial}
+` : ''}Resultado y balance medido: ${resumenMezclaInicial}
+El criterio de género y estilo es tuyo (pedido: «${cfg.pedido}»): mide con analysis.mix, ajusta con criterio de ese estilo y puedes modificar o deshacer cualquier cosa del perfil (un volumen, una banda de EQ —las bandas 1–4 de cada pista son del perfil—, un envío, la curva de secciones). Tus decisiones mandan sobre la base automática. No rehagas lo que ya suena bien y termina en pocos pasos.`
+      : rol === 'mezcla'
+        ? `Mezcla la canción según el plan. Pedido del usuario: «${cfg.pedido}».`
+        : 'Prepara el máster de la canción.'
+    let r = await cron.medir(etapa, () => correr({ etapa, p, rol, pedido, extras, ...(afinar ? { maxPasos: PASOS_AFINAR_MEZCLA } : {}) }))
     if (cancelado()) return terminar('cancelado', 'Producción detenida.')
     const devueltas = tomarDevoluciones()
     if (devueltas.length) {
@@ -1353,6 +1601,8 @@ ${t}` : ''
     }
     await registrar({ etapa, ok: r.estado === 'completado', resumen: r.texto.slice(0, 300) })
     emitir({ tipo: 'etapa', etapa, fase: 'fin', ok: r.estado === 'completado', resumen: r.texto.slice(0, 300) })
+    // Plan T: si el modelo de máster no terminó (fallo o corte por tiempo), el máster mínimo determinista se aplica igual.
+    if (rol === 'master' && r.estado !== 'completado' && cfg.masterMinimo && !cancelado()) await aplicarMasterMinimo()
     }
     const informe = await cicloQA(qaEtapa, medible, [p], async (problemas) => {
       await correr({ etapa, p, rol, extras, pedido: `Corrige solo lo que corresponde a ${rol === 'mezcla' ? 'la mezcla' : 'el máster'}: ${problemas.map((x) => x.problema).join('; ')}` })
@@ -1376,6 +1626,15 @@ ${t}` : ''
   const texto = [
     todoOk ? 'La producción está lista.' : 'La producción terminó con algunos avisos.',
     ...revisiones.map((e) => `${NOMBRE_ETAPA[e.etapa]}: ${e.ok ? 'aprobada' : 'con avisos'}${e.rondas ? ` (${e.rondas} ${e.rondas === 1 ? 'corrección' : 'correcciones'})` : ''}.${e.ok ? '' : ` ${breve(e.resumen)}`}`),
+    ...(asignacionesPistas.length
+      ? [
+          `Pistas sin encargo repartidas por la producción: ${asignacionesPistas
+            .map((a) => `«${a.nombre}» → ${musicos.find((m) => m.id === a.participante)?.nombre ?? a.participante}${a.rescate ? ' (estaba vacía: rescate)' : ''}`)
+            .join('; ')}.`,
+        ]
+      : []),
+    ...(resumenCoordinacion ? [resumenCoordinacion] : []),
+    ...(resumenMezclaInicial ? [`Mezcla inicial (sin modelo): ${resumenMezclaInicial}`] : []),
     ...(masterMinimoAplicado ? [`Se aplicó un máster mínimo automático (limitador a −1 dBTP y volumen a −14 LUFS, sin modelo): ${resumenMasterMinimo}`] : []),
     ...(omitidos.length ? [`Para entregar a tiempo (${formatearDuracion(cron.transcurrido())}${omitidos.some((o) => o.motivo === 'limite') ? ', límite superado' : ''}): ${omitidos.map((o) => o.texto).join('; ')}.`] : []),
     resumenTiempos(cron.instantanea(presupuestoMs, limiteMs)),
@@ -1548,7 +1807,14 @@ ${t}` : ''
       }
       if (sinTiempo && etapa === 'qa_musicos' && uno('qa')) omitir(etapa, sobreLimite() ? 'limite' : 'presupuesto', 'se omitió la revisión de las partes por el modelo ' + POR(sobreLimite() ? 'limite' : 'presupuesto'))
       emitir({ tipo: 'etapa', etapa, fase: 'inicio', ronda: 0 })
+      // Plan T: en la revisión de partes cada ronda (revisión o corrección + revisión) tiene un tope de peticiones al modelo.
+      const topeRonda = etapa === 'qa_musicos' && ahorro.topeRondaQA ? Math.max(10, cfg.maxPeticionesRondaQA ?? MAX_PETICIONES_RONDA_QA) : 0
+      const abrirRonda = () => {
+        presupuestoRondaQA = topeRonda ? { usadas: 0, max: topeRonda } : null
+      }
+      abrirRonda()
       let v = await revisar(etapa, medible, 0, responsables, sinTiempo)
+      presupuestoRondaQA = null
       let ronda = 0
       // Rondas de corrección permitidas ahora: todas; con el presupuesto agotado, ninguna en las partes y una en
       // mezcla/máster; pasado el límite, ninguna.
@@ -1558,9 +1824,17 @@ ${t}` : ''
       while (!v.aprobado && v.problemas.length && ronda < tope() && !cancelado()) {
         ronda++
         firmaAntes = firmaMedicion + '#' + v.problemas.map((x) => x.problema).join('|')
-        await corregir(v.problemas)
+        abrirRonda()
+        // Los músicos que corrigen se reparten el tope: cada uno termina su parte en pocos pasos en vez de quedar a medias.
+        if (topeRonda) pasosMusicoCorreccion = Math.max(4, Math.floor((topeRonda - 10) / Math.max(1, Math.min(musicos.length, encargos.length || musicos.length))))
+        try {
+          await corregir(v.problemas)
+        } finally {
+          pasosMusicoCorreccion = 0
+        }
         if (cancelado()) break
         v = await revisar(etapa, medible, ronda, responsables, etapa === 'qa_musicos' ? sobrePresupuesto() : pasado(0.6))
+        presupuestoRondaQA = null
         // Mismo veredicto y misma medición que antes de corregir: seguir repitiendo solo gasta tiempo.
         if (!v.aprobado && firmaAntes === firmaMedicion + '#' + v.problemas.map((x) => x.problema).join('|')) {
           omitir(etapa, 'sin_progreso', 'se cortó la revisión de ' + NOMBRE_ETAPA[etapa].toLowerCase().replace(/^revisión de /, '') + ': la corrección no cambió el veredicto ni la medición')

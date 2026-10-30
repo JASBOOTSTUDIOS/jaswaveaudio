@@ -30,8 +30,19 @@ const SOLFEO: Array<[RegExp, number]> = [
 const MAYOR = [0, 2, 4, 5, 7, 9, 11]
 /** Menor natural más la sensible (menor armónica). */
 const MENOR = [0, 2, 3, 5, 7, 8, 10, 11]
-/** Margen humano respecto de la rejilla (beats): ~40 ms a 120 BPM. El micro-tiempo de un músico cabe aquí. */
-const MARGEN_REJILLA = 0.08
+/**
+ * Margen humano respecto de la rejilla (beats): ~50 ms a 120 BPM. El micro-tiempo de un músico cabe aquí: la
+ * humanización de la banda (`humanizarBanda`) desplaza como mucho `MAX_DESVIO_BEATS` = 0,06 y el prompt del músico
+ * pide hasta ±0,04, así que 0,1 tolera ambos sumados. Nota de diseño: la rejilla admitida es la unión de
+ * semicorcheas, tresillos de corchea y sextillos, cuyo punto más lejano de cualquiera de ellas está a 1/12 ≈ 0,083
+ * beats; con un margen ≥ 0,084 esta comprobación solo se dispara con ritmos que no son de ninguna rejilla y nunca
+ * por el desvío humano que introducimos (comprobado en `humanizar-banda.test.ts`).
+ */
+const MARGEN_REJILLA = 0.1
+/** Fracción de compases idénticos a otro a partir de la cual se avisa («varía velocidades, adornos o reparto»). */
+export const UMBRAL_COPIAS = 0.4
+/** Un compás cuenta como cubierto por una nota anterior que lo atraviesa si la solapa al menos esta fracción. */
+const FRACCION_SOLAPE_COMPAS = 0.4
 const MAX_DETALLES = 14
 /** A partir de cuántas notas juzgamos si una parte suena robótica (todo igual). */
 const MIN_NOTAS_VIDA = 16
@@ -109,37 +120,127 @@ const enRejilla = (b: number) => {
 
 const sinAcentos = (t: string) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 
+/** Sección de la hoja de ruta con sus compases (0-based, [desde, hasta)). */
+export type SeccionCompases = { nombre: string; desde: number; hasta: number }
+
+export function seccionesConCompases(hoja: HojaCoherencia): SeccionCompases[] {
+  let compas = 0
+  return hoja.secciones.map((s) => {
+    const r = { nombre: s.nombre, desde: compas, hasta: compas + s.compases }
+    compas += s.compases
+    return r
+  })
+}
+
+/** Instrumentos que no tocan sin parar (lead, melodía, voz, efectos): se les pide cubrir secciones, no cada compás. */
+const NO_CONTINUA = /lead|melod|solo|voz|vocal|fx|efecto|riser|impact/i
+const SOLO_CERCA = /\b(solo|solamente|unicamente|exclusivamente)\b/
+
 /**
- * Secciones de la hoja de ruta que a la pista de un músico todavía le faltan, o null si está completa.
- * Qué se le exige: si su encargo nombra secciones («solo en el puente»), esas; si no, toda la canción salvo
- * la intro y el outro (la base rítmica, también el outro). Una sección está cubierta si hay alguna nota en ella.
+ * Secciones que el encargo limita EXPLÍCITAMENTE («solo en el puente», «únicamente en el coro»): la palabra
+ * restrictiva debe estar a ≤ 30 caracteres de la mención. Nombrar una sección sin más NO limita nada (un pianista
+ * con «intro suave…» sigue tocando toda la canción: error de la pasada real del e2e 29).
+ */
+function seccionesLimitadas(encargo: string, secciones: SeccionCompases[]): SeccionCompases[] {
+  const t = sinAcentos(encargo)
+  return secciones.filter((s) => {
+    const base = sinAcentos(s.nombre).replace(/[\s\d]+$/g, '').trim()
+    if (base.length < 3) return false
+    for (let i = t.indexOf(base); i >= 0; i = t.indexOf(base, i + 1)) {
+      if (SOLO_CERCA.test(t.slice(Math.max(0, i - 30), i + base.length + 30))) return true
+    }
+    return false
+  })
+}
+
+export type Hueco = { seccion: string; desde: number; hasta: number }
+
+/**
+ * Compases sin notas dentro de las secciones exigidas. Un compás está cubierto si empieza en él una nota o lo
+ * atraviesa una (≥ 40 % del compás). En pistas continuas se permite un único compás de silencio al FINAL de una
+ * sección (respiro o hit) si el resto está cubierto; en las demás basta con que la sección tenga alguna nota.
+ */
+export function huecosPorCompas(notas: ReadonlyArray<{ inicio: number; duracion: number }>, exigidas: SeccionCompases[], num: number, continua: boolean): Hueco[] {
+  const total = Math.max(0, ...exigidas.map((s) => s.hasta))
+  const cubierto = new Array<boolean>(total).fill(false)
+  for (const n of notas) {
+    const b0 = Math.max(0, Math.floor(n.inicio / num + 1e-9))
+    const fin = n.inicio + n.duracion
+    for (let b = b0; b < total && b * num < fin - 1e-9; b++) {
+      const a = b * num
+      const empieza = n.inicio >= a - 1e-6 && n.inicio < a + num - 1e-6
+      const solape = Math.min(a + num, fin) - Math.max(a, n.inicio)
+      if (empieza || solape >= FRACCION_SOLAPE_COMPAS * num) cubierto[b] = true
+    }
+  }
+  const huecos: Hueco[] = []
+  for (const s of exigidas) {
+    const vacios: number[] = []
+    for (let b = s.desde; b < s.hasta; b++) if (!cubierto[b]) vacios.push(b)
+    if (!vacios.length) continue
+    const todos = vacios.length === s.hasta - s.desde
+    if (!continua && !todos) continue
+    if (continua && !todos && vacios.length === 1 && vacios[0] === s.hasta - 1) continue
+    for (let i = 0; i < vacios.length; ) {
+      let j = i
+      while (j + 1 < vacios.length && vacios[j + 1] === vacios[j]! + 1) j++
+      huecos.push({ seccion: s.nombre, desde: vacios[i]!, hasta: vacios[j]! + 1 })
+      i = j + 1
+    }
+  }
+  return huecos
+}
+
+const textoHueco = (h: Hueco, num: number) => `${h.seccion} (${h.hasta - h.desde === 1 ? `compás ${h.desde + 1}` : `compases ${h.desde + 1}–${h.hasta}`}, beat ${h.desde * num}, ${(h.hasta - h.desde) * num} beats)`
+const COLA_FALTANTES = '. Cada tramo es un clip que empieza en su beat con la duración indicada (o amplía el clip de su sección hasta cubrirlo).'
+
+/**
+ * Cobertura de la parte de un músico frente a la hoja de ruta, o null si está completa (mensaje accionable con
+ * los rangos de compases vacíos, su beat de inicio y su duración en beats).
+ * Qué se le exige: toda la canción salvo la intro y el outro (la base rítmica, también el outro); si el encargo dice
+ * «solo/únicamente/exclusivamente/solamente» junto a una sección, solo esa. Se mide POR COMPÁS: en batería, bajo,
+ * piano, guitarra, pads y cuerdas ningún compás de una sección exigida puede quedar sin notas (un compás de
+ * respiro al final de la sección se tolera); los leads y melodías solo necesitan notas en cada sección exigida.
  */
 export function seccionesFaltantes(st: ReturnType<TiendaDAW['obtenerEstado']>, hoja: HojaCoherencia, o: { pista: string; encargo: string }): string | null {
   const q = o.pista.trim().toLowerCase()
   const pista = ((st.project?.tracks ?? []) as unknown as Array<Pista & { id: string }>).find((t) => t.id === o.pista || t.nombre.trim().toLowerCase() === q)
   if (!pista) return null
   const num = Math.max(1, Math.round(hoja.numerador || Number(st.project?.timeSignature?.numerador ?? 4) || 4))
-  let compas = 0
-  const secciones = hoja.secciones.map((s) => {
-    const r = { nombre: s.nombre, desde: compas, hasta: compas + s.compases }
-    compas += s.compases
-    return r
-  })
+  const secciones = seccionesConCompases(hoja)
   if (secciones.length < 2) return null
-  const encargo = sinAcentos(o.encargo)
-  const nombradas = secciones.filter((s) => {
-    const base = sinAcentos(s.nombre).replace(/[\s\d]+$/g, '').trim()
-    return base.length >= 3 && encargo.includes(base)
-  })
   const texto = `${pista.nombre} ${(pista.plugins ?? []).map((p) => p.nombre ?? '').join(' ')}`
   const base = /bater|drum|percus|kit|bajo|bass/i.test(texto)
-  const exigidas = !base && nombradas.length ? nombradas : base ? secciones.slice(1) : secciones.slice(1, -1)
+  const limitadas = base ? [] : seccionesLimitadas(o.encargo, secciones)
+  const exigidas = limitadas.length ? limitadas : base ? secciones.slice(1) : secciones.slice(1, -1)
   const notas: Nota[] = []
   for (const c of pista.clips ?? []) for (const n of c.notas ?? []) notas.push({ pitch: n.pitch, inicio: c.inicio + n.inicio, duracion: n.duracion })
-  const faltan = exigidas.filter((s) => !notas.some((n) => n.inicio < s.hasta * num && n.inicio + n.duracion > s.desde * num))
-  if (!faltan.length) return null
-  const lista = faltan.map((s) => `${s.nombre} (compases ${s.desde + 1}–${s.hasta}, beat ${s.desde * num}, ${(s.hasta - s.desde) * num} beats)`).join('; ')
-  return `en «${pista.nombre}» no hay notas en: ${lista}. Cada sección es un clip que empieza en su beat con la duración indicada.`
+  const huecos = huecosPorCompas(notas, exigidas, num, !NO_CONTINUA.test(texto))
+  if (!huecos.length) return null
+  return `en «${pista.nombre}» no hay notas en: ${huecos.map((h) => textoHueco(h, num)).join('; ')}${COLA_FALTANTES}`
+}
+
+/** Firma estructural de un compás (alturas, posición y duración a 1/32 de beat). */
+function firmasPorCompas(notas: ReadonlyArray<Nota>, num: number): Map<number, string> {
+  const q = (x: number) => Math.round(x * 32)
+  const porCompas = new Map<number, string[]>()
+  for (const n of notas) {
+    const c = Math.floor(n.inicio / num + 1e-9)
+    porCompas.set(c, [...(porCompas.get(c) ?? []), `${n.pitch}@${q(n.inicio - c * num)}/${q(n.duracion)}`])
+  }
+  const out = new Map<number, string>()
+  for (const [c, l] of porCompas) if (l.length >= 3) out.set(c, l.sort().join('|'))
+  return out
+}
+
+/** Compases con ≥ 3 notas que son copia exacta (alturas, posiciones y duraciones) de otro compás de la misma lista. */
+export function copiasExactas(notas: ReadonlyArray<Nota>, num: number): { copias: number; compases: number } {
+  const firmas = firmasPorCompas(notas, num)
+  const cuenta = new Map<string, number>()
+  for (const f of firmas.values()) cuenta.set(f, (cuenta.get(f) ?? 0) + 1)
+  let copias = 0
+  for (const f of firmas.values()) if ((cuenta.get(f) ?? 0) > 1) copias++
+  return { copias, compases: firmas.size }
 }
 
 export function analizarCoherencia(st: ReturnType<TiendaDAW['obtenerEstado']>, hoja: HojaCoherencia): MedicionQA {
@@ -200,13 +301,9 @@ export function analizarCoherencia(st: ReturnType<TiendaDAW['obtenerEstado']>, h
     const inicioUltima = (inicios[inicios.length - 1]?.compas ?? 0) * num
     if (ultima <= inicioUltima + 1e-6) detalles.push(`${nombre}: deja de sonar en el compás ${compasDe(Math.max(0, ultima - 1e-6))} y la canción sigue hasta el ${totalCompases}; falta tocar ${inicios.filter((s) => s.compas * num >= ultima - 1e-6).map((s) => s.nombre).join(', ')}.`)
     else if (p.bateria || p.bajo) {
-      // La base no deja secciones vacías (salvo la primera: la intro puede empezar sin ella).
-      const vacias = inicios.slice(1).filter((s, i) => {
-        const ini = s.compas * num
-        const fin = (inicios[i + 2]?.compas ?? totalCompases) * num
-        return !p.notas.some((n) => n.inicio < fin && n.inicio + n.duracion > ini)
-      })
-      if (vacias.length) detalles.push(`${nombre}: no toca en ${vacias.map((s) => s.nombre).join(', ')}; la base rítmica sostiene toda la canción.`)
+      // La base no deja compases vacíos (salvo la primera sección: la intro puede empezar sin ella).
+      const huecos = huecosPorCompas(p.notas, seccionesConCompases(hoja).slice(1), num, true)
+      if (huecos.length) detalles.push(`${nombre}: sin notas en los compases ${huecos.slice(0, 5).map((h) => `${h.hasta - h.desde === 1 ? h.desde + 1 : `${h.desde + 1}–${h.hasta}`} (${h.seccion})`).join(', ')}${huecos.length > 5 ? '…' : ''}; la base rítmica sostiene toda la canción.`)
     }
     const fueraRejilla = p.notas.filter((n) => !enRejilla(n.inicio))
     if (fueraRejilla.length > Math.max(2, p.notas.length * 0.15)) {
@@ -290,11 +387,30 @@ export function diagnosticoEscritura(st: ReturnType<TiendaDAW['obtenerEstado']>,
   const solo = { ...st, project: { ...st.project, tracks: [pista] } } as unknown as typeof st
   const defectos = analizarCoherencia(solo, hoja).detalles.slice(0, 3)
   const cuadrada = duraciones <= 2 && notas.length >= 12
+  // Copias exactas (plan S): compases idénticos a otro, en la pista entera y dentro de cada clip. Los pads y cuerdas
+  // sostienen el mismo acorde cada vez que se repite la progresión: ahí una copia es lo esperable y no se avisa.
+  const num = Math.max(1, Math.round(hoja.numerador || Number(st.project?.timeSignature?.numerador ?? 4) || 4))
+  const sostenida = /pad|atmos|ambient|cuerd|string/i.test(`${pista.nombre} ${(pista.plugins ?? []).map((p) => p.nombre ?? '').join(' ')}`)
+  const absolutas: Nota[] = (pista.clips ?? []).flatMap((c) => (c.notas ?? []).map((n) => ({ pitch: n.pitch, inicio: c.inicio + n.inicio, duracion: n.duracion })))
+  const enPista = copiasExactas(absolutas, num)
+  let copiasTxt: string | null = null
+  if (!sostenida && enPista.compases >= 4 && enPista.copias / enPista.compases > UMBRAL_COPIAS) {
+    copiasTxt = `${enPista.copias} de ${enPista.compases} compases son copia exacta de otro (${Math.round((enPista.copias / enPista.compases) * 100)} %): varía velocidades, adornos o reparto.`
+  } else if (!sostenida) {
+    for (const c of pista.clips ?? []) {
+      const r = copiasExactas((c.notas ?? []).map((n) => ({ pitch: n.pitch, inicio: n.inicio, duracion: n.duracion })), num)
+      if (r.compases >= 4 && r.copias / r.compases > UMBRAL_COPIAS) {
+        copiasTxt = `en el clip «${c.nombre ?? 'sin nombre'}» ${r.copias} de ${r.compases} compases son copia exacta: varía velocidades, adornos o reparto.`
+        break
+      }
+    }
+  }
   // Sin defectos: una línea corta (el resultado se queda en el historial del agente hasta el final de su turno).
-  if (!falta && !defectos.length && !cuadrada) return `Diagnóstico: sin defectos medidos (${stats}); todas las secciones exigidas cubiertas.`
+  if (!falta && !defectos.length && !cuadrada && !copiasTxt) return `Diagnóstico: sin defectos medidos (${stats}); todas las secciones exigidas cubiertas.`
   const lineas = [`Diagnóstico de tu pista (${stats}):`]
-  if (falta) lineas.push(`faltan secciones: ${falta.replace(/^en «[^»]*» no hay notas en: /, '').replace(/. Cada sección es un clip.*$/, '')}.`)
+  if (falta) lineas.push(`faltan secciones: ${falta.replace(/^en «[^»]*» no hay notas en: /, '').replace(/\. Cada (tramo|sección) es un clip.*$/, '')}.`)
   if (cuadrada) lineas.push('parte «cuadrada»: varía duraciones y velocidades.')
+  if (copiasTxt) lineas.push(copiasTxt)
   for (const d of defectos) lineas.push(d.length > 240 ? `${d.slice(0, 239)}…` : d)
   return lineas.join(' ').slice(0, 900)
 }
