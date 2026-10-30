@@ -74,6 +74,7 @@ import {
   type EfectosIde,
 } from './herramientas-ide'
 import { conFuentesDelTurno, iniciarFuentesTurno } from './fuentes-turno'
+import { contarAperturas, ejecutarHerramientaAyuda, esHerramientaAyuda, herramientasAyuda } from './herramientas-ayuda'
 import { fijarModoSesion, modoSesion, type ModoSesion } from './sesion-agente'
 
 export const AGENTE_PROGRAM_ID = 'jaswave-agente'
@@ -294,6 +295,7 @@ export async function runTurnoAgente(ctx: TurnContext, tienda: TiendaDAW): Promi
   const catalogo: HerramientaAgente[] = [
     ...herramientasIde({ habilidades: habilidadesUsuario, aprender: puedeAprender, meta: sesion?.tipo === 'meta' }),
     ...herramientasConfig({ escribir: editaConfig }),
+    ...herramientasAyuda(),
     ...catalogoAgente({ rol: ctx.run.role, habilidades }),
   ]
   const habilidadPorHerramienta = new Map(habilidades.map((h) => [nombreHerramientaHabilidad(h), h]))
@@ -388,9 +390,13 @@ export async function runTurnoAgente(ctx: TurnContext, tienda: TiendaDAW): Promi
     }
   }
 
+  const limiteAperturas = contarAperturas()
   const ejecutar = async (l: LlamadaAgente, h: HerramientaAgente): Promise<ResultadoHerramienta> => {
     const ide = await ejecutarHerramientaIde(l, { projectId, habilidades: habilidadesUsuario, efectos: estado.ide })
     if (ide) return ide
+    // Ayuda y guía en la interfaz: nunca llegan al ejecutor de comandos (no mutan el proyecto).
+    const ayuda = esHerramientaAyuda(l.nombre) ? await ejecutarHerramientaAyuda(l) : null
+    if (ayuda) return limiteAperturas(l, ayuda) ?? ayuda
     const hab = habilidadPorHerramienta.get(h.nombre)
     if (hab) return ejecutarHabilidad(hab, l)
     const a = accion(l)

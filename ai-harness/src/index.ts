@@ -278,6 +278,8 @@ export {
   AGENT_ACTION_CLASSES,
   AGENT_DOCS_WRITE_ACTIONS,
   AGENT_READ_ONLY_ACTIONS,
+  AGENT_UI_ACTIONS,
+  isUiAction,
   actionAlwaysNeedsConfirm,
   agentActionClass,
   agentActionClassOfType,

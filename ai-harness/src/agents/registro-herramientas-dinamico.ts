@@ -50,8 +50,9 @@ export class ErrorRegistroHerramientas extends Error {
   }
 }
 
-const ORDEN_CLASES: Record<AgentActionClass, number> = { read: 0, write: 1, destructive: 2, system: 3 }
-const CLASES_VALIDAS = new Set<string>(Object.keys(ORDEN_CLASES))
+const ORDEN_CLASES: Record<AgentActionClass, number> = { read: 0, ui: 0, write: 1, destructive: 2, system: 3 }
+// `ui` es solo del núcleo (herramientas de ayuda): un plugin no puede declararla.
+const CLASES_VALIDAS = new Set<string>(Object.keys(ORDEN_CLASES).filter((c) => c !== 'ui'))
 const NOMBRE_HERRAMIENTA = /^plugin\.[a-z0-9-]{2,40}\.[a-zA-Z][a-zA-Z0-9]{1,60}$/
 
 export function claseMinimaPorPermisos(p: PermisosPlugin): AgentActionClass {

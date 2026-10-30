@@ -57,6 +57,7 @@ import { SpeechToTextButton } from './speech-to-text-button'
 import { AudioSampleRecorder, type AttachedAudioSample } from './audio-sample-recorder'
 import { BandaLineaCompacta } from './banda-live-orchestrator'
 import { EVENTO_REANUDAR_BANDA } from './tarjeta-reanudar'
+import { TarjetaGuia } from './tarjeta-guia'
 import { abrirPanelBanda, bandaEnChat, useVistaBanda, vistaBanda } from './banda-vista-store'
 import { orquestadorBandaSingleton } from '../motor/banda-orchestrator'
 
@@ -1747,6 +1748,7 @@ export function CoProducerPanel() {
               ))}
             </div>
           ) : null}
+          <TarjetaGuia className="mb-1" />
           <textarea
             ref={inputRef}
             rows={1}

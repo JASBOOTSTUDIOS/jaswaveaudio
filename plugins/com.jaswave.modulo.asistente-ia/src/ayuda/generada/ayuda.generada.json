@@ -1,0 +1,2046 @@
+{
+  "_aviso": "GENERADO por jas-wave/scripts/generar-ayuda.mjs. NO EDITAR A MANO. Regenerar con: npm run ayuda:generar  (desde jas-wave/). Las fichas curadas viven en src/ayuda/curado/ y ganan a estas con el mismo id.",
+  "huellaFuentes": "ebeb9067bcb5987ae11053abad64136b9c570e16544a332442b070484f203609",
+  "fuentes": {
+    "herramientasNucleo": 20,
+    "herramientasModulos": 7,
+    "pantallasAbribles": 34,
+    "plugins": 22,
+    "acciones": 75
+  },
+  "totales": {
+    "panel": 27,
+    "pantalla": 8,
+    "plugin": 22,
+    "herramienta": 75
+  },
+  "fichas": [
+    {
+      "id": "herramienta:ai.askselection",
+      "tipo": "herramienta",
+      "titulo": "Preguntar a Jas sobre selección",
+      "resumen": "Ancla notas MIDI o un fragmento de plan.md al chat (Ctrl+L). Categoría: AI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "ai.askSelection",
+        "ia.preguntarSeleccion",
+        "ventana.preguntarSeleccion"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+L"
+      }
+    },
+    {
+      "id": "herramienta:ai.togglevoicedictation",
+      "tipo": "herramienta",
+      "titulo": "Dictado por voz",
+      "resumen": "Activa o detiene el dictado por voz del campo enfocado (o del asistente). Categoría: AI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "ai.toggleVoiceDictation",
+        "ia.dictadoVoz"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Alt+V"
+      }
+    },
+    {
+      "id": "herramienta:clip.autofade",
+      "tipo": "herramienta",
+      "titulo": "Fundido anti-clics",
+      "resumen": "Fundido de 10 ms en ambos extremos de los clips de audio seleccionados. Categoría: Clip.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "clip.autoFade"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "F"
+      }
+    },
+    {
+      "id": "herramienta:clip.consolidate",
+      "tipo": "herramienta",
+      "titulo": "Consolidar clips",
+      "resumen": "Une los clips seleccionados de cada pista en uno solo. Categoría: Clip.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "clip.consolidate"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+J"
+      }
+    },
+    {
+      "id": "herramienta:clip.normalizeaudio",
+      "tipo": "herramienta",
+      "titulo": "Normalizar clip",
+      "resumen": "Ajusta la ganancia del clip para que su pico quede en −1 dBFS. Categoría: Clip.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "clip.normalizeAudio"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Alt+N"
+      }
+    },
+    {
+      "id": "herramienta:clip.reverseaudio",
+      "tipo": "herramienta",
+      "titulo": "Invertir audio",
+      "resumen": "Reproduce al revés los clips de audio seleccionados. Categoría: Clip.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "clip.reverseAudio"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Alt+R"
+      }
+    },
+    {
+      "id": "herramienta:clip.togglemute",
+      "tipo": "herramienta",
+      "titulo": "Silenciar / activar clip",
+      "resumen": "Silencia los clips seleccionados (se ven atenuados y no suenan). Categoría: Clip.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "clip.toggleMute"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "0"
+      }
+    },
+    {
+      "id": "herramienta:editing.copy",
+      "tipo": "herramienta",
+      "titulo": "Copiar",
+      "resumen": "Copia la selección al portapapeles. Categoría: Editing.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "editing.copy",
+        "edicion.copiar"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+C"
+      }
+    },
+    {
+      "id": "herramienta:editing.cut",
+      "tipo": "herramienta",
+      "titulo": "Cortar",
+      "resumen": "Corta la selección al portapapeles. Categoría: Editing.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "editing.cut",
+        "edicion.cortar"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+X"
+      }
+    },
+    {
+      "id": "herramienta:editing.delete",
+      "tipo": "herramienta",
+      "titulo": "Eliminar",
+      "resumen": "Elimina la selección. Categoría: Editing.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "editing.delete",
+        "edicion.eliminar",
+        "clip.eliminar"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Delete / Backspace"
+      }
+    },
+    {
+      "id": "herramienta:editing.duplicate",
+      "tipo": "herramienta",
+      "titulo": "Duplicar",
+      "resumen": "Duplica la selección. Categoría: Editing.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "editing.duplicate",
+        "edicion.duplicar",
+        "clip.duplicar"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+D"
+      }
+    },
+    {
+      "id": "herramienta:editing.paste",
+      "tipo": "herramienta",
+      "titulo": "Pegar",
+      "resumen": "Pega desde el portapapeles. Categoría: Editing.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "editing.paste",
+        "edicion.pegar"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+V"
+      }
+    },
+    {
+      "id": "herramienta:editing.redo",
+      "tipo": "herramienta",
+      "titulo": "Rehacer",
+      "resumen": "Rehace la última operación deshecha. Categoría: Editing.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "editing.redo",
+        "edicion.rehacer"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Shift+Z / Ctrl+Y"
+      }
+    },
+    {
+      "id": "herramienta:editing.selectall",
+      "tipo": "herramienta",
+      "titulo": "Seleccionar todo",
+      "resumen": "Selecciona todos los clips. Categoría: Selection.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "editing.selectAll",
+        "edicion.seleccionarTodo"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+A"
+      }
+    },
+    {
+      "id": "herramienta:editing.split",
+      "tipo": "herramienta",
+      "titulo": "Dividir en playhead",
+      "resumen": "Divide el clip seleccionado en el playhead. Categoría: Editing.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "editing.split",
+        "clip.dividir"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "S"
+      }
+    },
+    {
+      "id": "herramienta:editing.undo",
+      "tipo": "herramienta",
+      "titulo": "Deshacer",
+      "resumen": "Deshace la última operación. Categoría: Editing.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "editing.undo",
+        "edicion.deshacer"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Z"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.dedupe",
+      "tipo": "herramienta",
+      "titulo": "Quitar notas duplicadas",
+      "resumen": "Elimina notas repetidas en el mismo tono y tiempo. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.dedupe"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Shift+D"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.humanize",
+      "tipo": "herramienta",
+      "titulo": "Humanizar",
+      "resumen": "Variación sutil de tiempo y velocidad (determinista). Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.humanize"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Alt+H"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.invert",
+      "tipo": "herramienta",
+      "titulo": "Invertir tonos",
+      "resumen": "Espejo tonal de las notas. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.invert"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Alt+I"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.legato",
+      "tipo": "herramienta",
+      "titulo": "Legato",
+      "resumen": "Alarga cada nota hasta la siguiente. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.legato"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Alt+L"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.mutenotes",
+      "tipo": "herramienta",
+      "titulo": "Silenciar / activar notas",
+      "resumen": "Alterna el silencio de las notas seleccionadas. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.muteNotes"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "M"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.reverse",
+      "tipo": "herramienta",
+      "titulo": "Invertir en el tiempo",
+      "resumen": "Invierte el orden temporal de las notas. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.reverse"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Alt+R"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.splitatplayhead",
+      "tipo": "herramienta",
+      "titulo": "Dividir notas en el playhead",
+      "resumen": "Corta las notas seleccionadas (o las que cruzan) en el playhead. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.splitAtPlayhead"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Shift+S"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.staccato",
+      "tipo": "herramienta",
+      "titulo": "Staccato",
+      "resumen": "Acorta las notas a la mitad. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.staccato"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Alt+S"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.stretchdouble",
+      "tipo": "herramienta",
+      "titulo": "Duplicar duración (×2)",
+      "resumen": "Estira tiempos y duraciones al doble. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.stretchDouble"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Alt+2"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.stretchhalf",
+      "tipo": "herramienta",
+      "titulo": "Reducir duración (÷2)",
+      "resumen": "Comprime tiempos y duraciones a la mitad. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.stretchHalf"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Alt+1"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.togglescalesnap",
+      "tipo": "herramienta",
+      "titulo": "Ajustar a escala",
+      "resumen": "Las notas nuevas y transpuestas caen en la escala elegida. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.toggleScaleSnap"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Alt+K"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.tooleraser",
+      "tipo": "herramienta",
+      "titulo": "Herramienta borrador",
+      "resumen": "Borrar notas. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.toolEraser"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "E"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.toolpencil",
+      "tipo": "herramienta",
+      "titulo": "Herramienta lápiz",
+      "resumen": "Dibujar notas. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.toolPencil"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "D / B"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.toolselect",
+      "tipo": "herramienta",
+      "titulo": "Herramienta selección",
+      "resumen": "Seleccionar y mover notas. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.toolSelect"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "V"
+      }
+    },
+    {
+      "id": "herramienta:pianoroll.toolslice",
+      "tipo": "herramienta",
+      "titulo": "Herramienta tijera",
+      "resumen": "Cortar notas con un clic o arrastrando en vertical. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pianoRoll.toolSlice"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "C"
+      }
+    },
+    {
+      "id": "herramienta:project.close",
+      "tipo": "herramienta",
+      "titulo": "Cerrar proyecto",
+      "resumen": "Cierra el proyecto actual. Categoría: Project.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "project.close",
+        "proyecto.cerrar"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+F4"
+      }
+    },
+    {
+      "id": "herramienta:project.export",
+      "tipo": "herramienta",
+      "titulo": "Exportar",
+      "resumen": "Exporta la canción, las pistas (stems), el MIDI o el proyecto empaquetado. Categoría: Project.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "project.export",
+        "archivo.exportarBounce"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Alt+R"
+      }
+    },
+    {
+      "id": "herramienta:project.new",
+      "tipo": "herramienta",
+      "titulo": "Nuevo proyecto",
+      "resumen": "Crea un proyecto nuevo. Categoría: Project.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "project.new",
+        "proyecto.nuevo"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+N"
+      }
+    },
+    {
+      "id": "herramienta:project.open",
+      "tipo": "herramienta",
+      "titulo": "Abrir proyecto",
+      "resumen": "Abre un proyecto existente. Categoría: Project.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "project.open",
+        "proyecto.abrir"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+O"
+      }
+    },
+    {
+      "id": "herramienta:project.save",
+      "tipo": "herramienta",
+      "titulo": "Guardar",
+      "resumen": "Guarda el proyecto. Categoría: Project.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "project.save",
+        "proyecto.guardar"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+S"
+      }
+    },
+    {
+      "id": "herramienta:project.saveas",
+      "tipo": "herramienta",
+      "titulo": "Guardar como",
+      "resumen": "Guarda el proyecto con otro nombre. Categoría: Project.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "project.saveAs",
+        "proyecto.guardarComo"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Shift+S"
+      }
+    },
+    {
+      "id": "herramienta:timeline.scrollleft",
+      "tipo": "herramienta",
+      "titulo": "Desplazar izquierda",
+      "resumen": "Desplaza la timeline a la izquierda. Categoría: Navigation.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "timeline.scrollLeft",
+        "vista.scrollIzquierda"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Alt+ArrowLeft"
+      }
+    },
+    {
+      "id": "herramienta:timeline.scrollright",
+      "tipo": "herramienta",
+      "titulo": "Desplazar derecha",
+      "resumen": "Desplaza la timeline a la derecha. Categoría: Navigation.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "timeline.scrollRight",
+        "vista.scrollDerecha"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Alt+ArrowRight"
+      }
+    },
+    {
+      "id": "herramienta:timeline.zoomin",
+      "tipo": "herramienta",
+      "titulo": "Acercar timeline",
+      "resumen": "Zoom horizontal in. Categoría: Timeline.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "timeline.zoomIn",
+        "vista.zoomIn"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Equal / Equal"
+      }
+    },
+    {
+      "id": "herramienta:timeline.zoomout",
+      "tipo": "herramienta",
+      "titulo": "Alejar timeline",
+      "resumen": "Zoom horizontal out. Categoría: Timeline.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "timeline.zoomOut",
+        "vista.zoomOut"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Minus / Minus"
+      }
+    },
+    {
+      "id": "herramienta:timeline.zoomtoproject",
+      "tipo": "herramienta",
+      "titulo": "Zoom a proyecto",
+      "resumen": "Ajusta el zoom al proyecto completo. Categoría: Timeline.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "timeline.zoomToProject",
+        "vista.zoomTodo"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+PageDown"
+      }
+    },
+    {
+      "id": "herramienta:timeline.zoomtoselection",
+      "tipo": "herramienta",
+      "titulo": "Zoom a selección",
+      "resumen": "Ajusta el zoom a la selección. Categoría: Timeline.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "timeline.zoomToSelection",
+        "vista.zoomSeleccion"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+PageUp"
+      }
+    },
+    {
+      "id": "herramienta:track.arm",
+      "tipo": "herramienta",
+      "titulo": "Armar pista",
+      "resumen": "Alterna armado de grabación. Categoría: Track.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "track.arm",
+        "pista.armar"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Shift+R"
+      }
+    },
+    {
+      "id": "herramienta:track.create",
+      "tipo": "herramienta",
+      "titulo": "Nueva pista de audio",
+      "resumen": "Crea una pista de audio. Categoría: Track.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "track.create",
+        "pista.nueva",
+        "ui.agregarPista"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Shift+A"
+      }
+    },
+    {
+      "id": "herramienta:track.createfolder",
+      "tipo": "herramienta",
+      "titulo": "Nueva carpeta (bus)",
+      "resumen": "Crea una carpeta: las pistas que metas dentro suenan por su fader, FX, mute y solo. Categoría: Track.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "track.createFolder",
+        "pista.nuevaCarpeta"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "herramienta:track.createmidi",
+      "tipo": "herramienta",
+      "titulo": "Nueva pista MIDI",
+      "resumen": "Crea una pista MIDI. Categoría: Track.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "track.createMidi",
+        "pista.nuevaMidi"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Shift+M"
+      }
+    },
+    {
+      "id": "herramienta:track.delete",
+      "tipo": "herramienta",
+      "titulo": "Eliminar pista",
+      "resumen": "Elimina la pista seleccionada. Categoría: Track.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "track.delete",
+        "pista.eliminarSeleccionada"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Delete"
+      }
+    },
+    {
+      "id": "herramienta:track.mute",
+      "tipo": "herramienta",
+      "titulo": "Mute pista",
+      "resumen": "Alterna mute de la pista seleccionada. Categoría: Track.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "track.mute",
+        "pista.mute"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "M"
+      }
+    },
+    {
+      "id": "herramienta:track.selectnext",
+      "tipo": "herramienta",
+      "titulo": "Pista siguiente",
+      "resumen": "Selecciona la siguiente pista. Categoría: Navigation.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "track.selectNext",
+        "pista.seleccionarSiguiente"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Alt+ArrowDown / ArrowDown"
+      }
+    },
+    {
+      "id": "herramienta:track.selectprevious",
+      "tipo": "herramienta",
+      "titulo": "Pista anterior",
+      "resumen": "Selecciona la pista anterior. Categoría: Navigation.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "track.selectPrevious",
+        "pista.seleccionarAnterior"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Alt+ArrowUp / ArrowUp"
+      }
+    },
+    {
+      "id": "herramienta:track.solo",
+      "tipo": "herramienta",
+      "titulo": "Solo pista",
+      "resumen": "Alterna solo de la pista seleccionada. Categoría: Track.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "track.solo",
+        "pista.solo"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Alt+S"
+      }
+    },
+    {
+      "id": "herramienta:transport.gotoend",
+      "tipo": "herramienta",
+      "titulo": "Ir al final",
+      "resumen": "Mueve el playhead al final. Categoría: Transport.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "transport.goToEnd",
+        "transporte.fin"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "End"
+      }
+    },
+    {
+      "id": "herramienta:transport.gotostart",
+      "tipo": "herramienta",
+      "titulo": "Ir al inicio",
+      "resumen": "Mueve el playhead al inicio del proyecto. Categoría: Transport.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "transport.goToStart",
+        "transporte.inicio"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "W / Home"
+      }
+    },
+    {
+      "id": "herramienta:transport.pause",
+      "tipo": "herramienta",
+      "titulo": "Pausar",
+      "resumen": "Pausa la reproducción. Categoría: Transport.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "transport.pause"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Enter"
+      }
+    },
+    {
+      "id": "herramienta:transport.record",
+      "tipo": "herramienta",
+      "titulo": "Grabar",
+      "resumen": "Alterna grabación. Categoría: Transport.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "transport.record",
+        "transporte.grabar"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+R"
+      }
+    },
+    {
+      "id": "herramienta:transport.stepback",
+      "tipo": "herramienta",
+      "titulo": "Retroceder playhead",
+      "resumen": "Retrocede el playhead. Categoría: Transport.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "transport.stepBack",
+        "transporte.playheadAnterior",
+        "transporte.rebobinar"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "ArrowLeft"
+      }
+    },
+    {
+      "id": "herramienta:transport.stepforward",
+      "tipo": "herramienta",
+      "titulo": "Avanzar playhead",
+      "resumen": "Avanza el playhead. Categoría: Transport.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "transport.stepForward",
+        "transporte.playheadSiguiente",
+        "transporte.avanceRapido"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "ArrowRight"
+      }
+    },
+    {
+      "id": "herramienta:transport.stop",
+      "tipo": "herramienta",
+      "titulo": "Detener",
+      "resumen": "Detiene el transporte. Categoría: Transport.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "transport.stop",
+        "transporte.detener"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Space"
+      }
+    },
+    {
+      "id": "herramienta:transport.toggleloop",
+      "tipo": "herramienta",
+      "titulo": "Activar / desactivar bucle",
+      "resumen": "Alterna el modo loop. Categoría: Transport.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "transport.toggleLoop",
+        "transporte.loop",
+        "ui.toggleLoop"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "R"
+      }
+    },
+    {
+      "id": "herramienta:transport.togglemetronome",
+      "tipo": "herramienta",
+      "titulo": "Metrónomo",
+      "resumen": "Activa o desactiva el metrónomo. Categoría: Transport.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "transport.toggleMetronome",
+        "transporte.metronomo",
+        "ui.toggleMetronomo"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "K"
+      }
+    },
+    {
+      "id": "herramienta:transport.toggleplay",
+      "tipo": "herramienta",
+      "titulo": "Reproducir / Pausar",
+      "resumen": "Alterna reproducción y pausa. Categoría: Transport.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "transport.togglePlay",
+        "transporte.reproducir"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Space"
+      }
+    },
+    {
+      "id": "herramienta:view.tooleraser",
+      "tipo": "herramienta",
+      "titulo": "Herramienta borrador",
+      "resumen": "Activa la herramienta borrador. Categoría: View.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "view.toolEraser",
+        "herramienta.eraser"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "5"
+      }
+    },
+    {
+      "id": "herramienta:view.toolmove",
+      "tipo": "herramienta",
+      "titulo": "Herramienta mover",
+      "resumen": "Activa la herramienta de mover. Categoría: View.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "view.toolMove",
+        "herramienta.move"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "2"
+      }
+    },
+    {
+      "id": "herramienta:view.toolpencil",
+      "tipo": "herramienta",
+      "titulo": "Herramienta lápiz",
+      "resumen": "Activa la herramienta lápiz. Categoría: View.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "view.toolPencil",
+        "herramienta.pencil"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "3"
+      }
+    },
+    {
+      "id": "herramienta:view.toolselect",
+      "tipo": "herramienta",
+      "titulo": "Herramienta seleccionar",
+      "resumen": "Activa la herramienta de selección. Categoría: View.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "view.toolSelect",
+        "herramienta.select"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "1"
+      }
+    },
+    {
+      "id": "herramienta:view.toolsplit",
+      "tipo": "herramienta",
+      "titulo": "Herramienta tijeras",
+      "resumen": "Activa la herramienta de dividir. Categoría: View.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "view.toolSplit",
+        "herramienta.split"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "4"
+      }
+    },
+    {
+      "id": "herramienta:window.commandpalette",
+      "tipo": "herramienta",
+      "titulo": "Paleta de comandos",
+      "resumen": "Abre la paleta de comandos. Categoría: Window.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "window.commandPalette",
+        "ventana.paletaComandos"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Shift+P"
+      }
+    },
+    {
+      "id": "herramienta:window.keyboardshortcuts",
+      "tipo": "herramienta",
+      "titulo": "Atajos de teclado",
+      "resumen": "Abre la configuración de atajos. Categoría: Window.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "window.keyboardShortcuts",
+        "ventana.atajos"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Shift+,"
+      }
+    },
+    {
+      "id": "herramienta:window.midimap",
+      "tipo": "herramienta",
+      "titulo": "Control MIDI / MIDI Learn",
+      "resumen": "Asigna notas, CC y teclas a comandos, mixer, sustain y plugins. Categoría: MIDI.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "window.midiMap",
+        "ventana.midiMap",
+        "ventana.controlMidi"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Shift+M"
+      }
+    },
+    {
+      "id": "herramienta:window.projectsettings",
+      "tipo": "herramienta",
+      "titulo": "Ajustes del proyecto",
+      "resumen": "Abre los ajustes del proyecto. Categoría: Window.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "window.projectSettings",
+        "ventana.ajustes"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+8"
+      }
+    },
+    {
+      "id": "herramienta:window.terminal",
+      "tipo": "herramienta",
+      "titulo": "Terminal",
+      "resumen": "Abre la Terminal del DAW (CLI y ejecución de la IA). Categoría: Window.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "window.terminal",
+        "ventana.terminal"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+`"
+      }
+    },
+    {
+      "id": "herramienta:window.togglebottom",
+      "tipo": "herramienta",
+      "titulo": "Panel inferior",
+      "resumen": "Muestra u oculta el panel inferior. Categoría: Window.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "window.toggleBottom",
+        "ventana.panelInferior"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+J"
+      }
+    },
+    {
+      "id": "herramienta:window.toggleleft",
+      "tipo": "herramienta",
+      "titulo": "Panel izquierdo",
+      "resumen": "Muestra u oculta el panel izquierdo. Categoría: Window.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "window.toggleLeft",
+        "ventana.barraLateral"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+B"
+      }
+    },
+    {
+      "id": "herramienta:window.toggleright",
+      "tipo": "herramienta",
+      "titulo": "Panel derecho",
+      "resumen": "Muestra u oculta el panel derecho. Categoría: Window.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "window.toggleRight",
+        "ventana.panelDerecho"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "atajo": "Ctrl+Shift+J"
+      }
+    },
+    {
+      "id": "panel:admin",
+      "tipo": "panel",
+      "titulo": "Administración",
+      "resumen": "Abre JasWave Admin, la app de administración aparte del DAW (solo administradores). Zona por defecto: centro. No se coloca solo: aparece cuando se abre.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "admin"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "panel:arrange",
+      "tipo": "panel",
+      "titulo": "Arrange",
+      "resumen": "Línea de tiempo. Zona por defecto: centro.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "arrange"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "arrange"
+      }
+    },
+    {
+      "id": "panel:automation",
+      "tipo": "panel",
+      "titulo": "Automatización",
+      "resumen": "Curvas vol/pan y write-on-play de la pista activa. Zona por defecto: derecha.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "automation"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "automation"
+      }
+    },
+    {
+      "id": "panel:banda-virtual",
+      "tipo": "panel",
+      "titulo": "Banda virtual",
+      "resumen": "Los agentes de la banda trabajando en vivo. Zona por defecto: derecha. No se coloca solo: aparece cuando se abre. Lo aporta el módulo «Asistente Jas (IA)».",
+      "nivel": "principiante",
+      "etiquetas": [
+        "banda-virtual"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "banda-virtual"
+      }
+    },
+    {
+      "id": "panel:coproducer",
+      "tipo": "panel",
+      "titulo": "Asistente Jas",
+      "resumen": "Asistente JasWave. Zona por defecto: izquierda. Lo aporta el módulo «Asistente Jas (IA)».",
+      "nivel": "principiante",
+      "etiquetas": [
+        "coproducer"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "coproducer"
+      }
+    },
+    {
+      "id": "panel:cuenta",
+      "tipo": "panel",
+      "titulo": "Cuenta",
+      "resumen": "Sesión, licencia de este equipo para los plugins JasWave y colaboración. Zona por defecto: derecha.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "cuenta"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "cuenta"
+      }
+    },
+    {
+      "id": "panel:docs",
+      "tipo": "panel",
+      "titulo": "Docs",
+      "resumen": "Tabs de edición y vista de Markdown del proyecto. Zona por defecto: izquierda. No se coloca solo: aparece cuando se abre. Lo aporta el módulo «Documentos del proyecto».",
+      "nivel": "principiante",
+      "etiquetas": [
+        "docs"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "docs"
+      }
+    },
+    {
+      "id": "panel:docs-explorer",
+      "tipo": "panel",
+      "titulo": "Explorador",
+      "resumen": "Árbol de docs/ del proyecto (plan.md y contextos). Zona por defecto: izquierda. Lo aporta el módulo «Documentos del proyecto».",
+      "nivel": "principiante",
+      "etiquetas": [
+        "docs-explorer"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "docs-explorer"
+      }
+    },
+    {
+      "id": "panel:fx-chain",
+      "tipo": "panel",
+      "titulo": "FX Chain",
+      "resumen": "Cadena de plugins de la pista activa. Zona por defecto: derecha.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "fx-chain"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "fx-chain"
+      }
+    },
+    {
+      "id": "panel:grooves",
+      "tipo": "panel",
+      "titulo": "Grooves",
+      "resumen": "Biblioteca de ritmos MIDI de batería por estilos. Zona por defecto: izquierda.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "grooves"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "grooves"
+      }
+    },
+    {
+      "id": "panel:instruments",
+      "tipo": "panel",
+      "titulo": "Instrumentos",
+      "resumen": "Catálogo de plugins · acoplable / otra pantalla. Zona por defecto: izquierda.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "instruments"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "instruments"
+      }
+    },
+    {
+      "id": "panel:library",
+      "tipo": "panel",
+      "titulo": "Biblioteca",
+      "resumen": "Audio y samples. Zona por defecto: izquierda.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "library"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "library"
+      }
+    },
+    {
+      "id": "panel:meters",
+      "tipo": "panel",
+      "titulo": "Medidores",
+      "resumen": "Espectro, estéreo, LUFS y sync de timing. Zona por defecto: derecha.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "meters"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "meters"
+      }
+    },
+    {
+      "id": "panel:midi-map",
+      "tipo": "panel",
+      "titulo": "MIDI Learn",
+      "resumen": "Asigna nota, CC o tecla a una función del DAW. Zona por defecto: derecha.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "midi-map"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "midi-map"
+      }
+    },
+    {
+      "id": "panel:midi-md",
+      "tipo": "panel",
+      "titulo": "MIDI · MD",
+      "resumen": "Clip MIDI como .md con sync en vivo al piano roll. Zona por defecto: izquierda. No se coloca solo: aparece cuando se abre. Lo aporta el módulo «MIDI · Markdown».",
+      "nivel": "principiante",
+      "etiquetas": [
+        "midi-md"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "midi-md"
+      }
+    },
+    {
+      "id": "panel:midi-zones",
+      "tipo": "panel",
+      "titulo": "Zonas MIDI",
+      "resumen": "Splits, capas y transposición del teclado para tocar en directo. Zona por defecto: inferior.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "midi-zones"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "midi-zones"
+      }
+    },
+    {
+      "id": "panel:mixer",
+      "tipo": "panel",
+      "titulo": "Mixer",
+      "resumen": "Consola de mezcla. Zona por defecto: inferior.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "mixer"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "mixer"
+      }
+    },
+    {
+      "id": "panel:modulos",
+      "tipo": "panel",
+      "titulo": "Módulos",
+      "resumen": "Activa, desactiva y descarga módulos opcionales del DAW (asistente IA, partitura…). Zona por defecto: derecha. No se coloca solo: aparece cuando se abre.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "modulos"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "modulos"
+      }
+    },
+    {
+      "id": "panel:piano-roll",
+      "tipo": "panel",
+      "titulo": "Piano roll",
+      "resumen": "Editor MIDI de notas. Zona por defecto: inferior.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "piano-roll"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "piano-roll"
+      }
+    },
+    {
+      "id": "panel:plugin-editor",
+      "tipo": "panel",
+      "titulo": "Editor de plugin",
+      "resumen": "IU del instrumento / efecto activo. Zona por defecto: derecha.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "plugin-editor"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "plugin-editor"
+      }
+    },
+    {
+      "id": "panel:progress",
+      "tipo": "panel",
+      "titulo": "Progreso",
+      "resumen": "Plan, bitácora, diffs y métricas (A9). Zona por defecto: derecha. No se coloca solo: aparece cuando se abre. Lo aporta el módulo «Asistente Jas (IA)».",
+      "nivel": "principiante",
+      "etiquetas": [
+        "progress"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "progress"
+      }
+    },
+    {
+      "id": "panel:project-files",
+      "tipo": "panel",
+      "titulo": "Archivos",
+      "resumen": "Explorador del proyecto por carpetas estilo IDE con vista contextual. Zona por defecto: izquierda.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "project-files"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "project-files"
+      }
+    },
+    {
+      "id": "panel:routing",
+      "tipo": "panel",
+      "titulo": "Ruteo",
+      "resumen": "Buses y envíos. Zona por defecto: derecha.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "routing"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "routing"
+      }
+    },
+    {
+      "id": "panel:score-editor",
+      "tipo": "panel",
+      "titulo": "Partitura",
+      "resumen": "Editor de partitura sincronizado con el clip MIDI. Zona por defecto: inferior. No se coloca solo: aparece cuando se abre. Lo aporta el módulo «Partitura».",
+      "nivel": "principiante",
+      "etiquetas": [
+        "score-editor"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "score-editor"
+      }
+    },
+    {
+      "id": "panel:settings",
+      "tipo": "panel",
+      "titulo": "Configuración",
+      "resumen": "Ajustes del DAW. Zona por defecto: derecha.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "settings"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "settings"
+      }
+    },
+    {
+      "id": "panel:terminal",
+      "tipo": "panel",
+      "titulo": "Terminal",
+      "resumen": "CLI del DAW y log de lo que ejecuta la IA. Zona por defecto: inferior.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "terminal"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "terminal"
+      }
+    },
+    {
+      "id": "panel:track-detail",
+      "tipo": "panel",
+      "titulo": "Inspector",
+      "resumen": "Propiedades de pista, canal y clip. Zona por defecto: derecha.",
+      "nivel": "principiante",
+      "etiquetas": [
+        "track-detail"
+      ],
+      "fuente": "generada",
+      "comoAbrir": {
+        "herramienta": "track-detail"
+      }
+    },
+    {
+      "id": "pantalla:abrir-proyecto",
+      "tipo": "pantalla",
+      "titulo": "Abrir…",
+      "resumen": "Diálogo que se abre desde el menú «Archivo > Abrir…».",
+      "nivel": "principiante",
+      "comoAbrir": {
+        "herramienta": "dlg.abrir-proyecto",
+        "menu": "Archivo > Abrir…",
+        "atajo": "Ctrl+O"
+      },
+      "etiquetas": [
+        "dlg.abrir-proyecto"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "pantalla:ajustes-proyecto",
+      "tipo": "pantalla",
+      "titulo": "Ajustes proyecto",
+      "resumen": "Diálogo «ajustes-proyecto» (sin descripción en el código).",
+      "nivel": "principiante",
+      "comoAbrir": {
+        "herramienta": "dlg.ajustes-proyecto"
+      },
+      "etiquetas": [
+        "dlg.ajustes-proyecto"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "pantalla:atajos",
+      "tipo": "pantalla",
+      "titulo": "Atajos",
+      "resumen": "Diálogo «atajos» (sin descripción en el código).",
+      "nivel": "principiante",
+      "comoAbrir": {
+        "herramienta": "dlg.atajos"
+      },
+      "etiquetas": [
+        "dlg.atajos"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "pantalla:exportar-bounce",
+      "tipo": "pantalla",
+      "titulo": "Exportar (canción, pistas, MIDI, proyecto)…",
+      "resumen": "Diálogo que se abre desde el menú «Archivo > Exportar (canción, pistas, MIDI, proyecto)…».",
+      "nivel": "principiante",
+      "comoAbrir": {
+        "herramienta": "dlg.exportar-bounce",
+        "menu": "Archivo > Exportar (canción, pistas, MIDI, proyecto)…",
+        "atajo": "Ctrl+Alt+R"
+      },
+      "etiquetas": [
+        "dlg.exportar-bounce"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "pantalla:exportar-partituras",
+      "tipo": "pantalla",
+      "titulo": "Exportar partituras PDF…",
+      "resumen": "Diálogo que se abre desde el menú «Archivo > Exportar partituras PDF…».",
+      "nivel": "principiante",
+      "comoAbrir": {
+        "herramienta": "dlg.exportar-partituras",
+        "menu": "Archivo > Exportar partituras PDF…"
+      },
+      "etiquetas": [
+        "dlg.exportar-partituras"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "pantalla:midi-map",
+      "tipo": "pantalla",
+      "titulo": "Control MIDI / MIDI Learn…",
+      "resumen": "Diálogo que se abre desde el menú «Ver > Control MIDI / MIDI Learn…».",
+      "nivel": "principiante",
+      "comoAbrir": {
+        "herramienta": "dlg.midi-map",
+        "menu": "Ver > Control MIDI / MIDI Learn…"
+      },
+      "etiquetas": [
+        "dlg.midi-map"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "pantalla:nuevo-proyecto",
+      "tipo": "pantalla",
+      "titulo": "Nuevo proyecto",
+      "resumen": "Diálogo «nuevo-proyecto» (sin descripción en el código).",
+      "nivel": "principiante",
+      "comoAbrir": {
+        "herramienta": "dlg.nuevo-proyecto"
+      },
+      "etiquetas": [
+        "dlg.nuevo-proyecto"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "pantalla:paleta",
+      "tipo": "pantalla",
+      "titulo": "Paleta de comandos",
+      "resumen": "Diálogo que se abre desde el menú «Ver > Paleta de comandos».",
+      "nivel": "principiante",
+      "comoAbrir": {
+        "herramienta": "dlg.paleta",
+        "menu": "Ver > Paleta de comandos",
+        "atajo": "Ctrl+Shift+P"
+      },
+      "etiquetas": [
+        "dlg.paleta"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:ambience",
+      "tipo": "plugin",
+      "titulo": "JasWave Ambience",
+      "resumen": "Rack worship con reverb FDN, delay, shimmer, swell, chorus, compresión y 21 presets profesionales. Categoría: audio-effect. 7 parámetros (básicos: Bypass, Reverb Mix, Reverb Decay, Delay Mix, Shimmer Mix, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "ambience",
+        "crear-ambiente-worship",
+        "reverb-espacial",
+        "delay-sincronizado",
+        "shimmer-pad",
+        "swell-guitarra",
+        "audio-effect"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:ambient-atmos",
+      "tipo": "plugin",
+      "titulo": "JasWave Ambient Atmos",
+      "resumen": "Atmósferas ambientales: guitarras dreamy de sostenido infinito, pads con movimiento espectral, texturas (aire, viento, presión, olas, nube armónica) y sound design (riser, downlifter, shimmer). Para cambiar de sonido usa plugin.setParameter con \"preset\" (0-9 Guitarras cinemáticas, 10-19 Pads evolutivos, 20-29 Texturas y atmósferas, 30-39 Sound design; los nombres están en values) y luego ajusta l… Categoría: instrument. 99 parámetros (básicos: Preset 0..39 (0-9 Guitarras, 10-19 Pads, 20-29 Texturas, 30-39 Sound design): fija banco, capas y los demás valores, A (Ataque): de percusivo (2 ms) a swell de hasta 10 s, R (Release): de 0,2 s a colas de 16 s, E/FX: profundidad coherente de eco + espacio + modulación (50 % = valores del preset, 0 = casi seco, 100 = el doble), Volumen principal, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "ambient-atmos",
+        "atmosfera-ambient",
+        "pad-evolutivo",
+        "guitarra-dreamy",
+        "textura-cinematica",
+        "sound-design",
+        "worship-ambiente",
+        "post-rock",
+        "dreampop",
+        "film-score",
+        "lo-fi-ambient",
+        "game-audio",
+        "colchon-armonico",
+        "instrument"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:audio-doctor",
+      "tipo": "plugin",
+      "titulo": "JasWave Audio Doctor",
+      "resumen": "Limpia grabaciones: quita ruido de fondo, zumbido de red, clics, recortes y reverberación, aísla la voz y, con Auto-Fix, decide los ajustes a partir de un diagnóstico del audio. Categoría: audio-effect. 49 parámetros (básicos: Bypass, Ganancia de salida, Modo Live Mic (latencia < 2 ms, calidad espectral reducida), Delta: escuchar solo lo eliminado, Auto-Fix: analiza ~3 s de audio y aplica los ajustes recomendados (se apaga solo), …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "audio-doctor",
+        "limpiar-ruido",
+        "quitar-zumbido",
+        "quitar-clics",
+        "reparar-recorte",
+        "quitar-reverb",
+        "aislar-voz",
+        "reparar-audio-automatico",
+        "escuchar-lo-eliminado",
+        "silenciar-entre-frases",
+        "audio-effect"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:audio-lens",
+      "tipo": "plugin",
+      "titulo": "JasWave AudioLens",
+      "resumen": "Analizador descriptivo musical de audio, acordes, tempo y extractor de beatbox a batería. Categoría: audio-effect. 4 parámetros.",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "audio-lens",
+        "analizar-audio",
+        "beatbox-a-bateria",
+        "extraer-acordes",
+        "detectar-tonalidad",
+        "audio-effect"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:bus-compressor",
+      "tipo": "plugin",
+      "titulo": "JasWave Bus Compressor",
+      "resumen": "Compresor de bus para cohesionar mezclas y controlar dinámica (umbral, ratio, rodilla, ataque, release). Categoría: audio-effect. 11 parámetros (básicos: Bypass, Umbral, Ratio, Ataque, Release, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "bus-compressor",
+        "pegar-mezcla",
+        "controlar-picos",
+        "compresion-paralela",
+        "controlar-dinamica",
+        "audio-effect"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:electric-bass",
+      "tipo": "plugin",
+      "titulo": "JasWave Electric Bass",
+      "resumen": "Bajo eléctrico P/J con modelado físico de cuerda: tono (tilt), ataque de dedo/púa, saturación valvular, subgrave con shelving, compresión paralela, posición de pastilla y de pulso, sustain, palm-mute, legato y pitch bend ±2 st. Incluye el FX Rack comun (ids 100..230, apagado por defecto): paso-altos/bajos, EQ de 6 bandas, compresor, saturacion, chorus, delay con sync, reverb y anchura; todo confi… Categoría: instrument. 78 parámetros (básicos: Tono (tilt EQ + filtro), Ataque del Dedo / Plectro, Saturación a Bulbos (Drive), Realce Sub / Bajos (shelving 110 Hz), Bypass, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "electric-bass",
+        "bajo-electrico",
+        "linea-de-bajo",
+        "groove-solido",
+        "sub-bajo",
+        "bajo-worship",
+        "ghost-notes",
+        "palm-mute",
+        "legato-slide",
+        "instrument"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:electric-guitar",
+      "tipo": "plugin",
+      "titulo": "JasWave Electric Guitar",
+      "resumen": "Guitarra eléctrica de worship con técnicas. MIDI: keyswitches (C4=60) 12 normal/reset, 13 palm mute, 14 nota muerta, 15 armónico natural, 16 artificial, 17 tremolo picking, 18 slide-in, 19/20 slide-out abajo/arriba (solo la siguiente nota), 21 pre-bend, 22 bend-up (siguiente nota), 23 modo legato (solape<=3 st hammer/pull, 4-12 st slide), 24 modo slide (todo solape se desliza), 25/26/27 rasgueo a… Categoría: instrument. 95 parámetros (básicos: Ganancia de Amplificador (limpio a lead), Simulación de Pantalla 4x12 (mezcla DI/cab), Tono (graves ↔ agudos y presencia), Bypass, Volumen Principal, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "electric-guitar",
+        "guitarra-electrica",
+        "guitarra-worship",
+        "arpegio-limpio",
+        "riff-crunch",
+        "solo-guitarra",
+        "melodia-lead",
+        "delay-punteado",
+        "slide-guitarra",
+        "hammer-on",
+        "pull-off",
+        "rasgueo",
+        "palm-mute",
+        "armonicos",
+        "bend",
+        "volume-swell",
+        "tremolo-picking",
+        "nota-muerta",
+        "legato",
+        "instrument"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:electro-drums",
+      "tipo": "plugin",
+      "titulo": "JasWave Electro Drums",
+      "resumen": "Caja de ritmos electrónica sintetizada (sin muestras) para house, techno, pop y electrónica: bombo con barrido de tono, caja, clap, rimshot, hi-hats con choke, toms, platos, cowbell, shaker y pandereta. Cuatro kits (808, 909, Techno duro, Lo-fi), afinación, decay, drive, nivel y panorama por voz. La velocidad cambia volumen y timbre. Mapa de notas GM (sin transponer; las demás notas no suenan): 3… Categoría: instrument. 84 parámetros (básicos: Kit (0 = 808, 1 = 909, 2 = Techno duro, 3 = Lo-fi; 2 y 3 requieren la licencia del instrumento), Bypass, Volumen principal, Afinación del bombo (frecuencia final, 40-70 Hz típico), Decay del bombo, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "electro-drums",
+        "bateria-electronica",
+        "caja-de-ritmos",
+        "house",
+        "techno",
+        "pop-electronico",
+        "kit-808",
+        "kit-909",
+        "bombo-electronico",
+        "hi-hats-electronicos",
+        "clap",
+        "bateria-lofi",
+        "percusion-electronica",
+        "instrument"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:grand-piano",
+      "tipo": "plugin",
+      "titulo": "JasWave Grand Piano",
+      "resumen": "Piano de cola de concierto: martillo dinámico, pedal con resonancia simpática, una corda, brillo, anchura y sala. CONTROL NOTA A NOTA (88 teclas, MIDI 21=A0 … 108=C8): fija primero note_select = nº MIDI y después ajusta note_gain / note_tune / note_tone / note_body / note_decay / note_release / note_hammer / note_pan / note_vel_curve; solo afectan a la tecla elegida (envía note_select ANTES; para… Categoría: instrument. 81 parámetros (básicos: Decaimiento Armónico, Brillo de Cuerdas, Envío a Reverberación de Sala, Bypass, Volumen Principal, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "grand-piano",
+        "piano-concierto",
+        "balada-acustica",
+        "solo-piano",
+        "intimo",
+        "piano-pedal-sustain",
+        "piano-afinacion-por-nota",
+        "piano-timbre-por-nota",
+        "piano-calido-worship",
+        "piano-intimo",
+        "piano-brillante-pop",
+        "instrument"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:param-eq",
+      "tipo": "plugin",
+      "titulo": "JasWave EQ Parametric Pro",
+      "resumen": "Ecualizador paramétrico de hasta 24 bandas dinámicas (activar/desactivar slots) para corrección y color (RBJ, 12–48 dB/oct en los cortes). Categoría: audio-effect. 220 parámetros (básicos: Bypass, Banda 1 Tipo, Banda 1 Frecuencia, Banda 1 Ganancia, Banda 1 Q, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "param-eq",
+        "cortar-graves",
+        "realzar-presencia",
+        "eliminar-resonancia",
+        "suavizar-agudos",
+        "dar-cuerpo",
+        "audio-effect"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:pedal-fix",
+      "tipo": "plugin",
+      "titulo": "JasWave Pedal Fix",
+      "resumen": "Arregla el pedal de sustain de teclados que lo mandan por varios canales y hace que cualquier instrumento sostenga aunque ignore CC64. Categoría: audio-effect. 10 parámetros (básicos: Bypass, Pedal que gobierna el sustain, Canal de salida, Polaridad del pedal, Forzar sustain (retener note-off con el pedal pisado), …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "pedal-fix",
+        "arreglar-sustain",
+        "unificar-pedal",
+        "invertir-pedal",
+        "fijar-canal-midi",
+        "transponer-midi",
+        "audio-effect"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:piano-synth",
+      "tipo": "plugin",
+      "titulo": "JasWave Piano Synth",
+      "resumen": "Piano acústico sintetizado con respuesta dinámica a la velocidad MIDI. Categoría: instrument. 10 parámetros (básicos: Brillo, Duración de la cuerda, Bypass, Volumen, Dureza del martillo, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "piano-synth",
+        "piano-brillante",
+        "piano-suave",
+        "acompanamiento",
+        "balada",
+        "instrument"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:roles-vst",
+      "tipo": "plugin",
+      "titulo": "JasWave Roles",
+      "resumen": "Genera la parte de cada rol de un arreglo con un único instrumento ligero. Categoría: instrument. 14 parámetros (básicos: Rol, Ataque, Release, Corte del filtro, Nivel, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "roles-vst",
+        "bateria-basica",
+        "linea-de-bajo",
+        "pad-ambiente",
+        "cuerdas",
+        "boceto-arreglo",
+        "instrument"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:shimmer-pad",
+      "tipo": "plugin",
+      "titulo": "JasWave Shimmer Pad",
+      "resumen": "Pad ambiental worship con filtro resonante, LFO lento, chorus ensemble y reverb shimmer (cola con octava superior) de RT60 ajustable. Cadena de mezcla: paso altos, tono, compresion suave, saturacion y delay de cinta con wow/flutter. Incluye el FX Rack comun (ids 100..230, apagado por defecto): paso-altos/bajos, EQ de 6 bandas, compresor, saturacion, chorus, delay con sync, reverb y anchura; todo… Categoría: instrument. 86 parámetros (básicos: Corte de filtro (Cutoff), Resonancia del filtro, Bypass, Volumen principal, Cantidad de shimmer (realimentación con pitch shift), …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "shimmer-pad",
+        "pad-ambiente",
+        "shimmer-worship",
+        "atmosfera-espacial",
+        "colchon-armonico",
+        "instrument"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:smart-deesser",
+      "tipo": "plugin",
+      "titulo": "JasWave Smart De-Esser",
+      "resumen": "Controla sibilancias y resonancias agudas de voces sin oscurecer el resto de la señal. Categoría: audio-effect. 10 parámetros (básicos: Bypass, Frecuencia, Umbral, Rango máximo, Modo).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "smart-deesser",
+        "quitar-sibilancia",
+        "suavizar-eses",
+        "domar-agudos-voz",
+        "audio-effect"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:stomplab",
+      "tipo": "plugin",
+      "titulo": "JasWave StompLab",
+      "resumen": "Cadena de pedales para dar carácter a guitarras, bajos y teclados: distorsión, amplificador, cabina y efectos de espacio (chorus, delay, shimmer) controlables por la IA. Categoría: audio-effect. 53 parámetros (básicos: Bypass, Ganancia de salida, Mezcla seco/procesado global, Gate activo, Compresor activo, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "stomplab",
+        "guitarra-limpia",
+        "guitarra-crunch",
+        "guitarra-distorsion",
+        "sonido-ambiental-worship",
+        "efecto-shimmer",
+        "eco-delay",
+        "chorus-estereo",
+        "comprimir-guitarra",
+        "simular-amplificador",
+        "quitar-ruido-de-pedal",
+        "audio-effect"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:strings-section",
+      "tipo": "plugin",
+      "titulo": "JasWave Strings Section",
+      "resumen": "Sección de cuerdas orquestal legato: expresión dinámica en tiempo real (CC11/CC1: nivel y timbre pp→ff), vibrato, legato con portamento y sala de concierto. Incluye el FX Rack comun (ids 100..230, apagado por defecto): paso-altos/bajos, EQ de 6 bandas, compresor, saturacion, chorus, delay con sync, reverb y anchura; todo configurable con plugin.setParameter. Categoría: instrument. 78 parámetros (básicos: Expresión Dinámica (CC11), Profundidad de Vibrato, Tiempo de Ataque del Arco, Tiempo de Relajación, Tamaño de Sala Sinfónica, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "strings-section",
+        "cuerdas-orquestales",
+        "legato-strings",
+        "arreglo-cinematico",
+        "balada-emotiva",
+        "instrument"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:truepeak-limiter",
+      "tipo": "plugin",
+      "titulo": "JasWave True-Peak Limiter Pro",
+      "resumen": "Limitador de mastering que garantiza el techo true-peak y mide la sonoridad integrada. Categoría: audio-effect. 7 parámetros (básicos: Bypass, Techo true-peak, Ganancia de entrada, Release).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "truepeak-limiter",
+        "subir-sonoridad",
+        "proteger-techo",
+        "preparar-streaming",
+        "medir-lufs",
+        "audio-effect"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:utility-tool",
+      "tipo": "plugin",
+      "titulo": "JasWave Utility & Phase Tool",
+      "resumen": "Ajustes de canal: ganancia, fase, imagen estéreo y mono-graves. Categoría: audio-effect. 10 parámetros (básicos: Bypass, Ganancia, Ancho estéreo, Balance, Mono).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "utility-tool",
+        "ajustar-ganancia",
+        "corregir-fase",
+        "ensanchar-estereo",
+        "mono-graves",
+        "quitar-dc",
+        "audio-effect"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:vocal-choir",
+      "tipo": "plugin",
+      "titulo": "JasWave Vocal Choir",
+      "resumen": "Convierte una voz (o una vocal interna) en un coro armónico tocable por MIDI de hasta 4 voces, sin voz de ardilla porque los formantes no se mueven con el tono. Categoría: audio-effect. 19 parámetros (básicos: Bypass, Número de voces (1–4), Spread estéreo, Fuente (Entrada de audio / Vocal interna), Vocal de la fuente interna, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "vocal-choir",
+        "coro-armonico",
+        "armonizar-voz",
+        "coros-worship",
+        "voz-sintetica",
+        "cantar-letra",
+        "audio-effect"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:vocal-tune",
+      "tipo": "plugin",
+      "titulo": "JasWave Vocal Tune",
+      "resumen": "Corrige la afinación de voces monofónicas hacia la escala elegida de forma natural, sin efecto robótico salvo con Retune Speed a 0. Categoría: audio-effect. 13 parámetros (básicos: Bypass, Velocidad de corrección (Retune Speed), Humanización de notas sostenidas, Escala, Tónica, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "vocal-tune",
+        "afinar-voz",
+        "corregir-desafinacion",
+        "efecto-robotico",
+        "cambiar-formantes",
+        "audio-effect"
+      ],
+      "fuente": "generada"
+    },
+    {
+      "id": "plugin:worship-drums",
+      "tipo": "plugin",
+      "titulo": "JasWave Worship Drums",
+      "resumen": "Batería acústica completa con muestras reales: bombo, caja, toms, hi-hat, ride con campana, crashes con campana de crash y percusión auxiliar (palmas 39, pandereta 54, cencerro 56, congas, bongós, shaker, claves, triángulo, woodblock) en notas GM. Selector de kit (drum_kit, id 23): 1 muldjord worship/rock moderno (por defecto), 2 bigrusty rock y metal vintage, 3 drskit jazz-rock, 4 naked rock y p… Categoría: instrument. 83 parámetros (básicos: Afinación del Bombo, Pegada y Bordón de Caja, Amortiguación de Toms, Mezcla de Sala Worship, Bypass, …).",
+      "nivel": "intermedio",
+      "etiquetas": [
+        "worship-drums",
+        "bateria-worship",
+        "balada-acustica",
+        "praise-rock",
+        "bateria-dinamica",
+        "bateria-ghost-notes",
+        "fills-toms",
+        "elegir-kit-bateria",
+        "kit-jazz",
+        "kit-rock",
+        "kit-pop",
+        "kit-escobillas",
+        "kit-indie",
+        "kit-vintage-metal",
+        "bateria-con-percusion",
+        "percusion-latina",
+        "campana-ride",
+        "campana-crash",
+        "nivel-percusion",
+        "instrument"
+      ],
+      "fuente": "generada"
+    }
+  ]
+}

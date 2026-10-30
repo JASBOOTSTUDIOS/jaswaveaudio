@@ -1118,7 +1118,7 @@ function categoryFromType(type: string): ToolCategory {
  */
 function riskFromType(type: string): RiskLevel {
   const cls = agentActionClassOfType(type)
-  if (cls === 'read') return 'read'
+  if (cls === 'read' || cls === 'ui') return 'read'
   if (cls === 'write') return 'write'
   return 'dangerous'
 }

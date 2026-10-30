@@ -136,7 +136,7 @@ export function MidiMapDialog({ open, onClose }: Props) {
         ) : (
           <div className="border-b border-border px-4 py-1.5 text-[11px] text-muted-foreground">
             M-VAVE SMC-MIXER: ponlo en modo CC (User) y aplica el preset. La paleta de comandos
-            (Ctrl+K) ejecuta las mismas acciones; el editor de automatización llega después de este
+            (Ctrl+Shift+P) ejecuta las mismas acciones; el editor de automatización llega después de este
             mapeo.
           </div>
         )}

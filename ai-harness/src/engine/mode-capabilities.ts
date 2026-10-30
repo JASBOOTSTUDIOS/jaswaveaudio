@@ -32,8 +32,8 @@ export type ModeCapabilities = {
   endOfTurn: ModeEndOfTurn
 }
 
-const READ_ONLY_CLASSES: ReadonlySet<AgentActionClass> = new Set<AgentActionClass>(['read'])
-const MUTATING_CLASSES: ReadonlySet<AgentActionClass> = new Set<AgentActionClass>(['read', 'write'])
+const READ_ONLY_CLASSES: ReadonlySet<AgentActionClass> = new Set<AgentActionClass>(['read', 'ui'])
+const MUTATING_CLASSES: ReadonlySet<AgentActionClass> = new Set<AgentActionClass>(['read', 'write', 'ui'])
 
 export const MODE_CAPABILITIES: Readonly<Record<EngineMode, ModeCapabilities>> = Object.freeze({
   ask: {
@@ -111,7 +111,7 @@ export function visibleInMode(
   cls: AgentActionClass | undefined,
 ): boolean {
   if (cls === undefined) return false
-  if (cls === 'read') return true
+  if (cls === 'read' || cls === 'ui') return true
   if (cls === 'write') {
     // Sin args no se puede saber el slug: doc.write/doc.append se ofertan en modos que
     // admiten escribir el plan; el gate rechaza los que no apuntan a plan.md.
@@ -148,7 +148,8 @@ export function gateToolForMode(
   if (cls === undefined) {
     return { allow: false, message: `Bloqueada: ${name} no tiene clase de riesgo conocida (fail closed).` }
   }
-  if (cls === 'read') return { allow: true }
+  // `ui` solo cambia la interfaz (nunca el proyecto): permitida en todos los modos, sin confirmación.
+  if (cls === 'read' || cls === 'ui') return { allow: true }
   if (cls === 'destructive' || cls === 'system') {
     if (!caps.canMutate) return deny(caps.mode, name)
     return { allow: true, needs: 'confirm' }

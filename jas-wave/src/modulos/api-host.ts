@@ -67,6 +67,9 @@ export { H_LEER_HABILIDAD, buscarHabilidad, habilidadDesdeMarkdown, listadoHabil
 export type { HabilidadAgente } from '@jaswave/ai-harness'
 export { buscarHerramientas, compactarResultado, ejecutarAgente, esModoSoloLectura, limpiarTextoUsuario, seleccionarIniciales, sistemaAgente, sistemaSubagente, tituloHerramienta } from '@jaswave/ai-harness'
 export type { ChatAgente, ClaseHerramienta, EventoAgente, HerramientaAgente, LlamadaAgente, MensajeAgente, PerfilSubagente, RegistroLlamada, ResultadoAgente, ResultadoHerramienta, Tarea as TareaAgente } from '@jaswave/ai-harness'
+// Base de ayuda (U-maestra F1/F2): esquema, validación, índice y herramienta consultar_ayuda
+export { H_CONSULTAR_AYUDA, MAX_FICHAS_AYUDA, MAX_CARACTERES_AYUDA, buscarAyuda, crearIndiceAyuda, ejecutarConsultarAyuda, fichaParaModelo, formatearErrores, herramientaConsultarAyuda, validarFicha, validarFichas } from '@jaswave/ai-harness'
+export type { ComoAbrir, ControlAyuda, ErrorFicha, FichaAyuda, FuenteFicha, IndiceAyuda, NivelFicha, OpcionesBusqueda, ResultadoBusqueda, TipoFicha } from '@jaswave/ai-harness'
 export { JasWaveLogo } from '../../components/brand'
 export { Aviso, Boton, Seccion } from '../../components/cuenta/ui'
 export { CambiarClave, FormularioProveedorIA } from '../../components/ia/formulario-proveedor-ia'

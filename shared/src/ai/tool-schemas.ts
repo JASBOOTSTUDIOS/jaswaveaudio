@@ -22,7 +22,7 @@ export type ToolSchemaSource = {
   examplePayload?: Record<string, unknown>
 }
 
-export type ToolRiskClass = 'read' | 'write' | 'destructive' | 'system'
+export type ToolRiskClass = 'read' | 'write' | 'destructive' | 'system' | 'ui'
 export type ToolAgentRole = 'coproductor' | 'director' | 'productor' | 'mezcla' | 'mastering' | 'qa'
 export type ToolAgentMode = 'auto' | 'ask' | 'plan' | 'create' | 'think'
 
@@ -100,7 +100,7 @@ export const ROLE_WRITE_PREFIXES: Readonly<Record<ToolAgentRole, readonly string
 
 export function roleAllowsTool(role: ToolAgentRole, name: string, cls: ToolRiskClass | undefined): boolean {
   if (cls === undefined) return false
-  if (cls === 'read') return true
+  if (cls === 'read' || cls === 'ui') return true
   const prefixes = ROLE_WRITE_PREFIXES[role] ?? []
   if (prefixes === '*') return true
   return prefixes.some((p) => (p.endsWith('.') ? name.startsWith(p) : name === p))
@@ -108,7 +108,7 @@ export function roleAllowsTool(role: ToolAgentRole, name: string, cls: ToolRiskC
 
 export function modeAllowsToolClass(mode: ToolAgentMode, name: string, cls: ToolRiskClass | undefined): boolean {
   if (cls === undefined) return false
-  if (cls === 'read') return true
+  if (cls === 'read' || cls === 'ui') return true
   if (mode === 'ask' || mode === 'think') return false
   if (mode === 'plan') return cls === 'write' && name.startsWith('plan.')
   return true

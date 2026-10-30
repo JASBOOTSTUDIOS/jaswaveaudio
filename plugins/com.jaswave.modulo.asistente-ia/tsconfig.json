@@ -13,6 +13,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "isolatedModules": true,
+    "resolveJsonModule": true,
     "paths": {
       "@jaswave/host-sdk": [
         "../sdk/host-sdk/src/index.ts"

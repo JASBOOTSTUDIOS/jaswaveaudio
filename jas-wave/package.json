@@ -24,6 +24,8 @@
     "electron:build": "npm run build && npm run stage:host && electron-builder --win nsis --publish never",
     "pack:win": "npm run electron:build",
     "plugin-host:ping": "node ../native/plugin-host/scripts/ping.cjs",
+    "ayuda:generar": "tsx scripts/generar-ayuda.mjs",
+    "ayuda:comprobar": "tsx scripts/generar-ayuda.mjs --comprobar",
     "cli": "node cli/daw-cli.mjs",
     "cli:watch": "node cli/daw-cli.mjs watch --play",
     "cli:audit": "node cli/daw-cli.mjs audit",

@@ -13,9 +13,11 @@ import { AgentToolRegistry } from '../agents/registro-herramientas-dinamico'
  * - destructive: borra contenido — SIEMPRE requiere confirmación del usuario.
  * - system: efectos fuera del proyecto (disco, dispositivo de audio, proyecto nuevo, bounce,
  *   importaciones) — SIEMPRE requiere confirmación del usuario.
+ * - ui: solo cambia la INTERFAZ (abrir pantalla, resaltar, guiar); nunca muta el proyecto, no necesita
+ *   confirmación ni undo, no pasa por el ejecutor de comandos y se permite en todos los modos.
  * Un tipo que no esté aquí no tiene clase → se bloquea y se registra.
  */
-export type AgentActionClass = 'read' | 'write' | 'destructive' | 'system'
+export type AgentActionClass = 'read' | 'write' | 'destructive' | 'system' | 'ui'
 
 export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = Object.freeze({
   // ── Lectura ─────────────────────────────────────────────
@@ -101,6 +103,13 @@ export const AGENT_ACTION_CLASSES: Readonly<Record<string, AgentActionClass>> = 
   // ── A10 · Workspace Filesystem & Terminal (confinados a proyecto) ──
   'fs.readFile': 'read',
   'fs.listDirectory': 'read',
+
+  // ── Ayuda / maestra del DAW (U-maestra F6) ──────────────
+  'consultar_ayuda': 'read',
+  // Solo interfaz: nunca tocan el proyecto.
+  'abrir_pantalla': 'ui',
+  'resaltar': 'ui',
+  'guiar_paso_a_paso': 'ui',
 
   // ── Escritura (deshacible) ──────────────────────────────
   'doc.create': 'write',
@@ -372,6 +381,13 @@ export const AGENT_READ_ONLY_ACTIONS: ReadonlySet<string> = new Set(
     .map(([t]) => t),
 )
 
+/** Herramientas de solo interfaz (clase `ui`). */
+export const AGENT_UI_ACTIONS: ReadonlySet<string> = new Set(
+  Object.entries(AGENT_ACTION_CLASSES)
+    .filter(([, c]) => c === 'ui')
+    .map(([t]) => t),
+)
+
 export const AGENT_DOCS_WRITE_ACTIONS: ReadonlySet<string> = new Set(['doc.create', 'doc.write', 'doc.append'])
 
 export type AgentAction = HarnessDawAction
@@ -405,8 +421,13 @@ export function isPreviewOnlyAction(action: AgentAction): boolean {
   return p.aplicar !== true && p.apply !== true
 }
 
+export function isUiAction(action: AgentAction): boolean {
+  return AGENT_UI_ACTIONS.has(action.type)
+}
+
 export function isMutatingAction(action: AgentAction): boolean {
   if (isReadOnlyAction(action)) return false
+  if (isUiAction(action)) return false
   if (isDocsWriteAction(action)) return false
   // Orquestadores: siempre van a la tarjeta Aplicar (aunque payload.aplicar=false en preview).
   // Si no, processActionsForMode los ejecuta como “plan” y el usuario ve pending vacío / sin cambios.
@@ -493,6 +514,7 @@ function isLoopReadOnlyTool(tool: string): boolean {
     tool === 'selection.get' ||
     tool === 'project.getSummary' ||
     tool === 'track.list' ||
+    AGENT_UI_ACTIONS.has(tool) ||
     AGENT_READ_ONLY_ACTIONS.has(tool)
   )
 }
@@ -514,7 +536,7 @@ export function actionRiskLevel(action: AgentAction): 'read' | 'write' | 'danger
   const cls = agentActionClass(action)
   if (cls === undefined) return 'dangerous'
   if (cls === 'destructive' || cls === 'system') return 'dangerous'
-  if (isReadOnlyAction(action) || isDocsWriteAction(action) || isPreviewOnlyAction(action)) {
+  if (isReadOnlyAction(action) || isUiAction(action) || isDocsWriteAction(action) || isPreviewOnlyAction(action)) {
     return 'read'
   }
   return 'write'
@@ -668,7 +690,7 @@ export function partitionActions(
       blocked.push(a)
       continue
     }
-    if (isReadOnlyAction(a) || isPreviewOnlyAction(a)) {
+    if (isReadOnlyAction(a) || isUiAction(a) || isPreviewOnlyAction(a)) {
       readonly.push(a)
       continue
     }

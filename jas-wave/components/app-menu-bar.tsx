@@ -110,7 +110,7 @@ const MENUS: MenuGroup[] = [
       { type: 'separator' },
       { type: 'tools', label: 'Herramientas' },
       { type: 'separator' },
-      { type: 'action', id: 'ventana.paletaComandos', label: 'Paleta de comandos', shortcut: 'Ctrl+K' },
+      { type: 'action', id: 'ventana.paletaComandos', label: 'Paleta de comandos', shortcut: 'Ctrl+Shift+P' },
       { type: 'action', id: 'ventana.atajos', label: 'Atajos de teclado…' },
       { type: 'action', id: 'ventana.midiMap', label: 'Control MIDI / MIDI Learn…' },
       { type: 'action', id: 'ventana.terminal', label: 'Terminal', shortcut: 'Ctrl+`' },
