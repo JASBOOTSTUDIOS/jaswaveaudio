@@ -41,7 +41,8 @@ if(JW_BUILD_INSTRUMENTS)
     com.jaswave.plugin.electric-guitar
     com.jaswave.plugin.shimmer-pad
     com.jaswave.plugin.strings-section
-    com.jaswave.plugin.ambient-atmos)
+    com.jaswave.plugin.ambient-atmos
+    com.jaswave.plugin.electro-drums)
 endif()
 foreach(_d ${JW_PLUGIN_DIRS})
   add_subdirectory(${_d})

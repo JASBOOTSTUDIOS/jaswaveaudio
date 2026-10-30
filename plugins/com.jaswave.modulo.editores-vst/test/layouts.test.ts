@@ -6,8 +6,8 @@ import { describe, it } from 'node:test'
 import { LAYOUTS, layoutPorNombre } from '../src/layouts'
 
 describe('layouts de la réplica web', () => {
-  it('incluye los 19 VST (7 FX/instrumentos previos + 7 instrumentos independientes + Vocal Tune + Pedal Fix + Audio Doctor + StompLab + Vocal Choir) con su nombre de manifiesto', () => {
-    assert.equal(LAYOUTS.length, 19)
+  it('incluye los 20 VST (7 FX/instrumentos previos + 7 instrumentos independientes + Vocal Tune + Pedal Fix + Audio Doctor + StompLab + Vocal Choir + Electro Drums) con su nombre de manifiesto', () => {
+    assert.equal(LAYOUTS.length, 20)
     for (const e of LAYOUTS) assert.equal(layoutPorNombre(e.nombre)?.productId, e.layout.productId)
     assert.equal(layoutPorNombre('JasWave Vocal Tune')?.productId, 'com.jaswave.plugin.vocal-tune')
     assert.equal(layoutPorNombre('JasWave Pedal Fix')?.productId, 'com.jaswave.plugin.pedal-fix')

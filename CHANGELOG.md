@@ -16,6 +16,14 @@ Endurecimiento para producción (rama `hardening/production`).
 
 ### Añadido
 
+- **Maestra del DAW (ayuda guiada):** fichas de ayuda curadas (paneles, diálogos, plugins, conceptos) más fichas
+  generadas desde el código (`npm run ayuda:generar` / `ayuda:comprobar`), herramienta de lectura `consultar_ayuda` y
+  herramientas de interfaz `abrir_pantalla`, `resaltar` y `guiar_paso_a_paso` (nueva clase de riesgo `ui`: solo cambia
+  la interfaz, nunca el proyecto, sin confirmación ni undo; solo aceptan ids lógicos registrados por el host, nunca
+  selectores; máximo 3 aperturas de pantalla por turno). Tarjeta «Te estoy guiando» junto al campo del chat.
+- **Electro Drums (VST3):** caja de ritmos electrónica sintetizada con DSP propio, sin muestras: cuatro kits (808,
+  909, Techno duro, Lo-fi), hi-hats con choke, toms, platos, percusión, respuesta a la velocidad y rack de mezcla común.
+  Con editor, ficha de ayuda y mapa GM de batería.
 - **Zonas MIDI y modo Directo (K3):** splits, capas y transposición del teclado por pista aplicados en el **host
   nativo** (`setLiveMidiTargets` con `targets`: rango, transposición, curva/escala de velocidad, canal de entrada y
   salida, hasta 32 destinos, seguimiento de note-off por nota original, sin reservas en el hilo de audio), modelo

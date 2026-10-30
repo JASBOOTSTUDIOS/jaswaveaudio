@@ -43,6 +43,7 @@ export const PLUGINS = [
   { dir: 'com.jaswave.plugin.shimmer-pad', target: 'JasWaveShimmerPad', corto: 'shimmer-pad' },
   { dir: 'com.jaswave.plugin.strings-section', target: 'JasWaveStringsSection', corto: 'strings-section' },
   { dir: 'com.jaswave.plugin.ambient-atmos', target: 'JasWaveAmbientAtmos', corto: 'ambient-atmos' },
+  { dir: 'com.jaswave.plugin.electro-drums', target: 'JasWaveElectroDrums', corto: 'electro-drums' },
   { dir: 'com.jaswave.plugin.vocal-tune', target: 'JasWaveVocalTune', corto: 'vocal-tune' },
   { dir: 'com.jaswave.plugin.vocal-choir', target: 'JasWaveVocalChoir', corto: 'vocal-choir' },
 ]

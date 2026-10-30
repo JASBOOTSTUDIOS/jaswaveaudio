@@ -14,7 +14,7 @@ import { calcular, resolverPlugin } from './fxrack-integrar.mjs'
 import { validarPaginaMixFx } from './ui-layout.mjs'
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const INSTRUMENTOS = ['grand-piano', 'worship-drums', 'electric-bass', 'electric-guitar', 'shimmer-pad', 'strings-section', 'ambient-atmos']
+const INSTRUMENTOS = ['grand-piano', 'worship-drums', 'electric-bass', 'electric-guitar', 'shimmer-pad', 'strings-section', 'ambient-atmos', 'electro-drums']
 const cerca = (a, b) => Math.abs(a - b) < 1e-9 * Math.max(1, Math.abs(b))
 const escalaManifiesto = (e) => (e.escala === 'stepped' ? 'enum' : e.escala)
 
