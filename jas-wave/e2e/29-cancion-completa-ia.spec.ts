@@ -15,6 +15,7 @@ import { setupJasWave } from './fixtures/harness'
 import { newProject } from './fixtures/project'
 import { crearPasos } from './fixtures/pasos'
 import type { BridgeClient } from './fixtures/app'
+import { generoDesdeEntorno } from './fixtures/generos-cancion'
 
 const EMAIL = process.env.JASWAVE_E2E_EMAIL ?? ''
 const PASSWORD = process.env.JASWAVE_E2E_PASSWORD ?? ''
@@ -23,18 +24,8 @@ test.skip(!EMAIL || !PASSWORD, 'IA real: define JASWAVE_E2E_EMAIL y JASWAVE_E2E_
 const app = setupJasWave({ label: 'cancion-ia', bridge: true })
 const paso = crearPasos(() => app().page, '29-cancion-ia')
 
-const PEDIDO = [
-  '/banda Canción de adoración completa «Tu Gracia Me Alcanzó», Re mayor, 74 BPM, 4/4, al estilo del grupo Barak:',
-  'worship moderno dominicano, pads amplios y guitarras eléctricas con delay y ambiente, piano con voicings abiertos (novenas, sus2/sus4),',
-  'batería contundente y bajo profundo en los coros, coros grandes y coreables con un pasaje de cánticos «aaa / oh-oh» en el puente,',
-  'frases melódicas cantables, nada cuadrado ni robótico.',
-  'Forma: Intro 4 compases, Verso 1 8, Pre-coro 4, Coro 8, Verso 2 8, Pre-coro 4, Coro 8, Puente 8 con crescendo, Coro final 8 y Outro 4.',
-  'Banda completa, una pista por instrumento con su VST3 JasWave cargado: batería (Worship Drums) con fills al cambiar de sección,',
-  'bajo eléctrico, piano de cola, guitarra eléctrica arpegiada, cuerdas (Strings Section), pad ambiental (Shimmer Pad) y un lead de sinte en el puente.',
-  'Dinámica real: versos suaves, coros llenos, el puente crece y el outro se apaga (velocidades distintas por sección).',
-  'Mezcla: bus de reverb con envíos desde piano, guitarra, cuerdas y pad; EQ y compresión por pista; guitarra y cuerdas abiertas en estéreo; volúmenes equilibrados.',
-  'Máster con limitador a −14 LUFS y picos por debajo de −1 dBTP.',
-].join(' ')
+const GENERO = generoDesdeEntorno()
+const PEDIDO = GENERO.pedido
 
 function chat() {
   return app().page.locator('aside[data-coproducer-chat]')
@@ -55,7 +46,7 @@ test('canción completa con la IA real: arreglo, mezcla, máster y exportación'
   const salida = process.env.JASWAVE_E2E_SALIDA || path.join(workDir, 'cancion-ia')
   fs.mkdirSync(salida, { recursive: true })
 
-  await newProject(bridge!, 'Tu Gracia Me Alcanzó', page)
+  await newProject(bridge!, GENERO.titulo, page)
   await page.getByTitle('Ventanas y paneles').click()
   await page.getByRole('button', { name: /^Cuenta/ }).first().click()
   const form = page.getByRole('form', { name: 'Iniciar sesión en JasWave' })
@@ -129,7 +120,7 @@ test('canción completa con la IA real: arreglo, mezcla, máster y exportación'
 
   // Calidad musical medida nota por nota (plan S): nada vacío, cobertura por compás, sin copias exactas ni todo en la rejilla,
   // sin choques entre pistas. El mismo análisis sirve para cualquier proyecto: scripts/analizar-proyecto-musical.mjs.
-  const musical = await analisisMusical(bridge!, pistas, st.bpm ?? 74, salida)
+  const musical = await analisisMusical(bridge!, pistas, st.bpm ?? GENERO.bpm, salida)
   console.log(musical.tabla)
   const vacias = pistas.filter((t) => t.tipo !== 'bus' && t.clips.reduce((n, c) => n + (c.notas ?? 0), 0) === 0).map((t) => t.nombre)
   expect(vacias, `pistas de instrumento vacías: ${vacias.join(', ')}`).toEqual([])
@@ -141,20 +132,20 @@ test('canción completa con la IA real: arreglo, mezcla, máster y exportación'
 
   // Exportación: mezcla con stems por pista, MIDI y proyecto empaquetado.
   await page.waitForTimeout(10_000)
-  const wav = path.join(salida, 'Tu Gracia Me Alcanzo.wav')
+  const wav = path.join(salida, `${GENERO.archivo}.wav`)
   const render = await bridge!.actions(
     [{ type: 'render.start', payload: { format: 'wav', outputPath: wav, normalize: false, stems: true, stemTrackIds: conMusica.map((t) => t.id) } }],
     900_000,
   )
   const r = render.results?.[0]
   console.log(`[ia] render: ${r?.success ? 'ok' : 'falló'} · ${String(r?.message ?? JSON.stringify(render)).slice(0, 600)}`)
-  const midi = await bridge!.actions([{ type: 'export.midi', payload: { ruta: path.join(salida, 'Tu Gracia Me Alcanzo.mid') } }], 120_000)
+  const midi = await bridge!.actions([{ type: 'export.midi', payload: { ruta: path.join(salida, `${GENERO.archivo}.mid`) } }], 120_000)
   console.log(`[ia] midi: ${String(midi.results?.[0]?.message ?? JSON.stringify(midi)).slice(0, 300)}`)
   // El .mid solo lleva las notas dentro de su clip (las que suenan): si faltan muchas, la IA las dejó fuera.
   const notasProyecto = pistas.reduce((n, t) => n + t.clips.reduce((m, c) => m + (c.notas ?? 0), 0), 0)
   const notasMidi = Number(/(\d+) notas/.exec(String(midi.results?.[0]?.message ?? ''))?.[1] ?? 0)
   console.log(`[ia] notas: ${notasMidi} exportadas de ${notasProyecto} en el proyecto`)
-  const zip = await bridge!.actions([{ type: 'export.projectBundle', payload: { ruta: path.join(salida, 'Tu Gracia Me Alcanzo.jaswave.zip') } }], 300_000)
+  const zip = await bridge!.actions([{ type: 'export.projectBundle', payload: { ruta: path.join(salida, `${GENERO.archivo}.jaswave.zip`) } }], 300_000)
   console.log(`[ia] proyecto: ${String(zip.results?.[0]?.message ?? JSON.stringify(zip)).slice(0, 300)}`)
   await paso('exportada')
   for (const f of fs.readdirSync(salida, { recursive: true }) as string[]) {
@@ -186,7 +177,7 @@ test('canción completa con la IA real: arreglo, mezcla, máster y exportación'
 })
 
 /** Forma pedida en PEDIDO (nombre, compases): el e2e la usa como marcadores de sección del análisis. */
-const FORMA: Array<[string, number]> = [['Intro', 4], ['Verso 1', 8], ['Pre-coro 1', 4], ['Coro 1', 8], ['Verso 2', 8], ['Pre-coro 2', 4], ['Coro 2', 8], ['Puente', 8], ['Coro final', 8], ['Outro', 4]]
+const FORMA = GENERO.forma
 
 type PistaResumen = { id: string; nombre: string; tipo: string; clips: Array<{ id?: string; nombre?: string; inicio: number; duracion: number; notas?: number }> }
 
@@ -216,10 +207,12 @@ async function analisisMusical(bridge: BridgeClient, pistas: PistaResumen[], bpm
     tracks.push({ nombre: t.nombre, tipo: t.tipo, clips })
   }
   const json = path.join(salida, 'proyecto-musical.json')
-  fs.writeFileSync(json, JSON.stringify({ nombre: 'e2e 29', bpm: { valor: bpm }, timeSignature: { numerador: 4 }, marcadores, tracks }))
+  fs.writeFileSync(json, JSON.stringify({ nombre: `e2e 29 · ${GENERO.id}`, bpm: { valor: bpm }, timeSignature: { numerador: 4 }, marcadores, tracks }))
   const script = path.join(__dirname, '..', 'scripts', 'analizar-proyecto-musical.mjs')
   const tabla = spawnSync(process.execPath, [script, json], { encoding: 'utf8' }).stdout
-  const salidaJson = spawnSync(process.execPath, [script, json, '--json'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  const u = GENERO.umbrales
+  const umbrales = `--umbrales=${JSON.stringify({ copias: u.copiasMax / 100, rejillaBateria: u.rejillaBateria / 100, rejillaResto: u.rejillaResto / 100, choques: u.choquesMax / 100 })}`
+  const salidaJson = spawnSync(process.execPath, [script, json, '--json', umbrales], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
   const fallos = (JSON.parse(salidaJson.stdout || '{"fallos":["el análisis no produjo salida"]}') as { fallos: string[] }).fallos
   return { tabla: tabla.split('\n').filter((l) => l.startsWith('[musica]')).join('\n'), fallos }
 }

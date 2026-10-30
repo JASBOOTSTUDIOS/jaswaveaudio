@@ -11,6 +11,7 @@ import { crearServicioJasWave, sembrarJasWaveIA } from './ia/jaswave/servicio.js
 import { crearGestorModelosGratis } from './ia/jaswave/modelos-gratis.js';
 import type { RegistroIntento } from './ia/jaswave/enrutador.js';
 import { aiChatDirecto } from './ia/gateway/ai-gateway.js';
+import { cintaDesdeEntorno } from './ia/gateway/cinta.js';
 import { claveMaestraDesdeBase64, type ClaveMaestra } from './seguridad/cifrado.js';
 
 const config = cargarConfiguracion();
@@ -56,7 +57,7 @@ const db = crearDb(config.urlBaseDatos);
 let alCambiarConexiones = () => {};
 const ia = crearServicioIA({ db, claveMaestra: claveMaestraIA, alCambiarConexiones: () => alCambiarConexiones() });
 let alIntentos: (r: RegistroIntento[]) => void = () => {};
-const jaswave = crearServicioJasWave({ db, claveMaestra: claveMaestraIA, permisos: (id) => ia.permisos(id), chat: aiChatDirecto, zonaHoraria: config.zonaHorariaIA, alIntentos: (r) => alIntentos(r) });
+const jaswave = crearServicioJasWave({ db, claveMaestra: claveMaestraIA, permisos: (id) => ia.permisos(id), chat: cintaDesdeEntorno(aiChatDirecto), zonaHoraria: config.zonaHorariaIA, alIntentos: (r) => alIntentos(r) });
 alCambiarConexiones = () => jaswave.admin.invalidar();
 // Gestor de modelos gratuitos de OpenRouter: descubre, prueba y reordena las cadenas solo (IA_GESTOR_MODELOS=0 lo apaga).
 const gestorModelos = crearGestorModelosGratis({

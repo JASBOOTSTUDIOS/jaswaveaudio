@@ -205,11 +205,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(2)
   }
   const a = analizarProyecto(JSON.parse(fs.readFileSync(ruta, 'utf8')))
-  if (process.argv.includes('--json')) console.log(JSON.stringify({ analisis: a, fallos: evaluarCalidad(a) }, null, 2))
+  // --umbrales='{"copias":0.7,...}' sustituye los de worship (otros géneros repiten y cuantizan más).
+  const arg = process.argv.find((x) => x.startsWith('--umbrales='))
+  const umbrales = arg ? { ...UMBRALES, ...JSON.parse(arg.slice('--umbrales='.length)) } : UMBRALES
+  if (process.argv.includes('--json')) console.log(JSON.stringify({ analisis: a, fallos: evaluarCalidad(a, umbrales) }, null, 2))
   else {
     console.log(`Proyecto «${a.nombre}» · secciones: ${a.secciones.join(', ')}`)
     console.log(tablaResumen(a))
-    const f = evaluarCalidad(a)
+    const f = evaluarCalidad(a, umbrales)
     console.log(f.length ? `\nFALLOS (${f.length}):\n- ${f.join('\n- ')}` : '\nSin fallos.')
     process.exitCode = f.length ? 1 : 0
   }
