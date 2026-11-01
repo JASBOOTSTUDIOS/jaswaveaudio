@@ -16,6 +16,7 @@ import * as path from 'node:path'
 import { writeFileAtomic } from './atomic-write'
 
 const FORMATO_LICENCIA = /^jwl1\.[A-Za-z0-9_-]{10,20000}\.[A-Za-z0-9_-]{40,200}$/
+const TIEMPO_MAXIMO_MS = 90_000
 const FORMATO_TOKEN_DISPOSITIVO = /^[A-Za-z0-9_-]{20,200}$/
 
 export function carpetaLicencias(appData = process.env.APPDATA ?? ''): string {
@@ -42,7 +43,12 @@ export function dpapi(operacion: 'Protect' | 'Unprotect', datos: Buffer): Promis
     })
     let salida = ''
     let error = ''
-    const limite = setTimeout(() => ps.kill(), 20_000)
+    // El primer arranque de PowerShell + Add-Type puede pasar de 20 s en equipos cargados (runner de CI).
+    let agotado = false
+    const limite = setTimeout(() => {
+      agotado = true
+      ps.kill()
+    }, TIEMPO_MAXIMO_MS)
     ps.stdout.on('data', (d) => (salida += d.toString()))
     ps.stderr.on('data', (d) => (error += d.toString()))
     ps.on('error', (e) => {
@@ -52,7 +58,8 @@ export function dpapi(operacion: 'Protect' | 'Unprotect', datos: Buffer): Promis
     ps.on('close', (codigo) => {
       clearTimeout(limite)
       if (codigo !== 0 || !/^[A-Za-z0-9+/=]+$/.test(salida.trim())) {
-        reject(new Error(`DPAPI ${operacion} falló (código ${codigo}): ${error.trim().slice(0, 300)}`))
+        const motivo = agotado ? `se agotó el tiempo (${TIEMPO_MAXIMO_MS / 1000} s)` : `código ${codigo}`
+        reject(new Error(`DPAPI ${operacion} falló (${motivo}): ${error.trim().slice(0, 300)}`))
         return
       }
       resolve(Buffer.from(salida.trim(), 'base64'))
