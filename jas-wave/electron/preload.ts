@@ -1,10 +1,125 @@
-const { contextBridge, ipcRenderer } = require('electron')
-import type { IpcMainInvokeEvent } from 'electron'
+// Preload en sandbox: solo 'electron' (contextBridge/ipcRenderer/webUtils) y process.env.
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 contextBridge.exposeInMainWorld('electron', {
+  /** Biblioteca de grooves MIDI por estilos (M). Todas las rutas son relativas a la carpeta de grooves. */
+  grooves: {
+    carpeta: () => ipcRenderer.invoke('grooves-carpeta'),
+    listar: () => ipcRenderer.invoke('grooves-listar'),
+    leer: (ruta: string) => ipcRenderer.invoke('grooves-leer', ruta),
+    importarBytes: (nombre: string, bytes: Uint8Array, estilo: string, subestilo?: string) =>
+      ipcRenderer.invoke('grooves-importar-bytes', nombre, bytes, estilo, subestilo),
+    importarDialogo: (estilo: string, subestilo?: string) => ipcRenderer.invoke('grooves-importar-dialogo', estilo, subestilo),
+    importarArchivos: (rutas: string[], estilo: string, subestilo?: string) => ipcRenderer.invoke('grooves-importar-rutas', rutas, estilo, subestilo),
+    crearEstilo: (estilo: string, subestilo?: string) => ipcRenderer.invoke('grooves-crear-estilo', estilo, subestilo),
+    renombrarEstilo: (actual: string, nuevo: string) => ipcRenderer.invoke('grooves-renombrar-estilo', actual, nuevo),
+    borrar: (ruta: string) => ipcRenderer.invoke('grooves-borrar', ruta),
+    borrarEstilo: (ruta: string) => ipcRenderer.invoke('grooves-borrar-estilo', ruta),
+    favorito: (id: string, valor?: boolean) => ipcRenderer.invoke('grooves-favorito', id, valor),
+    abrirCarpeta: () => ipcRenderer.invoke('grooves-abrir-carpeta'),
+    /** Sincronización con el catálogo del servidor. */
+    syncAhora: (apiBase: string, token: string) => ipcRenderer.invoke('grooves-sync-ahora', apiBase, token),
+    syncEstado: () => ipcRenderer.invoke('grooves-sync-estado'),
+    syncAjustes: (ajustes: { auto?: boolean; compartir?: boolean }) => ipcRenderer.invoke('grooves-sync-ajustes', ajustes),
+    proponer: (apiBase: string, token: string, ruta: string, meta: unknown, consentimiento: { aceptado: boolean; version: string }) =>
+      ipcRenderer.invoke('grooves-proponer', apiBase, token, ruta, meta, consentimiento),
+    onSync: (callback: (evento: { tipo: 'inicio' | 'progreso' | 'fin'; [k: string]: unknown }) => void) => {
+      const handler = (_e: unknown, ev: never) => callback(ev)
+      const canales = ['grooves-sync-inicio', 'grooves-sync-progreso', 'grooves-sync-fin']
+      for (const c of canales) ipcRenderer.on(c, handler)
+      return () => canales.forEach((c) => ipcRenderer.removeListener(c, handler))
+    },
+    onCambio: (callback: () => void) => {
+      const handler = () => callback()
+      ipcRenderer.on('grooves-cambio', handler)
+      return () => ipcRenderer.removeListener('grooves-cambio', handler)
+    },
+  },
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  logError: (scope: string, message: string, stack?: string) => ipcRenderer.send('log-error', scope, message, stack),
+  openLogsFolder: () => ipcRenderer.invoke('open-logs-folder'),
+  /** Carpeta de configuración del asistente (reglas, habilidades, prompts y planes). */
+  /** Producciones de la banda (plan Q): diario, puntos de control y avisos del proceso principal. */
+  producciones: {
+    carpeta: () => ipcRenderer.invoke('produccion-carpeta'),
+    iniciar: (proyectoId: string, runId: string) => ipcRenderer.invoke('produccion-iniciar', proyectoId, runId),
+    anexar: (proyectoId: string, runId: string, texto: string) => ipcRenderer.invoke('produccion-anexar', proyectoId, runId, texto),
+    listar: (proyectoId: string) => ipcRenderer.invoke('produccion-listar', proyectoId),
+    leer: (proyectoId: string, runId: string) => ipcRenderer.invoke('produccion-leer', proyectoId, runId),
+    puntoGuardar: (proyectoId: string, json: string, que: string) => ipcRenderer.invoke('produccion-punto-guardar', proyectoId, json, que),
+    puntoCargar: (proyectoId: string) => ipcRenderer.invoke('produccion-punto-cargar', proyectoId),
+    puntoInfo: (proyectoId: string) => ipcRenderer.invoke('produccion-punto-info', proyectoId),
+    candadoTomar: (proyectoId: string, runId: string) => ipcRenderer.invoke('produccion-candado-tomar', proyectoId, runId),
+    candadoSoltar: (proyectoId: string, runId: string, testigo: string) => ipcRenderer.invoke('produccion-candado-soltar', proyectoId, runId, testigo),
+    onAviso: (callback: (aviso: { tipo: 'emergencia' | 'memoria'; [k: string]: unknown }) => void) => {
+      const handler = (_e: unknown, a: never) => callback(a)
+      ipcRenderer.on('produccion-aviso', handler)
+      return () => ipcRenderer.removeListener('produccion-aviso', handler)
+    },
+  },
+  asistenteCarpeta: {
+    listar: () => ipcRenderer.invoke('asistente-carpeta-listar'),
+    escribir: (ruta: string, contenido: string) => ipcRenderer.invoke('asistente-carpeta-escribir', ruta, contenido),
+    eliminar: (ruta: string) => ipcRenderer.invoke('asistente-carpeta-eliminar', ruta),
+    restaurar: (ruta: string) => ipcRenderer.invoke('asistente-carpeta-restaurar', ruta),
+    abrir: () => ipcRenderer.invoke('asistente-carpeta-abrir'),
+  },
   localAppData: () => ipcRenderer.invoke('env-local-appdata'),
   userDataPath: () => ipcRenderer.invoke('user-data-path'),
+  /** { resourcesPath, localAppData, bundledVst3Dir } — bundled solo en la app empaquetada. */
+  knownPaths: () => ipcRenderer.invoke('known-paths'),
+  /** Paquetes de plugins JasWave encontrados (manifiesto sin validar + integridad). */
+  pluginsListar: () => ipcRenderer.invoke('plugins-listar'),
+  /** H1: enlace jaswave://abrir?token=… recibido desde la web. */
+  onHandover: (callback: (token: string) => void) => {
+    const handler = (_event: unknown, token: string) => callback(token)
+    ipcRenderer.on('handover-recibido', handler)
+    return () => ipcRenderer.removeListener('handover-recibido', handler)
+  },
+  handoverTakePending: () => ipcRenderer.invoke('handover-take-pending'),
+  /** Catálogo firmado de plugins descargables (verificado en main). */
+  pluginsCatalogo: (apiBase: string) => ipcRenderer.invoke('plugins-catalogo', apiBase),
+  pluginsInstalar: (apiBase: string, id: string) => ipcRenderer.invoke('plugins-instalar', apiBase, id),
+  /** X1: extensiones .jwx desde archivo (como los .vsix de VS Code). */
+  pluginsElegirJwx: () => ipcRenderer.invoke('plugins-elegir-jwx'),
+  pluginsInspeccionarArchivo: (ruta: string) => ipcRenderer.invoke('plugins-inspeccionar-archivo', ruta),
+  pluginsInstalarArchivo: (ruta: string, opciones?: { aceptarSinFirma?: boolean }) => ipcRenderer.invoke('plugins-instalar-archivo', ruta, opciones ?? {}),
+  pluginsDesinstalar: (id: string) => ipcRenderer.invoke('plugins-desinstalar', id),
+  /** Ruta en disco de un archivo soltado en la ventana (arrastrar un .jwx). */
+  rutaDeArchivo: (archivo: File) => webUtils.getPathForFile(archivo),
+  /** .jwx abierto con doble clic: llega por evento o queda pendiente hasta que el DAW lo pida. */
+  onExtensionSolicitada: (callback: (ruta: string) => void) => {
+    const handler = (_event: unknown, ruta: string) => callback(ruta)
+    ipcRenderer.on('extension-abrir-solicitada', handler)
+    return () => ipcRenderer.removeListener('extension-abrir-solicitada', handler)
+  },
+  extensionPendiente: () => ipcRenderer.invoke('extension-pendiente'),
+  modoDesarrollador: () => ipcRenderer.invoke('ajustes-modo-desarrollador'),
+  fijarModoDesarrollador: (activo: boolean) => ipcRenderer.invoke('ajustes-fijar-modo-desarrollador', activo),
+  onPluginsProgreso: (callback: (p: { id: string; fase: string; recibidos?: number; total?: number; mensaje?: string }) => void) => {
+    const handler = (_event: unknown, p: { id: string; fase: string; recibidos?: number; total?: number; mensaje?: string }) => callback(p)
+    ipcRenderer.on('plugins-progreso', handler)
+    return () => ipcRenderer.removeListener('plugins-progreso', handler)
+  },
+  /** El watchdog apartó un plugin (bypass + cuarentena). */
+  onPluginCuarentena: (callback: (aviso: { ruta: string; motivo: string; mensaje: string }) => void) => {
+    const handler = (_event: unknown, aviso: { ruta: string; motivo: string; mensaje: string }) => callback(aviso)
+    ipcRenderer.on('plugin-cuarentena', handler)
+    return () => ipcRenderer.removeListener('plugin-cuarentena', handler)
+  },
+  /** Licencia local compartida con los VST (license.jwl + device.bin con DPAPI). */
+  licenciaGuardar: (datos: { token: string; tokenDispositivo: string }) => ipcRenderer.invoke('licencia-guardar', datos),
+  licenciaLeer: () => ipcRenderer.invoke('licencia-leer'),
+  licenciaTokenDispositivo: () => ipcRenderer.invoke('licencia-token-dispositivo'),
+  equipoNombre: () => ipcRenderer.invoke('equipo-nombre'),
+  // Auto-update (electron/updater.ts)
+  onUpdateStatus: (callback: (status: { state: string; version?: string; message?: string }) => void) => {
+    const handler = (_event: unknown, status: { state: string; version?: string; message?: string }) => callback(status)
+    ipcRenderer.on('update-status', handler)
+    return () => ipcRenderer.removeListener('update-status', handler)
+  },
+  updateInstallNow: () => ipcRenderer.invoke('update-install-now'),
+  updateCheck: () => ipcRenderer.invoke('update-check'),
   /** Sync — preload tiene process.env; el renderer a menudo no. */
   localAppDataSync: process.env.LOCALAPPDATA || '',
   clipboardWriteText: (text: string) => ipcRenderer.invoke('clipboard-write-text', text),
@@ -12,37 +127,146 @@ contextBridge.exposeInMainWorld('electron', {
   windowMaximize: () => ipcRenderer.invoke('window-maximize'),
   windowClose: () => ipcRenderer.invoke('window-close'),
   windowIsMaximized: () => ipcRenderer.invoke('window-is-maximized'),
-  onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => {
-    ipcRenderer.on('window-maximized-changed', (_event: IpcMainInvokeEvent, isMaximized: boolean) => {
-      callback(isMaximized)
-    })
+  /** Colores de los botones nativos de ventana (solo ventanas sin marco con overlay). */
+  windowSetTitleBarOverlay: (opciones: { color?: string; symbolColor?: string; height?: number }) =>
+    ipcRenderer.invoke('window-set-titlebar-overlay', opciones),
+  /**
+   * main pide permiso para cerrar la ventana (cambios sin guardar). Al recibirlo se acusa
+   * recibo de inmediato; si nadie escucha, main cierra solo tras su timeout.
+   */
+  onAppCloseRequested: (callback: () => void) => {
+    const handler = () => {
+      ipcRenderer.send('app-close-ack')
+      callback()
+    }
+    ipcRenderer.on('app-close-requested', handler)
+    return () => ipcRenderer.removeListener('app-close-requested', handler)
   },
+  confirmAppClose: () => ipcRenderer.invoke('app-close-confirmed'),
+  cancelAppClose: () => ipcRenderer.invoke('app-close-canceled'),
+  onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => {
+    const handler = (_event: unknown, isMaximized: boolean) => callback(isMaximized)
+    ipcRenderer.on('window-maximized-changed', handler)
+    return () => ipcRenderer.removeListener('window-maximized-changed', handler)
+  },
+  /**
+   * main pide abrir un proyecto (segunda instancia o asociación de archivos).
+   * El renderer decide con la guarda de cambios sin guardar (U1).
+   */
+  onOpenProjectRequested: (callback: (ruta: string) => void) => {
+    const handler = (_event: unknown, ruta: string) => callback(ruta)
+    ipcRenderer.on('open-project-requested', handler)
+    return () => ipcRenderer.removeListener('open-project-requested', handler)
+  },
+  /** Proyecto que llegó antes de que el renderer estuviera listo (U7). */
+  projectTakePending: () => ipcRenderer.invoke('project-take-pending'),
   fileSave: (ruta: string, contenido: string) => ipcRenderer.invoke('file-save', ruta, contenido),
   fileSaveBinary: (ruta: string, data: Uint8Array) => ipcRenderer.invoke('file-save-binary', ruta, data),
-  ffmpegConvert: (input: string, output: string, args?: string[]) =>
-    ipcRenderer.invoke('ffmpeg-convert', input, output, args ?? []),
+  /** G7: dictado por voz con el reconocedor local de Windows (la Web Speech API no funciona en Electron). */
+  dictado: {
+    disponible: () => ipcRenderer.invoke('dictado-disponible'),
+    iniciar: (cultura: string) => ipcRenderer.invoke('dictado-iniciar', cultura),
+    detener: () => ipcRenderer.invoke('dictado-detener'),
+    onEvento: (callback: (evento: { tipo: string; texto?: string; codigo?: string; mensaje?: string }) => void) => {
+      const handler = (_event: unknown, evento: { tipo: string; texto?: string; codigo?: string; mensaje?: string }) => callback(evento)
+      ipcRenderer.on('dictado-evento', handler)
+      return () => ipcRenderer.removeListener('dictado-evento', handler)
+    },
+  },
   ffmpegAvailable: () => ipcRenderer.invoke('ffmpeg-available'),
+  ffmpegInstall: (apiBase: string) => ipcRenderer.invoke('ffmpeg-install', apiBase),
+  onFfmpegProgreso: (callback: (p: { recibidos: number; total: number }) => void) => {
+    const listener = (_: unknown, p: { recibidos: number; total: number }) => callback(p)
+    ipcRenderer.on('ffmpeg-progreso', listener)
+    return () => ipcRenderer.removeListener('ffmpeg-progreso', listener)
+  },
+  audioEncode: (
+    input: string,
+    output: string,
+    formato: string,
+    opciones?: { bitrate?: number; bitDepth?: number; sampleRate?: number; borrarEntrada?: boolean },
+  ) => ipcRenderer.invoke('audio-encode', input, output, formato, opciones ?? {}),
+  exportEnsureDir: (dir: string) => ipcRenderer.invoke('export-ensure-dir', dir),
+  projectExportBundle: (
+    salida: string,
+    json: string,
+    nombreProyecto: string,
+    archivos: Array<{ origen: string; destino: string }>,
+  ) => ipcRenderer.invoke('project-export-bundle', salida, json, nombreProyecto, archivos),
+  projectImportBundle: () => ipcRenderer.invoke('project-import-bundle'),
   fileRead: (ruta: string) => ipcRenderer.invoke('file-read', ruta),
   fileReadBinary: (ruta: string) => ipcRenderer.invoke('file-read-binary', ruta),
   fileExists: (ruta: string) => ipcRenderer.invoke('file-exists', ruta),
   fileListDir: (dir: string) => ipcRenderer.invoke('file-list-dir', dir),
   fileSize: (ruta: string) => ipcRenderer.invoke('file-size', ruta),
+  /** Firma del archivo (mtime + tamaño) para detectar cambios externos (U7). */
+  fileStat: (ruta: string) => ipcRenderer.invoke('file-stat', ruta),
   recordingsDir: (projectPath?: string) => ipcRenderer.invoke('recordings-dir', projectPath),
+  analisisIaDir: () => ipcRenderer.invoke('analisis-ia-dir'),
+  analisisIaLimpiar: () => ipcRenderer.invoke('analisis-ia-limpiar'),
+  /** Ruta real de un archivo arrastrado desde el explorador. */
+  pathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ''
+    }
+  },
+  /** Copia un archivo de audio al media del proyecto; devuelve ruta absoluta y nombre final. */
+  mediaCopy: (opts: { src: string; destDir: string; nombre?: string; mover?: boolean }) =>
+    ipcRenderer.invoke('media-copy', opts),
+  /** Busca archivos por nombre en una carpeta (reenlace de media faltante). */
+  mediaBuscar: (opts: { carpeta: string; nombres: string[] }) => ipcRenderer.invoke('media-buscar', opts),
   dialogSave: (defaultPath?: string) => ipcRenderer.invoke('dialog-save', defaultPath),
-  dialogOpen: () => ipcRenderer.invoke('dialog-open'),
   dialogOpenDirectory: () => ipcRenderer.invoke('dialog-open-directory'),
-  projectSave: (projectId: string, data: unknown) => ipcRenderer.invoke('project-save', projectId, data),
-  projectLoad: (projectId: string) => ipcRenderer.invoke('project-load', projectId),
   projectOpenDialog: () => ipcRenderer.invoke('project-open-dialog'),
-  projectSaveAs: (projectId: string, data: unknown) => ipcRenderer.invoke('project-save-as', projectId, data),
-  projectList: () => ipcRenderer.invoke('project-list'),
   aiChat: (payload: unknown, model?: string, baseUrl?: string, temperature?: number) =>
     ipcRenderer.invoke('ai-chat', payload, model, baseUrl, temperature),
   aiHealth: (payload?: unknown) => ipcRenderer.invoke('ai-health', payload),
+  aiChatCancel: (requestId: string) => ipcRenderer.invoke('ai-chat-cancel', requestId),
+  /** true si main arrancó con JASWAVE_AI_MOCK (pruebas): proveedor simulado local. */
+  aiMockActivo: () => ipcRenderer.invoke('ai-mock-activo'),
+  /** Chat con streaming: onEvent recibe {type:'delta',text} / {type:'done'}; resuelve con el resultado. */
+  aiChatStream: (payload: { requestId?: string }, onEvent: (e: { type: string; text?: string; success?: boolean }) => void) => {
+    const requestId = String(payload?.requestId ?? '')
+    const handler = (_event: unknown, e: { requestId?: string; type: string; text?: string; success?: boolean }) => {
+      if (e && e.requestId === requestId) onEvent({ type: e.type, text: e.text, success: e.success })
+    }
+    ipcRenderer.on('ai-chat-stream-event', handler)
+    return ipcRenderer.invoke('ai-chat-stream', payload).finally(() => ipcRenderer.removeListener('ai-chat-stream-event', handler))
+  },
+  agentRunSave: (runId: string, json: string) => ipcRenderer.invoke('agent-run-save', runId, json),
+  agentRunLoad: (runId: string) => ipcRenderer.invoke('agent-run-load', runId),
+  agentRunList: (limit?: number) => ipcRenderer.invoke('agent-run-list', limit),
+  agentRunDelete: (runId: string) => ipcRenderer.invoke('agent-run-delete', runId),
+  /** Guarda (o borra con '') la API key de un perfil; queda cifrada en main. */
+  aiCredSet: (providerId: string, apiKey: string) => ipcRenderer.invoke('ai-cred-set', providerId, apiKey),
+  aiCredStatus: (providerIds: string[]) => ipcRenderer.invoke('ai-cred-status', providerIds),
+  agentBridgeGetEnabled: () => ipcRenderer.invoke('agent-bridge-get-enabled'),
+  agentBridgeSetEnabled: (enabled: boolean) => ipcRenderer.invoke('agent-bridge-set-enabled', enabled),
   pluginLookup: (pluginName: string) => ipcRenderer.invoke('plugin-lookup', pluginName),
   webSearch: (query: string) => ipcRenderer.invoke('web-search', query),
+  /** K6: internet para la IA (búsqueda, lectura legible, YouTube y referencias). Todo corre en main. */
+  webTools: {
+    buscar: (q: string, max?: number) => ipcRenderer.invoke('web-tools-buscar', q, max),
+    leer: (url: string, maxChars?: number) => ipcRenderer.invoke('web-tools-leer', url, maxChars),
+    youtubeBuscar: (q: string, max?: number) => ipcRenderer.invoke('web-tools-youtube-buscar', q, max),
+    youtubeFicha: (urlOId: string) => ipcRenderer.invoke('web-tools-youtube-ficha', urlOId),
+    youtubeMiniatura: (videoId: string) => ipcRenderer.invoke('web-tools-youtube-miniatura', videoId),
+    referenciaAnalizar: (url: string) => ipcRenderer.invoke('web-tools-referencia-analizar', url),
+    referenciaEscuchar: (url: string, titulo?: string) => ipcRenderer.invoke('web-tools-referencia-escuchar', url, titulo),
+    internetPermitido: () => ipcRenderer.invoke('web-tools-internet-permitido'),
+    fijarInternetPermitido: (activo: boolean) => ipcRenderer.invoke('web-tools-fijar-internet-permitido', activo),
+    onProgreso: (callback: (p: { fase: string; detalle?: string }) => void) => {
+      const listener = (_event: unknown, p: { fase: string; detalle?: string }) => callback(p)
+      ipcRenderer.on('web-tools-progreso', listener)
+      return () => ipcRenderer.removeListener('web-tools-progreso', listener)
+    },
+  },
   dialogMessage: (type: string, title: string, message: string) => ipcRenderer.invoke('dialog-message', type, title, message),
   shellOpenExternal: (url: string) => ipcRenderer.invoke('shell-open-external', url),
+  /** Abre JasWave Admin (admin.html) en su propia ventana. */
+  abrirAdmin: () => ipcRenderer.invoke('admin-window-open'),
   openToolWindow: (toolId: string, title: string, extra?: Record<string, string>) =>
     ipcRenderer.invoke('tool-window-open', toolId, title, extra),
   closeToolWindow: (toolId: string) => ipcRenderer.invoke('tool-window-close', toolId),
@@ -73,17 +297,63 @@ contextBridge.exposeInMainWorld('electron', {
   nativeAudioGetMeterPeak: () => ipcRenderer.invoke('native-audio-meter'),
   pluginHostStatus: () => ipcRenderer.invoke('plugin-host-status'),
   pluginHostEnsure: () => ipcRenderer.invoke('plugin-host-ensure'),
+  /** U7: limpia el contador de fallos y reinicia el motor (sin cargar plugins). */
+  pluginHostReset: () => ipcRenderer.invoke('plugin-host-reset'),
   pluginHostSend: (cmd: unknown) => ipcRenderer.invoke('plugin-host-send', cmd),
   pluginHostMidi: (cmd: unknown) => ipcRenderer.send('plugin-host-midi', cmd),
+  /** Pin: elementos anclados (editores de plugin y paneles flotantes), jerarquía por índice (0 = más arriba). */
+  pins: {
+    estado: () => ipcRenderer.invoke('pins-estado'),
+    /** Clave de proyecto activo (solo la ventana principal): cada proyecto guarda su jerarquía. */
+    establecerProyecto: (clave: string) => ipcRenderer.invoke('pins-proyecto', clave),
+    alternar: (tipo: 'editor' | 'panel', id: string, etiqueta?: string) => ipcRenderer.invoke('pins-alternar', tipo, id, etiqueta),
+    mover: (clave: string, delta: number) => ipcRenderer.invoke('pins-mover', clave, delta),
+    moverA: (clave: string, destino: number) => ipcRenderer.invoke('pins-mover-a', clave, destino),
+    quitar: (clave: string) => ipcRenderer.invoke('pins-quitar', clave),
+    onCambio: (callback: (estado: unknown) => void) => {
+      const handler = (_event: unknown, estado: unknown) => callback(estado)
+      ipcRenderer.on('pins-cambio', handler)
+      return () => ipcRenderer.removeListener('pins-cambio', handler)
+    },
+  },
   onPluginHostRestarted: (callback: () => void) => {
     const handler = () => callback()
     ipcRenderer.on('plugin-host-restarted', handler)
     return () => ipcRenderer.removeListener('plugin-host-restarted', handler)
   },
+  /** U7: el motor entró en bucle de fallos (o se resolvió con "Reiniciar motor"). */
+  onPluginHostCrashLoop: (callback: (info?: { activo?: boolean; mensaje?: string }) => void) => {
+    const handler = (_: unknown, info: { activo?: boolean; mensaje?: string }) => callback(info)
+    ipcRenderer.on('plugin-host-crash-loop', handler)
+    return () => ipcRenderer.removeListener('plugin-host-crash-loop', handler)
+  },
+  /** Otra instancia de JasWave tiene el motor de audio (o lo acaba de liberar). */
+  onAudioEngineBusy: (callback: (info?: { activo?: boolean; mensaje?: string }) => void) => {
+    const handler = (_: unknown, info: { activo?: boolean; mensaje?: string }) => callback(info)
+    ipcRenderer.on('audio-engine-busy', handler)
+    return () => ipcRenderer.removeListener('audio-engine-busy', handler)
+  },
+  /** «Usar audio aquí»: trae el motor de audio de la otra instancia a esta. */
+  audioEngineTake: (): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('audio-engine-take'),
+  /** Cede el motor (tras parar el transporte) cuando otra instancia lo pide. */
+  audioEngineRelease: (): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('audio-engine-release'),
+  onAudioEngineReleaseRequested: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('audio-engine-release-requested', handler)
+    return () => ipcRenderer.removeListener('audio-engine-release-requested', handler)
+  },
   onPluginHostExited: (callback: (info?: { code?: number | null; signal?: string | null }) => void) => {
     const handler = (_: unknown, info: { code?: number | null; signal?: string | null }) => callback(info)
     ipcRenderer.on('plugin-host-exited', handler)
     return () => ipcRenderer.removeListener('plugin-host-exited', handler)
+  },
+  // U6: el host nativo avisa de reinicios y pérdidas del dispositivo de audio.
+  onAudioDeviceNotice: (callback: (notice: 'reset' | 'lost') => void) => {
+    const handler = (_: unknown, info: { notice?: 'reset' | 'lost' }) => {
+      if (info?.notice) callback(info.notice)
+    }
+    ipcRenderer.on('jaswave-audio-device-notice', handler)
+    return () => ipcRenderer.removeListener('jaswave-audio-device-notice', handler)
   },
   pluginHostPushPcm: (samples: Float32Array | ArrayBuffer | Uint8Array) => {
     // Siempre Uint8Array: ArrayBuffer puro a veces no sobrevive el clone IPC de Electron.
@@ -113,8 +383,13 @@ contextBridge.exposeInMainWorld('electron', {
   agentBridgeReply: (id: string, result: unknown, error?: string) => {
     ipcRenderer.send('agent-bridge-reply', id, result, error)
   },
-  onNativeMidi: (callback: (msg: { id: string; data: number[] }) => void) => {
-    const handler = (_event: unknown, msg: { id: string; data: number[] }) => callback(msg)
+  onHostTransportToggle: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('host-transport-toggle', handler)
+    return () => ipcRenderer.removeListener('host-transport-toggle', handler)
+  },
+  onNativeMidi: (callback: (msg: { id: string; data: number[]; tNs?: number }) => void) => {
+    const handler = (_event: unknown, msg: { id: string; data: number[]; tNs?: number }) => callback(msg)
     ipcRenderer.on('native-midi', handler)
     return () => ipcRenderer.removeListener('native-midi', handler)
   },

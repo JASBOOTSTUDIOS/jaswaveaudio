@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="cymbals">
+  <!-- Plato Crash en perspectiva elíptica -->
+  <ellipse cx="32" cy="20" rx="22" ry="7" fill="currentColor" fill-opacity="0.25" stroke-width="2.5" />
+  <!-- Campana central del plato (cup/bell) -->
+  <ellipse cx="32" cy="19" rx="6" ry="2.5" fill="currentColor" fill-opacity="0.5" stroke-width="1.5" />
+  <!-- Mariposa y arandela de fieltro superior -->
+  <path d="M29 13h6l-3 4z" fill="currentColor" />
+  <!-- Brazo de soporte jirafa (boom stand) -->
+  <line x1="32" y1="20" x2="32" y2="54" stroke-width="2.5" />
+  <circle cx="32" cy="30" r="2.5" fill="currentColor" />
+  <line x1="32" y1="48" x2="18" y2="60" stroke-width="2" />
+  <line x1="32" y1="48" x2="46" y2="60" stroke-width="2" />
+  <!-- Ondas acústicas de brillo metálico -->
+  <path d="M12 14c4-4 12-6 20-6s16 2 20 6" stroke-width="1.5" stroke-dasharray="2 2" opacity="0.6" />
+</svg>

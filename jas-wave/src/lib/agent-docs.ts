@@ -3,6 +3,8 @@
  * Editables por el usuario y por la IA. Persistidos por projectId.
  */
 
+export type DocRbacRole = 'owner' | 'editor' | 'viewer'
+
 export type AgentDoc = {
   slug: string
   title: string
@@ -10,25 +12,93 @@ export type AgentDoc = {
   createdAt: number
   updatedAt: number
   origin: 'system' | 'ai' | 'user'
+  roleAllowed?: DocRbacRole
+}
+
+/**
+ * `roleAllowed` = rol mínimo para EDITAR el documento: 'owner' → solo el propietario; ausente o 'editor' →
+ * propietario y editores. El `viewer` nunca edita. Leer: todos los miembros de la sala.
+ */
+export function puedoEditarDoc(doc: Pick<AgentDoc, 'roleAllowed'>, rolUsuario: DocRbacRole = 'owner'): boolean {
+  if (rolUsuario === 'owner') return true
+  if (rolUsuario === 'editor') return doc.roleAllowed !== 'owner'
+  return false
+}
+
+export function puedoLeerDoc(_doc: Pick<AgentDoc, 'roleAllowed'>, rolUsuario: DocRbacRole = 'owner'): boolean {
+  return rolUsuario === 'owner' || rolUsuario === 'editor' || rolUsuario === 'viewer'
+}
+
+/**
+ * Rol del usuario actual sobre los documentos. En local es 'owner'; en una sala colaborativa es el rol que
+ * confirma el servidor: pasa `alCambiarRol: rolDocumentosDesdeSala` al crear el `ClienteColaborativo`.
+ * La IA actúa con los permisos del usuario que la invoca: un `viewer` no puede hacer que la IA escriba documentos.
+ */
+let rolActual: DocRbacRole = 'owner'
+export function fijarRolDocumentos(rol: DocRbacRole): void {
+  rolActual = rol
+}
+/** Rol de la sala (o `null` al salir de ella, que vuelve al proyecto local como propietario). */
+export function rolDocumentosDesdeSala(rol: DocRbacRole | null): void {
+  rolActual = rol ?? 'owner'
+}
+export function rolDocumentos(): DocRbacRole {
+  return rolActual
+}
+
+function exigirEdicion(doc: Pick<AgentDoc, 'roleAllowed' | 'slug'>): void {
+  if (!puedoEditarDoc(doc, rolActual)) {
+    throw new Error(`Sin permiso: con el rol «${rolActual}» no puedes modificar ${doc.slug}`)
+  }
 }
 
 export const PLAN_SLUG = 'plan.md'
+export const CONOCIMIENTO_SLUG = 'conocimiento.md'
+
+/**
+ * conocimiento.md se inyecta en cada turno como fuente de verdad: solo lo escribe el usuario (/aprender o
+ * edición manual). Una escritura con origen IA persistiría texto no confiable (web, nombres de pistas…).
+ */
+export function esDocProtegidoParaIA(slug: string): boolean {
+  return sanitizeDocSlug(slug) === CONOCIMIENTO_SLUG
+}
 export const USER_NOTES_HEADING = 'Notas del usuario'
+
+export const DEFAULT_CONOCIMIENTO_MD = `# Base de Conocimiento y Reglas del Proyecto
+
+> Reglas, directivas de estilo y decisiones aprendidas automáticamente por los agentes (/aprender).
+
+## Reglas de Producción
+- [x] Respetar la jerarquía de mezcla y headroom (-1.0 dBTP de techo en el master).
+- [x] Los especialistas proponen cambios de FX chain; se ejecutan con comandos (con undo) según la autonomía del usuario.
+
+## Preferencias del Usuario
+`
 
 export const DEFAULT_PLAN_MD = `# Plan
 
 ## Intención
-_Describe qué quieres producir. La IA y tú pueden editar este archivo._
+### Qué se busca
+_Género, tempo, tonalidad, mood y referencia. La IA lo reescribe en cada pedido._
+
+### Forma
+_Intro / verso / coro / puente — compases y qué debe pasar en cada uno._
+
+### Pistas previstas
+_Nombre, rol e instrumento de cada pista._
+
+### Último pedido
+_Se actualiza en cada mensaje del usuario._
 
 ## Por implementar
-- [ ] (añade tareas o pistas aquí)
+- [ ] (tareas concretas y comprobables: pista «Nombre», BPM, clip de sección con notas, mezcla…)
 
 ## En curso
 
 ## Implementado
 
 ## Evaluación
-Aún no hay ejecución. Cuando la IA cree pistas o clips, comparará lo planeado con el DAW.
+Aún no hay ejecución. Cada turno compara lo planeado con el DAW y marca \`[x]\` lo hecho.
 
 ## ${USER_NOTES_HEADING}
 _Tus notas no se pisan automáticamente. Escríbelas aquí._
@@ -134,6 +204,7 @@ export async function hydrateAgentDocsFromDisk(projectId: string, projectRuta?: 
         createdAt: prev?.createdAt ?? now,
         updatedAt: now,
         origin: 'user',
+        ...(prev?.roleAllowed ? { roleAllowed: prev.roleAllowed } : {}),
       }
       const idx = next.findIndex((d) => d.slug === slug)
       if (idx >= 0) next[idx] = doc
@@ -218,10 +289,10 @@ function persist(projectId: string, docs: AgentDoc[]) {
     if (b.slug === PLAN_SLUG) return 1
     return b.updatedAt - a.updatedAt
   })
-  cache.set(id, next)
   const bag = loadBag()
   bag[id] = next
-  saveBag(bag)
+  saveBag(bag) // si falla (cuota llena) lanza antes de tocar la caché: memoria y almacenamiento no divergen
+  cache.set(id, next)
   const disk = diskRutaByProject.get(id)
   if (disk) writeDocsToDisk(disk, next)
   emit()
@@ -236,15 +307,20 @@ export function writeAgentDoc(
   projectId: string,
   slug: string,
   content: string,
-  opts?: { origin?: AgentDoc['origin']; title?: string; preserveUserNotes?: boolean },
+  opts?: { origin?: AgentDoc['origin']; title?: string; preserveUserNotes?: boolean; roleAllowed?: DocRbacRole },
 ): AgentDoc {
   const s = sanitizeDocSlug(slug)
+  if (esDocProtegidoParaIA(s) && (opts?.origin ?? 'ai') !== 'user') {
+    throw new Error(`${CONOCIMIENTO_SLUG} solo puede modificarlo el usuario (/aprender o edición manual)`)
+  }
   const docs = listAgentDocs(projectId)
   const prev = docs.find((d) => d.slug === s)
+  exigirEdicion({ slug: s, roleAllowed: prev?.roleAllowed ?? opts?.roleAllowed })
   let body = content.replace(/\r\n/g, '\n')
   if ((opts?.preserveUserNotes ?? true) && prev) {
     body = mergePreservingUserNotes(prev.content, body)
   }
+  if (s === PLAN_SLUG) body = normalizePlanCheckboxes(ensurePlanTemplate(body))
   const now = Date.now()
   const doc: AgentDoc = {
     slug: s,
@@ -253,6 +329,7 @@ export function writeAgentDoc(
     createdAt: prev?.createdAt ?? now,
     updatedAt: now,
     origin: opts?.origin ?? 'ai',
+    ...((opts?.roleAllowed ?? prev?.roleAllowed) ? { roleAllowed: (opts?.roleAllowed ?? prev?.roleAllowed) as DocRbacRole } : {}),
   }
   persist(projectId, [...docs.filter((d) => d.slug !== s), doc])
   return doc
@@ -274,7 +351,9 @@ export function deleteAgentDoc(projectId: string, slug: string): boolean {
     return true
   }
   const docs = listAgentDocs(projectId)
-  if (!docs.some((d) => d.slug === s)) return false
+  const objetivo = docs.find((d) => d.slug === s)
+  if (!objetivo) return false
+  exigirEdicion(objetivo)
   persist(projectId, docs.filter((d) => d.slug !== s))
   return true
 }
@@ -323,6 +402,48 @@ export function setMarkdownSection(md: string, heading: string, body: string): s
     .join('\n\n') + '\n'
 }
 
+export const PLAN_SECTION_HEADINGS = [
+  'Intención',
+  'Por implementar',
+  'En curso',
+  'Implementado',
+  'Evaluación',
+  USER_NOTES_HEADING,
+] as const
+
+export function normalizePlanCheckboxes(md: string): string {
+  let next = md
+  for (const heading of ['Por implementar', 'En curso'] as const) {
+    const body = getMarkdownSection(next, heading)
+    if (!body.trim()) continue
+    const lines = body.split('\n').map((line) => {
+      if (/^\s*[-*]\s*\[[ xX]\]/.test(line)) return line
+      const m = /^\s*[-*]\s+(.+)$/.exec(line)
+      if (!m) return line
+      const text = m[1]!.trim()
+      if (!text || text.startsWith('_') || /^\(/.test(text)) return line
+      return `- [ ] ${text}`
+    })
+    next = setMarkdownSection(next, heading, lines.join('\n'))
+  }
+  return next
+}
+
+/** Completa secciones que el modelo suele omitir, sin pisar lo ya escrito. */
+export function ensurePlanTemplate(md: string): string {
+  let next = (md || '').replace(/\r\n/g, '\n').trim()
+  if (!next) return DEFAULT_PLAN_MD
+  if (!/^#\s+/m.test(next)) next = `# Plan\n\n${next}`
+  for (const heading of PLAN_SECTION_HEADINGS) {
+    const parts = splitMarkdownSections(next)
+    const has = parts.some((p) => p.heading && p.heading.toLowerCase() === heading.toLowerCase())
+    if (has) continue
+    const fallback = getMarkdownSection(DEFAULT_PLAN_MD, heading).trim() || '_'
+    next = setMarkdownSection(next, heading, fallback)
+  }
+  return next.endsWith('\n') ? next : `${next}\n`
+}
+
 export function mergePreservingUserNotes(previous: string, incoming: string): string {
   const userNotes = getMarkdownSection(previous, USER_NOTES_HEADING)
   let next = incoming
@@ -344,13 +465,24 @@ export function parseDocBlocksFromText(text: string): Array<{ slug: string; cont
   return out
 }
 
+/** Cambio en un documento del proyecto (lo muestran el chat y el panel de progreso). */
+export type ChatDocEdit = {
+  slug: string
+  title: string
+  action: 'create' | 'write' | 'append'
+  previousContent: string
+  newContent: string
+  updatedAt: number
+}
+
 export function applyMarkdownDocsFromModel(
   projectId: string,
   text: string,
-): { slugs: string[]; edits: import('./chat-doc-edits').ChatDocEdit[] } {
+): { slugs: string[]; edits: ChatDocEdit[] } {
   const slugs: string[] = []
-  const edits: import('./chat-doc-edits').ChatDocEdit[] = []
+  const edits: ChatDocEdit[] = []
   for (const b of parseDocBlocksFromText(text)) {
+    if (esDocProtegidoParaIA(b.slug)) continue
     const prev = getAgentDoc(projectId, b.slug)
     const previousContent = prev?.content ?? ''
     const doc = writeAgentDoc(projectId, b.slug, b.content, { origin: 'ai' })
@@ -367,7 +499,7 @@ export function applyMarkdownDocsFromModel(
   return { slugs, edits }
 }
 
-export function formatDocsForPrompt(projectId: string, maxChars = 8000): string {
+export function formatDocsForPrompt(projectId: string, maxChars = 14000): string {
   const docs = listAgentDocs(projectId)
   const names = docs.map((d) => d.slug).join(', ')
   const plan = docs.find((d) => d.slug === PLAN_SLUG)
@@ -376,12 +508,14 @@ export function formatDocsForPrompt(projectId: string, maxChars = 8000): string 
   return [
     '## Documentos Markdown del proyecto (editables por el USUARIO y por ti)',
     `Archivos: ${names || 'plan.md'}`,
-    'El usuario puede abrir el panel Plan / Docs y editar estos .md. NO borres «Notas del usuario».',
-    'Para crear o actualizar un .md usa el bloque:',
+    'El usuario puede abrir el panel Docs y editar estos .md. NO borres «Notas del usuario».',
+    'plan.md es la fuente de verdad del trabajo. Actualízalo cuando cambie el objetivo, arranque o falle una operación compleja, o el usuario lo pida — no en cada pregunta corta.',
+    '1) Si el pedido cambia género, pistas, forma o mezcla: reescribe intención y tareas `- [ ]` concretas (pista «Nombre», clip de sección, BPM…).',
+    '2) Emite ACTIONS alineadas a las tareas pendientes de ESTE pedido.',
+    '3) Tras mutar el DAW el cliente marcará `[x]` lo que ya exista. Tú también puedes doc.evaluate.',
     '<<<DOC plan.md',
-    '(markdown)',
+    '(markdown completo del plan)',
     'DOC>>>',
-    'o las acciones doc.create / doc.write / doc.append.',
     '',
     '### plan.md actual',
     planBody,
@@ -395,8 +529,75 @@ export function docsPromptActions(): string {
     '- doc.append { slug, markdown, section? }  ← añade al final o a una sección ##',
     '- doc.list',
     '- doc.read { slug }',
-    '- doc.evaluate  ← compara plan.md (intención / por implementar) con el DAW y reescribe Evaluación + Implementado',
-    'Ciclo del agente: 1) escribe/ajusta plan.md  2) implementa en el DAW  3) evalúa intención vs por implementar vs lo hecho y actualiza ## Evaluación e ## Implementado.',
+    '- doc.evaluate  ← compara plan.md con el DAW y reescribe Evaluación + marca Implementado',
+    'Ciclo: si el objetivo cambió, actualizar plan.md → implementar → evaluar y marcar lo hecho.',
   ].join('\n')
 }
+
+export const MAX_LARGO_REGLA = 400
+export const SECCION_REGLAS_APRENDIDAS = 'Reglas aprendidas'
+
+/**
+ * Normaliza el texto de /aprender: una sola línea, sin encabezados ni marcadores del protocolo de documentos
+ * (`<<<DOC`, `DOC>>>`, `<<<ACTIONS`…), acotado en longitud. Lanza si queda vacío.
+ */
+export function sanitizarRegla(texto: string): string {
+  const limpio = texto
+    .replace(/[\r\n\p{Zl}\p{Zp}]+/gu, ' ')
+    .replace(/<<<[^>]*>>>|<<<\w*|\w*>>>/g, ' ')
+    .replace(/^(?:[#>*\-\s]+|\[[ xX]\]\s*)+/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, MAX_LARGO_REGLA)
+    .trim()
+  if (!limpio) throw new Error('La regla está vacía: escribe qué debo aprender (p. ej. /aprender usa siempre Re mayor en los temas de adoración)')
+  return limpio
+}
+
+/** Pila de contenidos anteriores de conocimiento.md para `deshacerUltimaReglaAprendida` (en memoria). */
+const historialReglas: Array<{ projectId: string; previo: string | null }> = []
+
+/**
+ * Añade una regla o directiva en conocimiento.md (/aprender o /learn), dentro de «Reglas aprendidas».
+ * Requiere permiso de edición (rol), evita duplicados y se puede revertir con `deshacerUltimaReglaAprendida`.
+ */
+export async function aprenderReglaOConocimiento(
+  projectId: string,
+  reglaOInstruccion: string,
+): Promise<{ doc: AgentDoc; regla: string; duplicada: boolean }> {
+  const regla = sanitizarRegla(reglaOInstruccion)
+  const existing = listAgentDocs(projectId).find((d) => d.slug === CONOCIMIENTO_SLUG)
+  const base = existing?.content ?? DEFAULT_CONOCIMIENTO_MD
+  const actual = getMarkdownSection(base, SECCION_REGLAS_APRENDIDAS)
+  const normalizada = regla.toLowerCase()
+  if (actual.split('\n').some((l) => l.toLowerCase().includes(normalizada))) {
+    return { doc: existing as AgentDoc, regla, duplicada: true }
+  }
+  const fecha = new Date().toISOString().slice(0, 10)
+  const item = `- [x] ${regla} *(aprendido el ${fecha})*`
+  const contenido = setMarkdownSection(base, SECCION_REGLAS_APRENDIDAS, [actual.trim(), item].filter(Boolean).join('\n'))
+  const doc = writeAgentDoc(projectId, CONOCIMIENTO_SLUG, contenido, {
+    title: existing?.title ?? 'Base de Conocimiento y Reglas',
+    origin: 'user',
+    preserveUserNotes: false,
+    roleAllowed: existing?.roleAllowed ?? 'editor',
+  })
+  historialReglas.push({ projectId, previo: existing?.content ?? null })
+  if (historialReglas.length > 20) historialReglas.shift()
+  return { doc, regla, duplicada: false }
+}
+
+/** Revierte la última regla aprendida del proyecto. Devuelve false si no hay nada que deshacer. */
+export function deshacerUltimaReglaAprendida(projectId: string): boolean {
+  for (let i = historialReglas.length - 1; i >= 0; i--) {
+    const h = historialReglas[i]!
+    if (h.projectId !== projectId) continue
+    historialReglas.splice(i, 1)
+    if (h.previo === null) deleteAgentDoc(projectId, CONOCIMIENTO_SLUG)
+    else writeAgentDoc(projectId, CONOCIMIENTO_SLUG, h.previo, { origin: 'user', preserveUserNotes: false })
+    return true
+  }
+  return false
+}
+
 

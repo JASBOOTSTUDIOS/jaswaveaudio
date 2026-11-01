@@ -5,7 +5,11 @@
 import { sampleTrackAutomation } from '../../../shared/src/commands/automation-commands'
 import type { AutomatizacionInfo } from '../../../shared/src/types/entidades'
 import type { Track } from '../../../shared/src/types/tracks'
-import { setSlotParameter, slotIdForTrackPlugin } from './plugin/track-vst-runtime'
+import {
+  setSlotParameter,
+  slotIdForTrackPlugin,
+  syncReaperTrackGraph,
+} from './plugin/track-vst-runtime'
 
 export type MixSnapshot = {
   id: string
@@ -85,4 +89,80 @@ export function applyParamAutomationAtTime(
       void setSlotParameter(slotId, paramId, Math.max(0, Math.min(1, v)))
     }
   }
+}
+
+export type ContextoAutomatizacionBounce = {
+  tracks: Track[]
+  masterPlugins?: Track['plugins']
+  routing?: Parameters<typeof syncReaperTrackGraph>[2]
+  /**
+   * Pistas cuyo volumen ya va horneado en el PCM de sus clips de audio
+   * (bakeVolumeAutomationIntoStem): el grafo debe mantener ahí el fader base.
+   */
+  volumenHorneado?: ReadonlySet<string>
+}
+
+/** true si alguna lane (vol, paneo o parámetro) está habilitada con puntos. */
+export function hayAutomatizacion(tracks: Array<Pick<Track, 'automatizaciones'>>): boolean {
+  return tracks.some((t) =>
+    (t.automatizaciones ?? []).some((a) => a.habilitada && a.puntos.length > 0),
+  )
+}
+
+/**
+ * Pistas del grafo nativo con vol/paneo muestreados en `timeSec` para el
+ * bounce offline:
+ * - el paneo siempre se muestrea (el grafo es su único aplicador);
+ * - el volumen solo se muestrea en pistas sin clips de audio, porque en las
+ *   demás la curva ya está multiplicada en el PCM y el grafo aplica el fader
+ *   base (muestrearla duplicaría la curva).
+ */
+export function grafoConAutomatizacionBounce(
+  ctx: ContextoAutomatizacionBounce,
+  timeSec: number,
+): Array<
+  Pick<Track, 'id' | 'plugins' | 'volumen' | 'paneo' | 'silenciada' | 'soloActiva' | 'automatizaciones' | 'tipo' | 'padreId'>
+> {
+  const snapshots = new Map(
+    applyAutomationAtTime(ctx.tracks, timeSec).map((s) => [s.id, s]),
+  )
+  return ctx.tracks.map((t) => {
+    const s = snapshots.get(t.id)
+    if (!s) return t
+    const baseVol = typeof t.volumen === 'number' ? t.volumen : 0.8
+    const volumen = ctx.volumenHorneado?.has(t.id) ? baseVol : s.volumen
+    return { ...t, volumen, paneo: s.paneo }
+  })
+}
+
+/**
+ * Cada cuántos bloques del bounce se republica el grafo (fader/paneo). Publicarlo en cada bloque (~10 ms) hacía
+ * el render 8-14 veces más lento (cada publicación es una ida y vuelta al host); una curva de fader/paneo es
+ * suave y ~170 ms de resolución sobra. Los parámetros VST siguen muestreándose en cada bloque.
+ */
+export const BLOQUES_POR_GRAFO_BOUNCE = 16
+
+/** ¿Toca republicar el grafo en este bloque (0, 1, 2…) del bounce? */
+export function toqueRepublicarGrafoBounce(bloque: number): boolean {
+  return bloque % BLOQUES_POR_GRAFO_BOUNCE === 0
+}
+
+/**
+ * Publica al host el fader/paneo muestreado y los parámetros VST de `timeSec`.
+ * El llamador decide el throttle del grafo con `opts.grafo` (por defecto siempre).
+ */
+export function publicarAutomatizacionBounce(
+  ctx: ContextoAutomatizacionBounce,
+  timeSec: number,
+  opts?: { grafo?: boolean },
+): void {
+  if (opts?.grafo !== false) {
+    syncReaperTrackGraph(
+      grafoConAutomatizacionBounce(ctx, timeSec),
+      ctx.masterPlugins,
+      ctx.routing,
+      { omitirLayout: true },
+    )
+  }
+  applyParamAutomationAtTime(ctx.tracks, timeSec)
 }

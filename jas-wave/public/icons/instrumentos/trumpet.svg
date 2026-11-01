@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="trumpet">
+  <!-- Boquilla izquierda -->
+  <path d="M6 35h4v-6H6z" fill="currentColor" stroke-width="1.5" />
+  <!-- Tubería principal recta hacia la campana -->
+  <path d="M10 32h32" stroke-width="2" />
+  <!-- Pabellón acampanado ensanchado hacia adelante -->
+  <path d="M42 32c4-1 9-5 16-12v24c-7-7-12-11-16-12" fill="currentColor" fill-opacity="0.15" stroke-width="2" />
+  <ellipse cx="58" cy="32" rx="2" ry="12" fill="currentColor" fill-opacity="0.25" stroke-width="2" />
+  <!-- Bucle inferior de tubería con codo posterior -->
+  <path d="M12 32v6c0 2 2 4 4 4h26v-6" stroke-width="2" />
+  <!-- 3 Pistones de válvulas verticales con pulsadores -->
+  <rect x="23" y="24" width="4" height="18" rx="1" fill="currentColor" fill-opacity="0.2" stroke-width="1.5" />
+  <rect x="29" y="24" width="4" height="18" rx="1" fill="currentColor" fill-opacity="0.2" stroke-width="1.5" />
+  <rect x="35" y="24" width="4" height="18" rx="1" fill="currentColor" fill-opacity="0.2" stroke-width="1.5" />
+  <!-- Pulsadores de los pistones -->
+  <path d="M22 24h6M28 24h6M34 24h6" stroke-width="2" />
+  <circle cx="25" cy="22" r="1" fill="currentColor" />
+  <circle cx="31" cy="22" r="1" fill="currentColor" />
+  <circle cx="37" cy="22" r="1" fill="currentColor" />
+</svg>

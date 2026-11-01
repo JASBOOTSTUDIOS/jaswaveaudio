@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="hihat">
+  <!-- Campana superior de sujeción (clutch) -->
+  <rect x="30" y="10" width="4" height="4" fill="currentColor" />
+  <!-- Plato superior cóncavo -->
+  <path d="M12 20c6-3 14-5 20-5s14 2 20 5l-20 3z" fill="currentColor" fill-opacity="0.3" stroke-width="2" />
+  <!-- Plato inferior -->
+  <path d="M12 25c6-2 14-3 20-3s14 1 20 3l-20 4z" fill="currentColor" fill-opacity="0.25" stroke-width="2" />
+  <!-- Tubo y varilla central del soporte -->
+  <line x1="32" y1="6" x2="32" y2="52" stroke-width="2.5" />
+  <!-- Rosetas de ajuste de altura -->
+  <rect x="29" y="32" width="6" height="3" rx="1" fill="currentColor" />
+  <!-- Patas trípode y pedal de pie -->
+  <line x1="32" y1="46" x2="16" y2="58" stroke-width="2" />
+  <line x1="32" y1="46" x2="48" y2="58" stroke-width="2" />
+  <!-- Pedalera metálica -->
+  <polygon points="26,58 38,58 35,52 29,52" fill="currentColor" fill-opacity="0.3" stroke-width="1.5" />
+</svg>

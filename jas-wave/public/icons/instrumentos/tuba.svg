@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="tuba">
+  <!-- Gran cuerpo curvado masivo de la tuba -->
+  <path d="M18 36c0 10 6 18 16 18s18-8 18-18c0-8-5-14-12-16" fill="currentColor" fill-opacity="0.14" stroke-width="2.5" />
+  <!-- Pabellón vertical masivo hacia arriba -->
+  <path d="M24 20c-4-4-8-8-14-10h28c-6 2-10 6-14 10" fill="currentColor" fill-opacity="0.2" stroke-width="2.5" />
+  <ellipse cx="24" cy="10" rx="14" ry="3.5" fill="currentColor" fill-opacity="0.3" stroke-width="2" />
+  <!-- Boquilla lateral -->
+  <path d="M46 22h6v4h-6z" fill="currentColor" stroke-width="1.5" />
+  <path d="M46 24h-6" stroke-width="2" />
+  <!-- 4 Válvulas de pistón de gran tamaño -->
+  <rect x="32" y="26" width="3" height="12" fill="currentColor" />
+  <rect x="36" y="26" width="3" height="12" fill="currentColor" />
+  <rect x="40" y="26" width="3" height="12" fill="currentColor" />
+  <rect x="44" y="26" width="3" height="12" fill="currentColor" />
+</svg>

@@ -26,7 +26,14 @@ export class PluginRegistry {
     return this.list().filter((d) => {
       const n = d.name.toLowerCase()
       const compact = n.replace(/\s+/g, '')
-      return queries.some((q) => n.includes(q) || compact.includes(q.replace(/\s+/g, '')))
+      const soloLetras = n.replace(/[^a-z0-9]/g, '')
+      return queries.some((q) => {
+        if (n.includes(q) || compact.includes(q.replace(/\s+/g, ''))) return true
+        // El nombre de manifiesto («JasWave True-Peak Limiter Pro») no coincide con el del archivo
+        // («JasWaveTruePeakLimiter»): se compara sin signos y sin el sufijo comercial «pro».
+        const qLetras = q.replace(/[^a-z0-9]/g, '').replace(/pro$/, '')
+        return qLetras.length >= 6 && soloLetras.includes(qLetras)
+      })
     })
   }
 

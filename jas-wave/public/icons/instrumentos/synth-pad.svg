@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="synth-pad">
+  <!-- Ondas armónicas superpuestas que crean el colchón sonoro -->
+  <path d="M6 20c8-6 18-6 26 0s18 6 26 0" stroke-width="2" />
+  <path d="M6 28c8-6 18-6 26 0s18 6 26 0" stroke-width="2" />
+  <path d="M6 36c8-6 18-6 26 0s18 6 26 0" stroke-width="2" />
+  <path d="M6 44c8-6 18-6 26 0s18 6 26 0" stroke-width="2" />
+  <!-- Halo espacial con destellos sutiles -->
+  <circle cx="32" cy="32" r="22" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.6" />
+  <circle cx="32" cy="32" r="14" fill="currentColor" fill-opacity="0.1" />
+</svg>

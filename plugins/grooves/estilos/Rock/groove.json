@@ -1,0 +1,179 @@
+{
+  "archivos": {
+    "rock-de-corcheas.mid": {
+      "id": "jw-rock-rock-de-corcheas",
+      "nombre": "Rock de corcheas",
+      "tempo": 120,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "rock",
+        "ocho-notas"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "rock-duro.mid": {
+      "id": "jw-rock-rock-duro",
+      "nombre": "Rock duro",
+      "tempo": 126,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "rock",
+        "duro",
+        "potente"
+      ],
+      "intensidad": 5,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "rock-lento-y-pesado.mid": {
+      "id": "jw-rock-rock-lento-y-pesado",
+      "nombre": "Rock lento y pesado",
+      "tempo": 72,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "rock",
+        "pesado",
+        "medio-tiempo"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "punk-veloz.mid": {
+      "id": "jw-rock-punk-veloz",
+      "nombre": "Punk veloz",
+      "tempo": 168,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "rock",
+        "punk",
+        "rapido"
+      ],
+      "intensidad": 5,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "rock-con-ride.mid": {
+      "id": "jw-rock-rock-con-ride",
+      "nombre": "Rock con ride",
+      "tempo": 116,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "rock",
+        "ride"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-redoble-de-caja.mid": {
+      "id": "jw-rock-fill-redoble-de-caja",
+      "nombre": "Fill redoble de caja",
+      "tempo": 120,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "redoble",
+        "caja"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-toms-bajando.mid": {
+      "id": "jw-rock-fill-toms-bajando",
+      "nombre": "Fill toms bajando",
+      "tempo": 120,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "toms",
+        "bajando"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-redoble-largo.mid": {
+      "id": "jw-rock-fill-redoble-largo",
+      "nombre": "Fill redoble largo",
+      "tempo": 120,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "redoble",
+        "largo"
+      ],
+      "intensidad": 5,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "intro-rock.mid": {
+      "id": "jw-rock-intro-rock",
+      "nombre": "Intro Rock",
+      "tempo": 120,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "intro",
+      "etiquetas": [
+        "intro"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "final-rock.mid": {
+      "id": "jw-rock-final-rock",
+      "nombre": "Final Rock",
+      "tempo": 120,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "outro",
+      "etiquetas": [
+        "outro",
+        "final"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

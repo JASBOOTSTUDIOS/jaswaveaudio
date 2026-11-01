@@ -5,9 +5,10 @@
 import type { MidiClip } from '@jaswave/shared'
 import type { TiendaDAW } from '../../../../shared/src/state/tienda'
 import { applyStyleProfileToNotes } from './apply-style-profile'
-import { extractStyleProfile, inferStyleRole, seedMesiasWorshipDrumProfile } from './extract-style-profile'
+import { extractStyleProfile, inferStyleRole, styleProfileFromPreset } from './extract-style-profile'
+import { EXAMPLE_STYLE_PRESETS } from './presets'
 import {
-  ensureMesiasSeed,
+  installGlobalStylePreset,
   getGlobalStyleProfile,
   listGlobalStyleProfiles,
   saveGlobalStyleProfile,
@@ -46,15 +47,28 @@ function findClip(
   return { trackName: track.nombre, clip }
 }
 
-export async function styleEnsureSeed(): Promise<StyleProfile> {
-  return ensureMesiasSeed(seedMesiasWorshipDrumProfile())
+/** Presets de ejemplo disponibles (NO instalados): el usuario elige cuál añadir. */
+export function styleListExamplePresets(): Array<{ id: string; nombre: string; tags: string[] }> {
+  return EXAMPLE_STYLE_PRESETS.map((p) => ({ id: p.id, nombre: p.nombre, tags: [...p.tags] }))
+}
+
+/**
+ * Instala en la biblioteca global un preset (de ejemplo por id, o un JSON propio del usuario).
+ * Acción explícita: nada se instala por defecto.
+ */
+export async function styleInstallPreset(presetOrId: string | unknown): Promise<StyleProfile> {
+  const raw =
+    typeof presetOrId === 'string'
+      ? EXAMPLE_STYLE_PRESETS.find((p) => p.id === presetOrId)
+      : presetOrId
+  if (!raw) throw new Error(`Preset de estilo no encontrado: ${String(presetOrId)}`)
+  return installGlobalStylePreset(styleProfileFromPreset(raw))
 }
 
 export async function styleList(
   tienda: TiendaDAW,
   scope: 'project' | 'global' | 'all' = 'all',
 ): Promise<StyleProfile[]> {
-  await styleEnsureSeed()
   const { projectId } = projectMeta(tienda)
   const proj = scope === 'global' ? [] : listStyleProfiles(projectId)
   const glob = scope === 'project' ? [] : await listGlobalStyleProfiles()
@@ -67,7 +81,6 @@ export async function styleSearch(
   tienda: TiendaDAW,
   opts: { query?: string; rol?: string; tag?: string; scope?: 'project' | 'global' | 'all' },
 ): Promise<StyleProfile[]> {
-  await styleEnsureSeed()
   const { projectId } = projectMeta(tienda)
   const scope = opts.scope ?? 'all'
   const proj =

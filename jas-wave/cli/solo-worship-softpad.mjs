@@ -1,5 +1,5 @@
 import http from 'http'
-import fs from 'fs'
+import './lib/bridge-auth.mjs'
 
 function req(method, path, body) {
   return new Promise((resolve, reject) => {

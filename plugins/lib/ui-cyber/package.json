@@ -1,0 +1,13 @@
+{
+  "name": "@jaswave/ui-cyber",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Réplica en Canvas del editor cyber de los VST de JasWave, dibujada desde plugins/<id>/ui-layout.json (V4).",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  }
+}

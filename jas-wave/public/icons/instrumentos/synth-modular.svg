@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="synth-modular">
+  <!-- Chasis de Eurorack con 3 módulos -->
+  <rect x="8" y="8" width="48" height="48" rx="2" fill="currentColor" fill-opacity="0.1" stroke-width="2" />
+  <line x1="24" y1="8" x2="24" y2="56" stroke-width="1.5" />
+  <line x1="40" y1="8" x2="40" y2="56" stroke-width="1.5" />
+  <!-- Perillas de osciladores y filtros en cada módulo -->
+  <circle cx="16" cy="16" r="3" stroke-width="1.5" />
+  <circle cx="16" cy="26" r="3" stroke-width="1.5" />
+  <circle cx="32" cy="16" r="3" stroke-width="1.5" />
+  <circle cx="32" cy="26" r="3" stroke-width="1.5" />
+  <circle cx="48" cy="16" r="3" stroke-width="1.5" />
+  <circle cx="48" cy="26" r="3" stroke-width="1.5" />
+  <!-- Jacks de conexión (patch bays) -->
+  <circle cx="16" cy="38" r="2" fill="currentColor" />
+  <circle cx="16" cy="48" r="2" fill="currentColor" />
+  <circle cx="32" cy="38" r="2" fill="currentColor" />
+  <circle cx="32" cy="48" r="2" fill="currentColor" />
+  <circle cx="48" cy="38" r="2" fill="currentColor" />
+  <circle cx="48" cy="48" r="2" fill="currentColor" />
+  <!-- Cables de patch reales con curvatura -->
+  <path d="M16 38c0 14 16 2 16 10" stroke-width="2.5" />
+  <path d="M32 38c4-12 16-4 16 10" stroke-width="2.5" stroke-dasharray="2 1" />
+</svg>

@@ -102,8 +102,19 @@ size_t drainRing(JaswaveMidiEvent* ring, std::atomic<uint32_t>& wAt, std::atomic
   return n;
 }
 
+int64_t qpcFrequency() {
+  static const int64_t f = [] {
+    LARGE_INTEGER q{};
+    QueryPerformanceFrequency(&q);
+    return q.QuadPart > 0 ? static_cast<int64_t>(q.QuadPart) : 1;
+  }();
+  return f;
+}
+
 void CALLBACK midiProc(HMIDIIN /*h*/, UINT msg, DWORD_PTR instance, DWORD_PTR p1, DWORD_PTR /*p2*/) {
   if (msg != MIM_DATA) return;
+  // Sello lo primero: QPC es lo bastante barato para el callback y no depende del reloj de WinMM (ms).
+  const int64_t ns = jaswave_midi_now_ns();
   const DWORD packed = static_cast<DWORD>(p1);
   const uint8_t st = static_cast<uint8_t>(packed & 0xff);
   if (st < 0x80 || st >= 0xf0) return;
@@ -112,6 +123,7 @@ void CALLBACK midiProc(HMIDIIN /*h*/, UINT msg, DWORD_PTR instance, DWORD_PTR p1
       st,
       static_cast<uint8_t>((packed >> 8) & 0xff),
       static_cast<uint8_t>((packed >> 16) & 0xff),
+      ns,
   };
   pushRing(gAudioRing, gAudioW, gAudioR, ev);
   pushRing(gUiRing, gUiW, gUiR, ev);
@@ -123,9 +135,10 @@ void uiEmitLoop() {
     const size_t n = drainRing(gUiRing, gUiW, gUiR, buf, 64);
     for (size_t i = 0; i < n; ++i) {
       const auto& e = buf[i];
-      std::fprintf(stderr, "JW_MIDI {\"id\":\"winmm:%u\",\"data\":[%u,%u,%u]}\n",
+      std::fprintf(stderr, "JW_MIDI {\"id\":\"winmm:%u\",\"data\":[%u,%u,%u],\"tNs\":%lld}\n",
                    static_cast<unsigned>(e.port), static_cast<unsigned>(e.status),
-                   static_cast<unsigned>(e.data1), static_cast<unsigned>(e.data2));
+                   static_cast<unsigned>(e.data1), static_cast<unsigned>(e.data2),
+                   static_cast<long long>(e.timestampNs));
     }
     if (n) std::fflush(stderr);
     if (!n) Sleep(1);
@@ -133,6 +146,15 @@ void uiEmitLoop() {
 }
 
 }  // namespace
+
+int64_t jaswave_midi_now_ns() {
+  LARGE_INTEGER c{};
+  QueryPerformanceCounter(&c);
+  const int64_t f = qpcFrequency();
+  // Sin desbordar: segundos enteros × 1e9 + resto escalado.
+  const int64_t t = static_cast<int64_t>(c.QuadPart);
+  return (t / f) * 1000000000LL + ((t % f) * 1000000000LL) / f;
+}
 
 bool jaswave_midi_list_json(std::string& jsonOut) {
   const UINT n = midiInGetNumDevs();

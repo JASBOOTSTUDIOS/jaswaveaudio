@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="flute">
+  <!-- Tubo cilíndrico plateado esbelto -->
+  <rect x="6" y="29" width="52" height="6" rx="2" fill="currentColor" fill-opacity="0.18" stroke-width="2" />
+  <!-- Embocadura con orificio de bisel (lip plate) -->
+  <rect x="11" y="28" width="7" height="8" rx="2" fill="currentColor" fill-opacity="0.3" stroke-width="1" />
+  <ellipse cx="14.5" cy="32" rx="1.5" ry="1" fill="currentColor" />
+  <!-- Corona y tapón izquierdo -->
+  <ellipse cx="6" cy="32" rx="1.5" ry="3" fill="currentColor" />
+  <!-- Llaves mecánicas de copa (plato abierto) alineadas -->
+  <circle cx="25" cy="27" r="2" fill="currentColor" />
+  <circle cx="30" cy="27" r="2" fill="currentColor" />
+  <circle cx="35" cy="27" r="2" fill="currentColor" />
+  <circle cx="41" cy="27" r="2" fill="currentColor" />
+  <circle cx="46" cy="27" r="2" fill="currentColor" />
+  <circle cx="51" cy="27" r="2" fill="currentColor" />
+  <!-- Varilla de mecanismo de llaves -->
+  <line x1="22" y1="27" x2="54" y2="27" stroke-width="1.5" />
+</svg>

@@ -1,0 +1,203 @@
+{
+  "archivos": {
+    "verso-6-8-suave.mid": {
+      "id": "jw-worship-6-8-verso-6-8-suave",
+      "nombre": "Verso 6-8 suave",
+      "tempo": 62,
+      "compas": "6/8",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "verso",
+        "suave",
+        "cross-stick",
+        "6-8"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "verso-6-8-con-ride.mid": {
+      "id": "jw-worship-6-8-verso-6-8-con-ride",
+      "nombre": "Verso 6-8 con ride",
+      "tempo": 64,
+      "compas": "6/8",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "verso",
+        "ride",
+        "6-8"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "verso-6-8-campana.mid": {
+      "id": "jw-worship-6-8-verso-6-8-campana",
+      "nombre": "Verso 6-8 campana",
+      "tempo": 60,
+      "compas": "6/8",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "verso",
+        "campana-de-ride",
+        "cross-stick",
+        "6-8"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "coro-6-8.mid": {
+      "id": "jw-worship-6-8-coro-6-8",
+      "nombre": "Coro 6-8",
+      "tempo": 66,
+      "compas": "6/8",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "coro",
+        "pleno",
+        "6-8"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "coro-6-8-ride-y-campana.mid": {
+      "id": "jw-worship-6-8-coro-6-8-ride-y-campana",
+      "nombre": "Coro 6-8 ride y campana",
+      "tempo": 66,
+      "compas": "6/8",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "coro",
+        "ride",
+        "campana-de-ride",
+        "6-8"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "puente-6-8-crescendo.mid": {
+      "id": "jw-worship-6-8-puente-6-8-crescendo",
+      "nombre": "Puente 6-8 crescendo",
+      "tempo": 62,
+      "compas": "6/8",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "puente",
+        "crescendo",
+        "toms",
+        "6-8"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "oracion-6-8.mid": {
+      "id": "jw-worship-6-8-oracion-6-8",
+      "nombre": "Oración 6-8",
+      "tempo": 56,
+      "compas": "6/8",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "oracion",
+        "suave",
+        "6-8"
+      ],
+      "intensidad": 1,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-caja-6-8.mid": {
+      "id": "jw-worship-6-8-fill-caja-6-8",
+      "nombre": "Fill caja 6-8",
+      "tempo": 62,
+      "compas": "6/8",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "caja"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-toms-6-8.mid": {
+      "id": "jw-worship-6-8-fill-toms-6-8",
+      "nombre": "Fill toms 6-8",
+      "tempo": 62,
+      "compas": "6/8",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "toms"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "intro-6-8.mid": {
+      "id": "jw-worship-6-8-intro-6-8",
+      "nombre": "Intro 6-8",
+      "tempo": 62,
+      "compas": "6/8",
+      "compases": 2,
+      "tipo": "intro",
+      "etiquetas": [
+        "intro",
+        "6-8"
+      ],
+      "intensidad": 1,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "final-6-8.mid": {
+      "id": "jw-worship-6-8-final-6-8",
+      "nombre": "Final 6-8",
+      "tempo": 62,
+      "compas": "6/8",
+      "compases": 2,
+      "tipo": "outro",
+      "etiquetas": [
+        "outro",
+        "final",
+        "6-8"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

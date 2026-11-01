@@ -27,6 +27,11 @@ describe('guessIsInstrument', () => {
     assert.equal(guessIsInstrument('Pro-Q 3'), false)
     assert.equal(isLikelyAudioFx('Pro-Q 3'), true)
     assert.equal(guessIsInstrument('ValhallaRoom'), false)
+    // Afinador vocal y ambiente de JasWave son FX (procesan la pista; no reciben MIDI).
+    assert.equal(isLikelyAudioFx('JasWave Vocal Tune', 'C:/VST3/JasWave/JasWaveVocalTune.vst3'), true)
+    assert.equal(isLikelyAudioFx('JasWave Ambience', 'C:/VST3/JasWave/JasWaveAmbience.vst3'), true)
+    assert.equal(isLikelyAudioFx('JasWave Ambient Atmos', 'C:/VST3/JasWave/JasWaveAmbientAtmos.vst3'), false)
+    assert.equal(isLikelyAudioFx('JasWave Grand Piano', 'C:/VST3/JasWave/JasWaveGrandPiano.vst3'), false)
   })
 })
 

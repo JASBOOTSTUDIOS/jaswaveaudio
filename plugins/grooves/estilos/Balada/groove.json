@@ -1,0 +1,93 @@
+{
+  "archivos": {
+    "balada-con-rimshot.mid": {
+      "id": "jw-balada-balada-con-rimshot",
+      "nombre": "Balada con rimshot",
+      "tempo": 66,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "balada",
+        "cross-stick",
+        "lenta"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "balada-de-corcheas.mid": {
+      "id": "jw-balada-balada-de-corcheas",
+      "nombre": "Balada de corcheas",
+      "tempo": 70,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "balada",
+        "suave"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "balada-con-ride.mid": {
+      "id": "jw-balada-balada-con-ride",
+      "nombre": "Balada con ride",
+      "tempo": 62,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "balada",
+        "ride",
+        "pasional"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "balada-en-3-tiempos.mid": {
+      "id": "jw-balada-balada-en-3-tiempos",
+      "nombre": "Balada en 3 tiempos",
+      "tempo": 78,
+      "compas": "3/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "balada",
+        "vals",
+        "3-4"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-caja-al-cuarto.mid": {
+      "id": "jw-balada-fill-caja-al-cuarto",
+      "nombre": "Fill caja al cuarto",
+      "tempo": 66,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "caja",
+        "cuarto"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

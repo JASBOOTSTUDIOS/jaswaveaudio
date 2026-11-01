@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="cello">
+  <!-- Cuerpo amplio de cello con curvas C profundas -->
+  <path d="M23 22c-6 3-8 8-6 13 1 2 2 3 1 5-4 4-3 12 3 15s15 3 22 0 7-11 3-15c-1-2 0-3 1-5 2-5 0-10-6-13" fill="currentColor" fill-opacity="0.14" stroke-width="2" />
+  <!-- Efes frotadas de cello -->
+  <path d="M26 34c-.5 3 .5 6 0 8" stroke-width="1.5" />
+  <path d="M38 34c.5 3-.5 6 0 8" stroke-width="1.5" />
+  <!-- Diapasón largo y puente de madera -->
+  <path d="M30 8v22h4V8z" fill="currentColor" fill-opacity="0.25" stroke-width="1.5" />
+  <rect x="29" y="36" width="6" height="2" fill="currentColor" />
+  <!-- Cordal y pica extensible al suelo -->
+  <polygon points="30,44 34,44 33,52 31,52" fill="currentColor" />
+  <line x1="32" y1="52" x2="32" y2="60" stroke-width="2.5" />
+  <!-- Voluta del mástil -->
+  <path d="M30 4c0-2 2-3 2-3s2 1 2 3v4h-4z" stroke-width="1.5" />
+  <circle cx="27" cy="5" r="1.5" fill="currentColor" />
+  <circle cx="37" cy="5" r="1.5" fill="currentColor" />
+</svg>

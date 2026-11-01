@@ -1,0 +1,55 @@
+{
+  "archivos": {
+    "one-drop.mid": {
+      "id": "jw-reggae-one-drop",
+      "nombre": "One drop",
+      "tempo": 74,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "reggae",
+        "one-drop"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "rockers.mid": {
+      "id": "jw-reggae-rockers",
+      "nombre": "Rockers",
+      "tempo": 80,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "reggae",
+        "rockers"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "steppers.mid": {
+      "id": "jw-reggae-steppers",
+      "nombre": "Steppers",
+      "tempo": 84,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "reggae",
+        "steppers"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

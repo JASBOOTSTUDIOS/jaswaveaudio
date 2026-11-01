@@ -59,6 +59,7 @@ export interface BaseTrack {
   profundidad: number;
   padreId?: string;
   hijos: string[];
+  takeFolderId?: string;
   clips: Clip[];
   plugins: PluginInfo[];
   automatizaciones: AutomatizacionInfo[];

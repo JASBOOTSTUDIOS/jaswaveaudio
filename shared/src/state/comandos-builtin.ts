@@ -27,6 +27,7 @@ import {
   crearComandoClipCreate,
   crearComandoMidiClipCreate,
   crearComandoMidiNotesSet,
+  crearComandoMidiNotesPatch,
   crearComandoMidiTranspose,
   crearComandoMidiQuantize,
   crearComandoMidiHumanize,
@@ -35,6 +36,7 @@ import {
   crearComandoMidiCreateNotes,
   crearComandoMidiMakeStaccato,
   crearComandoMidiMakeLegato,
+  crearComandoMidiLegatoWorship,
   crearComandoMidiRepeat,
   crearComandoMidiReverse,
   crearComandoMidiInvert,
@@ -47,9 +49,17 @@ import {
   crearComandoClipDelete,
   crearComandoClipMerge,
   crearComandoClipRestore,
+  crearComandoClipRestoreMany,
   crearComandoClipMove,
+  crearComandoClipSetSource,
   crearComandoClipResize,
   crearComandoClipSplit,
+  crearComandoClipSetMute,
+  crearComandoClipSetFade,
+  crearComandoClipSetGain,
+  crearComandoClipSetReverse,
+  crearComandoMidiNotesMute,
+  crearComandoMidiNotesSplit,
   crearComandoMidiClipSplitIntoSections,
   crearComandoTransportToggle,
   crearComandoTransportStop,
@@ -69,6 +79,8 @@ import {
   crearComandoSetSnap,
   crearComandoSetZoom,
   crearComandoMarkerCreate,
+  crearComandoMarkerUpdate,
+  crearComandoMarkerRemove,
   crearComandoProjectUpdate,
 } from '../commands/auxiliary-commands';
 import {
@@ -77,13 +89,24 @@ import {
   crearComandoUiSetPalette,
 } from '../commands/selection-commands';
 import {
+  crearComandoMidiZonesSet,
+  crearComandoMidiZonesAdd,
+  crearComandoMidiZonesRemove,
+  crearComandoMidiZonesUpdate,
+  crearComandoDirectoSetSafety,
+  crearComandoDirectoSetLock,
+} from '../commands/directo-commands';
+import {
   crearComandoPluginInsert,
+  crearComandoPluginUpdate,
   crearComandoPluginRemove,
   crearComandoPluginMove,
   crearComandoPluginBypass,
   crearComandoPluginDuplicate,
   crearComandoPluginReplace,
   crearComandoPluginSetParameter,
+  crearComandoTrackSnapshotPluginState,
+  crearComandoMasterSnapshotPluginState,
   crearComandoFxChainCopy,
   crearComandoFxChainPaste,
   crearComandoFxChainPasteUndo,
@@ -101,6 +124,18 @@ import {
   crearComandoAnalysisSpectrum,
   crearComandoAnalysisStereo,
   crearComandoAnalysisFullReport,
+  crearComandoAnalysisTrack,
+  crearComandoAnalysisMix,
+  crearComandoAnalysisMasking,
+  crearComandoAnalysisDynamics,
+  crearComandoAnalysisSection,
+  crearComandoAnalysisReference,
+  crearComandoAnalysisDiagnose,
+  crearComandoAnalysisTrackSound,
+  crearComandoAnalysisAudioLens,
+  crearComandoAnalysisVoiceToDrums,
+  crearComandoAnalysisVoiceToMelody,
+  crearComandoAnalysisExtractMidi,
 } from '../commands/analysis-commands';
 import {
   crearComandoAutomationSetCurve,
@@ -116,6 +151,45 @@ import {
   crearComandoTrackFreeze,
   crearComandoTrackUnfreeze,
 } from '../commands/freeze-commands';
+import {
+  crearComandoTakeFolderEnsure,
+  crearComandoTakeAdd,
+  crearComandoTakeDelete,
+  crearComandoTakeRename,
+  crearComandoTakePreview,
+  crearComandoCompSegmentSet,
+  crearComandoCompSegmentClear,
+  crearComandoTransportSetRecordMode,
+} from '../commands/take-commands';
+import {
+  crearComandoTrackGanancia,
+  crearComandoPistaPan,
+  crearComandoPistaEqAgregar,
+  crearComandoPistaEqEditar,
+  crearComandoPistaEqQuitar,
+  crearComandoPistaEqBandaAgregar,
+  crearComandoPistaEqBandaEditar,
+  crearComandoPistaEqBandaQuitar,
+  crearComandoPistaCompresorAgregar,
+  crearComandoPistaCompresorEditar,
+  crearComandoPistaCompresorQuitar,
+  crearComandoPistaLimite,
+  crearComandoMasterNormalizar,
+} from '../commands/actuacion-commands';
+import {
+  crearComandoLyricsSetPhrases,
+  crearComandoLyricsAlignTiming,
+  crearComandoLyricsSetChords,
+  crearComandoChordsUpsert,
+  crearComandoChordsRemove,
+  crearComandoChordsMove,
+  crearComandoLyricsClear,
+  crearComandoChordsSet,
+  crearComandoChordsGet,
+  crearComandoLyricsSet,
+  crearComandoLyricsGet,
+} from '../commands/lyrics-commands';
+import { entorno } from './entorno-determinista';
 
 /**
  * Crea un evento de dominio estandarizado para el bus.
@@ -128,7 +202,7 @@ function evento(nombre: string, payload: Record<string, unknown>): EventoDominio
   return {
     nombre,
     version: 1,
-    marcaTiempo: Date.now(),
+    marcaTiempo: entorno.ahora(),
     fuente: 'builtin',
     payload: payload as any,
   };
@@ -170,6 +244,7 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoClipCreate(), registry);
   registrar(crearComandoMidiClipCreate(), registry);
   registrar(crearComandoMidiNotesSet(), registry);
+  registrar(crearComandoMidiNotesPatch(), registry);
   registrar(crearComandoMidiTranspose(), registry);
   registrar(crearComandoMidiQuantize(), registry);
   registrar(crearComandoMidiHumanize(), registry);
@@ -178,6 +253,7 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoMidiCreateNotes(), registry);
   registrar(crearComandoMidiMakeStaccato(), registry);
   registrar(crearComandoMidiMakeLegato(), registry);
+  registrar(crearComandoMidiLegatoWorship(), registry);
   registrar(crearComandoMidiRepeat(), registry);
   registrar(crearComandoMidiReverse(), registry);
   registrar(crearComandoMidiInvert(), registry);
@@ -190,9 +266,17 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoClipDelete(), registry);
   registrar(crearComandoClipMerge(), registry);
   registrar(crearComandoClipRestore(), registry);
+  registrar(crearComandoClipRestoreMany(), registry);
   registrar(crearComandoClipMove(), registry);
+  registrar(crearComandoClipSetSource(), registry);
   registrar(crearComandoClipResize(), registry);
   registrar(crearComandoClipSplit(), registry);
+  registrar(crearComandoClipSetMute(), registry);
+  registrar(crearComandoClipSetFade(), registry);
+  registrar(crearComandoClipSetGain(), registry);
+  registrar(crearComandoClipSetReverse(), registry);
+  registrar(crearComandoMidiNotesMute(), registry);
+  registrar(crearComandoMidiNotesSplit(), registry);
   registrar(crearComandoMidiClipSplitIntoSections(), registry);
   registrar(crearComandoTransportToggle(), registry);
   registrar(crearComandoTransportStop(), registry);
@@ -214,17 +298,28 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoSetSnap(), registry);
   registrar(crearComandoSetZoom(), registry);
   registrar(crearComandoMarkerCreate(), registry);
+  registrar(crearComandoMarkerUpdate(), registry);
+  registrar(crearComandoMarkerRemove(), registry);
   registrar(crearComandoProjectUpdate(), registry);
   registrar(crearComandoSelectionSet(), registry);
   registrar(crearComandoSelectionClear(), registry);
   registrar(crearComandoUiSetPalette(), registry);
+  registrar(crearComandoMidiZonesSet(), registry);
+  registrar(crearComandoMidiZonesAdd(), registry);
+  registrar(crearComandoMidiZonesRemove(), registry);
+  registrar(crearComandoMidiZonesUpdate(), registry);
+  registrar(crearComandoDirectoSetSafety(), registry);
+  registrar(crearComandoDirectoSetLock(), registry);
   registrar(crearComandoPluginInsert(), registry);
+  registrar(crearComandoPluginUpdate(), registry);
   registrar(crearComandoPluginRemove(), registry);
   registrar(crearComandoPluginMove(), registry);
   registrar(crearComandoPluginBypass(), registry);
   registrar(crearComandoPluginDuplicate(), registry);
   registrar(crearComandoPluginReplace(), registry);
   registrar(crearComandoPluginSetParameter(), registry);
+  registrar(crearComandoTrackSnapshotPluginState(), registry);
+  registrar(crearComandoMasterSnapshotPluginState(), registry);
   registrar(crearComandoFxChainCopy(), registry);
   registrar(crearComandoFxChainPaste(), registry);
   registrar(crearComandoFxChainPasteUndo(), registry);
@@ -238,6 +333,18 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoAnalysisSpectrum(), registry);
   registrar(crearComandoAnalysisStereo(), registry);
   registrar(crearComandoAnalysisFullReport(), registry);
+  registrar(crearComandoAnalysisTrack(), registry);
+  registrar(crearComandoAnalysisMix(), registry);
+  registrar(crearComandoAnalysisMasking(), registry);
+  registrar(crearComandoAnalysisDynamics(), registry);
+  registrar(crearComandoAnalysisSection(), registry);
+  registrar(crearComandoAnalysisReference(), registry);
+  registrar(crearComandoAnalysisDiagnose(), registry);
+  registrar(crearComandoAnalysisTrackSound(), registry);
+  registrar(crearComandoAnalysisAudioLens(), registry);
+  registrar(crearComandoAnalysisVoiceToDrums(), registry);
+  registrar(crearComandoAnalysisVoiceToMelody(), registry);
+  registrar(crearComandoAnalysisExtractMidi(), registry);
   registrar(crearComandoAutomationSetCurve(), registry);
   registrar(crearComandoAutomationClear(), registry);
   registrar(crearComandoAutomationWritePoint(), registry);
@@ -246,6 +353,38 @@ export function registrarComandosBuiltin(registry: CommandRegistry): void {
   registrar(crearComandoSidechainConnect(), registry);
   registrar(crearComandoTrackFreeze(), registry);
   registrar(crearComandoTrackUnfreeze(), registry);
+  registrar(crearComandoTakeFolderEnsure(), registry);
+  registrar(crearComandoTakeAdd(), registry);
+  registrar(crearComandoTakeDelete(), registry);
+  registrar(crearComandoTakeRename(), registry);
+  registrar(crearComandoTakePreview(), registry);
+  registrar(crearComandoCompSegmentSet(), registry);
+  registrar(crearComandoCompSegmentClear(), registry);
+  registrar(crearComandoTransportSetRecordMode(), registry);
+  registrar(crearComandoTrackGanancia(), registry);
+  registrar(crearComandoPistaPan(), registry);
+  registrar(crearComandoPistaEqAgregar(), registry);
+  registrar(crearComandoPistaEqEditar(), registry);
+  registrar(crearComandoPistaEqQuitar(), registry);
+  registrar(crearComandoPistaEqBandaAgregar(), registry);
+  registrar(crearComandoPistaEqBandaEditar(), registry);
+  registrar(crearComandoPistaEqBandaQuitar(), registry);
+  registrar(crearComandoPistaCompresorAgregar(), registry);
+  registrar(crearComandoPistaCompresorEditar(), registry);
+  registrar(crearComandoPistaCompresorQuitar(), registry);
+  registrar(crearComandoPistaLimite(), registry);
+  registrar(crearComandoMasterNormalizar(), registry);
+  registrar(crearComandoLyricsSetPhrases(), registry);
+  registrar(crearComandoLyricsAlignTiming(), registry);
+  registrar(crearComandoLyricsSetChords(), registry);
+  registrar(crearComandoChordsUpsert(), registry);
+  registrar(crearComandoChordsRemove(), registry);
+  registrar(crearComandoChordsMove(), registry);
+  registrar(crearComandoLyricsClear(), registry);
+  registrar(crearComandoChordsSet(), registry);
+  registrar(crearComandoChordsGet(), registry);
+  registrar(crearComandoLyricsSet(), registry);
+  registrar(crearComandoLyricsGet(), registry);
 }
 /**
  * Alias de `registrarComandosBuiltin` para registrar comandos de proyecto.

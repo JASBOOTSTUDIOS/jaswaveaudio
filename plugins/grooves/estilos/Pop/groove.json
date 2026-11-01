@@ -1,0 +1,161 @@
+{
+  "archivos": {
+    "pop-clasico.mid": {
+      "id": "jw-pop-pop-clasico",
+      "nombre": "Pop clásico",
+      "tempo": 110,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "pop",
+        "ocho-notas"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "pop-con-semicorcheas.mid": {
+      "id": "jw-pop-pop-con-semicorcheas",
+      "nombre": "Pop con semicorcheas",
+      "tempo": 104,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "pop",
+        "hi-hat-16"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "pop-bailable.mid": {
+      "id": "jw-pop-pop-bailable",
+      "nombre": "Pop bailable",
+      "tempo": 118,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "pop",
+        "bailable",
+        "palmas"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "pop-sintetico.mid": {
+      "id": "jw-pop-pop-sintetico",
+      "nombre": "Pop sintético",
+      "tempo": 100,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "pop",
+        "synth",
+        "recto"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "pop-verso-ligero.mid": {
+      "id": "jw-pop-pop-verso-ligero",
+      "nombre": "Pop verso ligero",
+      "tempo": 96,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "pop",
+        "verso",
+        "cross-stick"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-caja-al-cuarto.mid": {
+      "id": "jw-pop-fill-caja-al-cuarto",
+      "nombre": "Fill caja al cuarto",
+      "tempo": 108,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "caja",
+        "cuarto"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-redoble-de-caja.mid": {
+      "id": "jw-pop-fill-redoble-de-caja",
+      "nombre": "Fill redoble de caja",
+      "tempo": 108,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "redoble",
+        "caja"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "intro-pop.mid": {
+      "id": "jw-pop-intro-pop",
+      "nombre": "Intro Pop",
+      "tempo": 108,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "intro",
+      "etiquetas": [
+        "intro"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "final-pop.mid": {
+      "id": "jw-pop-final-pop",
+      "nombre": "Final Pop",
+      "tempo": 108,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "outro",
+      "etiquetas": [
+        "outro",
+        "final"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

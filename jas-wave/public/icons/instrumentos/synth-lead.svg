@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="synth-lead">
+  <!-- Chasis de monosinte de directo / performance -->
+  <rect x="8" y="26" width="48" height="28" rx="2" fill="currentColor" fill-opacity="0.12" stroke-width="2" />
+  <!-- Onda diente de sierra agresiva que emerge con energía -->
+  <path d="M10 20l12-14v14l12-14v14l12-14v14l8-9" stroke-width="2.5" />
+  <!-- Perilla grande de Cutoff de filtro resonante -->
+  <circle cx="16" cy="34" r="5" fill="currentColor" fill-opacity="0.25" stroke-width="2" />
+  <line x1="16" y1="34" x2="19" y2="31" stroke-width="2" />
+  <!-- Teclado solista rápido -->
+  <rect x="24" y="32" width="30" height="20" rx="1" fill="currentColor" fill-opacity="0.25" stroke-width="1.75" />
+  <line x1="30" y1="32" x2="30" y2="52" stroke-width="1.5" />
+  <line x1="36" y1="32" x2="36" y2="52" stroke-width="1.5" />
+  <line x1="42" y1="32" x2="42" y2="52" stroke-width="1.5" />
+  <line x1="48" y1="32" x2="48" y2="52" stroke-width="1.5" />
+  <rect x="28" y="32" width="3.5" height="11" fill="currentColor" />
+  <rect x="34" y="32" width="3.5" height="11" fill="currentColor" />
+  <rect x="44" y="32" width="3.5" height="11" fill="currentColor" />
+</svg>

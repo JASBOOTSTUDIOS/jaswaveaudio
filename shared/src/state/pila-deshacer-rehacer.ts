@@ -32,7 +32,7 @@ export interface PilaDeshacerRehacer {
   popUndoSinRedo(): Command | null;
 }
 
-export function crearPilaDeshacerRehacer(maxSize = 1000): PilaDeshacerRehacer {
+export function crearPilaDeshacerRehacer(maxSize = 200): PilaDeshacerRehacer {
   const undoStack: Command[] = [];
   const redoStack: Command[] = [];
 

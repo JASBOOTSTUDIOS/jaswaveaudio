@@ -82,19 +82,32 @@ export async function setAudioDevice(
   },
 ): Promise<{ ok: boolean; message: string; audio?: AudioRuntime }> {
   const backend = opts.backend || 'asio'
+  const safeSampleRate = [44100, 48000, 88200, 96000, 192000].includes(Number(opts.sampleRate))
+    ? Number(opts.sampleRate)
+    : 48000
+  const safeBufferSize = Math.max(64, Math.min(2048, Number(opts.bufferSize) || 512))
+
   if (backend === 'asio' && (!opts.deviceId || opts.deviceId === 'default')) {
     return {
       ok: false,
       message: 'ASIO requiere deviceId (ej. driver UMC ASIO). Usa audio.listDevices.',
     }
   }
+  // U6: el dispositivo solo se cambia con el transporte detenido (evita cortes y
+  // perder la toma en curso).
+  const transporte = tienda.obtenerEstado().transport
+  if (transporte.reproduciendo || transporte.grabacion === 'grabando') {
+    await tienda.executor.execute('transport.stop', {})
+    const { esperarFinalizacionGrabacion } = await import('./recording-session')
+    await esperarFinalizacionGrabacion()
+  }
   await window.electron?.pluginHostEnsure?.()
   const raw = (await window.electron?.pluginHostSend?.({
     type: 'setAudioDevice',
     backend,
     deviceId: opts.deviceId,
-    sampleRate: opts.sampleRate,
-    bufferSize: opts.bufferSize,
+    sampleRate: safeSampleRate,
+    bufferSize: safeBufferSize,
     exclusive: opts.exclusive ?? backend === 'wasapi_exclusive',
   })) as { ok?: boolean; message?: string; audio?: AudioRuntime }
 
@@ -177,12 +190,14 @@ export async function ensureBestAudioDevice(
         audio: current,
       }
     }
-    return setAudioDevice(tienda, {
+    const asioRes = await setAudioDevice(tienda, {
       backend: 'asio',
       deviceId: pick.id,
       sampleRate: TARGET_SR,
       bufferSize: TARGET_BUF,
     })
+    if (asioRes.ok) return asioRes
+    console.warn('[audio-device] ASIO no se pudo activar (interfaz posiblemente desconectada). Pasando a WASAPI...')
   }
 
   const wasapi = devices.find((d) => d.backend === 'wasapi' && d.isDefault) || devices.find((d) => d.backend === 'wasapi')
@@ -237,7 +252,9 @@ export async function clearPluginQuarantineAndRestore(tienda: TiendaDAW): Promis
   const ensure = await ensureBestAudioDevice(tienda, 'UMC')
   const arm = await armNativeAudioOutput()
   return {
-    ok: Boolean(raw.ok) && ensure.ok && arm.ok,
+    // El dispositivo preferido (p. ej. ASIO desconectado) es un aviso: si el audio quedó armado
+    // en el fallback, limpiar la cuarentena fue exitoso.
+    ok: Boolean(raw.ok) && arm.ok,
     message: `${raw.message || `Cuarentena: ${cleared}`} · ${ensure.message} · ${arm.message}`,
     cleared,
   }

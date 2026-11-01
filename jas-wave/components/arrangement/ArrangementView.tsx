@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, LayoutGrid, Mic2, MoreVertical, Circle, Music, Upload, FileAudio, Headphones, GripVertical } from 'lucide-react'
+import { Plus, LayoutGrid, MoreVertical, Circle, Music, FileAudio, Headphones, GripVertical, AlertTriangle, Folder, AlignLeft } from 'lucide-react'
 import { usePlaybackActions } from '@/components/playback-provider'
 import { createProjection } from '@/lib/timeline-projection'
 import { TRACKS, type Track as UiTrack } from '@/lib/daw-data'
@@ -7,34 +7,46 @@ import { useDAW, useDAWState } from '../../src/context/daw-context'
 import type { DAWState } from '../../../shared/src'
 import { linealADb, panADisplay } from '@/lib/audio-conversions'
 import { ConfirmDialog } from '../ui/confirm-dialog'
+import { BrilloIA, CAMPOS_BRILLO_PISTA } from '../ui/resalto-ia'
 import { StereoWaveform } from '../stereo-waveform'
+import { audioEngine } from '@/lib/audio-engine'
+import { executeOrNotify } from '@/src/lib/execute-or-toast'
+import { registrarConfirmacionBorrarPista } from '@/src/lib/track-delete-request'
 import { requestOpenTool } from '@/src/workspace/types'
+import type { NuevoProyectoDetalle } from '@/components/nuevo-proyecto-dialog'
 import { TrackButton } from './TrackButton'
 import { TimelineRuler } from './TimelineRuler'
 import { GridLayer } from './GridLayer'
 import { PlayheadOverlay } from './PlayheadOverlay'
+import { StartMarkerOverlay } from './StartMarkerOverlay'
 import { ArrangeBoard } from './ArrangeBoard'
-import { AutomationLanesPanel } from '@/components/automation-lanes-panel'
-import { TrackAddPluginButton } from './TrackAddPluginButton'
+import { TimelineMarkersLane, MARKERS_LANE_H } from './TimelineMarkersLane'
+import { TimelineChordLane, TimelineLyricLane, CHORD_LANE_H, LYRIC_LANE_H, type HeaderLaneRow } from './TimelineLyricChordLane'
 import { MidiClipPreview } from './MidiClipPreview'
-import { ChannelFxBank } from '@/components/channel-fx-bank'
-import { TrackMidiInput } from '@/components/track-midi-input'
-import { TrackAudioInput } from '@/components/track-audio-input'
+import { ClipEditHandles, ClipMutedOverlay, type EdicionClip } from './ClipEditHandles'
 import { TrackContextMenu, type TrackMenuState } from './TrackContextMenu'
+import { TakeLanesPanel } from '@/components/take-lanes-panel'
 import { ClipContextMenu, type ClipMenuState } from './ClipContextMenu'
 import { clipsInLassoRect, type ClipLassoRect } from '@/src/lib/arrange-clip-lasso'
 import type { PluginInfo } from '../../../shared/src/types/entidades'
 import {
   ROW_H,
   HEADER_H,
+  HEADER_W,
   MIN_TOTAL_BEATS,
+  EMPTY_LANE_COUNT,
   BASE_PIXELS_PER_BEAT,
+  ROW_H_MIN,
   ARRANGE_MIN_ZOOM,
   ARRANGE_MAX_ZOOM,
 } from './constants'
 import { useTimelineScale } from '@/hooks/arrangement/useTimelineScale'
 import { useSnap } from '@/hooks/arrangement/useSnap'
 import { getSelectedTrackId, selectTrackPayload } from '@/src/lib/selection-helpers'
+import { revelarEnScroller } from '@/src/lib/scroll-reveal'
+import { padresEfectivos, planSoltarPista, profundidad } from '@/src/lib/plugin/track-hierarchy'
+import { resolveSnapDivision } from '@/src/lib/timeline-snap'
+import { snapPlayheadBeat } from './timeline-grid-math'
 
 export { ARRANGE_MIN_ZOOM, ARRANGE_MAX_ZOOM } from './constants'
 
@@ -50,6 +62,15 @@ type UiLikeTrack = UiTrack & {
 }
 
 type TrackToggle = { muted: boolean; solo: boolean; input: boolean; armed: boolean }
+
+/** Sangría por nivel de carpeta en las cabeceras. */
+const SANGRIA_PX = 12
+
+/** Arrastrar sobre la mitad derecha de una cabecera de carpeta = meter dentro. */
+function soltarEnMitadDerecha(e: { clientX: number; currentTarget: Element }): boolean {
+  const r = e.currentTarget.getBoundingClientRect()
+  return e.clientX - r.left > r.width / 2
+}
 
 function toUiLikeTrack(track: unknown): UiLikeTrack {
   const anyTrack = track as Record<string, unknown>
@@ -91,6 +112,16 @@ interface ClipDragState {
   previewInicio: number
   previewDuracion: number
   previewTrackId: string
+  /** Ctrl+arrastrar: dejar original y crear copia al soltar (Reaper). */
+  duplicate: boolean
+}
+
+/** Alt+Ctrl+arrastrar: crear clip MIDI vacío (estilo Reaper). */
+interface CreateMidiClipDrag {
+  trackId: string
+  originBeat: number
+  previewInicio: number
+  previewDuracion: number
 }
 
 export function ArrangementView() {
@@ -99,15 +130,32 @@ export function ArrangementView() {
   const activeTool = useDAWState((state: DAWState) => state.ui?.herramientaActiva || 'select')
   const snapValor = useDAWState((state: DAWState) => state.project?.timeline?.snapValor ?? 1)
   const snapEnabled = useDAWState((state: DAWState) => state.project?.timeline?.snap ?? true)
+  const playheadSnap = useDAWState((state: DAWState) => state.ui?.playheadSnap !== false)
   const bpm = useDAWState((state: DAWState) => state.project?.bpm?.valor ?? 120)
   const beatsPerBar = useDAWState((state: DAWState) => state.project?.timeSignature?.numerador ?? 4)
   const loopState = useDAWState((state: DAWState) => state.transport?.loop)
   const zoom = useDAWState((state: DAWState) => state.ui?.zoomHorizontal ?? 1)
   const zoomVertical = useDAWState((state: DAWState) => state.ui?.zoomVertical ?? 1)
   const scrollLeft = useDAWState((state: DAWState) => state.ui?.scrollX ?? 0)
-  const selectedClipId = useDAWState((state: DAWState) => state.selection?.idsClips?.[0] ?? null)
   const selectedClipIds = useDAWState((state: DAWState) => state.selection?.idsClips ?? [])
   const selectedTrackId = useDAWState((state: DAWState) => getSelectedTrackId(state))
+  // Carriles de la cabecera (marcadores, acordes, letra): solo se muestran si hay datos; se pueden plegar.
+  const hayMarcadores = useDAWState((state: DAWState) => (state.project?.marcadores?.length ?? 0) > 0)
+  const hayAcordes = useDAWState((state: DAWState) => (state.project?.letra?.acordes?.length ?? 0) > 0)
+  const hayLetra = useDAWState((state: DAWState) => (state.project?.letra?.frases?.length ?? 0) > 0)
+  const [carrilesPlegados, setCarrilesPlegados] = useState<Record<string, boolean>>({})
+  const plegarCarril = useCallback((id: string) => setCarrilesPlegados((p) => ({ ...p, [id]: !p[id] })), [])
+  const [letraAbierta, setLetraAbierta] = useState(false)
+  const [letraTexto, setLetraTexto] = useState('')
+  const letraRef = useRef<HTMLDivElement>(null)
+  /** Datos de edición de cada clip (mute, ganancia, fades, slip) desde el store. */
+  const edicionPorClip = useMemo(() => {
+    const m = new Map<string, EdicionClip & { clipInicio?: number }>()
+    for (const t of sharedTracks) for (const c of (t.clips ?? []) as Array<EdicionClip & { id: string; clipInicio?: number }>) m.set(c.id, c)
+    return m
+  }, [sharedTracks])
+  /** Slip (Alt+Shift+arrastrar): desplazamiento del audio dentro del clip mientras se arrastra (beats). */
+  const [slip, setSlip] = useState<{ clipId: string; clipInicio: number } | null>(null)
   const loopActivo = Boolean(loopState?.activo)
   const loopInicioBeats = loopState?.inicio?.beats ?? 0
   const loopFinBeats = loopState?.fin?.beats ?? 0
@@ -116,18 +164,35 @@ export function ArrangementView() {
   const timelineRef = useRef<HTMLDivElement>(null)
   const lanesScrollRef = useRef<HTMLDivElement>(null)
   const rulerScrollRef = useRef<HTMLDivElement>(null)
+  const seekOriginRef = useRef<'lanes' | 'ruler'>('lanes')
+  /** Cabecera de cada pista: al seleccionarla (aquí o en el Mixer) se desplaza en vertical hasta verse. */
+  const cabecerasRef = useRef(new Map<string, HTMLDivElement>())
+  useEffect(() => {
+    if (!selectedTrackId) return
+    revelarEnScroller(lanesScrollRef.current, cabecerasRef.current.get(selectedTrackId), 'y')
+  }, [selectedTrackId])
   const syncingScroll = useRef(false)
   const lastPointerXRef = useRef<number | null>(null)
 
   const [dragging, setDragging] = useState(false)
+  const playheadDraggingRef = useRef(false)
+  /** Cleanup de listeners window (playhead / crear clip). */
+  const windowDragCleanupRef = useRef<(() => void) | null>(null)
   const [playheadTooltip, setPlayheadTooltip] = useState<{ beat: number; bar: number; beatInBar: number } | null>(null)
   const [viewportWidth, setViewportWidth] = useState(800)
+  const [viewportHeight, setViewportHeight] = useState(400)
   const [liveScrollX, setLiveScrollX] = useState(0)
+  const [scrollEpoch, setScrollEpoch] = useState(0)
+  const scrollXRef = useRef(0)
 
   const [clipDrag, setClipDrag] = useState<ClipDragState | null>(null)
   const clipDragRef = useRef<ClipDragState | null>(null)
   const lastClipDragUiMs = useRef(0)
   clipDragRef.current = clipDrag
+  const [createMidiDrag, setCreateMidiDrag] = useState<CreateMidiClipDrag | null>(null)
+  const createMidiDragRef = useRef<CreateMidiClipDrag | null>(null)
+  createMidiDragRef.current = createMidiDrag
+  const suppressLaneClickRef = useRef(false)
   const [showAddTrackMenu, setShowAddTrackMenu] = useState(false)
   const addTrackMenuRef = useRef<HTMLDivElement>(null)
   const addTrackFileRef = useRef<HTMLInputElement>(null)
@@ -135,10 +200,12 @@ export function ArrangementView() {
   const [deleteConfirmTrack, setDeleteConfirmTrack] = useState<string | null>(null)
   const [trackMenu, setTrackMenu] = useState<TrackMenuState | null>(null)
   const [clipMenu, setClipMenu] = useState<ClipMenuState | null>(null)
+  const [takeLanesTrackId, setTakeLanesTrackId] = useState<string | null>(null)
   const [clipLasso, setClipLasso] = useState<ClipLassoRect | null>(null)
   const clipLassoActiveRef = useRef(false)
   const [dragTrackId, setDragTrackId] = useState<string | null>(null)
   const [dragOverTrackId, setDragOverTrackId] = useState<string | null>(null)
+  const [soltarDentro, setSoltarDentro] = useState(false)
 
   const tracks: UiLikeTrack[] = useMemo(() => {
     return sharedTracks.map((raw: unknown) => toUiLikeTrack(raw))
@@ -187,9 +254,22 @@ export function ArrangementView() {
       }),
     [pixelsPerBeat, viewportWidth, liveScrollX, bpm],
   )
-  const { snapBeat, snapDuration } = useSnap(snapEnabled, snapValor)
+  const { snapBeat, snapDuration } = useSnap(
+    snapEnabled && playheadSnap,
+    snapValor,
+    beatsPerBar,
+  )
+  /** Profundidad visual del selector (0 = Off → solo compases). */
+  const snapDivision = snapEnabled ? resolveSnapDivision(snapValor, beatsPerBar) : 0
 
-  // ResizeObserver para mantener viewportWidth reactivo
+  useEffect(() => {
+    return () => {
+      windowDragCleanupRef.current?.()
+      windowDragCleanupRef.current = null
+    }
+  }, [])
+
+  // Ancho del viewport de LANES (sin columna TCP) + altura del scroll
   useEffect(() => {
     const el = timelineRef.current
     if (!el) return
@@ -198,24 +278,75 @@ export function ArrangementView() {
         const w =
           entry.contentBoxSize?.[0]?.inlineSize ??
           entry.contentRect.width
-        if (w > 0) setViewportWidth(w)
+        const h =
+          entry.contentBoxSize?.[0]?.blockSize ??
+          entry.contentRect.height
+        // TrackCanvas incluye cabeceras sticky; la rejilla/regla solo cubren lanes.
+        const lanesW = Math.max(1, w - HEADER_W)
+        if (lanesW > 0) setViewportWidth(lanesW)
+        if (h > 0) setViewportHeight(h)
       }
     })
     obs.observe(el)
-    // Initial read
-    if (el.clientWidth > 0) setViewportWidth(el.clientWidth)
+    const lanesW = Math.max(1, el.clientWidth - HEADER_W)
+    if (lanesW > 0) setViewportWidth(lanesW)
+    if (el.clientHeight > 0) setViewportHeight(el.clientHeight)
     return () => obs.disconnect()
   }, [])
 
-  const handleAddTrack = async (tipo: 'audio' | 'midi') => {
+  const handleAddTrack = async (tipo: 'audio' | 'midi' | 'carpeta') => {
+    const estado = tienda.obtenerEstado()
+    if (!estado.project.ruta) {
+      // Se guarda el proyecto actual (sin vaciarlo) y luego se crea la pista que se pidió.
+      const detail: NuevoProyectoDetalle = {
+        mensaje:
+          'Para asegurar que tus pistas y audios no se pierdan al reiniciar o refrescar, primero asigna un nombre y carpeta a tu proyecto.',
+        conservar: true,
+        alCrear: () => void handleAddTrack(tipo),
+      }
+      window.dispatchEvent(new CustomEvent('jaswave-nuevo-proyecto', { detail }))
+      setShowAddTrackMenu(false)
+      return
+    }
     const count = sharedTracks.length + 1
-    const nombre = tipo === 'midi' ? `MIDI ${count}` : `Audio ${count}`
-    await tienda.executor.execute('track.create', { nombre, tipo })
+    const nombre = tipo === 'midi' ? `MIDI ${count}` : tipo === 'carpeta' ? `Carpeta ${count}` : `Audio ${count}`
+    const created = await tienda.executor.execute('track.create', { nombre, tipo })
+    // La pista nueva queda seleccionada: el catálogo y el inspector apuntan a ella sin un clic extra.
+    const trackId = created.success ? (created.result as { trackId?: string })?.trackId : undefined
+    if (trackId) void tienda.executor.execute('selection.set', selectTrackPayload(trackId))
     setShowAddTrackMenu(false)
   }
 
   const handleImportToTrack = async (trackId: string, file: File) => {
-    await addClipFromFile(trackId, file, 0)
+    const estado = tienda.obtenerEstado()
+    if (!estado.project.ruta) {
+      const detail: NuevoProyectoDetalle = {
+        mensaje:
+          'Para asegurar que el audio no se pierda al reiniciar o refrescar, primero asigna un nombre y carpeta a tu proyecto.',
+        conservar: true,
+        alCrear: () => void handleImportToTrack(trackId, file),
+      }
+      window.dispatchEvent(new CustomEvent('jaswave-nuevo-proyecto', { detail }))
+      return
+    }
+    try {
+      let destino = trackId
+      const pista = tienda.obtenerEstado().project.tracks.find((t) => t.id === trackId)
+      if (!pista || pista.tipo !== 'audio') {
+        const created = await tienda.executor.execute('track.create', {
+          nombre: file.name.replace(/\.[^.]+$/, ''),
+          tipo: 'audio',
+        })
+        if (created.success) {
+          destino = (created.result as { trackId?: string })?.trackId ?? destino
+        }
+      }
+      await addClipFromFile(destino, file, 0)
+    } catch (err) {
+      // Antes el rechazo quedaba como unhandledrejection y el usuario no veía nada.
+      const msg = err instanceof Error ? err.message : String(err)
+      tienda.busEventos.emit('comando.fallido', { type: 'audio.import', error: `${file.name}: ${msg}` })
+    }
   }
 
   const openTrackMenu = useCallback((trackId: string, clientX: number, clientY: number) => {
@@ -243,6 +374,9 @@ export function ArrangementView() {
     setDeleteConfirmTrack(trackId)
   }
 
+  // Ctrl+Delete (atajo global) reutiliza este mismo diálogo.
+  useEffect(() => registrarConfirmacionBorrarPista((trackId) => setDeleteConfirmTrack(trackId)), [])
+
   const confirmDeleteTrack = async () => {
     if (deleteConfirmTrack) {
       await tienda.executor.execute('track.delete', { trackId: deleteConfirmTrack })
@@ -250,9 +384,13 @@ export function ArrangementView() {
     }
   }
 
-  const moveTrackToIndex = useCallback(
-    (trackId: string, toIndex: number) => {
-      void tienda.executor.execute('track.move', { trackId, toIndex })
+  // Carpetas-bus: sangría por profundidad y soltar dentro / fuera de una carpeta en un solo paso de deshacer.
+  const padres = useMemo(() => padresEfectivos(sharedTracks), [sharedTracks])
+  const soltarPista = useCallback(
+    (trackId: string, destinoId: string, dentro: boolean) => {
+      const plan = planSoltarPista(tienda.obtenerEstado().project.tracks, trackId, destinoId, dentro)
+      if (plan.length === 1) void tienda.executor.execute(plan[0]!.type, plan[0]!.payload)
+      else if (plan.length > 1) void tienda.executor.batch(plan)
     },
     [tienda],
   )
@@ -284,10 +422,20 @@ export function ArrangementView() {
     return () => document.removeEventListener('mousedown', handler)
   }, [showAddTrackMenu])
 
+  // Cerrar el popover de letra al hacer clic fuera
+  useEffect(() => {
+    if (!letraAbierta) return
+    const handler = (e: MouseEvent) => {
+      if (letraRef.current && !letraRef.current.contains(e.target as Node)) setLetraAbierta(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [letraAbierta])
+
   // Note: keyboard shortcuts are now handled by useShortcutDispatcher (unified system)
 
-  const TRACK_COL_W = 300
-  const rowH = Math.max(56, Math.round(ROW_H * zoomVertical))
+  const TRACK_COL_W = HEADER_W
+  const rowH = Math.max(ROW_H_MIN, Math.round(ROW_H * zoomVertical))
 
   const beginClipRightDrag = useCallback(
     (e: React.PointerEvent) => {
@@ -374,9 +522,13 @@ export function ArrangementView() {
           return
         }
         let beatAtClick: number | undefined
-        if (timelineRef.current) {
-          const tRect = timelineRef.current.getBoundingClientRect()
-          beatAtClick = Math.max(0, projection.pixelToBeat(ev.clientX - tRect.left))
+        if (lanesScrollRef.current) {
+          const sc = lanesScrollRef.current
+          const tRect = sc.getBoundingClientRect()
+          beatAtClick = Math.max(
+            0,
+            (ev.clientX - tRect.left - TRACK_COL_W + sc.scrollLeft) / pixelsPerBeat,
+          )
         }
         const currentIds = tienda.obtenerEstado().selection?.idsClips ?? []
         if (clipId && trackId) {
@@ -395,42 +547,190 @@ export function ArrangementView() {
       window.addEventListener('pointerup', up)
       window.addEventListener('pointercancel', up)
     },
-    [clips, tracks, rowH, projection, tienda, openClipMenu],
+    [clips, tracks, rowH, pixelsPerBeat, TRACK_COL_W, tienda, openClipMenu],
+  )
+
+  /** clientX → beat en contenido (misma base que clips / beatToPixel). */
+  const clientXToBeat = useCallback(
+    (clientX: number, origin: 'lanes' | 'ruler' = 'lanes') => {
+      if (origin === 'ruler') {
+        const ruler = rulerScrollRef.current
+        const lanes = lanesScrollRef.current
+        if (!ruler) return 0
+        const rect = ruler.getBoundingClientRect()
+        const scrollX = lanes?.scrollLeft ?? 0
+        return Math.max(0, (clientX - rect.left + scrollX) / pixelsPerBeat)
+      }
+      const scroller = lanesScrollRef.current
+      if (!scroller) return 0
+      const rect = scroller.getBoundingClientRect()
+      // NO usar pixelToBeat: ese API suma scroll otra vez.
+      const contentX = clientX - rect.left - TRACK_COL_W + scroller.scrollLeft
+      return Math.max(0, contentX / pixelsPerBeat)
+    },
+    [pixelsPerBeat, TRACK_COL_W],
+  )
+
+  /** Beat actual del playhead (transporte), para anclar zoom/scroll. */
+  const getPlayheadBeat = useCallback(() => {
+    return Math.max(0, ((getPositionMs() / 1000) * bpm) / 60)
+  }, [getPositionMs, bpm])
+
+  /** Viewport X (lanes) donde está la línea amarilla. */
+  const getPlayheadViewportX = useCallback(() => {
+    const lanes = lanesScrollRef.current
+    const beat = getPlayheadBeat()
+    const contentX = beat * pixelsPerBeat
+    const scrollX = lanes?.scrollLeft ?? scrollXRef.current
+    return contentX - scrollX
+  }, [getPlayheadBeat, pixelsPerBeat])
+
+  /** Playhead / regla: siempre scrollLeft del DOM (nunca estado React desfasado). */
+  const getLanesScrollX = useCallback(() => {
+    return lanesScrollRef.current?.scrollLeft ?? scrollXRef.current
+  }, [])
+
+  const commitScrollX = useCallback((x: number) => {
+    scrollXRef.current = x
+    setLiveScrollX(x)
+    setScrollEpoch((n) => n + 1)
+    if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = x
+  }, [])
+
+  /** Mantener la línea amarilla centrada (o visible) en el viewport de lanes. */
+  const centerScrollOnPlayhead = useCallback(
+    (opts?: { beat?: number; smooth?: boolean }) => {
+      const lanes = lanesScrollRef.current
+      if (!lanes) return
+      const beat = opts?.beat ?? getPlayheadBeat()
+      const lanesViewportW = Math.max(1, lanes.clientWidth - TRACK_COL_W)
+      const contentX = beat * pixelsPerBeat
+      const target = Math.max(0, contentX - lanesViewportW / 2)
+      const maxScroll = Math.max(0, lanes.scrollWidth - lanes.clientWidth)
+      const next = Math.max(0, Math.min(maxScroll, target))
+      if (Math.abs(next - lanes.scrollLeft) < 0.5) return
+      syncingScroll.current = true
+      lanes.scrollLeft = next
+      commitScrollX(next)
+      tienda.establecerEstado((s) => ({ ...s, ui: { ...s.ui, scrollX: next } }))
+      requestAnimationFrame(() => {
+        syncingScroll.current = false
+      })
+    },
+    [getPlayheadBeat, pixelsPerBeat, TRACK_COL_W, commitScrollX, tienda],
   )
 
   const seekFromEvent = useCallback(
-    (clientX: number) => {
-      const scroller = lanesScrollRef.current
-      if (!scroller) return
-      const rect = scroller.getBoundingClientRect()
-      const x = clientX - rect.left + scroller.scrollLeft - TRACK_COL_W
-      const beat = projection.pixelToBeat(Math.max(0, x))
-      seekToBeats(Math.max(0, beat))
+    (clientX: number, origin: 'lanes' | 'ruler' = 'lanes') => {
+      const raw = clientXToBeat(clientX, origin)
+      const beat = snapPlayheadBeat(raw, {
+        playheadSnap,
+        snapEnabled,
+        snapValor,
+        beatsPerBar,
+      })
+      seekToBeats(beat)
       const bar = Math.floor(beat / beatsPerBar) + 1
-      const beatInBar = Math.floor(beat % beatsPerBar) + 1
-      setPlayheadTooltip({ beat: Math.max(0, beat), bar, beatInBar })
+      const beatInBar = (beat % beatsPerBar) + 1
+      setPlayheadTooltip({ beat, bar, beatInBar })
+
+      // Si la línea queda fuera de vista, centrar el scroll en ella.
+      const lanes = lanesScrollRef.current
+      if (lanes) {
+        const lanesViewportW = Math.max(1, lanes.clientWidth - TRACK_COL_W)
+        const viewX = beat * pixelsPerBeat - lanes.scrollLeft
+        const margin = 40
+        if (viewX < margin || viewX > lanesViewportW - margin) {
+          centerScrollOnPlayhead({ beat })
+        }
+      }
     },
-    [projection, seekToBeats, beatsPerBar],
+    [
+      clientXToBeat,
+      seekToBeats,
+      beatsPerBar,
+      pixelsPerBeat,
+      playheadSnap,
+      snapEnabled,
+      snapValor,
+      TRACK_COL_W,
+      centerScrollOnPlayhead,
+    ],
   )
 
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
     if (activeTool === 'select' || (activeTool as string) === 'move') {
-      seekFromEvent(e.clientX)
+      seekFromEvent(e.clientX, 'ruler')
     }
   }
 
-  const handlePlayheadPointerDown = (e: React.PointerEvent) => {
+  const handlePlayheadPointerDown = (e: React.PointerEvent, origin: 'lanes' | 'ruler' = 'lanes') => {
     e.preventDefault()
     e.stopPropagation()
+    seekOriginRef.current = origin
+    playheadDraggingRef.current = true
     setDragging(true)
-    seekFromEvent(e.clientX)
-    // Capturar puntero para arrastre fluido aunque el cursor salga del timeline
-    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+    seekFromEvent(e.clientX, origin)
+
+    // El playhead vive fuera de TrackCanvas: hay que escuchar en window
+    // o el pointerup nunca limpia el arrastre.
+    windowDragCleanupRef.current?.()
+    const onMove = (ev: PointerEvent) => {
+      if (!playheadDraggingRef.current) return
+      seekFromEvent(ev.clientX, seekOriginRef.current)
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      windowDragCleanupRef.current = null
+      playheadDraggingRef.current = false
+      setDragging(false)
+      setPlayheadTooltip(null)
+      try {
+        ;(e.target as HTMLElement)?.releasePointerCapture?.(ev.pointerId)
+      } catch {
+        /* ignore */
+      }
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    windowDragCleanupRef.current = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+    try {
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
   }
 
   const handleTimelinePointerMove = (e: React.PointerEvent) => {
-    if (dragging) {
-      seekFromEvent(e.clientX)
+    if (playheadDraggingRef.current || dragging) {
+      seekFromEvent(e.clientX, seekOriginRef.current)
+    }
+
+    const creating = createMidiDragRef.current
+    if (creating) {
+      const cur = snapBeat(clientXToBeat(e.clientX))
+      const a = Math.min(creating.originBeat, cur)
+      const b = Math.max(creating.originBeat, cur)
+      const minDur = snapDivision > 0 ? snapDivision : 0.25
+      const next: CreateMidiClipDrag = {
+        ...creating,
+        previewInicio: a,
+        previewDuracion: Math.max(minDur, b - a || minDur),
+      }
+      createMidiDragRef.current = next
+      const now = performance.now()
+      if (now - lastClipDragUiMs.current >= 32) {
+        lastClipDragUiMs.current = now
+        setCreateMidiDrag(next)
+      }
+      return
     }
 
     const drag = clipDragRef.current
@@ -465,20 +765,111 @@ export function ArrangementView() {
 
     clipDragRef.current = next
     const now = performance.now()
-    // Preview a ~30fps: evita re-render completo del arrangement en cada pixel
     if (now - lastClipDragUiMs.current >= 32) {
       lastClipDragUiMs.current = now
       setClipDrag(next)
     }
   }
 
-  const handleTimelinePointerUp = (e?: React.PointerEvent) => {
+  const handleTimelinePointerUp = (e?: React.PointerEvent | PointerEvent) => {
+    playheadDraggingRef.current = false
     setDragging(false)
     setPlayheadTooltip(null)
 
+    const creating = createMidiDragRef.current
+    if (creating) {
+      // Limpiar antes de await para que un segundo pointerup no duplique
+      createMidiDragRef.current = null
+      setCreateMidiDrag(null)
+      suppressLaneClickRef.current = true
+      const minDur = snapDivision > 0 ? snapDivision : 0.25
+      const inicio = Math.max(0, creating.previewInicio)
+      const duracion = Math.max(minDur, creating.previewDuracion)
+      void (async () => {
+        const created = await executeOrNotify(tienda, 'midi.clip.create', {
+          pistaId: creating.trackId,
+          nombre: 'Clip MIDI',
+          inicio,
+          duracion,
+          notas: [],
+        })
+        if (created.success) {
+          await executeOrNotify(tienda, 'selection.set', selectTrackPayload(creating.trackId))
+        }
+      })()
+      if (e && 'pointerId' in e) {
+        try {
+          ;(e.target as HTMLElement)?.releasePointerCapture?.(e.pointerId)
+        } catch {
+          /* ignore */
+        }
+      }
+      return
+    }
+
     const drag = clipDragRef.current
     if (drag) {
-      if (drag.mode === 'move') {
+      if (drag.mode === 'move' && drag.duplicate) {
+        const moved =
+          Math.abs(drag.previewInicio - drag.initialInicio) > 1e-6 ||
+          drag.previewTrackId !== drag.trackId
+        if (moved) {
+          const src = sharedTracks
+            .flatMap((t) => (t.clips ?? []).map((c) => ({ track: t, clip: c })))
+            .find((x) => x.clip.id === drag.clipId)
+          if (src) {
+            const c = src.clip as {
+              tipo?: string
+              nombre?: string
+              duracion?: number
+              color?: string
+              notas?: Array<{
+                pitch: number
+                inicio: number
+                duracion: number
+                velocidad?: number
+                canal?: number
+              }>
+              sourceId?: string
+              source?: { ruta?: string }
+              waveform?: number[]
+              clipInicio?: number
+            }
+            const destTrackId = drag.previewTrackId
+            const isMidi =
+              c.tipo === 'midi' || (Array.isArray(c.notas) && (c.notas?.length ?? 0) > 0)
+            void (async () => {
+              if (isMidi) {
+                await tienda.executor.execute('midi.clip.create', {
+                  pistaId: destTrackId,
+                  nombre: `${c.nombre || 'Clip'} (Copia)`,
+                  inicio: drag.previewInicio,
+                  duracion: c.duracion ?? drag.previewDuracion,
+                  color: c.color,
+                  notas: (c.notas ?? []).map((n) => ({
+                    pitch: n.pitch,
+                    inicio: n.inicio,
+                    duracion: n.duracion,
+                    velocidad: n.velocidad,
+                    canal: n.canal,
+                  })),
+                })
+              } else {
+                await tienda.executor.execute('clip.create', {
+                  pistaId: destTrackId,
+                  nombre: `${c.nombre || 'Clip'} (Copia)`,
+                  inicio: drag.previewInicio,
+                  duracion: c.duracion ?? drag.previewDuracion,
+                  color: c.color,
+                  sourceId: c.sourceId || c.source?.ruta,
+                  waveform: c.waveform,
+                  ...(c.clipInicio && c.clipInicio > 0 ? { clipInicio: c.clipInicio } : {}),
+                })
+              }
+            })()
+          }
+        }
+      } else if (drag.mode === 'move') {
         void tienda.executor.execute('clip.move', {
           pistaId: drag.trackId,
           clipId: drag.clipId,
@@ -499,8 +890,12 @@ export function ArrangementView() {
       setClipDrag(null)
     }
 
-    if (e && (e.target as HTMLElement)?.hasPointerCapture?.(e.pointerId)) {
-      ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+    if (e && 'pointerId' in e) {
+      try {
+        ;(e.target as HTMLElement)?.releasePointerCapture?.(e.pointerId)
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -545,7 +940,7 @@ export function ArrangementView() {
         if (Math.abs(next - lanes.scrollLeft) < 0.5) return
         syncingScroll.current = true
         lanes.scrollLeft = next
-        if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = next
+        commitScrollX(next)
         tienda.establecerEstado((s) => ({ ...s, ui: { ...s.ui, scrollX: next } }))
         requestAnimationFrame(() => {
           syncingScroll.current = false
@@ -553,14 +948,15 @@ export function ArrangementView() {
         return
       }
 
-      // Rueda simple sobre clips → zoom HORIZONTAL (ancho de timeline).
+      // Rueda simple sobre clips → zoom HORIZONTAL anclado a la línea amarilla.
       if (overHeaders) return
 
       e.preventDefault()
       e.stopPropagation()
 
-      const lanesCursorX = Math.max(0, xInScroller - TRACK_COL_W)
-      lastPointerXRef.current = xInScroller
+      // Ancla = playhead (punto céntrico), no el cursor.
+      const playheadViewportX = Math.max(0, getPlayheadViewportX())
+      lastPointerXRef.current = playheadViewportX + TRACK_COL_W
 
       const absDy = Math.abs(e.deltaY) || Math.abs(e.deltaX) || 100
       const ticks = Math.min(6, Math.max(1, Math.round(absDy / 80)))
@@ -573,6 +969,7 @@ export function ArrangementView() {
       let nextZoom = zoom
       let nextScroll = liveScroll
       let ppb = pixelsPerBeat
+      const anchorBeat = getPlayheadBeat()
 
       for (let i = 0; i < ticks; i++) {
         const liveProjection = createProjection({
@@ -581,9 +978,11 @@ export function ArrangementView() {
           scrollX: nextScroll,
           bpm,
         })
+        // Mantener el beat del playhead bajo el mismo X de viewport.
+        const anchorViewportX = Math.max(0, Math.min(lanesViewportW, anchorBeat * ppb - nextScroll))
         const result = liveProjection.zoomAt(
           nextZoom,
-          lanesCursorX,
+          anchorViewportX,
           direction,
           ARRANGE_MIN_ZOOM,
           ARRANGE_MAX_ZOOM,
@@ -593,7 +992,12 @@ export function ArrangementView() {
         const ratio = result.zoom / nextZoom
         ppb *= ratio
         nextZoom = result.zoom
-        nextScroll = result.scrollAdjust
+        // Recalcular scroll para que el playhead quede en el mismo sitio (o centrado si sale).
+        const desiredViewportX =
+          playheadViewportX >= 0 && playheadViewportX <= lanesViewportW
+            ? playheadViewportX
+            : lanesViewportW / 2
+        nextScroll = Math.max(0, anchorBeat * ppb - desiredViewportX)
       }
 
       if (Math.abs(nextZoom - zoom) < 1e-9) return
@@ -605,32 +1009,41 @@ export function ArrangementView() {
 
       syncingScroll.current = true
       lanes.scrollLeft = nextScroll
-      if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = nextScroll
+      commitScrollX(nextScroll)
       requestAnimationFrame(() => {
         syncingScroll.current = false
       })
     },
-    [pixelsPerBeat, zoom, zoomVertical, tienda, bpm],
+    [
+      pixelsPerBeat,
+      zoom,
+      zoomVertical,
+      tienda,
+      bpm,
+      TRACK_COL_W,
+      commitScrollX,
+      getPlayheadBeat,
+      getPlayheadViewportX,
+    ],
   )
 
   const applyZoomAtAnchor = useCallback(
-    (newZoom: number, anchorViewportX?: number) => {
+    (newZoom: number, _anchorViewportX?: number) => {
       const lanes = lanesScrollRef.current
       if (!lanes) return
       const z = Math.min(ARRANGE_MAX_ZOOM, Math.max(ARRANGE_MIN_ZOOM, newZoom))
       if (Math.abs(z - zoom) < 1e-9) return
 
-      const rect = lanes.getBoundingClientRect()
-      const rawX =
-        anchorViewportX ??
-        lastPointerXRef.current ??
-        rect.width / 2
-      const cursorX = Math.max(0, rawX - TRACK_COL_W)
-      const liveScroll = lanes.scrollLeft
+      const lanesViewportW = Math.max(1, lanes.clientWidth - TRACK_COL_W)
+      const beat = getPlayheadBeat()
       const oldPpb = pixelsPerBeat
-      const beatAtCursor = (cursorX + liveScroll) / oldPpb
       const newPpb = BASE_PIXELS_PER_BEAT * z
-      const newScroll = Math.max(0, beatAtCursor * newPpb - cursorX)
+      // Conservar la posición visual del playhead; si está fuera, centrarlo.
+      let viewportX = beat * oldPpb - lanes.scrollLeft
+      if (viewportX < 0 || viewportX > lanesViewportW) {
+        viewportX = lanesViewportW / 2
+      }
+      const newScroll = Math.max(0, beat * newPpb - viewportX)
 
       tienda.establecerEstado((s) => ({
         ...s,
@@ -638,12 +1051,12 @@ export function ArrangementView() {
       }))
       syncingScroll.current = true
       lanes.scrollLeft = newScroll
-      if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = newScroll
+      commitScrollX(newScroll)
       requestAnimationFrame(() => {
         syncingScroll.current = false
       })
     },
-    [pixelsPerBeat, zoom, tienda],
+    [pixelsPerBeat, zoom, tienda, TRACK_COL_W, commitScrollX, getPlayheadBeat],
   )
 
   useEffect(() => {
@@ -665,13 +1078,13 @@ export function ArrangementView() {
 
       syncingScroll.current = true
       lanes.scrollLeft = next
-      if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = next
+      commitScrollX(next)
       tienda.establecerEstado((s) => ({ ...s, ui: { ...s.ui, scrollX: next } }))
       requestAnimationFrame(() => {
         syncingScroll.current = false
       })
     },
-    [tienda],
+    [tienda, commitScrollX],
   )
 
   useEffect(() => {
@@ -690,14 +1103,18 @@ export function ArrangementView() {
     if (Math.abs(lanes.scrollLeft - scrollLeft) < 1) return
     syncingScroll.current = true
     lanes.scrollLeft = scrollLeft
-    setLiveScrollX(scrollLeft)
-    if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = scrollLeft
+    commitScrollX(scrollLeft)
     requestAnimationFrame(() => {
       syncingScroll.current = false
     })
-  }, [scrollLeft])
+  }, [scrollLeft, commitScrollX])
 
-  const tracksHeight = Math.max(tracks.length * rowH, rowH)
+  const tracksHeight = Math.max(
+    tracks.length * rowH,
+    tracks.length === 0 ? EMPTY_LANE_COUNT * rowH : rowH,
+    // Rellenar el panel al redimensionar (evita hueco negro bajo las pistas)
+    Math.max(0, viewportHeight - 8),
+  )
 
   const syncFromLanes = useCallback(() => {
     if (syncingScroll.current) return
@@ -705,14 +1122,13 @@ export function ArrangementView() {
     const lanes = lanesScrollRef.current
     if (lanes) {
       const x = lanes.scrollLeft
-      setLiveScrollX(x)
-      if (rulerScrollRef.current) rulerScrollRef.current.scrollLeft = x
+      commitScrollX(x)
       tienda.establecerEstado((s) => ({ ...s, ui: { ...s.ui, scrollX: x } }))
     }
     requestAnimationFrame(() => {
       syncingScroll.current = false
     })
-  }, [tienda])
+  }, [tienda, commitScrollX])
 
   const handleClipPointerDown = (
     e: React.PointerEvent,
@@ -744,16 +1160,38 @@ export function ArrangementView() {
     }
 
     if (activeTool === 'split') {
-      if (timelineRef.current) {
-        const rect = timelineRef.current.getBoundingClientRect()
-        const clickX = e.clientX - rect.left
-        const clickBeat = Math.max(0, projection.pixelToBeat(clickX))
-        void tienda.executor.execute('clip.split', {
-          pistaId: trackId,
-          clipId: clip.id,
-          tiempo: clickBeat,
-        })
+      const clickBeat = clientXToBeat(e.clientX)
+      void tienda.executor.execute('clip.split', {
+        pistaId: trackId,
+        clipId: clip.id,
+        tiempo: clickBeat,
+      })
+      return
+    }
+
+    // Slip: Alt+Shift+arrastrar desplaza el audio dentro del clip sin mover sus bordes.
+    if (e.altKey && e.shiftKey && edicionPorClip.has(clip.id) && (clip as { kind?: string }).kind !== 'midi') {
+      const ini = edicionPorClip.get(clip.id)?.clipInicio ?? 0
+      const x0 = e.clientX
+      let valor = ini
+      setSlip({ clipId: clip.id, clipInicio: ini })
+      const move = (ev: PointerEvent) => {
+        // Arrastrar a la derecha adelanta el audio: se lee desde antes en el archivo.
+        valor = Math.max(0, ini - (ev.clientX - x0) / pixelsPerBeat)
+        setSlip({ clipId: clip.id, clipInicio: valor })
       }
+      const up = () => {
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+        window.removeEventListener('pointercancel', up)
+        setSlip(null)
+        if (Math.abs(valor - ini) > 1e-4) {
+          void tienda.executor.execute('clip.resize', { pistaId: trackId, clipId: clip.id, clipInicio: valor })
+        }
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+      window.addEventListener('pointercancel', up)
       return
     }
 
@@ -766,6 +1204,10 @@ export function ArrangementView() {
     } else if (offsetX >= rect.width - 10) {
       mode = 'trim-right'
     }
+
+    // Ctrl/Cmd + arrastrar cuerpo = duplicar (Reaper). No en trim ni con Alt (crear MIDI).
+    const duplicate =
+      mode === 'move' && (e.ctrlKey || e.metaKey) && !e.altKey
 
     try {
       ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
@@ -782,6 +1224,7 @@ export function ArrangementView() {
       previewInicio: clip.inicioBeats,
       previewDuracion: clip.duracionBeats,
       previewTrackId: trackId,
+      duplicate,
     })
   }
 
@@ -789,13 +1232,48 @@ export function ArrangementView() {
     void tienda.executor.execute('selection.set', selectTrackPayload(trackId))
   }
 
+  const esPistaMidi = (trackId: string) => sharedTracks.find((t) => t.id === trackId)?.tipo === 'midi'
+
+  /** Clip MIDI vacío de un compás en `beat`: queda seleccionado y se abre en el piano roll para escribir notas. */
+  const crearClipMidiEnCarril = async (trackId: string, beat: number) => {
+    const id = `clip-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+    const inicio = Math.max(0, Math.floor(beat / beatsPerBar) * beatsPerBar)
+    const r = await executeOrNotify(tienda, 'midi.clip.create', {
+      pistaId: trackId,
+      id,
+      nombre: 'Clip MIDI',
+      inicio,
+      duracion: beatsPerBar,
+      notas: [],
+    })
+    if (!r.success) return
+    await tienda.executor.execute('selection.set', { idsClips: [id], idsPistas: [trackId], idPrincipal: trackId })
+    requestOpenTool('piano-roll', { zone: 'bottom' })
+  }
+
+  /** Doble clic en un hueco de una pista MIDI: crea un clip (lo que indica el piano roll vacío). */
+  const handleTrackLaneDoubleClick = (e: React.MouseEvent, trackId: string) => {
+    if ((e.target as HTMLElement).closest('[data-clip-id]')) return
+    if (!esPistaMidi(trackId)) return
+    e.preventDefault()
+    e.stopPropagation()
+    void crearClipMidiEnCarril(trackId, clientXToBeat(e.clientX))
+  }
+
   const handleTrackLaneClick = (e: React.MouseEvent, trackId: string) => {
+    if (suppressLaneClickRef.current) {
+      suppressLaneClickRef.current = false
+      return
+    }
     if (activeTool === 'pencil') {
-      if (!timelineRef.current) return
-      const rect = timelineRef.current.getBoundingClientRect()
-      const clickX = e.clientX - rect.left
-      const clickBeat = Math.max(0, projection.pixelToBeat(clickX))
+      const clickBeat = clientXToBeat(e.clientX)
       const snappedClick = snapBeat(clickBeat)
+      // En una pista MIDI el lápiz crea un clip MIDI (antes creaba un clip de audio vacío).
+      if (esPistaMidi(trackId)) {
+        void crearClipMidiEnCarril(trackId, snappedClick)
+        selectTrack(trackId)
+        return
+      }
 
       void tienda.executor.execute('clip.create', {
         pistaId: trackId,
@@ -804,13 +1282,163 @@ export function ArrangementView() {
         duracion: 16,
       })
       selectTrack(trackId)
+    } else if (activeTool === 'select' || (activeTool as string) === 'move') {
+      // Clic en carril vacío: seek preciso + seleccionar pista
+      if (!(e.target as HTMLElement).closest('[data-clip-id]')) {
+        seekFromEvent(e.clientX)
+      }
+      selectTrack(trackId)
     } else {
       selectTrack(trackId)
     }
   }
 
-  const beatToPixel = projection.beatToPixel
+  const beginCreateMidiClipDrag = (e: React.PointerEvent, trackId: string) => {
+    if (e.button !== 0) return
+    if (!(e.altKey && (e.ctrlKey || e.metaKey))) return
+    if ((e.target as HTMLElement).closest('[data-clip-id]')) return
+    e.preventDefault()
+    e.stopPropagation()
+    const beat = snapBeat(clientXToBeat(e.clientX))
+    const minDur = snapDivision > 0 ? snapDivision : 0.25
+    const drag: CreateMidiClipDrag = {
+      trackId,
+      originBeat: beat,
+      previewInicio: beat,
+      previewDuracion: minDur,
+    }
+    createMidiDragRef.current = drag
+    setCreateMidiDrag(drag)
+
+    windowDragCleanupRef.current?.()
+    const onMove = (ev: PointerEvent) => {
+      const creating = createMidiDragRef.current
+      if (!creating) return
+      const cur = snapBeat(clientXToBeat(ev.clientX))
+      const a = Math.min(creating.originBeat, cur)
+      const b = Math.max(creating.originBeat, cur)
+      const next: CreateMidiClipDrag = {
+        ...creating,
+        previewInicio: a,
+        previewDuracion: Math.max(minDur, b - a || minDur),
+      }
+      createMidiDragRef.current = next
+      const now = performance.now()
+      if (now - lastClipDragUiMs.current >= 32) {
+        lastClipDragUiMs.current = now
+        setCreateMidiDrag(next)
+      }
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      windowDragCleanupRef.current = null
+      // Última posición antes de commit
+      onMove(ev)
+      handleTimelinePointerUp(ev)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    windowDragCleanupRef.current = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+
+    try {
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const handleBlankDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      const t = e.target as HTMLElement
+      if (t.closest('[data-clip-id]')) return
+      if (t.closest('[data-track-lane]')) return
+      if (t.closest('button, input, a, [role="menuitem"]')) return
+      e.preventDefault()
+      e.stopPropagation()
+      void handleAddTrack('midi')
+    },
+    // handleAddTrack cierra sobre tienda / sharedTracks
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tienda, sharedTracks.length],
+  )
+
+  const occupiedRowsH =
+    (tracks.length === 0 ? EMPTY_LANE_COUNT : tracks.length) * rowH
+  const blankFillH = Math.max(0, tracksHeight - occupiedRowsH)
+
   const getPlayheadSeconds = useCallback(() => getPositionMs() / 1000, [getPositionMs])
+
+  const headerRows: HeaderLaneRow[] = []
+  if (hayMarcadores) {
+    headerRows.push({
+      id: 'marcadores',
+      label: 'Secciones',
+      height: MARKERS_LANE_H,
+      collapsed: Boolean(carrilesPlegados.marcadores),
+      onToggle: () => plegarCarril('marcadores'),
+      testId: 'fila-marcadores',
+      content: (
+        <TimelineMarkersLane
+          pixelsPerBeat={pixelsPerBeat}
+          getScrollX={getLanesScrollX}
+          contentWidth={contentWidth}
+          snapBeat={snapBeat}
+          onSeek={(beat) => seekToBeats(beat)}
+        />
+      ),
+    })
+  }
+  if (hayAcordes) {
+    headerRows.push({
+      id: 'acordes',
+      label: 'Acordes',
+      height: CHORD_LANE_H,
+      collapsed: Boolean(carrilesPlegados.acordes),
+      onToggle: () => plegarCarril('acordes'),
+      testId: 'fila-acordes',
+      content: (
+        <TimelineChordLane pixelsPerBeat={pixelsPerBeat} getScrollX={getLanesScrollX} contentWidth={contentWidth} snapBeat={snapBeat} beatsPerBar={beatsPerBar} />
+      ),
+    })
+  }
+  if (hayLetra) {
+    headerRows.push({
+      id: 'letra',
+      label: 'Letra',
+      height: LYRIC_LANE_H,
+      collapsed: Boolean(carrilesPlegados.letra),
+      onToggle: () => plegarCarril('letra'),
+      testId: 'fila-letra',
+      content: (
+        <TimelineLyricLane
+          pixelsPerBeat={pixelsPerBeat}
+          getScrollX={getLanesScrollX}
+          contentWidth={contentWidth}
+          snapBeat={snapBeat}
+          beatsPerBar={beatsPerBar}
+          bpm={bpm}
+          getSeconds={getPlayheadSeconds}
+        />
+      ),
+    })
+  }
+
+  const aplicarLetra = async () => {
+    const texto = letraTexto.trim()
+    if (!texto) return
+    const r = await tienda.executor.execute('lyrics.setPhrases', { texto })
+    if (r.success) {
+      setLetraAbierta(false)
+      setLetraTexto('')
+    }
+  }
 
   return (
     <div className="flex h-full w-full min-h-0 flex-col overflow-hidden">
@@ -820,7 +1448,8 @@ export function ArrangementView() {
         onClose={() => setDeleteConfirmTrack(null)}
         onConfirm={confirmDeleteTrack}
         title="Eliminar pista"
-        message="¿Estás seguro de que deseas eliminar esta pista? Esta acción no se puede deshacer."
+        message="¿Estás seguro de que deseas eliminar esta pista? Puedes deshacerlo con Ctrl+Z."
+
         confirmLabel="Eliminar"
         variant="danger"
       />
@@ -833,6 +1462,7 @@ export function ArrangementView() {
           setImportTargetTrack(trackId)
           addTrackFileRef.current?.click()
         }}
+        onShowTakeLanes={(trackId) => setTakeLanesTrackId(trackId)}
         trackIndex={
           trackMenu
             ? tracks.findIndex((t) => t.id === trackMenu.trackId)
@@ -841,10 +1471,15 @@ export function ArrangementView() {
         trackCount={tracks.length}
       />
       <ClipContextMenu menu={clipMenu} onClose={() => setClipMenu(null)} tienda={tienda} />
+      {takeLanesTrackId ? (
+        <div className="fixed bottom-4 right-4 z-180 w-[min(420px,92vw)]">
+          <TakeLanesPanel pistaId={takeLanesTrackId} onClose={() => setTakeLanesTrackId(null)} />
+        </div>
+      ) : null}
       <input
         type="file"
         ref={addTrackFileRef}
-        accept="audio/*,.wav,.mp3,.ogg,.webm,.flac"
+        accept="audio/*,.wav,.mp3,.ogg,.webm,.flac,.m4a,.aif,.aiff"
         className="hidden"
         onChange={async (e) => {
           const file = e.target.files?.[0]
@@ -870,6 +1505,7 @@ export function ArrangementView() {
         onPointerUp={handleTimelinePointerUp}
         onPointerLeave={() => {}}
         onWheel={handleZoom}
+        headerRows={headerRows}
         headerToolbar={(
           <>
 
@@ -895,10 +1531,19 @@ export function ArrangementView() {
                 <button
                   type="button"
                   onClick={() => handleAddTrack('midi')}
-                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] text-foreground hover:bg-panel-raised rounded-b-lg"
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] text-foreground hover:bg-panel-raised"
                 >
                   <Music className="size-3.5 text-accent-cyan" />
                   Pista MIDI
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAddTrack('carpeta')}
+                  title="Agrupa pistas: arrastra una pista sobre la mitad derecha de la carpeta para meterla. Su fader, FX, mute y solo afectan a todas."
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] text-foreground hover:bg-panel-raised rounded-b-lg"
+                >
+                  <Folder className="size-3.5 text-accent-amber" />
+                  Carpeta (bus)
                 </button>
               </div>
             )}
@@ -918,6 +1563,68 @@ export function ArrangementView() {
           >
             M
           </button>
+          <div className="relative" ref={letraRef}>
+            <button
+              type="button"
+              aria-label="Pegar letra"
+              title="Letra: pega el texto y se reparte por secciones o compases"
+              data-testid="boton-pegar-letra"
+              onClick={() => setLetraAbierta((v) => !v)}
+              className={`rounded px-1 text-muted-foreground hover:bg-panel-raised hover:text-foreground ${letraAbierta || hayLetra ? 'text-accent-amber' : ''}`}
+            >
+              <AlignLeft className="size-3.5" />
+            </button>
+            {letraAbierta && (
+              <div
+                className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-border bg-panel p-2 shadow-xl"
+                data-testid="popover-letra"
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <p className="mb-1 text-[10px] text-muted-foreground">
+                  Una línea por frase; separa estrofas con una línea en blanco. Cada estrofa cae en su sección (marcador) o, sin marcadores, dos compases por frase.
+                </p>
+                <textarea
+                  data-testid="textarea-letra"
+                  value={letraTexto}
+                  onChange={(e) => setLetraTexto(e.target.value)}
+                  onKeyDown={(e) => {
+                    e.stopPropagation()
+                    if (e.key === 'Escape') setLetraAbierta(false)
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void aplicarLetra()
+                  }}
+                  rows={6}
+                  placeholder={'Tu presencia, Señor\nllena este lugar\n\nSanto, santo…'}
+                  className="w-full resize-y rounded border border-border bg-background px-2 py-1 text-[12px] text-foreground outline-none focus:border-accent-amber"
+                />
+                <div className="mt-1 flex items-center justify-end gap-1.5">
+                  {hayLetra ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void tienda.executor.execute('lyrics.clear', { que: 'letra' })
+                        setLetraAbierta(false)
+                      }}
+                      className="rounded px-2 py-0.5 text-[11px] text-red-400 hover:bg-panel-raised"
+                    >
+                      Quitar letra
+                    </button>
+                  ) : null}
+                  <button type="button" onClick={() => setLetraAbierta(false)} className="rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-panel-raised">
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="aplicar-letra"
+                    disabled={!letraTexto.trim()}
+                    onClick={() => void aplicarLetra()}
+                    className="rounded bg-accent-amber px-2 py-0.5 text-[11px] font-medium text-background hover:opacity-90 disabled:opacity-40"
+                  >
+                    Aplicar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
           <button
             type="button"
             aria-label="Cuadrícula"
@@ -932,61 +1639,86 @@ export function ArrangementView() {
         ruler={(
           <div
             ref={rulerScrollRef}
-            className="jw-scroll-hide-x h-full overflow-x-hidden overflow-y-hidden"
+            className="relative h-full w-full cursor-pointer select-none overflow-hidden"
+            onClick={handleSeek}
           >
-            <div
-              className="relative cursor-pointer select-none"
-              style={{ width: `${contentWidth}px`, height: HEADER_H, minWidth: '100%' }}
-              onClick={handleSeek}
-            >
-              <TimelineRuler
-                projection={viewProjection}
-                zoom={zoom}
-                totalHeight={HEADER_H}
-                bpm={bpm}
-                beatsPerBar={beatsPerBar}
-                viewportWidth={viewportWidth}
-                height={HEADER_H}
-              />
-              <PlayheadOverlay
-                getSeconds={getPlayheadSeconds}
-                bpm={bpm}
-                beatToPixel={beatToPixel}
-                onPointerDown={handlePlayheadPointerDown}
-              />
-            </div>
+            <TimelineRuler
+              projection={viewProjection}
+              zoom={zoom}
+              totalHeight={HEADER_H}
+              bpm={bpm}
+              beatsPerBar={beatsPerBar}
+              viewportWidth={viewportWidth}
+              height={HEADER_H}
+              getScrollX={getLanesScrollX}
+              scrollEpoch={scrollEpoch}
+              snapDivision={snapDivision}
+            />
           </div>
+        )}
+        playhead={(
+          <>
+          <StartMarkerOverlay bpm={bpm} pixelsPerBeat={pixelsPerBeat} getScrollX={getLanesScrollX} />
+          <PlayheadOverlay
+            mode="viewport"
+            getSeconds={getPlayheadSeconds}
+            bpm={bpm}
+            pixelsPerBeat={pixelsPerBeat}
+            getScrollX={getLanesScrollX}
+            showTooltip={dragging && Boolean(playheadTooltip)}
+            tooltipLabel={
+              playheadTooltip
+                ? `${playheadTooltip.bar}.${Number(playheadTooltip.beatInBar.toFixed(4))}`
+                : undefined
+            }
+            onPointerDown={(e) => handlePlayheadPointerDown(e, 'ruler')}
+          />
+          </>
         )}
         headers={(
           <>
           {tracks.length === 0 && (
-            <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
-              <Music className="size-8 text-muted-foreground/40" />
-              <div>
-                <p className="text-[13px] font-semibold text-foreground">Sin pistas</p>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  Crea una pista de audio o MIDI para empezar.
-                </p>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => void handleAddTrack('audio')}
-                  className="rounded-md bg-accent-amber px-3 py-1.5 text-[12px] font-medium text-background hover:opacity-90"
+            <>
+              {Array.from({ length: EMPTY_LANE_COUNT }, (_, i) => (
+                <div
+                  key={`ghost-h-${i}`}
+                  className="relative flex items-center overflow-hidden border-b border-border/60 bg-panel/80 px-3"
+                  style={{ height: rowH }}
+                  onDoubleClick={handleBlankDoubleClick}
                 >
-                  Nueva pista de audio
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleAddTrack('midi')}
-                  className="rounded-md border border-border px-3 py-1.5 text-[12px] text-foreground hover:bg-panel-raised"
-                >
-                  Nueva pista MIDI
-                </button>
-              </div>
-            </div>
+                  {i === 0 ? (
+                    // Cabe en la altura de una fila: si se desborda, la fila siguiente tapa los botones.
+                    <div className="flex w-full flex-col items-start justify-center gap-1">
+                      <p className="truncate text-[10px] text-muted-foreground">Sin pistas: crea una para empezar.</p>
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => void handleAddTrack('audio')}
+                          title="Nueva pista de audio"
+                          aria-label="Nueva pista de audio"
+                          className="rounded-md bg-accent-amber px-2 py-0.5 text-[11px] font-medium text-background hover:opacity-90"
+                        >
+                          + Audio
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleAddTrack('midi')}
+                          title="Nueva pista MIDI"
+                          aria-label="Nueva pista MIDI"
+                          className="rounded-md border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-panel-raised"
+                        >
+                          + MIDI
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground/40">Pista {i + 1}</span>
+                  )}
+                </div>
+              ))}
+            </>
           )}
-          {tracks.map((track, trackIndex) => {
+          {tracks.map((track) => {
             const t = toggles[track.id] ?? {
               muted: false,
               solo: false,
@@ -994,13 +1726,19 @@ export function ArrangementView() {
               armed: false,
             }
             const isSelected = selectedTrackId === track.id
-            const isMidi = track.tipo === 'midi' || track.tipo === 'instrumento'
             const isDragOver = dragOverTrackId === track.id && dragTrackId !== track.id
+            const esCarpeta = track.tipo === 'carpeta'
+            const nivel = profundidad(track.id, padres)
             return (
               <div
                 key={track.id}
+                ref={(el) => {
+                  if (el) cabecerasRef.current.set(track.id, el)
+                  else cabecerasRef.current.delete(track.id)
+                }}
                 role="button"
                 tabIndex={0}
+                data-testid={`arrange-track-header-${track.id}`}
                 onClick={() => selectTrack(track.id)}
                 onContextMenu={(e) => {
                   e.preventDefault()
@@ -1008,7 +1746,9 @@ export function ArrangementView() {
                   openTrackMenu(track.id, e.clientX, e.clientY)
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
+                  // Solo Enter: la barra espaciadora es reproducir/pausar en todo el DAW (aquí se «consumía»
+                  // con preventDefault y el atajo global ya no la veía).
+                  if (e.key === 'Enter') {
                     e.preventDefault()
                     selectTrack(track.id)
                   }
@@ -1018,6 +1758,7 @@ export function ArrangementView() {
                   e.preventDefault()
                   e.dataTransfer.dropEffect = 'move'
                   setDragOverTrackId(track.id)
+                  setSoltarDentro(esCarpeta && soltarEnMitadDerecha(e))
                 }}
                 onDragLeave={() => {
                   if (dragOverTrackId === track.id) setDragOverTrackId(null)
@@ -1028,17 +1769,20 @@ export function ArrangementView() {
                   setDragOverTrackId(null)
                   setDragTrackId(null)
                   if (!id || id === track.id) return
-                  moveTrackToIndex(id, trackIndex)
+                  soltarPista(id, track.id, esCarpeta && soltarEnMitadDerecha(e))
                 }}
-                className={`flex cursor-pointer items-stretch gap-1 border-b border-border bg-panel pr-1 ${
-                  isSelected ? 'bg-accent-amber/20' : 'hover:bg-panel-raised'
-                } ${isDragOver ? 'ring-1 ring-inset ring-accent-amber' : ''} ${
+                className={`relative flex cursor-pointer items-center gap-1 border-b border-border bg-panel px-0.5 ${
+                  isSelected ? 'bg-accent-amber/20 ring-1 ring-inset ring-accent-amber/50' : 'hover:bg-panel-raised'
+                } ${isDragOver ? (soltarDentro && esCarpeta ? 'ring-2 ring-inset ring-accent-cyan' : 'ring-1 ring-inset ring-accent-amber') : ''} ${
                   dragTrackId === track.id ? 'opacity-60' : ''
                 }`}
-                style={{ height: rowH }}
+                style={{ height: rowH, paddingLeft: 2 + nivel * SANGRIA_PX }}
+                data-nivel={nivel}
+                title={isDragOver && esCarpeta ? (soltarDentro ? 'Soltar dentro de la carpeta' : 'Soltar aquí (fuera de la carpeta)') : undefined}
               >
+                <BrilloIA trackId={track.id} campos={CAMPOS_BRILLO_PISTA} />
                 <span
-                  className="h-full w-1 shrink-0"
+                  className="h-full w-1 shrink-0 self-stretch"
                   style={{ backgroundColor: track.color }}
                 />
                 <button
@@ -1046,7 +1790,7 @@ export function ArrangementView() {
                   draggable
                   aria-label={`Reordenar ${track.name}`}
                   title="Arrastrar para reordenar"
-                  className="flex shrink-0 cursor-grab items-center self-stretch px-0.5 text-muted-foreground active:cursor-grabbing hover:text-foreground"
+                  className="flex shrink-0 cursor-grab items-center px-0.5 text-muted-foreground active:cursor-grabbing hover:text-foreground"
                   onClick={(e) => e.stopPropagation()}
                   onDragStart={(e) => {
                     e.stopPropagation()
@@ -1061,53 +1805,34 @@ export function ArrangementView() {
                 >
                   <GripVertical className="size-3.5" />
                 </button>
-                <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-0.5">
-                  <div className="flex min-w-0 items-center gap-1">
-                    <Mic2 className="size-3 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground">
-                      {track.name}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-                    <TrackButton
-                      label={`Silenciar ${track.name}`}
-                      active={t.muted}
-                      onClick={() => toggle(track.id, 'muted')}
-                    >
-                      M
-                    </TrackButton>
-                    <TrackButton
-                      label={`Solo ${track.name}`}
-                      active={t.solo}
-                      activeClass="bg-track-vocals text-background"
-                      onClick={() => toggle(track.id, 'solo')}
-                    >
-                      S
-                    </TrackButton>
-                    <TrackButton
-                      label={`Monitor de entrada ${track.name}`}
-                      active={t.input}
-                      activeClass="bg-accent-cyan text-background"
-                      onClick={() => toggle(track.id, 'input')}
-                    >
-                      <Headphones className="size-2.5" />
-                    </TrackButton>
-                    <TrackAddPluginButton trackId={track.id} trackName={track.name} />
-                  </div>
-                  {(isMidi || track.tipo === 'audio') ? (
-                    <TrackMidiInput trackId={track.id} assignedId={track.entrada} compact />
-                  ) : null}
-                  {track.tipo === 'audio' ? (
-                    <TrackAudioInput trackId={track.id} assignedId={track.dispositivoEntrada} compact />
-                  ) : null}
-                  <ChannelFxBank
-                    trackId={track.id}
-                    trackName={track.name}
-                    plugins={track.plugins ?? []}
-                    compact
-                  />
-                </div>
-                <div className="flex flex-col items-center justify-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                {esCarpeta ? <Folder className="size-3 shrink-0 text-muted-foreground" aria-label="Carpeta" /> : null}
+                <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground" title={track.name}>
+                  {track.name}
+                </span>
+                <div className="flex shrink-0 items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                  <TrackButton
+                    label={`Silenciar ${track.name}`}
+                    active={t.muted}
+                    onClick={() => toggle(track.id, 'muted')}
+                  >
+                    M
+                  </TrackButton>
+                  <TrackButton
+                    label={`Solo ${track.name}`}
+                    active={t.solo}
+                    activeClass="bg-track-vocals text-background"
+                    onClick={() => toggle(track.id, 'solo')}
+                  >
+                    S
+                  </TrackButton>
+                  <TrackButton
+                    label={`Monitor de entrada ${track.name}`}
+                    active={t.input}
+                    activeClass="bg-accent-cyan text-background"
+                    onClick={() => toggle(track.id, 'input')}
+                  >
+                    <Headphones className="size-2.5" />
+                  </TrackButton>
                   <button
                     type="button"
                     onClick={() => toggle(track.id, 'armed')}
@@ -1123,17 +1848,6 @@ export function ArrangementView() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setImportTargetTrack(track.id)
-                      addTrackFileRef.current?.click()
-                    }}
-                    aria-label={`Importar audio a ${track.name}`}
-                    className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-accent-amber hover:bg-panel-raised transition-colors"
-                  >
-                    <Upload className="size-3" />
-                  </button>
-                  <button
-                    type="button"
                     onClick={(e) => {
                       e.stopPropagation()
                       openTrackMenu(track.id, e.clientX, e.clientY)
@@ -1142,12 +1856,21 @@ export function ArrangementView() {
                     aria-haspopup="menu"
                     className="text-muted-foreground hover:text-foreground"
                   >
-                    <MoreVertical className="size-4" />
+                    <MoreVertical className="size-3.5" />
                   </button>
                 </div>
               </div>
             )
           })}
+
+          {blankFillH > 0 ? (
+            <div
+              className="bg-panel/40"
+              style={{ height: blankFillH }}
+              onDoubleClick={handleBlankDoubleClick}
+              title="Doble clic: nueva pista"
+            />
+          ) : null}
 
           </>
         )}
@@ -1160,6 +1883,14 @@ export function ArrangementView() {
               onPointerDown={(e) => {
                 if (e.button === 2) beginClipRightDrag(e)
               }}
+              onClick={(e) => {
+                if ((e.target as HTMLElement).closest('[data-clip-id]')) return
+                if ((e.target as HTMLElement).closest('[data-track-lane]')) return
+                if (activeTool === 'select' || (activeTool as string) === 'move') {
+                  seekFromEvent(e.clientX, 'lanes')
+                }
+              }}
+              onDoubleClick={handleBlankDoubleClick}
               onContextMenu={(e) => e.preventDefault()}
             >
               <GridLayer
@@ -1168,6 +1899,7 @@ export function ArrangementView() {
                 beatsPerBar={beatsPerBar}
                 viewportWidth={viewportWidth}
                 contentHeight={tracksHeight}
+                snapDivision={snapDivision}
               />
 
             {/* Loop region overlay */}
@@ -1183,12 +1915,12 @@ export function ArrangementView() {
                 />
                 {/* Borde izquierdo del loop */}
                 <div
-                  className="absolute inset-y-0 z-5 w-[2px] bg-accent-cyan pointer-events-none"
+                  className="absolute inset-y-0 z-5 w-0.5 bg-accent-cyan pointer-events-none"
                   style={{ left: projection.beatToPixel(loopInicioBeats) }}
                 />
                 {/* Borde derecho del loop */}
                 <div
-                  className="absolute inset-y-0 z-5 w-[2px] bg-accent-cyan pointer-events-none"
+                  className="absolute inset-y-0 z-5 w-0.5 bg-accent-cyan pointer-events-none"
                   style={{ left: projection.beatToPixel(loopFinBeats) }}
                 />
                 {/* Zona después del loop (oscurecida) */}
@@ -1214,17 +1946,6 @@ export function ArrangementView() {
               </>
             )}
 
-            <PlayheadOverlay
-              getSeconds={getPlayheadSeconds}
-              bpm={bpm}
-              beatToPixel={beatToPixel}
-              showTooltip={dragging && Boolean(playheadTooltip)}
-              tooltipLabel={
-                playheadTooltip ? `${playheadTooltip.bar}.${playheadTooltip.beatInBar}` : undefined
-              }
-              onPointerDown={handlePlayheadPointerDown}
-            />
-
             {clipLasso ? (
               <div
                 className="pointer-events-none absolute z-30 border border-accent-amber bg-accent-amber/15"
@@ -1237,6 +1958,15 @@ export function ArrangementView() {
               />
             ) : null}
 
+            {tracks.length === 0 &&
+              Array.from({ length: EMPTY_LANE_COUNT }, (_, i) => (
+                <div
+                  key={`ghost-lane-${i}`}
+                  className="pointer-events-none relative border-b border-border/50 bg-transparent"
+                  style={{ height: rowH }}
+                />
+              ))}
+
             {tracks.map((track) => {
               const t = toggles[track.id] ?? {
                 muted: false,
@@ -1245,10 +1975,13 @@ export function ArrangementView() {
                 armed: false,
               }
 
-              // Clips visibles en este carril (soporta preview al mover entre pistas)
+              // Clips visibles en este carril (soporta preview al mover / duplicar entre pistas)
               let trackClips = clips.filter((c) => c.trackId === track.id)
               if (clipDrag?.mode === 'move') {
-                trackClips = trackClips.filter((c) => c.id !== clipDrag.clipId)
+                // Mover: ocultar original; duplicar: dejar original y añadir fantasma
+                if (!clipDrag.duplicate) {
+                  trackClips = trackClips.filter((c) => c.id !== clipDrag.clipId)
+                }
                 if (clipDrag.previewTrackId === track.id) {
                   const dragged = clips.find((c) => c.id === clipDrag.clipId)
                   if (dragged) {
@@ -1256,6 +1989,7 @@ export function ArrangementView() {
                       ...trackClips,
                       {
                         ...dragged,
+                        id: clipDrag.duplicate ? `${dragged.id}__dup-preview` : dragged.id,
                         inicioBeats: clipDrag.previewInicio,
                         duracionBeats: clipDrag.previewDuracion,
                       },
@@ -1270,11 +2004,14 @@ export function ArrangementView() {
               return (
                 <div
                   key={track.id}
+                  data-track-lane={track.id}
                   className={`relative border-b border-border transition-colors hover:bg-panel-raised/30 ${
                     isDropTarget ? 'bg-accent-amber/10' : ''
                   } ${selectedTrackId === track.id ? 'bg-accent-amber/10' : ''}`}
                   style={{ height: rowH }}
+                  onPointerDown={(e) => beginCreateMidiClipDrag(e, track.id)}
                   onClick={(e) => handleTrackLaneClick(e, track.id)}
+                  onDoubleClick={(e) => handleTrackLaneDoubleClick(e, track.id)}
                   onContextMenu={(e) => {
                     if ((e.target as HTMLElement).closest('[data-clip-id]')) return
                     e.preventDefault()
@@ -1287,16 +2024,56 @@ export function ArrangementView() {
                   }}
                   onDrop={async (e) => {
                     e.preventDefault()
-                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                      const file = e.dataTransfer.files[0]
-                      const rect = e.currentTarget.getBoundingClientRect()
-                      const dropX = e.clientX - rect.left
-                      const dropBeat = Math.max(0, projection.pixelToBeat(dropX))
-                      await addClipFromFile(track.id, file, dropBeat)
+                    // Groove arrastrado desde el panel «Grooves»: clip MIDI en esta pista, en el beat soltado.
+                    const grooveId = e.dataTransfer.getData('application/x-jaswave-groove')
+                    if (grooveId) {
+                      const { insertarGroove } = await import('@/src/lib/grooves/cliente')
+                      const r = await insertarGroove(tienda, { grooveId, pistaId: track.id, inicioBeat: clientXToBeat(e.clientX) })
+                      if (!r.ok) tienda.busEventos.emit('comando.fallido', { type: 'groove.insertar', error: r.mensaje })
+                      return
+                    }
+                    const files = Array.from(e.dataTransfer.files ?? [])
+                    if (files.length === 0) return
+                    const estado = tienda.obtenerEstado()
+                    if (!estado.project.ruta) {
+                      // Tras guardar, los archivos soltados se importan en esta pista.
+                      const detail: NuevoProyectoDetalle = {
+                        mensaje:
+                          'Para asegurar que el audio no se pierda al reiniciar o refrescar, primero asigna un nombre y carpeta a tu proyecto.',
+                        conservar: true,
+                        alCrear: () => {
+                          for (const f of files) void handleImportToTrack(track.id, f)
+                        },
+                      }
+                      window.dispatchEvent(new CustomEvent('jaswave-nuevo-proyecto', { detail }))
+                      return
+                    }
+                    const dropBeat = clientXToBeat(e.clientX)
+                    let isFirst = true
+                    for (const file of files) {
+                      try {
+                        let destino = track.id
+                        if (!isFirst || track.tipo !== 'audio') {
+                          const created = await tienda.executor.execute('track.create', {
+                            nombre: file.name.replace(/\.[^.]+$/, ''),
+                            tipo: 'audio',
+                          })
+                          if (!created.success) continue
+                          destino = (created.result as { trackId?: string })?.trackId ?? destino
+                        }
+                        await addClipFromFile(destino, file, dropBeat)
+                        isFirst = false
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err)
+                        tienda.busEventos.emit('comando.fallido', {
+                          type: 'audio.import',
+                          error: `${file.name}: ${msg}`,
+                        })
+                      }
                     }
                   }}
                 >
-                  {trackClips.length === 0 ? (
+                  {trackClips.length === 0 && createMidiDrag?.trackId !== track.id ? (
                     <div
                       className="pointer-events-none absolute inset-0 flex items-center pl-3 opacity-30"
                       style={{ height: rowH }}
@@ -1304,12 +2081,16 @@ export function ArrangementView() {
                       <span className="text-[11px] italic text-muted-foreground">
                         {activeTool === 'pencil'
                           ? '✏ Haz clic para crear un clip'
-                          : '↓ Arrastra un archivo de audio aquí'}
+                          : 'Alt+Ctrl+arrastrar: clip MIDI · o suelta audio aquí'}
                       </span>
                     </div>
-                  ) : (
-                    trackClips.map((clip) => {
-                      const isDraggingThis = clipDrag?.clipId === clip.id
+                  ) : null}
+                  {trackClips.map((clip) => {
+                      const isDupGhost = Boolean(
+                        clipDrag?.duplicate && String(clip.id).endsWith('__dup-preview'),
+                      )
+                      const isDraggingThis =
+                        clipDrag?.clipId === clip.id && !(clipDrag.duplicate && clipDrag.mode === 'move')
                       const inicio =
                         isDraggingThis && clipDrag.mode !== 'move'
                           ? clipDrag.previewInicio
@@ -1320,22 +2101,27 @@ export function ArrangementView() {
                         isDraggingThis ? clipDrag.previewDuracion : clip.duracionBeats
                       const clipLeft = projection.beatToPixel(inicio)
                       const clipWidth = Math.max(36, duracion * pixelsPerBeat)
-                      const isSelected = selectedClipIds.includes(clip.id)
+                      const isSelected = selectedClipIds.includes(clip.id) || isDupGhost
                       const barStart = Math.floor(inicio / beatsPerBar) + 1
                       const barEnd = Math.ceil((inicio + duracion) / beatsPerBar)
                       const barCount = barEnd - barStart + 1
 
+                      const isAudioMissing = clip.kind !== 'midi' && Boolean(clip.missing)
+                      const edicion = edicionPorClip.get(clip.id)
+                      const clipSilenciado = edicion?.silenciado === true
                       return (
                         <div
                           key={clip.id}
-                          data-clip-id={clip.id}
+                          data-clip-id={isDupGhost ? undefined : clip.id}
                           data-track-id={clip.trackId}
                           onPointerDown={(e) => {
+                            if (isDupGhost) return
                             if (e.button === 2) return
                             handleClipPointerDown(e, clip, clip.trackId)
                           }}
                           onContextMenu={(e) => e.preventDefault()}
                           onDoubleClick={(e) => {
+                            if (isDupGhost) return
                             e.stopPropagation()
                             if (clip.kind === 'midi') {
                               void tienda.executor.execute('selection.set', {
@@ -1349,27 +2135,61 @@ export function ArrangementView() {
                             }
                           }}
                           className={`group absolute inset-y-1 touch-none select-none overflow-hidden rounded-md border shadow-md transition-shadow ${
-                            activeTool === 'split'
-                              ? 'cursor-crosshair'
-                              : activeTool === 'eraser'
-                                ? 'cursor-not-allowed'
-                                : 'cursor-grab active:cursor-grabbing'
+                            isDupGhost
+                              ? 'pointer-events-none z-30 border-dashed border-accent-amber opacity-90'
+                              : activeTool === 'split'
+                                ? 'cursor-crosshair'
+                                : activeTool === 'eraser'
+                                  ? 'cursor-not-allowed'
+                                  : 'cursor-grab active:cursor-grabbing'
                           } ${
-                            isSelected
+                            isSelected && !isDupGhost
                               ? 'z-20 border-accent-amber shadow-lg ring-2 ring-accent-amber ring-offset-0'
-                              : 'z-10 hover:brightness-110'
-                          }`}
+                              : isDupGhost
+                                ? ''
+                                : 'z-10 hover:brightness-110'
+                          } ${isAudioMissing ? 'border-dashed border-amber-500/80' : ''}`}
                           style={{
                             left: `${clipLeft}px`,
                             width: `${clipWidth}px`,
-                            background: `linear-gradient(180deg, color-mix(in oklch, ${track.color} 42%, transparent) 0%, color-mix(in oklch, ${track.color} 22%, transparent) 100%)`,
+                            background: isAudioMissing
+                              ? 'linear-gradient(180deg, rgba(120, 53, 15, 0.35) 0%, rgba(69, 26, 3, 0.2) 100%)'
+                              : `linear-gradient(180deg, color-mix(in oklch, ${track.color} 42%, transparent) 0%, color-mix(in oklch, ${track.color} 22%, transparent) 100%)`,
                             borderColor: isSelected
                               ? undefined
-                              : `color-mix(in oklch, ${track.color} 80%, transparent)`,
-                            opacity: t.muted ? 0.35 : 1,
+                              : isAudioMissing
+                                ? 'rgba(245, 158, 11, 0.7)'
+                                : `color-mix(in oklch, ${track.color} 80%, transparent)`,
+                            opacity: t.muted ? 0.35 : clipSilenciado ? 0.4 : isDupGhost ? 0.85 : isAudioMissing ? 0.45 : 1,
                           }}
-                          title={`${clip.name} — Compás ${barStart}→${barEnd} (${clip.duracionSeconds.toFixed(2)}s)`}
+                          title={
+                            isAudioMissing
+                              ? `⚠️ ${clip.name} — Archivo de audio no encontrado en el proyecto`
+                              : isDupGhost
+                                ? 'Copia (Ctrl+arrastrar)'
+                                : slip?.clipId === clip.id
+                                  ? `Desplazamiento interno: ${slip.clipInicio.toFixed(2)} beats`
+                                  : `${clip.name} — Compás ${barStart}→${barEnd} (${clip.duracionSeconds.toFixed(2)}s)${
+                                      clipSilenciado ? ' · silenciado (0)' : ''
+                                    }${clip.kind !== 'midi' ? ' · Alt+Shift+arrastrar: desplazar el audio' : ''}`
+                          }
                         >
+                          {clipSilenciado && <ClipMutedOverlay />}
+                          {clip.kind !== 'midi' && !isDupGhost && edicion && (
+                            <ClipEditHandles
+                              pistaId={clip.trackId}
+                              clipId={clip.id}
+                              edicion={edicion}
+                              anchoPx={clipWidth}
+                              altoPx={rowH - 8}
+                              duracionSec={clip.duracionSeconds}
+                            />
+                          )}
+                          {slip?.clipId === clip.id && (
+                            <span className="pointer-events-none absolute bottom-0.5 left-1 z-[17] rounded bg-black/70 px-1 font-mono text-[9px] tabular-nums text-amber-200">
+                              ↔ {slip.clipInicio.toFixed(2)} beats
+                            </span>
+                          )}
                           <div
                             className="absolute bottom-0 left-0 top-0 z-10 w-2 cursor-ew-resize opacity-0 transition-opacity group-hover:opacity-100"
                             style={{ background: `linear-gradient(to right, ${track.color}, transparent)` }}
@@ -1382,12 +2202,25 @@ export function ArrangementView() {
                           <div className="flex items-center gap-1.5 px-2 pt-0.5">
                             <span
                               className="size-1.5 shrink-0 rounded-full opacity-90"
-                              style={{ backgroundColor: track.color }}
+                              style={{ backgroundColor: isAudioMissing ? '#f59e0b' : track.color }}
                             />
                             <span className="flex-1 truncate text-[10px] font-semibold leading-tight text-foreground">
                               {clip.name}
                               {clip.kind === 'midi' ? ' · MIDI' : ''}
                             </span>
+                            {isAudioMissing ? (
+                              <span
+                                className="shrink-0 font-mono text-[9px] text-amber-300 bg-amber-950/80 border border-amber-500/50 px-1.5 py-0.5 rounded flex items-center gap-1"
+                                title={clip.loadError || 'El archivo de audio no se encuentra en el proyecto'}
+                              >
+                                <AlertTriangle className="size-2.5 text-amber-400 shrink-0 animate-pulse" />
+                                Audio no encontrado
+                              </span>
+                            ) : clip.kind !== 'midi' && !audioEngine.getAudioBuffer(clip.sourceId) && !audioEngine.getAudioBuffer(clip.id) ? (
+                              <span className="shrink-0 font-mono text-[9px] text-amber-300 flex items-center gap-0.5" title="Audio en proceso de decodificación o carga">
+                                ⏳ Cargando...
+                              </span>
+                            ) : null}
                             {clipWidth > 80 && (
                               <span className="shrink-0 font-mono text-[9px] opacity-60">
                                 {clip.kind === 'midi' && clip.noteCount != null
@@ -1423,8 +2256,23 @@ export function ArrangementView() {
                           </div>
                         </div>
                       )
-                    })
-                  )}
+                    })}
+                  {createMidiDrag?.trackId === track.id ? (
+                    <div
+                      className="pointer-events-none absolute top-1 bottom-1 z-20 rounded-md border-2 border-sky-300/90 bg-sky-400/25"
+                      style={{
+                        left: projection.beatToPixel(createMidiDrag.previewInicio),
+                        width: Math.max(
+                          8,
+                          createMidiDrag.previewDuracion * pixelsPerBeat,
+                        ),
+                      }}
+                    >
+                      <span className="px-1.5 text-[9px] font-semibold text-sky-200">
+                        Nuevo MIDI
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
               )
             })}
@@ -1432,7 +2280,6 @@ export function ArrangementView() {
           </>
         )}
       />
-      <AutomationLanesPanel />
     </div>
     </div>
   )

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="vocal-lead">
+  <!-- Cuerpo cilíndrico del micrófono de estudio (tipo Neumann U87) -->
+  <rect x="25" y="10" width="14" height="26" rx="7" fill="currentColor" fill-opacity="0.15" stroke-width="2" />
+  <!-- Malla de rejilla de captación y aro de división -->
+  <path d="M25 22h14" stroke-width="2" />
+  <path d="M28 10v12M32 10v12M36 10v12" stroke-width="1" opacity="0.4" />
+  <!-- Filtro antipop circular de tela en primer plano -->
+  <circle cx="21" cy="20" r="10" stroke-width="2" fill="currentColor" fill-opacity="0.1" />
+  <circle cx="21" cy="20" r="8" stroke-width="1" stroke-dasharray="2 2" opacity="0.6" />
+  <!-- Brazo flexible de cuello de cisne del antipop -->
+  <path d="M21 30c0 8 7 10 9 14" stroke-width="2" />
+  <!-- Suspensión elástica (shockmount) y pie de micro -->
+  <path d="M20 28c0 8 5 14 12 14s12-6 12-14" stroke-width="2" />
+  <path d="M32 42v16" stroke-width="2.5" />
+  <path d="M24 58h16" stroke-width="2.5" />
+</svg>

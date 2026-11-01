@@ -7,8 +7,12 @@ import type { Clip, MidiClip, Track } from '@jaswave/shared'
 import type { TiendaDAW } from '../../../shared/src/state/tienda'
 import { requestOpenTool } from '@/src/workspace/types'
 import { dawClipboard, type ClipboardClip } from '@/src/lib/daw-clipboard'
-import { exportClipScorePdfDialog } from '@/src/lib/midi-score-export'
+import { loteBorrarClips, lotePegarClips } from '@/src/lib/clip-edit-commands'
+import { batchOrNotify } from '@/src/lib/execute-or-toast'
+import { loteAutoFade, loteConsolidar, loteInvertir, loteNormalizar, loteToggleMute } from '@/src/lib/clip-acciones'
+import { audioEngine } from '@/lib/audio-engine'
 import { styleSaveFromClip } from '@/src/lib/styles/ops'
+import { accionesDeClip, ejecutarAccionDeClip } from '@/src/modulos/contribuciones'
 
 export type ClipMenuState = {
   trackId: string
@@ -130,7 +134,7 @@ async function duplicateClip(tienda: TiendaDAW, trackId: string, clip: Clip): Pr
     })
     return
   }
-  const audio = clip as Clip & { source?: { ruta?: string }; sourceId?: string; waveform?: number[] }
+  const audio = clip as Clip & { source?: { ruta?: string }; sourceId?: string; waveform?: number[]; clipInicio?: number }
   await tienda.executor.execute('clip.create', {
     pistaId: trackId,
     nombre: `${clip.nombre || 'Clip'} (Copia)`,
@@ -139,6 +143,7 @@ async function duplicateClip(tienda: TiendaDAW, trackId: string, clip: Clip): Pr
     color: clip.color,
     sourceId: audio.sourceId || audio.source?.ruta,
     waveform: audio.waveform,
+    ...(audio.clipInicio && audio.clipInicio > 0 ? { clipInicio: audio.clipInicio } : {}),
   })
 }
 
@@ -202,7 +207,6 @@ export function ClipContextMenu({ menu, onClose, tienda }: Props) {
 
   const multi = menuClips.length > 1
   const midi = clipIsMidi(clip)
-  const allMidi = menuClips.every((c) => clipIsMidi(c))
   const beat = menu.beatAtClick
   const canSplit =
     !multi &&
@@ -262,6 +266,26 @@ export function ClipContextMenu({ menu, onClose, tienda }: Props) {
         }
       />
       ) : null}
+      {/* Acciones que aportan los módulos activos (p. ej. «Abrir MIDI · MD»). */}
+      {!multi
+        ? accionesDeClip({ clipId: clip.id, trackId: track.id, tipo: midi ? 'midi' : 'audio' }).map((a) => (
+            <MenuItem
+              key={a.id}
+              label={a.etiqueta}
+              onClick={() =>
+                run(() => {
+                  void tienda.executor.execute('selection.set', {
+                    idsClips: menu.clipIds,
+                    idsPistas: [track.id],
+                    tipo: 'clip',
+                    idPrincipal: track.id,
+                  })
+                  ejecutarAccionDeClip(a, { clipId: clip.id, trackId: track.id, tipo: midi ? 'midi' : 'audio' })
+                })
+              }
+            />
+          ))
+        : null}
       {!multi ? (
       <MenuItem
         label="Renombrar…"
@@ -292,9 +316,7 @@ export function ClipContextMenu({ menu, onClose, tienda }: Props) {
           run(async () => {
             dawClipboard.setClips(menuClips.map((c) => toClipboardClip(track.id, c)))
             tienda.busEventos.emit('portapapeles.copiado', { cantidad: menuClips.length })
-            for (const c of menuClips) {
-              await tienda.executor.execute('clip.delete', { pistaId: track.id, clipId: c.id })
-            }
+            await batchOrNotify(tienda, loteBorrarClips(tienda.obtenerEstado().project, menuClips.map((c) => c.id)), 'editing.cut')
           })
         }
       />
@@ -307,35 +329,7 @@ export function ClipContextMenu({ menu, onClose, tienda }: Props) {
             const clips = dawClipboard.getClips()
             if (clips.length === 0) return
             const pasteAt = clip.inicio + clip.duracion
-            for (const c of clips) {
-              const inicio = pasteAt
-              if (c.tipo === 'midi' || (c.notas?.length ?? 0) > 0) {
-                await tienda.executor.execute('midi.clip.create', {
-                  pistaId: track.id,
-                  nombre: c.nombre,
-                  inicio,
-                  duracion: c.duracion,
-                  color: c.color,
-                  notas: (c.notas ?? []).map((n) => ({
-                    pitch: n.pitch,
-                    inicio: n.inicio,
-                    duracion: n.duracion,
-                    velocidad: n.velocidad,
-                    canal: n.canal,
-                  })),
-                })
-              } else {
-                await tienda.executor.execute('clip.create', {
-                  pistaId: track.id,
-                  nombre: c.nombre,
-                  inicio,
-                  duracion: c.duracion,
-                  color: c.color,
-                  sourceId: c.sourceId,
-                  waveform: c.waveform,
-                })
-              }
-            }
+            await batchOrNotify(tienda, lotePegarClips(clips, track.id, pasteAt).comandos, 'editing.paste')
           })
         }
       />
@@ -362,27 +356,60 @@ export function ClipContextMenu({ menu, onClose, tienda }: Props) {
         }
       />
       ) : null}
+      <Sep />
+      {(() => {
+        const proyecto = tienda.obtenerEstado().project as never
+        const ids = menuClips.map((c) => c.id)
+        const todosSilenciados = menuClips.every((c) => (c as { silenciado?: boolean }).silenciado === true)
+        const hayAudio = menuClips.some((c) => !clipIsMidi(c))
+        return (
+          <>
+            <MenuItem
+              label={todosSilenciados ? 'Activar clip' : 'Silenciar clip'}
+              shortcut="0"
+              onClick={() => run(() => batchOrNotify(tienda, loteToggleMute(proyecto, ids), 'clip.toggleMute'))}
+            />
+            {hayAudio ? (
+              <>
+                <MenuItem
+                  label="Fundido anti-clics (10 ms)"
+                  shortcut="F"
+                  onClick={() => run(() => batchOrNotify(tienda, loteAutoFade(proyecto, ids), 'clip.autoFade'))}
+                />
+                <MenuItem
+                  label="Invertir audio"
+                  shortcut="Alt+R"
+                  onClick={() => run(() => batchOrNotify(tienda, loteInvertir(proyecto, ids), 'clip.reverseAudio'))}
+                />
+                <MenuItem
+                  label="Normalizar (pico −1 dB)"
+                  shortcut="Alt+N"
+                  onClick={() =>
+                    run(() =>
+                      batchOrNotify(
+                        tienda,
+                        loteNormalizar(proyecto, ids, (k, d, dur) => audioEngine.getClipPeak(k, d, dur)).comandos,
+                        'clip.normalizeAudio',
+                      ),
+                    )
+                  }
+                />
+              </>
+            ) : null}
+            {multi ? (
+              <MenuItem
+                label="Consolidar"
+                shortcut="Ctrl+J"
+                disabled={loteConsolidar(proyecto, ids).length === 0}
+                onClick={() => run(() => batchOrNotify(tienda, loteConsolidar(proyecto, ids), 'clip.consolidate'))}
+              />
+            ) : null}
+          </>
+        )
+      })()}
       {!multi && midi ? (
         <>
           <Sep />
-      <MenuItem
-        label="Abrir editor de partitura"
-        onClick={() =>
-          run(() => {
-            void tienda.executor.execute('selection.set', {
-              idsClips: menu.clipIds,
-              idsPistas: [track.id],
-              tipo: 'clip',
-              idPrincipal: track.id,
-            })
-            requestOpenTool('score-editor', { zone: 'bottom' })
-          })
-        }
-      />
-      <MenuItem
-        label="Vista previa / exportar partitura PDF…"
-            onClick={() => run(() => exportClipScorePdfDialog(tienda, track.id, clip.id))}
-          />
           <MenuItem
             label="Guardar como estilo…"
             onClick={() =>
@@ -429,9 +456,7 @@ export function ClipContextMenu({ menu, onClose, tienda }: Props) {
         shortcut="Del"
         onClick={() =>
           run(async () => {
-            for (const c of menuClips) {
-              await tienda.executor.execute('clip.delete', { pistaId: track.id, clipId: c.id })
-            }
+            await batchOrNotify(tienda, loteBorrarClips(tienda.obtenerEstado().project, menuClips.map((c) => c.id)), 'editing.delete')
           })
         }
       />

@@ -1,0 +1,84 @@
+name: Release
+
+# Al subir una etiqueta vX.Y.Z: verifica, compila nativo, empaqueta NSIS y lo publica
+# (borrador) en GitHub Releases junto con latest.yml para electron-updater.
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      CI: 'true'
+      # Repositorio destino de las releases (vars de Actions; por defecto JASBOOTSTUDIOS/jaswaveaudio).
+      JASWAVE_RELEASES_OWNER: ${{ vars.JASWAVE_RELEASES_OWNER }}
+      JASWAVE_RELEASES_REPO: ${{ vars.JASWAVE_RELEASES_REPO }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            shared/package-lock.json
+            ai-harness/package-lock.json
+            jas-wave/package-lock.json
+
+      - name: Comprobar que la etiqueta coincide con jas-wave/package.json
+        shell: bash
+        run: |
+          version="$(node -p "require('./jas-wave/package.json').version")"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::La etiqueta ${GITHUB_REF_NAME} no coincide con jas-wave/package.json (v${version})"
+            exit 1
+          fi
+
+      - name: Instalar dependencias
+        run: npm run install:all
+
+      - name: Verificar (lint + typecheck + tests)
+        run: npm run verify
+
+      - name: VST3 SDK (fijado)
+        run: npm run native:sdk
+
+      - name: Build nativo (Release x64, VS 2022)
+        run: npm run native:build
+
+      - name: Empaquetar y publicar
+        run: npm run release:win
+        env:
+          # Token con permiso de escritura sobre el repo de releases. Si es otro repo
+          # (p. ej. uno público solo de releases), definir el secreto JASWAVE_RELEASES_TOKEN.
+          GH_TOKEN: ${{ secrets.JASWAVE_RELEASES_TOKEN || secrets.GITHUB_TOKEN }}
+          # Firma opcional: sin estos secretos no se firma (ver docs/RELEASE.md).
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          AZURE_TRUSTED_SIGNING_PROFILE: ${{ vars.AZURE_TRUSTED_SIGNING_PROFILE }}
+          AZURE_TRUSTED_SIGNING_PUBLISHER: ${{ vars.AZURE_TRUSTED_SIGNING_PUBLISHER }}
+
+      - name: Subir instalador como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jaswave-setup-${{ github.ref_name }}
+          if-no-files-found: warn
+          path: |
+            jas-wave/release/*.exe
+            jas-wave/release/*.blockmap
+            jas-wave/release/latest.yml

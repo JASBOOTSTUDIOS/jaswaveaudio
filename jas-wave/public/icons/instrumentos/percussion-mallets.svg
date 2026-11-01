@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="percussion-mallets">
+  <!-- Láminas afinadas superiores (notas accidentales) -->
+  <rect x="14" y="10" width="5" height="12" rx="1" fill="currentColor" />
+  <rect x="22" y="10" width="5" height="12" rx="1" fill="currentColor" />
+  <rect x="34" y="10" width="5" height="12" rx="1" fill="currentColor" />
+  <rect x="42" y="10" width="5" height="12" rx="1" fill="currentColor" />
+  <!-- Láminas naturales inferiores diatónicas (graduadas de mayor a menor) -->
+  <rect x="10" y="24" width="6" height="18" rx="1" fill="currentColor" fill-opacity="0.3" stroke-width="1.5" />
+  <rect x="18" y="24" width="6" height="17" rx="1" fill="currentColor" fill-opacity="0.3" stroke-width="1.5" />
+  <rect x="26" y="24" width="6" height="16" rx="1" fill="currentColor" fill-opacity="0.3" stroke-width="1.5" />
+  <rect x="34" y="24" width="6" height="15" rx="1" fill="currentColor" fill-opacity="0.3" stroke-width="1.5" />
+  <rect x="42" y="24" width="6" height="14" rx="1" fill="currentColor" fill-opacity="0.3" stroke-width="1.5" />
+  <rect x="50" y="24" width="6" height="13" rx="1" fill="currentColor" fill-opacity="0.3" stroke-width="1.5" />
+  <!-- Tubos resonadores debajo -->
+  <path d="M13 42v10M21 42v9M29 42v8M37 42v7M45 42v6M53 42v5" stroke-width="1.5" opacity="0.6" />
+  <!-- Dos baquetas/mazas con cabeza de hilo cruzadas -->
+  <line x1="8" y1="56" x2="48" y2="16" stroke-width="2" />
+  <circle cx="48" cy="16" r="3" fill="currentColor" />
+  <line x1="56" y1="56" x2="16" y2="16" stroke-width="2" />
+  <circle cx="16" cy="16" r="3" fill="currentColor" />
+</svg>

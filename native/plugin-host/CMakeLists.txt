@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.25)
+
+# Runtime de C++ enlazado de forma estatica (/MT): el instalador no puede depender de que la PC destino
+# tenga el redistribuible de Visual C++ (sin VCRUNTIME140/MSVCP140 el host no arranca y no hay audio).
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+set(SMTG_USE_STATIC_CRT ON CACHE BOOL "" FORCE)
+
 project(jaswave_plugin_host LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -6,7 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(JASWAVE_VST3_SDK "Build Steinberg VST3 hosting (audio + editor embed)" ON)
 
-set(VST3_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vst3sdk")
+set(VST3_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vst3sdk" CACHE PATH "Ruta del VST3 SDK (npm run native:sdk)")
 set(HAS_VST3_SDK OFF)
 if(JASWAVE_VST3_SDK AND EXISTS "${VST3_SDK_DIR}/CMakeLists.txt"
    AND EXISTS "${VST3_SDK_DIR}/public.sdk/source/vst/hosting/module.h"
@@ -26,7 +32,6 @@ if(HAS_VST3_SDK)
   add_executable(jaswave-plugin-host
     src/main.cpp
     src/vst3_slot.cpp
-    src/vst2_slot.cpp
     src/audio_output.cpp
     src/asio_output.cpp
     src/asio_com.c
@@ -42,7 +47,7 @@ if(HAS_VST3_SDK)
   target_include_directories(jaswave-plugin-host PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/vendor"
-    "${CMAKE_CURRENT_SOURCE_DIR}/vendor/vst2"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../plugins/shared-dsp"
     "${VST3_SDK_DIR}"
   )
   target_link_libraries(jaswave-plugin-host PRIVATE sdk_hosting)
@@ -51,12 +56,24 @@ if(HAS_VST3_SDK)
   endif()
   message(STATUS "jaswave-plugin-host: VST3 audio+editor (miniaudio)")
 
-  # --- JasWave Piano Synth VST3 ---
-  add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../piano-synth" piano-synth EXCLUDE_FROM_ALL)
-  message(STATUS "JasWavePiano: VST3 instrument (Karplus-Strong synthesis)")
+  # El host no depende de ningún plugin concreto (K1): los plugins JasWave viven en plugins/ y se
+  # compilan aparte (native/scripts/build-plugins.mjs) y se entregan bajo demanda.
 else()
   add_executable(jaswave-plugin-host src/main.cpp)
   message(STATUS "jaswave-plugin-host: discover-only (SDK/miniaudio missing)")
 endif()
 
 install(TARGETS jaswave-plugin-host RUNTIME DESTINATION bin)
+
+# Selftest determinista del DSP propio del host (limitador true-peak del máster). No necesita el SDK:
+#   cmake --build <build> --config Release --target jaswave-host-selftest && <build>/Release/jaswave-host-selftest
+add_executable(jaswave-host-selftest EXCLUDE_FROM_ALL tests/master_limiter_test.cpp)
+target_include_directories(jaswave-host-selftest PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/src"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../plugins/shared-dsp"
+)
+
+# Selftest del orden de eventos MIDI y la emulación de sustain del host (midi_sustain.h). Sin SDK:
+#   cmake --build <build> --config Release --target jaswave-host-midi-selftest && <build>/Release/jaswave-host-midi-selftest
+add_executable(jaswave-host-midi-selftest EXCLUDE_FROM_ALL tests/midi_sustain_test.cpp)
+target_include_directories(jaswave-host-midi-selftest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

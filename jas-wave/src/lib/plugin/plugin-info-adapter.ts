@@ -3,20 +3,21 @@
  * ADR-0011 no-engaño: no marcar VST como «cargado» solo porque el catálogo existe.
  */
 
+import { mejorCopiaJasWave } from './rutas-jaswave'
 import type { PluginInfo } from '../../../../shared/src/types/entidades'
 import type { PluginDescriptor } from './types'
 import { pluginRegistry } from './registry'
 import { expandPluginNameQueries, preferredKnownVstPath } from './known-vst-aliases'
 
 const INSTRUMENT_RE =
-  /sampler|synth|piano|keys|organ|drum|drums|kit\b|bfd|bfdplayer|player|bass|guitar|violin|pad|lead|kontakt|sforzando|decent|descent|instrument|vsti|analog|arturia|lab\s*v|omnisphere|serum|vital|keyscape|play\b|workstation|engine|addictive|ezdrummer|superior\s*drum|battery|groove\s*agent|studi\s*drummer|4front|jaswave/i
+  /sampler|synth|piano|keys|organ|drum|drums|kit\b|bfd|bfdplayer|player|bass|guitar|violin|pad|lead|kontakt|sforzando|decent|descent|instrument|vsti|analog|arturia|lab\s*v|omnisphere|serum|vital|keyscape|play\b|workstation|engine|addictive|ezdrummer|superior\s*drum|battery|groove\s*agent|studi\s*drummer|4front|jaswave.*piano|jaswave.*roles/i
 
 const FX_RE =
-  /reverb|delay|compress|eq\b|pro-?q|equaliz|limiter|saturat|gate\b|chorus|flanger|phaser|utility|maximizer|imager|exciter|de-?ess|transient|clipper|valhalla|room\b|plate\b|verb\b/i
+  /reverb|delay|compress|eq\b|pro-?q|equaliz|limiter|saturat|gate\b|chorus|flanger|phaser|utility|maximizer|imager|exciter|de-?ess|transient|clipper|valhalla|room\b|plate\b|verb\b|audiolens|filter|tune\b|pitch|auto-?tune|ambience/i
 
-/** Mensaje cuando un VST2 no es hosteable (p. ej. DLL 32-bit). */
+/** Mensaje cuando se detecta un plugin VST2 (.dll). VST2 está descontinuado en favor de VST3. */
 export const VST2_NOT_HOSTED_MSG =
-  'VST2 no hosteable (requiere DLL x64). Usa la edición .vst3 si existe.'
+  'VST2 no soportado: JasWave admite exclusivamente plugins VST3 (.vst3) de 64 bits para garantizar la máxima estabilidad del motor de audio.'
 
 export function isLikelyAudioFx(name: string, path?: string): boolean {
   return FX_RE.test(name) || (!!path && FX_RE.test(path))
@@ -27,8 +28,8 @@ export function isLikelyAudioFx(name: string, path?: string): boolean {
  * Nombres ambiguos (BFDPlayer, kits, etc.) cuentan como instrumento.
  */
 export function guessIsInstrument(name: string, path?: string): boolean {
+  if (isLikelyAudioFx(name, path)) return false
   const hay = `${name} ${path ?? ''}`
-  if (isLikelyAudioFx(name, path) && !INSTRUMENT_RE.test(hay)) return false
   return INSTRUMENT_RE.test(hay)
 }
 
@@ -55,13 +56,40 @@ export function extractHostPluginPath(descripcion: string, pluginId?: string): s
  * Ruta hosteable desde PluginInfo. Si descripcion/id no traen path,
  * busca en el catálogo por pluginId o nombre (inserts viejos sin ruta).
  */
+/**
+ * Proyectos anteriores guardan los FX del bundle único JasWaveFx.vst3 (retirado). Cada uno se sustituye
+ * por su plugin independiente (mismos ParamID; el estado guardado se convierte al cargar).
+ */
+const FX_LEGADO: ReadonlyArray<[RegExp, string]> = [
+  [/jaswave\s*eq\b/i, 'com.jaswave.plugin.param-eq'],
+  [/compresor/i, 'com.jaswave.plugin.bus-compressor'],
+  [/limitador/i, 'com.jaswave.plugin.truepeak-limiter'],
+  [/utility/i, 'com.jaswave.plugin.utility-tool'],
+  [/de-?esser/i, 'com.jaswave.plugin.smart-deesser'],
+  [/pedal\s*fix/i, 'com.jaswave.plugin.pedal-fix'],
+]
+
+export function rutaSustitutoFxLegado(
+  nombre: string,
+  catalog: Array<{ pluginId: string; path?: string }>,
+): string {
+  const par = FX_LEGADO.find(([re]) => re.test(nombre))
+  if (!par) return ''
+  return catalog.find((d) => d.pluginId === `jaswave:${par[1]}` && !!d.path)?.path ?? ''
+}
+
 export function resolveHostPluginPath(
   plugin: Pick<PluginInfo, 'descripcion' | 'id' | 'nombre'>,
   catalog?: Array<{ pluginId: string; name: string; path?: string }>,
 ): string {
-  const direct = extractHostPluginPath(plugin.descripcion ?? '', plugin.id)
-  if (direct) return direct
   const list = catalog ?? pluginRegistry.list()
+  const direct = extractHostPluginPath(plugin.descripcion ?? '', plugin.id)
+  if (direct && /jaswavefx\.vst3$/i.test(direct)) {
+    const sustituto = rutaSustitutoFxLegado(plugin.nombre ?? '', list)
+    if (sustituto) return sustituto
+  }
+  // La ruta guardada en el proyecto puede ser de una copia obsoleta de un plugin propio: se usa la mejor conocida.
+  if (direct) return mejorCopiaJasWave(direct, list)
   const name = (plugin.nombre || '').trim().toLowerCase()
   const queries = plugin.nombre
     ? expandPluginNameQueries(plugin.nombre).map((q) => q.toLowerCase())
@@ -143,9 +171,7 @@ export function pluginRuntimeCaption(
   const path = resolveHostPluginPath(plugin)
   if (!path) return 'MISSING · sin ruta de plugin (.vst3/.dll)'
   if (/\.dll$/i.test(path)) {
-    return opts?.audioReady
-      ? 'VST2 x64 · host listo (preferir .vst3 si hay MIDI/audio raro)'
-      : 'VST2 · requiere DLL x64; preferir .vst3'
+    return 'VST2 no soportado · migrar a versión .vst3'
   }
   if (opts?.audioReady) return 'host listo · UI+audio misma instancia'
   return 'en proyecto · host no confirmado'

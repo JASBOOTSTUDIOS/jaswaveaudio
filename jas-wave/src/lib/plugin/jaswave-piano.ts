@@ -7,6 +7,7 @@ import { pluginRegistry } from './registry'
 import { descriptorToPluginInfo } from './plugin-info-adapter'
 import { ensureTrackVstInstrument, slotIdForTrackPlugin } from './track-vst-runtime'
 import type { PluginInfo } from '../../../../shared/src/types/entidades'
+import { isBundledJasWavePath } from './bundled-plugins'
 
 export const JASWAVE_PIANO_NAME = 'JasWave Piano Synth'
 export const JASWAVE_PIANO_VENDOR = 'JasWave'
@@ -48,7 +49,10 @@ export function ensureJasWavePianoRegistered(explicitPath?: string): PluginDescr
   const path = (explicitPath || defaultJasWavePianoPath()).trim()
   const existing = findJasWavePianoDescriptor()
   if (existing?.path) {
-    if (path && existing.path !== path && /AppData\\Local/i.test(path)) {
+    // Ruta explícita (bundle incluido en resources/): sustituye la de usuario inexistente.
+    const replaceWithExplicit =
+      !!explicitPath && (existing.path === defaultJasWavePianoPath() || isBundledJasWavePath(existing.path))
+    if (path && existing.path !== path && (replaceWithExplicit || /AppData\\Local/i.test(path))) {
       existing.path = path
       pluginRegistry.register(existing)
     }

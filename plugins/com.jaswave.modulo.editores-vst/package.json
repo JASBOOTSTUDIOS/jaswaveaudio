@@ -1,0 +1,15 @@
+{
+  "name": "@jaswave/modulo-editores-vst",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Módulo de JasWave: réplica web del editor cyber de los VST (V4).",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --tsconfig ../sdk/host-sdk/pruebas/tsconfig.pruebas.json --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@jaswave/ui-cyber": "1.0.0"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "archivos": {
+    "samba.mid": {
+      "id": "jw-latin-samba-samba",
+      "nombre": "Samba",
+      "tempo": 100,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "latin",
+        "samba",
+        "surdo"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

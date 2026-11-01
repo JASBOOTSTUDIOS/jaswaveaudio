@@ -12,6 +12,15 @@ namespace jaswave {
 bool clip_load_path(const std::string& clipId, const std::string& path, std::string& err);
 bool clip_load_pcm(const std::string& clipId, const float* interleaved, uint32_t frames,
                    uint32_t channels, uint32_t sampleRate, std::string& err);
+/** Subida por trozos de PCM f32 interleaved (clips largos): begin -> chunk* (en orden) -> end. */
+bool clip_load_begin(const std::string& clipId, uint32_t frames, uint32_t channels,
+                     uint32_t sampleRate, std::string& err);
+bool clip_load_chunk(const std::string& clipId, uint32_t offsetFrames, const float* interleaved, size_t floatCount,
+                     uint32_t frames, std::string& err);
+bool clip_load_end(const std::string& clipId, std::string& err);
+void clip_load_abort(const std::string& clipId);
+/** true si el clip ya esta cargado en el host (frames/sampleRate del buffer del host). */
+bool clip_has(const std::string& clipId, uint32_t& frames, uint32_t& sampleRate);
 void clip_unload(const std::string& clipId);
 void clip_unload_all();
 
@@ -19,8 +28,23 @@ void clip_unload_all();
  * Programa reproducción relativa al reloj de transporte.
  * startSample / durationSamples en el sample rate del device (host clock).
  */
+/** Fundidos de un clip: límites del clip entero en muestras de la línea de tiempo y largo de cada fade. */
+struct ClipFades {
+  int64_t clipStartSample{0};
+  int64_t clipEndSample{0};
+  int64_t inSamples{0};
+  int64_t outSamples{0};
+  int inCurve{0};   // 0 lineal · 1 exponencial · 2 logarítmica
+  int outCurve{0};
+  /** Clip invertido: la región [regionStart, regionStart+regionLen) del audio se lee al revés. */
+  bool reverse{false};
+  int64_t regionStart{0};
+  int64_t regionLen{0};
+};
+
 void clip_schedule(const std::string& clipId, uint16_t trackIndex, int64_t startSample,
-                   int64_t durationSamples, int64_t sourceOffsetSamples, float gain, float pan);
+                   int64_t durationSamples, int64_t sourceOffsetSamples, float gain, float pan,
+                   const ClipFades& fades = {});
 void clip_stop_all_scheduled();
 
 /** Suma audio de clips activos al stem interleaved (REPLACE semantics: add into buffer). */

@@ -178,6 +178,7 @@ export function createActionSystem(opts?: {
     },
 
     handleKeyboardEvent(e: KeyboardEvent) {
+      if (e.defaultPrevented) return false;
       if (shouldIgnoreGlobalShortcuts(e.target)) return false;
       // Solo ceder Ctrl+C/V al navegador si la selección de texto está en chat/input
       if (textSelectionIsInEditableOrChat() && isNativeClipboardShortcut(e)) return false;

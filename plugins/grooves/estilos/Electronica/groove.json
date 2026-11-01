@@ -1,0 +1,92 @@
+{
+  "archivos": {
+    "cuatro-por-cuatro.mid": {
+      "id": "jw-electronica-cuatro-por-cuatro",
+      "nombre": "Cuatro por cuatro",
+      "tempo": 124,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "electronica",
+        "four-on-the-floor",
+        "house"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "medio-tiempo-electronico.mid": {
+      "id": "jw-electronica-medio-tiempo-electronico",
+      "nombre": "Medio tiempo electrónico",
+      "tempo": 140,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "electronica",
+        "half-time"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "drum-and-bass.mid": {
+      "id": "jw-electronica-drum-and-bass",
+      "nombre": "Drum and bass",
+      "tempo": 174,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "electronica",
+        "dnb",
+        "rapido"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "techno.mid": {
+      "id": "jw-electronica-techno",
+      "nombre": "Techno",
+      "tempo": 130,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "electronica",
+        "techno"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-redoble-de-caja.mid": {
+      "id": "jw-electronica-fill-redoble-de-caja",
+      "nombre": "Fill redoble de caja",
+      "tempo": 128,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "redoble",
+        "caja"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

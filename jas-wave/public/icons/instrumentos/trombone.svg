@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="trombone">
+  <!-- Boquilla superior -->
+  <path d="M8 26h4v-5H8z" fill="currentColor" stroke-width="1.5" />
+  <line x1="12" y1="23.5" x2="38" y2="23.5" stroke-width="2" />
+  <!-- Campana del trombón que apunta hacia adelante -->
+  <path d="M38 23.5c4-1 9-5 18-11v22c-9-6-14-10-18-11" fill="currentColor" fill-opacity="0.15" stroke-width="2" />
+  <ellipse cx="56" cy="23.5" rx="2" ry="11" fill="currentColor" fill-opacity="0.25" stroke-width="2" />
+  <!-- Tubo posterior de afinación -->
+  <path d="M12 23.5c-4 0-6 2-6 6v4c0 4 2 6 6 6" stroke-width="2" />
+  <!-- Vara deslizante larga que se extiende -->
+  <line x1="12" y1="39.5" x2="48" y2="39.5" stroke-width="2.5" />
+  <line x1="12" y1="45.5" x2="48" y2="45.5" stroke-width="2.5" />
+  <path d="M48 39.5c2 0 4 1 4 3s-2 3-4 3" stroke-width="2.5" />
+  <!-- Tirantes de agarre de la vara -->
+  <line x1="22" y1="23.5" x2="22" y2="39.5" stroke-width="2" />
+  <line x1="34" y1="39.5" x2="34" y2="45.5" stroke-width="2" />
+</svg>

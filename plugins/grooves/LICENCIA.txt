@@ -1,0 +1,6 @@
+Grooves MIDI de serie de JasWave
+Autor: JasWave
+Licencia: CC0 1.0 Universal (dedicación al dominio público) - https://creativecommons.org/publicdomain/zero/1.0/
+
+Todos los patrones de plugins/grooves/estilos/ son originales, generados por plugins/grooves/tools/generar_grooves.mjs.
+No contienen ni derivan de material de ninguna librería comercial. Puedes usarlos, modificarlos y redistribuirlos sin permiso ni atribución.

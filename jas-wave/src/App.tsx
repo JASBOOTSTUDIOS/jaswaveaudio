@@ -1,5 +1,19 @@
-import { useState, useEffect } from 'react'
-import { DAWProvider } from './context/daw-context'
+import { useState, useEffect, useRef, type RefObject } from 'react'
+import type { ImperativePanelHandle } from 'react-resizable-panels'
+import { useElementSize } from '@/hooks/use-element-size'
+import { minimoPorcentaje, minimoZonaPx } from '@/src/workspace/zone-min'
+
+/** Si el mínimo sube (otra herramienta, ventana más baja) y el panel quedó por debajo, se agranda hasta él. */
+function useAsegurarMinimo(ref: RefObject<ImperativePanelHandle | null>, minPct: number, visible: boolean) {
+  useEffect(() => {
+    if (!visible) return
+    const p = ref.current
+    if (!p || p.isCollapsed()) return
+    if (p.getSize() < minPct - 0.05) p.resize(minPct)
+  }, [ref, minPct, visible])
+}
+import { DAWProvider, getSharedStore } from './context/daw-context'
+import { abrirProyectoIO, mensajeError } from './lib/project-io'
 import { PlaybackProvider } from '@/components/playback-provider'
 import { CommandPalette } from '@/components/command-palette'
 import { useShortcutDispatcher } from '@/hooks/use-shortcut-dispatcher'
@@ -11,36 +25,58 @@ import {
   ResizableHandle,
 } from '@/components/ui/resizable'
 import { TitleBar } from '@/components/title-bar'
+import { UpdateBanner } from '@/components/update-banner'
 import { AppMenuBar } from '@/components/app-menu-bar'
 import { IconRail } from '@/components/icon-rail'
 import { TransportBar } from '@/components/transport-bar'
 import { EditToolbar } from '@/components/edit-toolbar'
 import { EventToasts } from '@/components/event-toasts'
+import { PluginsNecesarios } from '@/components/plugins/plugins-necesarios'
+import { ProyectosWebDialog } from '@/components/web/proyectos-web-dialog'
+import { ReceptorHandover } from '@/components/handover/receptor-handover'
+import { AudioDeviceBanner } from '@/components/audio-device-banner'
+import { PluginHostCrashLoopBanner } from '@/components/plugin-host-crash-loop-banner'
+import { AudioEngineBusyBanner } from '@/components/audio-engine-busy-banner'
 import { ProjectCloseDialog } from '@/components/project-close-dialog'
+import { NuevoProyectoDialog } from '@/components/nuevo-proyecto-dialog'
+import { SaveConflictDialog } from '@/components/save-conflict-dialog'
+import { MediaFaltanteDialog } from '@/components/media-faltante-dialog'
+import { AppCloseGuard } from '@/components/app-close-guard'
+import { OpenProjectRequest } from '@/components/open-project-request'
 import { DockZonePanel } from '@/components/workspace/ide-shell'
 import { ToolHost } from '@/components/workspace/tool-host'
+import { LayoutLab } from '@/components/workspace/layout-lab'
+import { PluginWindowsBar } from '@/components/plugin-windows-bar'
+import { PinPanelButton } from '@/components/pin-button'
 import {
   WorkspaceProvider,
   useWorkspace,
   getUndockToolIdFromUrl,
+  esIdHerramientaValido,
 } from '@/src/workspace/workspace-context'
 import { TOOL_CATALOG, type ToolId } from '@/src/workspace/types'
+import { herramientasDisponibles } from '@/src/modulos/herramientas'
+import { useVersionModulos } from '@/src/modulos/use-modulos'
 import { MultiWindowSync } from '@/src/workspace/multi-window-sync'
 import { WorkspaceMenu } from '@/components/workspace/workspace-menu'
 import { ImportProgressProvider } from '@/src/context/import-progress-context'
 import { ProjectReadyProvider } from '@/src/context/project-ready-context'
 import { PluginHostBootstrap } from '@/components/plugin-host-bootstrap'
+import { GroovesSyncBootstrap } from '@/src/lib/grooves/sync-auto'
 import { PluginHostLifecycle } from '@/components/plugin-host-lifecycle'
 import { MidiControllerHost } from '@/components/midi-controller-host'
 import { AgentAuditHost, AGENT_BRIDGE_REV } from '@/src/lib/agent-audit-bridge'
 // bridge rev consumed as <AgentAuditHost key={AGENT_BRIDGE_REV} />
-import { PanelLeft, PanelRight, PanelBottom, Plus, X } from 'lucide-react'
+import { PanelLeft, PanelRight, PanelBottom, Plus, X, Home } from 'lucide-react'
 import { JasWaveAppIcon } from '@/components/brand'
-import { ScoreExportMenuListener } from '@/components/score-export-menu-listener'
-import { ScorePreviewDialog } from '@/components/score-preview-dialog'
+import { ComponentesDeModulos } from '@/components/modulos/componentes-de-modulos'
+import { CapaGuia } from '@/components/capa-guia'
+import { InstaladorExtensiones } from '@/components/modulos/instalador-extensiones'
+import { PortalCatalogoPWA } from '@/components/portal/portal-pwa'
 
 function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
   useShortcutDispatcher()
+  useVersionModulos()
   const [tabs, setTabs] = useState<ToolId[]>(() => {
     try {
       const params = new URLSearchParams(window.location.search)
@@ -49,7 +85,7 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
         const parsed = raw
           .split(',')
           .map((s) => s.trim())
-          .filter((id): id is ToolId => id in TOOL_CATALOG)
+          .filter((id): id is ToolId => esIdHerramientaValido(id))
         if (parsed.length) return [...new Set(parsed)]
       }
     } catch {
@@ -72,7 +108,7 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
         const data = ev.data as { type?: string; toolId?: string; floatHost?: string }
         if (data?.type === 'float-accept-tab' && data.toolId && data.floatHost === initialToolId) {
           const id = data.toolId as ToolId
-          if (!(id in TOOL_CATALOG)) return
+          if (!esIdHerramientaValido(id)) return
           setTabs((prev) => (prev.includes(id) ? prev : [...prev, id]))
           setActive(id)
         }
@@ -128,6 +164,7 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
       <div className="flex h-10 items-center gap-2 border-b border-border bg-panel px-2 text-[12px] font-semibold">
         <JasWaveAppIcon className="size-7 shrink-0" />
         <span className="text-[10px] font-normal text-muted-foreground">flotante</span>
+        <PinPanelButton toolId={initialToolId} titulo={TOOL_CATALOG[initialToolId]?.title ?? initialToolId} />
         <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
           {tabs.map((id) => (
             <button
@@ -138,7 +175,7 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
                 id === visible ? 'bg-background text-foreground' : 'text-muted-foreground hover:bg-panel-raised'
               }`}
             >
-              {TOOL_CATALOG[id].title}
+              {TOOL_CATALOG[id]?.title ?? id}
               <span
                 role="button"
                 tabIndex={0}
@@ -164,8 +201,8 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
             <Plus className="size-3.5" />
           </button>
           {addOpen ? (
-            <div className="absolute right-0 top-full z-[80] mt-1 max-h-64 w-48 overflow-y-auto rounded-md border border-border bg-panel py-1 shadow-xl">
-              {(Object.keys(TOOL_CATALOG) as ToolId[]).map((id) => (
+            <div className="absolute right-0 top-full z-80 mt-1 max-h-64 w-48 overflow-y-auto rounded-md border border-border bg-panel py-1 shadow-xl">
+              {herramientasDisponibles().map((id) => (
                 <button
                   key={id}
                   type="button"
@@ -173,7 +210,7 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
                   onClick={() => stealTool(id)}
                   className="flex w-full px-3 py-1.5 text-left text-[11px] hover:bg-panel-raised disabled:opacity-40"
                 >
-                  {TOOL_CATALOG[id].title}
+                  {TOOL_CATALOG[id]?.title ?? id}
                 </button>
               ))}
             </div>
@@ -189,18 +226,42 @@ function FloatingDockApp({ initialToolId }: { initialToolId: ToolId }) {
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         <div className="h-full min-h-0">
-          <ToolHost toolId={visible} />
+          <ToolHost toolId={visible} avisoEspacio={false} />
         </div>
       </div>
     </main>
   )
 }
 
-function AppShell() {
+/** Archivo → Abrir proyecto empaquetado: el main extrae el zip junto a él y se abre el .jaswave que contiene. */
+async function abrirPaqueteProyecto(): Promise<void> {
+  const tienda = getSharedStore()
+  const r = await window.electron?.projectImportBundle?.()
+  if (!r || r.canceled) return
+  if (!r.ok || !r.ruta) {
+    tienda.busEventos.emit('comando.fallido', { type: 'project.load', error: r.error ?? 'No se pudo abrir el paquete' })
+    return
+  }
+  const abierto = await abrirProyectoIO(tienda, { ruta: r.ruta })
+  if (!abierto.success && !abierto.canceled) {
+    tienda.busEventos.emit('comando.fallido', { type: 'project.load', error: mensajeError(abierto.error) ?? 'No se pudo abrir el proyecto' })
+  }
+}
+
+function AppShell({ onVolverAlPortal }: { onVolverAlPortal?: () => void } = {}) {
   const dispatcher = useShortcutDispatcher()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
-  const { layout, setActiveTab, toggleZone, moveTool, toolsInZone, dockTool } = useWorkspace()
+  const [railActive, setRailActive] = useState<ToolId | null>(null)
+  const { layout, setActiveTab, toggleZone, toolsInZone, dockTool, closeTool, openTool, toggleTool, isToolOpen } =
+    useWorkspace()
+  const hGroupRef = useRef<HTMLDivElement>(null)
+  const vGroupRef = useRef<HTMLDivElement>(null)
+  const { width: hGroupW } = useElementSize(hGroupRef)
+  const { height: vGroupH } = useElementSize(vGroupRef)
+  const bottomPanelRef = useRef<ImperativePanelHandle>(null)
+  const leftPanelRef = useRef<ImperativePanelHandle>(null)
+  const rightPanelRef = useRef<ImperativePanelHandle>(null)
 
   useEffect(() => {
     const handler = () => setShortcutsOpen(true)
@@ -212,6 +273,13 @@ function AppShell() {
     const handler = (e: Event) => {
       const id = (e as CustomEvent<{ id?: string }>).detail?.id
       if (id === 'archivo.exportarBounce') setExportOpen(true)
+      if (id === 'archivo.abrirPaquete') void abrirPaqueteProyecto()
+      if (id?.startsWith('ventana.tool.')) {
+        const toolId = id.slice('ventana.tool.'.length) as ToolId
+        if (toolId in TOOL_CATALOG) {
+          window.dispatchEvent(new CustomEvent('jaswave-toggle-tool', { detail: { toolId } }))
+        }
+      }
     }
     window.addEventListener('jaswave-menu-action', handler)
     return () => window.removeEventListener('jaswave-menu-action', handler)
@@ -241,7 +309,6 @@ function AppShell() {
       const toolId = detail?.toolId
       if (!toolId || !(toolId in TOOL_CATALOG)) return
       if (layout.undocked.includes(toolId)) {
-        // Ya está en otra ventana: enfocarla (no volver a acoplar)
         const api = window.electron as typeof window.electron & {
           openToolWindow?: (id: string, title: string) => Promise<unknown>
         }
@@ -251,29 +318,44 @@ function AppShell() {
       for (const zone of ['left', 'right', 'bottom', 'center'] as const) {
         if (toolsInZone(zone).includes(toolId)) {
           setActiveTab(zone, toolId)
-          if (!layout.zoneVisible[zone] && zone !== 'center') toggleZone(zone)
           return
         }
       }
-      moveTool(toolId, detail.zone ?? TOOL_CATALOG[toolId].defaultZone)
+      openTool(toolId, detail.zone ?? TOOL_CATALOG[toolId].defaultZone)
     }
     window.addEventListener('jaswave-open-tool', handler)
     return () => window.removeEventListener('jaswave-open-tool', handler)
-  }, [layout.undocked, layout.zoneVisible, toolsInZone, setActiveTab, toggleZone, moveTool])
+  }, [layout.undocked, toolsInZone, setActiveTab, openTool])
+
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const toolId = (ev as CustomEvent<{ toolId: ToolId }>).detail?.toolId
+      if (!toolId || !(toolId in TOOL_CATALOG)) return
+      toggleTool(toolId)
+    }
+    window.addEventListener('jaswave-toggle-tool', handler)
+    return () => window.removeEventListener('jaswave-toggle-tool', handler)
+  }, [toggleTool])
 
   const handleRailSelect = (toolId: ToolId) => {
+    setRailActive(toolId)
     if (layout.undocked.includes(toolId)) {
       dockTool(toolId)
       return
     }
+    // Si ya está abierta y activa → cerrar tab (toggle).
     for (const zone of ['left', 'right', 'bottom', 'center'] as const) {
       if (toolsInZone(zone).includes(toolId)) {
+        const zoneShown = zone === 'center' || layout.zoneVisible[zone]
+        if (zoneShown && layout.activeTab[zone] === toolId) {
+          closeTool(toolId)
+          return
+        }
         setActiveTab(zone, toolId)
-        if (!layout.zoneVisible[zone] && zone !== 'center') toggleZone(zone)
         return
       }
     }
-    moveTool(toolId, TOOL_CATALOG[toolId].defaultZone)
+    openTool(toolId, TOOL_CATALOG[toolId].defaultZone)
   }
 
   // Mostrar zona aunque esté vacía (para poder + / soltar herramientas)
@@ -281,13 +363,38 @@ function AppShell() {
   const rightVisible = layout.zoneVisible.right
   const bottomVisible = layout.zoneVisible.bottom
 
+  // El divisor no deja una zona más pequeña que su herramienta activa (el mixer no baja de sus faders):
+  // nada de scroll interno. Los mínimos en px pasan a % del grupo medido.
+  const activaEn = (zone: 'left' | 'right' | 'bottom' | 'center') => layout.activeTab[zone] ?? toolsInZone(zone)[0]
+  const minBottomPct = minimoPorcentaje(minimoZonaPx(activaEn('bottom'), 'h'), vGroupH, 12, 70)
+  const minArrangePct = minimoPorcentaje(minimoZonaPx(activaEn('center'), 'h'), vGroupH, 20, bottomVisible ? 100 - minBottomPct : 100)
+  const minLeftPct = minimoPorcentaje(minimoZonaPx(activaEn('left'), 'w'), hGroupW, 12, 40)
+  const minRightPct = minimoPorcentaje(minimoZonaPx(activaEn('right'), 'w'), hGroupW, 12, 40)
+  useAsegurarMinimo(bottomPanelRef, minBottomPct, bottomVisible)
+  useAsegurarMinimo(leftPanelRef, minLeftPct, leftVisible)
+  useAsegurarMinimo(rightPanelRef, minRightPct, rightVisible)
+
   return (
     <>
       <CommandPalette />
       <EventToasts />
+      <PluginsNecesarios />
+      <ProyectosWebDialog />
+      <ReceptorHandover />
+      <UpdateBanner />
+      <AudioDeviceBanner />
+      <PluginHostCrashLoopBanner />
+      <AudioEngineBusyBanner />
       <ProjectCloseDialog />
-      <ScoreExportMenuListener />
-      <ScorePreviewDialog />
+      <SaveConflictDialog />
+      <MediaFaltanteDialog />
+      <AppCloseGuard />
+      <OpenProjectRequest />
+      <NuevoProyectoDialog />
+      <ComponentesDeModulos />
+      <CapaGuia />
+      <LayoutLab />
+      <InstaladorExtensiones />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} dispatcher={dispatcher} />
       <ExportBounceDialog open={exportOpen} onClose={() => setExportOpen(false)} />
       <main className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground">
@@ -297,10 +404,12 @@ function AppShell() {
         <div className="flex flex-1 min-h-0">
           <IconRail
             activeTool={
-              layout.activeTab.left ??
-              layout.activeTab.right ??
-              layout.activeTab.bottom ??
-              layout.activeTab.center
+              railActive && isToolOpen(railActive)
+                ? railActive
+                : layout.activeTab.left ??
+                  layout.activeTab.right ??
+                  layout.activeTab.bottom ??
+                  layout.activeTab.center
             }
             undockedTools={layout.undocked}
             onToolSelect={handleRailSelect}
@@ -312,46 +421,68 @@ function AppShell() {
             <TransportBar />
             <EditToolbar />
 
-            <ResizablePanelGroup direction="horizontal" autoSaveId="jaswave-ide-h" className="min-h-0 flex-1">
+            <div ref={hGroupRef} className="flex min-h-0 flex-1">
+            <ResizablePanelGroup direction="horizontal" autoSaveId="jaswave-ide-h" className="min-h-0 flex-1 bg-panel">
               {leftVisible && (
                 <>
-                  <ResizablePanel id="jas-left" order={1} defaultSize={22} minSize={12} maxSize={40} className="min-w-0 border-r border-border">
-                    <DockZonePanel zone="left" />
+                  <ResizablePanel ref={leftPanelRef} id="jas-left" order={1} defaultSize={Math.max(22, minLeftPct)} minSize={minLeftPct} maxSize={40} className="min-h-0 min-w-0 border-r border-border bg-panel">
+                    <div className="h-full min-h-0">
+                      <DockZonePanel zone="left" />
+                    </div>
                   </ResizablePanel>
                   <ResizableHandle withHandle />
                 </>
               )}
 
-              <ResizablePanel id="jas-center" order={2} defaultSize={leftVisible && rightVisible ? 56 : 78} minSize={30} className="min-w-0">
-                <ResizablePanelGroup direction="vertical" autoSaveId="jaswave-ide-v" className="h-full">
-                  <ResizablePanel id="jas-arrange" order={1} defaultSize={bottomVisible ? 62 : 100} minSize={20}>
-                    <DockZonePanel zone="center" />
+              <ResizablePanel id="jas-center" order={2} defaultSize={leftVisible && rightVisible ? 56 : 78} minSize={30} className="min-h-0 min-w-0 bg-panel">
+                <div ref={vGroupRef} className="h-full min-h-0">
+                <ResizablePanelGroup direction="vertical" autoSaveId="jaswave-ide-v" className="h-full min-h-0 bg-panel">
+                  <ResizablePanel id="jas-arrange" order={1} defaultSize={bottomVisible ? 62 : 100} minSize={minArrangePct} className="min-h-0 bg-panel">
+                    <div className="h-full min-h-0">
+                      <DockZonePanel zone="center" />
+                    </div>
                   </ResizablePanel>
                   {bottomVisible && (
                     <>
                       <ResizableHandle withHandle />
-                      <ResizablePanel id="jas-bottom" order={2} defaultSize={38} minSize={12} maxSize={70} className="border-t border-border">
-                        <DockZonePanel zone="bottom" />
+                      <ResizablePanel ref={bottomPanelRef} id="jas-bottom" order={2} defaultSize={Math.max(38, minBottomPct)} minSize={minBottomPct} maxSize={70} className="min-h-0 border-t border-border bg-panel">
+                        <div className="h-full min-h-0">
+                          <DockZonePanel zone="bottom" />
+                        </div>
                       </ResizablePanel>
                     </>
                   )}
                 </ResizablePanelGroup>
+                </div>
               </ResizablePanel>
 
               {rightVisible && (
                 <>
                   <ResizableHandle withHandle />
-                  <ResizablePanel id="jas-right" order={3} defaultSize={22} minSize={12} maxSize={40} className="min-w-0 border-l border-border">
-                    <DockZonePanel zone="right" />
+                  <ResizablePanel ref={rightPanelRef} id="jas-right" order={3} defaultSize={Math.max(22, minRightPct)} minSize={minRightPct} maxSize={40} className="min-h-0 min-w-0 border-l border-border bg-panel">
+                    <div className="h-full min-h-0">
+                      <DockZonePanel zone="right" />
+                    </div>
                   </ResizablePanel>
                 </>
               )}
             </ResizablePanelGroup>
+            </div>
           </div>
         </div>
 
         {/* Barra de workspace: reabrir paneles + menú Ventanas */}
         <div className="flex h-7 items-center gap-1 border-t border-border bg-panel px-2">
+          {onVolverAlPortal && (
+            <button
+              type="button"
+              className="flex items-center gap-1 rounded px-1.5 text-[10px] text-muted-foreground hover:bg-panel-raised hover:text-[#19D9FF]"
+              onClick={onVolverAlPortal}
+              title="Volver al Portal y Catálogo PWA"
+            >
+              <Home className="size-3 text-[#19D9FF]" /> Portal
+            </button>
+          )}
           <WorkspaceMenu />
           <div className="mx-1 h-3 w-px bg-border" />
           {!leftVisible && (
@@ -369,6 +500,7 @@ function AppShell() {
               <PanelBottom className="size-3" /> Inferior
             </button>
           )}
+          <PluginWindowsBar />
           <span className="ml-auto text-[10px] text-muted-foreground/70">
             Ventanas · + en pestañas · clic en el rail para recuperar
           </span>
@@ -380,6 +512,43 @@ function AppShell() {
 
 export default function App() {
   const undockId = getUndockToolIdFromUrl()
+  const [entrarStudio, setEntrarStudio] = useState<boolean>(() => {
+    if (undockId) return true
+    if (typeof window !== 'undefined' && 'electron' in window && Boolean((window as unknown as { electron?: unknown }).electron)) {
+      return true
+    }
+    try {
+      const p = new URLSearchParams(window.location.search)
+      if (p.has('daw') || p.get('studio') === '1') return true
+      return sessionStorage.getItem('jaswave_entrar_studio') === '1'
+    } catch {
+      return false
+    }
+  })
+
+  if (!entrarStudio && !undockId) {
+    return (
+      <PortalCatalogoPWA
+        onEntrarAlDaw={() => {
+          try {
+            sessionStorage.setItem('jaswave_entrar_studio', '1')
+          } catch {
+            /* ignore */
+          }
+          setEntrarStudio(true)
+        }}
+      />
+    )
+  }
+
+  const volverAlPortal = () => {
+    try {
+      sessionStorage.removeItem('jaswave_entrar_studio')
+    } catch {
+      /* ignore */
+    }
+    setEntrarStudio(false)
+  }
 
   return (
     <DAWProvider>
@@ -396,10 +565,11 @@ export default function App() {
               <WorkspaceProvider>
                 <MultiWindowSync role="primary" />
                 <PluginHostBootstrap />
+                <GroovesSyncBootstrap />
                 <PluginHostLifecycle />
                 <MidiControllerHost />
                 <AgentAuditHost key={AGENT_BRIDGE_REV} />
-                <AppShell />
+                <AppShell onVolverAlPortal={volverAlPortal} />
               </WorkspaceProvider>
             )}
           </PlaybackProvider>

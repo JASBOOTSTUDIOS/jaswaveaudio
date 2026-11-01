@@ -565,6 +565,8 @@ describe('BusEventosMemoria', () => {
 
     it('should assign low priority to AI events', () => {
       expect(bus.obtenerPrioridad('ia.herramientaEjecutada')).toBe('baja');
+      expect(bus.obtenerPrioridad('ia.planCreado')).toBe('baja');
+      expect(bus.obtenerPrioridad('ia.faseIniciada')).toBe('baja');
       expect(bus.obtenerPrioridad('sistema.inicializado')).toBe('baja');
     });
   });

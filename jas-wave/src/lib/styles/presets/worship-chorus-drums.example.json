@@ -1,0 +1,56 @@
+{
+  "$comment": "Preset de ejemplo OPCIONAL (no se instala solo). Añádelo con styleInstallPreset(styleProfileFromPreset(...)) o copiándolo a la biblioteca global de estilos.",
+  "id": "style-preset-worship-chorus-drums",
+  "nombre": "Ejemplo worship — coro denso (batería)",
+  "rol": "drums",
+  "tags": ["ejemplo", "worship", "full", "drums", "ghost"],
+  "bpm": 72,
+  "feel": "full",
+  "groove": {
+    "id": "worship-chorus-example",
+    "nombre": "Coro denso (ejemplo)",
+    "stepBeats": 0.25,
+    "steps": [
+      { "timing": 0, "velocity": 6 },
+      { "timing": 0, "velocity": -4 },
+      { "timing": 0, "velocity": 2 },
+      { "timing": 0, "velocity": -4 },
+      { "timing": 0, "velocity": 6 },
+      { "timing": 0, "velocity": -4 },
+      { "timing": 0, "velocity": 2 },
+      { "timing": 0, "velocity": -4 },
+      { "timing": 0, "velocity": 6 },
+      { "timing": 0, "velocity": -4 },
+      { "timing": 0, "velocity": 2 },
+      { "timing": 0, "velocity": -4 },
+      { "timing": 0, "velocity": 6 },
+      { "timing": 0, "velocity": -4 },
+      { "timing": 0, "velocity": 2 },
+      { "timing": 0, "velocity": -4 }
+    ]
+  },
+  "stats": {
+    "kick": 48,
+    "snare": 24,
+    "snareGhost": 16,
+    "hatClosed": 56,
+    "hatOpen": 8,
+    "crash": 4,
+    "ride": 0,
+    "tom": 4,
+    "other": 0,
+    "total": 160,
+    "avgVel": 88,
+    "kickGrid16": [1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0],
+    "snareGrid16": [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0]
+  },
+  "motifContour": {
+    "intervals": [],
+    "rhythm16": [],
+    "pitchMin": 36,
+    "pitchMax": 49,
+    "notesPerBar": 18
+  },
+  "sectionHints": ["dense", "dense", "dense", "dense"],
+  "source": { "clipName": "preset" }
+}

@@ -11,7 +11,7 @@ function ev(nombre: string, payload: Record<string, unknown>): EventoDominio {
   return {
     nombre,
     version: 1,
-    marcaTiempo: Date.now(),
+    marcaTiempo: entorno.ahora(),
     fuente: 'builtin',
     payload: payload as EventoDominio['payload'],
   }
@@ -52,6 +52,8 @@ export function parseFrozenComment(comentario: string | undefined): {
 export function crearComandoTrackFreeze(): CommandDefinition<any> {
   return {
     type: 'track.freeze',
+    replicacion: 'resultado',
+    historialUndo: 'instantanea',
     description: 'Marca pista como frozen (bypass plugins; el bounce de stem lo hace el cliente)',
     risk: 'write',
     schema: {
@@ -97,6 +99,8 @@ export function crearComandoTrackFreeze(): CommandDefinition<any> {
 export function crearComandoTrackUnfreeze(): CommandDefinition<any> {
   return {
     type: 'track.unfreeze',
+    replicacion: 'resultado',
+    historialUndo: 'instantanea',
     description: 'Quita frozen y restaura bypass previo de plugins',
     risk: 'write',
     schema: {
@@ -130,3 +134,5 @@ export function crearComandoTrackUnfreeze(): CommandDefinition<any> {
     },
   }
 }
+
+import { entorno } from '../state/entorno-determinista';

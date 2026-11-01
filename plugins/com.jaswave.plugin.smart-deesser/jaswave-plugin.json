@@ -1,0 +1,189 @@
+{
+  "id": "com.jaswave.plugin.smart-deesser",
+  "name": "JasWave Smart De-Esser",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "vendor": "JasWave Audio",
+  "description": "De-esser de banda dividida (cruce Linkwitz-Riley 4º orden) o banda completa, con sidechain filtrado HP/BP, detección absoluta o relativa y escucha.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveSmartDeEsser.vst3"
+  },
+  "vst3": {
+    "classId": "{4A617357-4445-5352-5072-6F6356335431}",
+    "subCategories": "Fx|Dynamics"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "productor",
+    "mezcla",
+    "qa"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.smart-deesser",
+    "features": [
+      {
+        "key": "deesser.escucha-sidechain",
+        "description": "Escucha del sidechain filtrado"
+      },
+      {
+        "key": "deesser.deteccion-relativa",
+        "description": "Detección relativa (sidechain frente a banda completa)"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Controla sibilancias y resonancias agudas de voces sin oscurecer el resto de la señal.",
+    "intents": [
+      "quitar-sibilancia",
+      "suavizar-eses",
+      "domar-agudos-voz"
+    ],
+    "parameters": [
+      {
+        "id": "bypass",
+        "vstParamId": 0,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "bypass": true,
+        "basico": true
+      },
+      {
+        "id": "deesser.freq",
+        "vstParamId": 1,
+        "name": "Frecuencia",
+        "min": 3000,
+        "max": 12000,
+        "default": 6000,
+        "unit": "Hz",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "deesser.umbral",
+        "vstParamId": 2,
+        "name": "Umbral",
+        "min": -60,
+        "max": 0,
+        "default": -20,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "deesser.rango",
+        "vstParamId": 3,
+        "name": "Rango máximo",
+        "min": 0,
+        "max": 24,
+        "default": 12,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "deesser.modo",
+        "vstParamId": 4,
+        "name": "Modo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Split",
+          "Wide"
+        ],
+        "basico": true
+      },
+      {
+        "id": "deesser.escucha",
+        "vstParamId": 5,
+        "name": "Escuchar sidechain",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": "deesser.escucha-sidechain"
+      },
+      {
+        "id": "deesser.deteccion",
+        "vstParamId": 6,
+        "name": "Detección",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": "deesser.deteccion-relativa",
+        "values": [
+          "Absolute",
+          "Relative"
+        ]
+      },
+      {
+        "id": "deesser.filtro-sc",
+        "vstParamId": 7,
+        "name": "Filtro del sidechain",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "High-pass",
+          "Band-pass"
+        ]
+      },
+      {
+        "id": "deesser.release",
+        "vstParamId": 8,
+        "name": "Release",
+        "min": 20,
+        "max": 300,
+        "default": 80,
+        "unit": "ms",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "deesser.gr",
+        "vstParamId": 40,
+        "name": "Reducción (medidor)",
+        "min": -60,
+        "max": 0,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      }
+    ]
+  },
+  "download": {
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.smart-deesser-1.0.0.jwx",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
+}

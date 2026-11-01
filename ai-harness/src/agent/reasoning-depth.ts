@@ -5,7 +5,9 @@
 
 import type { AgentMode } from './modes'
 import {
+  isGenreRewriteIntent,
   isProjectAuditIntent,
+  isProjectWipeIntent,
   isSongRefineIntent,
   isStyleGapIntent,
   isTempoOnlyRefine,
@@ -41,11 +43,11 @@ export type ModelIntentBrief = {
  */
 const DEPTH_PHASES: Record<number, ReasoningPhase[]> = {
   2: ['normalize', 'commit'],
-  3: ['normalize', 'research1', 'commit'],
-  4: ['normalize', 'frame', 'research1', 'commit'],
-  5: ['normalize', 'frame', 'research1', 'synthesize', 'commit'],
-  6: ['normalize', 'frame', 'research1', 'critique', 'synthesize', 'commit'],
-  7: ['normalize', 'frame', 'research1', 'critique', 'research2', 'synthesize', 'commit'],
+  3: ['normalize', 'verify', 'commit'],
+  4: ['normalize', 'frame', 'verify', 'commit'],
+  5: ['normalize', 'frame', 'research1', 'verify', 'commit'],
+  6: ['normalize', 'frame', 'research1', 'critique', 'verify', 'commit'],
+  7: ['normalize', 'frame', 'research1', 'critique', 'synthesize', 'verify', 'commit'],
   8: ['normalize', 'frame', 'explore', 'research1', 'critique', 'synthesize', 'verify', 'commit'],
   9: [
     'normalize',
@@ -98,7 +100,8 @@ function isClarificationOrTrackPick(text: string): boolean {
 function isAffirmativeShort(text: string): boolean {
   const t = text.trim()
   if (!t || t.length > 80) return false
-  return /^(s[ií]|ok|vale|dale|hazlo|cr[eé]alo|aplica(lo)?|construir|construye|adelante|go|yes|do it)[\s!.]*$/i.test(
+  // Una o varias afirmaciones seguidas («sí, hazlo», «ok dale»).
+  return /^((s[ií]|ok|vale|dale|hazlo|cr[eé]alo|aplica(lo)?|construir|construye|adelante|go|yes|do it|contin[uú]a)[\s,!.]*)+$/i.test(
     t,
   )
 }
@@ -160,6 +163,17 @@ export function estimateReasoningDepth(userText: string, mode: AgentMode): Reaso
   if (isSimpleTransportOrTrackToggle(text) || isSimpleBpmOnly(text)) {
     return { depth: 2, phases: phasesForDepth(2), reason: 'acción simple (transporte/BPM/mute)' }
   }
+  // "borra todo" / "limpia el proyecto" → corto; no 10 capas de bachata
+  if (isProjectWipeIntent(text) && !isGenreRewriteIntent(text)) {
+    return { depth: 3, phases: phasesForDepth(3), reason: 'vaciar clips / wipe' }
+  }
+  if (isGenreRewriteIntent(text) || (wantsFullProject(text) && /limpia|borra|arma|bachata|arregla/i.test(text))) {
+    return {
+      depth: 4,
+      phases: phasesForDepth(4),
+      reason: 'rewrite/limpia+arma → musicBuild (sin overthink)',
+    }
+  }
   if (isShortAsk(text, mode)) {
     return { depth: 3, phases: phasesForDepth(3), reason: 'consulta corta' }
   }
@@ -193,12 +207,37 @@ export function estimateReasoningDepth(userText: string, mode: AgentMode): Reaso
     }
   }
   if (wantsFullProject(text) || mode === 'create' || mode === 'think') {
-    return { depth: 7, phases: phasesForDepth(7), reason: 'creación / plan estándar' }
+    return { depth: 9, phases: phasesForDepth(9), reason: 'creación / plan — consejo profundo' }
   }
   if (mode === 'plan') {
-    return { depth: 6, phases: phasesForDepth(6), reason: 'planificación' }
+    return { depth: 7, phases: phasesForDepth(7), reason: 'planificación' }
   }
-  return { depth: 5, phases: phasesForDepth(5), reason: 'complejidad media' }
+  return { depth: 6, phases: phasesForDepth(6), reason: 'complejidad media' }
+}
+
+/**
+ * Perfil del razonamiento previo al turno.
+ * - `rapido` (por defecto): pensado para modelos de poco razonamiento. Como mucho una llamada de plan
+ *   (dos si el pedido exige investigar) y nada tras Aplicar: la verificación la hacen las herramientas
+ *   deterministas del harness, no más capas de texto.
+ * - `profundo`: el consejo de 2–10 capas (un modelo simulando varias voces). Lento: cada capa es una
+ *   llamada secuencial; con modelos pequeños añade ruido más que calidad.
+ */
+export type ReasoningProfile = 'rapido' | 'profundo'
+export const DEFAULT_REASONING_PROFILE: ReasoningProfile = 'rapido'
+
+/** Perfil rápido: 0 capas (directo al turno), 1 (plan) o 2 (investigar + plan). Sin llamada de «traducir». */
+export function planFastReasoning(userText: string, mode: AgentMode): ReasoningDepthPlan {
+  const text = userText.trim()
+  const directo = (reason: string): ReasoningDepthPlan => ({ depth: 0, phases: [], reason })
+  if (isClarificationOrTrackPick(text) || isAffirmativeShort(text)) return directo('confirmación / clarificación')
+  if (isSimpleTransportOrTrackToggle(text) || isSimpleBpmOnly(text)) return directo('acción simple')
+  if (isProjectWipeIntent(text) && !isGenreRewriteIntent(text)) return directo('vaciar proyecto')
+  if (isShortAsk(text, mode)) return directo('consulta corta')
+  if (isStyleGapIntent(text) || wantsWebResearch(text)) {
+    return { depth: 2, phases: ['research1', 'commit'], reason: 'investigar y planificar' }
+  }
+  return { depth: 1, phases: ['commit'], reason: 'plan en un paso' }
 }
 
 export function planReasoningPhases(

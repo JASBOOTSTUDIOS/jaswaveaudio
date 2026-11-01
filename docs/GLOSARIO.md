@@ -28,7 +28,9 @@
 - **Take**: Grabación individual dentro de un clip.
 - **Automation**: Curva de automatización para un parámetro a lo largo del tiempo.
 - **FX Chain**: Cadena de efectos conectados en serie.
-- **Bus**: Canal de audio que recibe la salida de otros tracks.
+- **Bus**: Canal de audio que recibe la salida de otros tracks para tratarlos juntos (un solo fader o un solo efecto para varias pistas). Se crea en el panel **Ruteo**; ver [14 · Conceptos para principiantes](manual-usuario/14-conceptos-para-principiantes.md).
+- **Envío (send)**: Perilla de cada pista que decide cuánto de su sonido se copia hacia un bus (típicamente reverb o delay). Se ajusta en el **Mixer**.
+- **Retorno**: Salida de un bus de efectos que vuelve a la mezcla; se controla con el fader del bus.
 - **Routing**: Conexiones entre entradas, salidas, tracks y buses.
 - **Mixer**: Vista de mezcla con canales verticales.
 - **Timeline**: Línea de tiempo donde se disponen los clips y eventos.
@@ -128,3 +130,42 @@
 - **Schema**: Estructura de datos esperada (usualmente JSON Schema).
 - **Serializable**: Capacidad de convertir un objeto a formato JSON y viceversa.
 - **Immutable-ish**: Lógicamente inmutable; las mutaciones producen nuevas referencias.
+
+## Música y mezcla (para quien empieza)
+
+- **Pista (track)**: Carril de un instrumento o voz con su volumen, paneo y efectos.
+- **Armar (arm)**: Preparar una pista para grabar en ella.
+- **MIDI**: Datos de notas (cuál, cuándo, qué fuerza) sin sonido propio; necesita un instrumento que las toque.
+- **Velocity (velocidad)**: Fuerza con la que se toca una nota, de 1 a 127. Variarla hace que una parte suene humana.
+- **Cuantizar**: Alinear las notas a la rejilla del tiempo. Al 100 % suena rígido; en el Piano roll, tecla `Q`.
+- **Humanizar**: Añadir pequeñas variaciones de tiempo y velocidad para que suene tocado por una persona.
+- **Compresor**: Efecto que reduce la diferencia entre lo fuerte y lo suave. Controles: umbral, ratio, ataque, release y makeup.
+- **EQ (ecualizador)**: Efecto que sube o baja zonas de frecuencia (graves, medios, agudos).
+- **Sidechain**: Hacer que un efecto (normalmente un compresor o gate) reaccione a otra señal; p. ej. que el bajo baje cuando suena el bombo. Ver el estado en [05 · Mixer, FX y automatización](manual-usuario/05-mixer-fx-automatizacion.md).
+- **Reverb / Delay**: Reverb simula el eco de un espacio; delay repite el sonido unos instantes después.
+- **Limitador true-peak**: Efecto final que impide pasar un techo de nivel real (incluidos picos entre muestras).
+- **Bypass**: Apagar un efecto sin quitarlo de la cadena para comparar.
+- **Preset**: Ajuste guardado de un instrumento o efecto.
+- **Fill**: Adorno o redoble de batería que cierra un compás o sección.
+- **Groove**: Patrón rítmico de batería en MIDI, listo para insertar (panel **Grooves**).
+- **Kit**: Juego de batería con el que suena Worship Drums; se elige con **Drum Kit**.
+- **Split / capa**: Repartir el teclado entre pistas (split) o hacer sonar varias pistas a la vez con el mismo rango (capa); panel **Zonas MIDI**.
+- **PANIC**: Botón del transporte que apaga todas las notas colgadas.
+
+## Plugins y paneles de JasWave
+
+- **StompLab**: Pedalera universal (gate, compresor, drive, preamp, cabina, chorus, delay, shimmer) para guitarra, bajo, teclados y voz.
+- **Ambience**: Rack de ambiente worship: reverb, delay sincronizado, shimmer y swell, con 21 presets.
+- **Audio Doctor**: Restauración de audio: quita ruido, zumbido, clics, recortes y reverberación; incluye Auto-Fix y Delta.
+- **Auto-Fix**: Función de Audio Doctor que analiza unos 3 s de audio y aplica los ajustes recomendados.
+- **Delta**: Modo de Audio Doctor que deja oír solo lo que se está quitando.
+- **Vocal Tune**: Afinador automático de voz a una escala y tónica.
+- **Worship Drums**: Batería con 6 kits de muestras reales, síntesis física y percusión auxiliar.
+- **Grooves**: Panel con la biblioteca de ritmos de batería por estilo.
+- **Zonas MIDI**: Panel para dividir el teclado, apilar capas y transponer al tocar en directo.
+- **Banda virtual**: Panel con los agentes de la banda trabajando; contiene **Mi estilo**.
+- **Mi estilo**: Función de la Banda virtual que analiza cómo tocas tu teclado y lo guarda como habilidad de estilo para la banda.
+- **Habilidad (skill) de estilo**: Archivo `estilo-<nombre>` con tu perfil de toque; se puede activar o desactivar.
+- **Mención (`@`)**: Pastilla del chat que ancla un agente, pista, clip, plugin, documento o mensaje.
+- **Comando (`/`)**: Pastilla del chat que activa un modo: `/plan`, `/meta`, `/aprender`, `/entrevista`, `/programar`, `/configurar`, `/banda`.
+- **Paleta de comandos**: Buscador de acciones, `Ctrl+Shift+P` (menú **Ver**).

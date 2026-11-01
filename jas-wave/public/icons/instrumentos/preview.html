@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>JasWave - Galería de Iconos de Instrumentos</title>
+  <style>
+    body {
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      padding: 24px;
+    }
+    h1 {
+      font-size: 22px;
+      margin: 0 0 6px 0;
+      color: #f0f6fc;
+    }
+    p {
+      color: #8b949e;
+      font-size: 13px;
+      margin: 0 0 20px 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(135px, 1fr));
+      gap: 12px;
+    }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      color: #f59e0b; /* Amber */
+    }
+    .card.cyan { color: #38bdf8; }
+    .card.purple { color: #c084fc; }
+    .card.green { color: #4ade80; }
+    .card img {
+      width: 48px;
+      height: 48px;
+      margin-bottom: 8px;
+    }
+    .name {
+      font-size: 11px;
+      font-weight: 600;
+      color: #e6edf3;
+      margin-bottom: 2px;
+    }
+    .file {
+      font-size: 9px;
+      color: #8b949e;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+  <h1>Catálogo de Iconos Realistas — JasWave</h1>
+  <p>59 Instrumentos vectoriales rediseñados con anatomía realista, doble tono y adaptación a color de pista.</p>
+  <div class="grid" id="grid"></div>
+
+  <script>
+    const icons = [
+      { id: "piano-grand", name: "Piano de Cola", color: "" },
+      { id: "piano-upright", name: "Piano Vertical", color: "" },
+      { id: "piano-electric", name: "Piano Eléctrico", color: "" },
+      { id: "organ", name: "Órgano", color: "" },
+      { id: "accordion", name: "Acordeón", color: "" },
+      { id: "clavinet", name: "Clavinet", color: "" },
+      { id: "synth-keys", name: "Sintetizador", color: "cyan" },
+      { id: "synth-lead", name: "Lead Solista", color: "cyan" },
+      { id: "synth-bass", name: "Bajo Synth", color: "cyan" },
+      { id: "synth-pad", name: "Pad Atmosférico", color: "cyan" },
+      { id: "synth-modular", name: "Modular Eurorack", color: "cyan" },
+      { id: "vocoder", name: "Vocoder", color: "cyan" },
+      { id: "drums-acoustic", name: "Batería Acústica", color: "purple" },
+      { id: "drum-machine", name: "Caja de Ritmos", color: "purple" },
+      { id: "kick", name: "Bombo", color: "purple" },
+      { id: "snare", name: "Caja / Tarola", color: "purple" },
+      { id: "hihat", name: "Hi-Hats", color: "purple" },
+      { id: "cymbals", name: "Platos Cymbals", color: "purple" },
+      { id: "percussion-congas", name: "Congas", color: "green" },
+      { id: "percussion-guira", name: "Güira Dominicana", color: "green" },
+      { id: "percussion-tambora", name: "Tambora Dominicana", color: "green" },
+      { id: "percussion-timbales", name: "Timbales Latinos", color: "green" },
+      { id: "percussion-shaker", name: "Shaker", color: "green" },
+      { id: "percussion-tambourine", name: "Pandereta", color: "green" },
+      { id: "percussion-timpani", name: "Timpani", color: "green" },
+      { id: "percussion-mallets", name: "Marimba / Xilófono", color: "green" },
+      { id: "percussion-steel-drum", name: "Steel Drum", color: "green" },
+      { id: "percussion-cowbell", name: "Cencerro", color: "green" },
+      { id: "bass-electric", name: "Bajo Eléctrico", color: "" },
+      { id: "bass-acoustic", name: "Contrabajo", color: "" },
+      { id: "bass-synth-sub", name: "808 Sub-Bass", color: "" },
+      { id: "guitar-acoustic", name: "Guitarra Acústica", color: "cyan" },
+      { id: "guitar-electric", name: "Guitarra Eléctrica", color: "cyan" },
+      { id: "guitar-lead", name: "Guitarra Solista", color: "cyan" },
+      { id: "ukulele", name: "Ukelele", color: "cyan" },
+      { id: "banjo", name: "Banjo", color: "cyan" },
+      { id: "violin", name: "Violín", color: "purple" },
+      { id: "cello", name: "Cello", color: "purple" },
+      { id: "strings-ensemble", name: "Sección Cuerdas", color: "purple" },
+      { id: "harp", name: "Arpa", color: "purple" },
+      { id: "trumpet", name: "Trompeta", color: "green" },
+      { id: "trombone", name: "Trombón", color: "green" },
+      { id: "french-horn", name: "Trompa", color: "green" },
+      { id: "tuba", name: "Tuba", color: "green" },
+      { id: "brass-section", name: "Sección Metales", color: "green" },
+      { id: "saxophone", name: "Saxofón", color: "" },
+      { id: "flute", name: "Flauta", color: "" },
+      { id: "clarinet", name: "Clarinete", color: "" },
+      { id: "oboe", name: "Oboe", color: "" },
+      { id: "harmonica", name: "Armónica", color: "" },
+      { id: "vocal-lead", name: "Voz Solista", color: "cyan" },
+      { id: "choir", name: "Coro", color: "cyan" },
+      { id: "vocal-fx", name: "Vocal Chops / FX", color: "cyan" },
+      { id: "track-audio", name: "Pista Audio", color: "purple" },
+      { id: "track-midi", name: "Pista MIDI", color: "purple" },
+      { id: "track-folder", name: "Carpeta / Grupo", color: "purple" },
+      { id: "track-master", name: "Pista Master", color: "purple" },
+      { id: "fx-send", name: "Envío Aux / Reverb", color: "green" },
+      { id: "fx-ambient", name: "Efectos Ambient", color: "green" }
+    ];
+
+    const grid = document.getElementById('grid');
+    for (const item of icons) {
+      const card = document.createElement('div');
+      card.className = 'card ' + item.color;
+      card.innerHTML = `
+        <img src="./${item.id}.svg" alt="${item.name}" />
+        <div class="name">${item.name}</div>
+        <div class="file">${item.id}.svg</div>
+      `;
+      grid.appendChild(card);
+    }
+  </script>
+</body>
+</html>

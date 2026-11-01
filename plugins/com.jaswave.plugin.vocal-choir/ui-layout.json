@@ -1,0 +1,636 @@
+{
+  "productId": "com.jaswave.plugin.vocal-choir",
+  "titulo": "VOCAL CHOIR",
+  "subtitulo": "CORO MIDI · PSOLA CON FORMANTES · 4 VOCES",
+  "instrumento": false,
+  "visualizador": "curva-tono",
+  "acento": "#B59BFF",
+  "base": {
+    "ancho": 1100,
+    "alto": 620
+  },
+  "zonas": {
+    "pantalla": [
+      34,
+      34,
+      1066,
+      586
+    ],
+    "visualizador": [
+      52,
+      92,
+      652,
+      404
+    ],
+    "espectro": [
+      66,
+      124,
+      612,
+      382
+    ],
+    "miniPanel": [
+      52,
+      418,
+      652,
+      556
+    ],
+    "controles": [
+      666,
+      92,
+      1048,
+      404
+    ],
+    "salida": [
+      666,
+      418,
+      1048,
+      556
+    ],
+    "fader": [
+      680,
+      440,
+      724,
+      552
+    ],
+    "medidores": {
+      "x": 976,
+      "arriba": 446,
+      "abajo": 528
+    }
+  },
+  "escalas": {
+    "frecuencia": [
+      20,
+      20000
+    ],
+    "dbfs": [
+      -120,
+      0
+    ],
+    "caidaDbS": 14
+  },
+  "modoParam": null,
+  "modos": {
+    "selector": [
+      358,
+      48,
+      476,
+      68
+    ],
+    "corte": 410,
+    "defecto": "avanzado"
+  },
+  "parametrosCubiertos": [],
+  "widgets": [
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        92,
+        1048,
+        404
+      ],
+      "etiqueta": "CORO",
+      "basico": true
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        704,
+        140,
+        780,
+        234
+      ],
+      "etiqueta": "ATAQUE",
+      "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        761.5,
+        213,
+        837.5,
+        307
+      ],
+      "param": 8,
+      "min": 1,
+      "max": 1000,
+      "defecto": 60,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Attack",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        819,
+        140,
+        895,
+        234
+      ],
+      "etiqueta": "RELEASE",
+      "tamano": 64,
+      "basico": false,
+      "param": 9,
+      "min": 20,
+      "max": 3000,
+      "defecto": 400,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Release",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        934,
+        140,
+        1010,
+        234
+      ],
+      "etiqueta": "SPREAD",
+      "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        876.5,
+        213,
+        952.5,
+        307
+      ],
+      "param": 2,
+      "min": 0,
+      "max": 100,
+      "defecto": 70,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Stereo Spread",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        714,
+        278,
+        770,
+        352
+      ],
+      "etiqueta": "FORMANTES",
+      "tamano": 44,
+      "basico": false,
+      "param": 3,
+      "min": -12,
+      "max": 12,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Formant Shift",
+      "unidad": "st"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        829,
+        278,
+        885,
+        352
+      ],
+      "etiqueta": "GARGANTA",
+      "tamano": 44,
+      "basico": false,
+      "param": 4,
+      "min": 50,
+      "max": 200,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Throat Length",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        944,
+        278,
+        1000,
+        352
+      ],
+      "etiqueta": "VIBRATO",
+      "tamano": 44,
+      "basico": false,
+      "param": 10,
+      "min": 0,
+      "max": 100,
+      "defecto": 25,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Vibrato Depth",
+      "unidad": "cents"
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        418,
+        1048,
+        556
+      ],
+      "etiqueta": "SALIDA · FUENTE",
+      "basico": true,
+      "param": 0,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": true,
+      "nombre": "Bypass",
+      "unidad": "",
+      "opciones": [
+        "Active",
+        "Bypass"
+      ]
+    },
+    {
+      "tipo": "fader",
+      "rect": [
+        680,
+        440,
+        724,
+        552
+      ],
+      "etiqueta": "NIVEL",
+      "basico": true,
+      "param": 15,
+      "min": -24,
+      "max": 12,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Level",
+      "unidad": "dB"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        743,
+        454,
+        811,
+        478
+      ],
+      "etiqueta": "FUENTE",
+      "basico": true,
+      "rectBasico": [
+        743,
+        482,
+        811,
+        506
+      ],
+      "param": 5,
+      "min": 0,
+      "max": 1,
+      "defecto": 1,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Source",
+      "unidad": "",
+      "opciones": [
+        "Input",
+        "Internal"
+      ]
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        817,
+        454,
+        885,
+        478
+      ],
+      "etiqueta": "VOCAL",
+      "basico": true,
+      "rectBasico": [
+        817,
+        482,
+        885,
+        506
+      ],
+      "param": 6,
+      "min": 0,
+      "max": 4,
+      "defecto": 0,
+      "pasos": 4,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Vowel",
+      "unidad": "",
+      "opciones": [
+        "A",
+        "E",
+        "I",
+        "O",
+        "U"
+      ]
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        891,
+        454,
+        959,
+        478
+      ],
+      "etiqueta": "TESITURA",
+      "basico": false,
+      "param": 7,
+      "min": 0,
+      "max": 3,
+      "defecto": 1,
+      "pasos": 3,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Voice Range",
+      "unidad": "",
+      "opciones": [
+        "Bass",
+        "Tenor",
+        "Alto",
+        "Soprano"
+      ]
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        743,
+        510,
+        811,
+        534
+      ],
+      "etiqueta": "VOCES",
+      "basico": true,
+      "rectBasico": [
+        891,
+        482,
+        959,
+        506
+      ],
+      "param": 1,
+      "min": 0,
+      "max": 3,
+      "defecto": 3,
+      "pasos": 3,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Voices",
+      "unidad": "",
+      "opciones": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ]
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        976,
+        446,
+        985,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        990,
+        446,
+        999,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1020,
+        446,
+        1029,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1034,
+        446,
+        1043,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        52,
+        92,
+        1048,
+        556
+      ],
+      "etiqueta": "PARÁMETROS AVANZADOS · 5",
+      "pagina": 2,
+      "basico": true
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        134.8,
+        300,
+        190.8,
+        374
+      ],
+      "etiqueta": "VIBRATO RATE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 11,
+      "min": 2,
+      "max": 8,
+      "defecto": 5.2,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Vibrato Rate",
+      "unidad": "Hz"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        328.4,
+        300,
+        384.4,
+        374
+      ],
+      "etiqueta": "HUMANIZE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 12,
+      "min": 0,
+      "max": 100,
+      "defecto": 30,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Humanize",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        522,
+        300,
+        578,
+        374
+      ],
+      "etiqueta": "VOICE DETUNE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 13,
+      "min": 0,
+      "max": 50,
+      "defecto": 8,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Voice Detune",
+      "unidad": "cents"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        715.6,
+        300,
+        771.6,
+        374
+      ],
+      "etiqueta": "GLIDE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 14,
+      "min": 0,
+      "max": 500,
+      "defecto": 40,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Glide",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        909.2,
+        300,
+        965.2,
+        374
+      ],
+      "etiqueta": "ORIGINAL VOICE",
+      "tamano": 44,
+      "pagina": 2,
+      "basico": false,
+      "param": 16,
+      "min": 0,
+      "max": 100,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Original Voice",
+      "unidad": "%"
+    },
+    {
+      "tipo": "pagina",
+      "rect": [
+        948,
+        98,
+        1034,
+        113
+      ],
+      "etiqueta": "+5 PARÁM.",
+      "basico": false,
+      "paginaDestino": 2,
+      "textoAbierta": "◀ EDITOR"
+    },
+    {
+      "tipo": "modo",
+      "rect": [
+        358,
+        48,
+        476,
+        68
+      ],
+      "etiqueta": "BÁSICO|AVANZADO",
+      "basico": true,
+      "corte": 410
+    },
+    {
+      "tipo": "reset",
+      "rect": [
+        624,
+        48,
+        684,
+        68
+      ],
+      "etiqueta": "RESET",
+      "basico": true
+    }
+  ]
+}

@@ -1,0 +1,686 @@
+{
+  "id": "com.jaswave.plugin.stomplab",
+  "name": "JasWave StompLab",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "vendor": "JasWave Audio",
+  "description": "Pedalera universal para guitarra, bajo, teclados y voz: gate, compresor, overdrive de 5 modelos (Clean Boost, Overdrive, Distortion, Fuzz, Metal), preamp de válvulas con 3 canales y pila de tonos, cabina con IR de fase mínima (5 modelos + DI), chorus estéreo, delay (stereo, ping-pong, cinta) y shimmer (reverb con octava). Etapas no lineales sobremuestreadas x2, latencia fija de 15 muestras.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveStompLab.vst3"
+  },
+  "vst3": {
+    "classId": "{4A617357-5354-4D50-5072-6F6356335431}",
+    "subCategories": "Fx|Distortion"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "productor",
+    "mezcla",
+    "qa"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.stomplab",
+    "features": []
+  },
+  "ai": {
+    "summary": "Cadena de pedales para dar carácter a guitarras, bajos y teclados: distorsión, amplificador, cabina y efectos de espacio (chorus, delay, shimmer) controlables por la IA.",
+    "intents": [
+      "guitarra-limpia",
+      "guitarra-crunch",
+      "guitarra-distorsion",
+      "sonido-ambiental-worship",
+      "efecto-shimmer",
+      "eco-delay",
+      "chorus-estereo",
+      "comprimir-guitarra",
+      "simular-amplificador",
+      "quitar-ruido-de-pedal"
+    ],
+    "parameters": [
+      {
+        "id": "bypass",
+        "vstParamId": 0,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "bypass": true,
+        "basico": true
+      },
+      {
+        "id": "stomp.entrada",
+        "vstParamId": 1,
+        "name": "Ganancia de entrada",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "stomp.salida",
+        "vstParamId": 2,
+        "name": "Ganancia de salida",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "stomp.mezcla",
+        "vstParamId": 3,
+        "name": "Mezcla seco/procesado global",
+        "min": 0,
+        "max": 100,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "gate.activo",
+        "vstParamId": 10,
+        "name": "Gate activo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "gate.umbral",
+        "vstParamId": 11,
+        "name": "Gate umbral",
+        "min": -80,
+        "max": -20,
+        "default": -55,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "gate.release",
+        "vstParamId": 12,
+        "name": "Gate release",
+        "min": 10,
+        "max": 500,
+        "default": 80,
+        "unit": "ms",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "gate.rango",
+        "vstParamId": 13,
+        "name": "Gate rango de atenuación",
+        "min": 0,
+        "max": 80,
+        "default": 60,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "comp.activo",
+        "vstParamId": 20,
+        "name": "Compresor activo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "comp.umbral",
+        "vstParamId": 21,
+        "name": "Compresor umbral",
+        "min": -60,
+        "max": 0,
+        "default": -20,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "comp.ratio",
+        "vstParamId": 22,
+        "name": "Compresor ratio",
+        "min": 1,
+        "max": 20,
+        "default": 4,
+        "unit": ":1",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "comp.ataque",
+        "vstParamId": 23,
+        "name": "Compresor ataque",
+        "min": 0.1,
+        "max": 100,
+        "default": 10,
+        "unit": "ms",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "comp.release",
+        "vstParamId": 24,
+        "name": "Compresor release",
+        "min": 10,
+        "max": 1000,
+        "default": 120,
+        "unit": "ms",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "comp.makeup",
+        "vstParamId": 25,
+        "name": "Compresor ganancia de compensación",
+        "min": 0,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "comp.blend",
+        "vstParamId": 26,
+        "name": "Compresor mezcla paralela",
+        "min": 0,
+        "max": 100,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "comp.rodilla",
+        "vstParamId": 27,
+        "name": "Compresor rodilla",
+        "min": 0,
+        "max": 12,
+        "default": 6,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "drive.activo",
+        "vstParamId": 30,
+        "name": "Drive activo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "drive.modelo",
+        "vstParamId": 31,
+        "name": "Drive modelo (Clean Boost/Overdrive/Distortion/Fuzz/Metal)",
+        "min": 0,
+        "max": 4,
+        "default": 1,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Clean Boost",
+          "Overdrive",
+          "Distortion",
+          "Fuzz",
+          "Metal"
+        ],
+        "basico": true
+      },
+      {
+        "id": "drive.cantidad",
+        "vstParamId": 32,
+        "name": "Drive cantidad de ganancia",
+        "min": 0,
+        "max": 100,
+        "default": 40,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "drive.tono",
+        "vstParamId": 33,
+        "name": "Drive tono (corte de agudos)",
+        "min": 500,
+        "max": 8000,
+        "default": 3000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "drive.nivel",
+        "vstParamId": 34,
+        "name": "Drive nivel de salida",
+        "min": -24,
+        "max": 12,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "amp.activo",
+        "vstParamId": 40,
+        "name": "Preamp de válvulas activo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "amp.canal",
+        "vstParamId": 41,
+        "name": "Preamp canal (Clean/Crunch/Lead)",
+        "min": 0,
+        "max": 2,
+        "default": 1,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Clean",
+          "Crunch",
+          "Lead"
+        ]
+      },
+      {
+        "id": "amp.ganancia",
+        "vstParamId": 42,
+        "name": "Preamp ganancia",
+        "min": 0,
+        "max": 100,
+        "default": 40,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "amp.graves",
+        "vstParamId": 43,
+        "name": "Preamp graves",
+        "min": -12,
+        "max": 12,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "amp.medios",
+        "vstParamId": 44,
+        "name": "Preamp medios",
+        "min": -12,
+        "max": 12,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "amp.agudos",
+        "vstParamId": 45,
+        "name": "Preamp agudos",
+        "min": -12,
+        "max": 12,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "amp.presencia",
+        "vstParamId": 46,
+        "name": "Preamp presencia",
+        "min": 0,
+        "max": 100,
+        "default": 30,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "amp.master",
+        "vstParamId": 47,
+        "name": "Preamp volumen master",
+        "min": -24,
+        "max": 12,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "amp.sag",
+        "vstParamId": 48,
+        "name": "Preamp sag (compresión de la fuente)",
+        "min": 0,
+        "max": 100,
+        "default": 30,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "amp.brillo",
+        "vstParamId": 49,
+        "name": "Preamp bright",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "cabina.activa",
+        "vstParamId": 50,
+        "name": "Cabina IR activa",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "cabina.modelo",
+        "vstParamId": 51,
+        "name": "Cabina modelo (1x12 Open/2x12 Combo/4x12 Closed/Vintage Bright/British 2x12/DI)",
+        "min": 0,
+        "max": 5,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "1x12 Open",
+          "2x12 Combo",
+          "4x12 Closed",
+          "Vintage Bright",
+          "British 2x12",
+          "DI (flat)"
+        ],
+        "basico": true
+      },
+      {
+        "id": "cabina.corte-graves",
+        "vstParamId": 52,
+        "name": "Cabina corte de graves",
+        "min": 20,
+        "max": 400,
+        "default": 40,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "cabina.corte-agudos",
+        "vstParamId": 53,
+        "name": "Cabina corte de agudos",
+        "min": 2000,
+        "max": 20000,
+        "default": 14000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "cabina.mezcla",
+        "vstParamId": 54,
+        "name": "Cabina mezcla (IR frente a señal directa)",
+        "min": 0,
+        "max": 100,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "chorus.activo",
+        "vstParamId": 60,
+        "name": "Chorus activo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "chorus.velocidad",
+        "vstParamId": 61,
+        "name": "Chorus velocidad",
+        "min": 0.05,
+        "max": 8,
+        "default": 0.8,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "chorus.profundidad",
+        "vstParamId": 62,
+        "name": "Chorus profundidad",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "chorus.mezcla",
+        "vstParamId": 63,
+        "name": "Chorus mezcla",
+        "min": 0,
+        "max": 100,
+        "default": 40,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "delay.activo",
+        "vstParamId": 70,
+        "name": "Delay activo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "delay.tiempo",
+        "vstParamId": 71,
+        "name": "Delay tiempo",
+        "min": 20,
+        "max": 2000,
+        "default": 380,
+        "unit": "ms",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "delay.realimentacion",
+        "vstParamId": 72,
+        "name": "Delay realimentación",
+        "min": 0,
+        "max": 95,
+        "default": 35,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "delay.tono",
+        "vstParamId": 73,
+        "name": "Delay tono de los ecos",
+        "min": 1000,
+        "max": 12000,
+        "default": 5000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "delay.mezcla",
+        "vstParamId": 74,
+        "name": "Delay mezcla",
+        "min": 0,
+        "max": 100,
+        "default": 25,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "delay.modo",
+        "vstParamId": 75,
+        "name": "Delay modo (Stereo/Ping-Pong/Tape)",
+        "min": 0,
+        "max": 2,
+        "default": 0,
+        "unit": "",
+        "scale": "enum",
+        "feature": null,
+        "values": [
+          "Stereo",
+          "Ping-Pong",
+          "Tape"
+        ]
+      },
+      {
+        "id": "shimmer.activo",
+        "vstParamId": 80,
+        "name": "Shimmer activo",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "shimmer.mezcla",
+        "vstParamId": 81,
+        "name": "Shimmer mezcla",
+        "min": 0,
+        "max": 100,
+        "default": 25,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "shimmer.cola",
+        "vstParamId": 82,
+        "name": "Shimmer duración de la cola (T60)",
+        "min": 0.3,
+        "max": 20,
+        "default": 3,
+        "unit": "s",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "shimmer.octava",
+        "vstParamId": 83,
+        "name": "Shimmer cantidad de octava arriba",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "unit": "%",
+        "scale": "linear",
+        "feature": null
+      },
+      {
+        "id": "shimmer.amortiguacion",
+        "vstParamId": 84,
+        "name": "Shimmer amortiguación de agudos",
+        "min": 1000,
+        "max": 16000,
+        "default": 6000,
+        "unit": "Hz",
+        "scale": "log",
+        "feature": null
+      },
+      {
+        "id": "gate.gr",
+        "vstParamId": 120,
+        "name": "Reducción del gate (medidor)",
+        "min": 0,
+        "max": 80,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      },
+      {
+        "id": "comp.gr",
+        "vstParamId": 121,
+        "name": "Reducción del compresor (medidor)",
+        "min": 0,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "readOnly": true
+      }
+    ]
+  },
+  "download": {
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.stomplab-1.0.0.jwx",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
+}

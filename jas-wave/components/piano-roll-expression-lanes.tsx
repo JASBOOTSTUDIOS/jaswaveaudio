@@ -104,7 +104,7 @@ export function PianoRollExpressionLanes({
   const mid = sampleAutomation(points, durationBeats / 2)
 
   return (
-    <div className="flex shrink-0 flex-col border-t border-border bg-panel">
+    <div className="flex shrink-0 flex-col border-t border-border bg-panel" data-expression-lanes>
       <div className="flex h-7 items-center gap-1 border-b border-border px-2">
         <span className="mr-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
           Expresión

@@ -1,0 +1,458 @@
+{
+  "productId": "com.jaswave.plugin.vocal-tune",
+  "titulo": "VOCAL TUNE",
+  "subtitulo": "AFINACIÓN AUTOMÁTICA · PSOLA CON FORMANTES",
+  "instrumento": false,
+  "visualizador": "curva-tono",
+  "acento": "#E052FF",
+  "base": {
+    "ancho": 1100,
+    "alto": 620
+  },
+  "zonas": {
+    "pantalla": [
+      34,
+      34,
+      1066,
+      586
+    ],
+    "visualizador": [
+      52,
+      92,
+      652,
+      404
+    ],
+    "espectro": [
+      66,
+      124,
+      612,
+      382
+    ],
+    "miniPanel": [
+      52,
+      418,
+      652,
+      556
+    ],
+    "controles": [
+      666,
+      92,
+      1048,
+      404
+    ],
+    "salida": [
+      666,
+      418,
+      1048,
+      556
+    ],
+    "fader": [
+      680,
+      440,
+      724,
+      552
+    ],
+    "medidores": {
+      "x": 976,
+      "arriba": 446,
+      "abajo": 528
+    }
+  },
+  "escalas": {
+    "frecuencia": [
+      20,
+      20000
+    ],
+    "dbfs": [
+      -120,
+      0
+    ],
+    "caidaDbS": 14
+  },
+  "modoParam": null,
+  "modos": {
+    "selector": [
+      358,
+      48,
+      476,
+      68
+    ],
+    "corte": 410,
+    "defecto": "avanzado"
+  },
+  "parametrosCubiertos": [],
+  "widgets": [
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        92,
+        1048,
+        404
+      ],
+      "etiqueta": "CORRECCIÓN",
+      "basico": true
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        704,
+        140,
+        780,
+        234
+      ],
+      "etiqueta": "RETUNE",
+      "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        761.5,
+        213,
+        837.5,
+        307
+      ],
+      "param": 1,
+      "min": 0,
+      "max": 400,
+      "defecto": 40,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Retune Speed",
+      "unidad": "ms"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        819,
+        140,
+        895,
+        234
+      ],
+      "etiqueta": "HUMANIZE",
+      "tamano": 64,
+      "basico": true,
+      "rectBasico": [
+        876.5,
+        213,
+        952.5,
+        307
+      ],
+      "param": 2,
+      "min": 0,
+      "max": 100,
+      "defecto": 20,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Humanize",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        934,
+        140,
+        1010,
+        234
+      ],
+      "etiqueta": "VIBRATO",
+      "tamano": 64,
+      "basico": false,
+      "param": 3,
+      "min": 0,
+      "max": 100,
+      "defecto": 70,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Vibrato Preserve",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        714,
+        278,
+        770,
+        352
+      ],
+      "etiqueta": "FORMANTES",
+      "tamano": 44,
+      "basico": false,
+      "param": 4,
+      "min": -12,
+      "max": 12,
+      "defecto": 0,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 1,
+      "bipolar": true,
+      "bypass": false,
+      "nombre": "Formant Shift",
+      "unidad": "st"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        829,
+        278,
+        885,
+        352
+      ],
+      "etiqueta": "GARGANTA",
+      "tamano": 44,
+      "basico": false,
+      "param": 5,
+      "min": 50,
+      "max": 200,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Throat Length",
+      "unidad": "%"
+    },
+    {
+      "tipo": "knob",
+      "rect": [
+        944,
+        278,
+        1000,
+        352
+      ],
+      "etiqueta": "TRACKING",
+      "tamano": 44,
+      "basico": false,
+      "param": 6,
+      "min": 0,
+      "max": 100,
+      "defecto": 50,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Tracking",
+      "unidad": "%"
+    },
+    {
+      "tipo": "section",
+      "rect": [
+        666,
+        418,
+        1048,
+        556
+      ],
+      "etiqueta": "SALIDA · ESCALA",
+      "basico": true,
+      "param": 0,
+      "min": 0,
+      "max": 1,
+      "defecto": 0,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": true,
+      "nombre": "Bypass",
+      "unidad": "",
+      "opciones": [
+        "Active",
+        "Bypass"
+      ]
+    },
+    {
+      "tipo": "fader",
+      "rect": [
+        680,
+        440,
+        724,
+        552
+      ],
+      "etiqueta": "MEZCLA",
+      "basico": true,
+      "param": 9,
+      "min": 0,
+      "max": 100,
+      "defecto": 100,
+      "pasos": 0,
+      "escala": "linear",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Mix",
+      "unidad": "%"
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        743,
+        456,
+        959,
+        476
+      ],
+      "etiqueta": "ESCALA",
+      "basico": true,
+      "param": 7,
+      "min": 0,
+      "max": 9,
+      "defecto": 0,
+      "pasos": 9,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Scale",
+      "unidad": "",
+      "opciones": [
+        "Chromatic",
+        "Major",
+        "Natural Minor",
+        "Harmonic Minor",
+        "Melodic Minor",
+        "Major Pentatonic",
+        "Minor Pentatonic",
+        "Blues",
+        "Dorian",
+        "Mixolydian"
+      ]
+    },
+    {
+      "tipo": "dropdown",
+      "rect": [
+        743,
+        512,
+        885,
+        532
+      ],
+      "etiqueta": "TÓNICA",
+      "basico": true,
+      "param": 8,
+      "min": 0,
+      "max": 11,
+      "defecto": 0,
+      "pasos": 11,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Root",
+      "unidad": "",
+      "opciones": [
+        "C",
+        "C#",
+        "D",
+        "D#",
+        "E",
+        "F",
+        "F#",
+        "G",
+        "G#",
+        "A",
+        "A#",
+        "B"
+      ]
+    },
+    {
+      "tipo": "toggle",
+      "rect": [
+        891,
+        510,
+        959,
+        534
+      ],
+      "etiqueta": "LOW LAT",
+      "basico": false,
+      "param": 10,
+      "min": 0,
+      "max": 1,
+      "defecto": 1,
+      "pasos": 1,
+      "escala": "stepped",
+      "decimales": 0,
+      "bipolar": false,
+      "bypass": false,
+      "nombre": "Low Latency",
+      "unidad": "",
+      "opciones": [
+        "Off",
+        "On"
+      ]
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        976,
+        446,
+        985,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        990,
+        446,
+        999,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1020,
+        446,
+        1029,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "meter",
+      "rect": [
+        1034,
+        446,
+        1043,
+        528
+      ],
+      "etiqueta": "",
+      "basico": true
+    },
+    {
+      "tipo": "modo",
+      "rect": [
+        358,
+        48,
+        476,
+        68
+      ],
+      "etiqueta": "BÁSICO|AVANZADO",
+      "basico": true,
+      "corte": 410
+    },
+    {
+      "tipo": "reset",
+      "rect": [
+        624,
+        48,
+        684,
+        68
+      ],
+      "etiqueta": "RESET",
+      "basico": true
+    }
+  ]
+}

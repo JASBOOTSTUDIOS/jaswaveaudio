@@ -6,6 +6,7 @@ import http from 'http'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import './lib/bridge-auth.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 

@@ -1,0 +1,73 @@
+{
+  "archivos": {
+    "dos-tiempos.mid": {
+      "id": "jw-country-dos-tiempos",
+      "nombre": "Dos tiempos",
+      "tempo": 116,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "country",
+        "two-step"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "tren.mid": {
+      "id": "jw-country-tren",
+      "nombre": "Tren",
+      "tempo": 130,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "country",
+        "train-beat"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "shuffle-country.mid": {
+      "id": "jw-country-shuffle-country",
+      "nombre": "Shuffle country",
+      "tempo": 108,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "country",
+        "shuffle"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-caja-al-cuarto.mid": {
+      "id": "jw-country-fill-caja-al-cuarto",
+      "nombre": "Fill caja al cuarto",
+      "tempo": 116,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "caja",
+        "cuarto"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

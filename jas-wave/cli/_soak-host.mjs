@@ -12,6 +12,7 @@
 import { appendFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import './lib/bridge-auth.mjs'
 
 const PORT = Number(process.env.JASWAVE_AGENT_PORT || 18787)
 const CYCLES = Number(process.env.SOAK_CYCLES || 12)

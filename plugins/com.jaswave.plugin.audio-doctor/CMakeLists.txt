@@ -1,0 +1,15 @@
+# JasWave Audio Doctor – restauración de audio VST3 independiente (compila solo o desde plugins/CMakeLists.txt)
+cmake_minimum_required(VERSION 3.25)
+project(jaswave_audio_doctor VERSION 1.0.0 LANGUAGES C CXX)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/JasWavePlugins.cmake")
+jw_setup_shared()
+jaswave_add_vst3(TARGET JasWaveAudioDoctor SOURCES src/doctor_plugin.cpp)
+
+# Autoverificación numérica del DSP (sin SDK, sin UI): tools/<Config>/JasWaveAudioDoctor_selftest.exe
+add_executable(JasWaveAudioDoctor_selftest tools/doctor_selftest.cpp)
+target_include_directories(JasWaveAudioDoctor_selftest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${JW_PLUGINS_ROOT}/shared-dsp")
+if(MSVC)
+  target_compile_options(JasWaveAudioDoctor_selftest PRIVATE /O2 /EHsc /W3 /fp:precise /utf-8)
+  target_compile_definitions(JasWaveAudioDoctor_selftest PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(JasWaveAudioDoctor_selftest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tools/$<CONFIG>")

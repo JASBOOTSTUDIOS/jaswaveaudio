@@ -28,6 +28,8 @@ export const EventosProyecto = {
   cerrado: 'proyecto.cerrado',
   modificado: 'proyecto.modificado',
   nombreCambiado: 'proyecto.nombreCambiado',
+  /** El archivo principal estaba dañado y se cargó la copia `.bak`. */
+  recuperadoDeRespaldo: 'proyecto.recuperadoDeRespaldo',
 } as const;
 
 export const EventosTransporte = {
@@ -278,6 +280,17 @@ export const EventosIAExt = {
   modeloCambiado: 'ia.modeloCambiado',
   contextoAgregado: 'ia.contextoAgregado',
   contextoEliminado: 'ia.contextoEliminado',
+  planCreado: 'ia.planCreado',
+  faseIniciada: 'ia.faseIniciada',
+  faseCompletada: 'ia.faseCompletada',
+  faseFallida: 'ia.faseFallida',
+  planCompletado: 'ia.planCompletado',
+  planFallido: 'ia.planFallido',
+  runIniciado: 'ia.runIniciado',
+  runEstado: 'ia.runEstado',
+  herramientaSolicitada: 'ia.herramientaSolicitada',
+  runCompletado: 'ia.runCompletado',
+  runCancelado: 'ia.runCancelado',
 } as const;
 
 export const EventosControlMIDI = {

@@ -1,0 +1,93 @@
+{
+  "archivos": {
+    "gospel-shout.mid": {
+      "id": "jw-gospel-gospel-shout",
+      "nombre": "Gospel shout",
+      "tempo": 132,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "gospel",
+        "shout",
+        "palmas"
+      ],
+      "intensidad": 5,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "gospel-shuffle.mid": {
+      "id": "jw-gospel-gospel-shuffle",
+      "nombre": "Gospel shuffle",
+      "tempo": 104,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "gospel",
+        "shuffle"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "gospel-medio-tiempo.mid": {
+      "id": "jw-gospel-gospel-medio-tiempo",
+      "nombre": "Gospel medio tiempo",
+      "tempo": 70,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "gospel",
+        "medio-tiempo",
+        "ride"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-redoble-de-caja.mid": {
+      "id": "jw-gospel-fill-redoble-de-caja",
+      "nombre": "Fill redoble de caja",
+      "tempo": 120,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "redoble",
+        "caja"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-redoble-largo.mid": {
+      "id": "jw-gospel-fill-redoble-largo",
+      "nombre": "Fill redoble largo",
+      "tempo": 120,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "redoble",
+        "largo"
+      ],
+      "intensidad": 5,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

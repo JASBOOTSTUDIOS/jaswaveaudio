@@ -118,6 +118,8 @@ export interface Sidechain {
   nombre?: string;
   comentario?: string;
   tags: string[];
+  /** Slot FX destino (opcional; primer slot con bus sidechain si omitido). */
+  destinoSlotId?: string;
   orden: number;
   color?: string;
 }

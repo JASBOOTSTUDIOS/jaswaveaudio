@@ -4,11 +4,17 @@
  * - Solo clip: al reproducir, cicla el rango del clip.
  */
 
-import { useEffect, useRef } from 'react'
-import { Play, Pause, Square, Repeat, Link2, Unlink } from 'lucide-react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { Play, Pause, Square, Repeat, Link2, Unlink, Magnet } from 'lucide-react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { usePlaybackActions } from '@/components/playback-provider'
 import type { DAWState } from '../../shared/src/types/state'
+import {
+  formatRulerLabel,
+  gridLevelsForZoom,
+  pickZoomGridPrimary,
+  zoomLevelRank,
+} from '@/components/arrangement/timeline-grid-math'
 
 function formatBarsBeats(beatsAbs: number, beatsPerBar: number): string {
   const bar = Math.floor(beatsAbs / beatsPerBar) + 1
@@ -50,6 +56,7 @@ export function PianoRollTransport({
   const transport = useDAWState((s: DAWState) => s.transport)
   const bpm = useDAWState((s: DAWState) => s.project?.bpm?.valor ?? 120)
   const beatsPerBar = useDAWState((s: DAWState) => s.project?.timeSignature?.numerador ?? 4)
+  const playheadSnap = useDAWState((s: DAWState) => s.ui?.playheadSnap !== false)
   const { getPositionMs } = usePlaybackActions()
 
   const isPlaying = Boolean(transport?.reproduciendo)
@@ -129,6 +136,13 @@ export function PianoRollTransport({
     if (alignTimeline && soloClip) {
       await tienda.executor.execute('transport.seek', { segundos: clipStartMs / 1000 })
     }
+  }
+
+  const togglePlayheadSnap = () => {
+    tienda.establecerEstado((s: DAWState) => ({
+      ...s,
+      ui: { ...s.ui, playheadSnap: !(s.ui?.playheadSnap !== false) },
+    }))
   }
 
   return (
@@ -226,6 +240,25 @@ export function PianoRollTransport({
         </button>
       )}
 
+      <button
+        type="button"
+        onClick={togglePlayheadSnap}
+        aria-pressed={playheadSnap}
+        title={
+          playheadSnap
+            ? 'Imán ON: seek anclado a la profundidad de encaje'
+            : 'Imán OFF: seek libre (sin anclar a la rejilla)'
+        }
+        className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold ${
+          playheadSnap
+            ? 'bg-accent-amber/20 text-accent-amber'
+            : 'text-muted-foreground hover:bg-panel-raised hover:text-foreground'
+        }`}
+      >
+        <Magnet className="size-3" />
+        Magnet
+      </button>
+
       <span ref={syncLabelRef} className="ml-auto flex items-center gap-1 text-[9px] text-muted-foreground">
         <Repeat className="size-3" />
         {alignTimeline
@@ -238,24 +271,33 @@ export function PianoRollTransport({
   )
 }
 
-/** Regla temporal ligera (solo compases + beats) — sin miles de nodos DOM. */
+/** Regla temporal: 3 niveles según zoom (paridad TimelineRuler del arrange). */
 export function PianoRollTimelineRuler({
   pxPerBeat,
   durationBeats,
   beatsPerBar = 4,
   clipInicioBeats = 0,
+  clipDurationBeats,
   height = 22,
   onSeekBeats,
+  snapDivision = 0,
 }: {
   pxPerBeat: number
   durationBeats: number
   beatsPerBar?: number
   clipInicioBeats?: number
+  /** Si se indica, marca el final del clip dentro de la timeline extendida. */
+  clipDurationBeats?: number
   height?: number
   onSeekBeats?: (absoluteBeats: number) => void
+  /** Profundidad máxima (snap). */
+  snapDivision?: number
 }) {
   const width = durationBeats * pxPerBeat
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [tooltip, setTooltip] = useState<string | null>(null)
+  const draggingRef = useRef(false)
+  const clipEnd = clipDurationBeats != null ? Math.min(clipDurationBeats, durationBeats) : null
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -269,47 +311,126 @@ export function PianoRollTimelineRuler({
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, width, height)
-    ctx.fillStyle = 'transparent'
 
-    const barCount = Math.ceil(durationBeats / beatsPerBar) + 1
-    for (let bar = 0; bar < barCount; bar++) {
-      const x = bar * beatsPerBar * pxPerBeat
-      ctx.strokeStyle = 'rgba(245, 158, 11, 0.4)'
+    const primary = pickZoomGridPrimary(pxPerBeat, beatsPerBar, snapDivision)
+    const levels = gridLevelsForZoom(pxPerBeat, beatsPerBar, snapDivision)
+
+    for (const level of levels) {
+      const step = level.spacingBeats
+      if (step * pxPerBeat < 2) continue
+      const rank = zoomLevelRank(step, primary)
+      if (rank < 0) continue
+      const count = Math.ceil(durationBeats / step) + 1
+      for (let i = 0; i < count; i++) {
+        const b = i * step
+        if (b > durationBeats + 1e-9) break
+        if (rank > 0) {
+          const coarser = rank === 1 ? primary : primary / 2
+          const mod = ((b % coarser) + coarser) % coarser
+          if (mod < 1e-6) continue
+        }
+        const x = b * pxPerBeat
+        const pastClip = clipEnd != null && b > clipEnd + 1e-9
+        const tickTop = rank === 0 ? height * 0.16 : rank === 1 ? height * 0.34 : height * 0.5
+        ctx.globalAlpha = pastClip
+          ? rank === 0
+            ? 0.45
+            : rank === 1
+              ? 0.28
+              : 0.18
+          : rank === 0
+            ? 0.92
+            : rank === 1
+              ? 0.58
+              : 0.38
+        ctx.strokeStyle = 'rgb(125, 211, 252)'
+        ctx.lineWidth = rank === 0 ? 1.7 : rank === 1 ? 1.25 : 1
+        ctx.beginPath()
+        ctx.moveTo(x + 0.5, tickTop)
+        ctx.lineTo(x + 0.5, height)
+        ctx.stroke()
+        ctx.globalAlpha = 1
+
+        if (rank === 0 && step * pxPerBeat >= 22) {
+          ctx.fillStyle = pastClip ? 'rgba(125, 211, 252, 0.45)' : 'rgba(125, 211, 252, 0.95)'
+          ctx.font = '600 9px ui-monospace, monospace'
+          ctx.textBaseline = 'top'
+          ctx.fillText(formatRulerLabel(b, beatsPerBar, step), x + 3, 2)
+        }
+      }
+    }
+
+    if (clipEnd != null && clipEnd < durationBeats - 1e-6) {
+      const x = clipEnd * pxPerBeat
+      ctx.strokeStyle = 'rgba(125, 211, 252, 0.85)'
+      ctx.setLineDash([4, 3])
+      ctx.lineWidth = 1.5
       ctx.beginPath()
       ctx.moveTo(x + 0.5, 0)
       ctx.lineTo(x + 0.5, height)
       ctx.stroke()
-      ctx.fillStyle = 'rgba(160, 160, 170, 0.9)'
-      ctx.font = '9px ui-monospace, monospace'
-      ctx.fillText(String(bar + 1), x + 4, 10)
+      ctx.setLineDash([])
     }
+  }, [width, height, pxPerBeat, durationBeats, beatsPerBar, snapDivision, clipEnd])
 
-    if (pxPerBeat >= 10) {
-      const beatCount = Math.ceil(durationBeats) + 1
-      ctx.strokeStyle = 'rgba(120, 120, 130, 0.35)'
-      for (let b = 0; b < beatCount; b++) {
-        if (b % beatsPerBar === 0) continue
-        const x = b * pxPerBeat
-        ctx.beginPath()
-        ctx.moveTo(x + 0.5, height * 0.45)
-        ctx.lineTo(x + 0.5, height)
-        ctx.stroke()
+  const seekFromClientX = (clientX: number) => {
+    if (!onSeekBeats || !canvasRef.current) return
+    const rect = canvasRef.current.getBoundingClientRect()
+    const x = clientX - rect.left
+    const rel = Math.max(0, Math.min(durationBeats, x / pxPerBeat))
+    const abs = clipInicioBeats + rel
+    onSeekBeats(abs)
+    const bar = Math.floor(abs / beatsPerBar) + 1
+    const beat = Math.floor(abs % beatsPerBar) + 1
+    setTooltip(`${bar}.${beat}`)
+  }
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (!onSeekBeats || e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    draggingRef.current = true
+    seekFromClientX(e.clientX)
+
+    const onMove = (ev: PointerEvent) => {
+      if (!draggingRef.current) return
+      seekFromClientX(ev.clientX)
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      draggingRef.current = false
+      setTooltip(null)
+      try {
+        ;(e.target as HTMLElement)?.releasePointerCapture?.(ev.pointerId)
+      } catch {
+        /* ignore */
       }
     }
-  }, [width, height, pxPerBeat, durationBeats, beatsPerBar])
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
+  }
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="relative block shrink-0 cursor-pointer border-b border-border bg-panel-raised"
-      title="Clic para buscar en el tiempo"
-      onClick={(e) => {
-        if (!onSeekBeats) return
-        const rect = e.currentTarget.getBoundingClientRect()
-        const x = e.clientX - rect.left
-        const rel = Math.max(0, Math.min(durationBeats, x / pxPerBeat))
-        onSeekBeats(clipInicioBeats + rel)
-      }}
-    />
+    <div className="relative shrink-0" style={{ width, height }}>
+      <canvas
+        ref={canvasRef}
+        className="relative block cursor-ew-resize border-b border-border bg-panel-raised"
+        title="Clic / arrastrar para buscar en el tiempo"
+        onPointerDown={onPointerDown}
+      />
+      {tooltip && (
+        <div className="pointer-events-none absolute left-1/2 top-full z-30 -translate-x-1/2 rounded bg-background px-1.5 py-0.5 font-mono text-[10px] text-accent-amber shadow ring-1 ring-border">
+          {tooltip}
+        </div>
+      )}
+    </div>
   )
 }

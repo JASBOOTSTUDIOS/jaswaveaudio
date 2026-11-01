@@ -4,6 +4,10 @@
  */
 
 import type { PluginDescriptor } from './plugin/types'
+import {
+  filterCatalogForAi,
+  resolveRoleDefaultFromCatalog,
+} from './plugin/instrument-ai-prefs'
 
 export type InstrumentRole =
   | 'drums'
@@ -214,9 +218,13 @@ export function scoreDescriptorForRole(d: PluginDescriptor, role: InstrumentRole
 }
 
 export function pickVstForRole(catalog: PluginDescriptor[], role: InstrumentRole): PluginDescriptor | undefined {
+  const usable = filterCatalogForAi(catalog)
+  const preferred = resolveRoleDefaultFromCatalog(usable, role)
+  if (preferred) return preferred
+
   let best: PluginDescriptor | undefined
   let bestScore = 0
-  for (const d of catalog) {
+  for (const d of usable) {
     const sc = scoreDescriptorForRole(d, role)
     if (sc > bestScore) {
       bestScore = sc
@@ -246,6 +254,7 @@ const GENRE_ROLES: Record<string, InstrumentRole[]> = {
   trap: ['drums', 'bass', 'synth', 'lead'],
   jazz: ['drums', 'bass', 'piano', 'brass'],
   latin: ['drums', 'percussion', 'bass', 'keys', 'guitar'],
+  bachata: ['drums', 'percussion', 'bass', 'guitar', 'guitar', 'piano'],
   orchestral: ['strings', 'brass', 'woodwind', 'choir', 'percussion'],
   ballad: ['piano', 'pad', 'strings', 'bass'],
   worship: ['drums', 'bass', 'guitar', 'guitar', 'piano', 'pad'],
@@ -255,7 +264,7 @@ const GENRE_ROLES: Record<string, InstrumentRole[]> = {
 
 export function inferGenreRoles(text: string): InstrumentRole[] {
   const t = text.toLowerCase()
-  if (/worship|alabanza|adoraci[oó]n|hillsong|bethel|elevation/.test(t)) return GENRE_ROLES.worship!
+  if (/worship|alabanza|adoraci[oó]n/.test(t)) return GENRE_ROLES.worship!
   if (/gospel/.test(t)) return GENRE_ROLES.gospel!
   if (/metal|djent/.test(t)) return GENRE_ROLES.metal!
   if (/rock|indie/.test(t)) return GENRE_ROLES.rock!
@@ -263,6 +272,7 @@ export function inferGenreRoles(text: string): InstrumentRole[] {
   if (/trap/.test(t)) return GENRE_ROLES.trap!
   if (/hip\s*hop|rap/.test(t)) return GENRE_ROLES.hiphop!
   if (/jazz/.test(t)) return GENRE_ROLES.jazz!
+  if (/bachata|merengue/.test(t)) return GENRE_ROLES.bachata!
   if (/latin|salsa|cumbia|reggaet/.test(t)) return GENRE_ROLES.latin!
   if (/orquest|cinem|film|trailer/.test(t)) return GENRE_ROLES.orchestral!
   if (/balad|ballad|piano suave/.test(t)) return GENRE_ROLES.ballad!

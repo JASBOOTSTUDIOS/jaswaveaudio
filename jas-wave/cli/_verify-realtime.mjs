@@ -3,6 +3,7 @@
  * Crea proyecto propio (no hereda VSTs de fases certify anteriores).
  */
 import http from 'http'
+import './lib/bridge-auth.mjs'
 
 function req(method, path, body) {
   return new Promise((resolve, reject) => {

@@ -48,6 +48,16 @@ void jaswave_audio_set_renderer(JaswaveRenderProc proc);
 bool jaswave_audio_list(std::vector<JaswaveAudioBackendInfo>& backends,
                         std::vector<JaswaveAudioDevice>& devices, std::string& err);
 
+/** Reserva el motor de audio de la sesión (un solo host abre dispositivo). Falla con "AudioEngineBusy: …". */
+bool jaswave_audio_engine_acquire(std::string& err);
+bool jaswave_audio_engine_owned();
+/** Suelta el dispositivo y la reserva sin cerrar el host (traspaso a otra instancia). */
+void jaswave_audio_engine_release();
+/** Pide al dueño actual del motor que lo ceda ("Usar audio aquí"). */
+bool jaswave_audio_engine_request_release();
+typedef void (*JaswaveEngineReleaseRequestProc)();
+/** Callback (desde un hilo propio) cuando otra instancia pide el motor que este host tiene. */
+void jaswave_audio_engine_on_release_request(JaswaveEngineReleaseRequestProc proc);
 bool jaswave_audio_start(const JaswaveAudioConfig& want, std::string& err);
 void jaswave_audio_stop();
 JaswaveAudioStatus jaswave_audio_status();

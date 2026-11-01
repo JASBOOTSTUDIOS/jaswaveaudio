@@ -1,0 +1,14 @@
+{
+  "name": "proveedor sin tools nativas: cae a marcadores <<<DECISION>>>",
+  "responses": [
+    { "toolsUnsupported": true },
+    {
+      "when": { "hasTools": false, "afterToolResult": false },
+      "content": "Miro el proyecto.\n<<<DECISION\n{\"type\":\"tool-calls\",\"calls\":[{\"id\":\"c1\",\"tool\":\"track.list\",\"arguments\":{}}]}\nDECISION>>>"
+    },
+    {
+      "when": { "hasTools": false, "afterToolResult": true },
+      "content": "<<<DECISION {\"type\":\"complete\",\"summary\":\"Una pista: Bajo.\"} DECISION>>>"
+    }
+  ]
+}

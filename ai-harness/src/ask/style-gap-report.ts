@@ -1,10 +1,13 @@
 /**
- * Informe de gap de estilo (p. ej. batería vs worship moderno / Averill Morillo)
+ * Informe de gap de estilo (p. ej. batería vs el estilo/artista que pida el usuario)
  * en lenguaje de productor — no códigos P1/P2 ni “244.0b”.
+ * Neutral: la referencia sale del pedido del usuario o de un StyleProfile; ningún
+ * género ni artista tiene trato especial por defecto.
  */
 
 import type { DAWState } from '@jaswave/shared'
 import type { MidiClip, MidiNote } from '@jaswave/shared'
+import { extractStyleReference } from '../agent/modes'
 
 type ProjectTrack = NonNullable<DAWState['project']>['tracks'][number]
 
@@ -89,34 +92,27 @@ function classify(notes: MidiNote[]) {
 }
 
 function extractStyleRef(userText: string): string {
-  const m =
-    userText.match(/\bestilo\s+([^,.]+)/i) ||
-    userText.match(/\bcomo\s+([^,.]+)/i) ||
-    userText.match(/\btipo\s+([^,.]+)/i)
-  if (m) return m[1]!.trim().slice(0, 64)
-  if (/aver+y|averill|morillo/i.test(userText)) return 'Averill / Averly Morillo (worship moderno)'
-  if (/worship/i.test(userText)) return 'worship moderno'
-  return 'el estilo que pediste'
+  return extractStyleReference(userText) ?? 'el estilo que pediste'
 }
 
 /**
- * Rasgos worship moderno / Averly Morillo «Mesías».
- * Preferir bullets de StyleProfile si se pasan; fallback Firmthm.
+ * Criterios genéricos de groove de batería (independientes del género).
+ * Si hay bullets de StyleProfile (perfil elegido por el usuario) se usan esos.
  */
-export function worshipModernDrumExpectations(fromProfiles?: string[]): string[] {
+export function genericDrumStyleExpectations(fromProfiles?: string[]): string[] {
   if (fromProfiles?.length) return fromProfiles
   return [
-    'Tempo típico ~72 BPM en 4/4 (ballad worship, no midtempo pop genérico)',
-    'Intro muy escaso: varios compases en silencio y cues de 4 semicorcheas (hat/kick) antes del groove',
-    'Verso en half-time o muy contenido (kick en 1, rim/caja en 3) — no snare rock en 2·4 todo el tema',
-    'Pre-coro / build: hi-hat en semicorcheas + kick 1·3 + fill corto de 16vos al final del compás',
-    'Coro Firmthm (m28/m43): hats en corcheas, snare en 2·4, kick denso 1 + 1& + 2& + 3 + 3& + 4&',
-    'Ghost notes suaves en la “e” de cada negra entre los acentos de caja',
-    'Crash en entradas de frase (cada 4 compases) y fills de toms→redoble→crash al cierre',
-    'Puente: ride constante + half-time; al final densifica hacia el coro',
-    'Dinámica clara: intro/verso contenidos → build 16vos → coro abierto con hats ocasionalmente abiertos',
+    'Tempo y compás coherentes con la referencia (comprueba el BPM real de las canciones de referencia)',
+    'Contraste por secciones: intro/verso más contenidos, coro o drop más abierto',
+    'Fills cortos hacia el downbeat cada 4–8 compases y crash en entradas de frase',
+    'Dinámica variada nota a nota (acentos vs notas suaves), no todo a la misma velocidad',
+    'Densidad de hi-hat / ride acorde al feel (corcheas, semicorcheas o half-time según el estilo)',
+    'Articulación de la caja: acentos claros y, si el estilo lo usa, ghost notes suaves',
   ]
 }
+
+/** @deprecated usar genericDrumStyleExpectations (ya no hay defaults de un género concreto). */
+export const worshipModernDrumExpectations = genericDrumStyleExpectations
 
 export function expectationsFromStyleProfileSummaries(summaries: string[]): string[] {
   return summaries.filter(Boolean).slice(0, 6).map((s) => `[perfil] ${s}`)
@@ -141,7 +137,7 @@ export function buildStyleGapReport(state: DAWState, opts: StyleGapReportOpts): 
 
   lines.push(`## Qué pediste`)
   lines.push(
-    `Revisar la **batería** del proyecto y decirte **qué le falta** para acercarla a **${styleRef}** (worship moderno).`,
+    `Revisar la **batería** del proyecto y decirte **qué le falta** para acercarla a **${styleRef}**.`,
   )
   lines.push('')
 
@@ -187,10 +183,10 @@ export function buildStyleGapReport(state: DAWState, opts: StyleGapReportOpts): 
     lines.push('')
   } else {
     lines.push(
-      '_No hubo resultados útiles de internet en este turno; uso criterios habituales de worship moderno / Averill–Averly Morillo:_',
+      '_No hubo resultados útiles de internet en este turno; uso criterios generales de groove (no específicos de un género):_',
     )
   }
-  for (const e of worshipModernDrumExpectations(
+  for (const e of genericDrumStyleExpectations(
     opts.styleProfileSummaries?.length
       ? expectationsFromStyleProfileSummaries(opts.styleProfileSummaries)
       : undefined,
@@ -213,14 +209,14 @@ export function buildStyleGapReport(state: DAWState, opts: StyleGapReportOpts): 
       gaps.push({
         title: 'Casi no hay ghost notes en la caja',
         detail:
-          'En worship moderno la caja “habla” entre el 2 y el 4. Ahora suena más a patrón seco. Añade ghosts suaves (velocidad baja) en semicorcheas.',
+          'En muchos estilos con groove la caja “habla” entre los acentos. Ahora suena más a patrón seco. Si la referencia lo usa, añade ghosts suaves (velocidad baja) en semicorcheas.',
       })
     }
     if (stats.hatClosed + stats.hatOpen < stats.kick * 1.5) {
       gaps.push({
         title: 'Poco hi-hat / ride de empuje',
         detail:
-          'El groove worship suele ir montado sobre hats constantes. Sube la densidad de hi-hat (cerrado en verso, más abierto en coro).',
+          'El groove suele apoyarse en hats o ride constantes. Sube la densidad de hi-hat (cerrado en verso, más abierto en coro) si la referencia lo pide.',
       })
     }
     if (stats.hatOpen < 4 && bars > 8) {
@@ -233,7 +229,7 @@ export function buildStyleGapReport(state: DAWState, opts: StyleGapReportOpts): 
       gaps.push({
         title: 'Pocos crashes en cambios de sección',
         detail:
-          'Con un clip tan largo, un worship moderno marcaría entradas de coro/puente con crash. Coloca crashes en los “ganchos” de frase.',
+          'Con un clip tan largo conviene marcar entradas de coro/puente con crash. Coloca crashes en los “ganchos” de frase.',
       })
     }
     if (stats.tom < 4 && bars > 16) {
@@ -250,9 +246,9 @@ export function buildStyleGapReport(state: DAWState, opts: StyleGapReportOpts): 
     }
     if (bpm >= 110 && bpm <= 128) {
       gaps.push({
-        title: 'Revisa el feel a 120 BPM',
+        title: `Revisa el feel a ${bpm} BPM`,
         detail:
-          '120 está bien para pop-worship, pero Averill/Averly a menudo juega con half-time en coros o builds. Prueba un tramo half-time (caja en 3) para contraste.',
+          'A este tempo, un tramo en half-time (caja en 3) en coros o builds suele dar contraste. Compáralo con la referencia.',
       })
     }
   }
@@ -271,7 +267,7 @@ export function buildStyleGapReport(state: DAWState, opts: StyleGapReportOpts): 
   lines.push(
     [
       '1. Escucha solo la pista **Batería** (solo) contra una referencia del artista.',
-      '2. Pídeme: *“añade ghost notes y hats al estilo worship en el clip de batería, sin tocar el resto”*.',
+      '2. Pídeme: *“aplica ese estilo al clip de batería (ghost notes, hats, fills), sin tocar el resto”*.',
       '3. Si quieres, después partimos el clip largo por secciones en el arrange.',
     ].join('\n'),
   )
@@ -302,10 +298,57 @@ function mkNote(id: string, pitch: number, inicio: number, velocidad: number, du
 }
 
 /**
- * Acciones concretas para acercar la batería a worship moderno (ghosts, fills, crashes, humanize).
- * Usado cuando el usuario pide APLICAR el estilo (no solo analizar).
+ * Perfil de realce de batería: qué rasgos aplicar. Lo deriva el pedido del usuario
+ * (styleEnhanceProfileFromText) o un StyleProfile elegido por él — sin defaults de género.
  */
-export function buildWorshipDrumEnhanceActions(state: DAWState): StyleEnhanceAction[] {
+export type StyleEnhanceProfile = {
+  /** Ghost notes suaves en la caja (offsets dentro de la negra). */
+  ghostNotes?: boolean
+  ghostOffsets?: number[]
+  /** Hats abiertos ocasionales en tramos de “coro”. */
+  openHats?: boolean
+  /** Crash + fill corto cada `phraseBars` compases. */
+  crashFills?: boolean
+  phraseBars?: number
+  /** Humanize leve de timing/velocidad. */
+  humanize?: boolean
+}
+
+/** Rasgos neutrales cuando el usuario no especifica: fills/crash de frase + humanize. */
+export const DEFAULT_STYLE_ENHANCE_PROFILE: Readonly<StyleEnhanceProfile> = Object.freeze({
+  ghostNotes: false,
+  openHats: false,
+  crashFills: true,
+  phraseBars: 8,
+  humanize: true,
+})
+
+/** Deriva el perfil de realce de lo que pide el usuario (ghost, hats, fills, humaniza…). */
+export function styleEnhanceProfileFromText(userText: string): StyleEnhanceProfile {
+  const t = userText.toLowerCase()
+  const ghost = /\bghost/.test(t)
+  const hats = /\b(hats?\s+abiert|open\s*hats?|hi-?hat|hats?)\b/.test(t)
+  const fills = /\b(fills?|crash|platillos?|toms?|transici)/.test(t)
+  const human = /\b(humaniz|human|vivo|live|natural)/.test(t)
+  if (!ghost && !hats && !fills && !human) return { ...DEFAULT_STYLE_ENHANCE_PROFILE }
+  return {
+    ghostNotes: ghost,
+    openHats: hats,
+    crashFills: fills || (!ghost && !hats),
+    phraseBars: 8,
+    // Humanize leve siempre ayuda al realce; explícito si el usuario lo pidió.
+    humanize: human || ghost || hats || fills,
+  }
+}
+
+/**
+ * Acciones concretas para acercar la batería al estilo pedido (ghosts, hats, fills, humanize),
+ * según el perfil. Usado cuando el usuario pide APLICAR el estilo (no solo analizar).
+ */
+export function buildStyleEnhanceActions(
+  state: DAWState,
+  profile: StyleEnhanceProfile = DEFAULT_STYLE_ENHANCE_PROFILE,
+): StyleEnhanceAction[] {
   const track = findDrumTrack(state, 'bateria')
   if (!track) return []
   const clip = longestMidiClip(track)
@@ -324,10 +367,13 @@ export function buildWorshipDrumEnhanceActions(state: DAWState): StyleEnhanceAct
   let seq = 0
   const nextId = (prefix: string) => `${prefix}-${clip.id.slice(-6)}-${seq++}`
 
+  const phrase = Math.max(2, Math.floor(profile.phraseBars ?? 8))
+  const ghostOffsets = profile.ghostNotes ? (profile.ghostOffsets ?? [0.25, 1.25, 2.25, 3.25]) : []
+
   for (let bar = 0; bar < bars; bar++) {
     const base = bar * 4
-    // Ghosts en la «e» de cada negra (estilo Firmthm / Mesías)
-    for (const off of [0.25, 1.25, 2.25, 3.25]) {
+    // Ghosts suaves en la caja (solo si el perfil los pide)
+    for (const off of ghostOffsets) {
       const t = base + off
       if (t >= dur) continue
       if (!noteNear(existing, t, SNARE) && !noteNear(additions, t, SNARE)) {
@@ -335,14 +381,14 @@ export function buildWorshipDrumEnhanceActions(state: DAWState): StyleEnhanceAct
       }
     }
     // Hats abiertos ocasionales en off-beats de “coros” (cada 8–16)
-    if (bar % 8 >= 4) {
+    if (profile.openHats && bar % phrase >= phrase / 2) {
       const t = base + 1.5
       if (t < dur && !noteNear(existing, t, HAT_OPEN) && !noteNear(additions, t, HAT_OPEN)) {
         additions.push(mkNote(nextId('ho'), HAT_OPEN, t, 78, 0.2))
       }
     }
-    // Crash + fill corto cada 8 compases (transición)
-    if (bar > 0 && bar % 8 === 0) {
+    // Crash + fill corto cada `phrase` compases (transición)
+    if (profile.crashFills && bar > 0 && bar % phrase === 0) {
       if (!noteNear(existing, base, CRASH) && !noteNear(additions, base, CRASH)) {
         additions.push(mkNote(nextId('cr'), CRASH, base, 105, 0.8))
       }
@@ -362,11 +408,15 @@ export function buildWorshipDrumEnhanceActions(state: DAWState): StyleEnhanceAct
     (a, b) => a.inicio - b.inicio || a.pitch - b.pitch,
   )
 
-  return [
+  const out: StyleEnhanceAction[] = [
     {
       type: 'midi.notes.set',
       payload: { pistaId: track.id, clipId: clip.id, notas },
     },
+  ]
+  if (profile.humanize === false) return out
+  return [
+    ...out,
     {
       type: 'midi.humanize',
       payload: {
@@ -378,4 +428,18 @@ export function buildWorshipDrumEnhanceActions(state: DAWState): StyleEnhanceAct
       },
     },
   ]
+}
+
+/**
+ * @deprecated usar buildStyleEnhanceActions(state, profile). Alias con el realce completo
+ * (ghosts + hats + fills + humanize); ya no lo usa ningún flujo por defecto.
+ */
+export function buildWorshipDrumEnhanceActions(state: DAWState): StyleEnhanceAction[] {
+  return buildStyleEnhanceActions(state, {
+    ghostNotes: true,
+    openHats: true,
+    crashFills: true,
+    phraseBars: 8,
+    humanize: true,
+  })
 }

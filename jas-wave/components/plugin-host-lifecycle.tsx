@@ -13,8 +13,9 @@ import {
   forgetHostPlugins,
   isBuiltinInstrument,
   getLoadedInstrumentForTrack,
+  isPluginAudioReady,
+  resolveHostPluginPath,
 } from '@/src/lib/plugin/track-vst-runtime'
-import { extractHostPluginPath } from '@/src/lib/plugin/plugin-info-adapter'
 import {
   getProjectReadyGeneration,
   invalidateProjectPlugins,
@@ -27,7 +28,7 @@ import type { PluginInfo } from '../../shared/src/types/entidades'
 function chainNeedsVst(plugins: PluginInfo[] | undefined): boolean {
   for (const p of plugins ?? []) {
     if (p.bypass || isBuiltinInstrument(p)) continue
-    if (extractHostPluginPath(p.descripcion, p.id)) return true
+    if (resolveHostPluginPath(p)) return true
   }
   return false
 }
@@ -69,11 +70,11 @@ export function PluginHostLifecycle() {
         // Durante play: no relanzar loads (bloquean stdin); si ya hay slots, cerrar banner.
         if (audioEngine.getIsPlaying()) {
           const missing = tracks.some((t) => {
-            const wants = (t.plugins ?? []).some((p) => {
+            return (t.plugins ?? []).some((p) => {
               if (p.bypass || isBuiltinInstrument(p)) return false
-              return Boolean(extractHostPluginPath(p.descripcion, p.id))
+              if (!resolveHostPluginPath(p)) return false
+              return !isPluginAudioReady(t.id, p.id)
             })
-            return wants && !getLoadedInstrumentForTrack(t.id)
           })
           if (!missing) {
             reportProjectPluginsSettled(true, 'VSTs listos (en reproducción)', gen)

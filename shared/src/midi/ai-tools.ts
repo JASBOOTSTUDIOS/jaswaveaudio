@@ -108,6 +108,7 @@ export const MIDI_AI_TOOL_DEFS: ToolDefinitionExtended[] = [
   write('midi.createNotes', 'Anade notas al clip', ['pistaId', 'clipId', 'notas']),
   write('midi.makeStaccato', 'Staccato (ratio)', ['pistaId', 'clipId']),
   write('midi.makeLegato', 'Legato entre pitches', ['pistaId', 'clipId']),
+  write('midi.notes.legatoWorship', 'Legato worship: sostiene cada nota hasta solapeMs (500) tras la siguiente; pads siempre suenan', ['pistaId']),
   write('midi.repeatPattern', 'Repite seleccion', ['pistaId', 'clipId', 'noteIds']),
   write('midi.reverse', 'Invierte en el tiempo', ['pistaId', 'clipId']),
   write('midi.invert', 'Invierte pitches', ['pistaId', 'clipId']),
@@ -126,7 +127,7 @@ export function registrarMidiAiTools(registry: ToolRegistry, getState: GetState)
     (type: string): ToolHandler =>
     async (params, ctx) => {
       try {
-        return ok(await ctx.commandExecutor.execute(type, params as never));
+        return ok(await ctx.commandExecutor.execute(type, params as never, ctx.source));
       } catch (e) {
         return fail('COMMAND_FAILED', e instanceof Error ? e.message : String(e));
       }
@@ -136,7 +137,8 @@ export function registrarMidiAiTools(registry: ToolRegistry, getState: GetState)
     'midi.getClipSummary': async (params) => {
       const p = params as { clipId: string; trackId?: string };
       const data = getClipSummary(getState(), p.clipId, p.trackId);
-      return data ? ok(data) : fail('NOT_FOUND', `Clip ${p.clipId}`);
+      // «Clip no encontrado» es lo que el tool runner reconoce para añadir la lista de clips reales.
+      return data ? ok(data) : fail('NOT_FOUND', `Clip no encontrado: ${p.clipId}`);
     },
     'midi.getNotes': async (params) => ok(getNotes(getState(), params as never)),
     'midi.getMusicalSummary': async (params) => {
@@ -151,6 +153,7 @@ export function registrarMidiAiTools(registry: ToolRegistry, getState: GetState)
     'midi.createNotes': viaCommand('midi.createNotes'),
     'midi.makeStaccato': viaCommand('midi.makeStaccato'),
     'midi.makeLegato': viaCommand('midi.makeLegato'),
+    'midi.notes.legatoWorship': viaCommand('midi.notes.legatoWorship'),
     'midi.repeatPattern': viaCommand('midi.repeatPattern'),
     'midi.reverse': viaCommand('midi.reverse'),
     'midi.invert': viaCommand('midi.invert'),

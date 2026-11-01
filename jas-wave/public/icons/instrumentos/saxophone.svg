@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="saxophone">
+  <!-- Boquilla y tudel curvo superior -->
+  <path d="M14 11l4-1v4l-4-1z" fill="currentColor" stroke-width="1.5" />
+  <path d="M18 12c3 0 6 2 6 6v22c0 8 6 14 14 14s12-6 12-14h-8c0 4-2 6-4 6s-4-2-4-6V20c0-6-4-10-10-10l-6 2" fill="currentColor" fill-opacity="0.14" stroke-width="2" />
+  <!-- Campana ancha hacia arriba con labio elíptico -->
+  <ellipse cx="50" cy="38" rx="4" ry="8" fill="currentColor" fill-opacity="0.25" stroke-width="2" />
+  <!-- Llaves y cazoletas de digitación a lo largo del cuerpo -->
+  <line x1="22" y1="22" x2="22" y2="42" stroke-width="1.5" />
+  <circle cx="24" cy="24" r="2" fill="currentColor" />
+  <circle cx="24" cy="30" r="2" fill="currentColor" />
+  <circle cx="24" cy="36" r="2" fill="currentColor" />
+  <circle cx="25" cy="42" r="2" fill="currentColor" />
+  <!-- Protector de llaves de campana -->
+  <path d="M42 44l6-6" stroke-width="1.75" />
+</svg>

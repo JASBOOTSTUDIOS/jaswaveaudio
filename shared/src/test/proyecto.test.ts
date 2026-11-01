@@ -105,7 +105,7 @@ describe('Persistencia del proyecto', () => {
 
   it('rechaza cargar archivos corruptos', async () => {
     archivos.set('corrupto.jaswave', 'no-es-json');
-    await expect(cargarProyecto('corrupto.jaswave', fileService)).rejects.toThrow('JSON inválido');
+    await expect(cargarProyecto('corrupto.jaswave', fileService)).rejects.toThrow('JSON dañado');
   });
 
   it('rechaza cargar archivos con versión incompatible', async () => {
@@ -123,7 +123,7 @@ describe('Persistencia del proyecto', () => {
     const proyecto = proyectoNuevo('X') as any;
     delete proyecto.id;
     archivos.set('sin-id.jaswave', JSON.stringify({ version: FORMATO_ACTUAL, project: proyecto, audioReferences: {} }));
-    await expect(cargarProyecto('sin-id.jaswave', fileService)).rejects.toThrow('falta project.id');
+    await expect(cargarProyecto('sin-id.jaswave', fileService)).rejects.toThrow('project.id: falta el campo');
   });
 
   it('valida tamaño post-escritura correctamente', async () => {

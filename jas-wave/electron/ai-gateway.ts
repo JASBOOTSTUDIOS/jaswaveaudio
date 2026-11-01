@@ -1,7 +1,29 @@
 /**
  * Gateway multi-proveedor de IA para el proceso principal de Electron.
- * OpenAI / Anthropic / Gemini / Ollama / OpenRouter / KiloCode / OpenAI-compatible.
+ * OpenAI / Anthropic / Gemini / Ollama / OpenRouter / KiloCode / OpenAI-compatible / mock.
+ *
+ * A2: tool-calling nativo (serialización en ai-tools.ts), streaming (ai-stream.ts) y
+ * proveedor mock determinista (ai-mock.ts, JASWAVE_AI_MOCK=<guion.json>).
  */
+
+import {
+  buildAnthropicBody,
+  buildGeminiBody,
+  buildOllamaBody,
+  buildOpenAiBody,
+  isToolsUnsupportedError,
+  parseAnthropicContent,
+  parseGeminiParts,
+  parseOllamaMessage,
+  parseOpenAiMessage,
+  providerSupportsTools,
+  type AiToolCall,
+  type AiToolChoice,
+  type AiToolSchema,
+  type AiWireMessage,
+} from './ai-tools'
+import { createStreamAccumulator, type StreamStyle } from './ai-stream'
+import { createMockPlayer, envMockPlayer, mockScriptPathFromEnv } from './ai-mock'
 
 export type AiProviderKind =
   | 'ollama'
@@ -11,6 +33,7 @@ export type AiProviderKind =
   | 'openrouter'
   | 'kilocode'
   | 'openai-compatible'
+  | 'mock'
 
 export type AiApiStyle = 'openai' | 'anthropic' | 'gemini' | 'ollama'
 export type AiAuthStyle = 'bearer' | 'x-api-key' | 'none'
@@ -23,6 +46,8 @@ export type AiProviderCustom = {
   authStyle?: AiAuthStyle
   extraHeaders?: Record<string, string>
   needsApiKey?: boolean
+  /** Fuerza (o desactiva) el tool-calling nativo para este perfil. */
+  supportsTools?: boolean
 }
 
 export type AiErrorCode =
@@ -41,9 +66,10 @@ export type AiErrorCode =
   | 'provider_error'
   | 'empty_response'
   | 'not_available'
+  | 'cancelled'
   | 'unknown'
 
-export type ChatMessage = { role: string; content: string }
+export type ChatMessage = AiWireMessage
 
 export type AiChatRequest = {
   messages: ChatMessage[]
@@ -51,15 +77,25 @@ export type AiChatRequest = {
   model: string
   baseUrl: string
   apiKey?: string
+  /** Perfil cuyo API key guarda main (ai-credentials); el renderer no la envía. */
+  providerId?: string
+  /** Id para cancelar con cancelAiChat (botón Detener). */
+  requestId?: string
   temperature?: number
   maxTokens?: number
   custom?: AiProviderCustom
+  /** Herramientas con JSON Schema (nombres canónicos con puntos). */
+  tools?: AiToolSchema[]
+  toolChoice?: AiToolChoice
+  /** Metadatos del motor (propósito/rol): los usa el mock; los proveedores reales los ignoran. */
+  meta?: { purpose?: string; role?: string; runId?: string }
 }
 
 export type AiHealthRequest = {
   kind: AiProviderKind
   baseUrl: string
   apiKey?: string
+  providerId?: string
   custom?: AiProviderCustom
 }
 
@@ -71,6 +107,12 @@ export type AiChatResult = {
   error?: string
   errorCode?: AiErrorCode
   hint?: string
+  /** Llamadas a herramientas normalizadas (nombres canónicos). */
+  toolCalls?: AiToolCall[]
+  /** El modelo no soporta tools nativas o las rechazó: el cliente debe usar marcadores. */
+  toolsUnsupported?: boolean
+  /** Intentos HTTP realizados (incluye reintentos) — para el presupuesto del turno. */
+  httpAttempts?: number
 }
 
 export type AiHealthResult = {
@@ -211,6 +253,19 @@ function joinUrl(base: string, path: string): string {
   return `${b}${p}`
 }
 
+/** Cabeceras que un perfil personalizado no puede sobrescribir. */
+const FORBIDDEN_EXTRA_HEADERS = new Set(['host', 'content-length', 'connection', 'transfer-encoding', 'cookie'])
+
+/** Solo http(s); nada de file:, data:, etc. */
+export function isAllowedProviderUrl(raw: string | undefined): boolean {
+  try {
+    const u = new URL(String(raw || '').trim())
+    return (u.protocol === 'https:' || u.protocol === 'http:') && !u.username && !u.password
+  } catch {
+    return false
+  }
+}
+
 function applyAuthHeaders(
   headers: Record<string, string>,
   apiKey: string | undefined,
@@ -223,7 +278,7 @@ function applyAuthHeaders(
   if (style === 'x-api-key' && key) headers['x-api-key'] = key
   if (custom?.extraHeaders) {
     for (const [k, v] of Object.entries(custom.extraHeaders)) {
-      if (k && typeof v === 'string') headers[k] = v
+      if (k && typeof v === 'string' && !FORBIDDEN_EXTRA_HEADERS.has(k.toLowerCase())) headers[k] = v
     }
   }
   if (kind === 'openrouter') {
@@ -252,6 +307,18 @@ function mapHttpStatus(status: number, body: string, kind: AiProviderKind): AiCh
   return fail(`Error del proveedor (${status}). ${snippet}`, 'provider_error', kind)
 }
 
+/** Señal de cancelación del chat en curso (la cola es serial: uno a la vez). */
+let activeChatSignal: AbortSignal | null = null
+const chatControllers = new Map<string, AbortController>()
+
+/** Cancela un chat en cola o en curso (incluye sus reintentos). */
+export function cancelAiChat(requestId: string): boolean {
+  const c = chatControllers.get(requestId)
+  if (!c) return false
+  c.abort()
+  return true
+}
+
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
@@ -259,10 +326,15 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const outer = activeChatSignal
+  const onOuterAbort = () => controller.abort()
+  outer?.addEventListener('abort', onOuterAbort)
+  if (outer?.aborted) controller.abort()
   try {
     return await fetch(url, { ...init, signal: controller.signal })
   } finally {
     clearTimeout(timer)
+    outer?.removeEventListener('abort', onOuterAbort)
   }
 }
 
@@ -277,15 +349,21 @@ function classifyFetchError(err: unknown, kind: AiProviderKind): AiChatResult {
   return fail(msg || 'Error desconocido de red', 'unknown', kind)
 }
 
+function isMockRequest(req: { kind: AiProviderKind }): boolean {
+  return req.kind === 'mock' || Boolean(mockScriptPathFromEnv())
+}
+
 function validateRequest(req: AiChatRequest): AiChatResult | null {
   if (!req.kind) return fail('Falta el tipo de proveedor.', 'bad_request', 'openai-compatible')
+  if (!Array.isArray(req.messages) || req.messages.length === 0) {
+    return fail('No hay mensajes para enviar.', 'bad_request', req.kind)
+  }
+  if (isMockRequest(req)) return null
   if (!normalizeBase(req.baseUrl)) return fail('Falta la URL base del proveedor.', 'missing_base_url', req.kind)
+  if (!isAllowedProviderUrl(req.baseUrl)) return fail('La URL base debe ser http(s).', 'missing_base_url', req.kind)
   if (!String(req.model || '').trim()) return fail('Falta el modelo.', 'missing_model', req.kind)
   if (needsKey(req.kind, req.custom) && !String(req.apiKey || '').trim()) {
     return fail(`El proveedor ${req.kind} requiere API key.`, 'missing_api_key', req.kind)
-  }
-  if (!Array.isArray(req.messages) || req.messages.length === 0) {
-    return fail('No hay mensajes para enviar.', 'bad_request', req.kind)
   }
   return null
 }
@@ -308,43 +386,107 @@ function openAiBase(url: string, kind?: AiProviderKind, custom?: AiProviderCusto
   return `${base}/v1`
 }
 
-async function chatOpenAiCompatible(req: AiChatRequest): Promise<AiChatResult> {
+/** Estilo de API efectivo del request. */
+export function resolveApiStyle(req: { kind: AiProviderKind; custom?: AiProviderCustom }): StreamStyle | null {
+  const style = req.custom?.apiStyle
+  if (style) return style
+  if (req.kind === 'ollama') return 'ollama'
+  if (req.kind === 'anthropic') return 'anthropic'
+  if (req.kind === 'gemini') return 'gemini'
+  if (isOpenAiCompatible(req.kind)) return 'openai'
+  return null
+}
+
+/** Modelos que rechazaron tools en esta sesión (no se reintenta con tools). */
+const toolsRejectedModels = new Set<string>()
+
+function toolsKey(req: AiChatRequest): string {
+  return `${req.kind}|${normalizeBase(req.baseUrl)}|${req.model}`
+}
+
+/** ¿Se enviarán tools nativas en este request? */
+export function shouldSendTools(req: AiChatRequest): boolean {
+  if (!req.tools?.length) return false
+  if (toolsRejectedModels.has(toolsKey(req))) return false
+  return providerSupportsTools({
+    kind: req.kind,
+    apiStyle: req.custom?.apiStyle,
+    model: req.model,
+    supportsTools: req.custom?.supportsTools,
+  })
+}
+
+function toolsUnsupported(req: AiChatRequest, detail: string): AiChatResult {
+  toolsRejectedModels.add(toolsKey(req))
+  return fail(`El modelo no admite tool-calling nativo: ${detail}`, 'bad_request', req.kind, { toolsUnsupported: true })
+}
+
+type HttpTarget = { url: string; headers: Record<string, string>; body: Record<string, unknown> }
+
+/** Construye URL/cabeceras/cuerpo del proveedor (sin red). Exportado para snapshots. */
+export function buildProviderRequest(req: AiChatRequest, opts: { stream?: boolean } = {}): HttpTarget {
+  const style = resolveApiStyle(req)
+  const stream = opts.stream === true
+  const part = {
+    model: req.model,
+    messages: req.messages,
+    tools: shouldSendTools(req) ? req.tools : undefined,
+    toolChoice: req.toolChoice,
+    temperature: req.temperature,
+    maxTokens: req.maxTokens,
+  }
+  if (style === 'anthropic') {
+    const base = normalizeBase(req.baseUrl) || 'https://api.anthropic.com'
+    return {
+      url: `${base}/v1/messages`,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': String(req.apiKey ?? '').trim(),
+        'anthropic-version': '2023-06-01',
+      },
+      body: buildAnthropicBody(part, stream),
+    }
+  }
+  if (style === 'gemini') {
+    const base = normalizeBase(req.baseUrl) || 'https://generativelanguage.googleapis.com/v1beta'
+    const method = stream ? 'streamGenerateContent?alt=sse' : 'generateContent'
+    // API key por cabecera (no en la URL: evita que quede en logs/proxies).
+    return {
+      url: `${base}/models/${encodeURIComponent(req.model)}:${method}`,
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': String(req.apiKey ?? '').trim() },
+      body: buildGeminiBody(part),
+    }
+  }
+  if (style === 'ollama') {
+    return {
+      url: `${normalizeBase(req.baseUrl)}/api/chat`,
+      headers: { 'Content-Type': 'application/json' },
+      body: buildOllamaBody(part, stream),
+    }
+  }
   const base = openAiBase(req.baseUrl, req.kind, req.custom)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   applyAuthHeaders(headers, req.apiKey, req.kind, req.custom)
-
   const chatPath = req.custom?.chatPath?.trim() || '/chat/completions'
-  let res: Response
-  try {
-    res = await fetchWithTimeout(joinUrl(base, chatPath), {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model: req.model,
-        messages: req.messages,
-        temperature: req.temperature ?? 0.4,
-        max_tokens: req.maxTokens ?? 2048,
-        stream: false,
-      }),
-    })
-  } catch (err) {
-    return classifyFetchError(err, req.kind)
-  }
+  return { url: joinUrl(base, chatPath), headers, body: buildOpenAiBody(part, stream) }
+}
 
-  const text = await res.text()
-  if (!res.ok) return mapHttpStatus(res.status, text, req.kind)
+function emptyMessage(style: StreamStyle): string {
+  if (style === 'anthropic') return 'Claude devolvió una respuesta vacía.'
+  if (style === 'gemini') return 'Gemini devolvió una respuesta vacía.'
+  if (style === 'ollama') return 'Ollama devolvió una respuesta vacía.'
+  return 'El modelo devolvió una respuesta vacía.'
+}
 
-  let data: {
-    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>
-    error?: { message?: string; type?: string; statusCode?: number }
-  }
+/** Interpreta el cuerpo JSON (no streaming) de cada proveedor. Exportado para tests. */
+export function parseProviderResponse(style: StreamStyle, kind: AiProviderKind, text: string, model: string): AiChatResult {
+  let data: Record<string, any>
   try {
     data = JSON.parse(text)
   } catch {
-    return fail('Respuesta no JSON del proveedor.', 'provider_error', req.kind)
+    return fail('Respuesta no JSON del proveedor.', 'provider_error', kind)
   }
-
-  if (data.error?.message) {
+  if (style === 'openai' && data.error?.message) {
     const errType = String(data.error.type ?? '')
     const code: AiErrorCode =
       errType.includes('service_unavailable') || data.error.statusCode === 503
@@ -352,204 +494,202 @@ async function chatOpenAiCompatible(req: AiChatRequest): Promise<AiChatResult> {
         : errType.includes('rate_limit') || data.error.statusCode === 429
           ? 'rate_limit'
           : 'provider_error'
-    return fail(data.error.message, code, req.kind)
+    return fail(data.error.message, code, kind)
   }
-
-  const raw = data.choices?.[0]?.message?.content
-  let content = ''
-  if (typeof raw === 'string') content = raw
-  else if (Array.isArray(raw)) content = raw.map((p) => p.text ?? '').join('')
-
-  if (!content.trim()) return fail('El modelo devolvió una respuesta vacía.', 'empty_response', req.kind)
-  return { success: true, content, model: req.model, provider: req.kind }
+  if (style !== 'openai' && data.error) {
+    return fail(typeof data.error === 'string' ? data.error : String(data.error.message ?? 'Error del proveedor'), 'provider_error', kind)
+  }
+  const parsed =
+    style === 'anthropic'
+      ? parseAnthropicContent(data.content)
+      : style === 'gemini'
+        ? parseGeminiParts(data.candidates?.[0]?.content?.parts)
+        : style === 'ollama'
+          ? parseOllamaMessage(data.message ?? { content: data.response })
+          : parseOpenAiMessage(data.choices?.[0]?.message)
+  if (!parsed.content.trim() && !parsed.toolCalls.length) return fail(emptyMessage(style), 'empty_response', kind)
+  return {
+    success: true,
+    content: parsed.content,
+    ...(parsed.toolCalls.length ? { toolCalls: parsed.toolCalls } : {}),
+    model,
+    provider: kind,
+  }
 }
 
-async function chatAnthropic(req: AiChatRequest): Promise<AiChatResult> {
-  const base = normalizeBase(req.baseUrl) || 'https://api.anthropic.com'
-  const systemParts = req.messages.filter((m) => m.role === 'system').map((m) => m.content)
-  const messages = req.messages
-    .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
-
-  if (messages.length === 0) {
+async function chatHttp(req: AiChatRequest, onDelta?: (text: string) => void): Promise<AiChatResult> {
+  const style = resolveApiStyle(req)
+  if (!style) return fail(`Proveedor no soportado: ${req.kind}`, 'bad_request', req.kind)
+  if (style === 'anthropic' && !String(req.apiKey ?? '').trim()) {
+    return fail('Anthropic requiere API key.', 'missing_api_key', req.kind)
+  }
+  if (style === 'anthropic' && !req.messages.some((m) => m.role !== 'system')) {
     return fail('Anthropic requiere al menos un mensaje user/assistant.', 'bad_request', req.kind)
   }
-
-  let res: Response
-  try {
-    res = await fetchWithTimeout(`${base}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': req.apiKey!.trim(),
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: req.model,
-        max_tokens: req.maxTokens ?? 2048,
-        temperature: req.temperature ?? 0.4,
-        system: systemParts.length ? systemParts.join('\n\n') : undefined,
-        messages,
-      }),
-    })
-  } catch (err) {
-    return classifyFetchError(err, req.kind)
-  }
-
-  const text = await res.text()
-  if (!res.ok) return mapHttpStatus(res.status, text, req.kind)
-
-  let data: { content?: Array<{ type?: string; text?: string }>; error?: { message?: string } }
-  try {
-    data = JSON.parse(text)
-  } catch {
-    return fail('Respuesta no JSON de Anthropic.', 'provider_error', req.kind)
-  }
-  if (data.error?.message) return fail(data.error.message, 'provider_error', req.kind)
-
-  const content = (data.content ?? [])
-    .filter((b) => b.type === 'text' || !!b.text)
-    .map((b) => b.text ?? '')
-    .join('')
-
-  if (!content.trim()) return fail('Claude devolvió una respuesta vacía.', 'empty_response', req.kind)
-  return { success: true, content, model: req.model, provider: req.kind }
-}
-
-async function chatGemini(req: AiChatRequest): Promise<AiChatResult> {
-  const base = normalizeBase(req.baseUrl) || 'https://generativelanguage.googleapis.com/v1beta'
-  const key = req.apiKey!.trim()
-  const system = req.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n')
-  const contents = req.messages
-    .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .map((m) => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    }))
-
-  if (contents.length === 0) {
+  if (style === 'gemini' && !req.messages.some((m) => m.role !== 'system')) {
     return fail('Gemini requiere al menos un mensaje de usuario.', 'bad_request', req.kind)
   }
-
-  const url = `${base}/models/${encodeURIComponent(req.model)}:generateContent?key=${encodeURIComponent(key)}`
+  const sentTools = shouldSendTools(req)
+  const target = buildProviderRequest(req, { stream: Boolean(onDelta) })
   let res: Response
   try {
-    res = await fetchWithTimeout(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: system ? { parts: [{ text: system }] } : undefined,
-        contents,
-        generationConfig: {
-          temperature: req.temperature ?? 0.4,
-          maxOutputTokens: req.maxTokens ?? 2048,
-        },
-      }),
-    })
+    res = await fetchWithTimeout(target.url, { method: 'POST', headers: target.headers, body: JSON.stringify(target.body) })
   } catch (err) {
     return classifyFetchError(err, req.kind)
   }
-
-  const text = await res.text()
-  if (!res.ok) return mapHttpStatus(res.status, text, req.kind)
-
-  let data: {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
-    error?: { message?: string }
+  if (!res.ok) {
+    const text = await res.text()
+    if (sentTools && isToolsUnsupportedError(res.status, text)) return toolsUnsupported(req, extractProviderMessage(text))
+    return mapHttpStatus(res.status, text, req.kind)
   }
-  try {
-    data = JSON.parse(text)
-  } catch {
-    return fail('Respuesta no JSON de Gemini.', 'provider_error', req.kind)
+  if (!onDelta || !res.body) {
+    return parseProviderResponse(style, req.kind, await res.text(), req.model)
   }
-  if (data.error?.message) return fail(data.error.message, 'provider_error', req.kind)
-
-  const content = (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('')
-  if (!content.trim()) return fail('Gemini devolvió una respuesta vacía.', 'empty_response', req.kind)
-  return { success: true, content, model: req.model, provider: req.kind }
-}
-
-async function chatOllama(req: AiChatRequest): Promise<AiChatResult> {
-  const base = normalizeBase(req.baseUrl)
-  let res: Response
+  const acc = createStreamAccumulator(style)
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
   try {
-    res = await fetchWithTimeout(`${base}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: req.model,
-        messages: req.messages,
-        stream: false,
-        options: typeof req.temperature === 'number' ? { temperature: req.temperature } : undefined,
-      }),
-    })
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      const delta = acc.push(decoder.decode(value, { stream: true }))
+      if (delta) onDelta(delta)
+    }
   } catch (err) {
     return classifyFetchError(err, req.kind)
   }
-
-  const text = await res.text()
-  if (!res.ok) return mapHttpStatus(res.status, text, req.kind)
-
-  let data: { message?: { content?: string }; response?: string; error?: string }
-  try {
-    data = JSON.parse(text)
-  } catch {
-    return fail('Respuesta no JSON de Ollama.', 'provider_error', req.kind)
+  const out = acc.finish()
+  if (out.error) return fail(out.error, 'provider_error', req.kind)
+  if (!out.content.trim() && !out.toolCalls.length) return fail(emptyMessage(style), 'empty_response', req.kind)
+  return {
+    success: true,
+    content: out.content,
+    ...(out.toolCalls.length ? { toolCalls: out.toolCalls } : {}),
+    model: req.model,
+    provider: req.kind,
   }
-  if (data.error) return fail(String(data.error), 'provider_error', req.kind)
-
-  const content = data.message?.content ?? data.response ?? ''
-  if (!String(content).trim()) return fail('Ollama devolvió una respuesta vacía.', 'empty_response', req.kind)
-  return { success: true, content: String(content), model: req.model, provider: req.kind }
 }
 
-export async function aiChat(req: AiChatRequest): Promise<AiChatResult> {
+/** Mock por perfil (sin guion de entorno): cada perfil tiene su propio reproductor vacío. */
+const profileMock = createMockPlayer({ responses: [], fallback: { content: 'Respuesta mock (sin guion: define JASWAVE_AI_MOCK).' } })
+
+function chatMock(req: AiChatRequest, onDelta?: (text: string) => void): AiChatResult {
+  let player
+  try {
+    player = envMockPlayer() ?? profileMock
+  } catch (err) {
+    return fail(`Guion mock ilegible: ${err instanceof Error ? err.message : String(err)}`, 'bad_request', 'mock')
+  }
+  const r = player.next({
+    messages: req.messages,
+    hasTools: Boolean(req.tools?.length),
+    purpose: req.meta?.purpose,
+    role: req.meta?.role,
+  })
+  if (r.toolsUnsupported) return fail(r.error ?? 'tools no soportadas', 'bad_request', 'mock', { toolsUnsupported: true })
+  if (!r.success) return fail(r.error ?? 'mock', (r.errorCode as AiErrorCode) || 'provider_error', 'mock')
+  if (r.content && onDelta) onDelta(r.content)
+  return {
+    success: true,
+    content: r.content ?? '',
+    ...(r.toolCalls?.length ? { toolCalls: r.toolCalls } : {}),
+    model: req.model || 'mock',
+    provider: 'mock',
+  }
+}
+
+async function runQueued(
+  req: AiChatRequest,
+  body: (signal: AbortSignal) => Promise<AiChatResult>,
+): Promise<AiChatResult> {
   const invalid = validateRequest(req)
   if (invalid) return invalid
 
+  const controller = new AbortController()
+  if (req.requestId) chatControllers.set(req.requestId, controller)
+  const cancelled = () => fail('Solicitud cancelada.', 'cancelled', req.kind)
+
   let result!: AiChatResult
   const run = async () => {
-    const gap = minGapBetweenChatsMs(req.kind)
+    if (controller.signal.aborted) {
+      result = cancelled()
+      return
+    }
+    const gap = isMockRequest(req) ? 0 : minGapBetweenChatsMs(req.kind)
     if (gap > 0) {
       const wait = Math.max(0, lastChatFinishedAt + gap - Date.now())
       if (wait > 0) await sleep(wait)
     }
-    result = await aiChatWithRetry(req)
-    lastChatFinishedAt = Date.now()
+    activeChatSignal = controller.signal
+    try {
+      result = await body(controller.signal)
+      if (controller.signal.aborted) result = cancelled()
+    } finally {
+      activeChatSignal = null
+      lastChatFinishedAt = Date.now()
+    }
   }
-  chatQueue = chatQueue.then(run, run)
-  await chatQueue
-  return result
+  try {
+    chatQueue = chatQueue.then(run, run)
+    await chatQueue
+    return result
+  } finally {
+    if (req.requestId) chatControllers.delete(req.requestId)
+  }
 }
 
-async function aiChatWithRetry(req: AiChatRequest): Promise<AiChatResult> {
+export async function aiChat(req: AiChatRequest): Promise<AiChatResult> {
+  return runQueued(req, (signal) => aiChatWithRetry(req, signal))
+}
+
+/**
+ * Chat con streaming de texto: `onDelta` recibe cada trozo. Reintenta solo si el fallo ocurrió
+ * antes del primer delta (un stream a medias no se repite para no duplicar texto).
+ */
+export async function aiChatStream(req: AiChatRequest, onDelta: (text: string) => void): Promise<AiChatResult> {
+  return runQueued(req, (signal) => {
+    let any = false
+    return aiChatWithRetry(req, signal, (t) => {
+      any = true
+      onDelta(t)
+    }, () => any)
+  })
+}
+
+async function aiChatWithRetry(
+  req: AiChatRequest,
+  signal?: AbortSignal,
+  onDelta?: (text: string) => void,
+  streamedSomething?: () => boolean,
+): Promise<AiChatResult> {
   let last: AiChatResult = fail('Sin respuesta del proveedor.', 'unknown', req.kind)
+  let attempts = 0
   for (let attempt = 0; attempt <= MAX_CHAT_RETRIES; attempt++) {
-    last = await aiChatOnce(req)
-    if (last.success) return last
-    if (!isRetriableErrorCode(last.errorCode) || attempt === MAX_CHAT_RETRIES) return last
+    if (signal?.aborted) return { ...last, httpAttempts: attempts }
+    attempts += 1
+    last = await aiChatOnce(req, onDelta)
+    if (last.success || signal?.aborted || last.toolsUnsupported) return { ...last, httpAttempts: attempts }
+    if (streamedSomething?.()) return { ...last, httpAttempts: attempts }
+    if (!isRetriableErrorCode(last.errorCode) || attempt === MAX_CHAT_RETRIES) return { ...last, httpAttempts: attempts }
     const delay = RETRY_BASE_MS * 2 ** attempt + Math.floor(Math.random() * 500)
     await sleep(delay)
   }
-  return last
+  return { ...last, httpAttempts: attempts }
 }
 
-async function aiChatOnce(req: AiChatRequest): Promise<AiChatResult> {
-  const style = req.custom?.apiStyle
+async function aiChatOnce(req: AiChatRequest, onDelta?: (text: string) => void): Promise<AiChatResult> {
   try {
-    if (style === 'ollama' || (!style && req.kind === 'ollama')) return await chatOllama(req)
-    if (style === 'anthropic' || (!style && req.kind === 'anthropic')) return await chatAnthropic(req)
-    if (style === 'gemini' || (!style && req.kind === 'gemini')) return await chatGemini(req)
-    if (style === 'openai' || (!style && isOpenAiCompatible(req.kind))) return await chatOpenAiCompatible(req)
-    if (req.kind === 'ollama') return await chatOllama(req)
-    if (req.kind === 'anthropic') return await chatAnthropic(req)
-    if (req.kind === 'gemini') return await chatGemini(req)
-    if (isOpenAiCompatible(req.kind)) return await chatOpenAiCompatible(req)
-    return fail(`Proveedor no soportado: ${req.kind}`, 'bad_request', req.kind)
+    if (isMockRequest(req)) return chatMock(req, onDelta)
+    if (req.tools?.length && !shouldSendTools(req)) {
+      // El modelo no tiene tools nativas: el cliente reintenta con marcadores (sin gastar HTTP).
+      return toolsUnsupported(req, `${req.kind} · ${req.model}`)
+    }
+    return await chatHttp(req, onDelta)
   } catch (err) {
     return classifyFetchError(err, req.kind)
   }
 }
+
 
 async function healthOpenAi(req: AiHealthRequest): Promise<AiHealthResult> {
   if (needsKey(req.kind, req.custom) && !req.apiKey?.trim()) {
@@ -631,9 +771,9 @@ async function healthGemini(req: AiHealthRequest): Promise<AiHealthResult> {
     return healthFail('Gemini requiere API key.', 'missing_api_key', req.kind, 'misconfigured')
   }
   const base = normalizeBase(req.baseUrl) || 'https://generativelanguage.googleapis.com/v1beta'
-  const url = `${base}/models?key=${encodeURIComponent(req.apiKey.trim())}`
+  const url = `${base}/models`
   try {
-    const res = await fetchWithTimeout(url, { method: 'GET' }, 20_000)
+    const res = await fetchWithTimeout(url, { method: 'GET', headers: { 'x-goog-api-key': req.apiKey.trim() } }, 20_000)
     const text = await res.text()
     if (!res.ok) {
       const mapped = mapHttpStatus(res.status, text, req.kind)
@@ -671,8 +811,14 @@ async function healthOllama(req: AiHealthRequest): Promise<AiHealthResult> {
 
 export async function aiHealth(req: AiHealthRequest): Promise<AiHealthResult> {
   if (!req.kind) return healthFail('Falta el tipo de proveedor.', 'bad_request', 'openai-compatible', 'misconfigured')
+  if (isMockRequest(req)) {
+    return { status: 'healthy', models: ['mock'], baseUrl: req.baseUrl, provider: 'mock', hint: 'Proveedor mock (guion determinista).' }
+  }
   if (!normalizeBase(req.baseUrl)) {
     return healthFail('Falta la URL base.', 'missing_base_url', req.kind, 'misconfigured')
+  }
+  if (!isAllowedProviderUrl(req.baseUrl)) {
+    return healthFail('La URL base debe ser http(s).', 'missing_base_url', req.kind, 'misconfigured')
   }
   const style = req.custom?.apiStyle
   try {

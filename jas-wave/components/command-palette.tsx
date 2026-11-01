@@ -3,6 +3,7 @@ import { Command, ArrowRight } from 'lucide-react'
 import { useDAW, useDAWState } from '../src/context/daw-context'
 import type { DAWState } from '../../shared/src'
 import { getActionSystemFromWindow } from '@/hooks/use-shortcut-dispatcher'
+import { VoiceDictationButton } from './ui/voice-dictation-button'
 
 interface PaletteCommand {
   id: string
@@ -200,9 +201,18 @@ export function CommandPalette() {
                   setSelectedIndex(0)
                 }}
                 onKeyDown={handleKeyDown}
-                placeholder="Escribe un comando…"
+                placeholder="Escribe un comando… (Alt+V para dictar)"
                 className="flex-1 bg-transparent text-[14px] text-foreground outline-none placeholder:text-muted-foreground"
                 spellCheck={false}
+              />
+              {/* G7: dictar el comando; filtra la lista en tiempo real igual que al teclear. */}
+              <VoiceDictationButton
+                value={query}
+                onChange={(texto) => {
+                  setQuery(texto)
+                  setSelectedIndex(0)
+                }}
+                targetRef={inputRef}
               />
               <kbd className="rounded border border-border bg-panel-raised px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
                 esc

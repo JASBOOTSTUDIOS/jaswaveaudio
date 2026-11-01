@@ -9,6 +9,8 @@ import {
 } from 'react'
 import {
   DEFAULT_WORKSPACE,
+  EVENTO_HERRAMIENTAS,
+  reconciliarLayout,
   loadWorkspace,
   saveWorkspace,
   TOOL_CATALOG,
@@ -16,6 +18,7 @@ import {
   type ToolId,
   type WorkspaceLayout,
 } from './types'
+import { restablecerAvisosEspacio } from './space-guard'
 import { useDAW } from '@/src/context/daw-context'
 import { resolvePianoRollClip } from '@/src/lib/selection-helpers'
 
@@ -26,6 +29,10 @@ type WorkspaceContextValue = {
   toggleZone: (zone: DockZone) => void
   undockTool: (toolId: ToolId) => Promise<void>
   dockTool: (toolId: ToolId, zone?: DockZone) => void
+  closeTool: (toolId: ToolId) => void
+  openTool: (toolId: ToolId, zone?: DockZone) => void
+  toggleTool: (toolId: ToolId) => void
+  isToolOpen: (toolId: ToolId) => boolean
   isUndocked: (toolId: ToolId) => boolean
   toolsInZone: (zone: DockZone) => ToolId[]
   resetLayout: () => void
@@ -55,10 +62,21 @@ function stripTool(layout: WorkspaceLayout, toolId: ToolId): WorkspaceLayout {
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const daw = useDAW()
   const [layout, setLayout] = useState<WorkspaceLayout>(() => loadWorkspace())
+  // Cambia cuando un módulo añade o quita herramientas (catálogo dinámico).
+  const [versionCatalogo, setVersionCatalogo] = useState(0)
 
   useEffect(() => {
     saveWorkspace(layout)
   }, [layout])
+
+  useEffect(() => {
+    const al = () => {
+      setVersionCatalogo((v) => v + 1)
+      setLayout((prev) => reconciliarLayout(prev))
+    }
+    window.addEventListener(EVENTO_HERRAMIENTAS, al)
+    return () => window.removeEventListener(EVENTO_HERRAMIENTAS, al)
+  }, [])
 
   useEffect(() => {
     const api = window.electron as typeof window.electron & {
@@ -160,6 +178,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         zones: { ...next.zones, [toZone]: list },
         activeTab: { ...next.activeTab, [toZone]: toolId },
         zoneVisible: { ...next.zoneVisible, [toZone]: true },
+        closed: (next.closed ?? []).filter((id) => id !== toolId),
       }
       return next
     })
@@ -170,6 +189,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       ...prev,
       activeTab: { ...prev.activeTab, [zone]: toolId },
       zoneVisible: { ...prev.zoneVisible, [zone]: true },
+      closed: (prev.closed ?? []).filter((id) => id !== toolId),
     }))
   }, [])
 
@@ -180,6 +200,82 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       zoneVisible: { ...prev.zoneVisible, [zone]: !prev.zoneVisible[zone] },
     }))
   }, [])
+
+  const closeTool = useCallback((toolId: ToolId) => {
+    if (!(toolId in TOOL_CATALOG)) return
+    // Arrange siempre puede cerrarse, pero no lo sacamos del catálogo.
+    setLayout((prev) => {
+      const cleaned = stripTool(prev, toolId)
+      const closed = cleaned.closed ?? []
+      return {
+        ...cleaned,
+        closed: closed.includes(toolId) ? closed : [...closed, toolId],
+        undocked: cleaned.undocked.filter((id) => id !== toolId),
+      }
+    })
+    const api = window.electron as typeof window.electron & {
+      closeToolWindow?: (toolId: string) => Promise<void>
+    }
+    void api?.closeToolWindow?.(toolId)
+  }, [])
+
+  const openTool = useCallback((toolId: ToolId, zone?: DockZone) => {
+    if (!(toolId in TOOL_CATALOG)) return
+    const target = zone ?? TOOL_CATALOG[toolId].defaultZone
+    setLayout((prev) => {
+      if (prev.undocked.includes(toolId)) {
+        // Ya flotando: solo quitar de closed; dockTool se encarga si hace falta
+        return {
+          ...prev,
+          closed: (prev.closed ?? []).filter((id) => id !== toolId),
+          zoneVisible: { ...prev.zoneVisible, [target]: true },
+        }
+      }
+      const already =
+        prev.zones.left.includes(toolId) ||
+        prev.zones.center.includes(toolId) ||
+        prev.zones.right.includes(toolId) ||
+        prev.zones.bottom.includes(toolId)
+      if (already) {
+        let found: DockZone = target
+        for (const z of ['left', 'center', 'right', 'bottom'] as DockZone[]) {
+          if (prev.zones[z].includes(toolId)) {
+            found = z
+            break
+          }
+        }
+        return {
+          ...prev,
+          closed: (prev.closed ?? []).filter((id) => id !== toolId),
+          activeTab: { ...prev.activeTab, [found]: toolId },
+          zoneVisible: { ...prev.zoneVisible, [found]: true },
+        }
+      }
+      const cleaned = stripTool(prev, toolId)
+      return {
+        ...cleaned,
+        zones: {
+          ...cleaned.zones,
+          [target]: [...cleaned.zones[target], toolId],
+        },
+        activeTab: { ...cleaned.activeTab, [target]: toolId },
+        zoneVisible: { ...cleaned.zoneVisible, [target]: true },
+        closed: (cleaned.closed ?? []).filter((id) => id !== toolId),
+      }
+    })
+  }, [])
+
+  const isToolOpen = useCallback(
+    (toolId: ToolId) => {
+      if (layout.undocked.includes(toolId)) return true
+      if ((layout.closed ?? []).includes(toolId)) return false
+      for (const z of ['left', 'center', 'right', 'bottom'] as DockZone[]) {
+        if (layout.zones[z].includes(toolId)) return true
+      }
+      return false
+    },
+    [layout],
+  )
 
   const undockTool = useCallback(async (toolId: ToolId) => {
     // Publicar estado YA (antes de abrir satélite) para que el panel flotante no arranque vacío.
@@ -222,7 +318,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`
       window.open(url, `jaswave-${toolId}`, 'width=900,height=700')
     } else {
-      await api.openToolWindow(toolId, title, extra)
+      // Si la ventana no se pudo crear (IPC rechazado, renderer sin cargar) el panel debe
+      // quedarse acoplado: antes el rechazo escapaba sin capturar y el layout marcaba la
+      // herramienta como flotante sin ventana (panel "perdido").
+      try {
+        const res = await api.openToolWindow(toolId, title, extra)
+        if (res && res.success === false) return
+      } catch (err) {
+        console.warn('[workspace] no se pudo abrir la ventana flotante', toolId, err)
+        return
+      }
     }
     setLayout((prev) => {
       let next = stripTool(prev, toolId)
@@ -256,6 +361,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         activeTab: { ...cleaned.activeTab, [target]: toolId },
         zoneVisible: { ...cleaned.zoneVisible, [target]: true },
         undocked: cleaned.undocked.filter((id) => id !== toolId),
+        closed: (cleaned.closed ?? []).filter((id) => id !== toolId),
       }
     })
     const api = window.electron as typeof window.electron & {
@@ -264,18 +370,33 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     void api?.closeToolWindow?.(toolId)
   }, [])
 
+  const toggleTool = useCallback(
+    (toolId: ToolId) => {
+      if (layout.undocked.includes(toolId)) {
+        dockTool(toolId)
+        return
+      }
+      if (isToolOpen(toolId)) closeTool(toolId)
+      else openTool(toolId)
+    },
+    [closeTool, dockTool, isToolOpen, layout.undocked, openTool],
+  )
+
   const isUndocked = useCallback(
     (toolId: ToolId) => layout.undocked.includes(toolId),
     [layout.undocked],
   )
 
+  // Solo las herramientas del catálogo: las de módulos aún no cargados siguen en el layout, ocultas.
   const toolsInZone = useCallback(
-    (zone: DockZone) => layout.zones[zone].filter((id) => !layout.undocked.includes(id)),
-    [layout],
+    (zone: DockZone) => layout.zones[zone].filter((id) => id in TOOL_CATALOG && !layout.undocked.includes(id)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layout, versionCatalogo],
   )
 
   const resetLayout = useCallback(() => {
     setLayout(structuredClone(DEFAULT_WORKSPACE))
+    restablecerAvisosEspacio()
   }, [])
 
   const value = useMemo(
@@ -286,11 +407,29 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       toggleZone,
       undockTool,
       dockTool,
+      closeTool,
+      openTool,
+      toggleTool,
+      isToolOpen,
       isUndocked,
       toolsInZone,
       resetLayout,
     }),
-    [layout, moveTool, setActiveTab, toggleZone, undockTool, dockTool, isUndocked, toolsInZone, resetLayout],
+    [
+      layout,
+      moveTool,
+      setActiveTab,
+      toggleZone,
+      undockTool,
+      dockTool,
+      closeTool,
+      openTool,
+      toggleTool,
+      isToolOpen,
+      isUndocked,
+      toolsInZone,
+      resetLayout,
+    ],
   )
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
@@ -302,6 +441,16 @@ export function useWorkspace() {
   return ctx
 }
 
+/** Como {@link useWorkspace}, pero null fuera del proveedor (ventanas flotantes, pruebas). */
+export function useWorkspaceOptional() {
+  return useContext(WorkspaceContext)
+}
+
+/** Id de herramienta bien formado (del núcleo o de un módulo). */
+export function esIdHerramientaValido(id: string): boolean {
+  return /^[a-z0-9][a-z0-9.-]{0,80}$/.test(id)
+}
+
 export function getUndockToolIdFromUrl(): ToolId | null {
   try {
     const params = new URLSearchParams(window.location.search)
@@ -309,7 +458,8 @@ export function getUndockToolIdFromUrl(): ToolId | null {
     const fromQuery = params.get('undock')
     const fromHash = hash.startsWith('undock/') ? hash.slice('undock/'.length) : null
     const id = (fromQuery || fromHash) as ToolId | null
-    if (id && id in TOOL_CATALOG) return id
+    // Las herramientas de módulos se registran después de arrancar: basta con que el id sea válido.
+    if (id && esIdHerramientaValido(id)) return id
   } catch {
     /* ignore */
   }

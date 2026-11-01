@@ -121,17 +121,16 @@ describe('resolveAtMentions', () => {
 })
 
 describe('fallbackActionsFromUserIntent', () => {
-  it('aplica clip a la pista MIDI seleccionada, no inventa C menor', () => {
+  it('no inventa generateMidiSong ni musicBuild (decisiones creativas van al modelo)', () => {
     const st = miniState('t-midi')
     const actions = fallbackActionsFromUserIntent(USER, st)
-    const gen = actions.find((a) => a.type === 'daw.generateMidiSong')
-    assert.ok(gen)
-    assert.equal(gen!.payload?.pistaId, 't-midi')
-    assert.equal(gen!.payload?.aplicar, true)
-    assert.equal(gen!.payload?.keyRoot, 54)
-    assert.deepEqual(gen!.payload?.progresion, [6, 4, 1, 3])
-    assert.equal(gen!.payload?.articulacion, 'strum')
-    assert.equal(gen!.payload?.minutos, 2)
+    assert.ok(!actions.some((a) => a.type === 'daw.generateMidiSong' || a.type === 'daw.musicBuild'))
+  })
+
+  it('BPM explícito sigue siendo determinista', () => {
+    const actions = fallbackActionsFromUserIntent('pon BPM a 120')
+    const bpm = actions.find((a) => a.type === 'project.setBpm')
+    assert.equal(bpm?.payload?.bpm, 120)
   })
 })
 
@@ -150,7 +149,7 @@ describe('modos y @', () => {
     )
   })
 
-  it('refinar canción (más lenta / sublime) → create + musicBuild/BPM', () => {
+  it('refinar canción (más lenta / sublime) → create + BPM sin inventar musicBuild', () => {
     const prompt =
       'ahora necesito que me hagas esta cancion mas sublime, mas lenta, esta muy rapida'
     assert.equal(detectAgentMode(prompt), 'create')
@@ -158,7 +157,7 @@ describe('modos y @', () => {
     assert.equal(wantsFullProject(prompt), true)
     const actions = fallbackActionsFromUserIntent(prompt, undefined, 'auto')
     assert.ok(actions.some((a) => a.type === 'project.setBpm'))
-    assert.ok(actions.some((a) => a.type === 'daw.musicBuild'))
+    assert.equal(actions.some((a) => a.type === 'daw.musicBuild'), false)
     const bpm = actions.find((a) => a.type === 'project.setBpm')!.payload!.bpm as number
     assert.ok(bpm < 100, `BPM debería ser lento, got ${bpm}`)
   })

@@ -3,7 +3,7 @@
 export const JASWAVE_MIX_MAGIC = 0x4a575354
 export const JASWAVE_MIX_DAW_BUS = 0xffff
 
-/** Header 8 bytes + interleaved f32le stereo. Devuelve bytes listos para IPC. */
+/** @deprecated Legacy JWST pipe — bounce usa clip_player nativo. */
 export function encodeStemPacket(trackIndex: number, interleaved: Float32Array): Uint8Array {
   const frames = interleaved.length >> 1
   const u8 = new Uint8Array(8 + interleaved.byteLength)
@@ -17,12 +17,13 @@ export function encodeStemPacket(trackIndex: number, interleaved: Float32Array):
 
 export type GraphSend = { destStem: number; amount: number; preFader?: boolean }
 
-export type GraphSidechain = { srcStem: number; amount: number }
+export type GraphSidechain = { srcStem: number; amount: number; destSlotId?: string }
 
 /**
  * encoding Reaper graph:
- *   `idx~gain~pan~muted|slot:i:0,slot:e:1#dest:amt+dest2:amt2;...||masterSlot:e:0`
- * Sends opcionales tras `#` (post-fader, sample-accurate en renderMix).
+ *   `idx~gain~pan~muted[~padre]|slot:i:0,slot:e:1#dest:amt+dest2:amt2;...||masterSlot:e:0`
+ * Sends opcionales tras `#` (post-fader; entran por la cadena del bus destino).
+ * `~padre` (opcional): stem de la carpeta-bus a la que va la salida de la pista en lugar del master.
  */
 export function encodeTrackGraph(params: {
   tracks: Array<{
@@ -30,6 +31,8 @@ export function encodeTrackGraph(params: {
     gain: number
     pan: number
     muted: boolean
+    /** Stem de la carpeta-bus madre (undefined = al master). */
+    parentStem?: number
     slots: Array<{ slotId: string; instrument: boolean; bypass: boolean }>
     sends?: GraphSend[]
     sidechains?: GraphSidechain[]
@@ -51,13 +54,20 @@ export function encodeTrackGraph(params: {
       t.sidechains && t.sidechains.length > 0
         ? `$${t.sidechains
             .filter((s) => s.amount > 0 && Number.isFinite(s.srcStem))
-            .map((s) => `${s.srcStem}:${s.amount}`)
+            .map((s) =>
+              s.destSlotId ? `${s.srcStem}:${s.amount}@${s.destSlotId}` : `${s.srcStem}:${s.amount}`,
+            )
             .join('+')}`
         : ''
-    return `${t.stemIndex}~${t.gain}~${t.pan}~${t.muted ? '1' : '0'}|${slots}${sends}${sidechains}`
+    const padre = t.parentStem != null && t.parentStem >= 0 && t.parentStem !== t.stemIndex ? `~${t.parentStem}` : ''
+    return `${t.stemIndex}~${t.gain}~${t.pan}~${t.muted ? '1' : '0'}${padre}|${slots}${sends}${sidechains}`
   })
   const master = params.master
     .map((s) => `${s.slotId}:${s.instrument ? 'i' : 'e'}:${s.bypass ? '1' : '0'}`)
     .join(',')
-  return `${trackParts.join(';')}||${master}`
+  const body = trackParts.join(';')
+  // Si el último track no tiene slots (p. ej. pista de audio) termina en "|" y, pegado a "||",
+  // el host partía en ese "||" y descartaba el track (grafo vacío → audio en silencio).
+  // Un ";" vacío separa sin cambiar el formato (el host ignora segmentos sin "|").
+  return `${body}${body.endsWith('|') ? ';' : ''}||${master}`
 }

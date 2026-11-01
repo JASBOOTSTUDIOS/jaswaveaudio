@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": {
+      "@jaswave/host-sdk": [
+        "../../sdk/host-sdk/src/index.ts"
+      ],
+      "@jaswave/host-sdk/*": [
+        "../../sdk/host-sdk/src/*"
+      ],
+      "@/*": [
+        "../../sdk/host-sdk/../../../jas-wave/*"
+      ],
+      "@jaswave/ai-harness": [
+        "../../sdk/host-sdk/../../../ai-harness/src/index.ts"
+      ],
+      "@jaswave/shared": [
+        "../../sdk/host-sdk/../../../shared/src/index.ts"
+      ],
+      "vexflow-bravura-font": [
+        "../../node_modules/vexflow/build/esm/src/fonts/bravura.js"
+      ]
+    }
+  }
+}

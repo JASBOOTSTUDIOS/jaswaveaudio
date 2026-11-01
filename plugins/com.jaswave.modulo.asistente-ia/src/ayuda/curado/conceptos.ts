@@ -1,0 +1,418 @@
+import type { FichaAyuda } from '@jaswave/host-sdk'
+
+/**
+ * Fichas CURADAS de conceptos, explicados desde cero.
+ * Fuentes: docs/GLOSARIO.md, docs/manual-usuario/14-conceptos-para-principiantes.md y el código.
+ * Solo se afirma lo verificado; lo que depende de la versión se dice con cautela.
+ */
+
+type Def = {
+  slug: string
+  titulo: string
+  /** Definición en una frase. */
+  def: string
+  /** Para qué sirve. */
+  sirve: string
+  /** Ejemplo cotidiano. */
+  ejemplo: string
+  /** Dónde se toca en el DAW. */
+  donde: string
+  errores: string[]
+  relacionadas: string[]
+  etiquetas?: string[]
+  nivel?: 'principiante' | 'intermedio' | 'experto'
+}
+
+const concepto = (d: Def): FichaAyuda => ({
+  id: `concepto:${d.slug}`,
+  tipo: 'concepto',
+  titulo: d.titulo,
+  resumen: `${d.def} ${d.sirve} Ejemplo: ${d.ejemplo}`,
+  nivel: d.nivel ?? 'principiante',
+  pasos: [`Dónde se toca: ${d.donde}`, ...d.errores.map((e) => `Error típico: ${e}`)],
+  relacionadas: d.relacionadas,
+  etiquetas: d.etiquetas,
+  fuente: 'curada',
+})
+
+export const fichasConceptos: readonly FichaAyuda[] = [
+  concepto({
+    slug: 'pista',
+    titulo: 'Pista',
+    def: 'Una pista es un carril de la canción para un instrumento, una voz o un grupo de ellos.',
+    sirve: 'Cada pista tiene su propio volumen, paneo y efectos, así puedes tratar cada sonido por separado.',
+    ejemplo: 'como los carriles de una piscina: la batería nada en uno, el bajo en otro y la voz en otro, y cada uno se puede subir o bajar sin molestar a los demás.',
+    donde: 'las pistas se ven en el Arrange; su volumen y paneo están en el Mixer; sus propiedades, en el Inspector.',
+    errores: [
+      'Grabar sin armar la pista: si no la armas (Arm), no entra nada.',
+      'Poner todos los instrumentos en la misma pista; luego no puedes mezclarlos por separado.',
+      'Crear una pista de audio cuando querías MIDI (o al revés): una pista MIDI necesita un instrumento para sonar.',
+    ],
+    relacionadas: ['panel:arrange', 'panel:mixer', 'panel:track-detail', 'herramienta:track.create', 'herramienta:track.createmidi', 'herramienta:track.arm', 'concepto:clip'],
+    etiquetas: ['carril', 'track', 'canal'],
+  }),
+  concepto({
+    slug: 'clip',
+    titulo: 'Clip',
+    def: 'Un clip es un trozo de audio o de MIDI colocado en una pista.',
+    sirve: 'Puedes moverlo, cortarlo, copiarlo o repetirlo para armar la estructura de la canción sin volver a tocar.',
+    ejemplo: 'como un recorte de papel pegado en una tira: lo despegas, lo mueves o haces otra copia donde quieras.',
+    donde: 'se ven y se mueven en el Arrange; si es MIDI, sus notas se editan en el Piano roll.',
+    errores: [
+      'Dividir o borrar un clip sin querer: se deshace con Deshacer (undo).',
+      'Esperar sonido de un clip MIDI en una pista sin instrumento.',
+      'Dejar el clip más corto que la nota que hay dentro (se corta el final).',
+    ],
+    relacionadas: ['panel:arrange', 'panel:piano-roll', 'herramienta:editing.split', 'herramienta:editing.duplicate', 'concepto:pista', 'concepto:midi-audio'],
+    etiquetas: ['región', 'bloque', 'fragmento'],
+  }),
+  concepto({
+    slug: 'midi-audio',
+    titulo: 'MIDI y audio',
+    def: 'El audio es un sonido ya grabado (una onda); el MIDI son las instrucciones de qué notas tocar, cuándo y con qué fuerza, sin sonido propio.',
+    sirve: 'Con MIDI puedes cambiar notas, tempo o el instrumento después sin volver a tocar; con audio guardas tal cual una voz o una guitarra real.',
+    ejemplo: 'el audio es una grabación de una orquesta; el MIDI es la partitura: puedes dársela a otra orquesta (otro instrumento) y suena distinto.',
+    donde: 'las notas MIDI se editan en el Piano roll; el instrumento que las toca se elige en el panel Instrumentos.',
+    errores: [
+      'Pensar que un clip MIDI «no suena»: suena solo si la pista tiene un instrumento cargado.',
+      'Intentar corregir notas individuales en un clip de audio: eso es de MIDI.',
+    ],
+    relacionadas: ['panel:piano-roll', 'panel:instruments', 'concepto:clip', 'concepto:nota-velocity-duracion', 'concepto:pista'],
+    etiquetas: ['midi', 'audio', 'instrumento virtual', 'vst'],
+  }),
+  concepto({
+    slug: 'nota-velocity-duracion',
+    titulo: 'Nota, velocity y duración',
+    def: 'Una nota es un sonido con una altura (cuál), un momento de inicio (cuándo) y una duración (cuánto); la velocity (1 a 127) es la fuerza con que se toca.',
+    sirve: 'Estos tres datos más la velocity son lo que define una melodía; variar la velocity y la duración es lo que la hace sonar viva.',
+    ejemplo: 'al aplaudir, puedes dar palmas fuertes o suaves, cortas o largas: eso son velocity y duración.',
+    donde: 'en el Piano roll cada nota es un rectángulo: la altura es la tecla, el largo la duración y la velocity se edita aparte.',
+    errores: [
+      'Poner todas las notas con la misma velocity y duración: suena robótico.',
+      'Dejar notas muy cortas pensando que sostendrán: sin legato o pedal, se apagan.',
+    ],
+    relacionadas: ['panel:piano-roll', 'concepto:humanizar', 'concepto:cuantizar', 'concepto:sustain-pedal', 'concepto:midi-audio'],
+    etiquetas: ['velocidad', 'fuerza', 'nota', 'duración', 'legato', 'staccato'],
+  }),
+  concepto({
+    slug: 'cuantizar',
+    titulo: 'Cuantizar',
+    def: 'Cuantizar es alinear las notas a la rejilla del tiempo (negras, corcheas, etc.).',
+    sirve: 'Corrige el ritmo cuando tocaste un poco adelantado o atrasado.',
+    ejemplo: 'es como escribir sobre un papel cuadriculado: tu letra queda recta, pero pierde el estilo de tu mano.',
+    donde: 'en el Piano roll, con la tecla Q sobre las notas seleccionadas.',
+    errores: [
+      'Cuantizar al 100 % todo: suena rígido y mecánico; úsalo con moderación para conservar tu toque.',
+      'Elegir una rejilla demasiado gruesa (negras) para una parte con corcheas o semicorcheas: las notas se amontonan.',
+    ],
+    relacionadas: ['panel:piano-roll', 'concepto:humanizar', 'concepto:tempo-compas', 'plugin:audio-lens'],
+    etiquetas: ['cuantización', 'quantize', 'ritmo', 'rejilla', 'grid'],
+  }),
+  concepto({
+    slug: 'humanizar',
+    titulo: 'Humanizar',
+    def: 'Humanizar es añadir pequeñas variaciones de tiempo y de velocity para que una parte suene tocada por una persona.',
+    sirve: 'Quita el aspecto «de máquina» de las partes dibujadas o muy cuantizadas.',
+    ejemplo: 'dos personas aplaudiendo al unísono nunca suenan idénticas; esa pequeña diferencia es lo que suena humano.',
+    donde: 'en el Piano roll, con la herramienta Humanizar; además, algunos instrumentos (como el Sampler) tienen su propio control HUMANIZAR.',
+    errores: [
+      'Humanizar demasiado: las notas se desordenan y suena a mal tocado.',
+      'Humanizar antes de cuantizar: cuantizar después deshace la variación.',
+    ],
+    relacionadas: ['herramienta:pianoroll.humanize', 'panel:piano-roll', 'concepto:cuantizar', 'concepto:nota-velocity-duracion', 'plugin:sampler'],
+    etiquetas: ['humanización', 'natural', 'robótico', 'swing'],
+  }),
+  concepto({
+    slug: 'tempo-compas',
+    titulo: 'Tempo y compás',
+    def: 'El tempo son los pulsos por minuto (BPM) y el compás agrupa esos pulsos (4/4 son cuatro pulsos por compás).',
+    sirve: 'Fija la velocidad y la cuadrícula de la canción: a más BPM va más rápido, y el compás da el «contar» (1-2-3-4).',
+    ejemplo: 'es el latido del corazón de la canción: 60 BPM es un latido por segundo, y el compás es el número de latidos antes de repetir el patrón.',
+    donde: 'los ajustes del proyecto (Ajustes proyecto) y la barra de transporte con el metrónomo; la rejilla se ve en el Arrange y el Piano roll.',
+    errores: [
+      'Cambiar el tempo cuando ya hay audio grabado: el audio no cambia con el tempo y se desincroniza.',
+      'Grabar sin metrónomo y después querer cuantizar: las notas pueden caer en la rejilla equivocada.',
+    ],
+    relacionadas: ['pantalla:ajustes-proyecto', 'panel:arrange', 'panel:piano-roll', 'herramienta:transport.togglemetronome', 'concepto:cuantizar'],
+    etiquetas: ['bpm', 'metrónomo', 'compás', '4/4', 'velocidad'],
+  }),
+  concepto({
+    slug: 'tonalidad-acorde',
+    titulo: 'Tonalidad y acorde',
+    def: 'La tonalidad es el «grupo de notas base» de una canción (por ejemplo, Do mayor); un acorde son varias notas que suenan a la vez.',
+    sirve: 'Si las notas pertenecen a la tonalidad, suenan bien juntas; los acordes forman la base armónica sobre la que va la melodía.',
+    ejemplo: 'la tonalidad es la paleta de colores elegida para un cuadro; los acordes son las mezclas que haces con esa paleta.',
+    donde: 'los acordes se ven y se editan como insignias en una fila del Arrange; la escala del Piano roll ayuda a no salirte de la tonalidad; Vocal Tune pide escala y tónica.',
+    errores: [
+      'Tocar notas fuera de la tonalidad sin querer: suenan «mal» aunque el ritmo esté bien.',
+      'En Vocal Tune, poner una tónica distinta a la de la canción: corrige hacia notas equivocadas.',
+    ],
+    relacionadas: ['panel:arrange', 'panel:piano-roll', 'herramienta:pianoroll.togglescalesnap', 'plugin:vocal-tune', 'plugin:audio-lens'],
+    etiquetas: ['escala', 'tonalidad', 'acorde', 'armonía', 'tónica', 'mayor', 'menor'],
+  }),
+  concepto({
+    slug: 'bus',
+    titulo: 'Bus',
+    def: 'Un bus es un canal de mezcla al que varias pistas mandan su sonido para tratarlas juntas.',
+    sirve: 'Con un solo fader o un solo efecto controlas varias pistas a la vez.',
+    ejemplo: 'es como un tubo común: las tres guitarras desembocan en el mismo tubo, y un solo grifo (fader) controla todo el caudal.',
+    donde: 'el panel Ruteo crea los buses; en el Mixer subes el nivel y puedes cargar efectos en el bus.',
+    errores: [
+      'Mandar una pista a un bus y también dejarla sonando directa al máster sin querer: el sonido se duplica.',
+      'Olvidar que un bus tiene su propio volumen: si se oye poco, revisa su fader.',
+    ],
+    relacionadas: ['panel:routing', 'panel:mixer', 'panel:fx-chain', 'concepto:envio-retorno', 'concepto:mezcla-master'],
+    etiquetas: ['grupo', 'submix', 'bus', 'ruteo'],
+  }),
+  concepto({
+    slug: 'envio-retorno',
+    titulo: 'Envío y retorno',
+    def: 'Un envío (send) es una perilla de cada pista que copia una parte de su sonido hacia un bus, y el retorno es lo que sale de ese bus y vuelve a la mezcla.',
+    sirve: 'Permite compartir un solo efecto caro (por ejemplo, una reverb) entre muchas pistas, con una cantidad distinta para cada una.',
+    ejemplo: 'es como una sola sala con eco a la que todos pueden asomarse: cada uno decide cuánto de su voz manda allí.',
+    donde: 'se crea el bus en Ruteo, se sube el envío de cada pista en el Mixer y se carga la reverb o el delay en el bus.',
+    errores: [
+      'Poner una reverb al 100 % de mezcla en el bus: en un bus de efecto suele ir solo el efecto («wet»).',
+      'Subir mucho el envío y olvidar el fader del bus: se oye demasiado o nada.',
+    ],
+    relacionadas: ['panel:routing', 'panel:mixer', 'concepto:bus', 'concepto:reverb', 'concepto:delay', 'plugin:ambience'],
+    etiquetas: ['send', 'return', 'aux', 'envío'],
+  }),
+  concepto({
+    slug: 'sidechain',
+    titulo: 'Sidechain',
+    def: 'Sidechain es hacer que un efecto, normalmente un compresor o un gate, reaccione a otra señal distinta de la que procesa.',
+    sirve: 'Evita que dos sonidos se pisen: el caso clásico es que el bajo «baje» un instante cada vez que suena el bombo.',
+    ejemplo: 'como bajar la música de fondo cuando alguien habla, para que se entienda su voz.',
+    donde: 'según el manual, el sidechain entre pistas todavía no es audible en esta versión; sí tienen un filtro de sidechain propio los plugins Bus Compressor y Smart De-Esser, y el gate del Audio Doctor.',
+    errores: [
+      'Esperar un ducking de bombo y bajo con la función de sidechain entre pistas: hoy solo hay estado y medidor, no efecto audible.',
+      'Confundir el filtro del sidechain con un EQ de la señal: solo cambia lo que el efecto «escucha».',
+    ],
+    relacionadas: ['plugin:bus-compressor', 'plugin:smart-deesser', 'plugin:audio-doctor', 'concepto:compresor', 'panel:routing'],
+    nivel: 'intermedio',
+    etiquetas: ['ducking', 'bombeo', 'sidechain'],
+  }),
+  concepto({
+    slug: 'eq',
+    titulo: 'EQ (ecualizador)',
+    def: 'El EQ sube o baja zonas de frecuencia del sonido: graves, medios o agudos.',
+    sirve: 'Limpia la «turbiedad» de graves, quita resonancias molestas o da brillo, y ayuda a que los instrumentos no se tapen entre sí.',
+    ejemplo: 'es el mando de graves y agudos de un equipo de música, pero con mucha más precisión.',
+    donde: 'en la cadena de efectos de una pista (FX Chain) con el plugin Param EQ, y en el Editor de plugin para ajustarlo; algunos instrumentos traen un EQ sencillo propio.',
+    errores: [
+      'Subir en vez de bajar: suele sonar mejor quitar lo que molesta que añadir lo que falta.',
+      'Cambios exagerados de muchos dB: acaban sonando artificiales.',
+      'Retocar un instrumento solo, sin escucharlo dentro de la mezcla.',
+    ],
+    relacionadas: ['plugin:param-eq', 'panel:fx-chain', 'panel:plugin-editor', 'concepto:mezcla-master'],
+    etiquetas: ['ecualizador', 'frecuencias', 'graves', 'agudos', 'filtro', 'turbio'],
+  }),
+  concepto({
+    slug: 'compresor',
+    titulo: 'Compresor',
+    def: 'Un compresor reduce la diferencia entre lo más fuerte y lo más suave de un sonido.',
+    sirve: 'Hace el volumen más parejo y «pega» los instrumentos de una mezcla.',
+    ejemplo: 'es como una persona que sube el volumen cuando te susurran y lo baja cuando te gritan.',
+    donde: 'el plugin Bus Compressor en la FX Chain de una pista, un bus o el Master; el Editor de plugin tiene sus controles: umbral, ratio, ataque, release y compensación.',
+    errores: [
+      'Comprimir demasiado: la música pierde vida y suena plana.',
+      'Olvidar la ganancia de compensación (makeup) y creer que «mejora» solo porque suena más fuerte; compara con Bypass al mismo volumen.',
+      'Ataque muy rápido en todo: se pierde el golpe de la percusión.',
+    ],
+    relacionadas: ['plugin:bus-compressor', 'panel:fx-chain', 'concepto:sidechain', 'concepto:limitador'],
+    etiquetas: ['compresión', 'dinámica', 'umbral', 'ratio', 'makeup'],
+  }),
+  concepto({
+    slug: 'reverb',
+    titulo: 'Reverb',
+    def: 'La reverb simula el eco natural de un espacio (sala, iglesia, estadio).',
+    sirve: 'Hace que un sonido grabado «en seco» parezca estar en un lugar real; más reverb = más lejano.',
+    ejemplo: 'al cantar en el baño o en una iglesia, tu voz se prolonga: eso es reverb.',
+    donde: 'el plugin Ambience (reverb de sala, delay, shimmer), el Sampler, el Grand Piano y otros traen reverb propia; o una reverb en un bus con envíos desde el Mixer.',
+    errores: [
+      'Demasiada reverb: la mezcla se vuelve borrosa y pierdes claridad.',
+      'Poner una reverb distinta en cada instrumento: parecen estar en salas diferentes.',
+      'Cola de reverb muy larga en una parte rápida.',
+    ],
+    relacionadas: ['plugin:ambience', 'plugin:sampler', 'plugin:grand-piano', 'concepto:envio-retorno', 'concepto:delay'],
+    etiquetas: ['eco', 'sala', 'espacio', 'ambiente', 'cola'],
+  }),
+  concepto({
+    slug: 'delay',
+    titulo: 'Delay',
+    def: 'El delay repite el sonido unos instantes después, como un eco.',
+    sirve: 'Añade profundidad y ritmo; sincronizado con el tempo, las repeticiones caen «en tiempo».',
+    ejemplo: 'gritar en una montaña y oír tu voz volver una y otra vez, cada vez más baja.',
+    donde: 'el plugin Ambience (delay sincronizado), StompLab (módulo Delay) y el rack de efectos incluido en varios instrumentos.',
+    errores: [
+      'Repeticiones demasiado fuertes: tapan la parte siguiente.',
+      'Delay sin sincronizar al tempo: las repeticiones chocan con el ritmo.',
+    ],
+    relacionadas: ['plugin:ambience', 'plugin:stomplab', 'concepto:reverb', 'concepto:tempo-compas'],
+    etiquetas: ['eco', 'repetición', 'slap', 'ping pong'],
+  }),
+  concepto({
+    slug: 'limitador',
+    titulo: 'Limitador',
+    def: 'Un limitador es un compresor extremo que impide que la señal pase de un techo fijado.',
+    sirve: 'Protege contra la distorsión digital y permite subir el volumen general de la canción hasta el nivel deseado.',
+    ejemplo: 'es el techo de una habitación: puedes saltar todo lo que quieras, pero no pasarás de ahí.',
+    donde: 'se pone al final de la cadena del Master con el plugin True-Peak Limiter Pro.',
+    errores: [
+      'Ponerlo antes de otros efectos en el Master: debe ser el último.',
+      'Empujar demasiado: el sonido se aplasta; mira el medidor de reducción.',
+      'Dejar el techo en 0 dB: los picos entre muestras pueden pasarse; el valor por defecto del plugin es -1 dBTP.',
+    ],
+    relacionadas: ['plugin:truepeak-limiter', 'concepto:lufs-true-peak', 'concepto:mezcla-master', 'concepto:compresor', 'panel:meters'],
+    etiquetas: ['techo', 'master', 'brickwall', 'sonoridad'],
+  }),
+  concepto({
+    slug: 'volumen-db-pan',
+    titulo: 'Volumen, decibelios y pan',
+    def: 'El volumen se mide en decibelios (dB), donde 0 dB es el máximo digital; el pan reparte el sonido entre el altavoz izquierdo y el derecho.',
+    sirve: 'Equilibran cuánto se oye cada instrumento y dónde parece estar en el espacio estéreo.',
+    ejemplo: 'el volumen es el mando del equipo; el pan es como mover a un cantante hacia la izquierda o derecha del escenario.',
+    donde: 'en el Mixer, con el fader (volumen) y el control de paneo de cada pista; los medidores están en el panel Medidores.',
+    errores: [
+      'Pasar de 0 dB: el sonido se deforma (clipping). Deja margen por debajo de 0.',
+      'Subir todos los faders hasta arriba: mejor baja los que sobran y sube el volumen general al final.',
+      'Panear todo en el centro (o todo a un lado): la mezcla suena estrecha o desequilibrada.',
+    ],
+    relacionadas: ['panel:mixer', 'panel:meters', 'concepto:lufs-true-peak', 'concepto:mezcla-master', 'plugin:utility-tool'],
+    etiquetas: ['fader', 'paneo', 'decibelio', 'clipping', 'nivel'],
+  }),
+  concepto({
+    slug: 'lufs-true-peak',
+    titulo: 'LUFS y true-peak',
+    def: 'LUFS mide el volumen que el oído percibe de toda la canción; el true-peak es el pico más alto real de la señal, incluso entre muestras.',
+    sirve: 'Los servicios de música piden cierto nivel de LUFS y un techo de pico para que todas las canciones suenen parecidas sin distorsionar.',
+    ejemplo: 'LUFS es lo fuerte que «se siente» una canción; true-peak es el golpe más alto que alcanza, como la ola más alta de la tormenta.',
+    donde: 'los LUFS se miran en el panel Medidores; el techo true-peak se fija en el True-Peak Limiter; al exportar se puede normalizar a −14 LUFS o a un pico de −1 dB.',
+    errores: [
+      'Fijarse solo en el pico y no en el LUFS: una canción puede tener picos bajos y sonar flojísima.',
+      'Subir el LUFS a la fuerza hasta aplastar la música.',
+      'Medir antes de terminar la mezcla; mide con la mezcla casi lista.',
+    ],
+    relacionadas: ['panel:meters', 'plugin:truepeak-limiter', 'pantalla:exportar-bounce', 'concepto:limitador', 'concepto:mezcla-master'],
+    nivel: 'intermedio',
+    etiquetas: ['loudness', 'sonoridad', 'pico', 'streaming', '-14 lufs', 'dbtp'],
+  }),
+  concepto({
+    slug: 'mezcla-master',
+    titulo: 'Mezcla y máster',
+    def: 'Mezclar es ajustar volumen, paneo y efectos de cada pista para que suenen bien juntas; el máster es el canal final por donde pasa todo, con el que se termina la canción.',
+    sirve: 'Una buena mezcla hace que cada instrumento tenga su lugar y que el resultado suene bien en cualquier equipo.',
+    ejemplo: 'mezclar es colocar a los músicos en el escenario y equilibrar sus volúmenes; el máster es la última pulida antes de entregar la canción.',
+    donde: 'el Mixer (con el canal Master), la FX Chain para los efectos y el panel Medidores para comprobar niveles; al terminar, se exporta (Exportar bounce).',
+    errores: [
+      'Mezclar con el Master «al rojo» (pasando de 0 dB).',
+      'Poner efectos en el Master para arreglar problemas que están en las pistas.',
+      'Mezclar solo con auriculares sin comparar con otro sistema.',
+    ],
+    relacionadas: ['panel:mixer', 'panel:fx-chain', 'panel:meters', 'pantalla:exportar-bounce', 'concepto:limitador', 'concepto:lufs-true-peak', 'concepto:bus'],
+    etiquetas: ['mix', 'mastering', 'master', 'exportar'],
+  }),
+  concepto({
+    slug: 'automatizacion',
+    titulo: 'Automatización',
+    def: 'La automatización es una curva que mueve un control (volumen, paneo…) solo, a lo largo de la canción.',
+    sirve: 'Permite que algo cambie con el tiempo: subir el volumen de las cuerdas en el coro, o pasar un sonido de un lado a otro.',
+    ejemplo: 'es como si alguien moviera el fader por ti en cada momento, exactamente igual cada vez.',
+    donde: 'en el panel Automatización (menú Ver → Herramientas).',
+    errores: [
+      'Dejar una curva olvidada: el control se mueve solo y no sabes por qué.',
+      'Cambiar el fader a mano creyendo que anula la curva: la automatización manda.',
+    ],
+    relacionadas: ['panel:automation', 'panel:mixer', 'concepto:volumen-db-pan', 'plugin:strings-section'],
+    etiquetas: ['automatizar', 'curva', 'envolvente', 'fader automático'],
+  }),
+  concepto({
+    slug: 'sustain-pedal',
+    titulo: 'Sustain y pedal',
+    def: 'El pedal de sustain (CC64 en MIDI) mantiene sonando las notas aunque sueltes las teclas.',
+    sirve: 'Une las notas y da cuerpo y resonancia, sobre todo en el piano.',
+    ejemplo: 'en un piano, al pisar el pedal derecho las notas siguen sonando hasta que lo sueltas.',
+    donde: 'se graba junto con las notas del clip MIDI; los instrumentos lo reciben como CC64 (Grand Piano y Piano Synth lo tienen); Pedal Fix corrige teclados problemáticos.',
+    errores: [
+      'Pedal invertido (suena al soltar): cambia la polaridad en Pedal Fix.',
+      'Mantener el pedal en acordes que cambian: se mezclan y suena confuso.',
+      'Sustain en un instrumento que lo ignora: usa Pedal Fix con Forzar sustain.',
+    ],
+    relacionadas: ['plugin:pedal-fix', 'plugin:grand-piano', 'plugin:piano-synth', 'panel:piano-roll', 'concepto:nota-velocity-duracion'],
+    etiquetas: ['pedal', 'cc64', 'sostenuto', 'sustain', 'medio pedal'],
+  }),
+  concepto({
+    slug: 'polifonia',
+    titulo: 'Polifonía',
+    def: 'La polifonía es la cantidad de notas que un instrumento puede sonar a la vez.',
+    sirve: 'Si no alcanza, las notas más viejas se cortan al tocar nuevas, sobre todo con pedal o colas largas.',
+    ejemplo: 'es como el número de manos que tiene un pianista: con más manos suenan más notas a la vez.',
+    donde: 'es un límite del instrumento (por ejemplo, Piano Synth admite hasta 64 voces; Vocal Choir, 4); no se ajusta en el DAW.',
+    errores: [
+      'Notas que «desaparecen» en pasajes densos con pedal: puede ser el límite de voces.',
+      'Confundir polifonía con número de pistas: son cosas distintas.',
+    ],
+    relacionadas: ['plugin:piano-synth', 'plugin:vocal-choir', 'panel:instruments', 'concepto:sustain-pedal'],
+    nivel: 'intermedio',
+    etiquetas: ['voces', 'notas simultáneas', 'polyphony'],
+  }),
+  concepto({
+    slug: 'grooves',
+    titulo: 'Grooves',
+    def: 'Un groove es un patrón rítmico de batería en MIDI, listo para insertar.',
+    sirve: 'Te da una base rítmica de un estilo sin tener que dibujar cada golpe.',
+    ejemplo: 'es como una plantilla de ritmo: eliges «rock» o «balada» y ya tienes la base de la canción.',
+    donde: 'en el panel Grooves (menú Ver → Herramientas); suena con un instrumento de batería, como Worship Drums.',
+    errores: [
+      'Insertar un groove en una pista sin batería: no suena.',
+      'Dejar el mismo groove sin variar todo el tema: se vuelve monótono (añade un fill al final de la sección).',
+    ],
+    relacionadas: ['panel:grooves', 'plugin:worship-drums', 'panel:piano-roll', 'concepto:humanizar'],
+    etiquetas: ['ritmo', 'patrón', 'batería', 'fill'],
+  }),
+  concepto({
+    slug: 'banda-virtual',
+    titulo: 'Banda virtual (IA del DAW)',
+    def: 'La banda virtual es el grupo de agentes de IA del DAW (músicos, mezcla, máster, revisión) que producen una canción juntos a partir de lo que pides.',
+    sirve: 'Te ayudan a producir o completar una canción, y la verifican con medidas reales del motor de audio, no a ojo.',
+    ejemplo: 'es como un grupo de músicos de estudio que escucha tu idea, toca sus partes y revisa la mezcla.',
+    donde: 'se les pide desde el chat del Asistente Jas; sus tareas se ven en el panel Banda virtual y se configuran en Ajustes → IA.',
+    errores: [
+      'Pedir algo demasiado vago: indica estilo, tonalidad o ambiente para obtener mejor resultado.',
+      'Esperar que toque «como tú» sin haber guardado antes tu estilo (Mi estilo).',
+    ],
+    relacionadas: ['panel:banda-virtual', 'panel:coproducer', 'panel:settings', 'concepto:habilidad', 'concepto:mi-estilo'],
+    etiquetas: ['ia', 'agentes', 'banda', 'producción', 'asistente jas'],
+  }),
+  concepto({
+    slug: 'habilidad',
+    titulo: 'Habilidad (skill)',
+    def: 'Una habilidad es un conocimiento de oficio escrito paso a paso que la IA sigue cuando tu pedido encaja con él.',
+    sirve: 'Hace que la IA resuelva pedidos frecuentes de manera consistente y como tú quieres, en lugar de improvisar cada vez.',
+    ejemplo: 'es como una receta de cocina: los pasos ya están escritos y el cocinero (la IA) decide solo los detalles creativos.',
+    donde: 'las de serie y las tuyas se ven en Ajustes → IA → Banda de especialistas; las tuyas son archivos de texto en tu carpeta del asistente (habilidades) y se crean con el comando /configurar.',
+    errores: [
+      'Escribir una habilidad sin decir cuándo usarla: la IA no sabrá cuándo aplicarla.',
+      'Llamar una habilidad igual que una de serie sin querer reemplazarla: la tuya manda.',
+    ],
+    relacionadas: ['panel:banda-virtual', 'panel:settings', 'concepto:banda-virtual', 'concepto:mi-estilo'],
+    nivel: 'intermedio',
+    etiquetas: ['skill', 'habilidades', 'receta', 'configurar'],
+  }),
+  concepto({
+    slug: 'mi-estilo',
+    titulo: 'Mi estilo',
+    def: 'Mi estilo es una función de la Banda virtual que escucha cómo tocas tu teclado y guarda tu forma de tocar como una habilidad de estilo.',
+    sirve: 'Para que los músicos de la banda apliquen tus giros (duraciones, velocidades, adornos) en lugar de sonar genéricos; según el panel, no se aplica a la batería.',
+    ejemplo: 'es como darle a la banda una muestra de tu letra para que escriba imitando tu mano.',
+    donde: 'en el panel Banda virtual: graba una toma natural, pulsa «Analizar mi toque», ponle nombre y guárdala; en la lista puedes marcarla como Activa o Quitarla.',
+    errores: [
+      'Analizar una toma cuantizada o rígida: el retrato no se parecerá a tu toque.',
+      'Guardar el estilo sin comprobar el informe: revisa que se parezca a cómo tocas.',
+      'Olvidar activar el estilo en la lista: solo el activo se usa en la próxima producción.',
+    ],
+    relacionadas: ['panel:banda-virtual', 'concepto:habilidad', 'concepto:banda-virtual', 'concepto:humanizar'],
+    etiquetas: ['estilo', 'mi toque', 'perfil', 'estilo del usuario'],
+  }),
+]

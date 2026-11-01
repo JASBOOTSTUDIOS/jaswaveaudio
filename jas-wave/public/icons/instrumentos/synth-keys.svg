@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" class="jaswave-instrument-icon" data-instrument-id="synth-keys">
+  <!-- Panel de sintetizador moderno -->
+  <rect x="6" y="12" width="52" height="40" rx="3" fill="currentColor" fill-opacity="0.14" stroke-width="2" />
+  <!-- Pantalla LCD con forma de onda -->
+  <rect x="10" y="16" width="20" height="12" rx="1.5" fill="currentColor" fill-opacity="0.25" stroke-width="1.5" />
+  <path d="M12 22l3-4 4 8 4-8 4 4" stroke-width="1.75" />
+  <!-- Banco de perillas giratorias y faders -->
+  <circle cx="36" cy="19" r="2.5" stroke-width="1.5" />
+  <circle cx="43" cy="19" r="2.5" stroke-width="1.5" />
+  <circle cx="50" cy="19" r="2.5" stroke-width="1.5" />
+  <circle cx="36" cy="25" r="2.5" stroke-width="1.5" />
+  <circle cx="43" cy="25" r="2.5" stroke-width="1.5" />
+  <circle cx="50" cy="25" r="2.5" stroke-width="1.5" />
+  <!-- Ruedas de Pitch Bend y Modulación a la izquierda -->
+  <rect x="8" y="34" width="5" height="16" rx="1" stroke-width="1.5" />
+  <line x1="8" y1="42" x2="13" y2="42" stroke-width="2" />
+  <!-- Teclado del sintetizador -->
+  <rect x="15" y="32" width="41" height="18" rx="1" fill="currentColor" fill-opacity="0.25" stroke-width="2" />
+  <line x1="21" y1="32" x2="21" y2="50" stroke-width="1.5" />
+  <line x1="27" y1="32" x2="27" y2="50" stroke-width="1.5" />
+  <line x1="33" y1="32" x2="33" y2="50" stroke-width="1.5" />
+  <line x1="39" y1="32" x2="39" y2="50" stroke-width="1.5" />
+  <line x1="45" y1="32" x2="45" y2="50" stroke-width="1.5" />
+  <line x1="51" y1="32" x2="51" y2="50" stroke-width="1.5" />
+  <rect x="19" y="32" width="3.5" height="10" fill="currentColor" />
+  <rect x="25" y="32" width="3.5" height="10" fill="currentColor" />
+  <rect x="37" y="32" width="3.5" height="10" fill="currentColor" />
+  <rect x="43" y="32" width="3.5" height="10" fill="currentColor" />
+  <rect x="49" y="32" width="3.5" height="10" fill="currentColor" />
+</svg>

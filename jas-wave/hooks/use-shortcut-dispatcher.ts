@@ -14,11 +14,22 @@ import {
   guardarProyectoIO,
   nuevoProyectoIO,
 } from '../src/lib/project-io'
-import { executeOrNotify, redoOrNotify, undoOrNotify } from '../src/lib/execute-or-toast'
+import { batchOrNotify, executeOrNotify, redoOrNotify, undoOrNotify } from '../src/lib/execute-or-toast'
+import { selectTrackPayload } from '../src/lib/selection-helpers'
 import { dawClipboard, type ClipboardClip } from '../src/lib/daw-clipboard'
+import { loteBorrarClips, loteDuplicarClips, lotePegarClips } from '../src/lib/clip-edit-commands'
+import { loteAutoFade, loteConsolidar, loteInvertir, loteNormalizar, loteToggleMute } from '../src/lib/clip-acciones'
+import { audioEngine } from '@/lib/audio-engine'
+import { solicitarBorrarPista } from '../src/lib/track-delete-request'
+
 import { requestOpenTool } from '../src/workspace/types'
-import { bumpUiZoom, bumpDocsTextZoom, isDocsZoomTarget, setDocsTextZoom } from '../src/lib/docs-editor-store'
-import { bumpChatTextZoom, isChatZoomTarget, setChatTextZoom } from '../src/lib/chat-ui-store'
+import { bumpUiZoom } from '../src/lib/ui-zoom'
+import { zoomDeModulo } from '../src/modulos/contribuciones'
+import { captureActiveDocTextSelection } from '../src/lib/ai-selection-context'
+import { resolveSnapDivision } from '../src/lib/timeline-snap'
+import { estaRenderLock } from '../src/lib/render-lock'
+import { isUndockWindow } from '@/lib/undock-window'
+import { alternarDictadoEnfocado } from '../src/lib/voice-dictation-core'
 
 /**
  * Sistema unificado: ActionSystem → Command System.
@@ -43,6 +54,15 @@ export function useShortcutDispatcher(): DespachadorTeclado {
 
   useEffect(() => {
     const st = () => tienda.obtenerEstado()
+
+    /** Crea la pista y la deja seleccionada, para que el catálogo y el inspector apunten a ella. */
+    const crearPistaSeleccionada = (prefijo: string, tipo: 'audio' | 'midi' | 'carpeta') => {
+      const nombre = `${prefijo} ${st().project.tracks.length + 1}`
+      void executeOrNotify(tienda, 'track.create', { nombre, tipo }).then((r) => {
+        const trackId = r.success ? (r.result as { trackId?: string })?.trackId : undefined
+        if (trackId) void tienda.executor.execute('selection.set', selectTrackPayload(trackId))
+      })
+    }
 
     const collectSelectedClips = (): ClipboardClip[] => {
       const { selection, project } = st()
@@ -120,59 +140,27 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       const playheadBeats =
         state.transport.posicion?.beats ??
         ((state.transport.posicion?.segundos ?? 0) * (state.project.bpm?.valor ?? 120)) / 60
-      const baseInicio = Math.min(...clips.map((c) => c.inicio))
+      // Un pegado = un lote = un undo; conserva clipInicio de los clips de audio.
+      const lote = lotePegarClips(clips, targetTrackId, playheadBeats)
       void (async () => {
-        let ok = 0
-        let lastClipId: string | undefined
-        for (const clip of clips) {
-          const offset = clip.inicio - baseInicio
-          const inicio = playheadBeats + offset
-          const isMidi =
-            clip.tipo === 'midi' || (Array.isArray(clip.notas) && clip.notas.length > 0)
-          const result = isMidi
-            ? await executeOrNotify(tienda, 'midi.clip.create', {
-                pistaId: targetTrackId,
-                nombre: clip.nombre,
-                inicio,
-                duracion: clip.duracion,
-                color: clip.color,
-                notas: (clip.notas ?? []).map((n) => ({
-                  pitch: n.pitch,
-                  inicio: n.inicio,
-                  duracion: n.duracion,
-                  velocidad: n.velocidad,
-                  canal: n.canal,
-                })),
-              })
-            : await executeOrNotify(tienda, 'clip.create', {
-                pistaId: targetTrackId,
-                nombre: clip.nombre,
-                inicio,
-                duracion: clip.duracion,
-                color: clip.color,
-                sourceId: clip.sourceId,
-                waveform: clip.waveform,
-              })
-          if (result.success) {
-            ok += 1
-            const created = result.state?.project?.tracks
-              ?.find((t: { id: string }) => t.id === targetTrackId)
-              ?.clips?.slice(-1)[0] as { id?: string } | undefined
-            if (created?.id) lastClipId = created.id
-          }
+        const r = await batchOrNotify(tienda, lote.comandos, 'editing.paste')
+        if (!r.success) return
+        const lastClipId = lote.idsCreados[lote.idsCreados.length - 1]
+        if (lastClipId) {
+          void executeOrNotify(tienda, 'selection.set', {
+            idsClips: [lastClipId],
+            idsPistas: [targetTrackId],
+            tipo: 'clip',
+            idPrincipal: targetTrackId,
+          })
         }
-        if (ok > 0) {
-          if (lastClipId) {
-            void executeOrNotify(tienda, 'selection.set', {
-              idsClips: [lastClipId],
-              idsPistas: [targetTrackId],
-              tipo: 'clip',
-              idPrincipal: targetTrackId,
-            })
-          }
-          tienda.busEventos.emit('portapapeles.pegado', { cantidad: ok })
-        }
+        tienda.busEventos.emit('portapapeles.pegado', { cantidad: lote.idsCreados.length })
       })()
+    }
+
+    const deleteSelectedClips = (tipo: string) => {
+      const { selection, project } = st()
+      void batchOrNotify(tienda, loteBorrarClips(project, selection.idsClips), tipo)
     }
 
     const handlers: Record<string, () => void> = {
@@ -181,7 +169,8 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       'transport.stop': () => { void executeOrNotify(tienda, 'transport.stop', {}) },
       'transport.record': () => { void executeOrNotify(tienda, 'transport.toggleRecord', {}) },
       'transport.toggleLoop': () => { void executeOrNotify(tienda, 'transport.toggleLoop', {}) },
-      'transport.goToStart': () => { void executeOrNotify(tienda, 'transport.seek', { segundos: 0 }) },
+      // W / Inicio: playhead y punto de inicio (al que vuelve Stop) a cero.
+      'transport.goToStart': () => { void executeOrNotify(tienda, 'transport.seek', { segundos: 0, marcarInicio: true }) },
       'transport.goToEnd': () => {
         const { timeline } = st().project
         void executeOrNotify(tienda, 'transport.seek', { segundos: timeline.duracion.segundos })
@@ -192,8 +181,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         const s = st()
         const zoom = s.ui?.zoomHorizontal ?? 1
         const snapOn = s.project?.timeline?.snap ?? true
-        const snap = s.project?.timeline?.snapValor ?? 1
-        const beats = snapOn ? Math.max(0.0625, snap) : 1
+        const bpb = s.project?.timeSignature?.numerador ?? 4
+        const division = resolveSnapDivision(s.project?.timeline?.snapValor ?? 1, bpb)
+        const beats = snapOn && division > 0 ? division : 1
         const deltaPx = -Math.max(4, Math.round(5 * zoom * beats))
         window.dispatchEvent(new CustomEvent('jaswave-scroll-timeline', { detail: { deltaPx } }))
       },
@@ -201,8 +191,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         const s = st()
         const zoom = s.ui?.zoomHorizontal ?? 1
         const snapOn = s.project?.timeline?.snap ?? true
-        const snap = s.project?.timeline?.snapValor ?? 1
-        const beats = snapOn ? Math.max(0.0625, snap) : 1
+        const bpb = s.project?.timeSignature?.numerador ?? 4
+        const division = resolveSnapDivision(s.project?.timeline?.snapValor ?? 1, bpb)
+        const beats = snapOn && division > 0 ? division : 1
         const deltaPx = Math.max(4, Math.round(5 * zoom * beats))
         window.dispatchEvent(new CustomEvent('jaswave-scroll-timeline', { detail: { deltaPx } }))
       },
@@ -228,6 +219,46 @@ export function useShortcutDispatcher(): DespachadorTeclado {
           }
         })
       },
+      'clip.toggleMute': () => {
+        const { selection, project } = st()
+        void batchOrNotify(tienda, loteToggleMute(project as never, selection.idsClips), 'clip.toggleMute')
+      },
+      'clip.autoFade': () => {
+        const { selection, project } = st()
+        void batchOrNotify(tienda, loteAutoFade(project as never, selection.idsClips), 'clip.autoFade')
+      },
+      'clip.consolidate': () => {
+        const { selection, project } = st()
+        const lote = loteConsolidar(project as never, selection.idsClips)
+        if (!lote.length) {
+          tienda.busEventos.emit('comando.fallido', {
+            type: 'clip.consolidate',
+            error: 'Selecciona al menos dos clips del mismo tipo en una pista para consolidarlos.',
+          })
+          return
+        }
+        void batchOrNotify(tienda, lote, 'clip.consolidate')
+      },
+      'clip.reverseAudio': () => {
+        const { selection, project } = st()
+        void batchOrNotify(tienda, loteInvertir(project as never, selection.idsClips), 'clip.reverseAudio')
+      },
+      'clip.normalizeAudio': () => {
+        const { selection, project } = st()
+        const { comandos, sinAudio } = loteNormalizar(project as never, selection.idsClips, (k, d, dur) =>
+          audioEngine.getClipPeak(k, d, dur),
+        )
+        if (sinAudio > 0) {
+          tienda.busEventos.emit('comando.fallido', {
+            type: 'clip.normalizeAudio',
+            error: `${sinAudio} clip(s) sin audio cargado o en silencio: reprodúcelos una vez y vuelve a normalizar.`,
+          })
+        }
+        void batchOrNotify(tienda, comandos, 'clip.normalizeAudio')
+      },
+      'project.export': () => {
+        window.dispatchEvent(new CustomEvent('jaswave-menu-action', { detail: { id: 'archivo.exportarBounce' } }))
+      },
       'project.saveAs': () => {
         void guardarProyectoComoIO(tienda).then((r) => {
           if (!r.success && !r.canceled) {
@@ -237,7 +268,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       },
       'project.close': () => {
         void cerrarProyectoIO(tienda).then((r) => {
-          if (!r.success) {
+          if (!r.success && !r.canceled) {
             tienda.busEventos.emit('comando.fallido', { type: 'project.close', error: String(r.error ?? 'Error') })
           }
         })
@@ -271,14 +302,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         }
         dawClipboard.setClips(clips)
         tienda.busEventos.emit('portapapeles.copiado', { cantidad: clips.length })
-        const { selection, project } = st()
-        for (const clipId of selection.idsClips) {
-          for (const track of project.tracks) {
-            if (track.clips.some((c: { id: string }) => c.id === clipId)) {
-              void executeOrNotify(tienda, 'clip.delete', { pistaId: track.id, clipId })
-            }
-          }
-        }
+        deleteSelectedClips('editing.cut')
       },
       'editing.paste': () => {
         pasteClipboardClips()
@@ -286,48 +310,11 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       'editing.duplicate': () => {
         const clips = collectSelectedClips()
         if (clips.length === 0) return
-        // Duplicar: pegar justo después del original en la misma pista
-        for (const clip of clips) {
-          const inicio = clip.inicio + clip.duracion
-          const isMidi =
-            clip.tipo === 'midi' || (Array.isArray(clip.notas) && (clip.notas?.length ?? 0) > 0)
-          if (isMidi) {
-            void executeOrNotify(tienda, 'midi.clip.create', {
-              pistaId: clip.pistaOrigenId,
-              nombre: `${clip.nombre} (Copia)`,
-              inicio,
-              duracion: clip.duracion,
-              color: clip.color,
-              notas: (clip.notas ?? []).map((n) => ({
-                pitch: n.pitch,
-                inicio: n.inicio,
-                duracion: n.duracion,
-                velocidad: n.velocidad,
-                canal: n.canal,
-              })),
-            })
-          } else {
-            void executeOrNotify(tienda, 'clip.create', {
-              pistaId: clip.pistaOrigenId,
-              nombre: `${clip.nombre} (Copia)`,
-              inicio,
-              duracion: clip.duracion,
-              color: clip.color,
-              sourceId: clip.sourceId,
-              waveform: clip.waveform,
-            })
-          }
-        }
+        // Duplicar: justo después del original en la misma pista, un solo undo.
+        void batchOrNotify(tienda, loteDuplicarClips(clips).comandos, 'editing.duplicate')
       },
       'editing.delete': () => {
-        const { selection, project } = st()
-        for (const clipId of selection.idsClips) {
-          for (const track of project.tracks) {
-            if (track.clips.some((c: { id: string }) => c.id === clipId)) {
-              void executeOrNotify(tienda, 'clip.delete', { pistaId: track.id, clipId })
-            }
-          }
-        }
+        deleteSelectedClips('editing.delete')
       },
       'editing.selectAll': () => {
         const { project } = st()
@@ -356,19 +343,17 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         }
       },
 
-      'track.create': () => {
-        const count = st().project.tracks.length + 1
-        void executeOrNotify(tienda, 'track.create', { nombre: `Pista ${count}`, tipo: 'audio' })
-      },
-      'track.createMidi': () => {
-        const count = st().project.tracks.length + 1
-        void executeOrNotify(tienda, 'track.create', { nombre: `MIDI ${count}`, tipo: 'midi' })
-      },
+      'track.create': () => crearPistaSeleccionada('Pista', 'audio'),
+      'track.createMidi': () => crearPistaSeleccionada('MIDI', 'midi'),
+      'track.createFolder': () => crearPistaSeleccionada('Carpeta', 'carpeta'),
       'track.delete': () => {
-        const { selection } = st()
-        if (selection.idPrincipal) {
-          void executeOrNotify(tienda, 'track.delete', { trackId: selection.idPrincipal })
-        }
+        const { selection, project } = st()
+        const trackId = selection.idPrincipal
+        if (!trackId || !project.tracks.some((t: { id: string }) => t.id === trackId)) return
+        // Mismo diálogo de confirmación que el menú contextual de pista.
+        solicitarBorrarPista(trackId, (id) => {
+          void executeOrNotify(tienda, 'track.delete', { trackId: id })
+        })
       },
       'track.mute': () => {
         const { selection, project } = st()
@@ -434,14 +419,10 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       },
 
       'timeline.zoomIn': () => {
-        // Panel Docs con foco / undock Docs: Ctrl+= zoom tipográfico del .md.
-        if (isDocsZoomTarget()) {
-          bumpDocsTextZoom(0.1)
-          return
-        }
-        // Chat / Asistente Jas con foco: zoom solo del chat
-        if (isChatZoomTarget()) {
-          bumpChatTextZoom(0.1)
+        // Panel de un módulo con zoom propio (Docs, chat del asistente…) con foco: zoom solo de ese panel.
+        const zoomModulo = zoomDeModulo(document.activeElement)
+        if (zoomModulo) {
+          zoomModulo.cambiar(0.1)
           return
         }
         const z = st().ui?.zoomHorizontal ?? 1
@@ -451,12 +432,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         bumpUiZoom(0.05)
       },
       'timeline.zoomOut': () => {
-        if (isDocsZoomTarget()) {
-          bumpDocsTextZoom(-0.1)
-          return
-        }
-        if (isChatZoomTarget()) {
-          bumpChatTextZoom(-0.1)
+        const zoomModulo = zoomDeModulo(document.activeElement)
+        if (zoomModulo) {
+          zoomModulo.cambiar(-0.1)
           return
         }
         const z = st().ui?.zoomHorizontal ?? 1
@@ -466,12 +444,9 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         bumpUiZoom(-0.05)
       },
       'timeline.zoomToProject': () => {
-        if (isDocsZoomTarget()) {
-          setDocsTextZoom(1)
-          return
-        }
-        if (isChatZoomTarget()) {
-          setChatTextZoom(1)
+        const zoomModulo = zoomDeModulo(document.activeElement)
+        if (zoomModulo) {
+          zoomModulo.restablecer()
           return
         }
         void executeOrNotify(tienda, 'ui.setZoom', { horizontal: 1, vertical: 1 })
@@ -513,6 +488,10 @@ export function useShortcutDispatcher(): DespachadorTeclado {
       'window.midiMap': () => {
         requestOpenTool('midi-map')
       },
+      'window.terminal': () => {
+        requestOpenTool('terminal', { zone: 'bottom' })
+        window.dispatchEvent(new Event('jaswave-focus-terminal'))
+      },
       'window.toggleLeft': () => {
         window.dispatchEvent(new CustomEvent('jaswave-toggle-zone', { detail: { zone: 'left' } }))
       },
@@ -526,7 +505,16 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         window.dispatchEvent(new CustomEvent('open-project-settings'))
       },
       'ai.askSelection': () => {
+        captureActiveDocTextSelection()
         window.dispatchEvent(new CustomEvent('jaswave-ask-ai-selection'))
+      },
+      // G7: dictado del campo enfocado; si el foco no está en ninguno, el del asistente.
+      'ai.toggleVoiceDictation': () => {
+        if (alternarDictadoEnfocado(document.activeElement)) return
+        tienda.busEventos.emit('comando.fallido', {
+          type: 'ai.toggleVoiceDictation',
+          error: 'No hay ningún campo con dictado por voz a la vista: abre el Asistente Jas o enfoca un campo con micrófono.',
+        })
       },
     }
 
@@ -543,6 +531,11 @@ export function useShortcutDispatcher(): DespachadorTeclado {
     const onMenu = (ev: Event) => {
       const id = (ev as CustomEvent<{ id: string }>).detail?.id
       if (!id) return
+      // U6: con un render en curso la app está bloqueada (solo cancelar).
+      if (estaRenderLock()) return
+      // El diálogo de exportar lo abre App con este evento; `project.export` lo emite, así que reejecutar
+      // la acción por su alias aquí formaba un bucle infinito.
+      if (id === 'archivo.exportarBounce') return
       const resolved = system.actions.resolveId(id) ?? id
       // Copiar/pegar clips: no bloquear por selección de texto residual
       const isClipEdit =
@@ -551,7 +544,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         resolved === 'editing.paste' ||
         resolved === 'editing.duplicate'
       // Zoom de chat/docs debe llegar aunque el panel ignore atajos globales
-      if (isZoomAction(resolved) && (isChatZoomTarget() || isDocsZoomTarget())) {
+      if (isZoomAction(resolved) && zoomDeModulo(document.activeElement)) {
         system.actions.execute(resolved)
         return
       }
@@ -559,7 +552,7 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         const ae = document.activeElement
         if (ae && shouldIgnoreGlobalShortcuts(ae) && !(st().selection.idsClips.length > 0)) return
       } else if (shouldIgnoreGlobalShortcuts()) {
-        return
+        if (resolved !== 'window.terminal') return
       }
       system.actions.execute(resolved)
     }
@@ -570,12 +563,14 @@ export function useShortcutDispatcher(): DespachadorTeclado {
     }
     const unsubNative = api?.onMenuAction?.((id) => {
       const resolved = system.actions.resolveId(id) ?? id
+      // U6: con un render en curso la app está bloqueada (solo cancelar).
+      if (estaRenderLock()) return
       const isClipEdit =
         resolved === 'editing.copy' ||
         resolved === 'editing.cut' ||
         resolved === 'editing.paste' ||
         resolved === 'editing.duplicate'
-      if (isZoomAction(resolved) && (isChatZoomTarget() || isDocsZoomTarget())) {
+      if (isZoomAction(resolved) && zoomDeModulo(document.activeElement)) {
         system.actions.execute(resolved)
         return
       }
@@ -583,14 +578,24 @@ export function useShortcutDispatcher(): DespachadorTeclado {
         const ae = document.activeElement
         if (ae && shouldIgnoreGlobalShortcuts(ae) && !(st().selection.idsClips.length > 0)) return
       } else if (shouldIgnoreGlobalShortcuts()) {
-        return
+        if (resolved !== 'window.terminal') return
       }
       system.actions.execute(resolved)
     })
 
+    // Barra espaciadora con el foco en la ventana nativa de un plugin (la intercepta el host). Solo la
+    // ventana principal maneja el transporte; el foco del DOM aquí no cuenta (el usuario está en el plugin).
+    const unsubHostSpace = isUndockWindow()
+      ? undefined
+      : window.electron?.onHostTransportToggle?.(() => {
+          if (estaRenderLock()) return
+          system.actions.execute('transport.togglePlay')
+        })
+
     return () => {
       window.removeEventListener('jaswave-menu-action', onMenu)
       unsubNative?.()
+      unsubHostSpace?.()
     }
   }, [system, tienda])
 
@@ -610,13 +615,75 @@ export function useShortcutDispatcher(): DespachadorTeclado {
   }, [tienda])
 
   useEffect(() => {
+    // Si el play ya se ejecutó con el keydown, el keyup no debe además «pulsar» el control que tiene el foco.
+    let espacioManejada = false
     const handler = (e: KeyboardEvent) => {
+      // Un componente con foco (piano roll, editor de partitura, diálogo) ya
+      // manejó la tecla: no ejecutar además un atajo global (nunca dos acciones).
+      if (e.defaultPrevented) return
+      // U6: con un render en curso la app está bloqueada (solo cancelar).
+      if (estaRenderLock()) return
+      // G7: el dictado (Alt+V) funciona justo donde se escribe: campos de texto, chat y la paleta abierta.
+      if (system.resolver.resolveFromEvent(e)?.actionId === 'ai.toggleVoiceDictation') {
+        e.preventDefault()
+        if (!e.repeat) system.actions.execute('ai.toggleVoiceDictation')
+        return
+      }
       if (paletaAbiertaRef.current && e.key !== 'Escape') return
-      if (shouldIgnoreGlobalShortcuts(e.target)) return
-      system.handleKeyboardEvent(e)
+      // Barra espaciadora = reproducir/pausar en TODO el DAW, también con el foco en un desplegable (que se queda
+      // enfocado tras elegir). Solo se respetan el panel del agente de IA/terminal y los campos donde se escribe.
+      if (
+        e.code === 'Space' &&
+        !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey &&
+        e.target instanceof HTMLSelectElement &&
+        !e.target.closest('[data-shortcut-scope="ignore"]')
+      ) {
+        e.preventDefault()
+        espacioManejada = true
+        system.actions.execute('transport.togglePlay')
+        return
+      }
+      if (shouldIgnoreGlobalShortcuts(e.target)) {
+        const terminalChord =
+          (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key === '`'
+        const askSel =
+          (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l'
+        if (terminalChord) {
+          e.preventDefault()
+          system.actions.execute('window.terminal')
+          return
+        }
+        if (askSel) {
+          e.preventDefault()
+          captureActiveDocTextSelection()
+          system.actions.execute('ai.askSelection')
+          return
+        }
+        return
+      }
+      const manejado = system.handleKeyboardEvent(e)
+      // Barra espaciadora con el foco en un botón/casilla: el navegador activaría ese control al soltar la tecla.
+      if (manejado && e.code === 'Space') espacioManejada = true
+    }
+    const alSoltar = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || !espacioManejada) return
+      espacioManejada = false
+      e.preventDefault()
+    }
+    // Tras elegir una opción de un desplegable el foco se queda en el <select> y la barra espaciadora volvería a
+    // abrirlo en vez de reproducir: se suelta el foco al cambiar.
+    const alCambiar = (e: Event) => {
+      const t = e.target
+      if (t instanceof HTMLSelectElement) window.setTimeout(() => t.blur(), 0)
     }
     window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
+    window.addEventListener('keyup', alSoltar, true)
+    document.addEventListener('change', alCambiar, true)
+    return () => {
+      window.removeEventListener('keydown', handler)
+      window.removeEventListener('keyup', alSoltar, true)
+      document.removeEventListener('change', alCambiar, true)
+    }
   }, [system])
 
   return dispatcher

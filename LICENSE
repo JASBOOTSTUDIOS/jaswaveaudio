@@ -1,0 +1,42 @@
+JasWave — Licencia propietaria
+
+Copyright (c) 2026 JASBOOTSTUDIOS. Todos los derechos reservados.
+
+NOTA: Este texto es un borrador y debe ser revisado por un abogado antes de
+cualquier distribución pública del software.
+
+1. Titularidad. Este repositorio, su código fuente, código objeto, binarios,
+   documentación, diseños, gráficos, marcas, nombres ("JasWave") y demás
+   materiales (en conjunto, el "Software") son propiedad exclusiva de
+   JASBOOTSTUDIOS y están protegidos por las leyes de derechos de autor,
+   propiedad intelectual y tratados internacionales aplicables.
+
+2. Sin licencia implícita. El acceso a este repositorio o al Software no
+   otorga ninguna licencia ni derecho, salvo los que JASBOOTSTUDIOS conceda
+   expresamente y por escrito. Queda prohibido, sin autorización previa y por
+   escrito de JASBOOTSTUDIOS:
+
+   a) copiar, reproducir, modificar, traducir o crear obras derivadas del
+      Software, total o parcialmente;
+   b) distribuir, publicar, sublicenciar, vender, alquilar, prestar o poner
+      el Software a disposición de terceros por cualquier medio;
+   c) realizar ingeniería inversa, descompilar o desensamblar el Software,
+      salvo en la medida en que la ley aplicable lo permita expresamente pese
+      a esta limitación;
+   d) eliminar o alterar avisos de derechos de autor, marcas o licencias.
+
+3. Uso de la aplicación. El uso de la aplicación JasWave distribuida en forma
+   ejecutable se rige por el Acuerdo de Licencia de Usuario Final (EULA) que
+   la acompaña (docs/legal/EULA.md).
+
+4. Componentes de terceros. El Software incluye componentes de terceros
+   sujetos a sus propias licencias, listados en THIRD_PARTY_NOTICES.md. Nada
+   en esta licencia limita los derechos que dichas licencias otorgan sobre
+   esos componentes.
+
+5. Sin garantía. EL SOFTWARE SE PROPORCIONA "TAL CUAL", SIN GARANTÍA DE
+   NINGÚN TIPO, EXPRESA O IMPLÍCITA. EN NINGÚN CASO JASBOOTSTUDIOS SERÁ
+   RESPONSABLE DE DAÑOS DERIVADOS DEL USO O LA IMPOSIBILIDAD DE USO DEL
+   SOFTWARE, EN LA MEDIDA MÁXIMA PERMITIDA POR LA LEY.
+
+Para solicitar permisos: [CORREO DE CONTACTO LEGAL — PENDIENTE]

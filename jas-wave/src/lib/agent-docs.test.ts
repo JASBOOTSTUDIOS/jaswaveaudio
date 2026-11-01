@@ -7,9 +7,19 @@ import {
   parseDocBlocksFromText,
   sanitizeDocSlug,
   setMarkdownSection,
+  ensurePlanTemplate,
+  normalizePlanCheckboxes,
+  formatDocsForPrompt,
 } from './agent-docs'
-import { evaluatePlanAgainstDaw, planMarkdownFromProjectPlan } from './agent-plan-eval'
-import { buildHarnessReviewMessage, harnessReviewNeeded } from './agent-harness'
+import {
+  evaluatePlanAgainstDaw,
+  planMarkdownFromProjectPlan,
+} from './agent-plan-eval'
+import {
+  buildDocTextAnchor,
+  formatMusicalSelectionForPrompt,
+  headingNearSnippet,
+} from './ai-selection-context'
 import type { DAWState } from '../../../shared/src/types/state'
 
 describe('agent-docs', () => {
@@ -36,9 +46,46 @@ describe('agent-docs', () => {
     assert.equal(getMarkdownSection(md, 'Evaluación').trim(), 'ok')
   })
 
+  it('ensurePlanTemplate añade secciones que faltan', () => {
+    const md = ensurePlanTemplate('# Plan: Pop\n\n## Intención\nPop moderno.\n\n## Por implementar\n- [ ] BPM 120\n')
+    assert.match(getMarkdownSection(md, 'Intención'), /Pop moderno/)
+    assert.match(getMarkdownSection(md, 'Por implementar'), /BPM 120/)
+    assert.ok(getMarkdownSection(md, 'Implementado') !== undefined)
+    assert.match(md, /## Evaluación/)
+    assert.match(md, /## Notas del usuario/)
+  })
+
+  it('normalizePlanCheckboxes convierte viñetas sueltas', () => {
+    const md = normalizePlanCheckboxes('# Plan\n\n## Por implementar\n- Pista «Bajo»\n\n## En curso\n')
+    assert.match(getMarkdownSection(md, 'Por implementar'), /- \[ \] Pista «Bajo»/)
+  })
+
+  it('plan.md no se exige en cada mensaje', () => {
+    const text = formatDocsForPrompt('test-docs-policy')
+    assert.match(text, /no en cada pregunta corta/)
+    assert.equal(/OBLIGATORIO en CADA mensaje/i.test(text), false)
+  })
+
   it('resuelve carpeta docs junto al .jaswave', () => {
     assert.equal(docsFolderForProject('C:\\music\\tema.jaswave'), 'C:\\music\\docs')
     assert.equal(docsFolderForProject('/home/u/tema.jaswave'), '/home/u/docs')
+  })
+})
+
+describe('selección de plan.md', () => {
+  const md = `# Plan\n\n## Por implementar\n- [ ] Pista «Bajo»\n- [ ] Pad aéreo\n`
+
+  it('headingNearSnippet encuentra la sección', () => {
+    assert.equal(headingNearSnippet(md, 'Pista «Bajo»'), 'Por implementar')
+  })
+
+  it('formatMusicalSelectionForPrompt pide actualizar solo el fragmento', () => {
+    const a = buildDocTextAnchor({ slug: 'plan.md', markdown: md, text: '- [ ] Pista «Bajo»' })
+    assert.equal(a.kind, 'doc-text')
+    assert.equal(a.heading, 'Por implementar')
+    const block = formatMusicalSelectionForPrompt(a)
+    assert.match(block, /SOLO este fragmento/)
+    assert.match(block, /Pista «Bajo»/)
   })
 })
 
@@ -58,46 +105,18 @@ describe('agent-plan-eval', () => {
           {
             id: 't1',
             nombre: 'Bajo Cálido',
+            tipo: 'midi',
             plugins: [{ nombre: 'Analog Lab V' }],
             clips: [],
           },
         ],
       },
     } as unknown as DAWState
-    const ev = evaluatePlanAgainstDaw(plan, state)
-    assert.equal(ev.missing.length, 0)
+    const ev = evaluatePlanAgainstDaw(plan, state, undefined, { rewrite: true })
+    assert.equal(ev.missing.length, 1)
     assert.equal(ev.done, 1)
-    assert.match(getMarkdownSection(ev.markdown, 'Implementado'), /Bajo/)
+    assert.match(getMarkdownSection(ev.markdown, 'Implementado'), /Crear pista|Bajo/)
+    assert.match(getMarkdownSection(ev.markdown, 'Por implementar'), /MIDI|Escribir/)
     assert.match(getMarkdownSection(ev.markdown, 'Evaluación'), /Intención vs ejecución/)
-  })
-})
-
-describe('agent-harness', () => {
-  it('pide revisión tras mutar el DAW, no tras solo leer docs', () => {
-    assert.equal(harnessReviewNeeded([{ type: 'track.create', success: true, message: 'ok' }]), true)
-    assert.equal(harnessReviewNeeded([{ type: 'doc.read', success: true, message: 'ok' }]), false)
-  })
-
-  it('el mensaje de revisión pide las tres capas', () => {
-    const msg = buildHarnessReviewMessage({
-      userText: 'crea un bajo',
-      evalSummary: 'Falta el pad',
-      actionsSummary: '✓ pista',
-      projectId: 'test-harness',
-      evaluation: {
-        planned: 2,
-        done: 1,
-        missing: ['Pad aéreo'],
-        extraTracks: [],
-        summary: 'Falta el pad',
-        markdown: '',
-        checks: [],
-      },
-    })
-    assert.match(msg, /Intención/)
-    assert.match(msg, /Por implementar/)
-    assert.match(msg, /Implementado/)
-    assert.match(msg, /crea un bajo/)
-    assert.match(msg, /Notas del usuario/)
   })
 })

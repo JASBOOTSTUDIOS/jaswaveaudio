@@ -169,3 +169,59 @@ describe('Text input scope', () => {
     expect(isTextInputTarget(input)).toBe(true);
   });
 });
+
+describe('Eventos ya manejados por un editor (U5)', () => {
+  const makeEvent = (over: Record<string, unknown> = {}) =>
+    ({
+      target: null,
+      key: ' ',
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      metaKey: false,
+      defaultPrevented: false,
+      preventDefault: () => {},
+      stopPropagation: () => {},
+      ...over,
+    }) as unknown as KeyboardEvent;
+
+  it('no ejecuta ninguna acción si e.defaultPrevented está activo', () => {
+    const system = createActionSystem();
+    let called = 0;
+    system.bindHandler('transport.togglePlay', () => {
+      called += 1;
+    });
+    const handled = system.handleKeyboardEvent(makeEvent({ defaultPrevented: true }));
+    expect(handled).toBe(false);
+    expect(called).toBe(0);
+  });
+
+  it('ejecuta una sola vez si el evento no fue manejado antes', () => {
+    const system = createActionSystem();
+    let called = 0;
+    system.bindHandler('transport.togglePlay', () => {
+      called += 1;
+    });
+    const handled = system.handleKeyboardEvent(makeEvent({ defaultPrevented: false }));
+    expect(handled).toBe(true);
+    expect(called).toBe(1);
+  });
+
+  it('Enter tiene un único binding global (transport.pause)', () => {
+    const km = buildDefaultKeymap();
+    const enter = km.bindings.filter((b) => b.shortcut === 'Enter');
+    expect(enter).toHaveLength(1);
+    expect(enter[0]?.actionId).toBe('transport.pause');
+  });
+
+  it('Enter ejecuta exactamente una acción', () => {
+    const system = createActionSystem();
+    let called = 0;
+    system.bindHandler('transport.pause', () => {
+      called += 1;
+    });
+    const handled = system.handleKeyboardEvent(makeEvent({ key: 'Enter' }));
+    expect(handled).toBe(true);
+    expect(called).toBe(1);
+  });
+});

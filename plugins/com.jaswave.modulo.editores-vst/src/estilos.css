@@ -1,0 +1,5 @@
+/* Solo utilidades: la base (preflight) y las variables del tema las pone el DAW. */
+@import 'tailwindcss/theme' layer(theme);
+@import 'tailwindcss/utilities' layer(utilities);
+@import '../../sdk/host-sdk/src/tema.css';
+@source '.';

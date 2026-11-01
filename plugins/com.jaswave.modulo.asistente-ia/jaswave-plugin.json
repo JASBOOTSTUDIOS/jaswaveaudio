@@ -1,0 +1,27 @@
+{
+  "id": "com.jaswave.modulo.asistente-ia",
+  "name": "Asistente Jas (IA)",
+  "version": "1.0.1",
+  "vendor": "JasWave",
+  "category": "ai-skill",
+  "description": "Coproductor con IA: chat, agente que edita el proyecto con comandos deshacibles, plan.md y progreso. Usa los modelos que el administrador asigna a tu cuenta (o los tuyos, si te lo permite).",
+  "targetPlatforms": ["win-x64", "web"],
+  "entrypoints": {
+    "ui": "dist/modulo.js",
+    "uiEstilos": "dist/modulo.css"
+  },
+  "permissions": {
+    "realtimeAudio": false,
+    "fileSystem": "read-write-project",
+    "network": true,
+    "commands": []
+  },
+  "rolesAllowed": ["director", "productor", "mezcla", "mastering"],
+  "license": {
+    "productId": "com.jaswave.modulo.asistente-ia",
+    "features": [
+      { "key": "ia.usar", "description": "Usar el asistente de IA" },
+      { "key": "ia.modelo-propio", "description": "Registrar y usar modelos propios" }
+    ]
+  }
+}

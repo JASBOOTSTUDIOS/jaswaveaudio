@@ -88,8 +88,8 @@ export function applyStyleProfileToNotes(
         if (bar % 4 === 0) out.push(mk(nextId('c'), CRASH, base, 118, 1.0))
       }
 
-      // Ghosts en «e» de cada negra (prior worship / Firmthm)
-      if (profile.stats.snareGhost > 0 || profile.tags.some((t) => /worship|averly|mesias|ghost/i.test(t))) {
+      // Ghosts en «e» de cada negra: solo si el perfil los tiene (stats o tag explícito «ghost»)
+      if (profile.stats.snareGhost > 0 || profile.tags.some((t) => /ghost/i.test(t))) {
         for (const off of [0.25, 1.25, 2.25, 3.25]) {
           const t = base + off
           if (!noteNear(out, t, SNARE)) {

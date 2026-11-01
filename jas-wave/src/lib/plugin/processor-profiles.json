@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "plugin": {
+    "JasWave EQ": {
+      "name": "JasWave EQ",
+      "vendor": "JasWave",
+      "category": "eq",
+      "parameterCount": 42,
+      "parameters": [
+        { "id": 0, "name": "Bypass", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 0, "step": 1, "semanticTags": ["bypass"] },
+        { "id": 1, "name": "Banda 1 Tipo", "unit": "", "kind": "enum", "min": 0, "max": 5, "default": 2, "step": 1, "enumValues": ["HPF","lowShelf","peak","highShelf","LPF","notch"], "semanticTags": ["filter", "type"] },
+        { "id": 2, "name": "Banda 1 Freq", "unit": "Hz", "kind": "float", "min": 20, "max": 20000, "default": 1000, "step": 1, "scale": "log", "semanticTags": ["filter", "cutoff", "frequency"] },
+        { "id": 3, "name": "Banda 1 Gain", "unit": "dB", "kind": "float", "min": -24, "max": 24, "default": 0, "step": 0.1, "semanticTags": ["level", "gain", "eq"] },
+        { "id": 4, "name": "Banda 1 Q", "unit": "", "kind": "float", "min": 0.1, "max": 18, "default": 1, "step": 0.1, "semanticTags": ["filter", "resonance", "q"] },
+        { "id": 5, "name": "Banda 1 On", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 1, "step": 1, "semanticTags": [] },
+        { "id": 6, "name": "Banda 2 Tipo", "unit": "", "kind": "enum", "min": 0, "max": 5, "default": 2, "step": 1, "enumValues": ["HPF","lowShelf","peak","highShelf","LPF","notch"], "semanticTags": ["filter", "type"] },
+        { "id": 7, "name": "Banda 2 Freq", "unit": "Hz", "kind": "float", "min": 20, "max": 20000, "default": 1000, "step": 1, "scale": "log", "semanticTags": ["filter", "cutoff", "frequency"] },
+        { "id": 8, "name": "Banda 2 Gain", "unit": "dB", "kind": "float", "min": -24, "max": 24, "default": 0, "step": 0.1, "semanticTags": ["level", "gain", "eq"] },
+        { "id": 9, "name": "Banda 2 Q", "unit": "", "kind": "float", "min": 0.1, "max": 18, "default": 1, "step": 0.1, "semanticTags": ["filter", "resonance", "q"] },
+        { "id": 10, "name": "Banda 2 On", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 1, "step": 1, "semanticTags": [] },
+        { "id": 11, "name": "Banda 3 Tipo", "unit": "", "kind": "enum", "min": 0, "max": 5, "default": 2, "step": 1, "enumValues": ["HPF","lowShelf","peak","highShelf","LPF","notch"], "semanticTags": ["filter", "type"] },
+        { "id": 12, "name": "Banda 3 Freq", "unit": "Hz", "kind": "float", "min": 20, "max": 20000, "default": 1000, "step": 1, "scale": "log", "semanticTags": ["filter", "cutoff", "frequency"] },
+        { "id": 13, "name": "Banda 3 Gain", "unit": "dB", "kind": "float", "min": -24, "max": 24, "default": 0, "step": 0.1, "semanticTags": ["level", "gain", "eq"] },
+        { "id": 14, "name": "Banda 3 Q", "unit": "", "kind": "float", "min": 0.1, "max": 18, "default": 1, "step": 0.1, "semanticTags": ["filter", "resonance", "q"] },
+        { "id": 15, "name": "Banda 3 On", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 1, "step": 1, "semanticTags": [] },
+        { "id": 16, "name": "Banda 4 Tipo", "unit": "", "kind": "enum", "min": 0, "max": 5, "default": 2, "step": 1, "enumValues": ["HPF","lowShelf","peak","highShelf","LPF","notch"], "semanticTags": ["filter", "type"] },
+        { "id": 17, "name": "Banda 4 Freq", "unit": "Hz", "kind": "float", "min": 20, "max": 20000, "default": 1000, "step": 1, "scale": "log", "semanticTags": ["filter", "cutoff", "frequency"] },
+        { "id": 18, "name": "Banda 4 Gain", "unit": "dB", "kind": "float", "min": -24, "max": 24, "default": 0, "step": 0.1, "semanticTags": ["level", "gain", "eq"] },
+        { "id": 19, "name": "Banda 4 Q", "unit": "", "kind": "float", "min": 0.1, "max": 18, "default": 1, "step": 0.1, "semanticTags": ["filter", "resonance", "q"] },
+        { "id": 20, "name": "Banda 4 On", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 1, "step": 1, "semanticTags": [] },
+        { "id": 21, "name": "Banda 5 Tipo", "unit": "", "kind": "enum", "min": 0, "max": 5, "default": 2, "step": 1, "enumValues": ["HPF","lowShelf","peak","highShelf","LPF","notch"], "semanticTags": ["filter", "type"] },
+        { "id": 22, "name": "Banda 5 Freq", "unit": "Hz", "kind": "float", "min": 20, "max": 20000, "default": 1000, "step": 1, "scale": "log", "semanticTags": ["filter", "cutoff", "frequency"] },
+        { "id": 23, "name": "Banda 5 Gain", "unit": "dB", "kind": "float", "min": -24, "max": 24, "default": 0, "step": 0.1, "semanticTags": ["level", "gain", "eq"] },
+        { "id": 24, "name": "Banda 5 Q", "unit": "", "kind": "float", "min": 0.1, "max": 18, "default": 1, "step": 0.1, "semanticTags": ["filter", "resonance", "q"] },
+        { "id": 25, "name": "Banda 5 On", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 1, "step": 1, "semanticTags": [] },
+        { "id": 26, "name": "Banda 6 Tipo", "unit": "", "kind": "enum", "min": 0, "max": 5, "default": 2, "step": 1, "enumValues": ["HPF","lowShelf","peak","highShelf","LPF","notch"], "semanticTags": ["filter", "type"] },
+        { "id": 27, "name": "Banda 6 Freq", "unit": "Hz", "kind": "float", "min": 20, "max": 20000, "default": 1000, "step": 1, "scale": "log", "semanticTags": ["filter", "cutoff", "frequency"] },
+        { "id": 28, "name": "Banda 6 Gain", "unit": "dB", "kind": "float", "min": -24, "max": 24, "default": 0, "step": 0.1, "semanticTags": ["level", "gain", "eq"] },
+        { "id": 29, "name": "Banda 6 Q", "unit": "", "kind": "float", "min": 0.1, "max": 18, "default": 1, "step": 0.1, "semanticTags": ["filter", "resonance", "q"] },
+        { "id": 30, "name": "Banda 6 On", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 1, "step": 1, "semanticTags": [] },
+        { "id": 31, "name": "Banda 7 Tipo", "unit": "", "kind": "enum", "min": 0, "max": 5, "default": 2, "step": 1, "enumValues": ["HPF","lowShelf","peak","highShelf","LPF","notch"], "semanticTags": ["filter", "type"] },
+        { "id": 32, "name": "Banda 7 Freq", "unit": "Hz", "kind": "float", "min": 20, "max": 20000, "default": 1000, "step": 1, "scale": "log", "semanticTags": ["filter", "cutoff", "frequency"] },
+        { "id": 33, "name": "Banda 7 Gain", "unit": "dB", "kind": "float", "min": -24, "max": 24, "default": 0, "step": 0.1, "semanticTags": ["level", "gain", "eq"] },
+        { "id": 34, "name": "Banda 7 Q", "unit": "", "kind": "float", "min": 0.1, "max": 18, "default": 1, "step": 0.1, "semanticTags": ["filter", "resonance", "q"] },
+        { "id": 35, "name": "Banda 7 On", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 1, "step": 1, "semanticTags": [] },
+        { "id": 36, "name": "Banda 8 Tipo", "unit": "", "kind": "enum", "min": 0, "max": 5, "default": 2, "step": 1, "enumValues": ["HPF","lowShelf","peak","highShelf","LPF","notch"], "semanticTags": ["filter", "type"] },
+        { "id": 37, "name": "Banda 8 Freq", "unit": "Hz", "kind": "float", "min": 20, "max": 20000, "default": 1000, "step": 1, "scale": "log", "semanticTags": ["filter", "cutoff", "frequency"] },
+        { "id": 38, "name": "Banda 8 Gain", "unit": "dB", "kind": "float", "min": -24, "max": 24, "default": 0, "step": 0.1, "semanticTags": ["level", "gain", "eq"] },
+        { "id": 39, "name": "Banda 8 Q", "unit": "", "kind": "float", "min": 0.1, "max": 18, "default": 1, "step": 0.1, "semanticTags": ["filter", "resonance", "q"] },
+        { "id": 40, "name": "Banda 8 On", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 1, "step": 1, "semanticTags": [] },
+        { "id": 41, "name": "Output", "unit": "dB", "kind": "float", "min": -24, "max": 24, "default": 0, "step": 0.1, "semanticTags": ["level", "output"] }
+      ]
+    },
+    "JasWave Compresor": {
+      "name": "JasWave Compresor",
+      "vendor": "JasWave",
+      "category": "dynamics",
+      "parameterCount": 41,
+      "parameters": [
+        { "id": 0, "name": "Bypass", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 0, "step": 1, "semanticTags": ["bypass"] },
+        { "id": 1, "name": "Threshold", "unit": "dB", "kind": "float", "min": -60, "max": 0, "default": -20, "step": 0.1, "semanticTags": ["compressor", "threshold", "dynamics"] },
+        { "id": 2, "name": "Ratio", "unit": ":1", "kind": "float", "min": 1, "max": 20, "default": 4, "step": 0.1, "semanticTags": ["compressor", "ratio", "dynamics"] },
+        { "id": 3, "name": "Attack", "unit": "ms", "kind": "float", "min": 0.1, "max": 200, "default": 10, "step": 0.1, "semanticTags": ["envelope", "attack"] },
+        { "id": 4, "name": "Release", "unit": "ms", "kind": "float", "min": 5, "max": 2000, "default": 100, "step": 1, "semanticTags": ["envelope", "release"] },
+        { "id": 5, "name": "Knee", "unit": "dB", "kind": "float", "min": 0, "max": 24, "default": 0, "step": 0.1, "semanticTags": ["compressor", "knee", "dynamics"] },
+        { "id": 6, "name": "Makeup", "unit": "dB", "kind": "float", "min": -24, "max": 24, "default": 0, "step": 0.1, "semanticTags": ["compressor", "makeup", "dynamics"] },
+        { "id": 7, "name": "Mix", "unit": "%", "kind": "float", "min": 0, "max": 100, "default": 100, "step": 1, "semanticTags": ["mix", "wet"] },
+        { "id": 8, "name": "Sidechain HP", "unit": "Hz", "kind": "float", "min": 0, "max": 500, "default": 0, "step": 1, "semanticTags": ["filter", "cutoff", "sidechain"] },
+        { "id": 40, "name": "GR", "unit": "dB", "kind": "float", "min": -60, "max": 0, "default": 0, "step": 0.1, "readOnly": true, "semanticTags": ["meter", "gr"] }
+      ]
+    },
+    "JasWave Limitador": {
+      "name": "JasWave Limitador",
+      "vendor": "JasWave",
+      "category": "limiter",
+      "parameterCount": 41,
+      "parameters": [
+        { "id": 0, "name": "Bypass", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 0, "step": 1, "semanticTags": ["bypass"] },
+        { "id": 1, "name": "Ceiling", "unit": "dBTP", "kind": "float", "min": -12, "max": 0, "default": -1, "step": 0.1, "semanticTags": ["limiter", "ceiling", "dynamics"] },
+        { "id": 2, "name": "Input Gain", "unit": "dB", "kind": "float", "min": 0, "max": 24, "default": 0, "step": 0.1, "semanticTags": ["level", "gain"] },
+        { "id": 3, "name": "Release", "unit": "ms", "kind": "float", "min": 1, "max": 1000, "default": 100, "step": 1, "semanticTags": ["envelope", "release"] },
+        { "id": 4, "name": "Lookahead", "unit": "ms", "kind": "float", "min": 0, "max": 10, "default": 0, "step": 0.1, "semanticTags": [] },
+        { "id": 40, "name": "GR", "unit": "dB", "kind": "float", "min": -60, "max": 0, "default": 0, "step": 0.1, "readOnly": true, "semanticTags": ["meter", "gr"] }
+      ]
+    },
+    "JasWave Utility": {
+      "name": "JasWave Utility",
+      "vendor": "JasWave",
+      "category": "utility",
+      "parameterCount": 7,
+      "parameters": [
+        { "id": 0, "name": "Bypass", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 0, "step": 1, "semanticTags": ["bypass"] },
+        { "id": 1, "name": "Gain", "unit": "dB", "kind": "float", "min": -24, "max": 24, "default": 0, "step": 0.1, "semanticTags": ["level", "gain"] },
+        { "id": 2, "name": "Width", "unit": "%", "kind": "float", "min": 0, "max": 200, "default": 100, "step": 1, "semanticTags": ["stereo", "width"] },
+        { "id": 3, "name": "Mono Below", "unit": "Hz", "kind": "float", "min": 0, "max": 200, "default": 0, "step": 1, "semanticTags": ["filter", "mono"] },
+        { "id": 4, "name": "Invert L", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 0, "step": 1, "semanticTags": ["phase"] },
+        { "id": 5, "name": "Invert R", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 0, "step": 1, "semanticTags": ["phase"] },
+        { "id": 6, "name": "Balance", "unit": "", "kind": "float", "min": -1, "max": 1, "default": 0, "step": 0.01, "semanticTags": ["pan", "balance"] }
+      ]
+    },
+    "JasWave De-esser": {
+      "name": "JasWave De-esser",
+      "vendor": "JasWave",
+      "category": "deesser",
+      "parameterCount": 5,
+      "parameters": [
+        { "id": 0, "name": "Bypass", "unit": "", "kind": "bool", "min": 0, "max": 1, "default": 0, "step": 1, "semanticTags": ["bypass"] },
+        { "id": 1, "name": "Freq", "unit": "Hz", "kind": "float", "min": 3000, "max": 12000, "default": 6000, "step": 1, "scale": "linear", "semanticTags": ["filter", "cutoff", "frequency"] },
+        { "id": 2, "name": "Threshold", "unit": "dB", "kind": "float", "min": -60, "max": 0, "default": -20, "step": 0.1, "semanticTags": ["compressor", "threshold", "dynamics"] },
+        { "id": 3, "name": "Range", "unit": "dB", "kind": "float", "min": 0, "max": 24, "default": 12, "step": 0.1, "semanticTags": [] },
+        { "id": 4, "name": "Mode", "unit": "", "kind": "enum", "min": 0, "max": 1, "default": 0, "step": 1, "enumValues": ["split", "wide"], "semanticTags": [] }
+      ]
+    }
+  }
+}

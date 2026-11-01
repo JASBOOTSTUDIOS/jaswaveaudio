@@ -11,9 +11,17 @@ import {
 } from 'react'
 import { TransportClock } from '@/lib/transport-clock'
 import { audioEngine, type AudioClipPlaybackInfo, type MidiClipPlaybackInfo, type TrackAudioConfig } from '@/lib/audio-engine'
+import { presetParaPista } from '@/lib/web-synth/web-synth'
 import type { AudioClip } from '../../shared/src/types/clips'
 import { beatsASegundos, segundosABeats } from '@/lib/audio-conversions'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
+import { safeProjectBpm } from '../../shared/src'
+import { EventosTransporte } from '../../shared/src/constants/nombres-eventos'
+import { detectarFinProyecto } from '../../shared/src/render/fin-proyecto'
+import { puntoInicioDe } from '../../shared/src/commands/domain-commands'
+import { decidirFinReproduccion, umbralSilencioLineal } from '@/src/lib/fin-reproduccion'
+import { getPreferenciasTransporte } from '@/src/lib/preferencias-transporte'
+import { valorCcAMidi } from '@/src/lib/midi-cc-recorder'
 import { useImportProgress } from '@/src/context/import-progress-context'
 import { extractStereoPeaks, packStereoPeaks } from '@/lib/stereo-peaks'
 import { nativeAudioBridge } from '@/src/lib/native-audio-bridge'
@@ -30,12 +38,19 @@ import { encodeWavFromAudioBuffer } from '@/src/lib/encode-wav'
 import {
   loadRecordingBytes,
   makeRecordingFileName,
-  recordingBasename,
   saveRecordingWav,
+  saveRecordingWavFallback,
 } from '@/src/lib/audio-recording-persist'
+import { cargarBytesMedia, copiarAudioAlProyecto, esRutaMediaRelativa, validarImportacionAudio, guardarWaveformPeak, cargarWaveformPeak } from '@/src/lib/project-media'
+import {
+  cerrarFinalizacionGrabacion,
+  iniciarFinalizacionGrabacion,
+} from '@/src/lib/recording-session'
+import { scheduleCompPlayback } from '@/src/lib/comp-playback'
 import {
   ensureProjectVstInstruments,
   getLoadedInstrumentForTrack,
+  getLoadedInstrumentsForTrack,
   getVstRuntimeGeneration,
   registerProjectGraphResync,
   startVstRuntimeWindowSync,
@@ -43,6 +58,7 @@ import {
 } from '@/src/lib/plugin/track-vst-runtime'
 import { setPreferredVstPreviewTrack } from '@/src/lib/plugin/vst-voice-router'
 import { syncNativeChannelMix } from '@/src/lib/plugin/track-channel-mix'
+import { pistasAudibles } from '@/src/lib/plugin/track-hierarchy'
 import { applyAutomationAtTime, applyParamAutomationAtTime } from '@/src/lib/automation-runtime'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
 import { isUndockWindow } from '@/lib/undock-window'
@@ -50,7 +66,8 @@ import {
   startEditorPreviewFocusBridge,
   subscribeEditorPreviewTrack,
 } from '@/src/lib/plugin/editor-preview-focus'
-import { publishPlayheadTick, startPlayheadSyncReceiver } from '@/src/lib/playhead-window-sync'
+import { publishPlayheadTick, startPlayheadSyncReceiver, startPlayheadSyncResponder, requestPlayheadSync, extrapolatePlayheadMs, mergeSatellitePlayheadTick, type PlayheadAnchor } from '@/src/lib/playhead-window-sync'
+import { snapSeekBeat } from '@/src/lib/timeline-snap'
 import {
   getProjectReadyGeneration,
   markProjectBuffersNotNeeded,
@@ -73,20 +90,36 @@ function trackAudioConfigFromShared(
     plugins?: { id?: string; bypass?: boolean; licencia?: string; nombre?: string; descripcion?: string }[]
   },
   stemIndex = 0,
+  audibles?: ReadonlySet<string>,
 ): TrackAudioConfig {
   // Solo slot host-confirmado: si inventamos el id esperado, el host loguea «slot no cargado» y hay silencio.
   const loaded = getLoadedInstrumentForTrack(t.id)
   const vstSlot = loaded?.slotId
+  const capas = getLoadedInstrumentsForTrack(t.id)
+    .map((p) => p.slotId)
+    .filter((s) => s !== vstSlot)
 
   return {
     id: t.id,
     volumen: typeof t.volumen === 'number' ? t.volumen : 0.8,
     paneo: typeof t.paneo === 'number' ? t.paneo : 0,
-    silenciada: Boolean(t.silenciada),
-    soloActiva: Boolean(t.soloActiva),
+    // Con jerarquía resuelta, mute/solo heredados de carpetas ya vienen aplanados en `silenciada`.
+    silenciada: audibles ? !audibles.has(t.id) : Boolean(t.silenciada),
+    soloActiva: audibles ? false : Boolean(t.soloActiva),
     stemIndex,
     vstInstrumentSlotId: vstSlot,
+    vstLayerSlotIds: capas.length > 0 ? capas : undefined,
+    // W2: preset del WebSynth para escuchar la pista en la web.
+    instrumentoWeb: presetParaPista([t.nombre, ...(t.tags ?? []), ...(t.plugins ?? []).map((p) => p.nombre)]),
   }
+}
+
+/** Config de audio de todas las pistas con mute/solo heredados de las carpetas-bus. */
+function tracksAudioConfigFromShared(
+  tracks: Array<Parameters<typeof trackAudioConfigFromShared>[0] & { tipo?: string; padreId?: string }>,
+): TrackAudioConfig[] {
+  const audibles = pistasAudibles(tracks)
+  return tracks.map((t, i) => trackAudioConfigFromShared(t, i, audibles))
 }
 
 function esAudioClip(clip: unknown): clip is AudioClip {
@@ -119,6 +152,8 @@ export interface LoadedClip {
   waveform?: number[]
   kind?: 'audio' | 'midi'
   noteCount?: number
+  missing?: boolean
+  loadError?: string
   notes?: Array<{
     pitch: number
     inicio: number
@@ -149,6 +184,29 @@ type PlaybackState = {
 }
 
 /** Acciones + clips (cambia poco). */
+/**
+ * Proyección de notas para la miniatura del clip, cacheada por la identidad del array
+ * `clip.notas` del store (inmutable: sólo cambia si ese clip cambia). Antes se recreaban
+ * ~90 clips x ~1000 notas en cada mutación de cualquier pista, y cada MidiClipPreview
+ * redibujaba su canvas entero.
+ */
+const previewNotasCache = new WeakMap<object, Array<{ pitch: number; inicio: number; duracion: number; velocidad?: number; mute?: boolean }>>()
+function previewNotasCacheadas(
+  notas: ReadonlyArray<{ pitch: number; inicio: number; duracion: number; velocidad?: number; mute?: boolean }>,
+) {
+  const hit = previewNotasCache.get(notas)
+  if (hit) return hit
+  const out = notas.map((n) => ({
+    pitch: n.pitch,
+    inicio: n.inicio,
+    duracion: n.duracion,
+    velocidad: n.velocidad,
+    mute: n.mute,
+  }))
+  previewNotasCache.set(notas, out)
+  return out
+}
+
 const PlaybackActionsContext = createContext<Omit<PlaybackState, 'positionMs' | 'progress'> | null>(null)
 /** Reloj UI (~20fps). */
 const PlaybackClockContext = createContext<{ positionMs: number; progress: number } | null>(null)
@@ -171,6 +229,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   const importProgress = useImportProgress()
   const transportStatePlaying = useDAWState((s) => Boolean(s.transport?.reproduciendo))
   const transportGrabacion = useDAWState((s) => s.transport?.grabacion)
+  const transportModoGrabacion = useDAWState((s) => s.transport?.modoGrabacion ?? 'normal')
   const transportLoopActivo = useDAWState((s) => Boolean(s.transport?.loop?.activo))
   const transportMetronomo = useDAWState((s) => Boolean(s.transport?.metronomo?.activo))
   const transportPosSegundos = useDAWState((s) => s.transport?.posicion?.segundos ?? 0)
@@ -188,6 +247,33 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     return startVstRuntimeWindowSync(satellite ? 'satellite' : 'primary')
   }, [satellite])
+
+  // Stop (botón, atajo, IA o CLI: todos pasan por transport.stop) corta en seco todo el sonido de los plugins,
+  // reverbs y delays incluidos. La pausa no: ahí las colas de FX caen solas.
+  useEffect(() => {
+    if (satellite) return
+    const alDetener = () => {
+      void audioEngine.hardStop()
+    }
+    tienda.busEventos.on(EventosTransporte.detenido, alDetener)
+    return () => tienda.busEventos.off(EventosTransporte.detenido, alDetener as (p: unknown) => void)
+  }, [tienda, satellite])
+
+  // Si un clip no llega al motor nativo, se avisa (una vez por clip) en lugar de dejarlo mudo sin explicación.
+  useEffect(() => {
+    const avisados = new Set<string>()
+    audioEngine.onClipLoadFailed = (clipId) => {
+      if (avisados.has(clipId)) return
+      avisados.add(clipId)
+      tienda.busEventos.emit('comando.fallido', {
+        type: 'audio.playback',
+        error: 'No se pudo cargar un clip de audio en el motor nativo; ese clip no sonará. Revisa el log del motor.',
+      })
+    }
+    return () => {
+      audioEngine.onClipLoadFailed = undefined
+    }
+  }, [tienda])
 
   useEffect(() => {
     if (satellite) return
@@ -210,11 +296,11 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     return subscribeVstRuntime(() => {
       for (const t of sharedTracks) {
         const cfg = trackAudioConfigFromShared(t, sharedTracks.indexOf(t))
-        audioEngine.patchTrackVstInstrument(t.id, cfg.vstInstrumentSlotId)
+        audioEngine.patchTrackVstInstrument(t.id, cfg.vstInstrumentSlotId, cfg.vstLayerSlotIds ?? [])
       }
     })
   }, [sharedTracks])
-  const projectBpm = useDAWState((s) => s.project?.bpm?.valor ?? 120)
+  const projectBpm = useDAWState((s) => safeProjectBpm(s))
   const masterState = useDAWState((s) => s.project?.master)
   const timeSignatureNum = useDAWState((s) => s.project?.timeSignature?.numerador ?? 4)
   const timeSignatureDen = useDAWState((s) => s.project?.timeSignature?.denominador ?? 4)
@@ -253,6 +339,10 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   const [positionMs, setPositionMs] = useState(0)
   const positionMsRef = useRef(0)
+  /** `stop` del provider (lo usa el vigilante de fin de canción, definido más abajo). */
+  const stopRef = useRef<() => void>(() => undefined)
+  /** Ancla para extrapolación en ventanas undock (Date.now comparable). */
+  const satelliteAnchorRef = useRef<PlayheadAnchor | null>(null)
 
   const playing = transportStatePlaying
   const playingRef = useRef(playing)
@@ -270,12 +360,40 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         return prev
       })
       positionMsRef.current = sharedMs
-      if (!satellite) publishPlayheadTick(sharedMs, false)
+      // Crítico: alinear motor (si no, al play se republica la posición anterior al undock).
+      if (!satellite) {
+        try {
+          audioEngine.seekTimeline(sharedMs / 1000)
+        } catch {
+          /* ignore */
+        }
+        try {
+          const beats = (sharedMs / 1000) * (BPM / 60)
+          clock.seek({
+            beats,
+            segundos: sharedMs / 1000,
+            samples: Math.round((sharedMs / 1000) * audioEngine.getSampleRate()),
+            ticks: beats * PPQ,
+            compases: 0,
+            frames: 0,
+            tiempoMusical: '',
+            porcentaje: 0,
+          })
+        } catch {
+          /* ignore */
+        }
+        publishPlayheadTick(sharedMs, false)
+      } else {
+        satelliteAnchorRef.current = { ms: sharedMs, wall: Date.now(), playing: false }
+      }
     }
   }, [transportPosSegundos, playing, satellite])
 
+  const [failedSourcesState, setFailedSourcesState] = useState<Record<string, string>>({})
   // Map clips from shared store tracks (+ backfill peaks desde buffer en memoria)
   const peaksCacheRef = useRef<Map<string, number[]>>(new Map())
+  // Sube al llegar un .peak del disco para que las formas de onda se repinten sin esperar a otro cambio de estado
+  const [peaksVersion, setPeaksVersion] = useState(0)
   const clips: LoadedClip[] = useMemo(() => {
     const list: LoadedClip[] = []
     for (const trk of sharedTracks) {
@@ -295,15 +413,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
               sourceId: '',
               kind: 'midi',
               noteCount: Array.isArray(clip.notas) ? clip.notas.length : 0,
-              notes: Array.isArray(clip.notas)
-                ? clip.notas.map((n) => ({
-                    pitch: n.pitch,
-                    inicio: n.inicio,
-                    duracion: n.duracion,
-                    velocidad: n.velocidad,
-                    mute: n.mute,
-                  }))
-                : [],
+              notes: Array.isArray(clip.notas) ? previewNotasCacheadas(clip.notas) : [],
             })
             continue
           }
@@ -329,15 +439,24 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
               if (cached) {
                 waveform = cached
               } else {
+                void cargarWaveformPeak(sourceId, projectRuta).then((peakData) => {
+                  // No pisa una forma de onda recién calculada desde el buffer (carrera con el disco)
+                  if (peakData && peakData.length >= 4 && !peaksCacheRef.current.has(cacheKey)) {
+                    peaksCacheRef.current.set(cacheKey, peakData)
+                    setPeaksVersion((v) => v + 1)
+                  }
+                })
                 const buf = audioEngine.getAudioBuffer(sourceId)
                 if (buf) {
                   const buckets = Math.min(4096, Math.max(512, Math.floor(buf.duration * 80)))
                   waveform = packStereoPeaks(extractStereoPeaks(buf, buckets))
                   peaksCacheRef.current.set(cacheKey, waveform)
+                  void guardarWaveformPeak(sourceId, waveform, projectRuta)
                 }
               }
           }
 
+          const isMissing = failedSourcesState[sourceId] || failedSourcesState[clip.id]
           list.push({
             id: clip.id,
             trackId: trk.id,
@@ -349,12 +468,16 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
             sourceId,
             waveform,
             kind: 'audio',
+            missing: Boolean(isMissing),
+            loadError: isMissing || undefined,
           })
         }
       }
     }
     return list
-  }, [sharedTracks, BPM])
+    // peaksVersion no se lee dentro: solo fuerza el recálculo cuando llega un .peak del disco
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sharedTracks, BPM, failedSourcesState, projectRuta, peaksVersion])
 
   // Mute / solo / volumen / paneo / cadena FX en caliente durante play
   const trackMixSig = useMemo(
@@ -367,7 +490,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           const autos = (t.automatizaciones ?? [])
             .map((a) => `${a.parametro}:${a.puntos?.length ?? 0}`)
             .join(',')
-          return `${t.id}:${Boolean(t.silenciada)}:${Boolean(t.soloActiva)}:${typeof t.volumen === 'number' ? t.volumen : 0.8}:${typeof t.paneo === 'number' ? t.paneo : 0}:${plugs}:${autos}`
+          return `${t.id}:${t.padreId ?? ''}:${Boolean(t.silenciada)}:${Boolean(t.soloActiva)}:${typeof t.volumen === 'number' ? t.volumen : 0.8}:${typeof t.paneo === 'number' ? t.paneo : 0}:${plugs}:${autos}`
         })
         .join('|'),
     [sharedTracks],
@@ -405,7 +528,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (satellite) return
-    const tracksConfig: TrackAudioConfig[] = sharedTracks.map((t, i) => trackAudioConfigFromShared(t, i))
+    const tracksConfig: TrackAudioConfig[] = tracksAudioConfigFromShared(sharedTracks)
     audioEngine.applyTracksConfig(tracksConfig)
     syncNativeChannelMix(sharedTracks, masterState, projectRouting)
   }, [satellite, trackMixSig, masterMixSig, sharedTracks, vstRuntimeGen, masterState, projectRouting])
@@ -481,24 +604,20 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let lastUiMs = 0
-    let lastPub = 0
     const unsubscribe = clock.subscribe((position) => {
       const ms = position.segundos * 1000
       const loopMs = loopMsRef.current
       const clamped = progressToMs(msToProgress(ms, loopMs), loopMs)
       const ahora = performance.now()
-      positionMsRef.current = clamped
-      // React clock context poco frecuente (progress bars); displays usan getPositionMs+RAF
+      // En play, el intervalo de audio es la fuente de verdad para satélites.
+      // Aquí solo actualizamos UI local / ref cuando no estamos publicando audio.
+      if (!playingRef.current) {
+        positionMsRef.current = clamped
+      }
       if (ahora - lastUiMs >= 250) {
         lastUiMs = ahora
         setPositionMs(clamped)
       }
-      // Satélites (piano roll flotante) necesitan playhead fluido.
-      if (!satellite && ahora - lastPub >= 33) {
-        lastPub = ahora
-        publishPlayheadTick(clamped, playingRef.current)
-      }
-      // No escribir posición al store durante play (re-render global + BroadcastChannel = tirones)
     })
 
     return () => {
@@ -506,28 +625,130 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     }
   }, [clock, tienda, satellite])
 
-  // Ventana undock: seguir el playhead de la principal en tiempo real.
+  // Primary: responder sync con reloj monotónico.
+  useEffect(() => {
+    if (satellite) return
+    return startPlayheadSyncResponder(() => {
+      if (playingRef.current) {
+        try {
+          const ms = audioEngine.getMonotonicTimelineSeconds() * 1000
+          if (Number.isFinite(ms) && ms >= 0) return ms
+        } catch {
+          /* fall through */
+        }
+      }
+      return positionMsRef.current
+    }, () => playingRef.current)
+  }, [satellite])
+
+  // Primary: actualizar ref local a menudo; publicar a undock poco (satélite free-runea).
+  useEffect(() => {
+    if (satellite || !playing) return
+    const tickLocal = () => {
+      if (!playingRef.current) return
+      try {
+        const ms = audioEngine.getMonotonicTimelineSeconds() * 1000
+        if (!Number.isFinite(ms) || ms < 0) return
+        positionMsRef.current = ms
+      } catch {
+        /* ignore */
+      }
+    }
+    tickLocal()
+    const localId = window.setInterval(tickLocal, 32)
+    const pubId = window.setInterval(() => {
+      if (!playingRef.current) return
+      publishPlayheadTick(positionMsRef.current, true)
+    }, 500)
+    publishPlayheadTick(positionMsRef.current, true)
+    return () => {
+      window.clearInterval(localId)
+      window.clearInterval(pubId)
+    }
+  }, [satellite, playing])
+
+  // Ventana undock: free-run (ancla fija) + solo seek/pause re-anclan.
   useEffect(() => {
     if (!satellite) return
+    requestPlayheadSync()
     return startPlayheadSyncReceiver((tick) => {
-      positionMsRef.current = tick.ms
-      setPositionMs((prev) => (Math.abs(prev - tick.ms) > 16 ? tick.ms : prev))
+      const prev = satelliteAnchorRef.current
+      const merged = mergeSatellitePlayheadTick(prev, tick)
+      if (
+        prev &&
+        prev.playing === merged.playing &&
+        prev.ms === merged.ms &&
+        prev.wall === merged.wall
+      ) {
+        return
+      }
+      satelliteAnchorRef.current = merged
+      positionMsRef.current = merged.playing ? extrapolatePlayheadMs(merged) : merged.ms
+      if (!merged.playing || !prev?.playing) {
+        setPositionMs(merged.ms)
+      }
     })
   }, [satellite])
+
+  // Store pause/play en satélite.
+  useEffect(() => {
+    if (!satellite) return
+    if (!playing) {
+      // No pisar un seek reciente (W→0): preferir ancla/store ya en 0.
+      const a = satelliteAnchorRef.current
+      const ms = a && !a.playing ? a.ms : a ? extrapolatePlayheadMs(a) : positionMsRef.current
+      satelliteAnchorRef.current = { ms, wall: Date.now(), playing: false }
+      positionMsRef.current = ms
+      setPositionMs(ms)
+      return
+    }
+    // Al pasar a play: invalidar ancla para que el próximo tick (posición actual) fije el free-run.
+    satelliteAnchorRef.current = {
+      ms: satelliteAnchorRef.current?.ms ?? positionMsRef.current,
+      wall: Date.now(),
+      playing: false,
+    }
+    requestPlayheadSync()
+  }, [playing, satellite])
 
   const triggerAudioPlayback = useCallback(async (startMs: number, currentClips: LoadedClip[]) => {
     // Estado fresco (CLI/musicBuild puede ir por delante del cierre React).
     const freshTracks = tienda.obtenerEstado().project?.tracks ?? sharedTracks
 
+    // Datos de edición del clip (mute, ganancia, fades, slip) desde el store: los clips cargados solo
+    // conocen posición y audio.
+    type ClipEdicion = {
+      id: string
+      silenciado?: boolean
+      ganancia?: number
+      clipInicio?: number
+      fadeIn?: { duracion?: number; curva?: string } | null
+      fadeOut?: { duracion?: number; curva?: string } | null
+      inverso?: boolean
+    }
+    const edicionPorId = new Map<string, ClipEdicion>()
+    for (const trk of freshTracks) for (const c of (trk.clips ?? []) as ClipEdicion[]) edicionPorId.set(c.id, c)
     const playbackClips: AudioClipPlaybackInfo[] = currentClips
       .filter((c) => (c.kind ?? 'audio') !== 'midi')
-      .map((c) => ({
-        id: c.id,
-        trackId: c.trackId,
-        inicio: c.inicioSeconds,
-        duracion: c.duracionSeconds,
-        sourcePathOrId: c.sourceId,
-      }))
+      .map((c) => {
+        const e = edicionPorId.get(c.id)
+        return {
+          id: c.id,
+          trackId: c.trackId,
+          inicio: c.inicioSeconds,
+          duracion: c.duracionSeconds,
+          sourcePathOrId: c.sourceId,
+          // clipInicio se guarda en beats.
+          clipInicio: e?.clipInicio ? beatsASegundos(e.clipInicio, BPM) : 0,
+          silenciado: e?.silenciado === true,
+          gananciaDb: e?.ganancia,
+          fadeInSec: e?.fadeIn?.duracion,
+          fadeOutSec: e?.fadeOut?.duracion,
+          fadeInCurva: e?.fadeIn?.curva,
+          fadeOutCurva: e?.fadeOut?.curva,
+          inverso: e?.inverso === true,
+        }
+      })
 
     // MIDI siempre desde el store: tras daw.musicBuild el play del bridge
     // suele llegar antes de que React regenere `clips` → schedule vacío + silencio
@@ -537,6 +758,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       if (!Array.isArray(trk.clips)) continue
       for (const rawClip of trk.clips) {
         if (!esMidiClip(rawClip)) continue
+        if ((rawClip as { silenciado?: boolean }).silenciado) continue
         const inicioBeats = rawClip.inicio ?? 0
         const inicioSeconds = beatsASegundos(inicioBeats, BPM)
         const raw = rawClip as {
@@ -559,11 +781,11 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         const ccs: Array<{ cc: number; timeSec: number; value: number }> = []
         for (const lane of raw.expression?.cc ?? []) {
           for (const pt of lane.puntos ?? []) {
-            const nrm = pt.valor <= 1 ? pt.valor : pt.valor / 127
+            // Contrato: valor normalizado 0..1 (ver midi-cc-recorder.ts); un valor 1 es el máximo, no «CC = 1».
             ccs.push({
               cc: lane.cc,
               timeSec: inicioSeconds + beatsASegundos(pt.tiempo, BPM),
-              value: Math.max(0, Math.min(127, Math.round(nrm * 127))),
+              value: valorCcAMidi(pt.valor),
             })
           }
         }
@@ -584,8 +806,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    const trackAudioConfig = (): TrackAudioConfig[] =>
-      freshTracks.map((t, i) => trackAudioConfigFromShared(t, i))
+    const trackAudioConfig = (): TrackAudioConfig[] => tracksAudioConfigFromShared(freshTracks)
 
     if (midiClips.length === 0) {
       const storeMidi = freshTracks.reduce((n, t) => {
@@ -609,20 +830,26 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       armed = await audioEngine.armNativeMixOutput()
     }
     if (!armed) {
-      console.warn('[playback] native mix not armed', audioEngine.getTimingDiagnostics().lastArmError)
+      const motivo = audioEngine.getTimingDiagnostics().lastArmError
+      console.warn('[playback] native mix not armed', motivo)
+      if (motivo && motivo !== 'no-plugin-host-api' && motivo !== 'undock-window') {
+        tienda.busEventos.emit('comando.fallido', {
+          type: 'audio.engine',
+          error: `El motor de audio nativo no está disponible (${String(motivo)}). No habrá sonido hasta que arranque.`,
+        })
+      }
     }
-    // Esperar load breve para tener slots antes del primer lookahead MIDI.
-    // Si ya hay slots, no re-ensure (load/getLatency en play congela stdin → silencio).
-    const alreadySlotted = trackAudioConfig().filter((t) => t.vstInstrumentSlotId).length
-    const loadP =
-      alreadySlotted > 0
-        ? Promise.resolve(new Map<string, string>())
-        : ensureProjectVstInstruments(
-            freshTracks.map((t) => ({ id: t.id, plugins: t.plugins })),
-            masterState?.plugins,
-          )
-    await Promise.race([loadP, new Promise<void>((r) => setTimeout(r, 3500))])
-    // Publicar graph con tracks frescos antes del primer noteOn (no esperar al then).
+    // Carga de VSTs asíncrona no bloqueante: dispara en segundo plano y publica el grafo
+    const loadP = ensureProjectVstInstruments(
+      freshTracks.map((t) => ({ id: t.id, plugins: t.plugins })),
+      masterState?.plugins,
+    )
+    loadP.then(() => {
+      syncNativeChannelMix(freshTracks, masterState, projectRouting)
+    }).catch((err) => {
+      console.warn('[playback] background VST ensure error:', err)
+    })
+    // Publicar graph inmediatamente con tracks frescos para arrancar el audio en 0 ms
     syncNativeChannelMix(freshTracks, masterState, projectRouting)
     let cfg0 = trackAudioConfig()
     let slotN = cfg0.filter((t) => t.vstInstrumentSlotId).length
@@ -644,7 +871,18 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     if (noteN > 0 && slotN === 0) {
       console.warn('[playback] MIDI con notas pero sin slots VST', { noteN, tracks: freshTracks.length })
     }
-    audioEngine.playClips(startMs / 1000, playbackClips, cfg0, midiClips, BPM)
+    // Espera a que estén en el host los clips de los primeros segundos (máx. 4 s): el reloj de la UI
+    // arranca después (clock.play tras triggerAudioPlayback), así el playhead no corre con el audio mudo.
+    await audioEngine.playClips(startMs / 1000, playbackClips, cfg0, midiClips, BPM)
+    const stComp = tienda.obtenerEstado()
+    if ((stComp.project.takeFolders ?? []).some((f) => f.segments.length > 0 || f.takeActivoId)) {
+      const stemByTrackId = new Map(freshTracks.map((t, i) => [t.id, i]))
+      void scheduleCompPlayback(stComp, {
+        startSec: startMs / 1000,
+        sampleRate: audioEngine.getSampleRate(),
+        stemByTrackId,
+      })
+    }
     void loadP.then(() => {
       const cfg = trackAudioConfig()
       audioEngine.applyTracksConfig(cfg)
@@ -656,13 +894,23 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   }, [sharedTracks, BPM, masterState, projectRouting, tienda])
 
   // Sync clock & audio: Space = pause/resume en el playhead; Stop = cero
-  positionMsRef.current = positionMs
+  // NO pisar positionMsRef aquí: en satélite (undock) el ref lo actualiza
+  // BroadcastChannel ~30 Hz; en primary lo actualiza clock.subscribe. Si
+  // reasignamos desde el state React (lento) en cada render, el playhead
+  // se congela hasta pausar.
 
   useEffect(() => {
     if (satellite) return
     if (playing) {
+      // Usar posición del store/ref YA alineada (p.ej. tras W → 0), y fijar motor YA.
       const ms = positionMsRef.current
       const seconds = ms / 1000
+      try {
+        audioEngine.seekTimeline(seconds)
+      } catch {
+        /* ignore */
+      }
+      publishPlayheadTick(ms, true)
       const beats = (seconds * BPM) / 60
       clock.seek({
         beats,
@@ -683,7 +931,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         if (!clock.isPlaying) clock.play()
         // Metrónomo DESPUÉS de playClips (mismo reloj / epoch). Antes corría en paralelo → desync.
         if (metronomeOn) {
-          const beat = audioEngine.getTimelineSeconds() / (60 / BPM)
+          const beat = audioEngine.getMonotonicTimelineSeconds() / (60 / BPM)
           audioEngine.startMetronome(BPM, BEATS_PER_BAR, beat)
         }
       })()
@@ -698,7 +946,14 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     }
     const pos = clock.getCurrentPosition()
     const ms = Math.max(0, pos.segundos * 1000)
+    positionMsRef.current = ms
     setPositionMs(ms)
+    try {
+      audioEngine.seekTimeline(ms / 1000)
+    } catch {
+      /* ignore */
+    }
+    publishPlayheadTick(ms, false)
     lastStoreSyncRef.current = performance.now()
     tienda.establecerEstado((s) => ({
       ...s,
@@ -775,9 +1030,31 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   }, [tienda])
 
   const stop = useCallback(() => {
-    // Primero congelar reloj en 0 para que el effect de pause no reintroduzca posición
+    // Primero congelar el reloj en el punto de inicio (donde el usuario dejó el cursor; 0 por defecto) para que el
+    // effect de pausa no reintroduzca la posición. transport.stop deja el estado en ese mismo punto.
     clock.stop()
-    setPositionMs(0)
+    const inicioMs = puntoInicioDe(tienda.obtenerEstado().transport) * 1000
+    positionMsRef.current = inicioMs
+    setPositionMs(inicioMs)
+    if (inicioMs > 0) {
+      const seg = inicioMs / 1000
+      const beats = seg * (BPM / 60)
+      try {
+        clock.seek({
+          beats,
+          segundos: seg,
+          samples: Math.round(seg * audioEngine.getSampleRate()),
+          ticks: beats * PPQ,
+          compases: beats / BEATS_PER_BAR,
+          frames: Math.round(seg * 30),
+          tiempoMusical: '',
+          porcentaje: 0,
+        })
+        audioEngine.seekTimeline(seg)
+      } catch {
+        /* ignore */
+      }
+    }
     audioEngine.stopAllSources()
     audioEngine.stopMetronome()
     void nativeAudioBridge.pause()
@@ -786,7 +1063,9 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         tienda.busEventos.emit('comando.fallido', { type: 'transport.stop', error: r.error?.message })
       }
     })
-  }, [tienda, clock])
+  }, [tienda, clock, BPM, BEATS_PER_BAR])
+
+  stopRef.current = stop
 
   const toggleRecording = useCallback(() => {
     void tienda.executor.execute('transport.toggleRecord', {})
@@ -827,20 +1106,44 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       if (!Array.isArray(trk.clips)) continue
       for (const clip of trk.clips) {
         if (!esAudioClip(clip)) continue
-        const sourceId = clip.source?.ruta
+        // Preferir la ruta definitiva en disco si existe
+        const sourceId = clip.source?.ruta || ((clip as unknown as { sourceId?: string }).sourceId) || clip.id
         if (!sourceId) continue
-        if (!recordingBasename(sourceId) && !/\.wav$/i.test(sourceId)) continue
+        if (audioEngine.getAudioBuffer(sourceId) || audioEngine.getAudioBuffer(clip.id)) continue
+        // Grabaciones (.wav) y media relativa del proyecto (`media/...`) o rutas absolutas
+        const esMediaRelativa = esRutaMediaRelativa(sourceId)
         needed += 1
-        if (audioEngine.getAudioBuffer(sourceId)) continue
         if (hydratedSourcesRef.current.has(sourceId)) continue
         hydratedSourcesRef.current.add(sourceId)
         pending.push(
-          loadRecordingBytes(sourceId, projectRuta).then(async (bytes) => {
+          (esMediaRelativa
+            ? cargarBytesMedia(sourceId, projectRuta)
+            : loadRecordingBytes(sourceId, projectRuta)
+          ).then(async (bytes) => {
             if (!bytes) {
-              hydratedSourcesRef.current.delete(sourceId)
+              setFailedSourcesState((prev) => ({
+                ...prev,
+                [sourceId]: 'El archivo de audio no se encuentra en el proyecto',
+                [clip.id]: 'El archivo de audio no se encuentra en el proyecto',
+              }))
               return
             }
-            await audioEngine.decodeArrayBuffer(sourceId, bytes)
+            try {
+              const buf = await audioEngine.decodeArrayBuffer(sourceId, bytes)
+              if (buf) {
+                if (clip.id) audioEngine.setAudioBuffer(clip.id, buf)
+                if (clip.source?.ruta) audioEngine.setAudioBuffer(clip.source.ruta, buf)
+                const cName = clip.nombre
+                if (cName) audioEngine.setAudioBuffer(cName, buf)
+              }
+            } catch (err) {
+              console.warn('[playback-provider] Error al decodificar audio buffer para clip:', sourceId, err)
+              setFailedSourcesState((prev) => ({
+                ...prev,
+                [sourceId]: 'Archivo dañado o formato no decodificable',
+                [clip.id]: 'Archivo dañado o formato no decodificable',
+              }))
+            }
           }),
         )
       }
@@ -858,8 +1161,6 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     })
   }, [satellite, sharedTracks, projectRuta])
 
-  const countInActive = useDAWState((s) => Boolean(s.transport?.countIn?.activo))
-  const countInBars = useDAWState((s) => Math.max(1, s.transport?.countIn?.compases ?? 1))
   const punchActive = useDAWState((s) => Boolean(s.transport?.punch?.activo))
   const punchStartBeats = useDAWState((s) => s.transport?.punch?.inicio?.beats ?? 0)
   const punchEndBeats = useDAWState((s) => s.transport?.punch?.fin?.beats ?? 0)
@@ -894,6 +1195,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         return
       }
       wasRecordingRef.current = true
+      iniciarFinalizacionGrabacion()
       const gen = ++recGenRef.current
       const transport = tienda.obtenerEstado().transport
       const useCountIn = Boolean(transport.countIn?.activo)
@@ -988,13 +1290,18 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     if (!recOn && wasRecordingRef.current) {
       wasRecordingRef.current = false
       recGenRef.current += 1
-      let startBeats = recStartBeatsRef.current
+      const startBeats = recStartBeatsRef.current
       const plan = recPlanRef.current
       recPlanRef.current = []
       tienda.busEventos.emit('grabacion.detenida', {})
-      if (plan.length === 0) return
+      if (plan.length === 0) {
+        cerrarFinalizacionGrabacion()
+        return
+      }
       const punchOn = punchActiveRef.current
       const punchEnd = punchEndBeatsRef.current
+      // La escritura del WAV es asíncrona: quien abra o cierre el proyecto espera
+      // a que la toma esté en disco (U6).
       void (async () => {
         for (const { deviceKey, trackIds } of plan) {
           const memKey = `rec-${Date.now()}-${deviceKey || 'default'}`
@@ -1002,7 +1309,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           if (!result) continue
           let buffer = result.buffer
           let durationSec = result.duration
-          let clipStart = startBeats
+          const clipStart = startBeats
           // Punch: recortar al fin de ventana si la toma se pasó
           if (punchOn && punchEnd > clipStart) {
             const maxBeats = punchEnd - clipStart
@@ -1029,24 +1336,115 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           const wav = encodeWavFromAudioBuffer(buffer)
           const fileName = makeRecordingFileName(trackIds[0] ?? 'pista')
           const saved = await saveRecordingWav(wav, fileName, projectRuta)
-          const sourceId = saved?.sourceId ?? memKey
-          if (saved && sourceId !== memKey) {
-            audioEngine.setAudioBuffer(sourceId, buffer)
-          }
-          for (const trackId of trackIds) {
-            await tienda.executor.execute('clip.create', {
-              pistaId: trackId,
-              nombre: 'Grabación',
-              inicio: clipStart,
-              duracion: durationBeats,
-              sourceId,
-              waveform,
+          // Si no se pudo guardar en el proyecto: aviso visible + reintento en userData.
+          // Nunca se pierde la toma en silencio.
+          let sourceId = saved?.sourceId
+          if (!sourceId) {
+            const fallback = await saveRecordingWavFallback(wav, fileName)
+            if (!fallback) {
+              tienda.busEventos.emit('comando.fallido', {
+                type: 'audio.record',
+                error:
+                  'No se pudo guardar la grabación en disco: revisa los permisos de la carpeta del proyecto o el espacio en disco.',
+              })
+              continue
+            }
+            sourceId = fallback.sourceId
+            tienda.busEventos.emit('comando.fallido', {
+              type: 'audio.record',
+              error: `La grabación se guardó fuera del proyecto (${fallback.absPath}).`,
             })
           }
+          if (sourceId !== memKey) {
+            audioEngine.setAudioBuffer(sourceId, buffer)
+          }
+          if (sourceId) {
+            void guardarWaveformPeak(sourceId, waveform, projectRuta)
+          }
+          for (const trackId of trackIds) {
+            // La pista pudo borrarse mientras se grababa: la toma no se pierde,
+            // se guarda en una pista "Toma recuperada" (U6).
+            let destino = trackId
+            if (!tienda.obtenerEstado().project.tracks.some((t) => t.id === trackId)) {
+              const creada = await tienda.executor.execute('track.create', {
+                nombre: 'Toma recuperada',
+                tipo: 'audio',
+              })
+              const nuevaId = (creada.result as { trackId?: string })?.trackId
+              if (!creada.success || !nuevaId) {
+                tienda.busEventos.emit('comando.fallido', {
+                  type: 'audio.record',
+                  error: `La pista de grabación ya no existe y no se pudo crear "Toma recuperada": la toma está en ${sourceId}.`,
+                })
+                continue
+              }
+              destino = nuevaId
+              tienda.busEventos.emit('comando.fallido', {
+                type: 'audio.record',
+                error: `La pista de grabación ya no existía: la toma se guardó en "Toma recuperada".`,
+              })
+            }
+            const modo = tienda.obtenerEstado().transport?.modoGrabacion ?? 'normal'
+            if (modo === 'comping') {
+              await tienda.executor.execute('take.folder.ensure', { pistaId: destino })
+              const added = await tienda.executor.execute('take.add', {
+                pistaId: destino,
+                archivo: sourceId,
+                nombre: `Take ${Date.now().toString(36).slice(-4)}`,
+                inicioGrabacion: clipStart,
+                finGrabacion: clipStart + durationBeats,
+                sampleRate: buffer.sampleRate,
+                bitDepth: 24,
+                canales: buffer.numberOfChannels,
+              })
+              const takeId = (added.result as { takeId?: string })?.takeId
+              if (takeId) {
+                await tienda.executor.execute('comp.segment.set', {
+                  pistaId: destino,
+                  takeId,
+                  timelineInicio: clipStart,
+                  timelineFin: clipStart + durationBeats,
+                  origenInicio: 0,
+                  origenFin: durationSec,
+                })
+              }
+              const creado = await tienda.executor.execute('clip.create', {
+                pistaId: destino,
+                nombre: `Take`,
+                inicio: clipStart,
+                duracion: durationBeats,
+                sourceId,
+                waveform,
+              })
+              if (!creado.success) {
+                tienda.busEventos.emit('comando.fallido', {
+                  type: 'audio.record',
+                  error: `No se pudo crear el clip de la toma: ${creado.error?.message ?? 'error desconocido'}`,
+                })
+              }
+            } else {
+              const creado = await tienda.executor.execute('clip.create', {
+                pistaId: destino,
+                nombre: 'Grabación',
+                inicio: clipStart,
+                duracion: durationBeats,
+                sourceId,
+                waveform,
+              })
+              if (!creado.success) {
+                tienda.busEventos.emit('comando.fallido', {
+                  type: 'audio.record',
+                  error: `No se pudo crear el clip de la grabación: ${creado.error?.message ?? 'error desconocido'}`,
+                })
+              }
+            }
+          }
         }
-      })()
+      })().finally(() => {
+        cerrarFinalizacionGrabacion()
+      })
     }
-  }, [recording, satellite, sharedTracks, tienda, BPM, projectRuta, BEATS_PER_BAR])
+  }, [recording, satellite, sharedTracks, tienda, BPM, projectRuta, BEATS_PER_BAR, transportModoGrabacion])
 
   const toggleLooping = useCallback(() => {
     void tienda.executor.execute('transport.toggleLoop', {})
@@ -1071,7 +1469,15 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         porcentaje: p,
       })
       setPositionMs(targetMs)
-      void tienda.executor.execute('transport.seek', { segundos: targetSeconds })
+      positionMsRef.current = targetMs
+      try {
+        audioEngine.seekTimeline(targetSeconds)
+      } catch {
+        /* ignore */
+      }
+      if (!satellite) publishPlayheadTick(targetMs, playingRef.current)
+      // Arrastre en la barra de progreso = gesto del usuario: también fija el punto de inicio de Stop.
+      void tienda.executor.execute('transport.seek', { segundos: targetSeconds, marcarInicio: true })
 
       if (playing) {
         void triggerAudioPlayback(targetMs, clips).then(() => {
@@ -1081,13 +1487,16 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         })
       }
     },
-    [clock, playing, clips, triggerAudioPlayback, tienda, TOTAL_BEATS, BEATS_PER_BAR, metronomeOn, BPM],
+    [clock, playing, clips, triggerAudioPlayback, tienda, TOTAL_BEATS, BEATS_PER_BAR, metronomeOn, BPM, satellite],
   )
 
-  const seekToBeats = useCallback(
-    (beats: number) => {
+  /**
+   * Salto a un beat exacto (sin ajustar a la rejilla): lo usa el loop y seekToBeats tras el snap.
+   * `marcarInicio`: el salto es un gesto del usuario y fija el punto al que vuelve Stop (el loop no lo marca).
+   */
+  const seekToBeatsExact = useCallback(
+    (targetBeats: number, marcarInicio = false) => {
       const msPerBeat = msPerBeatRef.current
-      const targetBeats = Math.max(0, beats)
       const targetMs = targetBeats * msPerBeat
       const targetTicks = targetBeats * PPQ
       const targetSeconds = targetMs / 1000
@@ -1103,7 +1512,14 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         porcentaje: targetBeats / TOTAL_BEATS,
       })
       setPositionMs(targetMs)
-      void tienda.executor.execute('transport.seek', { segundos: targetSeconds })
+      positionMsRef.current = targetMs
+      try {
+        audioEngine.seekTimeline(targetSeconds)
+      } catch {
+        /* ignore */
+      }
+      if (!satellite) publishPlayheadTick(targetMs, playingRef.current)
+      void tienda.executor.execute('transport.seek', { segundos: targetSeconds, ...(marcarInicio ? { marcarInicio: true } : {}) })
 
       if (playing) {
         void triggerAudioPlayback(targetMs, clips).then(() => {
@@ -1113,8 +1529,70 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         })
       }
     },
-    [clock, playing, clips, triggerAudioPlayback, tienda, TOTAL_BEATS, BEATS_PER_BAR, metronomeOn, BPM],
+    [clock, playing, clips, triggerAudioPlayback, tienda, TOTAL_BEATS, BEATS_PER_BAR, metronomeOn, BPM, satellite],
   )
+
+  /** Clic del usuario en la regla (Arrange / Piano Roll): mueve el playhead y fija el punto de inicio. */
+  const seekToBeats = useCallback(
+    (beats: number) => {
+      const st = tienda.obtenerEstado()
+      seekToBeatsExact(
+        snapSeekBeat(Math.max(0, beats), {
+          playheadSnap: st.ui?.playheadSnap !== false,
+          snapEnabled: st.project?.timeline?.snap ?? true,
+          snapValor: st.project?.timeline?.snapValor ?? 1,
+          beatsPerBar: st.project?.timeSignature?.numerador ?? BEATS_PER_BAR,
+        }),
+        true,
+      )
+    },
+    [tienda, seekToBeatsExact, BEATS_PER_BAR],
+  )
+
+  // Fin de la canción: con loop, vuelve al inicio de la región (o de la canción); sin loop y con
+  // «detener al final» (por defecto), se detiene y vuelve al inicio cuando se apaga la cola de reverb.
+  const seekExactRef = useRef(seekToBeatsExact)
+  seekExactRef.current = seekToBeatsExact
+  useEffect(() => {
+    if (satellite || !playing) return
+    let silencioSec = 0
+    let ultimo = performance.now()
+    let ocupado = false
+    const id = window.setInterval(() => {
+      const ahora = performance.now()
+      const dt = (ahora - ultimo) / 1000
+      ultimo = ahora
+      if (ocupado) return
+      const st = tienda.obtenerEstado()
+      if (st.transport?.grabacion === 'grabando') return // grabando: la canción crece, no se corta
+      const nivel = audioEngine.getMasterMeterLevel()
+      const pico = nivel > 0 ? Math.pow(nivel, 1 / 0.6) : 0
+      silencioSec = pico < umbralSilencioLineal() ? silencioSec + dt : 0
+      const fin = detectarFinProyecto(st.project)
+      const loop = st.transport?.loop
+      const d = decidirFinReproduccion({
+        ahoraSec: audioEngine.getMonotonicTimelineSeconds(),
+        finContenidoSec: fin.vacio ? null : fin.finSegundos,
+        loop: { activo: Boolean(loop?.activo), inicioSec: loop?.inicio?.segundos, finSec: loop?.fin?.segundos },
+        detenerAlFinal: getPreferenciasTransporte().detenerAlFinal,
+        picoMaster: pico,
+        silencioSec,
+      })
+      if (d.tipo === 'saltar') {
+        ocupado = true
+        silencioSec = 0
+        const bpm = safeProjectBpm(st)
+        seekExactRef.current((d.segundos * bpm) / 60)
+        window.setTimeout(() => {
+          ocupado = false
+        }, 300)
+      } else if (d.tipo === 'detener') {
+        ocupado = true
+        stopRef.current()
+      }
+    }, 50)
+    return () => window.clearInterval(id)
+  }, [playing, satellite, tienda])
 
   const addClipFromFile = useCallback(
     async (trackId: string, file: File, startBeats = 0) => {
@@ -1122,31 +1600,87 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         importProgress.start(file.name)
         importProgress.setProgress(0.1, 'reading')
 
+        // Validación previa: extensión y tamaño (la duración se comprueba al decodificar).
+        const previa = validarImportacionAudio({ ruta: file.name, tamanoBytes: file.size })
+        if (previa.nivel === 'error') throw new Error(previa.mensaje ?? 'Archivo no importable')
+
         const bufferKey = `file-${trackId}-${Date.now()}`
         importProgress.setProgress(0.35, 'decoding')
-        const { buffer, duration } = await audioEngine.decodeAudioFile(bufferKey, file)
+        let buffer: AudioBuffer
+        let duration: number
+        try {
+          const decodificado = await audioEngine.decodeAudioFile(bufferKey, file)
+          buffer = decodificado.buffer
+          duration = decodificado.duration
+        } catch (err) {
+          throw new Error(
+            `No se pudo decodificar "${file.name}". El archivo puede estar dañado o usar un formato no compatible.`,
+            { cause: err },
+          )
+        }
         const durationBeats = secondsToBeats(duration, BPM)
+
+        const duracion = validarImportacionAudio({ ruta: file.name, duracionSec: duration })
+        if (duracion.nivel === 'error') throw new Error(duracion.mensaje ?? 'Archivo no importable')
+        if (duracion.nivel === 'aviso') {
+          tienda.busEventos.emit('comando.fallido', {
+            type: 'audio.import',
+            error: duracion.mensaje ?? 'El archivo es largo',
+          })
+        }
 
         importProgress.setProgress(0.7, 'peaks')
         const buckets = Math.min(4096, Math.max(512, Math.floor(duration * 80)))
         const peaks = extractStereoPeaks(buffer, buckets)
         const waveform = packStereoPeaks(peaks)
 
+        // Copia al media del proyecto: el clip guarda la ruta RELATIVA para que
+        // el proyecto siga funcionando en otra carpeta o en otro equipo.
+        importProgress.setProgress(0.85, 'copying')
+        const copia = await copiarAudioAlProyecto(file, projectRuta)
+        if (copia.error && !copia.rutaRelativa) {
+          // Antes se ignoraba: el clip quedaba solo en memoria y se perdía al reabrir el proyecto.
+          tienda.busEventos.emit('comando.fallido', {
+            type: 'audio.import',
+            error: `${file.name}: no se pudo copiar al proyecto (${copia.error}). El audio solo estará disponible en esta sesión.`,
+          })
+        }
+
         importProgress.setProgress(0.9, 'creating')
-        await tienda.executor.execute('clip.create', {
-          pistaId: trackId,
+        let targetTrackId = trackId
+        const estadoPistas = tienda.obtenerEstado().project.tracks
+        const pistaActual = estadoPistas.find((t) => t.id === targetTrackId)
+        if (!pistaActual || pistaActual.tipo !== 'audio') {
+          const resTrack = await tienda.executor.execute('track.create', {
+            nombre: file.name.replace(/\.[^.]+$/, ''),
+            tipo: 'audio',
+          })
+          if (resTrack.success && (resTrack.result as { trackId?: string })?.trackId) {
+            targetTrackId = (resTrack.result as { trackId: string }).trackId
+          }
+        }
+
+        const res = await tienda.executor.execute('clip.create', {
+          pistaId: targetTrackId,
           nombre: file.name.replace(/\.[^.]+$/, ''),
           inicio: startBeats,
           duracion: durationBeats,
-          sourceId: bufferKey,
+          sourceId: copia.rutaRelativa ?? bufferKey,
           waveform,
         })
+        if (!res.success) throw new Error(res.error?.message ?? 'No se pudo crear el clip')
+
+        const createdClipId = (res.result as { clipId?: string })?.clipId
+        audioEngine.setAudioBuffer(bufferKey, buffer)
+        if (copia.rutaRelativa) audioEngine.setAudioBuffer(copia.rutaRelativa, buffer)
+        if (createdClipId) audioEngine.setAudioBuffer(createdClipId, buffer)
+        audioEngine.setAudioBuffer(file.name, buffer)
 
         importProgress.finish()
 
         if (playing) {
           // Re-schedule clips on the native host from current playhead.
-          void triggerAudioPlayback(positionMs, clips)
+          void triggerAudioPlayback(positionMsRef.current, clips)
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -1154,10 +1688,25 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         throw err
       }
     },
-    [tienda, playing, positionMs, BPM, importProgress, triggerAudioPlayback, clips],
+    // positionMs NO va en deps: cambiaba 4x/s, recreaba actionsValue y re-renderizaba
+    // ArrangementView + PianoRoll completos durante el play. Se lee de positionMsRef.
+    [tienda, playing, BPM, importProgress, triggerAudioPlayback, clips, projectRuta],
   )
 
-  const getPositionMs = useCallback(() => positionMsRef.current, [])
+  const getPositionMs = useCallback(() => {
+    if (satellite) {
+      return extrapolatePlayheadMs(satelliteAnchorRef.current)
+    }
+    if (playingRef.current) {
+      try {
+        const ms = audioEngine.getMonotonicTimelineSeconds() * 1000
+        if (Number.isFinite(ms) && ms >= 0) return ms
+      } catch {
+        /* fall through */
+      }
+    }
+    return positionMsRef.current
+  }, [satellite])
 
   const actionsValue = useMemo(
     () => ({

@@ -55,6 +55,28 @@ describe('buildBounceContent', () => {
     assert.ok(Math.abs(n2.startSec - 3) < 1e-9)
   })
 
+  it('capas: cada nota y CC llega a todos los instrumentos de la pista', () => {
+    const st = estado([
+      {
+        id: 'synth',
+        clips: [
+          {
+            id: 'c1',
+            tipo: 'midi',
+            inicio: 0,
+            duracion: 4,
+            notas: [{ pitch: 60, inicio: 0, duracion: 1 }],
+            expression: { cc: [{ cc: 64, puntos: [{ tiempo: 0, valor: 127 }] }] },
+          },
+        ],
+      },
+    ])
+    const capas: BounceSlotResolver = () => ({ slotId: 'piano', capas: ['pad', 'piano'] })
+    const trk = buildBounceContent(st, {}, capas).tracks[0]!
+    assert.deepEqual(trk.notes.map((n) => n.slotId), ['piano', 'pad'])
+    assert.deepEqual(trk.ccs.map((c) => c.slotId), ['piano', 'pad'])
+  })
+
   it('filtra notas fuera de la ventana y recorta totalSec a endSec', () => {
     const st = estado([
       {
@@ -119,7 +141,26 @@ describe('buildBounceContent', () => {
     assert.equal(content.tracks.length, 2)
     assert.equal(content.tracks[0]!.audioClips[0]!.sourceKey, 'C:/samples/loop.wav')
     assert.ok(Math.abs(content.tracks[0]!.audioClips[0]!.inicioSec - 1) < 1e-9)
+    // clipInicio va en beats: 1,5 beats a 120 BPM = 0,75 s.
+    assert.ok(Math.abs(content.tracks[0]!.audioClips[0]!.clipInicioSec - 0.75) < 1e-9)
     assert.equal(content.tracks[1]!.audioClips[0]!.sourceKey, 'demo-lead')
+  })
+
+  it('los clips silenciados no entran en el bounce; ganancia y fades viajan al motor', () => {
+    const st = estado([
+      {
+        id: 'voz',
+        clips: [
+          { id: 'a', tipo: 'audio', inicio: 0, duracion: 4, silenciado: true },
+          { id: 'b', tipo: 'audio', inicio: 4, duracion: 4, ganancia: -6, fadeIn: { duracion: 0.5, curva: 'exponencial' } },
+        ],
+      },
+    ])
+    const clips = buildBounceContent(st, {}, vstResolver).tracks[0]!.audioClips
+    assert.equal(clips.length, 1)
+    assert.equal(clips[0]!.gananciaDb, -6)
+    assert.equal(clips[0]!.fadeInSec, 0.5)
+    assert.equal(clips[0]!.fadeInCurva, 'exponencial')
   })
 
   it('expression CC normaliza valor ≤1 a 0..127', () => {

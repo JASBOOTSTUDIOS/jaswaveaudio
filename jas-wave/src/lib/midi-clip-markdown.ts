@@ -70,7 +70,7 @@ export function pitchToName(pitch: number): string {
 export function midiClipDocSlug(clipId: string): string {
   const id = String(clipId)
     .trim()
-    .replace(/[^\w.\-]+/g, '-')
+    .replace(/[^\w.-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
   return `clip-${id || 'nuevo'}.md`.toLowerCase()

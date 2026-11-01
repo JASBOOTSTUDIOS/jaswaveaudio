@@ -131,11 +131,29 @@ export interface StateTransition<TResult = unknown> {
   result: TResult;
   /** Payload para el comando inverso (si difiere del payload original). */
   inversePayload?: unknown;
+  /**
+   * Payload para rehacer (redo). Debe fijar los ids generados por el handler
+   * para que redo sea determinista y un undo posterior apunte a las mismas
+   * entidades. Si se omite, redo reutiliza el payload original.
+   */
+  redoPayload?: unknown;
+  /**
+   * Tipo del comando inverso para esta transición concreta (sobrescribe
+   * CommandDefinition.inverseType cuando el inverso depende de la rama ejecutada).
+   */
+  inverseType?: string;
+  /**
+   * Tipo con el que rehacer, si no es el propio comando (p. ej. un parche diferencial que solo
+   * reaplica lo que este comando cambió, sin pisar ediciones concurrentes de otros usuarios).
+   */
+  redoType?: string;
 }
 
 export interface CommandPayload<T = unknown> {
   type: string;
   payload: T;
+  /** Entorno determinista propio (réplicas de un lote remoto); si falta, lo decide el ejecutor. */
+  entorno?: import('../state/entorno-determinista').EntornoComando;
 }
 
 export interface TransactionResult {
@@ -170,14 +188,52 @@ export interface Command {
   fechaCreacion: number;
 }
 
-export interface CommandDefinition<T = unknown> {
+/** `T` = payload; `R` = resultado del handler (por defecto, el mismo tipo que el payload). */
+export interface CommandDefinition<T = unknown, R = T> {
   type: string;
   description: string;
   risk: RiskLevel;
   schema?: Record<string, unknown>;
   inverseType?: string;
-  handler: (state: import('../types/state').DAWState, payload: T) => StateTransition<T> | Promise<StateTransition<T>>;
+  /** Si true, al ejecutarse con éxito vacía las pilas de undo/redo (p. ej. project.load). */
+  limpiaHistorialUndo?: boolean;
+  /**
+   * Participación en undo cuando no hay `inverseType`:
+   *   - `'instantanea'`: el executor guarda una instantánea parcial (campos del
+   *     proyecto/pistas/transporte que cambiaron) y la restaura al deshacer.
+   *   - `'ninguno'`: estado invisible (snapshot de plugins, guardar): no crea
+   *     entrada de undo ni invalida el redo.
+   * Por defecto, un comando sin inverso que cambia el proyecto invalida el redo.
+   */
+  historialUndo?: 'instantanea' | 'ninguno';
+  /**
+   * Cómo se replica en colaboración en tiempo real:
+   *   - `'operacion'` (por defecto): se reenvía tipo + payload + entorno y cada réplica lo reejecuta
+   *     (determinista: el handler usa `entorno` para tiempo, azar e ids). Permite fusionar ediciones
+   *     concurrentes de grano fino (p. ej. dos usuarios añadiendo notas al mismo clip).
+   *   - `'resultado'`: el resultado depende de algo local (medición de audio, host nativo): se envía
+   *     la instantánea parcial del cambio y las réplicas la aplican tal cual.
+   *   - `'local'`: no se replica (selección, vista, estado efímero de cada usuario).
+   */
+  replicacion?: 'operacion' | 'resultado' | 'local';
+  handler: (state: import('../types/state').DAWState, payload: T) => StateTransition<R> | Promise<StateTransition<R>>;
   validate?: (state: import('../types/state').DAWState, payload: T) => ValidationResult;
+}
+
+/**
+ * Opciones de `executor.execute` / `executor.batch`.
+ * Coalescencia: comandos consecutivos con el mismo `coalesceKey` y `gestureId`
+ * (p. ej. todos los pointermove de un arrastre de fader) se fusionan en una sola
+ * entrada de undo cuyo inverso restaura el estado previo al primer comando.
+ */
+export interface OpcionesEjecucion {
+  coalesceKey?: string;
+  gestureId?: string;
+  /**
+   * Entorno determinista (tiempo + semilla) con el que ejecutar el handler. Lo fija el autor del
+   * comando; las réplicas lo reutilizan para obtener exactamente los mismos ids y marcas de tiempo.
+   */
+  entorno?: import('../state/entorno-determinista').EntornoComando;
 }
 
 export interface CommandHistoryEntry {

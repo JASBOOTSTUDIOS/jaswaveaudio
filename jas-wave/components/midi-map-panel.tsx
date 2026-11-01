@@ -86,7 +86,7 @@ export function MidiMapPanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-panel">
-      <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+      <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3">
         <Radio className="size-4 text-accent-amber" />
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-foreground">MIDI Learn</h2>
@@ -97,7 +97,7 @@ export function MidiMapPanel() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2">
         <div className="flex min-w-[180px] flex-1 items-center gap-2 rounded-md bg-panel-raised px-2 py-1">
           <Search className="size-3.5 text-muted-foreground" />
           <input
@@ -132,7 +132,7 @@ export function MidiMapPanel() {
         </div>
       )}
 
-      <div className="flex gap-1 overflow-x-auto border-b border-border px-3 py-1.5">
+      <div className="jw-scrollbar flex shrink-0 gap-1 overflow-x-auto border-b border-border px-3 py-1.5">
         {groups.map((g) => (
           <button
             key={g}

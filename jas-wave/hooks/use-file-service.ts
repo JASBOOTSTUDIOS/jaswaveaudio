@@ -7,7 +7,7 @@ import {
   mensajeError,
   nuevoProyectoIO,
 } from '../src/lib/project-io'
-import type { AiChatRequest, AiChatResult, AiHealthResult } from '../src/lib/ai-settings'
+import type { AiChatRequest, AiChatResult, AiHealthResult } from '../src/lib/ia/proveedores'
 
 declare global {
   interface Window {
@@ -15,27 +15,114 @@ declare global {
       windowMinimize: () => Promise<void>
       localAppData?: () => Promise<string>
       userDataPath?: () => Promise<string>
+      knownPaths?: () => Promise<{ resourcesPath: string; localAppData: string; bundledVst3Dir: string; proyectosDir?: string }>
+      pluginsListar?: () => Promise<import('../src/lib/plugins/registro-plugins').PaqueteRecibido[]>
+      onHandover?: (callback: (token: string) => void) => () => void
+      handoverTakePending?: () => Promise<string | null>
+      pluginsCatalogo?: (apiBase: string) => Promise<import('../src/lib/plugins/entrega').CatalogoPlugins>
+      pluginsInstalar?: (apiBase: string, id: string) => Promise<{ ok: boolean; version?: string; error?: string }>
+      /** X1: extensiones .jwx desde archivo */
+      pluginsElegirJwx?: () => Promise<string | null>
+      pluginsInspeccionarArchivo?: (
+        ruta: string,
+      ) => Promise<{ ok: true; paquete: import('../src/lib/plugins/extensiones').InspeccionJwx } | { ok: false; error: string }>
+      pluginsInstalarArchivo?: (ruta: string, opciones?: { aceptarSinFirma?: boolean }) => Promise<import('../src/lib/plugins/extensiones').ResultadoInstalacionJwx>
+      pluginsDesinstalar?: (id: string) => Promise<{ ok: boolean; error?: string }>
+      rutaDeArchivo?: (archivo: File) => string
+      onExtensionSolicitada?: (callback: (ruta: string) => void) => () => void
+      extensionPendiente?: () => Promise<string | null>
+      modoDesarrollador?: () => Promise<boolean>
+      fijarModoDesarrollador?: (activo: boolean) => Promise<boolean>
+      onPluginsProgreso?: (callback: (p: import('../src/lib/plugins/entrega').ProgresoPlugin) => void) => () => void
+      onPluginCuarentena?: (callback: (aviso: { ruta: string; motivo: string; mensaje: string }) => void) => () => void
+      licenciaGuardar?: (datos: { token: string; tokenDispositivo: string }) => Promise<boolean>
+      licenciaLeer?: () => Promise<string | null>
+      licenciaTokenDispositivo?: () => Promise<string | null>
+      equipoNombre?: () => Promise<string>
+      onUpdateStatus?: (
+        callback: (status: {
+          state: 'checking' | 'available' | 'downloaded' | 'error' | 'none'
+          version?: string
+          message?: string
+        }) => void,
+      ) => () => void
+      updateInstallNow?: () => Promise<boolean>
+      updateCheck?: () => Promise<{ state: string; version?: string; message?: string }>
       localAppDataSync?: string
       windowMaximize: () => Promise<void>
       windowClose: () => Promise<void>
       windowIsMaximized: () => Promise<boolean>
-      onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => void
+      /** Colores de los botones nativos de ventana (window controls overlay). */
+      windowSetTitleBarOverlay?: (opciones: { color?: string; symbolColor?: string; height?: number }) => Promise<boolean>
+      /** Cierre de la ventana principal pendiente de confirmar (cambios sin guardar). */
+      onAppCloseRequested?: (callback: () => void) => () => void
+      confirmAppClose?: () => Promise<boolean>
+      cancelAppClose?: () => Promise<boolean>
+      onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => () => void
+      /** Main pide abrir un proyecto (segunda instancia o asociación de archivos, U7). */
+      onOpenProjectRequested?: (callback: (ruta: string) => void) => () => void
+      /** Proyecto que llegó antes de que el renderer estuviera listo (U7). */
+      projectTakePending?: () => Promise<string | null>
       getAppVersion: () => Promise<string>
+      logError?: (scope: string, message: string, stack?: string) => void
+      openLogsFolder?: () => Promise<string>
+      asistenteCarpeta?: import('../src/lib/asistente-carpeta').PuenteCarpetaAsistente
+      producciones?: import('../src/lib/produccion-resiliente').PuertoProducciones
       fileSave: (ruta: string, contenido: string) => Promise<{ success: boolean; error?: string }>
       fileSaveBinary: (ruta: string, data: Uint8Array) => Promise<{ success: boolean; error?: string }>
       fileRead: (ruta: string) => Promise<string>
       fileReadBinary: (ruta: string) => Promise<Uint8Array>
       fileExists: (ruta: string) => Promise<boolean>
       fileSize: (ruta: string) => Promise<number>
+    /** Firma del archivo (mtime + tamaño) para detectar cambios externos (U7). */
+    fileStat?: (ruta: string) => Promise<{ mtimeMs: number; size: number } | null>
+      fileListDir?: (dir: string) => Promise<{
+        success: boolean
+        error?: string
+        entries: Array<{ name: string; isDirectory: boolean; isFile: boolean }>
+      }>
       recordingsDir: (projectPath?: string) => Promise<string>
+      /** Carpeta temporal (vaciada) para los renders de medición de la IA; `analisisIaLimpiar` la borra. */
+      analisisIaDir?: () => Promise<string>
+      analisisIaLimpiar?: () => Promise<boolean>
+      /** Exportación (G2): codificador ffmpeg bajo demanda y conversión WAV → formato final. */
+      /** G7: dictado por voz con el reconocedor local de Windows (electron/dictado-windows.ts). */
+      dictado?: import('../src/lib/voice-dictation-core').PuenteDictadoEscritorio
+      ffmpegAvailable?: () => Promise<{ ok: boolean; origen?: 'jaswave' | 'path' | 'entorno'; error?: string }>
+      ffmpegInstall?: (apiBase: string) => Promise<{ ok: boolean; version?: string; error?: string }>
+      onFfmpegProgreso?: (callback: (p: { recibidos: number; total: number }) => void) => () => void
+      audioEncode?: (
+        input: string,
+        output: string,
+        formato: string,
+        opciones?: { bitrate?: number; bitDepth?: number; sampleRate?: number; borrarEntrada?: boolean },
+      ) => Promise<{ ok: boolean; output?: string; error?: string }>
+      exportEnsureDir?: (dir: string) => Promise<{ ok: boolean; error?: string }>
+      projectExportBundle?: (
+        salida: string,
+        json: string,
+        nombreProyecto: string,
+        archivos: Array<{ origen: string; destino: string }>,
+      ) => Promise<{ ok: boolean; bytes?: number; error?: string }>
+      projectImportBundle?: () => Promise<{ ok: boolean; ruta?: string; canceled?: boolean; error?: string }>
+      /** Ruta real de un archivo arrastrado desde el explorador (Electron). */
+      pathForFile?: (file: File) => string
+      /** Copia un archivo de audio al media del proyecto (o a media/pending/). */
+      mediaCopy?: (opts: { src: string; destDir: string; nombre?: string; mover?: boolean }) => Promise<{
+        ok: boolean
+        ruta?: string
+        nombre?: string
+        error?: string
+      }>
+      /** Busca archivos por nombre en una carpeta (reenlace de media faltante). */
+      mediaBuscar?: (opts: { carpeta: string; nombres: string[] }) => Promise<{
+        ok: boolean
+        encontrados?: Record<string, string>
+        error?: string
+      }>
       dialogSave: (defaultPath?: string) => Promise<{ canceled: boolean; filePath?: string }>
-      dialogOpen: () => Promise<{ canceled: boolean; filePaths?: string[] }>
       dialogOpenDirectory: () => Promise<{ canceled: boolean; filePaths?: string[] }>
-      projectSave: (projectId: string, data: unknown) => Promise<{ success: boolean; path?: string; size?: number; error?: string }>
-      projectLoad: (projectId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>
       projectOpenDialog: () => Promise<{ success: boolean; data?: unknown; path?: string; canceled?: boolean; error?: string }>
-      projectSaveAs: (projectId: string, data: unknown) => Promise<{ success: boolean; path?: string; size?: number; canceled?: boolean; error?: string }>
-      projectList: () => Promise<{ success: boolean; projects?: Array<{ id: string; name: string; modified: number; size: number }>; error?: string }>
       aiChat: (
         payload: AiChatRequest | unknown,
         model?: string,
@@ -51,10 +138,41 @@ declare global {
         provider?: string
         baseUrl?: string
       }>
+      aiChatCancel?: (requestId: string) => Promise<boolean>
+      aiMockActivo?: () => Promise<boolean>
+      /** Chat con streaming (deltas por evento); resuelve con el resultado final. */
+      aiChatStream?: (
+        payload: AiChatRequest,
+        onEvent: (e: { type: 'delta' | 'done' | string; text?: string; success?: boolean }) => void,
+      ) => Promise<AiChatResult>
+      /** Runs del motor de agente persistidos en userData/agent-runs. */
+      agentRunSave?: (runId: string, json: string) => Promise<{ ok: boolean; error?: string }>
+      agentRunLoad?: (runId: string) => Promise<string | null>
+      agentRunList?: (limit?: number) => Promise<
+        Array<{ id: string; conversationId: string; messageId?: string; status: string; mode?: string; updatedAt: number; userText: string }>
+      >
+      agentRunDelete?: (runId: string) => Promise<boolean>
+      aiCredSet?: (providerId: string, apiKey: string) => Promise<{ ok: boolean; error?: string }>
+      aiCredStatus?: (providerIds: string[]) => Promise<Record<string, boolean>>
+      agentBridgeGetEnabled?: () => Promise<boolean>
+      agentBridgeSetEnabled?: (enabled: boolean) => Promise<{ enabled: boolean; running: boolean }>
       pluginLookup: (pluginName: string) => Promise<Array<{ title: string; snippet: string; url: string }>>
       webSearch: (query: string) => Promise<Array<{ title: string; snippet: string; url: string }>>
+      /** K6: internet para la IA; respuestas `{ ok: true, datos } | { ok: false, error }` (ver web-tools-cliente.ts). */
+      webTools?: {
+        buscar: (q: string, max?: number) => Promise<unknown>
+        leer: (url: string, maxChars?: number) => Promise<unknown>
+        youtubeBuscar: (q: string, max?: number) => Promise<unknown>
+        youtubeFicha: (urlOId: string) => Promise<unknown>
+        youtubeMiniatura: (videoId: string) => Promise<unknown>
+        referenciaAnalizar: (url: string) => Promise<unknown>
+        referenciaEscuchar: (url: string, titulo?: string) => Promise<unknown>
+        internetPermitido: () => Promise<boolean>
+        fijarInternetPermitido: (activo: boolean) => Promise<boolean>
+        onProgreso: (callback: (p: { fase: string; detalle?: string }) => void) => () => void
+      }
       dialogMessage: (type: string, title: string, message: string) => Promise<number>
-      shellOpenExternal: (url: string) => Promise<void>
+      shellOpenExternal: (url: string) => Promise<boolean>
       nativeAudioAvailable: () => Promise<boolean>
       nativeAudioInitialize: (config: unknown) => Promise<void>
       nativeAudioShutdown: () => Promise<void>
@@ -87,16 +205,30 @@ declare global {
       pluginHostSend: (cmd: unknown) => Promise<unknown>
       pluginHostMidi: (cmd: unknown) => void
       onPluginHostRestarted?: (callback: () => void) => () => void
+    /** U7: reinicia el motor de audio (limpia el contador de fallos). */
+    pluginHostReset?: () => Promise<{ ok: boolean; message?: string }>
+    /** U7: el motor entró en bucle de fallos. */
+    onPluginHostCrashLoop?: (callback: (info?: { activo?: boolean; mensaje?: string }) => void) => () => void
+    /** Otra instancia de JasWave tiene el motor de audio. */
+    onAudioEngineBusy?: (callback: (info?: { activo?: boolean; mensaje?: string }) => void) => () => void
+    /** «Usar audio aquí»: trae el motor de audio de la otra instancia. */
+    audioEngineTake?: () => Promise<{ ok: boolean; message?: string }>
+    /** Cede el motor de audio a la instancia que lo pidió. */
+    audioEngineRelease?: () => Promise<{ ok: boolean; message?: string }>
+    onAudioEngineReleaseRequested?: (callback: () => void) => () => void
       onPluginHostExited?: (
         callback: (info?: { code?: number | null; signal?: string | null }) => void,
       ) => () => void
+      /** U6: aviso del dispositivo de audio (reset del driver o pérdida de la interfaz). */
+      onAudioDeviceNotice?: (callback: (notice: 'reset' | 'lost') => void) => () => void
       pluginHostPushPcm: (samples: Float32Array | ArrayBuffer | Uint8Array) => void
       pluginHostStop: () => Promise<{ ok: boolean }>
       onAgentBridgeRequest?: (
         callback: (msg: { id: string; channel: string; payload: Record<string, unknown> }) => void,
       ) => () => void
       agentBridgeReply?: (id: string, result: unknown, error?: string) => void
-      onNativeMidi?: (callback: (msg: { id: string; data: number[] }) => void) => () => void
+      onHostTransportToggle?: (callback: () => void) => () => void
+      onNativeMidi?: (callback: (msg: { id: string; data: number[]; tNs?: number }) => void) => () => void
     }
   }
 }
@@ -115,28 +247,18 @@ export function useFileService() {
   const tienda = useDAW()
   const loadingRef = useRef(false)
 
+  // Guardar / Guardar como: el guard único de project-io une llamadas concurrentes
+  // (barra, atajo, menú, IA): la segunda espera al mismo guardado.
   const save = useCallback(async () => {
-    if (loadingRef.current) return { success: false, error: 'Operation in progress' }
-    loadingRef.current = true
-    try {
-      const result = await guardarProyectoIO(tienda)
-      if (!result.success && !result.canceled) await notificarFallo(tienda, 'project.save', result.error)
-      return result
-    } finally {
-      loadingRef.current = false
-    }
+    const result = await guardarProyectoIO(tienda)
+    if (!result.success && !result.canceled) await notificarFallo(tienda, 'project.save', result.error)
+    return result
   }, [tienda])
 
   const saveAs = useCallback(async () => {
-    if (loadingRef.current) return { success: false, error: 'Operation in progress' }
-    loadingRef.current = true
-    try {
-      const result = await guardarProyectoComoIO(tienda)
-      if (!result.success && !result.canceled) await notificarFallo(tienda, 'project.saveAs', result.error)
-      return result
-    } finally {
-      loadingRef.current = false
-    }
+    const result = await guardarProyectoComoIO(tienda)
+    if (!result.success && !result.canceled) await notificarFallo(tienda, 'project.saveAs', result.error)
+    return result
   }, [tienda])
 
   const openDialog = useCallback(async () => {
@@ -151,54 +273,18 @@ export function useFileService() {
     }
   }, [tienda])
 
-  const load = useCallback(async (projectId: string) => {
-    if (!window.electron) return { success: false, error: 'Not in Electron' }
-    loadingRef.current = true
-    try {
-      const result = await window.electron.projectLoad(projectId)
-      if (result.success && result.data) {
-        const data = result.data as Record<string, unknown>
-        const actual = tienda.obtenerEstado()
-        tienda.reemplazarEstado({
-          ...actual,
-          ...(data.project ? { project: data.project as typeof actual.project } : {}),
-          ...(data.transport ? { transport: data.transport as typeof actual.transport } : {}),
-          ...(data.atajos ? { atajos: data.atajos as typeof actual.atajos } : {}),
-          ...(typeof data.version === 'string' ? { version: data.version } : {}),
-        })
-        try {
-          const { loadLibraryFromDisk } = await import('@/src/lib/library/preset-catalog')
-          const project = tienda.obtenerEstado().project
-          await loadLibraryFromDisk(project.id || 'default', project.ruta)
-        } catch {
-          /* best-effort */
-        }
-      } else if (!result.success) {
-        await notificarFallo(tienda, 'project.load', result.error)
-      }
-      return result
-    } finally {
-      loadingRef.current = false
-    }
-  }, [tienda])
-
-  const listProjects = useCallback(async () => {
-    if (!window.electron) return []
-    const result = await window.electron.projectList()
-    return result.projects || []
-  }, [])
-
   const newProject = useCallback(async () => {
     if (loadingRef.current) return { success: false, error: 'Operation in progress' }
     loadingRef.current = true
     try {
       const result = await nuevoProyectoIO(tienda)
-      if (!result.success) await notificarFallo(tienda, 'project.new', result.error)
+      // Cancelar en el diálogo de cambios sin guardar no es un error.
+      if (!result.success && !result.canceled) await notificarFallo(tienda, 'project.new', result.error)
       return result
     } finally {
       loadingRef.current = false
     }
   }, [tienda])
 
-  return { save, saveAs, load, openDialog, listProjects, newProject }
+  return { save, saveAs, openDialog, newProject }
 }

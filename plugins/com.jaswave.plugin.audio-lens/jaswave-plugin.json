@@ -1,0 +1,95 @@
+{
+  "id": "com.jaswave.plugin.audio-lens",
+  "name": "JasWave AudioLens",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "vendor": "JasWave Audio",
+  "description": "Herramienta de análisis descriptivo musical y extractor de Beatbox a batería MIDI con puente IA para cualquier DAW.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveAudioLens.vst3"
+  },
+  "vst3": {
+    "classId": "{4A617357-4155-444C-454E-5356335431}",
+    "subCategories": "Fx|Analysis|Tools"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "read-write-project",
+    "network": true,
+    "commands": [
+      "plugin.setParameter",
+      "analysis.audioLens",
+      "analysis.voiceToDrums"
+    ]
+  },
+  "rolesAllowed": [
+    "director",
+    "productor",
+    "mezcla",
+    "mastering",
+    "qa"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.audio-lens",
+    "features": [
+      {
+        "key": "lens.beatbox-midi",
+        "description": "Conversión avanzada de Beatbox/Voz a pistas de Batería MIDI"
+      },
+      {
+        "key": "lens.chords-key",
+        "description": "Extracción armónica de tonalidad y progresión de acordes"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Analizador descriptivo musical de audio, acordes, tempo y extractor de beatbox a batería.",
+    "intents": [
+      "analizar-audio",
+      "beatbox-a-bateria",
+      "extraer-acordes",
+      "detectar-tonalidad"
+    ],
+    "parameters": [
+      {
+        "id": "bypass",
+        "vstParamId": 0,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": ""
+      },
+      {
+        "id": "record_sample",
+        "vstParamId": 1,
+        "name": "Grabar Muestra",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": ""
+      },
+      {
+        "id": "sensibilidad",
+        "vstParamId": 2,
+        "name": "Sensibilidad",
+        "min": 0.5,
+        "max": 2.0,
+        "default": 1.0,
+        "unit": "x"
+      },
+      {
+        "id": "cuantizar",
+        "vstParamId": 3,
+        "name": "Cuantizar 1/16",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "unit": ""
+      }
+    ]
+  }
+}

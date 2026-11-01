@@ -4,6 +4,7 @@ import {
   useSyncExternalStore,
   useEffect,
   useRef,
+  useCallback,
   useMemo,
   useState,
   type ReactNode,
@@ -17,14 +18,26 @@ import {
   registrarMidiAiTools,
   registrarPluginTools,
   registrarAnalysisTools,
+  registrarProveedorAnalisis,
+  registrarSondaPlugins,
 } from '../../../shared/src'
 import { configurarFileService } from '../../../shared/src/commands/project-commands'
+import { FileServiceNavegador } from '../lib/web/file-service-navegador'
+import { permissionManager } from '../../../shared/src/state/permissions'
 import { FileServiceElectron } from '@/src/lib/file-service'
+import { registerAgentCatalogOnRegistry } from '@/src/lib/agent-action-catalog'
+import { crearBackendAnalisisWeb } from '@/src/lib/analysis-render-web'
+import { crearBackendAnalisisNativo } from '@/src/lib/analysis-render-native'
+import { crearServicioAnalisis } from '@/src/lib/analysis-render'
+import { instrumentosInstaladosApp, sondaPluginsApp } from '@/src/lib/sonda-plugins'
 import {
   attachSessionAutosave,
   hydrateSession,
   type HydrateProgress,
 } from '@/src/lib/session-persist'
+import { attachDiskAutosave } from '@/src/lib/disk-autosave'
+import { instalarAvisosProduccion, puertoProducciones } from '@/src/lib/produccion-resiliente'
+import { instalarGuardiaRenderLock } from '@/src/lib/render-lock-guard'
 import { JasWaveLogo } from '@/components/brand'
 import { isUndockWindow } from '@/lib/undock-window'
 
@@ -34,25 +47,54 @@ let sharedStore: TiendaDAW | null = null
 
 export { isUndockWindow }
 
-function getSharedStore() {
+/** Tienda compartida de la ventana (también para recuperación tras errores fuera del provider). */
+export function getSharedStore() {
   if (!sharedStore) {
     const estado = crearEstadoInicial()
 
     sharedStore = crearTiendaDAW({
       estadoInicial: estado,
-      maximoListeners: 100,
+      maximoListeners: 1000,
+      // Misma instancia que ajustes y ai-action-policy: el nivel elegido por el usuario aplica al agente.
+      permisos: permissionManager,
     })
 
     try {
       registrarMidiAiTools(toolRegistry, () => sharedStore!.obtenerEstado())
       registrarPluginTools(toolRegistry, () => sharedStore!.obtenerEstado())
       registrarAnalysisTools(toolRegistry)
+      registerAgentCatalogOnRegistry(toolRegistry, undefined, sharedStore!.registroComandos)
+    } catch {
+      /* HMR */
+    }
+
+    // U6: durante un bounce no se puede editar (ratón, teclado, IA ni scripts).
+    try {
+      instalarGuardiaRenderLock(sharedStore)
+    } catch {
+      /* ignore */
+    }
+
+    // Motor de análisis por pista (A7b): las herramientas analysis.* del agente
+    // miden el proyecto real (no inventan datos) cuando hay audio que renderizar.
+    try {
+      const servicio = crearServicioAnalisis({
+        obtenerEstado: () => sharedStore!.obtenerEstado(),
+        // Motor real (con VST3) cuando hay host; Web Audio como respaldo.
+        backend: crearBackendAnalisisNativo({ respaldo: crearBackendAnalisisWeb() }),
+      })
+      registrarProveedorAnalisis(servicio.proveedor)
+      // analysis.trackSound: estado real de carga de los VST en el host.
+      registrarSondaPlugins(sondaPluginsApp, instrumentosInstaladosApp)
     } catch {
       /* HMR */
     }
 
     if (typeof window !== 'undefined' && window.electron) {
       configurarFileService(new FileServiceElectron())
+    } else if (typeof indexedDB !== 'undefined') {
+      // Cliente web (W1): los proyectos se guardan en IndexedDB con el mismo formato .jaswave.
+      configurarFileService(new FileServiceNavegador())
     }
   }
   return sharedStore
@@ -135,7 +177,15 @@ export function DAWProvider({ children }: { children: ReactNode }) {
       }
       if (cancelled) return
       window.clearTimeout(failsafe)
-      detachAutosave = attachSessionAutosave(store)
+      const detachSession = attachSessionAutosave(store)
+      const detachDisk = attachDiskAutosave(store)
+      // Plan Q: ante un cierre inminente o poca memoria, copia extra del proyecto; el aviso se muestra en lenguaje llano.
+      const detachAvisos = instalarAvisosProduccion(puertoProducciones(), store, (a) => window.dispatchEvent(new CustomEvent('jaswave-produccion-aviso', { detail: a })))
+      detachAutosave = () => {
+        detachSession()
+        detachDisk()
+        detachAvisos()
+      }
       setReady(true)
     })()
 
@@ -172,8 +222,10 @@ export function useDAWState<T>(selector: (state: DAWState) => T): T {
   selectorRef.current = selector
   const cachedRef = useRef<{ snapshot: T } | null>(null)
 
+  const subscribe = useCallback((onStoreChange: () => void) => store.suscribir(onStoreChange), [store])
+
   return useSyncExternalStore(
-    (onStoreChange) => store.suscribir(onStoreChange),
+    subscribe,
     () => {
       const next = selectorRef.current(store.obtenerEstado())
       const prev = cachedRef.current
@@ -197,11 +249,16 @@ export function useDAWStateOptional<T>(
   fallbackRef.current = fallback
   const cachedRef = useRef<{ snapshot: T } | null>(null)
 
-  return useSyncExternalStore(
-    (onStoreChange) => {
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
       if (!store) return () => {}
       return store.suscribir(onStoreChange)
     },
+    [store],
+  )
+
+  return useSyncExternalStore(
+    subscribe,
     () => {
       if (!store) return fallbackRef.current
       const next = selectorRef.current(store.obtenerEstado())

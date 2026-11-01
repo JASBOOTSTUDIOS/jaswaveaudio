@@ -1,0 +1,15 @@
+{
+  "name": "e2e: el agente carga un instrumento (track.addVstLayer) y ecualiza (mix.eq) por las acciones del agente",
+  "responses": [
+    {
+      "when": { "purpose": "agent", "hasTools": true, "afterToolResult": false, "anyIncludes": "capa" },
+      "content": "Pruebo.",
+      "toolCalls": [
+        { "name": "track.addVstLayer", "arguments": { "trackId": "piano-diag", "nombre": "JasWave Grand Piano" } },
+        { "name": "mix.eq", "arguments": { "trackId": "piano-diag", "banda": 1, "gain": -2 } }
+      ]
+    },
+    { "when": { "purpose": "agent" }, "content": "Listo.", "repeat": true }
+  ],
+  "fallback": { "content": "ok" }
+}

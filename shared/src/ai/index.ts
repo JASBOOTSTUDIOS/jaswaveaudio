@@ -30,6 +30,23 @@ export type {
   ToolRegistry,
 } from './tool-registry';
 export { registrarPluginTools } from './plugin-tools'
+export {
+  buildToolSchema,
+  buildToolSchemas,
+  jsonSchemaFromExample,
+  normalizeToolParameters,
+  toolsForRole,
+  capToolSchemas,
+  TOOL_FAMILY_PRIORITY,
+  roleAllowsTool,
+  modeAllowsToolClass,
+  ROLE_WRITE_PREFIXES,
+  type ToolJsonSchema,
+  type ToolSchemaSource,
+  type ToolRiskClass,
+  type ToolAgentRole,
+  type ToolAgentMode,
+} from './tool-schemas'
 export { registrarAnalysisTools } from './analysis-tools';
 export { planFromActions, extractToolSteps, type ExecutionPlan, type PlanStep, type ToolCallStep } from './planner';
 

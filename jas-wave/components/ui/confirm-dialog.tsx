@@ -30,9 +30,11 @@ export function ConfirmDialog({
       if (e.key === 'Escape') { e.preventDefault(); onClose() }
       if (e.key === 'Enter') { e.preventDefault(); onConfirm() }
     }
-    window.addEventListener('keydown', handler)
+    // Captura: el diálogo procesa Escape/Enter antes que el dispatcher global
+    // de atajos (evita que Enter además dispare un atajo global).
+    window.addEventListener('keydown', handler, true)
     setTimeout(() => confirmRef.current?.focus(), 50)
-    return () => window.removeEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler, true)
   }, [open, onClose, onConfirm])
 
   if (!open) return null

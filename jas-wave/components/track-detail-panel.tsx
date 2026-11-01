@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useDAW, useDAWState } from '@/src/context/daw-context'
 import type { Clip } from '../../shared/src/types/clips'
 import type { DAWState } from '../../shared/src/types/state'
-import type { PluginInfo } from '../../shared/src/types/entidades'
 import {
   Volume2,
   VolumeX,
@@ -22,21 +21,28 @@ import {
   dbALineal,
   panADisplay,
 } from '@/lib/audio-conversions'
-import { FaderControl, KnobControl } from './ui/controls'
+import { KnobControl } from './ui/controls'
+import { ChannelFaderBlock } from './ui/channel-fader-block'
+import { useStereoMeter } from '@/hooks/use-stereo-meter'
+import { NumericField } from './ui/numeric-field'
+import { crearVentanaGesto, opcionesGesto } from '@/src/lib/gesture-id'
+import type { OpcionesEjecucion } from '../../shared/src/types/command'
 import { ConfirmDialog } from './ui/confirm-dialog'
+import { VoiceDictationButton } from './ui/voice-dictation-button'
 import { requestOpenTool } from '@/src/workspace/types'
 import { audioEngine } from '@/lib/audio-engine'
 import { hydratePluginCatalog } from '@/src/lib/plugin/catalog-store'
-import { pluginManager, catalogPluginInsertable } from '@/src/lib/plugin-host'
-import { descriptorToPluginInfo } from '@/src/lib/plugin/plugin-info-adapter'
+import { pluginManager } from '@/src/lib/plugin-host'
 import { openPluginEditor } from '@/src/lib/plugin/plugin-editor-store'
+import { PinEditorButton } from '@/components/pin-button'
+import { PluginPicker } from '@/components/plugin-picker'
+import { insertPluginOnTrack } from '@/src/lib/plugin/insert-plugin'
 import { openFxChain } from '@/src/lib/plugin/fx-chain-store'
 import { TrackMidiInput } from '@/components/track-midi-input'
 import { TrackAudioInput } from '@/components/track-audio-input'
 import type { PluginDescriptor } from '@/src/lib/plugin/types'
 import {
   isJasWaveRolesDescriptor,
-  jasWaveRolesPluginInfo,
 } from '@/src/lib/plugin/jaswave-roles'
 
 const TRACK_COLORS = [
@@ -90,6 +96,12 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [catalog, setCatalog] = useState<PluginDescriptor[]>([])
   const [pickId, setPickId] = useState('')
+  const notasRef = useRef<HTMLTextAreaElement>(null)
+  // Los resultados de un mismo dictado (con pausas de hasta 4 s) se agrupan en un solo deshacer.
+  const gestoDictadoNotas = useMemo(() => crearVentanaGesto(4000), [])
+  // Solo se lee el medidor mientras se ve un fader (pestaña Audio o clip MIDI).
+  const faderVisible = tab === 'audio' || (tab === 'clip' && selectedClip?.tipo === 'midi')
+  const stereo = useStereoMeter(track && faderVisible ? track.id : null)
 
   useEffect(() => {
     hydratePluginCatalog()
@@ -122,8 +134,8 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
   const isMidi = track.tipo === 'midi' || track.tipo === 'instrumento'
   const plugins = track.plugins ?? []
 
-  const updateTrack = (datos: Record<string, unknown>) => {
-    void tienda.executor.execute('track.update', { trackId: track.id, datos })
+  const updateTrack = (datos: Record<string, unknown>, opciones?: OpcionesEjecucion) => {
+    void tienda.executor.execute('track.update', { trackId: track.id, datos }, 'user', undefined, opciones)
   }
 
   const updateClip = (patch: Partial<Clip>) => {
@@ -133,12 +145,13 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
     updateTrack({ clips })
   }
 
-  const handleVolumeChange = (newDb: number) => {
-    updateTrack({ volumen: dbALineal(newDb) })
+  // Un arrastre del fader/knob del inspector = una sola entrada de undo.
+  const handleVolumeChange = (newDb: number, gestureId?: string) => {
+    updateTrack({ volumen: dbALineal(newDb) }, opcionesGesto(`inspector.volumen:${track.id}`, gestureId))
   }
 
-  const handlePanChange = (newPan: number) => {
-    updateTrack({ paneo: newPan / 100 })
+  const handlePanChange = (newPan: number, gestureId?: string) => {
+    updateTrack({ paneo: newPan / 100 }, opcionesGesto(`inspector.paneo:${track.id}`, gestureId))
   }
 
   const tabs: { id: InspectorTab; label: string; show?: boolean }[] = [
@@ -230,17 +243,35 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 onChange={(e) => updateTrack({ nombre: e.target.value })}
               />
             </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Notas / comentario
-              </span>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between">
+                <label
+                  htmlFor={`notas-pista-${track.id}`}
+                  className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+                >
+                  Notas / comentario
+                </label>
+                {/* G7: dictar notas de sesión; mismo comando que al teclear, el dictado entero = un deshacer. */}
+                <VoiceDictationButton
+                  value={track.notas ?? track.comentario ?? ''}
+                  onChange={(texto) =>
+                    updateTrack(
+                      { notas: texto, comentario: texto },
+                      opcionesGesto(`inspector.notas:${track.id}`, gestoDictadoNotas()),
+                    )
+                  }
+                  targetRef={notasRef}
+                />
+              </div>
               <textarea
+                id={`notas-pista-${track.id}`}
+                ref={notasRef}
                 className="min-h-[72px] resize-y rounded-md border border-border bg-background px-2 py-1.5 text-[12px] text-foreground outline-none focus:ring-1 focus:ring-accent-amber"
                 value={track.notas ?? track.comentario ?? ''}
                 onChange={(e) => updateTrack({ notas: e.target.value, comentario: e.target.value })}
-                placeholder="Notas de la pista…"
+                placeholder="Notas de la pista… (Alt+V para dictar)"
               />
-            </label>
+            </div>
             <label className="flex flex-col gap-1">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Tags (separados por coma)
@@ -312,7 +343,7 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
               <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Volumen
               </span>
-              <FaderControl db={db} color={track.color} onChange={handleVolumeChange} />
+              <ChannelFaderBlock db={db} color={track.color} onChange={handleVolumeChange} stereo={stereo} />
             </div>
             <div className="flex flex-col items-center gap-2">
               <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -434,46 +465,12 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 Añadir del catálogo
               </span>
               <div className="flex gap-1">
-                <select
-                  value={pickId}
-                  onChange={(e) => setPickId(e.target.value)}
-                  className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1.5 text-[11px] text-foreground"
-                >
-                  {catalog.map((d) => (
-                    <option key={d.pluginId} value={d.pluginId}>
-                      {d.name}
-                      {d.format === 'vst3' ? ' (VST3)' : d.format === 'vst2' ? ' (VST2)' : ''}
-                      {d.format === 'vst2'
-                        ? d.hostReady
-                          ? ''
-                          : ' · no hosteable'
-                        : !d.hostReady && d.format !== 'builtin'
-                          ? ' · pendiente'
-                          : ''}
-                    </option>
-                  ))}
-                </select>
+                <PluginPicker catalog={catalog} value={pickId} onChange={setPickId} />
                 <button
                   type="button"
                   onClick={() => {
-                    void (async () => {
-                      const d = catalog.find((x) => x.pluginId === pickId)
-                      if (d && !catalogPluginInsertable(d)) return
-                      const rolesInfo =
-                        d && isJasWaveRolesDescriptor(d) ? jasWaveRolesPluginInfo() : null
-                      const info = rolesInfo ?? (d ? descriptorToPluginInfo(d) : null)
-                      if (!info) return
-                      await tienda.executor.execute('plugin.insert', {
-                        trackId: track.id,
-                        plugin: info,
-                      })
-                      openPluginEditor({
-                        trackId: track.id,
-                        pluginId: info.id,
-                        pluginName: info.nombre,
-                        zone: 'right',
-                      })
-                    })()
+                    const d = catalog.find((x) => x.pluginId === pickId)
+                    if (d) void insertPluginOnTrack(tienda, track.id, d)
                   }}
                   className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent-amber/15 px-2 py-1 text-[10px] font-semibold text-accent-amber hover:bg-accent-amber/25"
                 >
@@ -482,7 +479,7 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 </button>
               </div>
               <p className="text-[9px] text-muted-foreground">
-                JasWave Roles u otros VST del catálogo. VST3/VST2 x64: MIDI al Plugin Host cuando
+                JasWave Roles u otros VST del catálogo. VST3 de 64 bits: MIDI al Plugin Host cuando
                 el load confirma.
               </p>
             </div>
@@ -531,6 +528,7 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                         </div>
                       ) : null}
                     </button>
+                    <PinEditorButton trackId={track.id} pluginId={p.id} nombre={p.nombre} size="size-3.5" />
                     <button
                       type="button"
                       title="Quitar"
@@ -569,16 +567,18 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                   Inicio (beats)
                 </span>
-                <input
-                  type="number"
+                {/* Confirma con Enter/blur; vacío o texto revierte (antes movía el clip a NaN). */}
+                <NumericField
                   step={0.25}
-                  className="rounded-md border border-border bg-background px-2 py-1.5 text-[12px] outline-none focus:ring-1 focus:ring-accent-amber"
+                  min={0}
+                  aria-label="Inicio del clip (beats)"
+                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[12px] outline-none focus:ring-1 focus:ring-accent-amber"
                   value={selectedClip.inicio}
-                  onChange={(e) =>
+                  onCommit={(inicio) =>
                     void tienda.executor.execute('clip.move', {
                       clipId: selectedClip.id,
                       pistaId: track.id,
-                      inicio: Number(e.target.value),
+                      inicio,
                     })
                   }
                 />
@@ -587,17 +587,17 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                   Duración
                 </span>
-                <input
-                  type="number"
+                <NumericField
                   step={0.25}
                   min={0.25}
-                  className="rounded-md border border-border bg-background px-2 py-1.5 text-[12px] outline-none focus:ring-1 focus:ring-accent-amber"
+                  aria-label="Duración del clip (beats)"
+                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-[12px] outline-none focus:ring-1 focus:ring-accent-amber"
                   value={selectedClip.duracion}
-                  onChange={(e) =>
+                  onCommit={(duracion) =>
                     void tienda.executor.execute('clip.resize', {
                       clipId: selectedClip.id,
                       pistaId: track.id,
-                      duracion: Number(e.target.value),
+                      duracion,
                     })
                   }
                 />
@@ -631,7 +631,7 @@ export function TrackDetailPanel({ trackId }: { trackId: string | null }) {
                   <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Volumen
                   </span>
-                  <FaderControl db={db} color={track.color} onChange={handleVolumeChange} />
+                  <ChannelFaderBlock db={db} color={track.color} onChange={handleVolumeChange} stereo={stereo} />
                 </div>
                 <div className="flex flex-col items-center gap-2">
                   <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">

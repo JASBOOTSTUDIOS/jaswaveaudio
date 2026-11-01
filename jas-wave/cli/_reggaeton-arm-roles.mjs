@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'
+import './lib/bridge-auth.mjs'
 
 const BASE = `http://127.0.0.1:${process.env.JASWAVE_AGENT_PORT || 18787}`
 const ROLES_PATH =

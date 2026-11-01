@@ -1,0 +1,16 @@
+{
+  "name": "e2e: turno completo del agente con proveedor mock (tool call nativa → ejecuta → responde)",
+  "responses": [
+    {
+      "when": { "purpose": "agent", "hasTools": true, "afterToolResult": false, "anyIncludes": "97" },
+      "content": "Ajusto el tempo a 97 BPM.",
+      "toolCalls": [{ "name": "project.setBpm", "arguments": { "bpm": 97 } }]
+    },
+    {
+      "when": { "purpose": "agent" },
+      "content": "Listo: el tempo del proyecto quedó en 97 BPM.",
+      "repeat": true
+    }
+  ],
+  "fallback": { "content": "Entendido: el usuario quiere el tempo a 97 BPM." }
+}

@@ -1,0 +1,75 @@
+{
+  "archivos": {
+    "soul-motown.mid": {
+      "id": "jw-soul-soul-motown",
+      "nombre": "Soul Motown",
+      "tempo": 108,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "soul",
+        "pandereta",
+        "motown"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "soul-lento.mid": {
+      "id": "jw-soul-soul-lento",
+      "nombre": "Soul lento",
+      "tempo": 72,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "soul",
+        "lento",
+        "cross-stick"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "soul-con-palmas.mid": {
+      "id": "jw-soul-soul-con-palmas",
+      "nombre": "Soul con palmas",
+      "tempo": 96,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "soul",
+        "palmas"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-caja-al-cuarto.mid": {
+      "id": "jw-soul-fill-caja-al-cuarto",
+      "nombre": "Fill caja al cuarto",
+      "tempo": 96,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "caja",
+        "cuarto"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

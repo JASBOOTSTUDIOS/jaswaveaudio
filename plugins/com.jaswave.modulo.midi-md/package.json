@@ -1,0 +1,15 @@
+{
+  "name": "@jaswave/modulo-midi-md",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Módulo de JasWave: clip MIDI como documento Markdown con sincronización en vivo.",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --tsconfig ../sdk/host-sdk/pruebas/tsconfig.pruebas.json --test test/*.test.ts"
+  },
+  "dependencies": {
+    "lucide-react": "^1.16.0"
+  }
+}

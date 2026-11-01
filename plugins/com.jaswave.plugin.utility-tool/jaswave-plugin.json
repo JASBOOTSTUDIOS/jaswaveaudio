@@ -1,0 +1,180 @@
+{
+  "id": "com.jaswave.plugin.utility-tool",
+  "name": "JasWave Utility & Phase Tool",
+  "version": "1.0.0",
+  "category": "audio-effect",
+  "vendor": "JasWave Audio",
+  "description": "Utilidad de canal: ganancia ±24 dB, fase L/R, intercambio L/R, filtro DC, ancho estéreo M/S, mono por debajo de una frecuencia, mono y balance.",
+  "targetPlatforms": [
+    "win-x64"
+  ],
+  "entrypoints": {
+    "dspDesktop": "bin/JasWaveUtility.vst3"
+  },
+  "vst3": {
+    "classId": "{4A617357-5554-494C-5072-6F6356335431}",
+    "subCategories": "Fx|Tools"
+  },
+  "permissions": {
+    "realtimeAudio": true,
+    "fileSystem": "none",
+    "network": false,
+    "commands": [
+      "plugin.setParameter"
+    ]
+  },
+  "rolesAllowed": [
+    "director",
+    "productor",
+    "mezcla",
+    "mastering",
+    "qa"
+  ],
+  "license": {
+    "productId": "com.jaswave.plugin.utility-tool",
+    "features": [
+      {
+        "key": "utilidad.mono-graves",
+        "description": "Mono por debajo de una frecuencia"
+      },
+      {
+        "key": "utilidad.ancho-estereo",
+        "description": "Ancho estéreo M/S"
+      }
+    ]
+  },
+  "ai": {
+    "summary": "Ajustes de canal: ganancia, fase, imagen estéreo y mono-graves.",
+    "intents": [
+      "ajustar-ganancia",
+      "corregir-fase",
+      "ensanchar-estereo",
+      "mono-graves",
+      "quitar-dc"
+    ],
+    "parameters": [
+      {
+        "id": "bypass",
+        "vstParamId": 0,
+        "name": "Bypass",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "bypass": true,
+        "basico": true
+      },
+      {
+        "id": "util.ganancia",
+        "vstParamId": 1,
+        "name": "Ganancia",
+        "min": -24,
+        "max": 24,
+        "default": 0,
+        "unit": "dB",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "util.ancho",
+        "vstParamId": 2,
+        "name": "Ancho estéreo",
+        "min": 0,
+        "max": 200,
+        "default": 100,
+        "unit": "%",
+        "scale": "linear",
+        "feature": "utilidad.ancho-estereo",
+        "basico": true
+      },
+      {
+        "id": "util.mono-bajo",
+        "vstParamId": 3,
+        "name": "Mono por debajo de (0 = off)",
+        "min": 0,
+        "max": 200,
+        "default": 0,
+        "unit": "Hz",
+        "scale": "linear",
+        "feature": "utilidad.mono-graves"
+      },
+      {
+        "id": "util.fase-l",
+        "vstParamId": 4,
+        "name": "Invertir fase L",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "util.fase-r",
+        "vstParamId": 5,
+        "name": "Invertir fase R",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "util.balance",
+        "vstParamId": 6,
+        "name": "Balance",
+        "min": -1,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "linear",
+        "feature": null,
+        "basico": true
+      },
+      {
+        "id": "util.dc",
+        "vstParamId": 7,
+        "name": "Filtro DC",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "util.swap",
+        "vstParamId": 8,
+        "name": "Intercambiar L/R",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null
+      },
+      {
+        "id": "util.mono",
+        "vstParamId": 9,
+        "name": "Mono",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "unit": "",
+        "scale": "toggle",
+        "feature": null,
+        "basico": true
+      }
+    ]
+  },
+  "download": {
+    "url": "https://github.com/JASBOOTSTUDIOS/jaswaveaudio/releases/download/plugins-v1.0.0/com.jaswave.plugin.utility-tool-1.0.0.jwx",
+    "sha256": "",
+    "sizeBytes": 0
+  },
+  "checksum": "SHA256:"
+}

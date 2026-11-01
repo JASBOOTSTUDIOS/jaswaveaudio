@@ -7,9 +7,17 @@
 #include <cmath>
 #include <cstring>
 #include <mutex>
+#include <new>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace jaswave {
 namespace {
@@ -29,14 +37,62 @@ struct ClipVoice {
   float gain{1.f};
   float pan{0.f};
   bool active{true};
+  // Fundidos en muestras absolutas de la línea de tiempo (límites del clip entero, no de la voz:
+  // si se reproduce desde la mitad del clip, el fundido sigue en su sitio).
+  int64_t fadeInStart{0};
+  int64_t fadeInEnd{0};
+  int64_t fadeOutStart{0};
+  int64_t fadeOutEnd{0};
+  int fadeInCurve{0};   // 0 lineal · 1 exponencial · 2 logarítmica
+  int fadeOutCurve{0};
+  bool reverse{false};
+  int64_t regionStart{0};
+  int64_t regionLen{0};
 };
 
+/** Forma del fundido para x ∈ [0,1] (0 = silencio, 1 = nivel completo). */
+static float fadeShape(float x, int curve) {
+  x = std::clamp(x, 0.f, 1.f);
+  if (curve == 1) return x * x;           // exponencial: arranca suave
+  if (curve == 2) return std::sqrt(x);    // logarítmica: sube rápido
+  return x;
+}
+
+static float fadeGainAt(const ClipVoice& v, int64_t absS) {
+  float g = 1.f;
+  if (v.fadeInEnd > v.fadeInStart && absS < v.fadeInEnd) {
+    g *= fadeShape(static_cast<float>(absS - v.fadeInStart) / static_cast<float>(v.fadeInEnd - v.fadeInStart), v.fadeInCurve);
+  }
+  if (v.fadeOutEnd > v.fadeOutStart && absS >= v.fadeOutStart) {
+    g *= fadeShape(static_cast<float>(v.fadeOutEnd - absS) / static_cast<float>(v.fadeOutEnd - v.fadeOutStart), v.fadeOutCurve);
+  }
+  return g;
+}
+
+// Subida por trozos (clip.loadBegin/Chunk/End): evita un unico mensaje gigante.
+struct PendingUpload {
+  std::vector<float> data; // interleaved f32, frames * channels
+  uint32_t frames{0};
+  uint32_t channels{2};
+  uint32_t sampleRate{48000};
+  uint32_t received{0}; // frames recibidos (se exige orden, sin huecos)
+};
+
+constexpr uint64_t kMaxUploadBytes = 3ull * 1024ull * 1024ull * 1024ull; // 3 GB de PCM f32
+constexpr uint32_t kMaxChannels = 64;
+
 std::mutex gMu;
+std::mutex gPendMu;
+std::unordered_map<std::string, PendingUpload> gPending;
 std::unordered_map<std::string, ClipBuffer> gBuffers;
 std::vector<ClipVoice> gVoices;
 
 void toStereo(const float* src, uint32_t frames, uint32_t channels, std::vector<float>& out) {
   out.resize(static_cast<size_t>(frames) * 2u);
+  if (!src) {
+    std::fill(out.begin(), out.end(), 0.f);
+    return;
+  }
   if (channels == 1) {
     for (uint32_t i = 0; i < frames; ++i) {
       out[i * 2] = src[i];
@@ -118,11 +174,13 @@ void renderVoiceInto(const ClipVoice& v, const ClipBuffer& buf, int64_t clockSam
   for (uint32_t i = 0; i < frames; ++i) {
     const int64_t absS = clockSamples + static_cast<int64_t>(i);
     if (absS < v.startSample || absS >= voiceEnd) continue;
-    const int64_t into = absS - v.startSample + v.sourceOffset;
+    int64_t into = absS - v.startSample + v.sourceOffset;
+    if (v.reverse && v.regionLen > 0) into = v.regionStart + v.regionLen - 1 - (into - v.regionStart);
     if (into < 0 || into >= static_cast<int64_t>(buf.frames)) continue;
     const size_t si = static_cast<size_t>(into) * 2u;
-    interleaved[i * 2] += buf.interleaved[si] * gL;
-    interleaved[i * 2 + 1] += buf.interleaved[si + 1] * gR;
+    const float f = fadeGainAt(v, absS);
+    interleaved[i * 2] += buf.interleaved[si] * gL * f;
+    interleaved[i * 2 + 1] += buf.interleaved[si + 1] * gR * f;
   }
 }
 
@@ -135,10 +193,27 @@ bool clip_load_path(const std::string& clipId, const std::string& path, std::str
   }
   ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 0, 0);
   ma_decoder dec{};
+#ifdef _WIN32
+  // Ruta UTF-8 -> UTF-16: con la variante ANSI fallan nombres como "cancion.wav" con acentos o "n".
+  {
+    const int n = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
+    if (n <= 0) {
+      err = "ruta no valida (UTF-8)";
+      return false;
+    }
+    std::vector<wchar_t> wide(static_cast<size_t>(n));
+    MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wide.data(), n);
+    if (ma_decoder_init_file_w(wide.data(), &cfg, &dec) != MA_SUCCESS) {
+      err = "no se pudo abrir/decodificar el archivo";
+      return false;
+    }
+  }
+#else
   if (ma_decoder_init_file(path.c_str(), &cfg, &dec) != MA_SUCCESS) {
-    err = "ma_decoder_init_file falló";
+    err = "no se pudo abrir/decodificar el archivo";
     return false;
   }
+#endif
   const uint32_t channels = dec.outputChannels ? dec.outputChannels : 2;
   const uint32_t inSr = dec.outputSampleRate ? dec.outputSampleRate : 48000;
 
@@ -155,14 +230,14 @@ bool clip_load_path(const std::string& clipId, const std::string& path, std::str
     packed.resize(static_cast<size_t>(read) * channels);
     frameCount = read;
   } else {
-    float tmp[4096 * 8];
+    std::vector<float> tmp(static_cast<size_t>(4096) * std::max<uint32_t>(1, channels));
     for (;;) {
       ma_uint64 read = 0;
-      const ma_result r = ma_decoder_read_pcm_frames(&dec, tmp, 4096, &read);
+      const ma_result r = ma_decoder_read_pcm_frames(&dec, tmp.data(), 4096, &read);
       if (read == 0) break;
       const size_t old = packed.size();
       packed.resize(old + static_cast<size_t>(read) * channels);
-      std::memcpy(packed.data() + old, tmp, static_cast<size_t>(read) * channels * sizeof(float));
+      std::memcpy(packed.data() + old, tmp.data(), static_cast<size_t>(read) * channels * sizeof(float));
       frameCount += read;
       if (r != MA_SUCCESS) break;
     }
@@ -207,7 +282,95 @@ bool clip_load_pcm(const std::string& clipId, const float* interleaved, uint32_t
   return true;
 }
 
+bool clip_load_begin(const std::string& clipId, uint32_t frames, uint32_t channels,
+                     uint32_t sampleRate, std::string& err) {
+  if (clipId.empty() || frames == 0) {
+    err = "clipId/frames invalidos";
+    return false;
+  }
+  if (channels == 0 || channels > kMaxChannels) {
+    err = "numero de canales no soportado";
+    return false;
+  }
+  const uint64_t bytes = static_cast<uint64_t>(frames) * channels * sizeof(float);
+  if (bytes > kMaxUploadBytes) {
+    err = "clip demasiado grande";
+    return false;
+  }
+  PendingUpload up;
+  up.frames = frames;
+  up.channels = channels;
+  up.sampleRate = sampleRate ? sampleRate : 48000;
+  try {
+    up.data.assign(static_cast<size_t>(frames) * channels, 0.f);
+  } catch (const std::bad_alloc&) {
+    err = "sin memoria para el clip";
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(gPendMu);
+  gPending[clipId] = std::move(up);
+  err.clear();
+  return true;
+}
+
+bool clip_load_chunk(const std::string& clipId, uint32_t offsetFrames, const float* interleaved, size_t floatCount,
+                     uint32_t frames, std::string& err) {
+  std::lock_guard<std::mutex> lock(gPendMu);
+  auto it = gPending.find(clipId);
+  if (it == gPending.end()) {
+    err = "subida no iniciada";
+    return false;
+  }
+  PendingUpload& up = it->second;
+  if (!interleaved || frames == 0 || offsetFrames != up.received ||
+      static_cast<uint64_t>(offsetFrames) + frames > up.frames ||
+      floatCount < static_cast<size_t>(frames) * up.channels) {
+    gPending.erase(it);
+    err = "trozo fuera de orden o de rango";
+    return false;
+  }
+  std::memcpy(up.data.data() + static_cast<size_t>(offsetFrames) * up.channels, interleaved,
+              static_cast<size_t>(frames) * up.channels * sizeof(float));
+  up.received += frames;
+  err.clear();
+  return true;
+}
+
+bool clip_load_end(const std::string& clipId, std::string& err) {
+  PendingUpload up;
+  {
+    std::lock_guard<std::mutex> lock(gPendMu);
+    auto it = gPending.find(clipId);
+    if (it == gPending.end()) {
+      err = "subida no iniciada";
+      return false;
+    }
+    up = std::move(it->second);
+    gPending.erase(it);
+  }
+  if (up.received != up.frames) {
+    err = "subida incompleta";
+    return false;
+  }
+  return clip_load_pcm(clipId, up.data.data(), up.frames, up.channels, up.sampleRate, err);
+}
+
+void clip_load_abort(const std::string& clipId) {
+  std::lock_guard<std::mutex> lock(gPendMu);
+  gPending.erase(clipId);
+}
+
+bool clip_has(const std::string& clipId, uint32_t& frames, uint32_t& sampleRate) {
+  std::lock_guard<std::mutex> lock(gMu);
+  auto it = gBuffers.find(clipId);
+  if (it == gBuffers.end()) return false;
+  frames = it->second.frames;
+  sampleRate = it->second.sampleRate;
+  return true;
+}
+
 void clip_unload(const std::string& clipId) {
+  clip_load_abort(clipId);
   std::lock_guard<std::mutex> lock(gMu);
   gBuffers.erase(clipId);
   gVoices.erase(std::remove_if(gVoices.begin(), gVoices.end(),
@@ -216,16 +379,34 @@ void clip_unload(const std::string& clipId) {
 }
 
 void clip_unload_all() {
+  {
+    std::lock_guard<std::mutex> lock(gPendMu);
+    gPending.clear();
+  }
   std::lock_guard<std::mutex> lock(gMu);
   gBuffers.clear();
   gVoices.clear();
 }
 
 void clip_schedule(const std::string& clipId, uint16_t trackIndex, int64_t startSample,
-                   int64_t durationSamples, int64_t sourceOffsetSamples, float gain, float pan) {
+                   int64_t durationSamples, int64_t sourceOffsetSamples, float gain, float pan,
+                   const ClipFades& fades) {
   std::lock_guard<std::mutex> lock(gMu);
   if (gBuffers.find(clipId) == gBuffers.end()) return;
   ClipVoice v;
+  if (fades.inSamples > 0) {
+    v.fadeInStart = fades.clipStartSample;
+    v.fadeInEnd = fades.clipStartSample + fades.inSamples;
+    v.fadeInCurve = fades.inCurve;
+  }
+  if (fades.outSamples > 0) {
+    v.fadeOutStart = fades.clipEndSample - fades.outSamples;
+    v.fadeOutEnd = fades.clipEndSample;
+    v.fadeOutCurve = fades.outCurve;
+  }
+  v.reverse = fades.reverse;
+  v.regionStart = std::max<int64_t>(0, fades.regionStart);
+  v.regionLen = std::max<int64_t>(0, fades.regionLen);
   v.clipId = clipId;
   v.trackIndex = trackIndex;
   v.startSample = std::max<int64_t>(0, startSample);
@@ -256,20 +437,24 @@ void clip_render_stem(uint16_t trackIndex, float* interleavedStereo, uint32_t fr
 
 void clip_render_mix(float* outL, float* outR, uint32_t frames) {
   if (!outL || !outR || frames == 0) return;
-  std::vector<float> tmp(static_cast<size_t>(frames) * 2u, 0.f);
+  // Sin asignacion en el callback: se procesa por bloques sobre un buffer fijo.
+  constexpr uint32_t kBlock = 1024;
+  float tmp[kBlock * 2];
   const int64_t clock = transport_clock_samples();
-  {
-    std::lock_guard<std::mutex> lock(gMu);
+  std::lock_guard<std::mutex> lock(gMu);
+  for (uint32_t done = 0; done < frames; done += kBlock) {
+    const uint32_t n = std::min(kBlock, frames - done);
+    std::fill(tmp, tmp + static_cast<size_t>(n) * 2u, 0.f);
     for (const auto& v : gVoices) {
       if (!v.active) continue;
       auto it = gBuffers.find(v.clipId);
       if (it == gBuffers.end()) continue;
-      renderVoiceInto(v, it->second, clock, tmp.data(), frames);
+      renderVoiceInto(v, it->second, clock + done, tmp, n);
     }
-  }
-  for (uint32_t i = 0; i < frames; ++i) {
-    outL[i] += tmp[i * 2];
-    outR[i] += tmp[i * 2 + 1];
+    for (uint32_t i = 0; i < n; ++i) {
+      outL[done + i] += tmp[i * 2];
+      outR[done + i] += tmp[i * 2 + 1];
+    }
   }
 }
 

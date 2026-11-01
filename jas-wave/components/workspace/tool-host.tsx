@@ -1,22 +1,31 @@
-import { Construction, Library, Gauge, GitBranch, Piano, SlidersHorizontal } from 'lucide-react'
+import { useRef } from 'react'
+import { Boxes, Construction, GitBranch } from 'lucide-react'
+import { PanelSpaceGuard } from './panel-space-guard'
+import { DawTerminalPanel } from '@/components/daw-terminal-panel'
 import { ArrangeView } from '@/components/arrange-view'
 import { Mixer } from '@/components/mixer'
 import { MixAnalyzerPanel } from '@/components/mix-analyzer-panel'
-import { CoProducerPanel } from '@/components/coproducer-panel'
-import { AgentDocsPanel } from '@/components/agent-docs-panel'
-import { DocsExplorerPanel } from '@/components/docs-explorer-panel'
 import { TrackDetailPanel } from '@/components/track-detail-panel'
 import { PianoRollToolPanel } from '@/components/piano-roll'
-import { ScoreEditorToolPanel } from '@/components/score-editor-panel'
 import { InstrumentsPanel } from '@/components/instruments-panel'
 import { LibraryPanel } from '@/components/library-panel'
 import { FxChainPanel } from '@/components/fx-chain-panel'
+import { AutomationLanesPanel } from '@/components/automation-lanes-panel'
 import { PluginEditorPanel } from '@/components/plugin-editor-panel'
 import { MidiMapPanel } from '@/components/midi-map-panel'
+import { MidiZonesPanel } from '@/components/midi-zones-panel'
+import { GroovesPanel } from '@/components/grooves-panel'
 import { SettingsPanel } from '@/components/project-settings-dialog'
+import { ProjectFileExplorer } from './project-file-explorer'
+import { PanelCuenta } from '@/components/cuenta/panel-cuenta'
+import { PanelAbrirAdmin } from '@/components/admin/abrir-admin'
+import { PanelModulos } from '@/components/modulos/panel-modulos'
+import { panelDeHerramienta } from '@/src/modulos/registro-modulos'
+import { useVersionModulos } from '@/src/modulos/use-modulos'
 import { useDAWState } from '@/src/context/daw-context'
-import type { ToolId } from '@/src/workspace/types'
+import { tamanoMinimoHerramienta, type ToolId } from '@/src/workspace/types'
 import { getSelectedTrackId } from '@/src/lib/selection-helpers'
+import { AppErrorBoundary } from '@/components/app-error-boundary'
 
 function _PlaceholderTool({ title }: { title: string }) {
   return (
@@ -30,16 +39,38 @@ function _PlaceholderTool({ title }: { title: string }) {
   )
 }
 
-export function ToolHost({ toolId }: { toolId: ToolId }) {
+/**
+ * Cada panel tiene su boundary: un fallo en uno no tumba el DAW ni el audio.
+ * `avisoEspacio`: ofrecer flotar/ocultar el panel cuando su zona queda pequeña (no en ventanas flotantes).
+ */
+export function ToolHost({ toolId, avisoEspacio = true }: { toolId: ToolId; avisoEspacio?: boolean }) {
+  const min = tamanoMinimoHerramienta(toolId)
+  const viewportRef = useRef<HTMLDivElement>(null)
+  return (
+    <AppErrorBoundary key={toolId} area={toolId} compact>
+      <div className="relative h-full w-full">
+        {/*
+          Visor con tamaño mínimo: si la zona se hace más pequeña que el panel, este contenedor hace scroll y el
+          contenido mantiene sus proporciones (nada de faders aplastados ni controles superpuestos).
+        */}
+        <div ref={viewportRef} className="jw-scrollbar relative h-full w-full overflow-auto" data-tool-viewport={toolId}>
+          <div className="h-full w-full" style={{ minWidth: min.w, minHeight: min.h }}>
+            <ToolContent toolId={toolId} />
+          </div>
+        </div>
+        {avisoEspacio ? <PanelSpaceGuard toolId={toolId} viewportRef={viewportRef} /> : null}
+      </div>
+    </AppErrorBoundary>
+  )
+}
+
+function ToolContent({ toolId }: { toolId: ToolId }) {
   const selectedTrackId = useDAWState((s) => getSelectedTrackId(s))
+  useVersionModulos()
+  const PanelModulo = panelDeHerramienta(toolId)
+  if (PanelModulo) return <PanelModulo />
 
   switch (toolId) {
-    case 'coproducer':
-      return <CoProducerPanel />
-    case 'docs':
-      return <AgentDocsPanel />
-    case 'docs-explorer':
-      return <DocsExplorerPanel />
     case 'arrange':
       return <ArrangeView />
     case 'mixer':
@@ -48,18 +79,32 @@ export function ToolHost({ toolId }: { toolId: ToolId }) {
       return <TrackDetailPanel trackId={selectedTrackId} />
     case 'piano-roll':
       return <PianoRollToolPanel />
-    case 'score-editor':
-      return <ScoreEditorToolPanel />
+    case 'terminal':
+      return <DawTerminalPanel />
     case 'instruments':
       return <InstrumentsPanel />
     case 'fx-chain':
       return <FxChainPanel />
+    case 'automation':
+      return <AutomationLanesPanel />
     case 'plugin-editor':
       return <PluginEditorPanel />
     case 'midi-map':
       return <MidiMapPanel />
+    case 'midi-zones':
+      return <MidiZonesPanel />
+    case 'grooves':
+      return <GroovesPanel />
     case 'settings':
       return <SettingsPanel />
+    case 'project-files':
+      return <ProjectFileExplorer />
+    case 'cuenta':
+      return <PanelCuenta />
+    case 'admin':
+      return <PanelAbrirAdmin />
+    case 'modulos':
+      return <PanelModulos />
     case 'library':
       return <LibraryPanel />
     case 'meters':
@@ -72,11 +117,20 @@ export function ToolHost({ toolId }: { toolId: ToolId }) {
         </div>
       )
     default:
+      // Herramienta de un módulo que no está instalado, activo o cargado en este equipo.
       return (
-        <div className="flex h-full items-center justify-center gap-2 bg-panel text-muted-foreground">
-          <Library className="size-5" />
-          <SlidersHorizontal className="size-5" />
-          <Piano className="size-5" />
+        <div className="flex h-full flex-col items-center justify-center gap-3 bg-panel px-4 text-center" data-testid="herramienta-no-disponible">
+          <Boxes className="size-8 text-muted-foreground/40" />
+          <p className="max-w-[260px] text-[11px] text-muted-foreground">
+            Esta herramienta es de un módulo que no está instalado o activo.
+          </p>
+          <button
+            type="button"
+            className="rounded-md bg-accent-amber/20 px-2.5 py-1.5 text-[11px] font-semibold text-accent-amber hover:bg-accent-amber/30"
+            onClick={() => window.dispatchEvent(new CustomEvent('jaswave-open-tool', { detail: { toolId: 'modulos' } }))}
+          >
+            Abrir Módulos
+          </button>
         </div>
       )
   }

@@ -41,7 +41,7 @@ describe('buildStyleGapReport', () => {
   it('habla en lenguaje de productor, no P1/P2 ni 244.0b', () => {
     const text = buildStyleGapReport(miniState(), {
       userText:
-        'analizame la pista de la bateria y dime que le falta para estilo averly morillo worship, investiga en internet',
+        'analizame la pista de la bateria y dime que le falta para estilo funk de los 70, investiga en internet',
     })
     expect(text).toMatch(/Batería/)
     expect(text).toMatch(/ghost notes|Ghost|hi-hat|Hi-hat/i)

@@ -1,0 +1,76 @@
+{
+  "archivos": {
+    "afrobeat-clasico.mid": {
+      "id": "jw-afrobeat-afrobeat-clasico",
+      "nombre": "Afrobeat clásico",
+      "tempo": 104,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "afrobeat",
+        "cencerro",
+        "groove"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "afrobeats-moderno.mid": {
+      "id": "jw-afrobeat-afrobeats-moderno",
+      "nombre": "Afrobeats moderno",
+      "tempo": 100,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "afrobeat",
+        "moderno",
+        "palmas"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "afrobeat-ligero.mid": {
+      "id": "jw-afrobeat-afrobeat-ligero",
+      "nombre": "Afrobeat ligero",
+      "tempo": 96,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "afrobeat",
+        "ligero",
+        "ride"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-redoble-de-caja.mid": {
+      "id": "jw-afrobeat-fill-redoble-de-caja",
+      "nombre": "Fill redoble de caja",
+      "tempo": 104,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "redoble",
+        "caja"
+      ],
+      "intensidad": 4,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}

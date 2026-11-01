@@ -46,7 +46,7 @@ export function hydratePluginCatalog(): PluginDescriptor[] {
 
 /**
  * Tras arrancar el Plugin Host: VST3 en disco con hostReady=false (caché vieja)
- * vuelven a ser insertables. VST2 sigue necesitando discover (chequeo PE64).
+ * vuelven a ser insertables. VST2 ya no se admite (solo VST3).
  */
 export function promoteCachedVst3WhenHostReady(): number {
   let n = 0

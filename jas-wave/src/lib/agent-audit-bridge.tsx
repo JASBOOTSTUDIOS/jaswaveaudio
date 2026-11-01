@@ -3,7 +3,7 @@
  * (reload bump: plugin.snapshotState)
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useDAW } from '@/src/context/daw-context'
 import { audioEngine } from '@/lib/audio-engine'
 import {
@@ -22,7 +22,9 @@ import {
   waitUntilProjectReady,
 } from './project-ready'
 import { getLoadedInstrumentForTrack } from './plugin/track-vst-runtime'
-import type { HarnessHealthContext } from './agent-harness'
+import type { HarnessHealthContext } from '@jaswave/ai-harness'
+import { inferPluginRole, localUsageGuide } from './plugin-knowledge'
+import type { ProductionPluginGuide } from '@jaswave/ai-harness'
 
 export type AuditTrackLine = {
   id: string
@@ -110,7 +112,6 @@ export async function buildAuditSnapshot(tienda: TiendaDAW): Promise<AuditSnapsh
 
   const playheadSec = audioEngine.getAudibleTimelineSeconds()
   const enginePlaying = playheadSec >= 0 && playing
-  const order = getMixMeterTrackOrder()
   const issues: string[] = []
 
   const lines: AuditTrackLine[] = tracks.map((t) => {
@@ -204,10 +205,41 @@ export async function buildAuditSnapshot(tienda: TiendaDAW): Promise<AuditSnapsh
   }
 }
 
+function buildPluginGuides(tienda: TiendaDAW): ProductionPluginGuide[] {
+  const tracks = tienda.obtenerEstado().project?.tracks ?? []
+  const out: ProductionPluginGuide[] = []
+  for (const t of tracks) {
+    const inst =
+      (t.plugins ?? []).find((p) => p.tipo === 'instrumento' || p.tipo === 'instrument') ??
+      (t.plugins ?? [])[0]
+    if (!inst) continue
+    const g = localUsageGuide(inst.nombre)
+    const tagRole = (t.tags ?? []).map(String).find((x) => x.startsWith('role:'))?.slice(5)
+    out.push({
+      trackId: t.id,
+      pluginName: inst.nombre,
+      role: g.role,
+      trackRole: tagRole || inferPluginRole(t.nombre),
+      chromatic: g.chromatic,
+      range: g.range,
+      keyswitchPitches: g.keyswitches?.map((k) => k.pitch),
+      drumMapPitches: g.chromatic ? undefined : g.map?.map((m) => m.pitch),
+    })
+  }
+  return out
+}
+
+function inferLoudnessTarget(tienda: TiendaDAW): 'streaming' | 'club' | 'cd' {
+  const name = String(tienda.obtenerEstado().project?.nombre ?? '')
+  if (/club|edm|techno|house/i.test(name)) return 'club'
+  if (/\bcd\b|album/i.test(name)) return 'cd'
+  return 'streaming'
+}
+
 /** Contexto para inspectDawHealth: peaks, slots host, hang. */
 export async function buildHarnessHealthContext(
   tienda: TiendaDAW,
-  opts?: { sidechainApplied?: boolean },
+  opts?: { sidechainApplied?: boolean; requireListen?: boolean },
 ): Promise<HarnessHealthContext> {
   const snap = await buildAuditSnapshot(tienda)
   const st = tienda.obtenerEstado()
@@ -215,6 +247,9 @@ export async function buildHarnessHealthContext(
   const sidechainHostRouted = sidechains.length > 0
   const destIds = [...new Set(sidechains.map((s) => s.destinoTrackId).filter(Boolean))]
   const sidechainPeaks = snapshotNativeSidechainPeaks(destIds.length ? destIds : getMixMeterTrackOrder())
+  const g = globalThis as unknown as {
+    __jaswaveLastListen?: { ok: boolean; issues?: string[]; summary?: string; target?: string }
+  }
   return {
     auditTracks: snap.tracks.map((t) => ({
       id: t.id,
@@ -232,6 +267,10 @@ export async function buildHarnessHealthContext(
     sidechainApplied: opts?.sidechainApplied ?? sidechains.length > 0,
     sidechainHostRouted,
     sidechainPeaks,
+    pluginGuides: buildPluginGuides(tienda),
+    lastListen: g.__jaswaveLastListen ?? null,
+    loudnessTarget: inferLoudnessTarget(tienda),
+    requireListen: opts?.requireListen,
   }
 }
 
@@ -261,6 +300,8 @@ export function buildStateSummary(tienda: TiendaDAW) {
       inicio: c.inicio,
       duracion: c.duracion,
       notas: noteCount(c),
+      // Ruta del audio del clip (relativa dentro del proyecto, p. ej. media/intro.wav).
+      sourceRuta: (c as { source?: { ruta?: string } }).source?.ruta,
     })),
   }))
   return {
@@ -269,6 +310,7 @@ export function buildStateSummary(tienda: TiendaDAW) {
     nombre: st.project?.nombre,
     bpm: projectBpm(st),
     playing: Boolean(st.transport?.reproduciendo),
+    grabacion: st.transport?.grabacion ?? 'inactiva',
     positionSec: st.transport?.posicion?.segundos ?? 0,
     master: {
       volumen: st.project?.master?.volumen,

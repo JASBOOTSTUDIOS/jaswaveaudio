@@ -4,9 +4,13 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { MidiClip, MidiNote } from '@jaswave/shared'
-import { extractStyleProfile, seedMesiasWorshipDrumProfile } from '../styles/extract-style-profile'
+import { extractStyleProfile, styleProfileFromPreset } from '../styles/extract-style-profile'
+import { EXAMPLE_STYLE_PRESETS } from '../styles/presets'
+
+function examplePreset() {
+  return styleProfileFromPreset(EXAMPLE_STYLE_PRESETS[0])
+}
 import { applyStyleProfileToNotes, pitchesDifferEnough } from '../styles/apply-style-profile'
-import { buildScorePdfBytes, isDrumishNotes } from '../midi-score-export'
 
 function note(pitch: number, inicio: number, duracion = 0.25, velocidad = 90): MidiNote {
   return {
@@ -57,9 +61,11 @@ describe('extractStyleProfile', () => {
     assert.ok(!('notas' in p))
   })
 
-  it('seed Mesías tiene kick grid denso', () => {
-    const seed = seedMesiasWorshipDrumProfile()
-    assert.equal(seed.id, 'style-seed-mesias-firmthm-drums')
+  it('preset de ejemplo (opcional) tiene kick grid denso y sin nombres de artista', () => {
+    const seed = examplePreset()
+    assert.equal(seed.id, 'style-preset-worship-chorus-drums')
+    assert.equal(seed.scope, 'global')
+    assert.ok(!/aver|morillo|mes[ií]as|firmthm/i.test(JSON.stringify(seed)))
     assert.ok((seed.stats.kickGrid16[0] ?? 0) > 0)
     assert.ok((seed.stats.snareGrid16[4] ?? 0) > 0)
   })
@@ -67,31 +73,12 @@ describe('extractStyleProfile', () => {
 
 describe('applyStyleProfileToNotes', () => {
   it('genera notas nuevas (no copy-paste de pitches origen ficticio)', () => {
-    const profile = seedMesiasWorshipDrumProfile()
+    const profile = examplePreset()
     const originPitches = [60, 62, 64, 65, 67]
     const generated = applyStyleProfileToNotes(profile, { bars: 2, seed: 7 })
     assert.ok(generated.length > 8)
     const pitches = generated.map((n) => n.pitch)
     assert.ok(pitchesDifferEnough(originPitches, pitches, 0.2))
     assert.ok(generated.some((n) => n.pitch === 36 || n.pitch === 38))
-  })
-})
-
-describe('midi-score-export', () => {
-  it('detecta drums y produce PDF válido', async () => {
-    const notas = [note(36, 0), note(38, 1), note(42, 0.5), note(36, 2), note(38, 3)]
-    assert.equal(isDrumishNotes(notas), true)
-    const bytes = await buildScorePdfBytes(notas, { bpm: 72, drums: true, title: 'Test Drums' })
-    assert.ok(bytes.length > 100)
-    const head = String.fromCharCode(...bytes.slice(0, 4))
-    assert.equal(head, '%PDF')
-  })
-
-  it('produce PDF melódico', async () => {
-    const notas = [note(60, 0, 0.5), note(62, 0.5), note(64, 1), note(65, 1.5), note(67, 2, 1)]
-    const bytes = await buildScorePdfBytes(notas, { bpm: 100, drums: false, title: 'Melody' })
-    assert.ok(bytes.byteLength > 100)
-    assert.equal(bytes[0], 0x25) // %
-    assert.equal(bytes[1], 0x50) // P
   })
 })

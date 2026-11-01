@@ -10,7 +10,13 @@ import { useDAW, useDAWState } from '@/src/context/daw-context'
 import { executeDawActions } from '@/src/lib/ai-daw-agent'
 import type { BufferHealthReport } from '@/src/lib/audio-buffer-health'
 import { useLiveBufferMeter } from '@/hooks/use-live-buffer-meter'
-import { getNativeMasterPeak } from '@/src/lib/plugin/native-mix-meters'
+import {
+  getNativeMasterMetering,
+  getNativeMasterSpectrum,
+  refreshNativeMasterSpectrum,
+  refreshNativeMixMeters,
+  resetNativeMasterLoudness,
+} from '@/src/lib/plugin/native-mix-meters'
 import { cn } from '@/lib/utils'
 
 type TimingInfo = ReturnType<typeof audioEngine.getTimingDiagnostics>
@@ -25,10 +31,83 @@ type BounceListen = {
   issues?: string[]
 }
 
-function barColor(norm: number): string {
-  if (norm > 0.92) return '#ef4444'
-  if (norm > 0.7) return '#f59e0b'
-  return '#34d399'
+const toDb = (v: number) => (v > 1e-6 ? 20 * Math.log10(v) : -120)
+const fmtDb = (db: number) => (db <= -100 ? '−∞' : db.toFixed(1))
+const fmtLufs = (v: number) => (v <= -100 ? '—' : v.toFixed(1))
+
+/** Espectro del master en dBFS (−96…0) con rejilla de dB y de frecuencia. */
+function drawMasterSpectrum(canvas: HTMLCanvasElement, cols: Float32Array) {
+  const dpr = window.devicePixelRatio || 1
+  const w = canvas.clientWidth
+  const h = canvas.clientHeight
+  if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
+    canvas.width = Math.floor(w * dpr)
+    canvas.height = Math.floor(h * dpr)
+  }
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.fillStyle = '#0c0e12'
+  ctx.fillRect(0, 0, w, h)
+  const dbMin = -96
+  const yFor = (db: number) => h - Math.max(0, Math.min(1, (db - dbMin) / -dbMin)) * (h - 4)
+  ctx.font = '9px sans-serif'
+  ctx.lineWidth = 1
+  for (const db of [-12, -24, -48, -72]) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'
+    ctx.beginPath()
+    ctx.moveTo(0, yFor(db))
+    ctx.lineTo(w, yFor(db))
+    ctx.stroke()
+    ctx.fillStyle = 'rgba(255,255,255,0.35)'
+    ctx.fillText(`${db}`, 2, yFor(db) - 2)
+  }
+  for (const [f, label] of [[100, '100'], [1000, '1k'], [10000, '10k']] as const) {
+    const x = (Math.log(f / 20) / Math.log(1000)) * w
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'
+    ctx.beginPath()
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, h)
+    ctx.stroke()
+    ctx.fillStyle = 'rgba(255,255,255,0.35)'
+    ctx.fillText(label, x + 2, h - 3)
+  }
+  const n = cols.length
+  ctx.beginPath()
+  ctx.moveTo(0, h)
+  for (let i = 0; i < n; i++) ctx.lineTo(((i + 0.5) / n) * w, yFor(cols[i] ?? -140))
+  ctx.lineTo(w, h)
+  ctx.closePath()
+  ctx.fillStyle = 'rgba(52,211,153,0.18)'
+  ctx.fill()
+  ctx.beginPath()
+  for (let i = 0; i < n; i++) {
+    const x = ((i + 0.5) / n) * w
+    if (i === 0) ctx.moveTo(x, yFor(cols[i] ?? -140))
+    else ctx.lineTo(x, yFor(cols[i] ?? -140))
+  }
+  ctx.strokeStyle = '#34d399'
+  ctx.lineWidth = 1.4
+  ctx.stroke()
+}
+
+/** Barra de nivel en dBFS (−60…0) con RMS, pico y retención. */
+function LevelRow({ label, peak, hold, rms }: { label: string; peak: number; hold: number; rms: number }) {
+  const pos = (v: number) => `${Math.max(0, Math.min(1, (toDb(v) + 60) / 60)) * 100}%`
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-3 text-[10px] text-muted-foreground">{label}</span>
+      <div className="relative h-2.5 flex-1 overflow-hidden rounded bg-muted/40">
+        <div className="absolute inset-y-0 left-0 bg-emerald-500/35" style={{ width: pos(peak) }} />
+        <div className="absolute inset-y-0 left-0 bg-emerald-400" style={{ width: pos(rms) }} />
+        <div className="absolute inset-y-0 w-0.5 bg-white" style={{ left: pos(hold) }} />
+        <div className="absolute inset-y-0 w-px bg-red-500/70" style={{ left: pos(0.89) }} title="−1 dBFS" />
+      </div>
+      <span className={cn('w-12 text-right font-mono text-[10px]', toDb(peak) > -1 ? 'text-red-400' : 'text-foreground')}>
+        {fmtDb(toDb(peak))}
+      </span>
+    </div>
+  )
 }
 
 function correlationLabel(c: number): string {
@@ -42,10 +121,9 @@ export function MixAnalyzerPanel() {
   const tienda = useDAW()
   const playing = useDAWState((s) => Boolean(s.transport?.reproduciendo))
   const spectrumRef = useRef<HTMLCanvasElement>(null)
-  const freqBuf = useRef<Uint8Array | null>(null)
-  const timeBuf = useRef<Uint8Array | null>(null)
-  const [peak, setPeak] = useState(0)
-  const [rms, setRms] = useState(0)
+  const [levels, setLevels] = useState({ peakL: 0, peakR: 0, holdL: 0, holdR: 0, rmsL: 0, rmsR: 0 })
+  const [live, setLive] = useState({ m: -120, s: -120, i: -120 })
+  const [clipped, setClipped] = useState(false)
   const [corr, setCorr] = useState(1)
   const [timing, setTiming] = useState<TimingInfo | null>(null)
   const [bufferHealth, setBufferHealth] = useState<BufferHealthReport | null>(null)
@@ -56,69 +134,31 @@ export function MixAnalyzerPanel() {
 
   useEffect(() => {
     let raf = 0
-    const tick = () => {
+    let lastPoll = 0
+    let holdL = 0
+    let holdR = 0
+    const tick = (t: number) => {
       raf = requestAnimationFrame(tick)
-      const spec = audioEngine.getMasterSpectrum(
-        (freqBuf.current as Uint8Array<ArrayBuffer> | null) ?? undefined,
-      )
-      freqBuf.current = spec
-      const td = audioEngine.getMasterTimeDomain(
-        (timeBuf.current as Uint8Array<ArrayBuffer> | null) ?? undefined,
-      )
-      timeBuf.current = td
-
-      let max = 0
-      let sumSq = 0
-      for (let i = 0; i < td.length; i++) {
-        const v = ((td[i] ?? 128) - 128) / 128
-        max = Math.max(max, Math.abs(v))
-        sumSq += v * v
+      // El host nativo mezcla y mide el master: se sondea a ~20 Hz (una petición en vuelo a la vez).
+      if (t - lastPoll > 50) {
+        lastPoll = t
+        void refreshNativeMixMeters()
+        void refreshNativeMasterSpectrum()
       }
-      const rmsV = Math.sqrt(sumSq / Math.max(1, td.length))
-      setPeak(Math.max(getNativeMasterPeak(), max, audioEngine.getMasterMeterLevel()))
-      setRms(rmsV)
-
-      // Correlación aproximada partiendo el buffer en dos mitades (proxy L/R)
-      const mid = Math.floor(td.length / 2)
-      let num = 0
-      let dL = 0
-      let dR = 0
-      for (let i = 0; i < mid; i++) {
-        const a = ((td[i] ?? 128) - 128) / 128
-        const b = ((td[i + mid] ?? 128) - 128) / 128
-        num += a * b
-        dL += a * a
-        dR += b * b
-      }
-      const den = Math.sqrt(dL * dR)
-      setCorr(den > 1e-9 ? Math.max(-1, Math.min(1, num / den)) : 1)
+      const m = getNativeMasterMetering()
+      const pkL = Math.max(m.peakL, 0)
+      const pkR = Math.max(m.peakR, 0)
+      holdL = Math.max(holdL * 0.985, pkL)
+      holdR = Math.max(holdR * 0.985, pkR)
+      setLevels({ peakL: pkL, peakR: pkR, holdL, holdR, rmsL: m.rmsL, rmsR: m.rmsR })
+      setCorr(m.correlation)
+      setLive({ m: m.lufsMomentary, s: m.lufsShort, i: m.lufsIntegrated })
+      if (pkL >= 0.999 || pkR >= 0.999) setClipped(true)
 
       setTiming(audioEngine.getTimingDiagnostics())
 
       const canvas = spectrumRef.current
-      if (canvas && spec.length) {
-        const dpr = window.devicePixelRatio || 1
-        const w = canvas.clientWidth
-        const h = canvas.clientHeight
-        if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
-          canvas.width = Math.floor(w * dpr)
-          canvas.height = Math.floor(h * dpr)
-        }
-        const ctx = canvas.getContext('2d')
-        if (ctx) {
-          ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-          ctx.fillStyle = '#0c0e12'
-          ctx.fillRect(0, 0, w, h)
-          const n = Math.min(spec.length, 256)
-          const barW = w / n
-          for (let i = 0; i < n; i++) {
-            const v = (spec[i] ?? 0) / 255
-            const bh = v * (h - 4)
-            ctx.fillStyle = barColor(v)
-            ctx.fillRect(i * barW, h - bh, Math.max(1, barW - 0.5), bh)
-          }
-        }
-      }
+      if (canvas) drawMasterSpectrum(canvas, getNativeMasterSpectrum())
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
@@ -153,7 +193,7 @@ export function MixAnalyzerPanel() {
     try {
       const results = await executeDawActions(tienda, [
         { type: 'audio.ensureBest', payload: { preferName: 'UMC' } },
-      ])
+      ], { source: 'user_build' })
       setMsg(results[0]?.message || 'Audio actualizado')
     } catch (err) {
       setMsg(err instanceof Error ? err.message : String(err))
@@ -228,10 +268,41 @@ export function MixAnalyzerPanel() {
           </span>
         </div>
         <canvas ref={spectrumRef} className="h-28 w-full rounded border border-border/50" />
-        <div className="grid grid-cols-2 gap-2">
-          <MeterChip label="Peak" value={`${(peak * 100).toFixed(0)}%`} hot={peak > 0.95} />
-          <MeterChip label="RMS" value={`${(rms * 100).toFixed(0)}%`} />
+        <div className="space-y-1 rounded border border-border/50 bg-black/20 p-2">
+          <LevelRow label="L" peak={levels.peakL} hold={levels.holdL} rms={levels.rmsL} />
+          <LevelRow label="R" peak={levels.peakR} hold={levels.holdR} rms={levels.rmsR} />
+          <div className="flex items-center justify-between pt-0.5 text-[10px] text-muted-foreground">
+            <span>
+              Pico máx{' '}
+              <span className={cn('font-mono', clipped ? 'text-red-400' : 'text-foreground')}>
+                {fmtDb(toDb(Math.max(levels.holdL, levels.holdR)))} dBFS
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setClipped(false)}
+              title="Reiniciar indicador de clip"
+              className={cn(
+                'rounded px-1.5 py-0.5 font-semibold uppercase',
+                clipped ? 'bg-red-600 text-white' : 'bg-muted/40 text-muted-foreground',
+              )}
+            >
+              Clip
+            </button>
+          </div>
         </div>
+        <div className="grid grid-cols-3 gap-2">
+          <MeterChip label="LUFS-M" value={fmtLufs(live.m)} />
+          <MeterChip label="LUFS-S" value={fmtLufs(live.s)} />
+          <MeterChip label="LUFS-I" value={fmtLufs(live.i)} hint="streaming ≈ −14" />
+        </div>
+        <button
+          type="button"
+          onClick={() => resetNativeMasterLoudness()}
+          className="text-[10px] text-muted-foreground underline-offset-2 hover:underline"
+        >
+          Reiniciar LUFS integrado
+        </button>
       </section>
 
       <section className="space-y-1.5">
@@ -264,7 +335,7 @@ export function MixAnalyzerPanel() {
 
       <section className="space-y-1.5">
         <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-          <Disc3 className="size-3.5" /> Loudness (último bounce)
+          <Disc3 className="size-3.5" /> Análisis del último bounce
         </div>
         <div className="grid grid-cols-3 gap-2">
           <MeterChip

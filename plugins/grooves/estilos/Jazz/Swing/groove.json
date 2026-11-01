@@ -1,0 +1,94 @@
+{
+  "archivos": {
+    "swing-medio-con-ride.mid": {
+      "id": "jw-jazz-swing-swing-medio-con-ride",
+      "nombre": "Swing medio con ride",
+      "tempo": 132,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "jazz",
+        "swing",
+        "ride"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "swing-rapido.mid": {
+      "id": "jw-jazz-swing-swing-rapido",
+      "nombre": "Swing rápido",
+      "tempo": 190,
+      "compas": "4/4",
+      "compases": 4,
+      "tipo": "groove",
+      "etiquetas": [
+        "jazz",
+        "swing",
+        "rapido"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "balada-de-escobillas.mid": {
+      "id": "jw-jazz-swing-balada-de-escobillas",
+      "nombre": "Balada de escobillas",
+      "tempo": 66,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "jazz",
+        "escobillas",
+        "balada"
+      ],
+      "intensidad": 1,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "escobillas-medio-swing.mid": {
+      "id": "jw-jazz-swing-escobillas-medio-swing",
+      "nombre": "Escobillas medio swing",
+      "tempo": 120,
+      "compas": "4/4",
+      "compases": 2,
+      "tipo": "groove",
+      "etiquetas": [
+        "jazz",
+        "escobillas",
+        "swing"
+      ],
+      "intensidad": 2,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    },
+    "fill-caja-en-tresillos.mid": {
+      "id": "jw-jazz-swing-fill-caja-en-tresillos",
+      "nombre": "Fill caja en tresillos",
+      "tempo": 140,
+      "compas": "4/4",
+      "compases": 1,
+      "tipo": "fill",
+      "etiquetas": [
+        "fill",
+        "caja",
+        "tresillos"
+      ],
+      "intensidad": 3,
+      "revision": 1,
+      "origen": "catalogo",
+      "autor": "JasWave",
+      "licencia": "CC0-1.0"
+    }
+  }
+}
