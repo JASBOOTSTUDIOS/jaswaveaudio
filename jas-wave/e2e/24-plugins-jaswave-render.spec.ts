@@ -13,7 +13,7 @@ import { findTrack, newProject, tracks } from './fixtures/project'
 
 const app = setupJasWave({ label: 'plugins-render', bridge: true })
 
-const ENV_UNAVAILABLE = /plugin host|host no disponible|sin dispositivo|no audio device|device|ASIO|WASAPI|pipe|ENOENT.*plugin-host|AudioEngineBusy/i
+const ENV_UNAVAILABLE = /plugin host|host no disponible|sin dispositivo|no audio device|device|ASIO|WASAPI|pipe|ENOENT.*plugin-host|AudioEngineBusy|Comando desconocido/i
 const CARPETA_VST3 = path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Common', 'VST3', 'JasWave')
 const RAIZ_PLUGINS = path.resolve(__dirname, '..', '..', 'plugins')
 

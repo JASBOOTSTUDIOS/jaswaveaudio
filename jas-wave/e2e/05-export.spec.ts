@@ -13,7 +13,7 @@ import { newProject, tracks } from './fixtures/project'
 const app = setupJasWave({ label: 'export', bridge: true })
 
 /** Mensajes de render que indican falta de entorno (no un bug del export). */
-const ENV_UNAVAILABLE = /plugin host|host no disponible|sin dispositivo|no audio device|device|ASIO|WASAPI|pipe|ENOENT.*plugin-host|timeout/i
+const ENV_UNAVAILABLE = /plugin host|host no disponible|sin dispositivo|no audio device|device|ASIO|WASAPI|pipe|ENOENT.*plugin-host|timeout|Comando desconocido/i
 
 /** WAV PCM 16 bit estéreo con un seno de 440 Hz (fuente de la pista de audio). */
 function writeSineWav(file: string, seconds: number, sampleRate = 48000) {

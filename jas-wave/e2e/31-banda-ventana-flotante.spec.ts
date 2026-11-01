@@ -5,10 +5,12 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { setupJasWave } from './fixtures/harness'
+import { requiereModulos } from './fixtures/modulos'
 import { newProject } from './fixtures/project'
 import { crearPasos } from './fixtures/pasos'
 
 const app = setupJasWave({ label: 'banda-flotante', bridge: true })
+requiereModulos(app)
 const paso = crearPasos(() => app().page, '31-banda-flotante')
 const CANAL = 'jaswave-banda-v1'
 

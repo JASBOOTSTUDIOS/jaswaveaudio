@@ -5,9 +5,11 @@
  */
 import { expect, test } from '@playwright/test'
 import { setupJasWave } from './fixtures/harness'
+import { requiereModulos } from './fixtures/modulos'
 import { createMidiTrackWithClip, newProject } from './fixtures/project'
 
 const app = setupJasWave({ label: 'zonas-midi', bridge: true })
+requiereModulos(app)
 
 type ZonaE2E = { id: string; pistaId: string; lo: number; hi: number; transposicion: number }
 type EstadoE2E = { project: { directo?: { zonas: ZonaE2E[]; bloqueo?: boolean; seguridad?: { activa: boolean } } } }

@@ -4,10 +4,12 @@
  */
 import { expect, test } from '@playwright/test'
 import { setupJasWave } from './fixtures/harness'
+import { requiereModulos } from './fixtures/modulos'
 import { createMidiTrackWithClip, newProject } from './fixtures/project'
 import { crearPasos } from './fixtures/pasos'
 
 const app = setupJasWave({ label: 'transporte-seguir-ia', bridge: true })
+requiereModulos(app)
 const paso = crearPasos(() => app().page, '30-transporte-ia')
 
 test('escuchar y ver a la IA se controlan desde el transporte', async () => {

@@ -4,9 +4,11 @@
  */
 import { expect, test } from '@playwright/test'
 import { setupJasWave } from './fixtures/harness'
+import { requiereModulos } from './fixtures/modulos'
 import { createMidiTrackWithClip, newProject } from './fixtures/project'
 
 const app = setupJasWave({ label: 'espectros', bridge: true })
+requiereModulos(app)
 
 test('varias tiras muestran su espectro a la vez', async () => {
   const { bridge, page } = app()

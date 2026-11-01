@@ -10,11 +10,13 @@ import { expect, test, type Locator } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { setupJasWave } from './fixtures/harness'
+import { requiereModulos } from './fixtures/modulos'
 import { newProject, tracks } from './fixtures/project'
 import { buscarArchivos, crearPasos, escribirWavTono } from './fixtures/pasos'
 
 const SCRIPT = path.join(__dirname, 'fixtures', 'agent-mock-configurar.json')
 const app = setupJasWave({ label: 'configurar', bridge: true, env: { JASWAVE_AI_MOCK: SCRIPT } })
+requiereModulos(app)
 const paso = crearPasos(() => app().page, '26-configurar')
 
 const carpeta = () => path.join(app().userData, 'asistente')

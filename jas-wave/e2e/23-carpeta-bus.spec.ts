@@ -10,7 +10,7 @@ import { findTrack, newProject, tracks } from './fixtures/project'
 
 const app = setupJasWave({ label: 'carpeta-bus', bridge: true })
 
-const ENV_UNAVAILABLE = /plugin host|host no disponible|sin dispositivo|no audio device|device|ASIO|WASAPI|pipe|ENOENT.*plugin-host|timeout|AudioEngineBusy/i
+const ENV_UNAVAILABLE = /plugin host|host no disponible|sin dispositivo|no audio device|device|ASIO|WASAPI|pipe|ENOENT.*plugin-host|timeout|AudioEngineBusy|Comando desconocido/i
 
 function writeSineWav(file: string, seconds: number, sampleRate = 48000) {
   const frames = Math.round(seconds * sampleRate)

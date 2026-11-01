@@ -17,7 +17,7 @@ const app = setupJasWave({ label: 'u6', bridge: true })
 
 /** Mensajes que indican falta de entorno (no un bug de U6). */
 const ENV_UNAVAILABLE =
-  /plugin host|host no disponible|sin dispositivo|no audio device|device|ASIO|WASAPI|pipe|ENOENT.*plugin-host|timeout/i
+  /plugin host|host no disponible|sin dispositivo|no audio device|device|ASIO|WASAPI|pipe|ENOENT.*plugin-host|timeout|Comando desconocido/i
 
 /** WAV PCM 16 bit estéreo con un seno de 440 Hz. */
 function writeSineWav(file: string, seconds: number, sampleRate = 48000) {

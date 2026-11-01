@@ -9,11 +9,13 @@ import { expect, test } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { setupJasWave } from './fixtures/harness'
+import { requiereModulos } from './fixtures/modulos'
 import { newProject } from './fixtures/project'
 import { waitFor } from './fixtures/app'
 
 const SCRIPT = path.join(__dirname, 'fixtures', 'agent-mock-tempo.json')
 const app = setupJasWave({ label: 'agent-mock', bridge: true, env: { JASWAVE_AI_MOCK: SCRIPT } })
+requiereModulos(app)
 
 function runFiles(userData: string): Array<Record<string, any>> {
   const dir = path.join(userData, 'agent-runs')

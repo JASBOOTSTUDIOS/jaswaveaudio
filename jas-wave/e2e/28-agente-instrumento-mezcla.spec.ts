@@ -6,10 +6,12 @@
 import { expect, test } from '@playwright/test'
 import * as path from 'node:path'
 import { setupJasWave } from './fixtures/harness'
+import { requiereModulos } from './fixtures/modulos'
 import { newProject } from './fixtures/project'
 
 const SCRIPT = path.join(__dirname, 'fixtures', 'agent-mock-instrumento-mezcla.json')
 const app = setupJasWave({ label: 'agente-instrumento', bridge: true, env: { JASWAVE_AI_MOCK: SCRIPT } })
+requiereModulos(app)
 
 test('el agente carga el instrumento y ecualiza sin duplicar plugins', async () => {
   test.setTimeout(240_000)
